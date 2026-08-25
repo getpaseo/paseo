@@ -37,7 +37,7 @@ const COPILOT_CAPABILITIES: AgentCapabilityFlags = {
 
 const COPILOT_AGENT_MODE_ID = "https://agentclientprotocol.com/protocol/session-modes#agent";
 const COPILOT_PLAN_MODE_ID = "https://agentclientprotocol.com/protocol/session-modes#plan";
-const COPILOT_AUTOPILOT_MODE_ID =
+export const COPILOT_AUTOPILOT_MODE_ID =
   "https://agentclientprotocol.com/protocol/session-modes#autopilot";
 export const COPILOT_ALLOW_ALL_MODE_ID = "allow-all";
 const COPILOT_ALLOW_ALL_CONFIG_ID = "allow_all";
@@ -67,6 +67,11 @@ export const COPILOT_MODES: AgentMode[] = [
     description: "Plan mode for creating and executing multi-step plans",
   },
   {
+    id: COPILOT_AUTOPILOT_MODE_ID,
+    label: "Autopilot",
+    description: "Copilot's own unattended mode: it approves requests and skips prompts.",
+  },
+  {
     id: COPILOT_ALLOW_ALL_MODE_ID,
     label: "Allow All",
     description: "Automatically approves all Copilot tool, path, and URL requests.",
@@ -89,7 +94,6 @@ export class CopilotACPAgentClient extends ACPAgentClient {
       sessionResponseTransformer: transformCopilotSessionResponse,
       configOptionsTransformer: transformCopilotConfigOptions,
       configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
-      modeIdTransformer: transformCopilotModeId,
       providerModeWriter: writeCopilotProviderMode,
       beforeModeWriter: beforeCopilotModeWriter,
       capabilities: COPILOT_CAPABILITIES,
@@ -136,18 +140,16 @@ export function transformCopilotSessionResponse(
     modes: {
       ...response.modes,
       availableModes: response.modes.availableModes
-        ?.filter(
-          (mode) => mode.id !== COPILOT_AUTOPILOT_MODE_ID && mode.id !== COPILOT_ALLOW_ALL_MODE_ID,
-        )
+        ?.filter((mode) => mode.id !== COPILOT_ALLOW_ALL_MODE_ID)
         .concat({
           id: COPILOT_ALLOW_ALL_MODE_ID,
           name: "Allow All",
           description: "Automatically approves all Copilot tool, path, and URL requests.",
         }),
-      currentModeId: allowAllEnabled
-        ? COPILOT_ALLOW_ALL_MODE_ID
-        : (transformCopilotModeId(response.modes.currentModeId ?? COPILOT_AGENT_MODE_ID) ??
-          COPILOT_AGENT_MODE_ID),
+      currentModeId: resolveCopilotCurrentModeId(
+        response.modes.currentModeId ?? COPILOT_AGENT_MODE_ID,
+        allowAllEnabled,
+      ),
     },
   };
 }
@@ -162,10 +164,7 @@ export function transformCopilotConfigOptions(
     }
     // Trust Copilot's allow_all config value as the source of truth when it changes in-process.
     const options = flattenCopilotModeOptions(option.options)
-      .filter(
-        (choice) =>
-          choice.value !== COPILOT_AUTOPILOT_MODE_ID && choice.value !== COPILOT_ALLOW_ALL_MODE_ID,
-      )
+      .filter((choice) => choice.value !== COPILOT_ALLOW_ALL_MODE_ID)
       .concat({
         value: COPILOT_ALLOW_ALL_MODE_ID,
         name: "Allow All",
@@ -173,9 +172,7 @@ export function transformCopilotConfigOptions(
       });
     return {
       ...option,
-      currentValue: allowAllEnabled
-        ? COPILOT_ALLOW_ALL_MODE_ID
-        : (transformCopilotModeId(option.currentValue) ?? COPILOT_AGENT_MODE_ID),
+      currentValue: resolveCopilotCurrentModeId(option.currentValue, allowAllEnabled),
       options,
     };
   });
@@ -195,20 +192,31 @@ function flattenCopilotModeOptions(
   return flattened;
 }
 
-export function transformCopilotModeId(modeId: string): string | null {
-  return modeId === COPILOT_AUTOPILOT_MODE_ID ? COPILOT_AGENT_MODE_ID : modeId;
+// Autopilot turns allow_all on by itself, so allow_all alone cannot tell the two
+// apart: only a session that is not in autopilot reports the synthesised Allow
+// All mode.
+function resolveCopilotCurrentModeId(modeId: string, allowAllEnabled: boolean): string {
+  if (modeId === COPILOT_AUTOPILOT_MODE_ID) {
+    return COPILOT_AUTOPILOT_MODE_ID;
+  }
+  return allowAllEnabled ? COPILOT_ALLOW_ALL_MODE_ID : modeId;
 }
 
 export async function writeCopilotProviderMode(
   context: ACPProviderModeWriterContext,
 ): Promise<ACPProviderModeWriteResult> {
-  // COMPAT(copilotAutopilotMode): added in v0.1.75, remove after 2026-11-12 once old clients no longer send Copilot's old ACP autopilot mode ID.
-  const requestsAllowAll =
-    context.requestedModeId === COPILOT_ALLOW_ALL_MODE_ID ||
-    context.requestedModeId === COPILOT_AUTOPILOT_MODE_ID;
-  if (!requestsAllowAll) {
+  if (context.requestedModeId !== COPILOT_ALLOW_ALL_MODE_ID) {
     return { handled: false };
   }
+  // Allow All is Paseo's own mode: it is agent mode with permissions pre-granted.
+  // `mode` and `allow_all` are independent Copilot config options, so a session
+  // left in #plan keeps its plan framing and refuses to edit even with the flag
+  // on. The mode write goes first because leaving #autopilot makes Copilot
+  // revert allow_all to off, which would clobber the flag if it were set first.
+  await context.connection.setSessionMode({
+    sessionId: context.sessionId,
+    modeId: COPILOT_AGENT_MODE_ID,
+  });
   const response = await context.connection.setSessionConfigOption({
     sessionId: context.sessionId,
     configId: COPILOT_ALLOW_ALL_CONFIG_ID,
