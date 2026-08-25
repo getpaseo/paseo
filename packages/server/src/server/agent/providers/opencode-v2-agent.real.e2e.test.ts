@@ -15,7 +15,7 @@ import pino from "pino";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { findExecutable } from "../../../executable-resolution/executable-resolution.js";
-import type { AgentStreamEvent } from "../agent-sdk-types.js";
+import type { AgentSession, AgentStreamEvent } from "../agent-sdk-types.js";
 import { OpenCodeV2AgentClient } from "./opencode-v2-agent.js";
 import { createOpenCodeV2Client } from "./opencode-v2/client.js";
 import { OpenCodeV2EventConsumer } from "./opencode-v2/event-consumer.js";
@@ -73,6 +73,97 @@ describe.sequential("OpenCode 2 real e2e", () => {
     },
     TIMEOUT_MS,
   );
+
+  test(
+    "rewinds conversation and files after real edit turns",
+    async () => {
+      const { client, rawClient, workspace } = harness;
+      const session = await client.createSession({
+        provider: "opencode-v2",
+        cwd: workspace,
+        model: MODEL,
+        modeId: "build",
+      });
+      const events: AgentStreamEvent[] = [];
+      session.subscribe(recordAndAutoApprove(session, events));
+
+      const terminalCount = () =>
+        events.filter(
+          (event) =>
+            event.type === "turn_completed" ||
+            event.type === "turn_failed" ||
+            event.type === "turn_canceled",
+        ).length;
+      const runTurn = async (prompt: string) => {
+        const before = terminalCount();
+        await session.startTurn(prompt);
+        const started = Date.now();
+        while (Date.now() - started < TIMEOUT_MS - 10_000) {
+          if (terminalCount() > before) return;
+          await new Promise<void>((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error(`Timed out waiting for terminal event after: ${prompt}`);
+      };
+
+      try {
+        await runTurn("Create note.txt containing exactly NOTE_ONE. Use the edit tool.");
+        expect(existsSync(path.join(workspace, "note.txt"))).toBe(true);
+
+        await runTurn("Create note2.txt containing exactly NOTE_TWO. Use the edit tool.");
+        expect(existsSync(path.join(workspace, "note2.txt"))).toBe(true);
+
+        const firstUserMessage = events.find(
+          (event) => event.type === "timeline" && event.item.type === "user_message",
+        );
+        expect(firstUserMessage?.type).toBe("timeline");
+        const messageId =
+          firstUserMessage?.type === "timeline" && firstUserMessage.item.type === "user_message"
+            ? firstUserMessage.item.messageId
+            : undefined;
+        expect(messageId).toBeTruthy();
+
+        const sessionId = (await session.getRuntimeInfo()).sessionId;
+        expect(sessionId).toBeTruthy();
+
+        // Wait for the session to be idle so the rewind's snapshot capture has
+        // fully settled before staging the revert.
+        const started = Date.now();
+        while (Date.now() - started < 30_000) {
+          const info = await rawClient.session.get({ sessionID: sessionId! });
+          if (info.status?.type === "idle") break;
+          await new Promise<void>((resolve) => setTimeout(resolve, 500));
+        }
+
+        const beforeTranscript = await rawClient.message.list({ sessionID: sessionId! });
+        const beforeUserAssistant = beforeTranscript.data.filter(
+          (message) => message.type === "user" || message.type === "assistant",
+        );
+
+        // Rewind to the first user message: files restored + transcript truncated.
+        await session.revertBoth({ messageId: messageId! });
+
+        expect(existsSync(path.join(workspace, "note.txt"))).toBe(false);
+        expect(existsSync(path.join(workspace, "note2.txt"))).toBe(false);
+
+        const transcript = await rawClient.message.list({ sessionID: sessionId! });
+        const userAssistant = transcript.data.filter(
+          (message) => message.type === "user" || message.type === "assistant",
+        );
+        expect(userAssistant.length).toBeLessThan(beforeUserAssistant.length);
+
+        // Session usable after rewind: a new turn completes from the reverted base.
+        await runTurn("Reply with exactly: POST_REWIND_OK");
+        const postRewind = await rawClient.message.list({ sessionID: sessionId! });
+        expect(postRewind.data.some((message) => message.type === "user")).toBe(true);
+
+        // Rewinding to an unknown message errors cleanly.
+        await expect(session.revertBoth({ messageId: "msg_does_not_exist" })).rejects.toThrow();
+      } finally {
+        await session.close().catch(() => undefined);
+      }
+    },
+    TIMEOUT_MS * 2,
+  );
 });
 
 async function createRealHarness() {
@@ -84,6 +175,20 @@ async function createRealHarness() {
   let setupManager: OpenCodeV2ServerManager | null = null;
   try {
     const openCode2Command = await resolveOpenCode2Command();
+    // v2 snapshots files for rewind, so the workspace must be a git repo from
+    // the start (every session's snapshot capture depends on it).
+    execFileSync("git", ["init"], { cwd: workspace, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], {
+      cwd: workspace,
+      stdio: "ignore",
+    });
+    execFileSync("git", ["config", "user.name", "Paseo Test"], {
+      cwd: workspace,
+      stdio: "ignore",
+    });
+    writeFileSync(path.join(workspace, "base.txt"), "BASE\n", "utf8");
+    execFileSync("git", ["add", "base.txt"], { cwd: workspace, stdio: "ignore" });
+    execFileSync("git", ["commit", "-m", "base"], { cwd: workspace, stdio: "ignore" });
     const isolatedEnv = {
       ...process.env,
       HOME: home,
@@ -113,10 +218,19 @@ async function createRealHarness() {
     const client = new OpenCodeV2AgentClient(pino({ level: "silent" }), undefined, {
       serverManager: manager,
     });
+    // Raw v2 client bound to the current server, used by the rewind scenario to
+    // read the transcript directly after `revertBoth` truncates it.
+    const rawClient = createOpenCodeV2Client({
+      baseUrl: lease.server.url,
+      authorization: lease.server.authorization,
+    });
 
     return {
       artifactDir,
       manager,
+      client,
+      rawClient,
+      workspace,
       writeSummary(name: string, summary: unknown) {
         writeFileSync(
           path.join(artifactDir, `${name}.summary.json`),
@@ -242,6 +356,24 @@ function scanRetainedArtifacts(artifactDir: string) {
     )
     .sort();
   return { credentialPatternFiles: files.length, files };
+}
+
+/**
+ * Subscribe handler for real sessions: records every event and auto-approves
+ * tool permissions so a real session can complete unattended.
+ */
+function recordAndAutoApprove(
+  session: AgentSession,
+  events: AgentStreamEvent[],
+): (event: AgentStreamEvent) => void {
+  return (event) => {
+    events.push(event);
+    if (event.type === "permission_requested") {
+      void session.respondToPermission(event.request.id, { behavior: "allow" }).catch(() => {
+        // A permission that was already resolved is a no-op.
+      });
+    }
+  };
 }
 
 function assertParentResult(events: AgentStreamEvent[], sentinel: string): void {

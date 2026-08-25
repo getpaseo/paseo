@@ -20,6 +20,10 @@ import type {
   SessionMessagesResponse,
   SessionPromptInput,
   SessionRemoveInput,
+  SessionRevert,
+  SessionRevertClearInput,
+  SessionRevertCommitInput,
+  SessionRevertStageInput,
   SessionSwitchAgentInput,
   SessionSwitchModelInput,
 } from "@opencode-ai/client";
@@ -134,6 +138,9 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
     sessionRemove: [] as unknown[],
     sessionSwitchAgent: [] as unknown[],
     sessionSwitchModel: [] as unknown[],
+    sessionRevertStage: [] as unknown[],
+    sessionRevertClear: [] as unknown[],
+    sessionRevertCommit: [] as unknown[],
     messageList: [] as unknown[],
     modelList: [] as unknown[],
     agentList: [] as unknown[],
@@ -187,6 +194,17 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
 
   sessionSwitchAgentError: unknown = null;
   sessionSwitchModelError: unknown = null;
+
+  sessionRevertStageResponse: SessionRevert = {
+    messageID: "msg_user_1",
+    files: [],
+  };
+  sessionRevertStageImplementation:
+    | ((input: SessionRevertStageInput) => Promise<SessionRevert>)
+    | null = null;
+  sessionRevertStageError: unknown = null;
+  sessionRevertClearError: unknown = null;
+  sessionRevertCommitError: unknown = null;
 
   messageListResponse: SessionMessagesResponse = { data: [], cursor: {} };
   messageListImplementation:
@@ -295,6 +313,31 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
     }
   }
 
+  async sessionRevertStage(input: SessionRevertStageInput): Promise<SessionRevert> {
+    this.calls.sessionRevertStage.push(input);
+    if (this.sessionRevertStageError) {
+      throw this.sessionRevertStageError;
+    }
+    if (this.sessionRevertStageImplementation) {
+      return await this.sessionRevertStageImplementation(input);
+    }
+    return this.sessionRevertStageResponse;
+  }
+
+  async sessionRevertClear(input: SessionRevertClearInput): Promise<void> {
+    this.calls.sessionRevertClear.push(input);
+    if (this.sessionRevertClearError) {
+      throw this.sessionRevertClearError;
+    }
+  }
+
+  async sessionRevertCommit(input: SessionRevertCommitInput): Promise<void> {
+    this.calls.sessionRevertCommit.push(input);
+    if (this.sessionRevertCommitError) {
+      throw this.sessionRevertCommitError;
+    }
+  }
+
   async modelList(input: ModelListInput): Promise<ModelListOutput> {
     this.calls.modelList.push(input);
     if (this.modelListError) {
@@ -367,6 +410,11 @@ export class TestOpenCodeV2Client implements OpenCodeV2ClientLike {
     remove: (input: SessionRemoveInput) => this.sessionRemove(input),
     switchAgent: (input: SessionSwitchAgentInput) => this.sessionSwitchAgent(input),
     switchModel: (input: SessionSwitchModelInput) => this.sessionSwitchModel(input),
+    revert: {
+      stage: (input: SessionRevertStageInput) => this.sessionRevertStage(input),
+      clear: (input: SessionRevertClearInput) => this.sessionRevertClear(input),
+      commit: (input: SessionRevertCommitInput) => this.sessionRevertCommit(input),
+    },
   };
 
   message = {

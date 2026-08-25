@@ -950,6 +950,29 @@ export class OpenCodeV2AgentSession implements AgentSession {
     }
   }
 
+  /**
+   * Rewind the conversation and working tree to an earlier user message. v2
+   * reverts in two phases: `revert.stage` computes the boundary and restores
+   * files (returning a preview), then `revert.commit` truncates the transcript
+   * to the staged message. Errors from either phase (e.g. an unknown message
+   * id) propagate so the daemon can surface them cleanly.
+   */
+  async revertBoth(input: { messageId: string }): Promise<void> {
+    await this.client.session.revert.stage({
+      sessionID: this.sessionId,
+      messageID: input.messageId,
+    });
+    await this.client.session.revert.commit({ sessionID: this.sessionId });
+  }
+
+  /**
+   * Discard a staged rewind without committing it. The conversation and the
+   * working tree are left unchanged; the session remains usable.
+   */
+  async revertClear(): Promise<void> {
+    await this.client.session.revert.clear({ sessionID: this.sessionId });
+  }
+
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
     this.subscribers.add(callback);
     return () => {

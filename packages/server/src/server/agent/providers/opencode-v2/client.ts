@@ -18,6 +18,10 @@ import {
   type SessionMessagesResponse,
   type SessionPromptInput,
   type SessionRemoveInput,
+  type SessionRevert,
+  type SessionRevertClearInput,
+  type SessionRevertCommitInput,
+  type SessionRevertStageInput,
   type SessionSwitchAgentInput,
   type SessionSwitchModelInput,
 } from "@opencode-ai/client";
@@ -38,6 +42,11 @@ export interface OpenCodeV2ClientLike {
     remove(input: SessionRemoveInput): Promise<void>;
     switchAgent(input: SessionSwitchAgentInput): Promise<void>;
     switchModel(input: SessionSwitchModelInput): Promise<void>;
+    revert: {
+      stage(input: SessionRevertStageInput): Promise<SessionRevert>;
+      clear(input: SessionRevertClearInput): Promise<void>;
+      commit(input: SessionRevertCommitInput): Promise<void>;
+    };
   };
   message: {
     list(input: MessageListInput): Promise<SessionMessagesResponse>;
@@ -86,6 +95,11 @@ export function createOpenCodeV2Client(options: OpenCodeV2ClientOptions): OpenCo
       remove: (input) => client.session.remove(input),
       switchAgent: (input) => client.session.switchAgent(input),
       switchModel: (input) => client.session.switchModel(input),
+      revert: {
+        stage: (input) => client.session.revert.stage(input),
+        clear: (input) => client.session.revert.clear(input),
+        commit: (input) => client.session.revert.commit(input),
+      },
     },
     message: {
       list: (input) => client.message.list(input),

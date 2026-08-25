@@ -669,6 +669,11 @@ export interface AgentSession {
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
   /**
+   * Discard a staged rewind (e.g. opencode-v2 `revert/clear`) without
+   * committing it. The conversation and working tree are left unchanged.
+   */
+  revertClear?(): Promise<void>;
+  /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events
    * directly via the provided `emit` callback, which routes through the
