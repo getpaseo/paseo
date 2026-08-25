@@ -188,7 +188,10 @@ export async function sampleTabsDuringTransition(
         requestAnimationFrame(sample);
       }
     }
-    requestAnimationFrame(sample);
+    // Establish the known-good pre-action state synchronously. Starting on the
+    // next animation frame lets the action race the first sample, which can
+    // misclassify a not-yet-painted test harness frame as a transition blank.
+    sample();
   }, durationMs);
   await action();
   await page.waitForTimeout(durationMs + 100);
