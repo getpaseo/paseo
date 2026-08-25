@@ -2058,10 +2058,10 @@ export class PiRpcAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.rejectAllExtensionResults(new Error(error));
-    if (!this.activeTurnId) {
+    if (!this.activeTurnId && !this.activeTurnStarted) {
       return;
     }
-    const turnId = this.activeTurnId;
+    const turnId = this.activeTurnId ?? undefined;
     this.usagePoller.stopTurn();
     this.activeTurnId = null;
     this.activeClientMessageId = null;

@@ -1404,6 +1404,24 @@ describe("PiRpcAgentSession", () => {
     });
   });
 
+  test("fails an autonomous turn when the Pi process exits before settlement", async () => {
+    const { pi, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.emit({ type: "process_exit", error: "Pi exited" });
+
+    await expect(events.nextTurnFailure()).resolves.toMatchObject({
+      error: "Pi exited",
+      turnId: undefined,
+    });
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId: undefined },
+      { type: "turn_failed", turnId: undefined },
+    ]);
+  });
+
   test("completes locally handled slash commands when agentInvoked is false", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
