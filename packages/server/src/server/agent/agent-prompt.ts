@@ -298,14 +298,14 @@ export async function sendPromptToAgent(
 
 export async function startCreatedAgentInitialPrompt(
   params: StartCreatedAgentInitialPromptParams,
-): Promise<ManagedAgent> {
+): Promise<{ liveSnapshot: ManagedAgent; disposition: PromptDispatchDisposition | null }> {
   const currentSnapshot = params.agentManager.getAgent(params.agentId) ?? params.snapshot ?? null;
   if (!currentSnapshot) {
     throw new Error(`Agent ${params.agentId} not found`);
   }
 
   if (params.prompt === null) {
-    return currentSnapshot;
+    return { liveSnapshot: currentSnapshot, disposition: null };
   }
 
   const dispatchResult = await startAgentRun(
@@ -326,7 +326,7 @@ export async function startCreatedAgentInitialPrompt(
   if (!refreshedSnapshot) {
     throw new Error(`Agent ${params.agentId} not found`);
   }
-  return refreshedSnapshot;
+  return { liveSnapshot: refreshedSnapshot, disposition: dispatchResult.disposition };
 }
 
 export interface SetupFinishNotificationParams {
