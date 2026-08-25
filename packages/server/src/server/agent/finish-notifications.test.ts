@@ -390,3 +390,28 @@ test.each([
     expect(scenario.deliveries[0]?.reason).toBe(reason);
   },
 );
+
+test.each([
+  { lifecycle: "error" as const, reason: "errored" as const },
+  { lifecycle: "closed" as const, reason: "was closed" as const },
+])(
+  "a watched agent that becomes $lifecycle bypasses a running descendant watcher",
+  async ({ lifecycle, reason }) => {
+    const scenario = createCoordinatorScenario();
+    scenario.addAgent("caller");
+    scenario.addAgent("child", "running", "caller");
+    scenario.addAgent("descendant", "running", "child");
+    scenario.watch("child", "caller", true);
+    scenario.watch("descendant", "child", true);
+
+    scenario.setState("child", lifecycle);
+
+    await expectDeliveryCount(scenario, 1);
+    scenario.setState("child", lifecycle);
+    await Promise.resolve();
+    expect(scenario.deliveries).toEqual([
+      { childAgentId: "child", callerAgentId: "caller", reason },
+    ]);
+    expect(scenario.agentManager.hasInFlightRun("descendant")).toBe(true);
+  },
+);
