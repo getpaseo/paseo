@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import type { V2Event } from "@opencode-ai/client";
 import type { Logger } from "pino";
 
 import { findExecutable } from "../../../../executable-resolution/executable-resolution.js";
@@ -27,7 +28,7 @@ const OPENCODE_V2_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 export type OpenCodeV2EventSourceInput =
   | { type: "server-exited"; error: Error }
   | { type: "reconnected" }
-  | { type: "event"; event: unknown };
+  | { type: "event"; event: V2Event };
 
 export interface OpenCodeV2EventSource {
   ready(): Promise<void>;

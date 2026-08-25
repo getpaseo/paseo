@@ -1,3 +1,4 @@
+import type { SessionMessageInfo } from "@opencode-ai/client";
 import type { Logger } from "pino";
 
 import type {
@@ -5,13 +6,24 @@ import type {
   AgentClient,
   AgentCreateSessionOptions,
   AgentLaunchContext,
+  AgentMode,
+  AgentPermissionRequest,
+  AgentPermissionResponse,
   AgentPersistenceHandle,
+  AgentPromptInput,
   AgentResumeSessionOptions,
+  AgentRunOptions,
+  AgentRunResult,
+  AgentRuntimeInfo,
   AgentSession,
   AgentSessionConfig,
+  AgentStreamEvent,
+  AgentTimelineItem,
   FetchCatalogOptions,
   ProviderCatalog,
   ProviderRefreshContext,
+  SteerActiveTurnOptions,
+  SteerResult,
 } from "../agent-sdk-types.js";
 import {
   checkProviderLaunchAvailable,
@@ -20,6 +32,9 @@ import {
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { execCommand } from "../../../utils/spawn.js";
+import { runProviderTurn } from "./provider-runner.js";
+import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
+import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
 import {
   buildBinaryDiagnosticRows,
   buildCommandResolutionDiagnosticRows,
@@ -27,6 +42,31 @@ import {
   formatProviderDiagnosticError,
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
+import {
+  createOpenCodeV2Client,
+  type OpenCodeV2ClientFactory,
+  type OpenCodeV2ClientLike,
+} from "./opencode-v2/client.js";
+import { OpenCodeV2EventConsumer } from "./opencode-v2/event-consumer.js";
+import {
+  createOpenCodeV2EventTranslationState,
+  resetOpenCodeV2TurnTrackingState,
+  resolveOpenCodeV2PermissionReply,
+  translateOpenCodeV2Event,
+  type OpenCodeV2EventTranslationState,
+} from "./opencode-v2/event-translator.js";
+import { mapOpenCodeV2ToolCall } from "./opencode-v2/tool-call-mapper.js";
+import {
+  OpenCodeV2ProviderOptionsSchema,
+  type OpenCodeV2ProviderOptions,
+} from "./opencode-v2/options.js";
+import {
+  OpenCodeV2ServerManager,
+  type OpenCodeV2EventSource,
+  type OpenCodeV2EventSourceInput,
+  type OpenCodeV2ServerManagerLike,
+} from "./opencode-v2/server-manager.js";
+import type { ManagedProcessRegistry } from "../../managed-processes/managed-processes.js";
 
 const OPENCODE_V2_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -41,44 +81,355 @@ const OPENCODE_V2_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindBoth: true,
 };
 
+const EMPTY_OPENCODE_V2_EVENT_SOURCE: OpenCodeV2EventSource = {
+  ready: async () => undefined,
+  subscribe: () => () => undefined,
+  close: async () => undefined,
+};
+
+type OpenCodeV2AgentConfig = Omit<AgentSessionConfig, "providerOptions"> & {
+  provider: "opencode-v2";
+  providerOptions: OpenCodeV2ProviderOptions;
+};
+
+type OpenCodeV2TurnState = { status: "idle" } | { status: "running"; turnId: string };
+
+type OpenCodeV2TerminalTurnEvent = Extract<
+  AgentStreamEvent,
+  { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+>;
+
+function toOpenCodeV2TerminalTurnEvent(
+  event: AgentStreamEvent,
+): OpenCodeV2TerminalTurnEvent | null {
+  if (event.type === "turn_failed") {
+    return {
+      type: "turn_failed",
+      provider: "opencode-v2",
+      error: toDiagnosticErrorMessage(event.error),
+    };
+  }
+  if (event.type === "turn_completed" || event.type === "turn_canceled") {
+    return event;
+  }
+  return null;
+}
+
+function normalizeOpenCodeV2ModeId(modeId: string | null | undefined): string | null {
+  const trimmed = typeof modeId === "string" ? modeId.trim() : "";
+  if (!trimmed || trimmed === "default") {
+    return null;
+  }
+  return trimmed;
+}
+
+function parseOpenCodeV2ModelRef(
+  modelId: string | undefined,
+): { id: string; providerID: string; variant?: string } | undefined {
+  if (!modelId) {
+    return undefined;
+  }
+  const slashIndex = modelId.indexOf("/");
+  if (slashIndex <= 0 || slashIndex === modelId.length - 1) {
+    return undefined;
+  }
+  return {
+    providerID: modelId.slice(0, slashIndex),
+    id: modelId.slice(slashIndex + 1),
+  };
+}
+
+function buildOpenCodeV2PromptText(prompt: AgentPromptInput): string {
+  if (typeof prompt === "string") {
+    return prompt;
+  }
+  return prompt
+    .map((part) => {
+      if (part.type === "text") {
+        return part.text;
+      }
+      if (part.type === "image") {
+        return "[Image]";
+      }
+      return renderPromptAttachmentAsText(part);
+    })
+    .filter((text) => text.trim().length > 0)
+    .join("\n");
+}
+
+function isOpenCodeV2DefinitiveSteerRejection(error: unknown): boolean {
+  const message = toDiagnosticErrorMessage(error).toLowerCase();
+  return /session\s+(?:is\s+)?(?:not found|inactive|not active|not running|idle)/.test(message);
+}
+
+function extractOpenCodeV2ToolOutputText(content: unknown): string | undefined {
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+  const parts = content
+    .map((entry) => {
+      if (entry && typeof entry === "object" && "type" in entry && entry.type === "text") {
+        const text = (entry as { text?: unknown }).text;
+        return typeof text === "string" ? text : undefined;
+      }
+      return undefined;
+    })
+    .filter((text): text is string => typeof text === "string" && text.length > 0);
+  return parts.length > 0 ? parts.join("\n") : undefined;
+}
+
+function parseOpenCodeV2ToolInput(input: unknown): unknown {
+  if (typeof input === "string") {
+    try {
+      return JSON.parse(input);
+    } catch {
+      return input;
+    }
+  }
+  return input;
+}
+
+function buildOpenCodeV2ReplayTimelineEvents(
+  message: SessionMessageInfo,
+): Extract<AgentStreamEvent, { type: "timeline" }>[] {
+  const timestamp = normalizeProviderReplayTimestamp(message.time?.created);
+  const build = (item: AgentTimelineItem): Extract<AgentStreamEvent, { type: "timeline" }> => ({
+    type: "timeline",
+    provider: "opencode-v2",
+    item,
+    ...(timestamp ? { timestamp } : {}),
+  });
+
+  switch (message.type) {
+    case "user":
+      return buildOpenCodeV2UserReplayEvent(message, build);
+    case "assistant":
+      return buildOpenCodeV2AssistantReplayEvents(message, build);
+    case "synthetic":
+      return buildOpenCodeV2SyntheticReplayEvent(message, build);
+    case "compaction":
+      return buildOpenCodeV2CompactionReplayEvents(message, build);
+    default:
+      return [];
+  }
+}
+
+function buildOpenCodeV2UserReplayEvent(
+  message: Extract<SessionMessageInfo, { type: "user" }>,
+  build: (item: AgentTimelineItem) => Extract<AgentStreamEvent, { type: "timeline" }>,
+): Extract<AgentStreamEvent, { type: "timeline" }>[] {
+  const text = message.text;
+  if (!text || text.trim().length === 0) {
+    return [];
+  }
+  return [build({ type: "user_message", text, messageId: message.id })];
+}
+
+function buildOpenCodeV2SyntheticReplayEvent(
+  message: Extract<SessionMessageInfo, { type: "synthetic" }>,
+  build: (item: AgentTimelineItem) => Extract<AgentStreamEvent, { type: "timeline" }>,
+): Extract<AgentStreamEvent, { type: "timeline" }>[] {
+  const text = message.text;
+  if (!text || text.trim().length === 0) {
+    return [];
+  }
+  return [build({ type: "assistant_message", text, messageId: message.id })];
+}
+
+function buildOpenCodeV2CompactionReplayEvents(
+  message: Extract<SessionMessageInfo, { type: "compaction" }>,
+  build: (item: AgentTimelineItem) => Extract<AgentStreamEvent, { type: "timeline" }>,
+): Extract<AgentStreamEvent, { type: "timeline" }>[] {
+  if (message.status === "failed") {
+    return [
+      build({
+        type: "error",
+        message: `Compaction failed: ${message.error?.message ?? "unknown error"}`,
+      }),
+    ];
+  }
+  return [
+    build({
+      type: "compaction",
+      status: message.status === "completed" ? "completed" : "loading",
+      trigger: message.reason === "auto" ? "auto" : "manual",
+    }),
+  ];
+}
+
+function buildOpenCodeV2AssistantReplayEvents(
+  message: Extract<SessionMessageInfo, { type: "assistant" }>,
+  build: (item: AgentTimelineItem) => Extract<AgentStreamEvent, { type: "timeline" }>,
+): Extract<AgentStreamEvent, { type: "timeline" }>[] {
+  const events: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
+  for (const part of message.content) {
+    if (part.type === "text" && part.text) {
+      events.push(build({ type: "assistant_message", text: part.text, messageId: message.id }));
+    } else if (part.type === "reasoning" && part.text) {
+      events.push(build({ type: "reasoning", text: part.text }));
+    } else if (part.type === "tool") {
+      const item = buildOpenCodeV2ToolReplayItem(part, build);
+      if (item) {
+        events.push(item);
+      }
+    }
+  }
+  return events;
+}
+
+function buildOpenCodeV2ToolReplayItem(
+  part: Extract<SessionMessageInfo, { type: "assistant" }>["content"][number] & { type: "tool" },
+  build: (item: AgentTimelineItem) => Extract<AgentStreamEvent, { type: "timeline" }>,
+): Extract<AgentStreamEvent, { type: "timeline" }> | null {
+  const state = part.state;
+  const metadata =
+    state && "metadata" in state
+      ? (state as { metadata?: Record<string, unknown> }).metadata
+      : undefined;
+  const item = mapOpenCodeV2ToolCall({
+    toolName: part.name,
+    callId: part.id,
+    input: parseOpenCodeV2ToolInput(state?.input),
+    output:
+      state?.status === "completed" ? extractOpenCodeV2ToolOutputText(state?.content) : undefined,
+    error: state?.status === "error" ? state?.error : undefined,
+    status: state?.status,
+    ...(metadata ? { metadata } : {}),
+  });
+  return item ? build(item) : null;
+}
+
+export interface OpenCodeV2AgentClientDeps {
+  serverManager?: OpenCodeV2ServerManagerLike;
+  createClient?: OpenCodeV2ClientFactory;
+  managedProcesses?: ManagedProcessRegistry;
+}
+
 export class OpenCodeV2AgentClient implements AgentClient {
   readonly provider = "opencode-v2" as const;
   readonly capabilities = OPENCODE_V2_CAPABILITIES;
 
+  private readonly serverManager: OpenCodeV2ServerManagerLike;
+  private readonly createOpenCodeV2Client: OpenCodeV2ClientFactory;
+  private readonly logger: Logger;
   private readonly runtimeSettings?: ProviderRuntimeSettings;
 
   constructor(
-    _logger: Logger,
+    logger: Logger,
     runtimeSettings?: ProviderRuntimeSettings,
-    _deps: { managedProcesses?: unknown } = {},
+    deps: OpenCodeV2AgentClientDeps = {},
   ) {
+    this.logger = logger.child({ module: "agent", provider: "opencode-v2" });
     this.runtimeSettings = runtimeSettings;
+    this.createOpenCodeV2Client = deps.createClient ?? createOpenCodeV2Client;
+    this.serverManager =
+      deps.serverManager ??
+      OpenCodeV2ServerManager.getInstance(this.logger, runtimeSettings, {
+        managedProcesses: deps.managedProcesses,
+        createEventSource: ({
+          serverUrl,
+          password,
+          authorization,
+          processExit,
+          logger: eventLogger,
+        }) =>
+          new OpenCodeV2EventConsumer({
+            serverUrl,
+            password,
+            authorization,
+            processExit,
+            logger: eventLogger,
+            createClient: this.createOpenCodeV2Client,
+          }),
+      });
   }
 
   async createSession(
-    _config: AgentSessionConfig,
-    _launchContext?: AgentLaunchContext,
-    _options?: AgentCreateSessionOptions,
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
-    throw new Error("OpenCodeV2 createSession is not implemented yet");
+    const openCodeV2Config = this.assertConfig(config);
+    const acquisition = launchContext?.env
+      ? await this.serverManager.acquireDedicated(launchContext.env)
+      : await this.serverManager.acquireCurrent();
+    const { url, authorization } = acquisition.server;
+    const client = this.createOpenCodeV2Client({ baseUrl: url, authorization });
+
+    try {
+      const modelRef = parseOpenCodeV2ModelRef(openCodeV2Config.model);
+      const modeId = normalizeOpenCodeV2ModeId(openCodeV2Config.modeId);
+      const session = await client.session.create({
+        location: { directory: openCodeV2Config.cwd },
+        ...(modelRef ? { model: modelRef } : {}),
+        ...(modeId ? { agent: modeId } : {}),
+      });
+
+      return new OpenCodeV2AgentSession(
+        openCodeV2Config,
+        client,
+        session.id,
+        this.logger,
+        acquisition.events,
+        acquisition.release,
+        options?.persistSession,
+        launchContext?.agentId,
+      );
+    } catch (error) {
+      await acquisition.release();
+      throw error;
+    }
   }
 
   async resumeSession(
-    _handle: AgentPersistenceHandle,
-    _overrides?: Partial<AgentSessionConfig>,
-    _launchContext?: AgentLaunchContext,
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
     _options?: AgentResumeSessionOptions,
   ): Promise<AgentSession> {
-    throw new Error("OpenCodeV2 resumeSession is not implemented yet");
+    const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
+    const cwd = overrides?.cwd ?? metadata.cwd;
+    if (!cwd) {
+      throw new Error("OpenCode 2 resume requires the original working directory");
+    }
+
+    const config: AgentSessionConfig = {
+      ...metadata,
+      ...overrides,
+      provider: "opencode-v2",
+      cwd,
+    };
+    const openCodeV2Config = this.assertConfig(config);
+    const acquisition = launchContext?.env
+      ? await this.serverManager.acquireDedicated(launchContext.env)
+      : await this.serverManager.acquireCurrent();
+    const { url, authorization } = acquisition.server;
+    const client = this.createOpenCodeV2Client({ baseUrl: url, authorization });
+
+    try {
+      await client.session.get({ sessionID: handle.sessionId });
+      return new OpenCodeV2AgentSession(
+        openCodeV2Config,
+        client,
+        handle.sessionId,
+        this.logger,
+        acquisition.events,
+        acquisition.release,
+        undefined,
+        launchContext?.agentId,
+      );
+    } catch (error) {
+      await acquisition.release();
+      throw error;
+    }
   }
 
   async fetchCatalog(
     _options: FetchCatalogOptions,
     _context?: ProviderRefreshContext,
   ): Promise<ProviderCatalog> {
-    // Scaffold: no runtime discovery yet. The catalog/modes feature replaces
-    // this with a real probe of the opencode2 `/api/model` + `/api/agent`.
-    // Returning an empty catalog keeps the provider "ready" in snapshots.
+    // The catalog/modes feature owns runtime model + agent discovery. Returning
+    // an empty catalog keeps the provider "ready" in snapshots until then.
     return { models: [], modes: [] };
   }
 
@@ -137,7 +488,418 @@ export class OpenCodeV2AgentClient implements AgentClient {
   }
 
   async shutdown(): Promise<void> {
-    // Scaffold: no server-managed processes yet. The server-manager feature
-    // owns ref-counted process shutdown.
+    await this.serverManager.shutdown();
   }
+
+  private assertConfig(config: AgentSessionConfig): OpenCodeV2AgentConfig {
+    if (config.provider !== "opencode-v2") {
+      throw new Error(`OpenCodeV2AgentClient received config for provider '${config.provider}'`);
+    }
+    const providerOptions = OpenCodeV2ProviderOptionsSchema.parse(config.providerOptions ?? {});
+    return { ...config, provider: "opencode-v2", providerOptions };
+  }
+}
+
+export class OpenCodeV2AgentSession implements AgentSession {
+  readonly provider = "opencode-v2" as const;
+  readonly capabilities = OPENCODE_V2_CAPABILITIES;
+
+  private readonly config: OpenCodeV2AgentConfig;
+  private readonly client: OpenCodeV2ClientLike;
+  private readonly logger: Logger;
+  private readonly sessionId: string;
+  private readonly events: OpenCodeV2EventSource;
+  private releaseServer: (() => Promise<void>) | null;
+  private readonly persistSession: boolean;
+
+  private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
+  private readonly pendingPermissions = new Map<string, AgentPermissionRequest>();
+  private translationState: OpenCodeV2EventTranslationState;
+  private turnState: OpenCodeV2TurnState = { status: "idle" };
+  private currentMode: string | null;
+  private abortController: AbortController | null = null;
+  private closed = false;
+  private ingress: Promise<void> = Promise.resolve();
+  private unsubscribeEvents: (() => void) | null = null;
+  private nextTurnOrdinal = 0;
+
+  constructor(
+    config: OpenCodeV2AgentConfig,
+    client: OpenCodeV2ClientLike,
+    sessionId: string,
+    logger: Logger,
+    events: OpenCodeV2EventSource = EMPTY_OPENCODE_V2_EVENT_SOURCE,
+    releaseServer?: () => Promise<void>,
+    persistSession = true,
+    agentId?: string,
+  ) {
+    this.config = config;
+    this.client = client;
+    this.sessionId = sessionId;
+    this.logger = logger.child({ agentId });
+    this.events = events;
+    this.releaseServer = releaseServer ?? null;
+    this.persistSession = persistSession;
+    this.currentMode = normalizeOpenCodeV2ModeId(config.modeId);
+    this.translationState = createOpenCodeV2EventTranslationState(sessionId);
+    this.unsubscribeEvents = this.events.subscribe((input) => {
+      this.ingress = this.ingress
+        .then(() => this.consumeEventSourceInput(input))
+        .catch((error) => {
+          this.logger.warn(
+            { err: error, sessionId: this.sessionId },
+            "OpenCode 2 event ingress failed",
+          );
+        });
+    });
+  }
+
+  get id(): string | null {
+    return this.sessionId;
+  }
+
+  private get activeForegroundTurnId(): string | null {
+    return this.turnState.status === "running" ? this.turnState.turnId : null;
+  }
+
+  async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
+    return {
+      provider: "opencode-v2",
+      sessionId: this.sessionId,
+      model: this.config.model ?? null,
+      modeId: this.currentMode,
+    };
+  }
+
+  async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
+    return runProviderTurn({
+      prompt,
+      runOptions: options,
+      startTurn: (p, o) => this.startTurn(p, o),
+      subscribe: (callback) => this.subscribe(callback),
+      getSessionId: () => this.sessionId,
+    });
+  }
+
+  async startTurn(
+    prompt: AgentPromptInput,
+    options?: AgentRunOptions,
+  ): Promise<{ turnId: string }> {
+    if (this.closed) {
+      throw new Error("OpenCode 2 session is closed");
+    }
+    if (this.turnState.status === "running") {
+      throw new Error("A foreground turn is already active");
+    }
+    const text = buildOpenCodeV2PromptText(prompt);
+    if (!text || text.trim().length === 0) {
+      throw new Error("A prompt is required");
+    }
+
+    const turnAbortController = new AbortController();
+    this.abortController = turnAbortController;
+    this.translationState = createOpenCodeV2EventTranslationState(this.sessionId, {
+      pendingUserMessageText: text,
+      pendingClientMessageId: options?.clientMessageId ?? null,
+    });
+
+    const turnId = this.createTurnId();
+    this.turnState = { status: "running", turnId };
+    this.notifySubscribers({ type: "turn_started", provider: "opencode-v2" }, turnId);
+
+    void this.client.session
+      .prompt({
+        sessionID: this.sessionId,
+        text,
+        resume: true,
+      })
+      .then(() => undefined)
+      .catch((error) => {
+        if (this.activeForegroundTurnId !== turnId) {
+          return;
+        }
+        this.finishForegroundTurn(
+          {
+            type: "turn_failed",
+            provider: "opencode-v2",
+            error: toDiagnosticErrorMessage(error),
+          },
+          turnId,
+        );
+      });
+
+    return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.closed || this.activeForegroundTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    const text = buildOpenCodeV2PromptText(prompt);
+    if (!text || text.trim().length === 0) {
+      return { status: "unavailable" };
+    }
+
+    try {
+      await this.client.session.prompt({
+        sessionID: this.sessionId,
+        text,
+        delivery: "steer",
+        resume: true,
+      });
+      if (options.clearPendingPermissions) {
+        await this.clearPendingPermissionsForSteer();
+      }
+      return { status: "accepted" };
+    } catch (error) {
+      if (isOpenCodeV2DefinitiveSteerRejection(error)) {
+        return { status: "unavailable" };
+      }
+      throw error;
+    }
+  }
+
+  private async clearPendingPermissionsForSteer(): Promise<void> {
+    const requestIds = Array.from(this.pendingPermissions.keys());
+    for (const requestId of requestIds) {
+      if (!this.pendingPermissions.has(requestId)) continue;
+      await this.respondToPermission(requestId, {
+        behavior: "deny",
+        message: "The user answered with a message instead of approving. Their message follows.",
+      });
+    }
+  }
+
+  async interrupt(): Promise<void> {
+    const turnId = this.activeForegroundTurnId;
+    this.abortController?.abort();
+    try {
+      const response = await this.client.session.interrupt({ sessionID: this.sessionId });
+      if (!response.interrupted && !turnId) {
+        // Idle interrupt is a clean no-op.
+        return;
+      }
+    } catch (error) {
+      if (!turnId) {
+        // An idle interrupt that errors is still a no-op; the session remains usable.
+        return;
+      }
+      throw error;
+    }
+  }
+
+  subscribe(callback: (event: AgentStreamEvent) => void): () => void {
+    this.subscribers.add(callback);
+    return () => {
+      this.subscribers.delete(callback);
+    };
+  }
+
+  async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+    const response = await this.client.message.list({ sessionID: this.sessionId });
+    for (const message of response.data) {
+      for (const event of buildOpenCodeV2ReplayTimelineEvents(message)) {
+        yield event;
+      }
+    }
+  }
+
+  async getAvailableModes(): Promise<AgentMode[]> {
+    // The catalog/modes feature owns runtime agent discovery. Until then the
+    // provider manifest's static build/plan scaffolding covers mode listing.
+    return [];
+  }
+
+  async getCurrentMode(): Promise<string | null> {
+    return this.currentMode;
+  }
+
+  async setMode(modeId: string): Promise<void> {
+    const normalizedModeId = normalizeOpenCodeV2ModeId(modeId);
+    this.currentMode = normalizedModeId;
+  }
+
+  getPendingPermissions(): AgentPermissionRequest[] {
+    return Array.from(this.pendingPermissions.values());
+  }
+
+  async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
+    const pending = this.pendingPermissions.get(requestId);
+    if (!pending) {
+      throw new Error(`No pending permission request with id '${requestId}'`);
+    }
+
+    if (pending.kind === "question") {
+      if (response.behavior === "deny") {
+        await this.client.form.cancel({
+          sessionID: this.sessionId,
+          formID: requestId,
+        });
+      } else {
+        const answers = readOpenCodeV2FormAnswers(pending, response);
+        await this.client.form.reply({
+          sessionID: this.sessionId,
+          formID: requestId,
+          answer: answers,
+        });
+      }
+      this.pendingPermissions.delete(requestId);
+      return;
+    }
+
+    const reply = resolveOpenCodeV2PermissionReply(response);
+    await this.client.permission.reply({
+      sessionID: this.sessionId,
+      requestID: requestId,
+      reply,
+      ...(response.behavior === "deny" && response.message ? { message: response.message } : {}),
+    });
+    this.pendingPermissions.delete(requestId);
+  }
+
+  describePersistence(): AgentPersistenceHandle | null {
+    return {
+      provider: "opencode-v2",
+      sessionId: this.sessionId,
+      nativeHandle: this.sessionId,
+      metadata: {
+        cwd: this.config.cwd,
+        ...(this.config.modeId ? { modeId: this.config.modeId } : {}),
+        ...(this.config.model ? { model: this.config.model } : {}),
+      },
+    };
+  }
+
+  async close(): Promise<void> {
+    try {
+      this.closed = true;
+      this.abortController?.abort();
+      this.unsubscribeEvents?.();
+      this.unsubscribeEvents = null;
+      await this.ingress.catch(() => undefined);
+      this.subscribers.clear();
+      this.turnState = { status: "idle" };
+      if (!this.persistSession) {
+        await this.client.session.remove({ sessionID: this.sessionId });
+      }
+    } finally {
+      await this.releaseServer?.();
+      this.releaseServer = null;
+    }
+  }
+
+  private async consumeEventSourceInput(input: OpenCodeV2EventSourceInput): Promise<void> {
+    if (input.type === "server-exited") {
+      const turnId = this.activeForegroundTurnId;
+      if (turnId) {
+        this.finishForegroundTurn(
+          {
+            type: "turn_failed",
+            provider: "opencode-v2",
+            error: input.error.message,
+          },
+          turnId,
+        );
+      }
+      return;
+    }
+    if (input.type === "reconnected") {
+      return;
+    }
+    const translated = translateOpenCodeV2Event(input.event, this.translationState);
+    for (const event of translated) {
+      this.handleTranslatedEvent(event);
+    }
+  }
+
+  private handleTranslatedEvent(event: AgentStreamEvent): void {
+    const turnId = this.activeForegroundTurnId;
+    if (!turnId) {
+      // No active foreground turn. Background permission requests still surface
+      // so a resumed session can show pending prompts.
+      if (event.type === "permission_requested") {
+        this.pendingPermissions.set(event.request.id, event.request);
+        this.notifySubscribers(event, null);
+      }
+      return;
+    }
+    const terminalEvent = toOpenCodeV2TerminalTurnEvent(event);
+    if (terminalEvent) {
+      this.finishForegroundTurn(terminalEvent, turnId);
+      return;
+    }
+    if (event.type === "permission_requested") {
+      this.pendingPermissions.set(event.request.id, event.request);
+    }
+    this.notifySubscribers(event, turnId);
+  }
+
+  private finishForegroundTurn(event: OpenCodeV2TerminalTurnEvent, turnId: string): void {
+    if (this.activeForegroundTurnId !== turnId) {
+      return;
+    }
+    resetOpenCodeV2TurnTrackingState(this.translationState);
+    this.turnState = { status: "idle" };
+    this.abortController = null;
+    this.notifySubscribers(event, turnId);
+  }
+
+  private notifySubscribers(event: AgentStreamEvent, turnIdOverride?: string | null): void {
+    if (this.closed) {
+      return;
+    }
+    const turnId = turnIdOverride === null ? null : (turnIdOverride ?? this.activeForegroundTurnId);
+    const tagged = turnId ? { ...event, turnId } : event;
+    for (const callback of this.subscribers) {
+      try {
+        callback(tagged);
+      } catch {
+        // A subscriber cannot tear down the session.
+      }
+    }
+  }
+
+  private createTurnId(): string {
+    this.nextTurnOrdinal += 1;
+    return `opencode-v2-turn-${this.nextTurnOrdinal}`;
+  }
+}
+
+function readOpenCodeV2FormAnswers(
+  pending: AgentPermissionRequest,
+  response: AgentPermissionResponse,
+): Record<string, string | number | boolean | string[]> {
+  const answers: Record<string, string | number | boolean | string[]> = {};
+  const questions = Array.isArray(pending.input?.questions) ? pending.input.questions : [];
+  const updatedInput = response.behavior === "allow" ? response.updatedInput : undefined;
+  const answersRecord = (updatedInput?.answers ?? {}) as Record<string, unknown>;
+  for (const question of questions) {
+    const key = readOpenCodeV2QuestionKey(question);
+    if (!key) {
+      continue;
+    }
+    const value = answersRecord[key];
+    if (value === undefined) {
+      continue;
+    }
+    if (typeof value === "string") {
+      answers[key] = value;
+    } else if (typeof value === "number" || typeof value === "boolean") {
+      answers[key] = value;
+    } else if (Array.isArray(value)) {
+      answers[key] = value.filter((entry): entry is string => typeof entry === "string");
+    }
+  }
+  return answers;
+}
+
+function readOpenCodeV2QuestionKey(question: unknown): string | undefined {
+  if (!question || typeof question !== "object") {
+    return undefined;
+  }
+  const key = (question as { key?: unknown }).key;
+  return typeof key === "string" && key.trim().length > 0 ? key : undefined;
 }
