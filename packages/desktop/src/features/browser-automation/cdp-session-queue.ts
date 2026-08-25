@@ -1,8 +1,3 @@
-export type CdpCommandSender = (
-  command: string,
-  params?: Record<string, unknown>,
-) => Promise<unknown>;
-
 export class CdpSessionQueue {
   private queue: Promise<void> = Promise.resolve();
 

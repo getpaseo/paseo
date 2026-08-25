@@ -16,15 +16,14 @@ import {
   dispatchTrustedClick,
   dispatchTrustedDrag,
   dispatchTrustedHover,
-  dispatchTrustedKey,
   dispatchTrustedKeyEvent,
   dispatchTrustedMousePhase,
   dispatchTrustedScroll,
   dispatchTrustedText,
-  type BrowserInputEvent,
+  type CdpCommandSender,
   type ClickInputOptions,
-} from "./trusted-input.js";
-import type { CdpCommandSender } from "./cdp-session-queue.js";
+} from "@getpaseo/server/browser-tools/cdp-input";
+import { dispatchTrustedKey, type BrowserInputEvent } from "./trusted-input.js";
 
 type DebugMessageListener = (method: string, params: Record<string, unknown>) => void;
 

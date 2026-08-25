@@ -27,6 +27,11 @@
       "types": "./dist/server/terminal/agent-hooks/provider-registry.d.ts",
       "source": "./src/terminal/agent-hooks/provider-registry.ts",
       "default": "./dist/server/terminal/agent-hooks/provider-registry.js"
+    },
+    "./browser-tools/cdp-input": {
+      "types": "./dist/server/server/browser-tools/cdp-input.d.ts",
+      "source": "./src/server/browser-tools/cdp-input.ts",
+      "default": "./dist/server/server/browser-tools/cdp-input.js"
     }
   },
   "publishConfig": {
