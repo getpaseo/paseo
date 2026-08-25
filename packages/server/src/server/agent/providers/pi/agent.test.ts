@@ -1187,6 +1187,47 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("formats Tintinweb custom notifications instead of exposing their XML", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("/wait-for-agent");
+    fakeSession.emit({
+      type: "message_end",
+      message: {
+        role: "custom",
+        customType: "subagent-notification",
+        content: "<task-notification>raw XML</task-notification>",
+        details: {
+          id: "agent-1",
+          description: "inspect Paseo pin",
+          status: "completed",
+          toolUses: 10,
+          turnCount: 0,
+          totalTokens: 101_088,
+          durationMs: 36_787,
+          resultPreview: "Found the source pins.",
+        },
+      },
+    });
+
+    expect(events.timelineAndCompletionEvents()).toEqual([
+      {
+        type: "timeline",
+        item: {
+          type: "assistant_message",
+          text: [
+            "**Agent completed: inspect Paseo pin**",
+            "10 tool uses | 101.1k tokens | 36.8s",
+            "",
+            "Found the source pins.",
+          ].join("\n"),
+        },
+      },
+      { type: "turn_completed" },
+    ]);
+  });
+
   test("canceling a silent Pi extension command leaves the session usable", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();

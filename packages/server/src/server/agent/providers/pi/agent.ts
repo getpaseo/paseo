@@ -86,6 +86,7 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
+import { formatTintinwebSubagentNotification } from "./tintinweb-notification.js";
 
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
@@ -130,6 +131,9 @@ const PiAgentMessageSchema: z.ZodType<PiAgentMessage> = z.discriminatedUnion("ro
   z.object({
     role: z.literal("custom"),
     content: z.union([z.string(), z.array(z.union([PiTextContentSchema, PiImageContentSchema]))]),
+    customType: z.string().optional(),
+    display: z.boolean().optional(),
+    details: z.unknown().optional(),
   }),
   z.object({
     role: z.literal("assistant"),
@@ -2748,7 +2752,9 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     if (event.message.role === "custom") {
-      const text = getUserMessageText(event.message.content);
+      const text =
+        formatTintinwebSubagentNotification(event.message) ??
+        getUserMessageText(event.message.content);
       if (text) {
         this.emit({
           type: "timeline",

@@ -168,6 +168,8 @@ Provider descriptors may include one compact subtitle. The provider owns its con
 
 Pi RPC does not expose extension event-bus messages. The daemon's injected Pi extension forwards background `Agent` events from `@tintinweb/pi-subagents` through Pi's extension-notification channel. It uses Tintinweb's cross-package manager registry to subscribe to each running child session, then sends completed turns through the provider timeline stream. The lifecycle event remains the fallback source for a terminal result or error when no child session was available.
 
+Tintinweb also sends the parent model a `subagent-notification` custom message when background work finishes. Paseo keeps that message in the model context but displays its structured details as a compact summary instead of the XML content. The XML parser is a fallback for older notifications that have no details.
+
 Queued children use the provider `running` state because the provider-subagent contract has no queued state. A queued child starts timeline forwarding when Tintinweb announces that it is running. Session shutdown cancels active descriptors and removes child subscriptions. The parent agent lifecycle stays literal; the provider child contributes to the daemon-owned workspace activity projection. Pi cannot rebuild these child timelines after a daemon restart because Tintinweb does not expose them through provider history.
 
 ### Claude provider subagents: the task protocol
