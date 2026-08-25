@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentAttachment, ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type {
   AttachmentMetadata,
@@ -37,6 +37,7 @@ import {
   type QueueWriter,
   type QueuedComposerMessage,
 } from "./actions";
+import { forgetRecallState, readRecallHistory } from "./message-recall";
 
 const imageMetadata: AttachmentMetadata = {
   id: "img-1",
@@ -418,12 +419,49 @@ describe("pickAndPersistImages", () => {
 });
 
 describe("dispatchComposerAgentMessage", () => {
+  beforeEach(() => {
+    forgetRecallState();
+  });
+
+  it("remembers the prompt for recall once the daemon has taken it", async () => {
+    await dispatchComposerAgentMessage({
+      client: createFakeSendClient(),
+      serverId: "host",
+      agentId: "agent",
+      text: "  rebase onto main  ",
+      attachments: [],
+      encodeImages: async () => [],
+      submission: createFakeStream(),
+    });
+
+    expect(readRecallHistory({ serverId: "host", agentId: "agent", timeline: [] })).toEqual([
+      "rebase onto main",
+    ]);
+  });
+
+  it("does not remember a prompt the daemon rejected", async () => {
+    await expect(
+      dispatchComposerAgentMessage({
+        client: createFakeSendClient({ rejection: new Error("offline") }),
+        serverId: "host",
+        agentId: "agent",
+        text: "never left the client",
+        attachments: [],
+        encodeImages: async () => [],
+        submission: createFakeStream(),
+      }),
+    ).rejects.toThrow("offline");
+
+    expect(readRecallHistory({ serverId: "host", agentId: "agent", timeline: [] })).toEqual([]);
+  });
+
   it("forwards the configured active-turn intent without provider capability checks", async () => {
     const client = createFakeSendClient();
     const stream = createFakeStream();
 
     await dispatchComposerAgentMessage({
       client,
+      serverId: "host",
       agentId: "agent",
       text: "steer this turn",
       attachments: [],
@@ -440,6 +478,7 @@ describe("dispatchComposerAgentMessage", () => {
     const stream = createFakeStream();
     await dispatchComposerAgentMessage({
       client,
+      serverId: "host",
       agentId: "agent",
       text: "hello",
       attachments: [],
@@ -452,6 +491,7 @@ describe("dispatchComposerAgentMessage", () => {
     const legacy = createFakeStream();
     await dispatchComposerAgentMessage({
       client,
+      serverId: "host",
       agentId: "legacy",
       text: "hello",
       attachments: [],
@@ -470,6 +510,7 @@ describe("dispatchComposerAgentMessage", () => {
     await expect(
       dispatchComposerAgentMessage({
         client,
+        serverId: "host",
         agentId: "agent",
         text: "rejected prompt",
         attachments: [],
@@ -490,6 +531,7 @@ describe("dispatchComposerAgentMessage", () => {
     await expect(
       dispatchComposerAgentMessage({
         client,
+        serverId: "host",
         agentId: "agent",
         text: "force send",
         attachments: [],
@@ -513,6 +555,7 @@ describe("dispatchComposerAgentMessage", () => {
     await expect(
       dispatchComposerAgentMessage({
         client,
+        serverId: "host",
         agentId: "agent",
         text: "unknown state",
         attachments: [],
@@ -534,6 +577,7 @@ describe("dispatchComposerAgentMessage", () => {
     await expect(
       dispatchComposerAgentMessage({
         client,
+        serverId: "host",
         agentId: "agent",
         text: "ambiguous steer",
         attachments: [],
@@ -551,6 +595,7 @@ describe("dispatchComposerAgentMessage", () => {
 
     await dispatchComposerAgentMessage({
       client,
+      serverId: "host",
       agentId: "agent",
       text: "send attachments",
       attachments: [
@@ -599,6 +644,7 @@ describe("dispatchComposerAgentMessage", () => {
 
     await dispatchComposerAgentMessage({
       client,
+      serverId: "host",
       agentId: "agent",
       text: "send old attachment",
       attachments: [{ kind: "forge_change_request", item: prItem }],
@@ -633,6 +679,7 @@ describe("dispatchComposerAgentMessage", () => {
 
     await dispatchComposerAgentMessage({
       client,
+      serverId: "host",
       agentId: "agent",
       text: "next message",
       attachments: [],
@@ -650,6 +697,7 @@ describe("dispatchComposerAgentMessage", () => {
 
     await dispatchComposerAgentMessage({
       client,
+      serverId: "host",
       agentId: "agent",
       text: "plain message",
       attachments: [],
@@ -670,6 +718,7 @@ describe("dispatchComposerAgentMessage", () => {
 
     await dispatchComposerAgentMessage({
       client,
+      serverId: "host",
       agentId: "agent",
       text: "review this",
       attachments: [review],
@@ -688,6 +737,7 @@ describe("dispatchComposerAgentMessage", () => {
 
     await dispatchComposerAgentMessage({
       client,
+      serverId: "host",
       agentId: "agent",
       text: "inspect element",
       attachments: [browserElement],
