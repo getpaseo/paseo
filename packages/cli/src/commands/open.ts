@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { spawnProcess } from "@getpaseo/server";
@@ -91,8 +91,15 @@ function launchDesktop(args: string[]): void {
   spawnDetached(desktopApp, args);
 }
 
-export async function openDesktopWithProject(projectPath: string): Promise<void> {
+export async function openDesktopWithProject(
+  projectPath: string,
+  options: { createIfMissing?: boolean } = {},
+): Promise<void> {
   try {
+    if (options.createIfMissing && !existsSync(projectPath)) {
+      mkdirSync(projectPath, { recursive: true });
+      process.stdout.write(`Created directory: ${projectPath}\n`);
+    }
     launchDesktop([projectPath]);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
