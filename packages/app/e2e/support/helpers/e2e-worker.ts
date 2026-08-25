@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -19,11 +19,19 @@ async function createFakeEditorBin(): Promise<string> {
   const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-editor-bin-"));
   let realGhPath = "";
   try {
-    realGhPath = execSync("which gh").toString().trim();
+    const locator = process.platform === "win32" ? "where.exe" : "which";
+    const candidates = execFileSync(locator, ["gh"], { encoding: "utf8" })
+      .split(/\r?\n/u)
+      .map((candidate) => candidate.trim())
+      .filter(Boolean);
+    realGhPath =
+      candidates.find(
+        (candidate) =>
+          process.platform !== "win32" || !/\.(?:cmd|bat)$/iu.test(path.extname(candidate)),
+      ) ?? "";
   } catch {
     // The local GitHub fixture remains usable without a system gh binary.
   }
-
   const fakeEditorSource = `#!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
@@ -41,6 +49,9 @@ if (recordPath) {
     const editorPath = path.join(binDir, editorCommand);
     await writeFile(editorPath, fakeEditorSource);
     await chmod(editorPath, 0o755);
+    if (process.platform === "win32") {
+      await writeFile(`${editorPath}.cmd`, `@node "%~dp0${editorCommand}" %*\r\n`);
+    }
   }
 
   const fakeGhPath = path.join(binDir, "gh");
@@ -106,6 +117,9 @@ process.exit(result.status ?? 1);
 `;
   await writeFile(fakeGhPath, fakeGhSource);
   await chmod(fakeGhPath, 0o755);
+  if (process.platform === "win32") {
+    await writeFile(`${fakeGhPath}.cmd`, '@node "%~dp0gh" %*\r\n');
+  }
   return binDir;
 }
 

@@ -38,6 +38,7 @@ import {
   Smartphone,
   Sparkles,
   Blocks,
+  PanelsTopLeft,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -49,6 +50,7 @@ import { ScreenTitle } from "@/components/headers/screen-title";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
+import { LayoutSection } from "@/screens/settings/layout/layout-section";
 import {
   useAppSettings,
   useSettings,
@@ -144,6 +146,12 @@ interface SidebarSectionItem {
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "general", labelKey: "settings.sections.general", icon: Settings },
   { id: "appearance", labelKey: "settings.sections.appearance", icon: Palette },
+  {
+    id: "layout",
+    labelKey: "settings.sections.layout",
+    icon: PanelsTopLeft,
+    desktopOnly: true,
+  },
   { id: "editor", labelKey: "settings.sections.editor", icon: Code2, webOnly: true },
   { id: "shortcuts", labelKey: "settings.sections.shortcuts", icon: Keyboard, desktopOnly: true },
   {
@@ -282,6 +290,24 @@ interface ServiceUrlBehaviorMenuItemProps {
   onChange: (value: ServiceUrlBehavior) => void;
 }
 
+interface SendBehaviorMenuItemProps {
+  value: SendBehavior;
+  label: string;
+  selected: boolean;
+  onChange: (value: SendBehavior) => void;
+}
+
+function SendBehaviorMenuItem({ value, label, selected, onChange }: SendBehaviorMenuItemProps) {
+  const handleSelect = useCallback(() => {
+    onChange(value);
+  }, [onChange, value]);
+  return (
+    <DropdownMenuItem selected={selected} onSelect={handleSelect}>
+      {label}
+    </DropdownMenuItem>
+  );
+}
+
 function ServiceUrlBehaviorMenuItem({
   value,
   label,
@@ -333,6 +359,9 @@ function GeneralSection({
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
   const sendBehaviorOptions = useMemo(() => getSendBehaviorOptions(t), [t]);
+  const selectedSendBehaviorLabel =
+    sendBehaviorOptions.find((option) => option.value === settings.sendBehavior)?.label ??
+    settings.sendBehavior;
   const sendBehaviorDescriptionKey = `settings.general.defaultSend.descriptions.${settings.sendBehavior}`;
   const selectedLanguageOption = LANGUAGE_OPTIONS.find(
     (option) => option.value === settings.language,
@@ -377,12 +406,26 @@ function GeneralSection({
             <Text style={settingsStyles.rowTitle}>{t("settings.general.defaultSend.label")}</Text>
             <Text style={settingsStyles.rowHint}>{t(sendBehaviorDescriptionKey)}</Text>
           </View>
-          <SegmentedControl
-            size="sm"
-            value={settings.sendBehavior}
-            onValueChange={handleSendBehaviorChange}
-            options={sendBehaviorOptions}
-          />
+          <DropdownMenu>
+            <DropdownTrigger
+              accessibilityRole="button"
+              accessibilityLabel={`${t("settings.general.defaultSend.label")}: ${selectedSendBehaviorLabel}`}
+              style={themeTriggerStyle}
+            >
+              <Text style={styles.themeTriggerText}>{selectedSendBehaviorLabel}</Text>
+            </DropdownTrigger>
+            <DropdownMenuContent side="bottom" align="end" width={200}>
+              {sendBehaviorOptions.map((option) => (
+                <SendBehaviorMenuItem
+                  key={option.value}
+                  value={option.value}
+                  label={option.label}
+                  selected={settings.sendBehavior === option.value}
+                  onChange={handleSendBehaviorChange}
+                />
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </View>
         <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
           <View style={settingsStyles.rowContent}>
@@ -1394,71 +1437,76 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     return null;
   })();
 
-  const content = (() => {
-    if (view.kind === "host") {
-      return renderHostSettingsContent(view, handleHostRemoved);
-    }
-    if (view.kind === "project") {
-      return (
-        <ProjectSettingsScreen
-          serverId={view.serverId}
-          projectId={view.projectId}
-          onBackToProjects={handleBackFromDetail}
-          showBackToProjects={!isCompactLayout}
-        />
-      );
-    }
-    if (view.kind === "section") {
-      switch (view.section) {
-        case "general":
-          return (
-            <>
-              <GeneralSection
-                settings={settings}
-                isDesktopApp={isDesktopApp}
-                handleSendBehaviorChange={handleSendBehaviorChange}
-                handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
-                handleLanguageChange={handleLanguageChange}
-                handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
-              />
-              {isDesktopApp ? <BrowserDataSection /> : null}
-            </>
-          );
-        case "appearance":
-          return <AppearanceSection />;
-        case "editor":
-          return isWeb ? <EditorSection /> : null;
-        case "shortcuts":
-          return isDesktopApp ? <KeyboardShortcutsSection /> : null;
-        case "integrations":
-          return isDesktopApp ? <IntegrationsSection /> : null;
-        case "notifications":
-          return isDesktopApp ? <DesktopNotificationsSection /> : null;
-        case "permissions":
-          return isDesktopApp ? <DesktopPermissionsSection /> : null;
-        case "diagnostics":
-          return (
-            <DiagnosticsSection
-              useLegacyTerminalRenderer={settings.useLegacyTerminalRenderer}
-              onUseLegacyTerminalRendererChange={handleUseLegacyTerminalRendererChange}
-              voiceAudioEngine={voiceAudioEngine}
-              isPlaybackTestRunning={isPlaybackTestRunning}
-              playbackTestResult={playbackTestResult}
-              handlePlaybackTest={handlePlaybackTest}
-            />
-          );
-        case "about":
-          return (
-            <AboutSection
-              appVersion={appVersion}
-              appVersionText={appVersionText}
-              isDesktopApp={isDesktopApp}
-            />
-          );
+  let content: ReactNode;
+  if (view.kind === "section" && view.section === "layout") {
+    content = isDesktopApp ? <LayoutSection /> : null;
+  } else {
+    content = (() => {
+      if (view.kind === "host") {
+        return renderHostSettingsContent(view, handleHostRemoved);
       }
-    }
-    return null;
-  })();
+      if (view.kind === "project") {
+        return (
+          <ProjectSettingsScreen
+            serverId={view.serverId}
+            projectId={view.projectId}
+            onBackToProjects={handleBackFromDetail}
+            showBackToProjects={!isCompactLayout}
+          />
+        );
+      }
+      if (view.kind === "section") {
+        switch (view.section) {
+          case "general":
+            return (
+              <>
+                <GeneralSection
+                  settings={settings}
+                  isDesktopApp={isDesktopApp}
+                  handleSendBehaviorChange={handleSendBehaviorChange}
+                  handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
+                  handleLanguageChange={handleLanguageChange}
+                  handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+                />
+                {isDesktopApp ? <BrowserDataSection /> : null}
+              </>
+            );
+          case "appearance":
+            return <AppearanceSection />;
+          case "editor":
+            return isWeb ? <EditorSection /> : null;
+          case "shortcuts":
+            return isDesktopApp ? <KeyboardShortcutsSection /> : null;
+          case "integrations":
+            return isDesktopApp ? <IntegrationsSection /> : null;
+          case "notifications":
+            return isDesktopApp ? <DesktopNotificationsSection /> : null;
+          case "permissions":
+            return isDesktopApp ? <DesktopPermissionsSection /> : null;
+          case "diagnostics":
+            return (
+              <DiagnosticsSection
+                useLegacyTerminalRenderer={settings.useLegacyTerminalRenderer}
+                onUseLegacyTerminalRendererChange={handleUseLegacyTerminalRendererChange}
+                voiceAudioEngine={voiceAudioEngine}
+                isPlaybackTestRunning={isPlaybackTestRunning}
+                playbackTestResult={playbackTestResult}
+                handlePlaybackTest={handlePlaybackTest}
+              />
+            );
+          case "about":
+            return (
+              <AboutSection
+                appVersion={appVersion}
+                appVersionText={appVersionText}
+                isDesktopApp={isDesktopApp}
+              />
+            );
+        }
+      }
+      return null;
+    })();
+  }
 
   if (settingsLoading) {
     return (

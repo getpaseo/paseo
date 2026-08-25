@@ -1,7 +1,10 @@
 import { test, expect } from "../support/fixtures";
 import { createTempGitRepo } from "../support/helpers/workspace";
 import {
+  closeSetupTab,
   waitForWorkspaceTabsVisible,
+  expectFailedSetupTabSeededInMainPane,
+  expectSetupTabNotSeeded,
   expectNoTerminalTabs,
   clickFirstTerminalTab,
   expectFirstTerminalTabContains,
@@ -19,6 +22,7 @@ import {
   expectSetupPanel,
   openHomeWithProject,
   navigateToWorkspaceViaSidebar,
+  returnHomeFromWorkspace,
   openWorkspaceScriptsMenu,
   startWorkspaceScriptFromMenu,
   closeWorkspaceScriptsMenu,
@@ -39,7 +43,7 @@ interface WorkspaceScriptStarter {
 }
 
 test.describe("Workspace setup streaming", () => {
-  test("opens the setup tab when a workspace is created from the sidebar", async ({ page }) => {
+  test("does not seed the setup tab while workspace setup is running", async ({ page }) => {
     const client = await connectWorkspaceSetupClient();
     const repo = await createTempGitRepo("setup-open-", {
       paseoConfig: {
@@ -60,7 +64,7 @@ test.describe("Workspace setup streaming", () => {
       await openHomeWithProject(page, repo.path);
       await navigateToWorkspaceViaSidebar(page, workspace.id);
 
-      await expectSetupPanel(page);
+      await expectSetupTabNotSeeded(page, workspace.id);
     } finally {
       await client.close();
       await repo.cleanup();
@@ -99,6 +103,8 @@ test.describe("Workspace setup streaming", () => {
       await openHomeWithProject(page, repo.path);
       await navigateToWorkspaceViaSidebar(page, workspace.id);
 
+      await expectSetupTabNotSeeded(page, workspace.id);
+      await expectSetupPanel(page);
       await waitForWorkspaceTabsVisible(page);
       await clickNewChat(page);
       await expectComposerVisible(page, { timeout: 30_000 });
@@ -156,7 +162,7 @@ test.describe("Workspace setup streaming", () => {
     }
   });
 
-  test("streams a failed setup snapshot when setup fails", async () => {
+  test("seeds a failed setup tab once in the main pane", async ({ page }) => {
     const client = await connectWorkspaceSetupClient();
     const repo = await createTempGitRepo("setup-failure-", {
       paseoConfig: {
@@ -173,7 +179,7 @@ test.describe("Workspace setup streaming", () => {
         (payload) => payload.status === "failed" && payload.detail.log.includes("setup failed"),
       );
 
-      await createWorkspaceThroughDaemon(client, {
+      const workspace = await createWorkspaceThroughDaemon(client, {
         cwd: repo.path,
         worktreeSlug: "workspace-setup-failure",
       });
@@ -182,6 +188,16 @@ test.describe("Workspace setup streaming", () => {
       expect(failedPayload.detail.log).toContain("starting setup");
       expect(failedPayload.detail.log).toContain("setup failed");
       expect(failedPayload.error).toMatch(/failed/i);
+
+      await openHomeWithProject(page, repo.path);
+      await navigateToWorkspaceViaSidebar(page, workspace.id);
+      await waitForWorkspaceTabsVisible(page);
+      await expectFailedSetupTabSeededInMainPane(page, workspace.id);
+
+      await closeSetupTab(page, workspace.id);
+      await returnHomeFromWorkspace(page);
+      await navigateToWorkspaceViaSidebar(page, workspace.id);
+      await expectSetupTabNotSeeded(page, workspace.id);
     } finally {
       await client.close();
       await repo.cleanup();

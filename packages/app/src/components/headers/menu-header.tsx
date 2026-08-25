@@ -10,6 +10,7 @@ import { selectIsAgentListOpen, usePanelStore } from "@/stores/panel-store";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useHasWindowChromeObstruction, useOwnsWindowChromeCorner } from "@/utils/desktop-window";
+import { iconButtonChromeGlyphSize } from "@/components/ui/icon-button-chrome";
 
 interface MenuHeaderProps {
   title?: string;
@@ -26,7 +27,7 @@ interface SidebarMenuToggleProps {
 
 const MOBILE_MENU_LINE_WIDTH = 16;
 const MOBILE_MENU_LINE_SHORT_WIDTH = 8;
-const MOBILE_MENU_LINE_HEIGHT = 2;
+const MOBILE_MENU_LINE_HEIGHT = 1.5;
 
 function MobileMenuIcon({ color }: { color: string }) {
   const lineStyle = useMemo(() => [styles.mobileMenuLine, { backgroundColor: color }], [color]);
@@ -84,19 +85,21 @@ function SidebarMenuToggleButton({
       accessibilityLabel={isOpen ? t("shell.menu.close") : t("shell.menu.open")}
       accessibilityState={accessibilityState}
     >
-      {({ hovered, pressed }) => {
-        let color = extraMutedIdleIcon
-          ? theme.colors.foregroundExtraMuted
-          : theme.colors.foregroundMuted;
-        if (hovered || pressed) {
-          color = theme.colors.foreground;
-        }
-        return isMobile ? (
-          <MobileMenuIcon color={color} />
-        ) : (
-          <PanelLeft size={theme.iconSize.md} color={color} />
-        );
-      }}
+      {isMobile ? (
+        <MobileMenuIcon
+          color={
+            extraMutedIdleIcon ? theme.colors.foregroundExtraMuted : theme.colors.foregroundMuted
+          }
+        />
+      ) : (
+        <PanelLeft
+          size={iconButtonChromeGlyphSize("large")}
+          strokeWidth={1.5}
+          color={
+            extraMutedIdleIcon ? theme.colors.foregroundExtraMuted : theme.colors.foregroundMuted
+          }
+        />
+      )}
     </HeaderToggleButton>
   );
 }

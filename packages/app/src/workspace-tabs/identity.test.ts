@@ -5,6 +5,18 @@ import {
   workspaceTabTargetsEqual,
 } from "./identity";
 
+describe("New tab identity", () => {
+  it("stays outside deterministic target identity", () => {
+    const target = { kind: "new_tab" } as const;
+
+    expect(normalizeWorkspaceTabTarget(target)).toEqual(target);
+    expect(workspaceTabTargetsEqual(target, target)).toBe(false);
+    expect(() => buildDeterministicWorkspaceTabId(target)).toThrow(
+      "New tabs do not have deterministic target identities",
+    );
+  });
+});
+
 describe("provider subagent tab identity", () => {
   test("normalizes and compares the parent and provider child as one tab identity", () => {
     const target = normalizeWorkspaceTabTarget({

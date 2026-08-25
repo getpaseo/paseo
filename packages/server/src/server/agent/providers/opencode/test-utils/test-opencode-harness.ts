@@ -6,6 +6,7 @@ import type { OpenCodeServerAcquisition, OpenCodeServerManagerLike } from "../se
 interface OpenCodeResponse {
   data?: unknown;
   error?: unknown;
+  response?: { status: number };
 }
 
 export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
@@ -144,6 +145,7 @@ export class TestOpenCodeClient {
   sessionCommandEvents: unknown[] = [idleEvent()];
   sessionCommandResponse: OpenCodeResponse = {};
   sessionCreateResponse: OpenCodeResponse = { data: { id: "session-1" } };
+  sessionCreateImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionDeleteResponse: OpenCodeResponse = {};
   sessionChildrenResponses: OpenCodeResponse[] = [];
   sessionChildrenImplementation:
@@ -293,6 +295,9 @@ export class TestOpenCodeClient {
         },
         create: async (parameters: unknown) => {
           this.calls.sessionCreate.push(parameters);
+          if (this.sessionCreateImplementation) {
+            return await this.sessionCreateImplementation(parameters);
+          }
           return this.sessionCreateResponse;
         },
         delete: async (parameters: unknown) => {

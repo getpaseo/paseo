@@ -23,7 +23,7 @@ import { useActiveWorkspaceSelection } from "@/stores/navigation-active-workspac
 import { type SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { StatusBucket } from "@/hooks/sidebar-status-view-model";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
-import { SidebarLabelFilterEmptyState } from "@/components/sidebar/empty-states";
+import { SidebarFilterEmptyState } from "@/components/sidebar/empty-states";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { isWeb as platformIsWeb, isNative as platformIsNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
@@ -127,7 +127,7 @@ interface StatusWorkspaceListProps {
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspaceEntry[]) => void;
   listHeaderComponent?: ReactNode;
   /** Swaps the group list for the label filter's empty state. Never the header above it. */
-  labelFilterEmpty?: boolean;
+  sidebarFilterEmpty?: boolean;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
   dragGestureHostPresented?: boolean;
 }
@@ -144,7 +144,7 @@ export function SidebarStatusWorkspaceList({
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
   listHeaderComponent,
-  labelFilterEmpty = false,
+  sidebarFilterEmpty = false,
   parentGestureRef,
   dragGestureHostPresented,
 }: StatusWorkspaceListProps) {
@@ -231,8 +231,8 @@ export function SidebarStatusWorkspaceList({
         </View>
       ) : null}
       {listHeaderComponent}
-      {labelFilterEmpty ? (
-        <SidebarLabelFilterEmptyState />
+      {sidebarFilterEmpty ? (
+        <SidebarFilterEmptyState />
       ) : (
         <StatusGroupList
           groups={groups}

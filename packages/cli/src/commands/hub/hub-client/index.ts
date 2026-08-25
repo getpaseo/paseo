@@ -12,6 +12,8 @@ import {
   type CliAuthorizationPoll,
   type HubInstallResult,
   type HubConfigurationResources,
+  setupResourcesSchema,
+  type HubSetupResources,
   type HubProject,
   type HubValidationResult,
 } from "./internal/contracts.js";
@@ -22,6 +24,7 @@ export type {
   CliAuthorizationPoll,
   HubInstallResult,
   HubConfigurationResources,
+  HubSetupResources,
   HubProject,
   HubValidationResult,
 } from "./internal/contracts.js";
@@ -92,6 +95,18 @@ export class HubHttpClient {
       successStatus: 200,
       schema: configurationResourcesSchema,
       failureMessage: "Hub configuration resource listing failed",
+    });
+  }
+
+  listSetupResources(origin: string, apiKey: string): Promise<HubSetupResources> {
+    return requestHub({
+      origin,
+      path: "/api/v1/setup-resources",
+      method: "GET",
+      apiKey,
+      successStatus: 200,
+      schema: setupResourcesSchema,
+      failureMessage: "Hub guided setup resource listing failed",
     });
   }
 

@@ -6,7 +6,7 @@ import {
   type PluginAgentSnapshot,
   type PluginCommandCenterItemContribution,
   type PluginWorkspaceSnapshot,
-} from "@paseo/plugin";
+} from "@getpaseo/plugin";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { InstalledPlugin } from "../types";
@@ -70,6 +70,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
         title: "Details",
         icon: "Scan",
         context: "agent",
+        locations: ["workspace", "explorer"],
         Component: () => null,
       },
     ],
@@ -97,6 +98,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
       },
     ],
     attachmentSources: [],
+    themes: [],
   };
 }
 
@@ -178,7 +180,7 @@ describe("plugin Command Center contributions", () => {
       receivedPaseo = context.paseo;
       rpcValue = (await context.rpc(inspect, { value: 4 })).value;
       context.openSurface("main");
-      context.openPanel("details");
+      context.openPanel("details", { location: "explorer" });
     });
     const runtime = createRuntime("review");
     const actions = buildPluginCommandCenterContributions({
@@ -191,11 +193,11 @@ describe("plugin Command Center contributions", () => {
         openSurface(pluginId, surfaceId) {
           opened.push(`${pluginId}/surface/${surfaceId}`);
         },
-        openWorkspacePanel(pluginId, panelId) {
-          opened.push(`${pluginId}/workspace/${panelId}`);
+        openWorkspacePanel(pluginId, panelId, location) {
+          opened.push(`${pluginId}/workspace/${panelId}/${location}`);
         },
-        openAgentPanel(pluginId, panelId, agentId) {
-          opened.push(`${pluginId}/agent/${panelId}/${agentId}`);
+        openAgentPanel(pluginId, panelId, agentId, location) {
+          opened.push(`${pluginId}/agent/${panelId}/${agentId}/${location}`);
         },
       },
       reportError(error) {
@@ -207,7 +209,7 @@ describe("plugin Command Center contributions", () => {
 
     expect(rpcValue).toBe(5);
     expect(receivedPaseo).toBe(runtime.paseo);
-    expect(opened).toEqual(["review/surface/main", "review/agent/details/agent-1"]);
+    expect(opened).toEqual(["review/surface/main", "review/agent/details/agent-1/explorer"]);
   });
 
   it("removes every contribution when its installation disappears", () => {

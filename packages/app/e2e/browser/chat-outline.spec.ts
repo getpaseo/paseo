@@ -119,6 +119,7 @@ test.describe("desktop chat outline", () => {
     test("previews and jumps to the focused prompt from the keyboard", async ({ page }) => {
       await focusChatOutlinePrompt(page, 1);
       await expectChatOutlinePreview(page, agent.prompts[0]);
+      await expectTimelinePromptNotMounted(page, agent.oldestPrompt);
 
       await pressEnterOnFocusedPrompt(page);
       await expectTimelinePromptLandedBelowTop(page, agent.oldestPrompt);

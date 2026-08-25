@@ -8,6 +8,10 @@ export interface RetainedWorkspaceSelection {
   inactiveSince: number | null;
 }
 
+export function resolveWorkspaceDeckRetentionLimit(input: { isNative: boolean }): number {
+  return input.isNative ? 1 : WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES;
+}
+
 interface ReconcileRetainedWorkspaceSelectionsInput {
   currentEntries: RetainedWorkspaceSelection[];
   activeSelection: ActiveWorkspaceSelection | null;

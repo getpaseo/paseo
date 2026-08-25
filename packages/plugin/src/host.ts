@@ -7,6 +7,7 @@ import type {
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginSurfaceProps,
+  PluginThemeContribution,
   PluginWorkspacePanelContribution,
 } from "./contracts.js";
 import { PluginRpcProvider } from "./rpc-context.js";
@@ -20,6 +21,7 @@ interface PluginCollector {
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
+  addTheme(contribution: PluginThemeContribution): void;
 }
 
 export interface PluginRegistrationCollector {
@@ -28,6 +30,7 @@ export interface PluginRegistrationCollector {
   workspacePanels: PluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
+  themes: PluginThemeContribution[];
 }
 
 export function createPluginContext(
@@ -39,6 +42,7 @@ export function createPluginContext(
   | "addWorkspacePanel"
   | "addCommandCenterItem"
   | "addAttachmentSource"
+  | "addTheme"
 > {
   return {
     addSurface(id, Component) {
@@ -55,6 +59,9 @@ export function createPluginContext(
     },
     addAttachmentSource(contribution) {
       collector.addAttachmentSource(contribution);
+    },
+    addTheme(contribution) {
+      collector.addTheme(contribution);
     },
   };
 }

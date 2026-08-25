@@ -5,7 +5,8 @@ import { FileDiff, GitCommitHorizontal } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useRetainedPanelActive } from "@/components/retained-panel";
-import { useIsCompactFormFactor, WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
 import { isWeb } from "@/constants/platform";
 import { DiffDocument } from "@/git/diff-document";
 import { ChangesSurface, DiffLayoutToggle, resolveDiffLayout } from "@/git/diff-pane";
@@ -13,10 +14,13 @@ import { useCommitDiffFiles } from "@/git/use-diff-files";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useAppSettings } from "@/hooks/use-settings";
 import { usePaneContext } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor, type PanelPresentation } from "@/panels/panel-registry";
 import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { defaultChangesState, changesStateSchema } from "@/panels/changes/state";
+import { usePanelState } from "@/panels/use-panel-state";
+import { RenderProfile } from "@/utils/render-profiler";
 
 const ThemedFileDiff = withUnistyles(FileDiff);
 const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
@@ -72,36 +76,77 @@ function PanelState({
   );
 }
 
-function WorkingDiffPanel() {
+function resolveChangesPresentation(
+  isTree: boolean,
+  inlineDiff: boolean,
+): "tree" | "diff" | "combined" {
+  if (!isTree) return "diff";
+  return inlineDiff ? "combined" : "tree";
+}
+
+function ChangesPanel() {
   const { t } = useTranslation();
-  const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
+  const { serverId, workspaceId, tabId, target, openPreferredTarget, openTargetToSide } =
+    usePaneContext();
+  const [changesState, setChangesState] = usePanelState(changesStateSchema, defaultChangesState);
+  const { preferences } = useChangesPreferences();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
   const isActive = useRetainedPanelActive();
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
-  invariant(target.kind === "working_diff", "WorkingDiffPanel requires working_diff target");
+  invariant(
+    target.kind === "working_diff" || target.kind === "changes_tree",
+    "ChangesPanel requires working_diff or changes_tree target",
+  );
+  const isTree = target.kind === "changes_tree";
 
   const handleOpenFile = useCallback(
-    (path: string) => openFileInWorkspace({ location: { path }, disposition: "side" }),
-    [openFileInWorkspace],
+    (path: string) =>
+      openPreferredTarget({ kind: "file", path }, isTree ? "explorerChanges" : "diffFiles"),
+    [isTree, openPreferredTarget],
+  );
+
+  const handleSelectDiffFile = useCallback(
+    (path: string) =>
+      openPreferredTarget(
+        { kind: "working_diff", focusPath: path, focusRequestId: Date.now() },
+        "explorerChanges",
+      ),
+    [openPreferredTarget],
+  );
+  const handleOpenDiffToSide = useCallback(
+    (path: string) =>
+      openTargetToSide?.({ kind: "working_diff", focusPath: path, focusRequestId: Date.now() }),
+    [openTargetToSide],
   );
 
   if (!cwd) {
     return <PanelState message={t("panels.diff.directoryMissing")} />;
   }
 
+  const presentation = resolveChangesPresentation(isTree, preferences.inlineDiff);
+  const testID = isTree ? "changes-tree-panel" : "working-diff-panel";
+  const profileId = isTree ? `ChangesTreePanel:${tabId}` : `WorkingDiffPanel:${tabId}`;
+
   return (
-    <View style={styles.container} testID="working-diff-panel">
-      <ChangesSurface
-        serverId={serverId}
-        workspaceId={workspaceId}
-        cwd={cwd}
-        enabled={isActive}
-        host="panel"
-        focusPath={target.focusPath}
-        focusRequestId={target.focusRequestId}
-        onOpenFile={handleOpenFile}
-        onAddToChat={canAddToChat ? addFile : undefined}
-      />
+    <View style={styles.container} testID={testID}>
+      <RenderProfile id={profileId}>
+        <ChangesSurface
+          serverId={serverId}
+          workspaceId={workspaceId}
+          cwd={cwd}
+          enabled={isActive}
+          presentation={presentation}
+          modeScope={tabId}
+          focusPath={target.kind === "working_diff" ? target.focusPath : undefined}
+          focusRequestId={target.kind === "working_diff" ? target.focusRequestId : undefined}
+          onSelectDiffFile={isTree ? handleSelectDiffFile : undefined}
+          onOpenFile={handleOpenFile}
+          onOpenToSide={isTree && openTargetToSide ? handleOpenDiffToSide : undefined}
+          onAddToChat={canAddToChat ? addFile : undefined}
+          state={changesState}
+          onStateChange={setChangesState}
+        />
+      </RenderProfile>
     </View>
   );
 }
@@ -151,7 +196,7 @@ function CommitDiffPanel() {
   return (
     <View style={styles.container} testID="commit-diff-panel">
       {panelPreferences.canUseSplitLayout ? (
-        <View style={styles.toolbar}>
+        <PaneContentToolbar style={styles.toolbar} testID="commit-diff-header">
           <View style={styles.toolbarActions} testID="commit-diff-toolbar">
             <DiffLayoutToggle
               layout={panelPreferences.preferences.layout}
@@ -160,24 +205,26 @@ function CommitDiffPanel() {
               onToggle={panelPreferences.toggleLayout}
             />
           </View>
-        </View>
+        </PaneContentToolbar>
       ) : null}
       <View style={styles.body}>{body}</View>
     </View>
   );
 }
 
-function useWorkingDiffPanelDescriptor(): PanelDescriptor {
-  const { t } = useTranslation();
-  return {
-    label: t("panels.diff.changesLabel"),
-    subtitle: t("panels.diff.changesSubtitle"),
-    tooltip: t("panels.diff.changesSubtitle"),
-    titleState: "ready",
-    icon: ThemedFileDiff,
-    statusBucket: null,
-  };
-}
+const workingDiffPresentation = {
+  label: (t) => t("panels.diff.diffLabel"),
+  subtitle: (t) => t("panels.diff.changesSubtitle"),
+  tooltip: (t) => t("panels.diff.changesSubtitle"),
+  icon: ThemedFileDiff,
+} satisfies PanelPresentation;
+
+const changesTreePresentation = {
+  label: (t) => t("panels.diff.changesLabel"),
+  subtitle: (t) => t("panels.diff.changesSubtitle"),
+  tooltip: (t) => t("panels.diff.changesSubtitle"),
+  icon: ThemedFileDiff,
+} satisfies PanelPresentation;
 
 function useCommitDiffPanelDescriptor(
   target: Extract<WorkspaceTabTarget, { kind: "commit_diff" }>,
@@ -193,17 +240,20 @@ function useCommitDiffPanelDescriptor(
   };
 }
 
-export const workingDiffPanelRegistration: PanelRegistration<"working_diff"> = {
-  kind: "working_diff",
-  component: WorkingDiffPanel,
-  useDescriptor: useWorkingDiffPanelDescriptor,
-};
+export const workingDiffPanelRegistration = definePanel("working_diff", {
+  component: ChangesPanel,
+  presentation: workingDiffPresentation,
+});
 
-export const commitDiffPanelRegistration: PanelRegistration<"commit_diff"> = {
-  kind: "commit_diff",
+export const changesTreePanelRegistration = definePanel("changes_tree", {
+  component: ChangesPanel,
+  presentation: changesTreePresentation,
+});
+
+export const commitDiffPanelRegistration = definePanel("commit_diff", {
   component: CommitDiffPanel,
   useDescriptor: useCommitDiffPanelDescriptor,
-};
+});
 
 const styles = StyleSheet.create((theme) => ({
   container: {
@@ -211,15 +261,11 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 0,
   },
   toolbar: {
-    height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     gap: theme.spacing[2],
     paddingRight: theme.spacing[2],
-    borderBottomWidth: theme.borderWidth[1],
-    borderBottomColor: theme.colors.border,
-    flexShrink: 0,
   },
   toolbarActions: {
     flexDirection: "row",

@@ -4,17 +4,24 @@ import type {
   PluginCommandCenterItemContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
+  PluginThemeContribution,
+  PluginPanelLocation,
   PluginWorkspacePanelContribution,
-} from "@paseo/plugin";
+} from "@getpaseo/plugin";
+
+export type EvaluatedPluginWorkspacePanelContribution = PluginWorkspacePanelContribution & {
+  locations: readonly PluginPanelLocation[];
+};
 
 export interface EvaluatedPlugin {
   id: string;
   cleanup: () => void;
   surfaces: PluginSurfaceContribution[];
   sidebarItems: PluginSidebarContribution[];
-  workspacePanels: PluginWorkspacePanelContribution[];
+  workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
+  themes: PluginThemeContribution[];
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {
@@ -28,5 +35,6 @@ export type {
   PluginCommandCenterItemContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
+  PluginThemeContribution,
   PluginWorkspacePanelContribution,
 };

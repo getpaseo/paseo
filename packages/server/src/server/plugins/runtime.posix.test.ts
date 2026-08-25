@@ -501,7 +501,7 @@ export default function contribute(plugin: unknown) {
 import { platform } from "node:os";
 import { Text } from "react-native";
 import { z } from "zod";
-import { defineAttachmentSource, defineRpc } from "@paseo/plugin";
+import { defineAttachmentSource, defineRpc } from "@getpaseo/plugin";
 
 const greetRpc = defineRpc({
   name: "greet",
@@ -560,6 +560,34 @@ export default function contribute(plugin: any) {
     await runtime.stopAll();
   });
 
+  // COMPAT(plugin-sdk-scope): plugins scaffolded through 0.5.0-beta.1 import the unpublished
+  // @paseo/plugin name. Drop with the specifiers in plugin-sdk-specifiers.ts.
+  it("loads a plugin that imports the pre-rename @paseo/plugin specifier", async () => {
+    const directory = await createPlugin(
+      "legacy-sdk",
+      `import { z } from "zod";
+import { defineRpc } from "@paseo/plugin/server";
+
+const pingRpc = defineRpc({
+  name: "ping",
+  input: z.object({}),
+  output: z.object({ ok: z.boolean() }),
+});
+
+export default function contribute(plugin: any) {
+  plugin.handle(pingRpc, async () => ({ ok: true }));
+  return () => undefined;
+}`,
+    );
+    const runtime = createTestRuntime();
+
+    await runtime.startPlugin("legacy-sdk", directory);
+
+    await expect(runtime.invoke("legacy-sdk", "ping", {})).resolves.toMatchObject({ ok: true });
+
+    await runtime.stopAll();
+  });
+
   it("keeps client and server modules in their target runtime", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
     temporaryDirectories.push(directory);
@@ -571,7 +599,7 @@ export default function contribute(plugin: any) {
       ),
       writeFile(
         path.join(directory, "index.ts"),
-        `import type { PluginContext } from "@paseo/plugin";
+        `import type { PluginContext } from "@getpaseo/plugin";
 import { Surface } from "./surface.client";
 import { inspectRpc } from "./inspect.shared";
 import { inspectHost } from "./inspect.server";
@@ -597,7 +625,7 @@ export function Surface() {
       ),
       writeFile(
         path.join(directory, "inspect.shared.ts"),
-        `import { defineRpc } from "@paseo/plugin";
+        `import { defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 export const inspectRpc = defineRpc({
@@ -643,7 +671,7 @@ export function inspectHost(_input: z.input<typeof inspectRpc.input>) {
       ),
       writeFile(
         path.join(directory, "index.ts"),
-        `import type { PluginContext } from "@paseo/plugin";
+        `import type { PluginContext } from "@getpaseo/plugin";
 import { Surface } from "./surface.client";
 
 export default function contribute(plugin: PluginContext) {
@@ -683,7 +711,7 @@ export function Surface() { return readSecret(); }`,
       ),
       writeFile(
         path.join(directory, "index.ts"),
-        `import type { PluginContext } from "@paseo/plugin";
+        `import type { PluginContext } from "@getpaseo/plugin";
 import { inspect } from "./inspect.server";
 import { inspectRpc } from "./inspect.shared";
 
@@ -695,7 +723,7 @@ export default function contribute(plugin: PluginContext) {
       ),
       writeFile(
         path.join(directory, "inspect.shared.ts"),
-        `import { defineRpc } from "@paseo/plugin";
+        `import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 export const inspectRpc = defineRpc({
   name: "inspect",
@@ -728,7 +756,7 @@ export function inspect() { void Surface; return {}; }`,
     const directory = await createPlugin(
       "invalid-output",
       `import { z } from "zod";
-import { defineRpc } from "@paseo/plugin";
+import { defineRpc } from "@getpaseo/plugin";
 const brokenRpc = defineRpc({
   name: "broken",
   input: z.object({}),
