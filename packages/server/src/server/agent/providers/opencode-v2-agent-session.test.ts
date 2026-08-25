@@ -258,8 +258,24 @@ async function waitFor(assertion: () => void | Promise<void>): Promise<void> {
   await assertion();
 }
 
+async function waitForLong(assertion: () => void | Promise<void>): Promise<void> {
+  for (let attempt = 0; attempt < 500; attempt += 1) {
+    try {
+      await assertion();
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+  }
+  await assertion();
+}
+
 function hasTurnCanceled(events: AgentStreamEvent[]): boolean {
   return events.some((streamEvent) => streamEvent.type === "turn_canceled");
+}
+
+function hasModeChanged(events: AgentStreamEvent[]): boolean {
+  return events.some((streamEvent) => streamEvent.type === "mode_changed");
 }
 
 describe("OpenCodeV2AgentClient session core", () => {
@@ -888,6 +904,113 @@ describe("OpenCodeV2AgentClient session core", () => {
     const modes = await session.getAvailableModes();
     expect(modes.map((mode) => mode.id)).toEqual(["build", "plan", "general"]);
     expect(openCode.calls.agentList).toEqual([{ location: { directory: "/workspace/repo" } }]);
+    await session.close();
+  });
+
+  test("cold-start: refreshes availableModes with a mode_changed once the event source is ready", async () => {
+    const { session, openCode, runtime } = await createSession("session-1", (client) => {
+      client.agentListResponse = {
+        ...client.agentListResponse,
+        data: [
+          buildAgentInfo({ name: "general", mode: "subagent" }),
+          buildAgentInfo({ name: "plan" }),
+          buildAgentInfo({ name: "explore" }),
+          buildAgentInfo({ name: "build" }),
+        ],
+      };
+    });
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    // Before the event source is ready, no mode refresh has happened: the
+    // daemon's registration-time fetch failed and left availableModes empty.
+    expect(openCode.calls.agentList).toHaveLength(0);
+    expect(hasModeChanged(events)).toBe(false);
+
+    runtime.resolveEventsReadyNow();
+
+    await waitFor(() => expect(hasModeChanged(events)).toBe(true));
+
+    const modeChanged = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "mode_changed" }> =>
+        event.type === "mode_changed",
+    );
+    expect(modeChanged?.availableModes.map((mode) => mode.id)).toEqual([
+      "build",
+      "plan",
+      "explore",
+      "general",
+    ]);
+    expect(modeChanged?.currentModeId).toBeNull();
+    expect(openCode.calls.agentList.length).toBeGreaterThan(0);
+
+    await session.close();
+  });
+
+  test("warm: mode refresh after ready keeps the available modes unchanged", async () => {
+    const { session, runtime } = await createSession("session-1", (client) => {
+      client.agentListResponse = {
+        ...client.agentListResponse,
+        data: [
+          buildAgentInfo({ name: "general", mode: "subagent" }),
+          buildAgentInfo({ name: "plan" }),
+          buildAgentInfo({ name: "explore" }),
+          buildAgentInfo({ name: "build" }),
+        ],
+      };
+    });
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    runtime.resolveEventsReadyNow();
+
+    await waitFor(() => expect(hasModeChanged(events)).toBe(true));
+
+    const modeChanged = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "mode_changed" }> =>
+        event.type === "mode_changed",
+    );
+    expect(modeChanged?.availableModes.map((mode) => mode.id)).toEqual([
+      "build",
+      "plan",
+      "explore",
+      "general",
+    ]);
+
+    await session.close();
+  });
+
+  test("cold-start: retries the mode fetch when the first post-ready call fails", async () => {
+    const { session, openCode, runtime } = await createSession("session-1", (client) => {
+      let agentListCalls = 0;
+      client.agentListImplementation = async () => {
+        agentListCalls += 1;
+        if (agentListCalls === 1) {
+          throw new Error("server not ready yet");
+        }
+        return {
+          ...client.agentListResponse,
+          data: [buildAgentInfo({ name: "plan" }), buildAgentInfo({ name: "build" })],
+        };
+      };
+    });
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    runtime.resolveEventsReadyNow();
+
+    await waitForLong(() => expect(hasModeChanged(events)).toBe(true));
+
+    const modeChanged = events.find(
+      (event): event is Extract<AgentStreamEvent, { type: "mode_changed" }> =>
+        event.type === "mode_changed",
+    );
+    expect(modeChanged?.availableModes.map((mode) => mode.id)).toEqual(["build", "plan"]);
+    expect(openCode.calls.agentList.length).toBeGreaterThanOrEqual(2);
+
     await session.close();
   });
 

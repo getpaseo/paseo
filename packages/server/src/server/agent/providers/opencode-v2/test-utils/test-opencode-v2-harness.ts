@@ -38,14 +38,23 @@ export class TestOpenCodeV2Harness implements OpenCodeV2ServerManagerLike {
   readonly clientCreations: Array<{ baseUrl: string; authorization: string }> = [];
   private readonly clients: TestOpenCodeV2Client[] = [];
   private readonly eventListeners = new Set<(input: OpenCodeV2EventSourceInput) => void>();
+  private resolveEventsReady: (() => void) | null = null;
+  private readonly eventsReadyPromise: Promise<void> = new Promise<void>((resolve) => {
+    this.resolveEventsReady = resolve;
+  });
   readonly events = {
-    ready: async () => undefined,
+    ready: () => this.eventsReadyPromise,
     subscribe: (listener: (input: OpenCodeV2EventSourceInput) => void) => {
       this.eventListeners.add(listener);
       return () => this.eventListeners.delete(listener);
     },
     close: async () => undefined,
   };
+
+  /** Resolve the event source ready signal, simulating the SSE stream connecting. */
+  resolveEventsReadyNow(): void {
+    this.resolveEventsReady?.();
+  }
 
   server = {
     port: 1234,

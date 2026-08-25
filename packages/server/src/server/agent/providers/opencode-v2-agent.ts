@@ -102,6 +102,22 @@ const EMPTY_OPENCODE_V2_EVENT_SOURCE: OpenCodeV2EventSource = {
   close: async () => undefined,
 };
 
+/**
+ * Cold-start mode refresh budget (VAL-OC2-REG-007). availableModes is captured
+ * once at registration, before the freshly spawned opencode2 server is fully
+ * ready; that fetch throws and leaves the list empty forever because
+ * opencode-v2 emits no `mode_changed` stream event. Once the event stream is
+ * ready, re-fetch getAvailableModes() and emit a `mode_changed` so the daemon
+ * refreshes the agent's availableModes. Retry a few times in case the server
+ * accepts the SSE stream before /api/agent is fully warmed up.
+ */
+const OPENCODE_V2_MODE_REFRESH_ATTEMPTS = 5;
+const OPENCODE_V2_MODE_REFRESH_RETRY_DELAY_MS = 100;
+
+function delayOpenCodeV2ModeRefresh(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 type OpenCodeV2AgentConfig = Omit<AgentSessionConfig, "providerOptions"> & {
   provider: "opencode-v2";
   providerOptions: OpenCodeV2ProviderOptions;
@@ -649,6 +665,10 @@ export class OpenCodeV2AgentSession implements AgentSession {
           );
         });
     });
+    // Cold-start fix: the daemon captures availableModes at registration, before
+    // the freshly spawned server is ready, so it can be empty forever. Once the
+    // event stream is ready, re-fetch modes and emit `mode_changed` to refresh it.
+    void this.refreshModesWhenReady();
   }
 
   get id(): string | null {
@@ -813,6 +833,59 @@ export class OpenCodeV2AgentSession implements AgentSession {
       .filter(isSelectableOpenCodeV2Agent)
       .map(mapOpenCodeV2AgentToMode);
     return sortOpenCodeV2Modes(discovered);
+  }
+
+  /**
+   * Cold-start fix (VAL-OC2-REG-007): the daemon captures availableModes once
+   * at registration, before the freshly spawned opencode2 server is ready, so
+   * the list can be empty forever (opencode-v2 emits no `mode_changed` stream
+   * event). Once the event source is ready (the server is serving requests),
+   * re-fetch getAvailableModes() and emit a `mode_changed` so the daemon
+   * refreshes the agent's availableModes. Best-effort: on failure the agent
+   * keeps its registration-time list.
+   */
+  private async refreshModesWhenReady(): Promise<void> {
+    try {
+      await this.events.ready();
+    } catch {
+      return; // server exited or the source closed before becoming ready
+    }
+    if (this.closed) {
+      return;
+    }
+    for (let attempt = 0; attempt < OPENCODE_V2_MODE_REFRESH_ATTEMPTS; attempt += 1) {
+      try {
+        const modes = await this.getAvailableModes();
+        if (this.closed) {
+          return;
+        }
+        if (modes.length === 0 && attempt < OPENCODE_V2_MODE_REFRESH_ATTEMPTS - 1) {
+          // The server may accept the SSE stream before /api/agent is fully
+          // warmed up; retry before emitting an empty list.
+          await delayOpenCodeV2ModeRefresh(OPENCODE_V2_MODE_REFRESH_RETRY_DELAY_MS);
+          continue;
+        }
+        this.notifySubscribers(
+          {
+            type: "mode_changed",
+            provider: "opencode-v2",
+            currentModeId: this.currentMode,
+            availableModes: modes,
+          },
+          null,
+        );
+        return;
+      } catch (error) {
+        if (attempt >= OPENCODE_V2_MODE_REFRESH_ATTEMPTS - 1) {
+          this.logger.warn(
+            { err: error, sessionId: this.sessionId },
+            "OpenCode 2 failed to refresh modes after server ready",
+          );
+          return;
+        }
+        await delayOpenCodeV2ModeRefresh(OPENCODE_V2_MODE_REFRESH_RETRY_DELAY_MS);
+      }
+    }
   }
 
   async getCurrentMode(): Promise<string | null> {

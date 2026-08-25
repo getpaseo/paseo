@@ -31,6 +31,7 @@ import type {
   AgentCreateSessionOptions,
   AgentFeature,
   AgentLaunchContext,
+  AgentMode,
   AgentPromptInput,
   AgentProvider,
   AgentPersistenceHandle,
@@ -577,6 +578,21 @@ class SteeringTestSession extends TestAgentSession {
       },
     });
     return { status: "accepted" };
+  }
+}
+
+class ColdStartModesSession extends TestAgentSession {
+  getAvailableModesCallCount = 0;
+
+  override async getAvailableModes(): Promise<AgentMode[]> {
+    this.getAvailableModesCallCount += 1;
+    if (this.getAvailableModesCallCount === 1) {
+      throw new Error("server not ready yet");
+    }
+    return [
+      { id: "build", label: "Build" },
+      { id: "plan", label: "Plan" },
+    ];
   }
 }
 
@@ -4266,6 +4282,56 @@ test("session config drift events update state through the stream channel", asyn
     thinkingOptionId: "high",
   });
   expect(streams.map((event) => event.type)).toEqual([]);
+});
+
+test("cold-start: a mode_changed event refreshes availableModes captured empty at registration", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cold-start-modes-"));
+  let capturedSession: ColdStartModesSession | null = null;
+  class ColdStartModesClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new ColdStartModesSession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new ColdStartModesClient(),
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000135",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  // The registration-time mode fetch failed (cold start): availableModes is empty.
+  expect(capturedSession?.getAvailableModesCallCount).toBeGreaterThanOrEqual(1);
+  expect(manager.getAgent(snapshot.id)?.availableModes).toEqual([]);
+
+  // The session re-fetches modes once the server is ready and emits mode_changed.
+  capturedSession?.pushEvent({
+    type: "mode_changed",
+    provider: "codex",
+    currentModeId: "build",
+    availableModes: [
+      { id: "build", label: "Build" },
+      { id: "plan", label: "Plan" },
+    ],
+  });
+  await manager.flush();
+
+  expect(manager.getAgent(snapshot.id)?.availableModes).toEqual([
+    { id: "build", label: "Build" },
+    { id: "plan", label: "Plan" },
+  ]);
+  expect(manager.getAgent(snapshot.id)?.currentModeId).toBe("build");
 });
 
 test("setLabels merges and persists labels", async () => {
