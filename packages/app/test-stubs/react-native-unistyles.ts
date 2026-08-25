@@ -27,6 +27,7 @@ const testTheme = {
       green: { 500: "#22c55e" },
       red: { 300: "#fca5a5" },
       white: "#ffffff",
+      zinc: { 600: "#52525b" },
     },
   },
   borderWidth: { 1: 1 },
