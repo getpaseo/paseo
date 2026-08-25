@@ -43,6 +43,7 @@ import {
 } from "@/composer/agent-controls";
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
+import { shouldRenderCompactContextWindowSlot } from "./context-window-slot";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
 import { useFilePicker } from "@/hooks/use-file-picker";
@@ -2001,6 +2002,10 @@ function ComposerContentImpl({
 
   const contextWindowPending = agentState.status === "initializing" || isAgentRunning;
   const contextWindowMeterGlyphSize = isCompactLayout ? ICON_SIZE.md : buttonIconSize;
+  const contextWindowAgentKey = `${serverId}:${agentId}`;
+  const [reservedCompactContextWindowAgentKey, setReservedCompactContextWindowAgentKey] = useState<
+    string | null
+  >(null);
 
   const contextWindowMeter = useMemo(
     () =>
@@ -2029,6 +2034,20 @@ function ComposerContentImpl({
     () => resolveContextWindowPlacement(contextWindowMeter, hasAgent, isCompactLayout),
     [contextWindowMeter, hasAgent, isCompactLayout],
   );
+  const shouldReserveCompactContextWindowSlot = shouldRenderCompactContextWindowSlot(
+    isCompactLayout,
+    hasAgent,
+    contextWindowMeter !== null,
+    contextWindowAgentKey,
+    reservedCompactContextWindowAgentKey,
+  );
+
+  useEffect(() => {
+    if (!isCompactLayout || !hasAgent || contextWindowMeter === null) return;
+    setReservedCompactContextWindowAgentKey((current) =>
+      current === contextWindowAgentKey ? current : contextWindowAgentKey,
+    );
+  }, [contextWindowAgentKey, contextWindowMeter, hasAgent, isCompactLayout]);
 
   const hasGithubAttachment = useMemo(
     () =>
@@ -2386,7 +2405,7 @@ function ComposerContentImpl({
                   submitLabel={submitLabel}
                 />
               </RenderProfile>
-              {compactContextWindowContent ? (
+              {shouldReserveCompactContextWindowSlot ? (
                 <View style={styles.contextWindowMeterCompactSlot}>
                   {compactContextWindowContent}
                 </View>
@@ -2484,6 +2503,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   contextWindowMeterCompactSlot: {
     alignSelf: "stretch",
+    height: 28,
   },
   realtimeVoiceButton: {
     width: 28,
