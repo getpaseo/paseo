@@ -1,7 +1,7 @@
 # Local plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
+app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
 subprocess and evaluates the client contribution in the app runtime. Plugin code is trusted code;
 this first slice does not sandbox it.
 
@@ -165,6 +165,10 @@ RPC. Snapshot DTOs are deeply readonly and frozen at runtime so plugin code cann
 app state or a memoized selection. Panels use one persisted
 `plugin` workspace-tab target, so reload, disable, removal, and restoration resolve through the
 current installed-plugin catalog. A missing contribution renders unavailable inside the tab.
+Panels declare `locations: ["workspace", "explorer"]` to opt into Explorer hosting; omission means
+workspace only. Location controls hosting, not context. An agent panel target keeps its `agentId`
+when moved between hosts. Explorer configuration can create workspace-context panels and remove
+existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
 
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
 They use typed plugin RPC only for plugin-specific backend work. Navigation is limited to the
@@ -194,5 +198,28 @@ on several hosts are not coalesced. The selected snapshot submits as a text atta
 external-resource presentation, so it remains readable if the plugin is removed or an older peer
 drops the optional presentation fields.
 
-See `plugin-examples/local-plugin` for a native surface and `plugin-examples/linear` for a complete
-attachment-source example.
+## Contribute a theme
+
+`addTheme` takes a small light or dark palette and a display name. Paseo expands it through the
+same semantic builders as the built-in themes, so plugins do not depend on the complete app token
+contract. Unistyles needs every theme name at `StyleSheet.configure` time, so
+`packages/app/src/styles/theme.ts` reserves one light and one dark plugin slot. The appearance
+provider rewrites the matching slot when the selection changes. See [unistyles.md](unistyles.md)
+for the runtime-patching rules the appearance settings share.
+
+`addTheme` is a client registration, so the compiler strips it from the backend bundle. A daemon
+that predates it does not, and the plugin fails to start there. Daemons advertise
+`features.pluginThemes` in `server_info`; the plugin theme catalog is the one place the app reads it, and
+a host without it contributes no themes.
+
+The selection persists as `theme: "plugin"` plus a `pluginThemeId` of `<pluginId>/theme/<themeId>`,
+so equal themes on several hosts coalesce the way sidebar contributions do. Two hosts can answer
+that id with different palettes, so picking a theme records its host through
+`rememberPluginContributionHost` and resolution prefers it; a peer connecting or dropping then does
+not repaint the app. Without a preference the sorted registry snapshot decides, so the result is
+stable rather than arrival-ordered. The app resolves that id
+against the installed catalog on every change; an id nothing contributes falls back to the default
+preference instead of painting the reserved slot's placeholder colors.
+
+See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
+attachment-source example, and `plugin-examples/catppuccin` for a theme.

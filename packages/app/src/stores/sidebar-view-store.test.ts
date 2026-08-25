@@ -42,6 +42,7 @@ describe("sidebar view store", () => {
     useSidebarViewStore.setState({
       groupMode: "project",
       hostFilters: [],
+      projectFilters: [],
       labelFilter: { labels: [] },
     });
   });
@@ -93,6 +94,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: [],
+      projectFilters: [],
       labelFilter: { labels: [] },
     });
   });
@@ -106,6 +108,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: ["host-a"],
+      projectFilters: [],
       labelFilter: { labels: [] },
     });
   });
@@ -119,6 +122,7 @@ describe("sidebar view store", () => {
     ).toEqual({
       groupMode: "status",
       hostFilters: ["host-a", "host-b"],
+      projectFilters: [],
       labelFilter: { labels: [] },
     });
   });
@@ -180,6 +184,66 @@ describe("sidebar view store", () => {
         labelFilter: { labels: [" Urgent ", "BLOCKED", "urgent"], match: "all" },
       }).labelFilter,
     ).toEqual({ labels: ["urgent", "blocked"] });
+  });
+
+  it("toggles multiple projects into and out of the filter", () => {
+    const store = useSidebarViewStore.getState();
+    store.toggleProjectFilter("project-a");
+    store.toggleProjectFilter("project-b");
+
+    expect(useSidebarViewStore.getState().projectFilters).toEqual(["project-a", "project-b"]);
+
+    store.toggleProjectFilter("project-a");
+
+    expect(useSidebarViewStore.getState().projectFilters).toEqual(["project-b"]);
+
+    store.clearProjectFilters();
+
+    expect(useSidebarViewStore.getState().projectFilters).toEqual([]);
+  });
+
+  it("keeps the other facets when the project filter is cleared", () => {
+    useSidebarViewStore.setState({
+      groupMode: "status",
+      hostFilters: ["host-a"],
+      projectFilters: ["project-a"],
+      labelFilter: { labels: ["urgent"] },
+    });
+
+    useSidebarViewStore.getState().clearProjectFilters();
+
+    expect(useSidebarViewStore.getState()).toMatchObject({
+      groupMode: "status",
+      hostFilters: ["host-a"],
+      projectFilters: [],
+      labelFilter: { labels: ["urgent"] },
+    });
+  });
+
+  // The persisted schema is a `z.strictObject` behind `createValidatedPersistStorage`, so a key
+  // the schema does not list fails the parse and takes every other sidebar setting down with it.
+  it("carries a persisted project filter through the version migration", () => {
+    expect(
+      migrateSidebarViewState({
+        groupMode: "project",
+        hostFilters: ["host-a"],
+        projectFilters: ["project-a", "project-b"],
+      }),
+    ).toEqual({
+      groupMode: "project",
+      hostFilters: ["host-a"],
+      projectFilters: ["project-a", "project-b"],
+      labelFilter: { labels: [] },
+    });
+  });
+
+  it("never keeps project filters from state the schema rejects", () => {
+    expect(migrateSidebarViewState({ projectFilters: "project-a" })).toEqual({
+      groupMode: "project",
+      hostFilters: [],
+      projectFilters: [],
+      labelFilter: { labels: [] },
+    });
   });
 
   it("falls back to the legacy storage key when the new key is empty", async () => {

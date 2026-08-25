@@ -12,7 +12,7 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceExists } from "@/stores/session-store-hooks";
@@ -159,12 +159,10 @@ function usePluginPanelDescriptor(
   };
 }
 
-export const pluginPanelRegistration: PanelRegistration<"plugin"> = {
-  kind: "plugin",
-  resourceKey: (target) => `${target.pluginId}:${target.panelId}:${target.context}`,
+export const pluginPanelRegistration = definePanel("plugin", {
   component: PluginPanel,
   useDescriptor: usePluginPanelDescriptor,
-};
+});
 
 const styles = StyleSheet.create((theme) => ({
   unavailable: {

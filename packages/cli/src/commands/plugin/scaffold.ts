@@ -143,15 +143,36 @@ declare module "@getpaseo/plugin" {
     agentId: string;
   }
 
+  export type PluginPanelLocation = "workspace" | "explorer";
+  export interface PluginOpenPanelOptions { location?: PluginPanelLocation; }
+
   export type PluginWorkspacePanelContribution =
-    | { id: string; title: string; icon: string; context: "workspace"; Component: ComponentType<PluginWorkspacePanelProps> }
-    | { id: string; title: string; icon: string; context: "agent"; Component: ComponentType<PluginAgentPanelProps> };
+    | { id: string; title: string; icon: string; locations?: readonly PluginPanelLocation[]; context: "workspace"; Component: ComponentType<PluginWorkspacePanelProps> }
+    | { id: string; title: string; icon: string; locations?: readonly PluginPanelLocation[]; context: "agent"; Component: ComponentType<PluginAgentPanelProps> };
 
   export interface PluginSidebarContribution {
     id: string;
     title: string;
     icon: string;
     surface: string;
+  }
+
+  export interface PluginThemeColors {
+    background: string;
+    foreground: string;
+    raised: string;
+    control: string;
+    border: string;
+    accent?: string;
+    mutedForeground: string;
+    ring: string;
+  }
+
+  export interface PluginThemeContribution {
+    id: string;
+    name: string;
+    appearance: "light" | "dark";
+    colors: PluginThemeColors;
   }
 
   export interface PluginSurfaceContribution {
@@ -175,14 +196,14 @@ declare module "@getpaseo/plugin" {
   export interface PluginWorkspaceCommandContext extends PluginCommandCapabilities {
     context: "workspace";
     workspace: PluginWorkspaceSnapshot;
-    openPanel(id: string): void;
+    openPanel(id: string, options?: PluginOpenPanelOptions): void;
   }
 
   export interface PluginAgentCommandContext extends PluginCommandCapabilities {
     context: "agent";
     workspace: PluginWorkspaceSnapshot;
     agent: PluginAgentSnapshot;
-    openPanel(id: string): void;
+    openPanel(id: string, options?: PluginOpenPanelOptions): void;
   }
 
   export type PluginCommandCenterItemContribution =
@@ -203,6 +224,7 @@ declare module "@getpaseo/plugin" {
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
     addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
+    addTheme(contribution: PluginThemeContribution): void;
   }
 
   export type PluginCleanup = () => void | Promise<void>;

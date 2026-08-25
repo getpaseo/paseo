@@ -545,15 +545,22 @@ async function returnTimelineToSettledHistoryStart(
   page: Page,
   moveUp: () => Promise<unknown>,
 ): Promise<void> {
+  const loadingSpinner = page.getByTestId("load-older-history-spinner");
+  // A caller may only start a new history traversal after its prior page has settled.
+  await expect(loadingSpinner).toBeHidden();
   let previous = await readTimelineViewport(page);
   while (true) {
     await moveUp();
     await waitForTimelineGeometryToSettle(page);
     let viewport = await readTimelineViewport(page);
+    // Tests that hold the response need to observe the requested page before releasing it.
+    if (await loadingSpinner.isVisible()) {
+      return;
+    }
     if (viewport.scrollTop <= HISTORY_START_THRESHOLD_PX) {
       return;
     }
-    await expect(page.getByTestId("load-older-history-spinner")).toBeHidden();
+    await expect(loadingSpinner).toBeHidden();
     await waitForTimelineGeometryToSettle(page);
     viewport = await readTimelineViewport(page);
     expect(

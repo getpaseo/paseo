@@ -33,5 +33,5 @@ function formatQr(qr: string | null, columns: number | undefined): string {
 }
 
 export function formatPairingInstructions({ url, qr, columns }: PairingInstructions): string {
-  return `\nScan to pair:\n${formatQr(qr, columns)}\n\nPairing link:\n${url}\n`;
+  return `\nScan to pair:\n${formatQr(qr, columns)}\n\nPairing link:\n${url}\n\nTreat this pairing link like a password. Anyone with it can access this daemon.\n`;
 }

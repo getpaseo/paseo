@@ -2,7 +2,7 @@ import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useCallback, useMemo } from "react";
 import { View, Text, Pressable, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { ChevronDown, MoreVertical } from "lucide-react-native";
+import { ChevronDown, GitBranch, MoreVertical } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import {
   DropdownMenu,
@@ -17,11 +17,12 @@ import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import type { GitAction, GitActions } from "@/git/policy";
 import { useGitActionRunner } from "@/git/use-actions";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 
 interface GitActionsSplitButtonProps {
   gitActions: GitActions;
   hideLabels?: boolean;
+  menuOnly?: boolean;
 }
 
 interface GitActionMenuItemProps {
@@ -74,7 +75,11 @@ function GitActionMenuItem({
   );
 }
 
-export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSplitButtonProps) {
+export function GitActionsSplitButton({
+  gitActions,
+  hideLabels,
+  menuOnly = false,
+}: GitActionsSplitButtonProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const runGitAction = useGitActionRunner();
@@ -115,6 +120,66 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
     [theme.colors.surface2],
   );
 
+  const menuOnlyTriggerStyle = useCallback(
+    ({ hovered, pressed, open }: { hovered: boolean; pressed: boolean; open: boolean }) => [
+      styles.menuOnlyTrigger,
+      (hovered || pressed || open) &&
+        inlineUnistylesStyle({ backgroundColor: theme.colors.surface2 }),
+    ],
+    [theme.colors.surface2],
+  );
+
+  const menuOnlyActions = useMemo(
+    () => [
+      ...(gitActions.primary ? [gitActions.primary] : []),
+      ...gitActions.secondary,
+      ...gitActions.menu,
+    ],
+    [gitActions.menu, gitActions.primary, gitActions.secondary],
+  );
+
+  if (menuOnly) {
+    if (menuOnlyActions.length === 0) {
+      return null;
+    }
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          testID="changes-actions-menu-trigger"
+          style={menuOnlyTriggerStyle}
+          accessibilityRole="button"
+          accessibilityLabel={t("workspace.header.actions.workspaceActions")}
+        >
+          <GitBranch size={16} color={theme.colors.foregroundMuted} />
+          <ChevronDown size={12} color={theme.colors.foregroundExtraMuted} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" testID="changes-primary-cta-menu">
+          {menuOnlyActions.map((action, index) => (
+            <GitActionMenuItem
+              key={action.id}
+              action={action}
+              onSelect={runGitAction}
+              archiveShortcutKeys={archiveShortcutKeys}
+              needsSeparator={action.startsGroup}
+              showSeparator={index > 0}
+              closeOnSelect={
+                action.status === "idle" &&
+                action.id === "pr" &&
+                action.label === action.pendingLabel &&
+                action.label === action.successLabel
+              }
+            />
+          ))}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  }
+
+  if (!gitActions.primary && gitActions.secondary.length === 0 && gitActions.menu.length === 0) {
+    return null;
+  }
+
   return (
     <View style={styles.row}>
       {gitActions.primary ? (
@@ -152,7 +217,7 @@ export function GitActionsSplitButton({ gitActions, hideLabels }: GitActionsSpli
                 accessibilityRole="button"
                 accessibilityLabel={t("workspace.git.actions.moreOptions")}
               >
-                <ChevronDown size={16} color={theme.colors.foregroundMuted} />
+                <ChevronDown size={16} color={theme.colors.foregroundExtraMuted} />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" testID="changes-primary-cta-menu">
                 {gitActions.secondary.map((action, index) => (
@@ -211,18 +276,41 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   splitButton: {
-    height: buttonControlHeight.xs,
+    height: {
+      xs: buttonControlHeight.xs,
+      md: HEADER_CONTROL_HEIGHT,
+    },
     flexDirection: "row",
     alignItems: "stretch",
-    borderRadius: theme.borderRadius.lg,
+    borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
   },
   splitButtonPrimary: {
-    paddingHorizontal: theme.spacing[3],
+    paddingHorizontal: {
+      xs: theme.spacing[3],
+      md: theme.spacing[2],
+    },
     justifyContent: "center",
     position: "relative",
+  },
+  menuOnlyTrigger: {
+    width: {
+      xs: 48,
+      md: 42,
+    },
+    height: {
+      xs: buttonControlHeight.xs,
+      md: HEADER_CONTROL_HEIGHT,
+    },
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: theme.spacing[1],
+    borderRadius: theme.borderRadius.md,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.borderAccent,
   },
   splitButtonPrimaryDisabled: {
     opacity: 0.6,
@@ -237,24 +325,36 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: theme.spacing[2],
+    gap: {
+      xs: theme.spacing[2],
+      md: theme.spacing[1],
+    },
   },
   splitButtonSpinnerOnly: {
     transform: [{ scale: 0.8 }],
   },
   splitButtonCaret: {
-    width: 28,
+    width: {
+      xs: buttonControlHeight.xs,
+      md: HEADER_CONTROL_HEIGHT,
+    },
     alignItems: "center",
     justifyContent: "center",
     borderLeftWidth: theme.borderWidth[1],
     borderLeftColor: theme.colors.borderAccent,
   },
   iconButton: {
-    width: buttonControlHeight.xs,
-    height: buttonControlHeight.xs,
+    width: {
+      xs: buttonControlHeight.xs,
+      md: HEADER_CONTROL_HEIGHT,
+    },
+    height: {
+      xs: buttonControlHeight.xs,
+      md: HEADER_CONTROL_HEIGHT,
+    },
     alignItems: "center",
     justifyContent: "center",
-    borderRadius: theme.borderRadius.lg,
+    borderRadius: theme.borderRadius.md,
   },
   overflowMenuButton: {
     marginRight: -theme.spacing[2],

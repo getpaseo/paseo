@@ -12,6 +12,7 @@ import {
   type PluginCommandCenterItemContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
+  type PluginThemeContribution,
   type PluginWorkspacePanelContribution,
   usePaseo,
   useAgent,
@@ -22,8 +23,30 @@ import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
 import { resolvePluginIcon } from "./icons";
+import { parsePluginThemeContribution } from "./themes";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
+const PANEL_LOCATIONS = ["workspace", "explorer"] as const;
+
+function normalizePanelLocations(
+  panelId: string,
+  locations: PluginWorkspacePanelContribution["locations"],
+): readonly (typeof PANEL_LOCATIONS)[number][] {
+  if (locations === undefined) return ["workspace"];
+  if (!Array.isArray(locations) || locations.length === 0) {
+    throw new Error(`Workspace panel ${panelId} must support at least one location`);
+  }
+  const normalized = locations.map((location) => {
+    if (!PANEL_LOCATIONS.includes(location as never)) {
+      throw new Error(`Workspace panel ${panelId} has invalid location: ${String(location)}`);
+    }
+    return location;
+  });
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error(`Workspace panel ${panelId} has duplicate locations`);
+  }
+  return normalized;
+}
 
 function requireId(value: string, label: string): string {
   const id = value.trim();
@@ -38,12 +61,14 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     workspacePanels: [],
     commandCenterItems: [],
     attachmentSources: [],
+    themes: [],
   };
   const surfaceIds = new Set<string>();
   const sidebarItemIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
   const attachmentSourceIds = new Set<string>();
+  const themeIds = new Set<string>();
   const pluginContext = createPluginContext({
     addSurface(surfaceId: string, Component: ComponentType<PluginSurfaceProps>) {
       const normalizedId = requireId(surfaceId, "surface id");
@@ -84,8 +109,15 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         throw new Error(`Workspace panel ${normalizedId} is not a component`);
       }
       resolvePluginIcon(icon);
+      const locations = normalizePanelLocations(normalizedId, contribution.locations);
       workspacePanelIds.add(normalizedId);
-      collector.workspacePanels.push({ ...contribution, id: normalizedId, title, icon });
+      collector.workspacePanels.push({
+        ...contribution,
+        id: normalizedId,
+        title,
+        icon,
+        locations,
+      });
     },
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution) {
       const normalizedId = requireId(contribution.id, "Command Center item id");
@@ -143,6 +175,13 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         searchPlaceholder,
         search: { ...contribution.search, name: method },
       });
+    },
+    addTheme(contribution: PluginThemeContribution) {
+      const normalizedId = requireId(contribution.id, "theme id");
+      if (themeIds.has(normalizedId)) throw new Error(`Duplicate theme: ${normalizedId}`);
+      const theme = parsePluginThemeContribution({ ...contribution, id: normalizedId });
+      themeIds.add(normalizedId);
+      collector.themes.push(theme);
     },
   });
   const runtimeRequire = (name: string): unknown => {
@@ -202,8 +241,9 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     cleanup,
     surfaces: collector.surfaces,
     sidebarItems: collector.sidebarItems,
-    workspacePanels: collector.workspacePanels,
+    workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
     attachmentSources: collector.attachmentSources,
+    themes: collector.themes,
   };
 }

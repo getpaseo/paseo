@@ -12,6 +12,12 @@ export function resolveComposerPillClearance(isCompact: boolean): number {
 }
 
 export function resolveComposerTrackTailClearance(isCompact: boolean): number {
+  const composerClearance = resolveComposerPillClearance(isCompact);
+  const transcriptClearance = isCompact ? SPACING[6] : 20;
+  return transcriptClearance + COMPOSER_PILL_MIN_HEIGHT + composerClearance;
+}
+
+export function resolveComposerTrackControlClearance(isCompact: boolean): number {
   const clearance = resolveComposerPillClearance(isCompact);
   return clearance + COMPOSER_PILL_MIN_HEIGHT + clearance;
 }

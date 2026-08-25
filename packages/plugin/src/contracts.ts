@@ -63,10 +63,17 @@ export interface PluginAgentSnapshot {
   readonly labels: Readonly<Record<string, string>>;
 }
 
+export type PluginPanelLocation = "workspace" | "explorer";
+
+export interface PluginOpenPanelOptions {
+  location?: PluginPanelLocation;
+}
+
 interface PluginWorkspacePanelBase {
   id: string;
   title: string;
   icon: string;
+  locations?: readonly PluginPanelLocation[];
 }
 
 export interface PluginWorkspacePanelProps extends PluginHostProps {
@@ -102,6 +109,24 @@ export interface PluginSidebarContribution {
   surface: string;
 }
 
+export interface PluginThemeColors {
+  background: string;
+  foreground: string;
+  raised: string;
+  control: string;
+  border: string;
+  accent?: string;
+  mutedForeground: string;
+  ring: string;
+}
+
+export interface PluginThemeContribution {
+  id: string;
+  name: string;
+  appearance: "light" | "dark";
+  colors: PluginThemeColors;
+}
+
 export interface PluginAttachmentSourceContribution {
   id: string;
   title: string;
@@ -127,14 +152,14 @@ export interface PluginGlobalCommandContext extends PluginCommandCapabilities {
 export interface PluginWorkspaceCommandContext extends PluginCommandCapabilities {
   context: "workspace";
   workspace: PluginWorkspaceSnapshot;
-  openPanel(id: string): void;
+  openPanel(id: string, options?: PluginOpenPanelOptions): void;
 }
 
 export interface PluginAgentCommandContext extends PluginCommandCapabilities {
   context: "agent";
   workspace: PluginWorkspaceSnapshot;
   agent: PluginAgentSnapshot;
-  openPanel(id: string): void;
+  openPanel(id: string, options?: PluginOpenPanelOptions): void;
 }
 
 interface PluginCommandCenterItemBase {
@@ -175,6 +200,7 @@ export interface PluginContext {
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
+  addTheme(contribution: PluginThemeContribution): void;
 }
 
 export type PluginCleanup = () => void | Promise<void>;

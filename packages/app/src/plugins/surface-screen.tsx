@@ -17,7 +17,7 @@ import { resolvePluginIcon } from "./icons";
 import { toPluginTheme } from "./theme";
 import { useInstalledPlugin, usePluginInstallations } from "./registry";
 import { buildPluginSurfaceRoute } from "./routes";
-import { rememberPluginContributionHost } from "./sidebar-groups";
+import { rememberPluginContributionHost } from "./contribution-host";
 import { SurfaceErrorBoundary } from "./surface-error-boundary";
 import { createPluginSurfaceRuntime } from "./surface-runtime";
 import { PluginRuntimeBoundary } from "./runtime-boundary";

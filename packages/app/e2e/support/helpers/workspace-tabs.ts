@@ -13,12 +13,52 @@ export async function getWorkspaceTabTestIds(page: Page): Promise<string[]> {
   return ids;
 }
 
+function setupTabTestId(workspaceId: string): string {
+  return `workspace-tab-setup_${workspaceId}`;
+}
+
+async function waitForSetupToReachWorkspace(page: Page): Promise<void> {
+  const actionsButton = page.getByTestId("workspace-header-menu-trigger");
+  await expect(actionsButton).toBeVisible({ timeout: 30_000 });
+  await actionsButton.click();
+  await expect(page.getByTestId("workspace-header-show-setup")).toBeVisible({ timeout: 30_000 });
+  await page.keyboard.press("Escape");
+}
+
+export async function expectSetupTabNotSeeded(page: Page, workspaceId: string): Promise<void> {
+  await waitForSetupToReachWorkspace(page);
+  const tab = page.getByTestId(setupTabTestId(workspaceId));
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await expect(tab).toHaveCount(0);
+    await page.waitForTimeout(100);
+  }
+}
+
+export async function expectFailedSetupTabSeededInMainPane(
+  page: Page,
+  workspaceId: string,
+): Promise<void> {
+  const tabId = setupTabTestId(workspaceId);
+  await expect(page.getByTestId(tabId).filter({ visible: true }).first()).toBeVisible({
+    timeout: 30_000,
+  });
+  const explorer = await ensureExplorerSidebar(page);
+  await expect(explorer.getByTestId(tabId)).toHaveCount(0);
+}
+
+export async function closeSetupTab(page: Page, workspaceId: string): Promise<void> {
+  const tabId = setupTabTestId(workspaceId);
+  await page.getByTestId(tabId).filter({ visible: true }).first().click({ button: "right" });
+  await page.getByTestId(`workspace-tab-context-setup_${workspaceId}-close`).click();
+  await expect(page.getByTestId(tabId)).toHaveCount(0);
+}
+
 function visibleTestId(page: Page, testId: string) {
   return page.getByTestId(testId).filter({ visible: true });
 }
 
-function sidePanel(page: Page) {
-  return visibleTestId(page, "workspace-side-panel").first();
+function explorerSidebar(page: Page) {
+  return visibleTestId(page, "workspace-explorer-sidebar").first();
 }
 
 async function selectWorkspaceTab(tab: Locator): Promise<void> {
@@ -30,50 +70,54 @@ async function selectWorkspaceTab(tab: Locator): Promise<void> {
   await expect(tab).toHaveAttribute("aria-selected", "true");
 }
 
-/** Reveal the Side panel. It opens empty; the caller decides what goes in it. */
-export async function ensureSidePanel(page: Page): Promise<Locator> {
+/** Reveal the Explorer sidebar without changing its selected view. */
+export async function ensureExplorerSidebar(page: Page): Promise<Locator> {
   const toggle = page.getByTestId("workspace-explorer-toggle").first();
   await expect(toggle).toBeVisible({ timeout: 30_000 });
-  const panel = sidePanel(page);
-  if ((await panel.count()) === 0) {
+  const explorer = explorerSidebar(page);
+  if ((await explorer.count()) === 0) {
     await toggle.click();
   }
-  await expect(panel).toBeVisible({ timeout: 30_000 });
-  return panel;
+  await expect(explorer).toBeVisible({ timeout: 30_000 });
+  return explorer;
 }
 
-/**
- * Reveals the Side panel and brings one of its views up in it. Goes through the
- * pane's own `+` menu, which is there whether the pane is empty or already loaded.
- */
-async function openSidePanelView(
+/** Reveals the Explorer sidebar and selects one of its fixed navigation views. */
+async function openExplorerView(
   page: Page,
-  view: { tabTestId: string; menuTestId: string; contentTestId: string; timeout?: number },
+  view: { tabTestId: string; contentTestId: string; timeout?: number },
 ): Promise<void> {
-  const panel = await ensureSidePanel(page);
-  const tab = panel.getByTestId(view.tabTestId);
-  if ((await tab.count()) === 0) {
-    await panel.getByTestId("workspace-new-tab-menu-trigger").click();
-    await visibleTestId(page, view.menuTestId).first().click();
-  }
-  await selectWorkspaceTab(tab);
+  const explorer = await ensureExplorerSidebar(page);
+  const tab = explorer.getByTestId(view.tabTestId);
+  await tab.click();
   await expect(visibleTestId(page, view.contentTestId).first()).toBeVisible({
     timeout: view.timeout ?? 30_000,
   });
 }
 
+export async function openChangesTreePanel(page: Page): Promise<void> {
+  await openExplorerView(page, {
+    tabTestId: "explorer-sidebar-tab-changes_tree",
+    contentTestId: "changes-tree-panel",
+  });
+}
+
 export async function openChangesPanel(page: Page): Promise<void> {
-  await openSidePanelView(page, {
-    tabTestId: "workspace-tab-working_diff",
-    menuTestId: "workspace-new-tab-menu-changes",
-    contentTestId: "working-diff-panel",
+  await openChangesTreePanel(page);
+  const changedFile = page
+    .locator('[data-testid^="diff-tree-file-"][data-testid$="-toggle"]')
+    .filter({ visible: true })
+    .first();
+  await expect(changedFile).toBeVisible({ timeout: 30_000 });
+  await changedFile.click();
+  await expect(visibleTestId(page, "working-diff-panel").first()).toBeVisible({
+    timeout: 30_000,
   });
 }
 
 export async function openFilesPanel(page: Page): Promise<void> {
-  await openSidePanelView(page, {
-    tabTestId: "workspace-tab-files",
-    menuTestId: "workspace-new-tab-menu-files",
+  await openExplorerView(page, {
+    tabTestId: "explorer-sidebar-tab-files",
     contentTestId: "file-explorer-tree-scroll",
   });
 }
@@ -85,26 +129,24 @@ export async function openPullRequestPanel(page: Page): Promise<void> {
     await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
     return;
   }
-  await openSidePanelView(page, {
-    tabTestId: "workspace-tab-pull_request",
-    menuTestId: "workspace-new-tab-menu-pull-request",
-    contentTestId: "pr-pane",
-    timeout: 15_000,
-  });
+  const trigger = visibleTestId(page, "workspace-new-tab-button").first();
+  await trigger.click();
+  await visibleTestId(page, "workspace-new-tab-menu-pull-request").first().click();
+  await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
 }
 
 export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {
   await expect(visibleTestId(page, "workspace-tabs-row").first()).toBeVisible({
     timeout: 30_000,
   });
-  await expect(visibleTestId(page, "workspace-new-tab-menu-trigger").first()).toBeVisible({
+  await expect(visibleTestId(page, "workspace-new-tab-button").first()).toBeVisible({
     timeout: 30_000,
   });
 }
 
-/** Open the `+` menu in the tab row and pick "New agent". */
+/** Open the pane-local `+` menu and pick Agent. */
 export async function createAgentTabFromMenu(page: Page): Promise<void> {
-  const trigger = visibleTestId(page, "workspace-new-tab-menu-trigger").first();
+  const trigger = visibleTestId(page, "workspace-new-tab-button").first();
   await expect(trigger).toBeVisible({ timeout: 10_000 });
   await trigger.click();
   const item = visibleTestId(page, "workspace-new-tab-menu-agent").first();

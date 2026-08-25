@@ -39,6 +39,12 @@ async function assertHeldFileTransition(
   finalText: string,
   gate: Awaited<ReturnType<typeof delayFileReadResponse>>,
 ) {
+  await page.evaluate(() => {
+    const originalChip = document.querySelector('[data-testid="workspace-tab-file_src/a.ts"]');
+    (
+      window as typeof window & { __fileTransitionOriginalChip?: Element | null }
+    ).__fileTransitionOriginalChip = originalChip;
+  });
   await page.evaluate((tabTestId) => {
     const timeline: Array<{ chip: boolean; loading: boolean; unavailable: boolean }> = [];
     const sample = () => {
@@ -68,6 +74,19 @@ async function assertHeldFileTransition(
   await expect(page.getByTestId("file-preview-loading")).toBeVisible();
   await expect(page.getByTestId("file-preview-unsupported")).toHaveCount(0);
   await expect(page.getByText("export const sourceA = true;")).toHaveCount(0);
+
+  const chipIdentity = await page.evaluate((tabTestId) => {
+    const windowWithOriginal = window as typeof window & {
+      __fileTransitionOriginalChip?: Element | null;
+    };
+    const originalChip = windowWithOriginal.__fileTransitionOriginalChip ?? null;
+    const currentChip = document.querySelector(`[data-testid="${tabTestId}"]`);
+    return {
+      originalStillConnected: originalChip?.isConnected ?? false,
+      sameNode: originalChip === currentChip,
+    };
+  }, `workspace-tab-file_${targetPath}`);
+  expect(chipIdentity).toEqual({ originalStillConnected: true, sameNode: true });
 
   const heldTimeline = await page.evaluate(
     () =>
