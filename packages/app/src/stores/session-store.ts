@@ -27,6 +27,7 @@ import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 import type {
   AgentPermissionRequest,
   AgentFeature,
+  AgentGoal,
   AgentProvider,
   AgentMode,
   AgentCapabilityFlags,
@@ -87,6 +88,7 @@ export interface Agent {
   pendingPermissions: AgentPermissionRequest[];
   persistence: AgentPersistenceHandle | null;
   runtimeInfo?: AgentRuntimeInfo;
+  goal?: AgentGoal | null;
   lastUsage?: AgentUsage;
   lastError?: string | null;
   title: string | null;

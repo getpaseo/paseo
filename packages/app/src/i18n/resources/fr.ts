@@ -133,6 +133,8 @@ export const fr: TranslationResources = {
       dropImagesHere: "Déposez des images ici",
       dropFilesHere: "Drop files here",
       editQueuedMessage: "Modifier le message en file d'attente",
+      steerQueuedMessage: "Orienter",
+      removeQueuedMessage: "Supprimer le message en file d'attente",
       sendQueuedMessageNow: "Envoyer le message en file d'attente maintenant",
       openImage: "Ouvrir la pièce jointe de l'image",
       removeImage: "Supprimer l'image jointe",
@@ -1754,6 +1756,17 @@ export const fr: TranslationResources = {
     archiveTooltip: "Sous-agent d'archivage",
     archiveFinishedAction: "Archiver les sous-agents terminés",
     archiveFinishedRetry: "Réessayer ({{failed}}/{{total}})",
+  },
+  goals: {
+    status: {
+      active: "Objectif en cours",
+      paused: "En pause",
+      blocked: "Bloqué",
+      usageLimited: "Limite d’utilisation atteinte",
+      budgetLimited: "Limite de budget atteinte",
+      complete: "Terminé",
+    },
+    actions: { pause: "Mettre en pause", resume: "Reprendre", clear: "Effacer" },
   },
   panels: {
     draft: {

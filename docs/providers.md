@@ -55,6 +55,15 @@ Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.
 
 Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
 
+Provider-owned goals are projected through the optional `AgentSession.getGoal()` method and
+`goal_changed` stream event. Codex restores the durable value with `thread/goal/get` and maps
+`thread/goal/updated` and `thread/goal/cleared` notifications. This projection is independent of how
+the goal was created, including `/goal` commands and goals Codex creates while handling a normal
+natural-language turn. Agent snapshots expose the current goal as an optional field so older clients
+and daemons remain wire-compatible; the provider remains the source of truth after reconnect or
+resume. A failed `getGoal()` refresh preserves the last provider projection because only a successful
+null lookup or `goal_changed(null)` is an authoritative clear.
+
 Claude first-party model metadata lives in `packages/server/src/server/agent/providers/claude/model-manifest.ts`. When adding or updating a Claude model, update that manifest only; the model picker thinking options and Claude-specific feature gates are derived from the manifest. Do not add model-specific Claude capability lists in feature code.
 
 Paseo tools are not implemented as MCP tools internally. They live in a shared tool catalog under `packages/server/src/server/agent/tools/`; MCP is only the fallback adapter. A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`.

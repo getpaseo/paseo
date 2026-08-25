@@ -5,6 +5,7 @@ import {
   type AgentClient,
   type AgentCreateSessionOptions,
   type AgentFeature,
+  type AgentGoal,
   type AgentLaunchContext,
   type AgentResumeSessionOptions,
   type AgentMode,
@@ -2087,6 +2088,25 @@ const ThreadStartedNotificationSchema = z
   })
   .passthrough();
 
+const CodexGoalSchema = z.object({
+  objective: z.string(),
+  status: z.enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]),
+  tokenBudget: z.number().nullable(),
+  tokensUsed: z.number(),
+  timeUsedSeconds: z.number(),
+});
+
+const ThreadGoalUpdatedNotificationSchema = z
+  .object({
+    threadId: z.string(),
+    goal: CodexGoalSchema,
+  })
+  .passthrough();
+
+const ThreadGoalClearedNotificationSchema = z.object({ threadId: z.string() }).passthrough();
+
+const ThreadGoalGetResponseSchema = z.object({ goal: CodexGoalSchema.nullable() }).passthrough();
+
 const TurnStartedNotificationSchema = z
   .object({
     threadId: z.string().optional(),
@@ -2372,6 +2392,8 @@ const CodexEventThreadRolledBackNotificationSchema = z
 
 type ParsedCodexNotification =
   | { kind: "thread_started"; threadId: string }
+  | { kind: "goal_updated"; threadId: string; goal: AgentGoal }
+  | { kind: "goal_cleared"; threadId: string }
   | { kind: "turn_started"; turnId: string; threadId: string | null }
   | {
       kind: "turn_completed";
@@ -2500,6 +2522,43 @@ const CodexNotificationSchema = z.union([
       }),
     ),
   z.object({ method: z.literal("thread/started"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({
+      method: z.literal("thread/goal/updated"),
+      params: ThreadGoalUpdatedNotificationSchema,
+    })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "goal_updated",
+        threadId: params.threadId,
+        goal: params.goal,
+      }),
+    ),
+  z.object({ method: z.literal("thread/goal/updated"), params: z.unknown() }).transform(
+    ({ method, params }): ParsedCodexNotification => ({
+      kind: "invalid_payload",
+      method,
+      params,
+    }),
+  ),
+  z
+    .object({
+      method: z.literal("thread/goal/cleared"),
+      params: ThreadGoalClearedNotificationSchema,
+    })
+    .transform(
+      ({ params }): ParsedCodexNotification => ({
+        kind: "goal_cleared",
+        threadId: params.threadId,
+      }),
+    ),
+  z.object({ method: z.literal("thread/goal/cleared"), params: z.unknown() }).transform(
     ({ method, params }): ParsedCodexNotification => ({
       kind: "invalid_payload",
       method,
@@ -4320,6 +4379,23 @@ export class CodexAppServerAgentSession implements AgentSession {
     return { ...info };
   }
 
+  async getGoal(): Promise<AgentGoal | null> {
+    if (!this.goalsEnabled) return null;
+    await this.connect();
+    if (this.currentThreadId) {
+      await this.ensureThreadLoaded();
+    } else {
+      await this.ensureThread();
+    }
+    if (!this.client || !this.currentThreadId) {
+      throw new Error("Codex thread is not available");
+    }
+    const response = await this.client.request("thread/goal/get", {
+      threadId: this.currentThreadId,
+    });
+    return ThreadGoalGetResponseSchema.parse(response).goal;
+  }
+
   async getAvailableModes(): Promise<AgentMode[]> {
     if (this.autoReviewEnabled) {
       return CODEX_MODES;
@@ -5148,6 +5224,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     switch (parsed.kind) {
+      case "goal_updated":
+        this.emitEvent({ type: "goal_changed", provider: CODEX_PROVIDER, goal: parsed.goal });
+        return;
+      case "goal_cleared":
+        this.emitEvent({ type: "goal_changed", provider: CODEX_PROVIDER, goal: null });
+        return;
       case "thread_started":
         this.handleThreadStartedNotification(parsed);
         return;

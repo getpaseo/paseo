@@ -30,6 +30,7 @@ import type {
   AgentClient,
   AgentCreateSessionOptions,
   AgentFeature,
+  AgentGoal,
   AgentLaunchContext,
   AgentPromptInput,
   AgentProvider,
@@ -4251,6 +4252,17 @@ test("session config drift events update state through the stream channel", asyn
     provider: "codex",
     thinkingOptionId: "high",
   });
+  capturedSession?.pushEvent({
+    type: "goal_changed",
+    provider: "codex",
+    goal: {
+      objective: "Ship persistent goal controls",
+      status: "blocked",
+      tokenBudget: null,
+      tokensUsed: 12,
+      timeUsedSeconds: 5,
+    },
+  });
   await manager.flush();
 
   const agent = manager.getAgent(snapshot.id);
@@ -4265,7 +4277,65 @@ test("session config drift events update state through the stream channel", asyn
     modeId: "build",
     thinkingOptionId: "high",
   });
+  expect(agent?.goal).toMatchObject({
+    objective: "Ship persistent goal controls",
+    status: "blocked",
+  });
+  expect(agent ? toAgentPayload(agent).goal : null).toMatchObject({ status: "blocked" });
   expect(streams.map((event) => event.type)).toEqual([]);
+});
+
+test("goal refresh failure preserves the last authoritative projection", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-goal-refresh-failure-"));
+  class GoalRefreshSession extends TestAgentSession {
+    failGoalRefresh = false;
+    goal: AgentGoal | null = {
+      objective: "Keep this projection authoritative",
+      status: "active",
+      tokenBudget: null,
+      tokensUsed: 4,
+      timeUsedSeconds: 2,
+    };
+
+    async getGoal() {
+      if (this.failGoalRefresh) {
+        throw new Error("goal lookup unavailable");
+      }
+      return this.goal;
+    }
+  }
+  let session: GoalRefreshSession | null = null;
+  class GoalRefreshClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      session = new GoalRefreshSession(config);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new GoalRefreshClient() },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000134",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  expect(manager.getAgent(snapshot.id)?.goal?.status).toBe("active");
+
+  if (!session) throw new Error("Expected goal refresh session");
+  session.failGoalRefresh = true;
+  await manager.respondToPermission(snapshot.id, "refresh-goal", { behavior: "allow" });
+
+  expect(manager.getAgent(snapshot.id)?.goal).toMatchObject({
+    objective: "Keep this projection authoritative",
+    status: "active",
+  });
+
+  session.failGoalRefresh = false;
+  session.goal = null;
+  await manager.respondToPermission(snapshot.id, "refresh-goal", { behavior: "allow" });
+
+  expect(manager.getAgent(snapshot.id)?.goal).toBeNull();
 });
 
 test("setLabels merges and persists labels", async () => {

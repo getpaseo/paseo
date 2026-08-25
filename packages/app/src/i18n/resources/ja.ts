@@ -131,6 +131,8 @@ export const ja: TranslationResources = {
       dropImagesHere: "ここに画像をドロップ",
       dropFilesHere: "ここにファイルをドロップ",
       editQueuedMessage: "キューに入れたメッセージを編集",
+      steerQueuedMessage: "指示",
+      removeQueuedMessage: "キューからメッセージを削除",
       sendQueuedMessageNow: "キューに入れたメッセージを今すぐ送信",
       openImage: "画像添付ファイルを開く",
       removeImage: "画像添付ファイルを削除",
@@ -1721,6 +1723,17 @@ export const ja: TranslationResources = {
     archiveTooltip: "サブエージェントをアーカイブ",
     archiveFinishedAction: "完了したサブエージェントをアーカイブ",
     archiveFinishedRetry: "再試行 ({{failed}}/{{total}})",
+  },
+  goals: {
+    status: {
+      active: "目標を追跡中",
+      paused: "一時停止中",
+      blocked: "ブロック中",
+      usageLimited: "使用量上限",
+      budgetLimited: "予算上限",
+      complete: "完了",
+    },
+    actions: { pause: "一時停止", resume: "再開", clear: "クリア" },
   },
   panels: {
     draft: {

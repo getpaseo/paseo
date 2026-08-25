@@ -131,6 +131,8 @@ export const ko: TranslationResources = {
       dropImagesHere: "여기에 이미지를 끌어다 놓으세요",
       dropFilesHere: "여기에 파일을 끌어다 놓으세요",
       editQueuedMessage: "대기 중인 메시지 편집",
+      steerQueuedMessage: "지시",
+      removeQueuedMessage: "대기열 메시지 제거",
       sendQueuedMessageNow: "대기 중인 메시지 지금 보내기",
       openImage: "이미지 첨부 열기",
       removeImage: "이미지 첨부 제거",
@@ -1714,6 +1716,17 @@ export const ko: TranslationResources = {
     archiveTooltip: "서브에이전트 보관",
     archiveFinishedAction: "완료된 하위 에이전트 보관",
     archiveFinishedRetry: "다시 시도 ({{failed}}/{{total}})",
+  },
+  goals: {
+    status: {
+      active: "목표 수행 중",
+      paused: "일시 중지됨",
+      blocked: "차단됨",
+      usageLimited: "사용량 제한",
+      budgetLimited: "예산 제한",
+      complete: "완료",
+    },
+    actions: { pause: "일시 중지", resume: "재개", clear: "지우기" },
   },
   panels: {
     draft: {

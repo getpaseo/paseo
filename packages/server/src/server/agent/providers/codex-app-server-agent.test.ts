@@ -4553,6 +4553,52 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("restores and emits goal state created during a normal Codex turn", async () => {
+    const session = createSession({}, { goalsEnabled: true });
+    const goal = {
+      objective: "Ship persistent goal controls",
+      status: "active" as const,
+      tokenBudget: null,
+      tokensUsed: 42,
+      timeUsedSeconds: 8,
+    };
+    session.client = {
+      request: vi.fn(async (method: string) => {
+        if (method === "thread/loaded/list") return { data: ["test-thread"] };
+        if (method === "thread/goal/get") return { goal };
+        return {};
+      }),
+    };
+
+    await expect(session.getGoal?.()).resolves.toEqual(goal);
+    expect(
+      session.tryHandleOutOfBand?.(
+        "Set up a goal, keep working on it, test end to end, and commit as you go",
+      ),
+    ).toBeNull();
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    asInternals(session).handleNotification("thread/goal/updated", {
+      threadId: "test-thread",
+      turnId: null,
+      goal,
+    });
+    asInternals(session).handleNotification("thread/goal/cleared", {
+      threadId: "test-thread",
+    });
+
+    expect(events).toEqual([
+      {
+        type: "goal_changed",
+        provider: "codex",
+        goal,
+        turnId: "test-turn",
+      },
+      { type: "goal_changed", provider: "codex", goal: null, turnId: "test-turn" },
+    ]);
+  });
+
   test("lists /compact and sends Codex compaction out of band", async () => {
     const requests: Array<{ method: string; params: unknown }> = [];
     const session = createSession();

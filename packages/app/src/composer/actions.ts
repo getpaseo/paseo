@@ -274,6 +274,24 @@ export function editQueuedComposerMessage(
   };
 }
 
+export function removeQueuedComposerMessage(input: {
+  agentId: string;
+  messageId: string;
+  queue: QueueWriter;
+}): QueuedComposerMessage | null {
+  const item = input.queue.read(input.agentId).find((queued) => queued.id === input.messageId);
+  if (!item) return null;
+  input.queue.write((prev) => {
+    const next = new Map(prev);
+    next.set(
+      input.agentId,
+      (prev.get(input.agentId) ?? []).filter((queued) => queued.id !== input.messageId),
+    );
+    return next;
+  });
+  return item;
+}
+
 export interface SendQueuedComposerMessageNowInput {
   agentId: string;
   messageId: string;

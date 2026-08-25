@@ -131,6 +131,8 @@ export const ru: TranslationResources = {
       dropImagesHere: "Скиньте изображения сюда",
       dropFilesHere: "Переместите файлы сюда",
       editQueuedMessage: "Изменить сообщение из очереди",
+      steerQueuedMessage: "Направить",
+      removeQueuedMessage: "Удалить сообщение из очереди",
       sendQueuedMessageNow: "Отправить сообщение из очереди сейчас",
       openImage: "Открыть прикрепленное изображение",
       removeImage: "Удалить прикрепленное изображение",
@@ -1734,6 +1736,17 @@ export const ru: TranslationResources = {
     archiveTooltip: "Архивировать субагента",
     archiveFinishedAction: "Архивировать завершенные субагенты",
     archiveFinishedRetry: "Повторить ({{failed}}/{{total}})",
+  },
+  goals: {
+    status: {
+      active: "Выполнение цели",
+      paused: "Приостановлена",
+      blocked: "Заблокирована",
+      usageLimited: "Лимит использования",
+      budgetLimited: "Лимит бюджета",
+      complete: "Завершена",
+    },
+    actions: { pause: "Пауза", resume: "Продолжить", clear: "Очистить" },
   },
   panels: {
     draft: {

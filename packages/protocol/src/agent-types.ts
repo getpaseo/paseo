@@ -347,6 +347,22 @@ export interface AgentTaskItem {
   activeForm?: string;
 }
 
+export type AgentGoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
+
+export interface AgentGoal {
+  objective: string;
+  status: AgentGoalStatus;
+  tokenBudget: number | null;
+  tokensUsed: number;
+  timeUsedSeconds: number;
+}
+
 export type AgentTimelineItem =
   | { type: "user_message"; text: string; messageId?: string; clientMessageId?: string }
   | { type: "assistant_message"; text: string; messageId?: string }
@@ -373,6 +389,7 @@ export type AgentStreamEvent =
       provider: AgentProvider;
       thinkingOptionId: string | null;
     }
+  | { type: "goal_changed"; provider: AgentProvider; goal: AgentGoal | null }
   | {
       type: "turn_failed";
       provider: AgentProvider;

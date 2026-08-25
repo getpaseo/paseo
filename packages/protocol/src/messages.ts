@@ -721,6 +721,14 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
   }),
 ]);
 
+export const AgentGoalPayloadSchema = z.object({
+  objective: z.string(),
+  status: z.enum(["active", "paused", "blocked", "usageLimited", "budgetLimited", "complete"]),
+  tokenBudget: z.number().nullable(),
+  tokensUsed: z.number(),
+  timeUsedSeconds: z.number(),
+});
+
 export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("thread_started"),
@@ -751,6 +759,11 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     provider: AgentProviderSchema,
     turnId: z.string().optional(),
     reason: z.string(),
+  }),
+  z.object({
+    type: z.literal("goal_changed"),
+    provider: AgentProviderSchema,
+    goal: AgentGoalPayloadSchema.nullable(),
   }),
   z.object({
     type: z.literal("timeline"),
@@ -827,6 +840,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   lastUserMessageAt: z.string().nullable(),
   status: AgentStatusSchema,
   activeTurn: AgentActiveTurnPayloadSchema.nullable().optional(),
+  goal: AgentGoalPayloadSchema.nullable().optional(),
   capabilities: AgentCapabilityFlagsSchema,
   currentModeId: z.string().nullable(),
   availableModes: z.array(AgentModeSchema),

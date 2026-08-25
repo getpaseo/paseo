@@ -1,4 +1,5 @@
 import type {
+  AgentGoal,
   AgentProviderNotice,
   AgentTaskItem,
   ProviderOptions,
@@ -7,7 +8,12 @@ import type {
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 import type { PaseoToolCatalog } from "./tools/types.js";
 
-export type { AgentProviderNotice, AgentTaskItem };
+export type {
+  AgentGoal,
+  AgentGoalStatus,
+  AgentProviderNotice,
+  AgentTaskItem,
+} from "@getpaseo/protocol/agent-types";
 
 export type AgentProvider = string;
 
@@ -416,6 +422,7 @@ export type AgentStreamEvent =
       provider: AgentProvider;
       thinkingOptionId: string | null;
     }
+  | { type: "goal_changed"; provider: AgentProvider; goal: AgentGoal | null }
   | {
       type: "turn_failed";
       provider: AgentProvider;
@@ -646,6 +653,7 @@ export interface AgentSession {
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;
+  getGoal?(): Promise<AgentGoal | null>;
   setMode(modeId: string): Promise<void | AgentProviderNotice>;
   getPendingPermissions(): AgentPermissionRequest[];
   respondToPermission(

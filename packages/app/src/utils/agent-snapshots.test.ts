@@ -18,6 +18,7 @@ function createSnapshot(
     lastUserMessageAt: input.lastUserMessageAt ?? null,
     status: input.status ?? "idle",
     activeTurn: input.activeTurn,
+    goal: input.goal,
     capabilities: input.capabilities ?? {
       supportsStreaming: true,
       supportsSessionPersistence: true,
@@ -78,6 +79,19 @@ describe("normalizeAgentSnapshot", () => {
 
     expect(agent.parentAgentId).toBe("parent-1");
     expect(agent.labels).toEqual(labels);
+  });
+
+  it("preserves goal state across snapshot normalization", () => {
+    const goal = {
+      objective: "Ship persistent goal controls",
+      status: "active" as const,
+      tokenBudget: null,
+      tokensUsed: 7,
+      timeUsedSeconds: 3,
+    };
+
+    expect(normalizeAgentSnapshot(createSnapshot({ goal }), "server-1").goal).toEqual(goal);
+    expect(normalizeAgentSnapshot(createSnapshot(), "server-1").goal).toBeNull();
   });
 
   it("trims whitespace around the parent label", () => {

@@ -127,6 +127,7 @@ export function toAgentPayload(
           startedAt: agent.activeTurnStartedAt?.toISOString() ?? null,
         }
       : null,
+    goal: agent.goal ?? null,
     capabilities: cloneCapabilities(agent.capabilities),
     currentModeId: agent.currentModeId,
     availableModes: cloneAvailableModes(agent.availableModes),

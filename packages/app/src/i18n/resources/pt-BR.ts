@@ -131,6 +131,8 @@ export const ptBR: TranslationResources = {
       dropImagesHere: "Solte imagens aqui",
       dropFilesHere: "Solte arquivos aqui",
       editQueuedMessage: "Editar mensagem na fila",
+      steerQueuedMessage: "Direcionar",
+      removeQueuedMessage: "Remover mensagem da fila",
       sendQueuedMessageNow: "Enviar mensagem da fila agora",
       openImage: "Abrir anexo de imagem",
       removeImage: "Remover anexo de imagem",
@@ -1736,6 +1738,17 @@ export const ptBR: TranslationResources = {
     archiveTooltip: "Arquivar subagente",
     archiveFinishedAction: "Arquivar subagentes concluídos",
     archiveFinishedRetry: "Tentar novamente ({{failed}}/{{total}})",
+  },
+  goals: {
+    status: {
+      active: "Perseguindo objetivo",
+      paused: "Pausada",
+      blocked: "Bloqueada",
+      usageLimited: "Limite de uso atingido",
+      budgetLimited: "Limite de orçamento atingido",
+      complete: "Concluída",
+    },
+    actions: { pause: "Pausar", resume: "Retomar", clear: "Limpar" },
   },
   panels: {
     draft: {

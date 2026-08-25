@@ -21,6 +21,7 @@ import {
   cancelComposerAgent,
   dispatchComposerAgentMessage,
   editQueuedComposerMessage,
+  removeQueuedComposerMessage,
   findGithubItemByOption,
   isAttachmentSelectedForGithubItem,
   openComposerAttachment,
@@ -786,6 +787,40 @@ describe("editQueuedComposerMessage", () => {
       attachments: [{ kind: "image", metadata: image }],
     });
     expect(queue.state.get("agent")).toEqual([]);
+  });
+});
+
+describe("removeQueuedComposerMessage", () => {
+  it("removes and returns the matching queued message", () => {
+    const queue = createFakeQueue(
+      new Map([
+        [
+          "agent",
+          [
+            { id: "msg-1", text: "remove me", attachments: [] },
+            { id: "msg-2", text: "keep me", attachments: [] },
+          ],
+        ],
+      ]),
+    );
+
+    expect(removeQueuedComposerMessage({ agentId: "agent", messageId: "msg-1", queue })).toEqual({
+      id: "msg-1",
+      text: "remove me",
+      attachments: [],
+    });
+    expect(queue.state.get("agent")?.map((message) => message.id)).toEqual(["msg-2"]);
+  });
+
+  it("leaves the queue untouched when the message is missing", () => {
+    const queue = createFakeQueue(
+      new Map([["agent", [{ id: "msg-1", text: "keep me", attachments: [] }]]]),
+    );
+
+    expect(
+      removeQueuedComposerMessage({ agentId: "agent", messageId: "missing", queue }),
+    ).toBeNull();
+    expect(queue.state.get("agent")).toHaveLength(1);
   });
 });
 
