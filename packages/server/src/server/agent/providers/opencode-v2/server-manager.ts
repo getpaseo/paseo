@@ -136,7 +136,19 @@ export class OpenCodeV2ServerManager implements OpenCodeV2ServerManagerLike {
     this.resolveCommandPrefix =
       options.resolveCommandPrefix ??
       (() => resolveProviderCommandPrefix(this.runtimeSettings?.command, resolveOpenCodeV2Binary));
-    this.resolveHomeDir = options.resolveHomeDir ?? resolveOpenCodeV2HomeDir;
+    this.resolveHomeDir =
+      options.resolveHomeDir ??
+      (() => {
+        // Honor an explicit PASEO_HOME in the provider runtime-settings env so
+        // tests (and users) can point the isolated opencode2 home at a temp
+        // dir instead of the real user's ~/.paseo. Otherwise fall back to the
+        // daemon process env.
+        const env = this.runtimeSettings?.env;
+        if (env && typeof env.PASEO_HOME === "string" && env.PASEO_HOME.trim().length > 0) {
+          return resolveOpenCodeV2HomeDir(env);
+        }
+        return resolveOpenCodeV2HomeDir();
+      });
     this.resolveCredentialSourcePath =
       options.resolveCredentialSourcePath ?? resolveOpenCodeV2CredentialSourcePath;
     this.spawnServerProcess = options.spawnServerProcess ?? spawnProcess;

@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
+import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
 import type {
   ManagedProcessRecord,
   ManagedProcessRecordInput,
@@ -347,6 +348,25 @@ describe("OpenCodeV2ServerManager managed process ledger", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("resolves the isolated home from PASEO_HOME in the runtime settings env", async () => {
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "opencode-v2-runtime-paseo-home-"));
+    const paseoHome = path.join(tempDir, "custom-paseo-home");
+    try {
+      const { manager, runtime } = createTestManager([4099], {
+        runtimeSettings: { env: { PASEO_HOME: paseoHome } },
+      });
+
+      const acquisition = await manager.acquireCurrent();
+
+      expect(runtime.spawnCalls[0]?.options.cwd).toBe(path.join(paseoHome, "opencode2-home"));
+
+      await acquisition.release();
+      await manager.shutdown();
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("OpenCodeV2ServerManager credential seeding", () => {
@@ -556,12 +576,13 @@ function createTestManager(
     autoAnnounce?: boolean;
     opencodeV2HomeDir?: string;
     credentialSourcePath?: string;
+    runtimeSettings?: ProviderRuntimeSettings;
   } = {},
 ): {
   manager: OpenCodeV2ServerManager;
   runtime: FakeOpenCodeV2ServerRuntime;
 } {
-  const { opencodeV2HomeDir, credentialSourcePath } = options;
+  const { opencodeV2HomeDir, credentialSourcePath, runtimeSettings } = options;
   const runtime = new FakeOpenCodeV2ServerRuntime(ports, {
     autoAnnounce: options.autoAnnounce ?? true,
   });
@@ -570,6 +591,7 @@ function createTestManager(
   return {
     manager: new OpenCodeV2ServerManager({
       logger: createTestLogger(),
+      runtimeSettings,
       managedProcesses: runtime.managedProcesses,
       portAllocator: runtime.allocatePort,
       resolveCommandPrefix: runtime.resolveCommandPrefix,

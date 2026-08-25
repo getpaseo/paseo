@@ -9,11 +9,13 @@ import type { ProviderRuntimeSettings } from "../agent/provider-launch-config.js
 import { ClaudeAgentClient } from "../agent/providers/claude/agent.js";
 import { CodexAppServerAgentClient } from "../agent/providers/codex-app-server-agent.js";
 import { OpenCodeAgentClient } from "../agent/providers/opencode-agent.js";
+import { OpenCodeV2AgentClient } from "../agent/providers/opencode-v2-agent.js";
+import { resolveOpenCodeV2CredentialSourcePath } from "../agent/providers/opencode-v2/server-manager.js";
 import { OmpAgentClient } from "../agent/providers/omp/agent.js";
 import { PiRpcAgentClient } from "../agent/providers/pi/agent.js";
 import { isCommandAvailable } from "../../executable-resolution/executable-resolution.js";
 
-export const realProviders = ["claude", "codex", "opencode", "pi", "omp"] as const;
+export const realProviders = ["claude", "codex", "opencode", "opencode-v2", "pi", "omp"] as const;
 export type RealProvider = (typeof realProviders)[number];
 export type RealProviderConfig = Pick<
   AgentSessionConfig,
@@ -27,6 +29,7 @@ const CODEX_AUTH_CONFIG_PATH = join(homedir(), ".codex", "auth.json");
 const CLAUDE_REAL_TEST_MODEL = "haiku";
 const CODEX_REAL_TEST_MODEL = "~openai/gpt-latest";
 const OPENCODE_REAL_TEST_MODEL = "openrouter/google/gemini-2.5-flash-lite";
+const OPENCODE_V2_REAL_TEST_MODEL = "baseten/deepseek-ai/DeepSeek-V4-Flash-0731";
 const PI_OPENROUTER_REAL_TEST_MODEL = "openrouter/google/gemini-2.5-flash-lite";
 const PI_CODEX_REAL_TEST_MODEL = "openai-codex/gpt-5.4";
 const OMP_OPENROUTER_REAL_TEST_MODEL = "openrouter/google/gemini-2.5-flash-lite";
@@ -53,6 +56,12 @@ export function getRealProviderConfig(provider: RealProvider): RealProviderConfi
       return {
         provider,
         model: OPENCODE_REAL_TEST_MODEL,
+        modeId: "build",
+      };
+    case "opencode-v2":
+      return {
+        provider,
+        model: OPENCODE_V2_REAL_TEST_MODEL,
         modeId: "build",
       };
     case "pi":
@@ -91,6 +100,9 @@ export function getRealProviderRuntimeSettings(provider: RealProvider): Provider
       };
     }
     return {};
+  }
+  if (provider === "opencode-v2") {
+    return getOpenCodeV2RealProviderRuntimeSettings();
   }
   const apiKey = getOpenRouterApiKey();
   switch (provider) {
@@ -147,6 +159,8 @@ export function createRealProviderClient(provider: RealProvider, logger: Logger)
       });
     case "opencode":
       return new OpenCodeAgentClient(logger, runtimeSettings);
+    case "opencode-v2":
+      return new OpenCodeV2AgentClient(logger, runtimeSettings);
     case "pi":
       return new PiRpcAgentClient({ logger, runtimeSettings });
     case "omp":
@@ -170,6 +184,14 @@ export function canRunRealProvider(provider: RealProvider): Promise<boolean> {
   }
 
   const availability = (async () => {
+    if (provider === "opencode-v2") {
+      // OpenCode 2 needs the opencode2 binary AND the user's stored
+      // credentials (the isolated home is seeded from the real auth file).
+      return (
+        (await isCommandAvailable(getProviderBinary(provider))) &&
+        existsSync(resolveOpenCodeV2CredentialSourcePath())
+      );
+    }
     if (provider !== "omp" && provider !== "pi" && !getOpenRouterApiKeyOrNull()) {
       return false;
     }
@@ -252,5 +274,27 @@ function getProviderBinary(provider: RealProvider): string {
   if (provider === "omp") {
     return process.env.OMP_COMMAND ?? "omp";
   }
+  if (provider === "opencode-v2") {
+    return process.env.OPENCODE_V2_COMMAND ?? "opencode2";
+  }
   return provider;
+}
+
+function getOpenCodeV2RealProviderRuntimeSettings(): ProviderRuntimeSettings {
+  const root = mkdtempSync(path.join(tmpdir(), "paseo-real-opencode-v2-"));
+  return {
+    env: {
+      // Isolate the opencode2 home (serverCwd) from the real user's paseo home
+      // and the real opencode config. The server manager pins HOME/XDG under
+      // $PASEO_HOME/opencode2-home and generates its own OPENCODE_PASSWORD,
+      // overriding these; PASEO_HOME here is what keeps the isolated home in a
+      // temp dir instead of the real user's ~/.paseo.
+      PASEO_HOME: path.join(root, "paseo-home"),
+      HOME: path.join(root, "home"),
+      XDG_CONFIG_HOME: path.join(root, "config"),
+      XDG_DATA_HOME: path.join(root, "data"),
+      XDG_CACHE_HOME: path.join(root, "cache"),
+      OPENCODE_PASSWORD: "paseo-real-opencode-v2-test-password",
+    },
+  };
 }

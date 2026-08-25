@@ -53,6 +53,16 @@ export const agentConfigs = {
       ask: "default",
     },
   },
+  "opencode-v2": {
+    provider: "opencode-v2",
+    model: "baseten/deepseek-ai/DeepSeek-V4-Flash-0731",
+    modes: {
+      // OpenCode 2 permissions are controlled by provider options, not modes;
+      // both full-access and ask runs use the default `build` agent.
+      full: "build",
+      ask: "build",
+    },
+  },
   pi: {
     provider: "pi",
     thinkingOptionId: "medium",
@@ -101,4 +111,11 @@ export function getAskModeConfig(provider: AgentProvider) {
 /**
  * Helper to run a test for each provider.
  */
-export const allProviders: AgentProvider[] = ["claude", "codex", "opencode", "pi", "omp"];
+export const allProviders: AgentProvider[] = [
+  "claude",
+  "codex",
+  "opencode",
+  "opencode-v2",
+  "pi",
+  "omp",
+];
