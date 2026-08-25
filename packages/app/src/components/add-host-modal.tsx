@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Alert, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -8,6 +8,7 @@ import type { HostProfile } from "@/types/host-connection";
 import { useHosts, useHostMutations } from "@/runtime/host-runtime";
 import {
   parseConnectionUri,
+  parseHostPort,
   serializeConnectionUri,
   serializeConnectionUriForStorage,
 } from "@/utils/daemon-endpoints";
@@ -279,6 +280,10 @@ function buildConnectionFailureCopy(input: {
 
 export interface AddHostModalProps {
   visible: boolean;
+  initialConnection?: {
+    endpoint: string;
+    useTls?: boolean;
+  };
   onClose: () => void;
   onCancel?: () => void;
   onSaved?: (result: {
@@ -289,7 +294,13 @@ export interface AddHostModalProps {
   }) => void;
 }
 
-export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostModalProps) {
+export function AddHostModal({
+  visible,
+  initialConnection,
+  onClose,
+  onCancel,
+  onSaved,
+}: AddHostModalProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const daemons = useHosts();
@@ -317,6 +328,25 @@ export function AddHostModal({ visible, onClose, onCancel, onSaved }: AddHostMod
     setAdvancedUri("");
     bumpInputResetKey();
   }, []);
+
+  useEffect(() => {
+    if (!visible || !initialConnection) {
+      return;
+    }
+    try {
+      const { host: initialHost, port: initialPort } = parseHostPort(initialConnection.endpoint);
+      setHost(initialHost);
+      setPort(String(initialPort));
+      setUseTls(initialConnection.useTls ?? false);
+      setPassword("");
+      setIsPasswordVisible(false);
+      setIsAdvancedOpen(false);
+      setAdvancedUri("");
+      bumpInputResetKey();
+    } catch {
+      return;
+    }
+  }, [initialConnection, visible]);
 
   const connectIcon = useMemo(
     () => <Link2 size={16} color={theme.colors.accentForeground} />,

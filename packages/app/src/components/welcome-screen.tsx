@@ -6,7 +6,12 @@ import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { QrCode, Link2, ClipboardPaste, ExternalLink, Settings } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { HostProfile } from "@/types/host-connection";
-import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";
+import {
+  getHostRuntimeStore,
+  isHostRuntimeConnected,
+  useHosts,
+  useInitialConnectionHintAuthentication,
+} from "@/runtime/host-runtime";
 import { AddHostModal } from "./add-host-modal";
 import { PairLinkModal } from "./pair-link-modal";
 import { Button } from "@/components/ui/button";
@@ -167,12 +172,19 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
   const [isDirectOpen, setIsDirectOpen] = useState(false);
   const [isPasteLinkOpen, setIsPasteLinkOpen] = useState(false);
   const hosts = useHosts();
+  const initialConnectionHintAuthentication = useInitialConnectionHintAuthentication();
   const anyOnlineServerId = useAnyHostOnline(hosts.map((h) => h.serverId));
 
   useEffect(() => {
     if (!anyOnlineServerId) return;
     router.replace(buildOpenProjectRoute());
   }, [anyOnlineServerId, router]);
+
+  useEffect(() => {
+    if (initialConnectionHintAuthentication?.type === "directTcp") {
+      setIsDirectOpen(true);
+    }
+  }, [initialConnectionHintAuthentication]);
 
   const finishOnboarding = useCallback(() => {
     router.replace(buildOpenProjectRoute());
@@ -296,6 +308,11 @@ export function WelcomeScreen({ onHostAdded }: WelcomeScreenProps) {
 
         <AddHostModal
           visible={isDirectOpen}
+          initialConnection={
+            initialConnectionHintAuthentication?.type === "directTcp"
+              ? initialConnectionHintAuthentication
+              : undefined
+          }
           onClose={handleCloseDirect}
           onSaved={handleHostSaved}
         />

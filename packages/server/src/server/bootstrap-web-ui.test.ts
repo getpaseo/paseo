@@ -110,6 +110,35 @@ describe("daemon web UI bootstrap", () => {
     });
   });
 
+  test("uses the default HTTPS port for a password-protected UI behind a proxy", async () => {
+    const distDir = await createWebUiDist();
+
+    daemonHandle = await createTestPaseoDaemon({
+      auth: { password: "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW" },
+      mcpEnabled: false,
+      webUi: {
+        enabled: true,
+        distDir,
+      },
+    });
+
+    const hint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: {
+          host: "paseo.example.com",
+          "x-forwarded-proto": "https",
+        },
+      }),
+    );
+
+    expect(hint).toEqual({
+      listen: "paseo.example.com:443",
+      useTls: true,
+      label: os.hostname(),
+    });
+  });
+
   test("ignores forwarded HTTPS when proxy trust is disabled", async () => {
     const distDir = await createWebUiDist();
 
