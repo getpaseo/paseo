@@ -143,9 +143,12 @@ declare module "@getpaseo/plugin" {
     agentId: string;
   }
 
+  export type PluginPanelLocation = "workspace" | "explorer";
+  export interface PluginOpenPanelOptions { location?: PluginPanelLocation; }
+
   export type PluginWorkspacePanelContribution =
-    | { id: string; title: string; icon: string; context: "workspace"; Component: ComponentType<PluginWorkspacePanelProps> }
-    | { id: string; title: string; icon: string; context: "agent"; Component: ComponentType<PluginAgentPanelProps> };
+    | { id: string; title: string; icon: string; locations?: readonly PluginPanelLocation[]; context: "workspace"; Component: ComponentType<PluginWorkspacePanelProps> }
+    | { id: string; title: string; icon: string; locations?: readonly PluginPanelLocation[]; context: "agent"; Component: ComponentType<PluginAgentPanelProps> };
 
   export interface PluginSidebarContribution {
     id: string;
@@ -193,14 +196,14 @@ declare module "@getpaseo/plugin" {
   export interface PluginWorkspaceCommandContext extends PluginCommandCapabilities {
     context: "workspace";
     workspace: PluginWorkspaceSnapshot;
-    openPanel(id: string): void;
+    openPanel(id: string, options?: PluginOpenPanelOptions): void;
   }
 
   export interface PluginAgentCommandContext extends PluginCommandCapabilities {
     context: "agent";
     workspace: PluginWorkspaceSnapshot;
     agent: PluginAgentSnapshot;
-    openPanel(id: string): void;
+    openPanel(id: string, options?: PluginOpenPanelOptions): void;
   }
 
   export type PluginCommandCenterItemContribution =

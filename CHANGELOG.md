@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.2 - 2026-08-24
+
+### Fixed
+
+- Fixed workspaces crashing on Android tablets and foldables in non-compact layouts ([#3760](https://github.com/getpaseo/paseo/pull/3760) by [@jeid64](https://github.com/jeid64))
+- Fixed app settings resetting when builds sharing a profile recognize different settings ([#3787](https://github.com/getpaseo/paseo/pull/3787))
+
 ## 0.5.1 - 2026-08-23
 
 ### Fixed

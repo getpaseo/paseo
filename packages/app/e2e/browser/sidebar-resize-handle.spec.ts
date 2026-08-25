@@ -29,10 +29,10 @@ test("sidebar and workspace pane borders highlight on hover", async ({ page, wit
   await expectBorderHighlight(page, "left-sidebar-resize-handle", sidebarHandle, "1px");
 
   await page.getByTestId("workspace-explorer-toggle").first().click();
-  const splitHandle = page.getByTestId("workspace-split-resize-handle");
+  const splitHandle = page.getByTestId("workspace-explorer-sidebar-resize-handle");
   await expectBorderHighlight(
     page,
-    "workspace-split-resize-handle",
+    "workspace-explorer-sidebar-resize-handle",
     splitHandle.getByRole("separator"),
     "3px",
   );

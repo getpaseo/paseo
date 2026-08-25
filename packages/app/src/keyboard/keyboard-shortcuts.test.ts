@@ -271,18 +271,6 @@ describe("keyboard-shortcuts", () => {
       action: "workspace.pane.split.down",
     },
     {
-      name: "matches Cmd+Shift+M to maximize the Explorer pane on macOS",
-      event: { key: "M", code: "KeyM", metaKey: true, shiftKey: true },
-      context: { isMac: true },
-      action: "workspace.explorer.maximize.toggle",
-    },
-    {
-      name: "matches Ctrl+Shift+M to maximize the Explorer pane on non-macOS",
-      event: { key: "M", code: "KeyM", ctrlKey: true, shiftKey: true },
-      context: { isMac: false },
-      action: "workspace.explorer.maximize.toggle",
-    },
-    {
       name: "matches Cmd+Shift+ArrowRight to focus pane right on macOS",
       event: { key: "ArrowRight", code: "ArrowRight", metaKey: true, shiftKey: true },
       context: { isMac: true },
@@ -654,7 +642,6 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-close-current": ["alt", "shift", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
-        "workspace-explorer-maximize": ["mod", "shift", "M"],
         "cycle-agent-mode": ["shift", "Tab"],
       },
     },
@@ -674,7 +661,6 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-tab-close-current": ["mod", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
-        "workspace-explorer-maximize": ["mod", "shift", "M"],
       },
     },
     {
@@ -683,7 +669,6 @@ describe("keyboard-shortcut help sections", () => {
       expectedKeys: {
         "workspace-tab-jump-index": ["alt", "1-9"],
         "workspace-tab-close-current": ["ctrl", "W"],
-        "workspace-explorer-maximize": ["ctrl", "shift", "M"],
       },
     },
     {

@@ -20,6 +20,8 @@ export type {
   PluginGlobalCommandContext,
   PluginHandlerContext,
   PluginHostProps,
+  PluginOpenPanelOptions,
+  PluginPanelLocation,
   PluginTheme,
   PluginSidebarContribution,
   PluginSurfaceContribution,
