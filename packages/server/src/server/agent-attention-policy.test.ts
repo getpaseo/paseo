@@ -223,6 +223,59 @@ describe("computeNotificationPlan", () => {
       }),
     ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
   });
+
+  it("alwaysPush keeps the in-app recipient for a present client but also pushes", () => {
+    expect(
+      computeNotificationPlan({
+        allStates: [state({ lastActivityAtMs: nowMs - 1_000 })],
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
+        nowMs,
+        alwaysPush: true,
+      }),
+    ).toEqual({ inAppRecipientIndex: 0, shouldPush: true });
+  });
+
+  it("alwaysPush overrides the focused-client suppression for push (not for in-app)", () => {
+    expect(
+      computeNotificationPlan({
+        allStates: [
+          state({
+            focusedAgentId: "agent-1",
+            lastActivityAtMs: presentAtMs,
+          }),
+        ],
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
+        nowMs,
+        alwaysPush: true,
+      }),
+    ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
+  });
+
+  it("alwaysPush still respects pushEligible for errors", () => {
+    expect(
+      computeNotificationPlan({
+        allStates: [state({ lastActivityAtMs: presentAtMs })],
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: false,
+        nowMs,
+        alwaysPush: true,
+      }),
+    ).toEqual({ inAppRecipientIndex: 0, shouldPush: false });
+  });
+
+  it("alwaysPush does not change the no-client-present branch", () => {
+    expect(
+      computeNotificationPlan({
+        allStates: [state({ lastActivityAtMs: staleAtMs })],
+        focusTarget: { kind: "agent", id: "agent-1" },
+        pushEligible: true,
+        nowMs,
+        alwaysPush: true,
+      }),
+    ).toEqual({ inAppRecipientIndex: null, shouldPush: true });
+  });
 });
 
 describe("isPushEligibleAttentionReason", () => {

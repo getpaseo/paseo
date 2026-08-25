@@ -195,6 +195,14 @@ export const AgentSkillSelectionSchema = z.discriminatedUnion("mode", [
 ]);
 export type AgentSkillSelection = z.infer<typeof AgentSkillSelectionSchema>;
 
+const MutableNotificationsConfigSchema = z
+  .object({
+    // When true, always send remote push notifications when a reason is
+    // eligible, even while a client is present or focused on the target.
+    alwaysPush: z.boolean().optional(),
+  })
+  .strict();
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -232,6 +240,7 @@ export const MutableDaemonConfigSchema = z
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
+    notifications: MutableNotificationsConfigSchema.optional(),
   })
   .passthrough();
 

@@ -294,6 +294,14 @@ export const PersistedConfigSchema = z
           .strict()
           .optional(),
         auth: DaemonAuthSchema.optional(),
+        notifications: z
+          .object({
+            // When true, always send remote push notifications when a reason is
+            // eligible, even while a client is present or focused on the target.
+            alwaysPush: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
       })
       .strict()
       .transform(({ allowedHosts, ...daemon }) => {

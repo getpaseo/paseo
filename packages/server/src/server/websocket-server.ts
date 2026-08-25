@@ -2507,8 +2507,7 @@ export class VoiceAssistantWebSocketServer {
     this.logger.info(loggedMetrics, "ws_runtime_metrics");
   }
 
-  private getClientActivityState(session: Session): ClientPresenceState {
-    const activity = session.getClientActivity();
+  private getClientActivityState(session: Session): ClientPresenceState {    const activity = session.getClientActivity();
     if (!activity) {
       return {
         appVisible: false,
@@ -2524,6 +2523,10 @@ export class VoiceAssistantWebSocketServer {
       focusedTerminalId: activity.focusedTerminalId,
       lastActivityAtMs: activity.lastActivityAt.getTime(),
     };
+  }
+
+  private alwaysPushNotifications(): boolean {
+    return this.daemonConfigStore.get().notifications?.alwaysPush === true;
   }
 
   private async broadcastAgentAttention(params: {
@@ -2567,6 +2570,7 @@ export class VoiceAssistantWebSocketServer {
       focusTarget: { kind: "agent", id: params.agentId },
       pushEligible: isPushEligibleAttentionReason(params.reason),
       nowMs,
+      alwaysPush: this.alwaysPushNotifications(),
     });
 
     if (plan.shouldPush) {
@@ -2644,6 +2648,7 @@ export class VoiceAssistantWebSocketServer {
       focusTarget: { kind: "terminal", id: params.terminalId },
       pushEligible: true,
       nowMs,
+      alwaysPush: this.alwaysPushNotifications(),
     });
 
     const title = terminalAttentionTitle(params.reason);

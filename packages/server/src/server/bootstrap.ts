@@ -453,6 +453,11 @@ export interface PaseoDaemonConfig {
   onLifecycleIntent?: (intent: DaemonLifecycleIntent) => void;
   pushNotificationSender?: PushNotificationSender;
   managedProcesses?: ManagedProcessRegistry;
+  notifications?: {
+    // When true, always send remote push notifications when a reason is
+    // eligible, even while a client is present or focused on the target.
+    alwaysPush?: boolean;
+  };
   configReload?: {
     env: NodeJS.ProcessEnv;
     cli?: CliConfigOverrides;
@@ -555,6 +560,9 @@ function createInitialMutableDaemonConfig(config: PaseoDaemonConfig): MutableDae
     pluginsEnabled: config.pluginsEnabled ?? false,
     plugins: config.plugins ?? {},
     skills: { selection: config.skillSelection },
+    ...(config.notifications !== undefined
+      ? { notifications: config.notifications }
+      : {}),
   };
 
   if (config.terminalProfiles !== undefined) {

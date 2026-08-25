@@ -24,6 +24,10 @@ interface ComputeNotificationPlanInput {
   // Whether a push notification is allowed when no client is present.
   pushEligible: boolean;
   nowMs: number;
+  // When true, always send a remote push when pushEligible, even while a client
+  // is present or focused on the target. In-app routing is unchanged. Defaults
+  // to false (presence suppresses push).
+  alwaysPush?: boolean;
 }
 
 function isFocusedOnTarget(
@@ -44,6 +48,7 @@ export function computeNotificationPlan({
   focusTarget,
   pushEligible,
   nowMs,
+  alwaysPush = false,
 }: ComputeNotificationPlanInput): NotificationPlan {
   let mostRecentPresentIndex: number | null = null;
   let mostRecentPresentAtMs = Number.NEGATIVE_INFINITY;
@@ -59,7 +64,12 @@ export function computeNotificationPlan({
     }
 
     if (state.appVisible && isFocusedOnTarget(state, focusTarget)) {
-      return { inAppRecipientIndex: null, shouldPush: false };
+      // A focused client suppresses the notification. With alwaysPush, keep the
+      // in-app suppression but still deliver the remote push to other devices.
+      return {
+        inAppRecipientIndex: null,
+        shouldPush: alwaysPush ? pushEligible : false,
+      };
     }
 
     if (clampedActivityAtMs > mostRecentPresentAtMs) {
@@ -69,7 +79,10 @@ export function computeNotificationPlan({
   }
 
   if (mostRecentPresentIndex !== null) {
-    return { inAppRecipientIndex: mostRecentPresentIndex, shouldPush: false };
+    return {
+      inAppRecipientIndex: mostRecentPresentIndex,
+      shouldPush: alwaysPush ? pushEligible : false,
+    };
   }
 
   return { inAppRecipientIndex: null, shouldPush: pushEligible };
