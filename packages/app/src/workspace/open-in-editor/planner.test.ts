@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { planWorkspaceOpenTargets } from "./open-target-planner";
+import { planWorkspaceOpenTargets } from "./planner";
 
 const desktopTargets = [
   {

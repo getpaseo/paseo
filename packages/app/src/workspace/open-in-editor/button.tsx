@@ -23,7 +23,7 @@ import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
-import { planWorkspaceOpenTargets } from "@/workspace/open-target-planner";
+import { planWorkspaceOpenTargets } from "@/workspace/open-in-editor/planner";
 import type { Theme } from "@/styles/theme";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { getForgePresentation } from "@/git/forge";

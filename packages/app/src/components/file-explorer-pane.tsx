@@ -59,9 +59,8 @@ import { useSessionStore } from "@/stores/session-store";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { ContextMenu, ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
-import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
+import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import { usePanelStore, type ExpandedPathsUpdate, type SortOption } from "@/stores/panel-store";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
@@ -78,7 +77,7 @@ import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-dra
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useToast } from "@/contexts/toast-context";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
-import { planWorkspaceOpenTargets } from "@/workspace/open-target-planner";
+import { useOpenDirectoryInEditor } from "@/workspace/open-in-editor/directory";
 
 const SORT_OPTIONS: { value: SortOption }[] = [
   { value: "name" },
@@ -447,23 +446,14 @@ export function FileExplorerPane({
   });
   const toast = useToast();
   const isLocalDaemon = useIsLocalDaemon(serverId);
-  const { preferredEditorId } = usePreferredEditor();
-  const { targets: desktopOpenTargets, isAvailable: isDesktopOpenAvailable } =
-    useDesktopOpenTargets({
-      isLocalExecution: isLocalDaemon,
-    });
+  const { targets: desktopOpenTargets } = useDesktopOpenTargets({
+    isLocalExecution: isLocalDaemon,
+  });
   const fileManagerTarget = desktopOpenTargets.find((target) => target.kind === "file-manager");
-  const editorTargets = useMemo(
-    () => desktopOpenTargets.filter((target) => target.kind === "editor"),
-    [desktopOpenTargets],
-  );
-  const preferredEditorTarget = useMemo(() => {
-    const preferredId = resolvePreferredEditorId(
-      editorTargets.map((target) => target.id),
-      preferredEditorId,
-    );
-    return editorTargets.find((target) => target.id === preferredId) ?? null;
-  }, [editorTargets, preferredEditorId]);
+  const openDirectoryInEditor = useOpenDirectoryInEditor({
+    serverId,
+    workspaceDirectory: normalizedWorkspaceRoot,
+  });
   // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
   const fsEntryOpsEnabled = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.fsEntryOps === true,
@@ -634,36 +624,8 @@ export function FileExplorerPane({
   );
 
   const handleOpenDirectoryInEditor = useCallback(
-    async (entry: ExplorerEntry) => {
-      if (!preferredEditorTarget) {
-        return;
-      }
-      const target = planWorkspaceOpenTargets({
-        workspaceDirectory: normalizedWorkspaceRoot,
-        directoryPath: entry.path,
-        desktopTargets: [preferredEditorTarget],
-        canUseDesktopBridge: isDesktopOpenAvailable,
-        isLocalExecution: isLocalDaemon,
-      }).find((candidate) => candidate.source === "desktop");
-      if (!target) {
-        return;
-      }
-      try {
-        await openDesktopTarget(target.openInput);
-      } catch (cause) {
-        toast.error(
-          cause instanceof Error ? cause.message : t("sidebar.project.actions.openFolderFailed"),
-        );
-      }
-    },
-    [
-      isDesktopOpenAvailable,
-      isLocalDaemon,
-      normalizedWorkspaceRoot,
-      preferredEditorTarget,
-      t,
-      toast,
-    ],
+    (entry: ExplorerEntry) => openDirectoryInEditor?.open(entry.path),
+    [openDirectoryInEditor],
   );
 
   const handleDownloadEntry = useCallback(
@@ -1017,8 +979,8 @@ export function FileExplorerPane({
           onSelectEntry={handleSelectEntry}
           onCopyPath={handleCopyPath}
           onCopyRelativePath={handleCopyRelativePath}
-          onOpenInEditor={preferredEditorTarget ? handleOpenDirectoryInEditor : undefined}
-          editorTargetName={preferredEditorTarget?.label}
+          onOpenInEditor={openDirectoryInEditor ? handleOpenDirectoryInEditor : undefined}
+          editorTargetName={openDirectoryInEditor?.targetName}
           onRevealEntry={fileManagerTarget ? handleRevealEntry : undefined}
           revealTargetName={fileManagerTarget?.label}
           onDownloadEntry={handleDownloadEntry}
@@ -1053,7 +1015,7 @@ export function FileExplorerPane({
       handleSelectEntry,
       isDirectoryLoading,
       fileManagerTarget,
-      preferredEditorTarget,
+      openDirectoryInEditor,
       selectedEntryPath,
       onAddToChat,
       onOpenFileToSide,
