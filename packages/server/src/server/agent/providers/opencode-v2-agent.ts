@@ -329,21 +329,39 @@ function isOpenCodeV2DefinitiveSteerRejection(error: unknown): boolean {
 }
 
 /**
- * A permission/form reply that hit an expired or unknown request. The v2 client
- * surfaces these as a ClientError with an UnexpectedStatus reason; the daemon
- * treats them as a graceful no-op (the agent already moved on) rather than a
- * failure.
+ * A permission/form reply that hit an expired or unknown request. The v2 server
+ * maps reply errors to HTTP statuses (FormInvalidAnswerError=400,
+ * FormNotFoundError=404, FormAlreadySettledError=409, PermissionNotFoundError=404).
+ * The client surfaces declared statuses (400/404/409) as the parsed error body (a
+ * plain object with a `_tag`) and undeclared statuses (e.g. 5xx) as a ClientError
+ * with an UnexpectedStatus reason. Only 404/409 mean the request is gone or already
+ * settled — a graceful no-op (the agent already moved on). A 400 invalid-answer is a
+ * real validation error (VAL-OC2-FORM-006) and 5xx are real failures; both must
+ * propagate so the daemon surfaces them.
  */
 function isOpenCodeV2StalePermissionError(error: unknown): boolean {
   if (error instanceof ClientError) {
     const status = (error.cause as { status?: number } | undefined)?.status ?? 0;
-    return error.reason === "UnexpectedStatus" && status >= 400;
+    return error.reason === "UnexpectedStatus" && (status === 404 || status === 409);
+  }
+  const tag = readOpenCodeV2ErrorTag(error);
+  if (tag) {
+    return (
+      tag === "FormNotFoundError" ||
+      tag === "FormAlreadySettledError" ||
+      tag === "PermissionNotFoundError"
+    );
   }
   const message = toDiagnosticErrorMessage(error).toLowerCase();
-  return (
-    /(?:not found|expired|no longer|unknown|invalid).*(?:permission|request|form)/.test(message) ||
-    /(?:permission|request|form).*(?:not found|expired|no longer|unknown|invalid)/.test(message)
-  );
+  return /(?:form not found|form already settled|permission request not found)/.test(message);
+}
+
+function readOpenCodeV2ErrorTag(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const tag = (error as { _tag?: unknown })._tag;
+  return typeof tag === "string" && tag.length > 0 ? tag : undefined;
 }
 
 function extractOpenCodeV2ToolOutputText(content: unknown): string | undefined {

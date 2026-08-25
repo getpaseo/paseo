@@ -544,6 +544,230 @@ describe("opencode-v2 permission session behavior", () => {
     await session.close();
   });
 
+  test("a 400 invalid form answer propagates (not swallowed as stale)", async () => {
+    const { session, openCode } = await createSession(undefined, (client) => {
+      client.formReplyError = {
+        _tag: "FormInvalidAnswerError",
+        id: "form-1",
+        message: "Expected number for form field: count",
+      };
+    });
+
+    const runPromise = session.run("Ask me a question");
+    openCode.emitEvent(formCreatedEvent("session-1", "form-1"));
+    await waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await expect(
+      session.respondToPermission("form-1", {
+        behavior: "allow",
+        updatedInput: { answers: { choice: "first" } },
+      }),
+    ).rejects.toMatchObject({ _tag: "FormInvalidAnswerError" });
+    // A real validation error keeps the pending entry so the user can retry.
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    openCode.emitEvent(
+      v2Event({
+        type: "session.text.delta",
+        data: {
+          sessionID: "session-1",
+          assistantMessageID: "assistant-1",
+          ordinal: 0,
+          delta: "done",
+        },
+      }),
+    );
+    openCode.emitEvent(
+      v2Event({ type: "session.execution.succeeded", data: { sessionID: "session-1" } }),
+    );
+    await runPromise;
+    await session.close();
+  });
+
+  test("a 404 form-not-found reply is a graceful no-op", async () => {
+    const { session, openCode } = await createSession(undefined, (client) => {
+      client.formReplyError = {
+        _tag: "FormNotFoundError",
+        id: "form-1",
+        message: "Form not found: form-1",
+      };
+    });
+
+    const runPromise = session.run("Ask me a question");
+    openCode.emitEvent(formCreatedEvent("session-1", "form-1"));
+    await waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await expect(
+      session.respondToPermission("form-1", {
+        behavior: "allow",
+        updatedInput: { answers: { choice: "first" } },
+      }),
+    ).resolves.toBeUndefined();
+    expect(session.getPendingPermissions()).toHaveLength(0);
+
+    openCode.emitEvent(
+      v2Event({
+        type: "session.text.delta",
+        data: {
+          sessionID: "session-1",
+          assistantMessageID: "assistant-1",
+          ordinal: 0,
+          delta: "done",
+        },
+      }),
+    );
+    openCode.emitEvent(
+      v2Event({ type: "session.execution.succeeded", data: { sessionID: "session-1" } }),
+    );
+    await runPromise;
+    await session.close();
+  });
+
+  test("a 409 already-settled form reply is a graceful no-op", async () => {
+    const { session, openCode } = await createSession(undefined, (client) => {
+      client.formReplyError = {
+        _tag: "FormAlreadySettledError",
+        id: "form-1",
+        message: "Form already settled: form-1",
+      };
+    });
+
+    const runPromise = session.run("Ask me a question");
+    openCode.emitEvent(formCreatedEvent("session-1", "form-1"));
+    await waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await expect(
+      session.respondToPermission("form-1", {
+        behavior: "allow",
+        updatedInput: { answers: { choice: "first" } },
+      }),
+    ).resolves.toBeUndefined();
+    expect(session.getPendingPermissions()).toHaveLength(0);
+
+    openCode.emitEvent(
+      v2Event({
+        type: "session.text.delta",
+        data: {
+          sessionID: "session-1",
+          assistantMessageID: "assistant-1",
+          ordinal: 0,
+          delta: "done",
+        },
+      }),
+    );
+    openCode.emitEvent(
+      v2Event({ type: "session.execution.succeeded", data: { sessionID: "session-1" } }),
+    );
+    await runPromise;
+    await session.close();
+  });
+
+  test("a 404 permission-request-not-found reply is a graceful no-op", async () => {
+    const { session, openCode } = await createSession(undefined, (client) => {
+      client.permissionReplyError = {
+        _tag: "PermissionNotFoundError",
+        requestID: "perm-1",
+        message: "Permission request not found: perm-1",
+      };
+    });
+
+    const runPromise = session.run("Run a shell command");
+    openCode.emitEvent(permissionAskedEvent("session-1", "perm-1"));
+    await waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await expect(
+      session.respondToPermission("perm-1", { behavior: "allow" }),
+    ).resolves.toBeUndefined();
+    expect(session.getPendingPermissions()).toHaveLength(0);
+
+    openCode.emitEvent(
+      v2Event({
+        type: "session.text.delta",
+        data: {
+          sessionID: "session-1",
+          assistantMessageID: "assistant-1",
+          ordinal: 0,
+          delta: "done",
+        },
+      }),
+    );
+    openCode.emitEvent(
+      v2Event({ type: "session.execution.succeeded", data: { sessionID: "session-1" } }),
+    );
+    await runPromise;
+    await session.close();
+  });
+
+  test("a generic 5xx permission reply error propagates", async () => {
+    const { session, openCode } = await createSession(undefined, (client) => {
+      client.permissionReplyError = new ClientError("UnexpectedStatus", {
+        cause: { status: 500 },
+      });
+    });
+
+    const runPromise = session.run("Run a shell command");
+    openCode.emitEvent(permissionAskedEvent("session-1", "perm-1"));
+    await waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await expect(session.respondToPermission("perm-1", { behavior: "allow" })).rejects.toThrow(
+      "UnexpectedStatus",
+    );
+    // The pending request stays for a retryable failure.
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    openCode.emitEvent(
+      v2Event({
+        type: "session.text.delta",
+        data: {
+          sessionID: "session-1",
+          assistantMessageID: "assistant-1",
+          ordinal: 0,
+          delta: "done",
+        },
+      }),
+    );
+    openCode.emitEvent(
+      v2Event({ type: "session.execution.succeeded", data: { sessionID: "session-1" } }),
+    );
+    await runPromise;
+    await session.close();
+  });
+
+  test("a generic 5xx form reply error propagates", async () => {
+    const { session, openCode } = await createSession(undefined, (client) => {
+      client.formReplyError = new ClientError("UnexpectedStatus", { cause: { status: 502 } });
+    });
+
+    const runPromise = session.run("Ask me a question");
+    openCode.emitEvent(formCreatedEvent("session-1", "form-1"));
+    await waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await expect(
+      session.respondToPermission("form-1", {
+        behavior: "allow",
+        updatedInput: { answers: { choice: "first" } },
+      }),
+    ).rejects.toThrow("UnexpectedStatus");
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    openCode.emitEvent(
+      v2Event({
+        type: "session.text.delta",
+        data: {
+          sessionID: "session-1",
+          assistantMessageID: "assistant-1",
+          ordinal: 0,
+          delta: "done",
+        },
+      }),
+    );
+    openCode.emitEvent(
+      v2Event({ type: "session.execution.succeeded", data: { sessionID: "session-1" } }),
+    );
+    await runPromise;
+    await session.close();
+  });
+
   test("a tool permission request surfaces full detail metadata", async () => {
     const { session, openCode } = await createSession();
 
