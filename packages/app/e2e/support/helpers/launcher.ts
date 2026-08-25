@@ -175,7 +175,7 @@ export async function sampleTabsDuringTransition(
     function sample() {
       const tabs = Array.from(
         document.querySelectorAll<HTMLElement>(
-          '[data-testid^="workspace-tab-"]:not([data-testid^="workspace-tab-context-"])',
+          '[data-testid^="workspace-tab-"][role="button"][aria-selected]',
         ),
       ).filter((element) => element.getClientRects().length > 0);
       scope.__paseoTabTrackFrames?.push(
