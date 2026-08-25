@@ -1,6 +1,7 @@
-import { Fragment, useMemo, type ReactElement, type ReactNode } from "react";
+import { Fragment, useMemo, type ReactElement } from "react";
 import { withUnistyles } from "react-native-unistyles";
 import {
+  ArrowRightToLine,
   Copy,
   CopyPlus,
   Download,
@@ -25,8 +26,11 @@ import {
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
+type FileActionGroup = "create" | "open" | "reference" | "manage" | "destructive";
+
 interface FileAction {
   key: string;
+  group: FileActionGroup;
   label: string;
   icon: LucideIcon;
   onSelect: () => void;
@@ -35,10 +39,19 @@ interface FileAction {
   testID?: string;
 }
 
+function optionalFileAction(
+  available: boolean,
+  onSelect: (() => void) | undefined,
+  action: Omit<FileAction, "onSelect">,
+): FileAction | null {
+  return available && onSelect ? { ...action, onSelect } : null;
+}
+
 interface FileActionsContextMenuContentProps {
   fileKind: "file" | "directory";
   fileExists?: boolean;
   onOpenFile?: () => void;
+  onOpenToSide?: () => void;
   onCopyPath?: () => void;
   onCopyRelativePath?: () => void;
   onReveal?: () => void;
@@ -52,8 +65,6 @@ interface FileActionsContextMenuContentProps {
   onDuplicate?: () => void;
   onRevert?: () => void;
   onDelete?: () => void;
-  /** Optional metadata block rendered above the actions (e.g. size/modified). */
-  header?: ReactNode;
   testIDPrefix?: string;
 }
 
@@ -65,6 +76,7 @@ export function FileActionsContextMenuContent({
   fileKind,
   fileExists = true,
   onOpenFile,
+  onOpenToSide,
   onCopyPath,
   onCopyRelativePath,
   onReveal,
@@ -78,7 +90,6 @@ export function FileActionsContextMenuContent({
   onDuplicate,
   onRevert,
   onDelete,
-  header,
   testIDPrefix,
 }: FileActionsContextMenuContentProps): ReactElement | null {
   const { t } = useTranslation();
@@ -88,6 +99,7 @@ export function FileActionsContextMenuContent({
       onNewFile
         ? {
             key: "new-file",
+            group: "create",
             label: t("workspace.fileActions.newFile"),
             icon: FilePlus,
             onSelect: onNewFile,
@@ -96,6 +108,7 @@ export function FileActionsContextMenuContent({
       onNewFolder
         ? {
             key: "new-folder",
+            group: "create",
             label: t("workspace.fileActions.newFolder"),
             icon: FolderPlus,
             onSelect: onNewFolder,
@@ -104,6 +117,7 @@ export function FileActionsContextMenuContent({
       onCollapseFolder
         ? {
             key: "collapse-folder",
+            group: "open",
             label: t("workspace.fileActions.collapseFolder"),
             icon: FolderMinus,
             onSelect: onCollapseFolder,
@@ -112,30 +126,22 @@ export function FileActionsContextMenuContent({
       availableFile && onOpenFile
         ? {
             key: "open-file",
+            group: "open",
             label: t("workspace.fileActions.openFile"),
             icon: FileText,
             onSelect: onOpenFile,
           }
         : null,
-      onRename
-        ? {
-            key: "rename",
-            label: t("workspace.fileActions.rename"),
-            icon: Pencil,
-            onSelect: onRename,
-          }
-        : null,
-      onDuplicate
-        ? {
-            key: "duplicate",
-            label: t("workspace.fileActions.duplicate"),
-            icon: CopyPlus,
-            onSelect: onDuplicate,
-          }
-        : null,
+      optionalFileAction(availableFile, onOpenToSide, {
+        key: "open-to-side",
+        group: "open",
+        label: t("workspace.fileActions.openToSide"),
+        icon: ArrowRightToLine,
+      }),
       onCopyPath
         ? {
             key: "copy-path",
+            group: "reference",
             label: t("workspace.fileActions.copyPath"),
             icon: Copy,
             onSelect: onCopyPath,
@@ -144,6 +150,7 @@ export function FileActionsContextMenuContent({
       onCopyRelativePath
         ? {
             key: "copy-relative-path",
+            group: "reference",
             label: t("workspace.fileActions.copyRelativePath"),
             icon: Copy,
             onSelect: onCopyRelativePath,
@@ -152,6 +159,7 @@ export function FileActionsContextMenuContent({
       onReveal && revealTargetName
         ? {
             key: "reveal",
+            group: "reference",
             label: t("workspace.fileActions.revealIn", { target: revealTargetName }),
             icon: FolderOpen,
             onSelect: onReveal,
@@ -160,6 +168,7 @@ export function FileActionsContextMenuContent({
       availableFile && onDownload
         ? {
             key: "download",
+            group: "reference",
             label: t("workspace.fileActions.download"),
             icon: Download,
             onSelect: onDownload,
@@ -168,14 +177,34 @@ export function FileActionsContextMenuContent({
       availableFile && onAddToChat
         ? {
             key: "add-to-chat",
+            group: "reference",
             label: t("workspace.fileActions.addToChat"),
             icon: MessageSquarePlus,
             onSelect: onAddToChat,
           }
         : null,
+      onRename
+        ? {
+            key: "rename",
+            group: "manage",
+            label: t("workspace.fileActions.rename"),
+            icon: Pencil,
+            onSelect: onRename,
+          }
+        : null,
+      onDuplicate
+        ? {
+            key: "duplicate",
+            group: "manage",
+            label: t("workspace.fileActions.duplicate"),
+            icon: CopyPlus,
+            onSelect: onDuplicate,
+          }
+        : null,
       onRevert
         ? {
             key: "revert",
+            group: "destructive",
             label: t("workspace.fileActions.revert"),
             icon: Undo2,
             onSelect: onRevert,
@@ -185,6 +214,7 @@ export function FileActionsContextMenuContent({
       onDelete
         ? {
             key: "delete",
+            group: "destructive",
             label: t("workspace.fileActions.delete"),
             icon: Trash2,
             onSelect: onDelete,
@@ -195,9 +225,7 @@ export function FileActionsContextMenuContent({
     const availableActions = specs.filter((action): action is FileAction => action !== null);
     return availableActions.map((action, index) =>
       Object.assign(action, {
-        separatorBefore: Boolean(
-          action.destructive && index > 0 && !availableActions[index - 1].destructive,
-        ),
+        separatorBefore: index > 0 && action.group !== availableActions[index - 1]?.group,
         testID: testIDPrefix ? `${testIDPrefix}-${action.key}` : undefined,
       }),
     );
@@ -214,6 +242,7 @@ export function FileActionsContextMenuContent({
     onNewFile,
     onNewFolder,
     onOpenFile,
+    onOpenToSide,
     onRename,
     onReveal,
     onRevert,
@@ -231,12 +260,6 @@ export function FileActionsContextMenuContent({
       width={220}
       testID={testIDPrefix ? `${testIDPrefix}-context-menu` : undefined}
     >
-      {header ? (
-        <>
-          {header}
-          <ContextMenuSeparator />
-        </>
-      ) : null}
       {actions.map((action) => (
         <Fragment key={action.key}>
           {action.separatorBefore ? <ContextMenuSeparator /> : null}

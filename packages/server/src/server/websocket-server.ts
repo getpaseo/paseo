@@ -1672,7 +1672,7 @@ export class VoiceAssistantWebSocketServer {
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
-        // COMPAT(browserMirror): added in v0.5.1, remove after 2027-09-01 once the
+        // COMPAT(browserMirror): added in v0.6.0, remove after 2027-09-01 once the
         // supported client floor always gates browser tabs on this flag.
         ...(this.hasBrowserMirrorHost() ? { browserMirror: true } : {}),
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.

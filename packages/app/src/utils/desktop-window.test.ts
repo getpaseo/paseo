@@ -8,21 +8,28 @@ import {
 
 describe("window chrome", () => {
   it("has no corner obstruction outside Electron or in fullscreen", () => {
-    expect(
-      resolveWindowChromeObstruction({ isElectron: false, isMac: true, isFullscreen: false }),
-    ).toEqual({ topLeft: null, topRight: null });
-    expect(
-      resolveWindowChromeObstruction({ isElectron: true, isMac: true, isFullscreen: true }),
-    ).toEqual({ topLeft: null, topRight: null });
+    expect(resolveWindowChromeObstruction({ mode: null, isFullscreen: false })).toEqual({
+      topLeft: null,
+      topRight: null,
+    });
+    expect(resolveWindowChromeObstruction({ mode: "native-mac", isFullscreen: true })).toEqual({
+      topLeft: null,
+      topRight: null,
+    });
   });
 
   it("places native controls in their physical top corner", () => {
-    expect(
-      resolveWindowChromeObstruction({ isElectron: true, isMac: true, isFullscreen: false }),
-    ).toEqual({ topLeft: { width: 78, height: 45 }, topRight: null });
-    expect(
-      resolveWindowChromeObstruction({ isElectron: true, isMac: false, isFullscreen: false }),
-    ).toEqual({ topLeft: null, topRight: { width: 140, height: 48 } });
+    expect(resolveWindowChromeObstruction({ mode: "native-mac", isFullscreen: false })).toEqual({
+      topLeft: { width: 78, height: 45 },
+      topRight: null,
+    });
+    expect(resolveWindowChromeObstruction({ mode: "custom-windows", isFullscreen: false })).toEqual(
+      { topLeft: null, topRight: { width: 138, height: 36 } },
+    );
+    expect(resolveWindowChromeObstruction({ mode: "custom-linux", isFullscreen: false })).toEqual({
+      topLeft: null,
+      topRight: { width: 108, height: 36 },
+    });
   });
 
   it("insets and reserves only claimed corners", () => {

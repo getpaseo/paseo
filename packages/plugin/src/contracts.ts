@@ -63,10 +63,17 @@ export interface PluginAgentSnapshot {
   readonly labels: Readonly<Record<string, string>>;
 }
 
+export type PluginPanelLocation = "workspace" | "explorer";
+
+export interface PluginOpenPanelOptions {
+  location?: PluginPanelLocation;
+}
+
 interface PluginWorkspacePanelBase {
   id: string;
   title: string;
   icon: string;
+  locations?: readonly PluginPanelLocation[];
 }
 
 export interface PluginWorkspacePanelProps extends PluginHostProps {
@@ -145,14 +152,14 @@ export interface PluginGlobalCommandContext extends PluginCommandCapabilities {
 export interface PluginWorkspaceCommandContext extends PluginCommandCapabilities {
   context: "workspace";
   workspace: PluginWorkspaceSnapshot;
-  openPanel(id: string): void;
+  openPanel(id: string, options?: PluginOpenPanelOptions): void;
 }
 
 export interface PluginAgentCommandContext extends PluginCommandCapabilities {
   context: "agent";
   workspace: PluginWorkspaceSnapshot;
   agent: PluginAgentSnapshot;
-  openPanel(id: string): void;
+  openPanel(id: string, options?: PluginOpenPanelOptions): void;
 }
 
 interface PluginCommandCenterItemBase {

@@ -52,7 +52,8 @@ import {
   buildWorkspaceTabPersistenceKey,
   type WorkspaceDraftTabSetup,
 } from "@/workspace-tabs/model";
-import { openSidePanelView } from "@/workspace-tabs/side-panel";
+import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
+import { useSettings } from "@/hooks/use-settings";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const EMPTY_ONLINE_SERVER_IDS: string[] = [];
@@ -439,6 +440,7 @@ export function WorkspaceDraftAgentTab({
     workspaceId,
   });
   const draftAttachmentScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
+  const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const attachmentScopeKeys = useMemo(
     () => [draftAttachmentScopeKey, workspaceAttachmentScopeKey].filter(Boolean),
     [draftAttachmentScopeKey, workspaceAttachmentScopeKey],
@@ -451,14 +453,15 @@ export function WorkspaceDraftAgentTab({
       if (attachment.kind !== "review") {
         return;
       }
-      openSidePanelView({
+      openPreferredWorkspaceTarget({
         isCompact: isCompactFormFactor,
         workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId: workspaceId ?? "" }),
-        checkout: { serverId, cwd: attachment.attachment.cwd, isGit: true },
-        view: "changes",
+        target: { kind: "working_diff" },
+        source: "changesLinks",
+        preferences: openInSidePane,
       });
     },
-    [isCompactFormFactor, serverId, workspaceId],
+    [isCompactFormFactor, openInSidePane, serverId, workspaceId],
   );
 
   const {

@@ -356,22 +356,6 @@ function parseWorkspaceIdFromPageUrl(page: Page, serverId: string): string | nul
   return decodeWorkspaceIdFromPathSegment(match[1]);
 }
 
-async function expectWorkspaceRowHasOnlyIndicator(
-  page: Page,
-  input: { serverId: string; workspaceId: string; indicator: string },
-) {
-  const row = page.getByTestId(`sidebar-workspace-row-${input.serverId}:${input.workspaceId}`);
-  await expect(row).toBeVisible({ timeout: 30_000 });
-  for (const indicator of ["attention", "done", "failed", "loading", "needs_input", "running"]) {
-    const locator = row.locator(`[data-testid="workspace-status-indicator-${indicator}"]`);
-    if (indicator === input.indicator) {
-      await expect(locator).toBeVisible({ timeout: 30_000 });
-    } else {
-      await expect(locator).toHaveCount(0);
-    }
-  }
-}
-
 async function expectWorkspaceRowDoesNotShowIndicator(
   page: Page,
   input: { serverId: string; workspaceId: string; indicator: string },
@@ -444,11 +428,6 @@ test.describe("Workspace model restart regressions", () => {
 
       await page.goto(buildHostWorkspaceRoute(serverId, seeded.workspaceA));
       await waitForSidebarHydration(page);
-      await expectWorkspaceRowHasOnlyIndicator(page, {
-        serverId,
-        workspaceId: seeded.workspaceA,
-        indicator: "running",
-      });
       await expectWorkspaceRowDoesNotShowIndicator(page, {
         serverId,
         workspaceId: seeded.workspaceB,

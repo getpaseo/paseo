@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.0 - 2026-08-25
+
+### Changed
+
+- Restored the dedicated Explorer sidebar with Files and Changes by default, replacing the empty user-directed Side panel introduced in 0.5.0 ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+- Changed content opened to the side to use an ordinary closable workspace pane instead of the Explorer sidebar ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+- Restored the resizable combined Explorer dock on tablets ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+
+### Added
+
+- Added per-action settings for opening files, changes, subagents, and pull requests in the main panel or on the side ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+- Added New tab and drag support for compatible files, diffs, agents, terminals, pull requests, and plugin panels in Explorer ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+- Added standalone Diff tabs while keeping an optional persisted inline-diff mode in Changes ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+- Added custom Windows and Linux window controls ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+
+### Fixed
+
+- Fixed OpenCode turns failing when the first event-stream connection stalls during startup ([#3814](https://github.com/getpaseo/paseo/pull/3814))
+- Fixed OpenCode prompts starting before the provider reports a ready connection ([#3821](https://github.com/getpaseo/paseo/pull/3821))
+
 ## 0.5.2 - 2026-08-24
 
 ### Fixed

@@ -28,6 +28,7 @@ import { registerDaemonManager } from "./daemon/daemon-manager.js";
 import { parsePassthroughCliArgsFromArgv, runPassthroughCli } from "./daemon/cli/passthrough.js";
 import { closeAllTransportSessions } from "./daemon/local-transport.js";
 import {
+  applyDesktopWindowChromeMode,
   registerWindowManager,
   getMainWindowChromeOptions,
   getWindowBackgroundColor,
@@ -40,6 +41,7 @@ import {
   buildStandardContextMenuItems,
 } from "./window/window-manager.js";
 import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/index.js";
+import { resolveDesktopWindowChromeMode, windowChromeModeArgument } from "./window/chrome.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
   registerNotificationHandlers,
@@ -103,6 +105,11 @@ const APP_SCHEME = "paseo";
 const PASEO_DEBUG = process.env.PASEO_DEBUG === "1";
 const DISABLE_SINGLE_INSTANCE_LOCK = process.env.PASEO_DISABLE_SINGLE_INSTANCE_LOCK === "1";
 const APP_NAME = process.env.PASEO_TEST_APP_NAME?.trim() || "Paseo";
+const DESKTOP_WINDOW_CHROME_MODE = resolveDesktopWindowChromeMode({
+  platform: process.platform,
+  override: process.env.PASEO_DESKTOP_WINDOW_CONTROLS,
+  isPackaged: app.isPackaged,
+});
 const UPDATE_QUIT_DEADLINE_MS = 5_000;
 const pendingBrowserWindowOpenRequests = new PendingBrowserWindowOpenRequests();
 const agentNavigationInbox = new AgentNavigationInbox();
@@ -748,16 +755,17 @@ async function createWindow(
     backgroundColor: getWindowBackgroundColor(systemTheme),
     ...(iconPath ? { icon: iconPath } : {}),
     ...getMainWindowChromeOptions({
-      platform: process.platform,
-      theme: systemTheme,
+      mode: DESKTOP_WINDOW_CHROME_MODE,
     }),
     webPreferences: {
       preload: getPreloadPath(),
+      additionalArguments: [windowChromeModeArgument(DESKTOP_WINDOW_CHROME_MODE)],
       contextIsolation: true,
       nodeIntegration: false,
       webviewTag: true,
     },
   });
+  applyDesktopWindowChromeMode({ win: mainWindow, mode: DESKTOP_WINDOW_CHROME_MODE });
 
   const webContentsId = mainWindow.webContents.id;
   pendingOpenProjectStore.set(webContentsId, options.pendingOpenProjectPath);
@@ -1015,7 +1023,7 @@ async function bootstrap(): Promise<void> {
   });
   ensureNotificationCenterRegistration();
   registerDaemonManager();
-  registerWindowManager();
+  registerWindowManager({ mode: DESKTOP_WINDOW_CHROME_MODE });
   registerDialogHandlers();
   registerNotificationHandlers();
   registerOpenerHandlers();
