@@ -166,7 +166,9 @@ Provider descriptors may include one compact subtitle. The provider owns its con
 
 ### Pi provider subagents
 
-Pi RPC does not expose extension event-bus messages. The daemon's injected Pi extension forwards background `Agent` lifecycle events from `@tintinweb/pi-subagents` through Pi's extension-notification channel. Queued children use the provider `running` state because the provider-subagent contract has no queued state. Session shutdown cancels active descriptors. The parent agent lifecycle stays literal; the provider child contributes to the daemon-owned workspace activity projection.
+Pi RPC does not expose extension event-bus messages. The daemon's injected Pi extension forwards background `Agent` events from `@tintinweb/pi-subagents` through Pi's extension-notification channel. It uses Tintinweb's cross-package manager registry to subscribe to each running child session, then sends completed turns through the provider timeline stream. The lifecycle event remains the fallback source for a terminal result or error when no child session was available.
+
+Queued children use the provider `running` state because the provider-subagent contract has no queued state. A queued child starts timeline forwarding when Tintinweb announces that it is running. Session shutdown cancels active descriptors and removes child subscriptions. The parent agent lifecycle stays literal; the provider child contributes to the daemon-owned workspace activity projection. Pi cannot rebuild these child timelines after a daemon restart because Tintinweb does not expose them through provider history.
 
 ### Claude provider subagents: the task protocol
 

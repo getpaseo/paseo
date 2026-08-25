@@ -14,6 +14,7 @@ import path from "node:path";
 import pino from "pino";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { createContext, runInContext } from "node:vm";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
@@ -124,6 +125,56 @@ async function loadPaseoExtensionListeners(
     },
   });
   return listeners;
+}
+
+async function loadPaseoExtensionListenersWithTintinwebManager(
+  extensionPath: string,
+  manager: { getRecord(id: string): unknown },
+  extensionEventListeners = new Map<string, Set<PaseoExtensionEventListener>>(),
+): Promise<Map<string, PaseoExtensionListener>> {
+  const listeners = new Map<string, PaseoExtensionListener>();
+  const source = readUtf8File(extensionPath).replace(
+    "export default function paseoIntegration(pi)",
+    "globalThis.paseoIntegration = function paseoIntegration(pi)",
+  );
+  const context = createContext({ Buffer, clearTimeout, queueMicrotask, setTimeout });
+  Reflect.set(context, Symbol.for("pi-subagents:manager"), manager);
+  runInContext(source, context);
+  const extension = Reflect.get(context, "paseoIntegration");
+  if (typeof extension !== "function") {
+    throw new Error("Paseo extension did not register its entry point");
+  }
+  extension({
+    on: (event: string, listener: PaseoExtensionListener) => listeners.set(event, listener),
+    registerCommand: () => undefined,
+    events: {
+      on: (event: string, listener: PaseoExtensionEventListener) => {
+        const eventListeners = extensionEventListeners.get(event) ?? new Set();
+        eventListeners.add(listener);
+        extensionEventListeners.set(event, eventListeners);
+        return () => eventListeners.delete(listener);
+      },
+    },
+  });
+  return listeners;
+}
+
+class FakeTintinwebChildSession {
+  readonly messages: unknown[] = [{ role: "user", content: "Private effective prompt" }];
+  private readonly listeners = new Set<(event: Record<string, unknown>) => void>();
+
+  subscribe(listener: (event: Record<string, unknown>) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  emit(event: Record<string, unknown>): void {
+    for (const listener of this.listeners) listener(event);
+  }
+
+  listenerCount(): number {
+    return this.listeners.size;
+  }
 }
 
 async function applyPaseoExtensionSystemPrompt(
@@ -372,6 +423,159 @@ describe("PiRpcAgentSession", () => {
         type: "provider_subagent",
         provider: "pi",
         event: { type: "upsert", id: "run-1", status: "completed" },
+      },
+    ]);
+
+    await session.close();
+  });
+
+  test("maps Tintinweb child activity markers to provider subagent timelines", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-started",
+      method: "notify",
+      message: 'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","title":"Explore","status":"running"}',
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-presentation",
+      method: "notify",
+      message:
+        'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","subtitle":"Explore · gpt-5 · High · 1.2k tokens","toolCallId":"parent-tool-1"}',
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-compaction-started",
+      method: "notify",
+      message:
+        'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"compaction","id":"run-1","status":"loading","trigger":"auto"}',
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-compaction-completed",
+      method: "notify",
+      message:
+        'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"compaction","id":"run-1","status":"completed"}',
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-messages",
+      method: "notify",
+      message:
+        'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"messages","id":"run-1","messages":[{"role":"assistant","responseId":"response-1","content":[{"type":"thinking","thinking":"Trace the path"},{"type":"text","text":"Reading the source"},{"type":"toolCall","id":"tool-1","name":"bash","arguments":{"command":"pwd"}}]},{"role":"toolResult","toolCallId":"tool-1","toolName":"bash","content":[{"type":"text","text":"/workspace\\n"}],"details":{"output":"/workspace\\n","exitCode":0}}]}',
+    });
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "subagent-error",
+      method: "notify",
+      message:
+        'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"error","id":"run-1","message":"Child retry failed"}',
+    });
+
+    expect(events.providerSubagentEvents()).toEqual([
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: { type: "upsert", id: "run-1", title: "Explore", status: "running" },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "upsert",
+          id: "run-1",
+          subtitle: "Explore · gpt-5 · High · 1.2k tokens",
+          toolCallId: "parent-tool-1",
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "timeline",
+          id: "run-1",
+          item: { type: "compaction", status: "loading", trigger: "auto" },
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "timeline",
+          id: "run-1",
+          item: { type: "compaction", status: "completed" },
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "timeline",
+          id: "run-1",
+          item: { type: "reasoning", text: "Trace the path" },
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "timeline",
+          id: "run-1",
+          item: {
+            type: "assistant_message",
+            text: "Reading the source",
+            messageId: "response-1",
+          },
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "timeline",
+          id: "run-1",
+          item: {
+            type: "tool_call",
+            callId: "tool-1",
+            name: "bash",
+            status: "running",
+            detail: {
+              type: "shell",
+              command: "pwd",
+              output: undefined,
+              exitCode: undefined,
+            },
+            error: null,
+          },
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "timeline",
+          id: "run-1",
+          item: {
+            type: "tool_call",
+            callId: "tool-1",
+            name: "bash",
+            status: "completed",
+            detail: { type: "shell", command: "pwd", output: "/workspace\n", exitCode: null },
+            error: null,
+          },
+        },
+      },
+      {
+        type: "provider_subagent",
+        provider: "pi",
+        event: {
+          type: "timeline",
+          id: "run-1",
+          item: { type: "error", message: "Child retry failed" },
+        },
       },
     ]);
 
@@ -1349,7 +1553,13 @@ describe("PiRpcAgentSession", () => {
       description: "Trace the Pi mapper",
       isBackground: true,
     });
-    emitExtensionEvent("subagents:completed", { id: "run-1", status: "steered" });
+    emitExtensionEvent("subagents:completed", {
+      id: "run-1",
+      type: "Explore",
+      status: "steered",
+      result: "Mapped the Pi provider",
+      tokens: { input: 800, output: 400, total: 1200 },
+    });
     emitExtensionEvent("subagents:completed", { id: "run-1", status: "completed" });
     emitExtensionEvent("subagents:created", {
       id: "run-2",
@@ -1371,7 +1581,11 @@ describe("PiRpcAgentSession", () => {
       description: "Check the change",
       isBackground: true,
     });
-    emitExtensionEvent("subagents:failed", { id: "run-4", status: "error" });
+    emitExtensionEvent("subagents:failed", {
+      id: "run-4",
+      status: "error",
+      error: "Child provider failed",
+    });
     emitExtensionEvent("subagents:created", {
       id: "run-5",
       type: "Explore",
@@ -1383,12 +1597,15 @@ describe("PiRpcAgentSession", () => {
 
     expect(notifications).toEqual([
       'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","title":"Explore","description":"Trace the Pi mapper","status":"running"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","subtitle":"Explore · 1.2k tokens"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"messages","id":"run-1","messages":[{"role":"assistant","content":[{"type":"text","text":"Mapped the Pi provider"}]}]}',
       'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","status":"completed"}',
       'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-2","title":"Plan","description":"Plan a focused change","status":"running"}',
       'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-2","status":"canceled"}',
       'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-3","title":"general-purpose","description":"Implement the change","status":"running"}',
       'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-3","status":"failed"}',
       'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-4","title":"general-purpose","description":"Check the change","status":"running"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"error","id":"run-4","message":"Child provider failed"}',
       'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-4","status":"failed"}',
       'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-5","title":"Explore","description":"Cancel on shutdown","status":"running"}',
       'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-5","status":"canceled"}',
@@ -1397,6 +1614,140 @@ describe("PiRpcAgentSession", () => {
       true,
     );
 
+    await session.close();
+  });
+
+  test("streams Tintinweb child turns through the Paseo extension", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+    const session = await client.createSession(createConfig());
+    const extensionPath = pi.recordedLaunches[0]?.extensionPaths[0];
+    expect(extensionPath).toBeDefined();
+
+    const childSession = new FakeTintinwebChildSession();
+    const record = {
+      id: "run-1",
+      type: "Explore",
+      status: "running",
+      isBackground: true,
+      toolCallId: "parent-tool-1",
+      invocation: { modelName: "gpt-5", thinking: "high" },
+      lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+      session: childSession,
+    };
+    const queuedChildSession = new FakeTintinwebChildSession();
+    const queuedRecord = {
+      id: "run-2",
+      type: "Plan",
+      status: "queued",
+      isBackground: true,
+      invocation: { modelName: "gpt-5", thinking: "low" },
+      lifetimeUsage: { input: 0, output: 0, cacheWrite: 0 },
+      session: queuedChildSession,
+    };
+    const records = new Map([
+      [record.id, record],
+      [queuedRecord.id, queuedRecord],
+    ]);
+    const extensionEvents = new Map<string, Set<PaseoExtensionEventListener>>();
+    const listeners = await loadPaseoExtensionListenersWithTintinwebManager(
+      extensionPath!,
+      { getRecord: (id) => records.get(id) },
+      extensionEvents,
+    );
+    const notifications: string[] = [];
+    const context = {
+      sessionManager: { getEntries: () => [] },
+      ui: { notify: (message: string) => notifications.push(message) },
+    };
+    const emitExtensionEvent = (name: string, payload: unknown) => {
+      extensionEvents.get(name)?.forEach((listener) => listener(payload));
+    };
+
+    await listeners.get("session_start")?.({}, context);
+    notifications.length = 0;
+    emitExtensionEvent("subagents:started", {
+      id: "run-1",
+      type: "Explore",
+      description: "Trace the Pi mapper",
+    });
+    emitExtensionEvent("subagents:created", {
+      id: "run-1",
+      type: "Explore",
+      description: "Trace the Pi mapper",
+      isBackground: true,
+    });
+
+    childSession.messages.push(
+      {
+        role: "assistant",
+        responseId: "response-1",
+        content: [
+          { type: "thinking", thinking: "Trace the path" },
+          { type: "text", text: "Reading the source" },
+          { type: "toolCall", id: "tool-1", name: "read", arguments: { path: "agent.ts" } },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "tool-1",
+        toolName: "read",
+        content: [{ type: "text", text: "source" }],
+      },
+    );
+    record.lifetimeUsage.input = 800;
+    record.lifetimeUsage.output = 400;
+    childSession.emit({ type: "turn_end" });
+    childSession.emit({ type: "compaction_start", reason: "threshold" });
+    childSession.emit({ type: "compaction_end", result: { tokensBefore: 1200 } });
+    childSession.emit({ type: "compaction_start", reason: "manual" });
+    childSession.emit({ type: "compaction_end", aborted: true, errorMessage: "Canceled" });
+    emitExtensionEvent("subagents:completed", {
+      id: "run-1",
+      type: "Explore",
+      status: "completed",
+      result: "Reading the source",
+      tokens: { input: 800, output: 400, total: 1200 },
+    });
+
+    emitExtensionEvent("subagents:created", {
+      id: "run-2",
+      type: "Plan",
+      description: "Wait for a slot",
+      isBackground: true,
+    });
+    expect(queuedChildSession.listenerCount()).toBe(0);
+    queuedRecord.status = "running";
+    emitExtensionEvent("subagents:started", {
+      id: "run-2",
+      type: "Plan",
+      description: "Wait for a slot",
+    });
+    queuedChildSession.messages.push({
+      role: "assistant",
+      content: [{ type: "text", text: "The slot is active" }],
+    });
+    queuedChildSession.emit({ type: "turn_end" });
+    emitExtensionEvent("subagents:failed", { id: "run-2", status: "stopped" });
+
+    expect(notifications).toEqual([
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","title":"Explore","description":"Trace the Pi mapper","status":"running","subtitle":"Explore · gpt-5 · High","toolCallId":"parent-tool-1"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"messages","id":"run-1","messages":[{"role":"assistant","responseId":"response-1","content":[{"type":"thinking","thinking":"Trace the path"},{"type":"text","text":"Reading the source"},{"type":"toolCall","id":"tool-1","name":"read","arguments":{"path":"agent.ts"}}]}]}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"messages","id":"run-1","messages":[{"role":"toolResult","toolCallId":"tool-1","toolName":"read","content":[{"type":"text","text":"source"}]}]}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","subtitle":"Explore · gpt-5 · High · 1.2k tokens"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"compaction","id":"run-1","status":"loading","trigger":"auto"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"compaction","id":"run-1","status":"completed"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"compaction","id":"run-1","status":"loading","trigger":"manual"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"compaction","id":"run-1","status":"completed"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-1","status":"completed"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-2","title":"Plan","description":"Wait for a slot","status":"running","subtitle":"Plan · gpt-5 · Low"}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"kind":"messages","id":"run-2","messages":[{"role":"assistant","content":[{"type":"text","text":"The slot is active"}]}]}',
+      'PASEO_PI_TINTINWEB_SUBAGENT {"id":"run-2","status":"canceled"}',
+    ]);
+    expect(childSession.listenerCount()).toBe(0);
+    expect(queuedChildSession.listenerCount()).toBe(0);
+
+    await listeners.get("session_shutdown")?.({}, context);
     await session.close();
   });
 
