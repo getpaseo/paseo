@@ -31,7 +31,7 @@ describe("resolveImportCwd", () => {
     );
   });
 
-  it("accepts pi as an import provider", async () => {
+  it("imports a provider session into the requested workspace", async () => {
     importAgent.mockResolvedValueOnce({
       id: "agent-1",
       status: "idle",
@@ -45,6 +45,7 @@ describe("resolveImportCwd", () => {
       {
         provider: "pi",
         cwd: "/tmp/project",
+        workspace: "wks-existing",
       },
       {} as never,
     );
@@ -53,6 +54,7 @@ describe("resolveImportCwd", () => {
       provider: "pi",
       sessionId: "pi-session-1",
       cwd: "/tmp/project",
+      workspaceId: "wks-existing",
     });
     expect(result.data.provider).toBe("pi");
   });
