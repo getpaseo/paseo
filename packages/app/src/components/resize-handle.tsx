@@ -12,6 +12,7 @@ import {
 export interface ResizeHandleProps {
   testID?: string;
   direction: "horizontal" | "vertical";
+  hitAreaAlignment?: "center" | "end";
   groupId: string;
   index: number;
   sizes: number[];
@@ -37,6 +38,7 @@ function resetWindowHorizontalScroll() {
 export function ResizeHandle({
   testID,
   direction,
+  hitAreaAlignment = "center",
   groupId,
   index,
   sizes,
@@ -213,19 +215,27 @@ export function ResizeHandle({
       styles.hitArea,
       direction === "horizontal" ? styles.hitAreaHorizontal : styles.hitAreaVertical,
       {
+        ...(direction === "horizontal"
+          ? { left: hitAreaAlignment === "end" ? 0 : -5 }
+          : { top: hitAreaAlignment === "end" ? 0 : -5 }),
         cursor: direction === "horizontal" ? "col-resize" : "row-resize",
         touchAction: "none",
       } as object,
     ],
-    [direction],
+    [direction, hitAreaAlignment],
   );
   const touchHitAreaStyle = useMemo(
     () => [
       styles.touchHitArea,
       direction === "horizontal" ? styles.touchHitAreaHorizontal : styles.touchHitAreaVertical,
-      { touchAction: "none" } as object,
+      {
+        ...(direction === "horizontal"
+          ? { left: hitAreaAlignment === "end" ? 0 : -12 }
+          : { top: hitAreaAlignment === "end" ? 0 : -12 }),
+        touchAction: "none",
+      } as object,
     ],
-    [direction],
+    [direction, hitAreaAlignment],
   );
   const touchGripStyle = useMemo(
     () => [
@@ -275,6 +285,7 @@ const styles = StyleSheet.create((_theme) => ({
   handle: {
     position: "relative",
     flexShrink: 0,
+    zIndex: 10,
   },
   handleHorizontal: {
     width: 1,
@@ -305,13 +316,11 @@ const styles = StyleSheet.create((_theme) => ({
     zIndex: 10,
   },
   hitAreaHorizontal: {
-    left: -5,
     top: 0,
     bottom: 0,
     width: 10,
   },
   hitAreaVertical: {
-    top: -5,
     left: 0,
     right: 0,
     height: 10,
@@ -323,14 +332,12 @@ const styles = StyleSheet.create((_theme) => ({
     justifyContent: "center",
   },
   touchHitAreaHorizontal: {
-    left: -12,
     top: "50%",
     width: 24,
     height: 88,
     transform: [{ translateY: -44 }],
   },
   touchHitAreaVertical: {
-    top: -12,
     left: "50%",
     width: 88,
     height: 24,

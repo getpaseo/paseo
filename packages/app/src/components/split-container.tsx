@@ -691,6 +691,7 @@ export function SplitContainer({
               <ResizeHandle
                 testID="workspace-explorer-sidebar-resize-handle"
                 direction="horizontal"
+                hitAreaAlignment="end"
                 groupId={EXPLORER_SIDEBAR_RESIZE_GROUP_ID}
                 index={0}
                 sizes={explorerSidebarDockSizes}

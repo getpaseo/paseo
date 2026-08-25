@@ -145,6 +145,7 @@ export function openPreferredWorkspacePreview(
     target: input.target,
     intent: "reveal",
     placement: { mode: "pane", paneId: destinationPaneId },
+    parentTabId: input.parentTabId ?? activeTab?.tabId ?? undefined,
   });
 }
 

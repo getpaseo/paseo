@@ -701,8 +701,17 @@ test("compact Changes keeps its actions compact and menu-only", async ({ page })
   await openWorkspaceChanges(page, workspace);
   await page.setViewportSize({ width: 480, height: 900 });
 
-  const actions = page.getByTestId("changes-actions-menu-trigger").filter({ visible: true });
-  const options = page.getByRole("button", { name: "Diff options" }).filter({ visible: true });
+  const compactChangesTab = page.getByTestId("explorer-tab-changes").filter({ visible: true });
+  if (!(await compactChangesTab.isVisible())) {
+    await page.getByTestId("workspace-explorer-toggle").first().click();
+  }
+  await expect(compactChangesTab).toBeVisible();
+  await compactChangesTab.click();
+  const compactExplorer = page.getByTestId("explorer-content-area").filter({ visible: true });
+  await expect(compactExplorer.getByTestId("changes-header")).toBeVisible();
+
+  const actions = compactExplorer.getByTestId("changes-actions-menu-trigger");
+  const options = compactExplorer.getByRole("button", { name: "Diff options" });
   const [actionsBox, optionsBox, glyphBox] = await Promise.all([
     actions.boundingBox(),
     options.boundingBox(),
@@ -730,7 +739,9 @@ test("compact Changes keeps its actions compact and menu-only", async ({ page })
   await expect(wrapLines).toBeVisible();
   await wrapLines.click();
   await options.click();
-  await expect(page.getByTestId("changes-toggle-wrap-lines")).toContainText("Scroll long lines");
+  await expect(
+    page.getByTestId("changes-options-menu-content").getByTestId("changes-toggle-wrap-lines"),
+  ).toContainText("Scroll long lines");
 });
 
 test("canvas diff stays sharp while its workspace pane is resized", async ({ page }) => {
@@ -740,7 +751,9 @@ test("canvas diff stays sharp while its workspace pane is resized", async ({ pag
 
   const canvas = page.getByTestId("git-diff-canvas");
   const root = page.getByTestId("git-diff-canvas-root");
-  const handle = page.getByTestId("workspace-split-resize-handle").getByRole("separator");
+  const handle = page
+    .getByTestId("workspace-explorer-sidebar-resize-handle")
+    .getByRole("separator");
   await expect(handle).toBeVisible();
   await expect
     .poll(async () => {
@@ -761,11 +774,11 @@ test("canvas diff stays sharp while its workspace pane is resized", async ({ pag
       };
     }),
   ]);
-  if (!handleBounds) throw new Error("Workspace split resize handle has no bounds");
+  if (!handleBounds) throw new Error("Explorer sidebar resize handle has no bounds");
 
   await page.mouse.move(handleBounds.x + handleBounds.width / 2, handleBounds.y + 120);
   await page.mouse.down();
-  await page.mouse.move(handleBounds.x - 120, handleBounds.y + 120);
+  await page.mouse.move(handleBounds.x + 120, handleBounds.y + 120);
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
 
   const duringDrag = await Promise.all([
@@ -931,6 +944,7 @@ test("canvas diff uses the overlay scrollbar and its thumb controls vertical scr
   if (!bounds) throw new Error("Diff overlay scrollbar thumb has no bounds");
   await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
   await page.mouse.down();
+  await expect(grab).toHaveCSS("cursor", "grabbing");
   await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2 + 180);
   await page.mouse.up();
 
@@ -1170,24 +1184,20 @@ async function setOpenChangesPresentation(
   page: Page,
   requestedPresentation: { layout: "unified" | "split"; wrapLines: boolean },
 ): Promise<void> {
-  const options = page.getByRole("button", { name: "Diff options" }).filter({ visible: true });
-
-  await options.click();
-  const layoutItem = page.getByTestId("changes-toggle-layout");
-  const currentLayout = (await layoutItem.locator("svg").count()) === 2 ? "split" : "unified";
+  const diffPanel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  const layoutItem = diffPanel.getByTestId("changes-toggle-layout");
+  const currentLayout =
+    (await layoutItem.getAttribute("aria-label")) === "Switch to unified diff"
+      ? "split"
+      : "unified";
   if (currentLayout !== requestedPresentation.layout) {
     await layoutItem.click();
-  } else {
-    await page.keyboard.press("Escape");
   }
 
-  await options.click();
-  const wrapItem = page.getByTestId("changes-toggle-wrap-lines");
-  const currentWrapLines = (await wrapItem.locator("svg").count()) === 2;
+  const wrapItem = diffPanel.getByTestId("changes-toggle-wrap-lines");
+  const currentWrapLines = (await wrapItem.getAttribute("aria-label")) === "Scroll long lines";
   if (currentWrapLines !== requestedPresentation.wrapLines) {
     await wrapItem.click();
-  } else {
-    await page.keyboard.press("Escape");
   }
 }
 
@@ -1359,7 +1369,10 @@ async function openSelectionWorkspaceChanges(page: Page, workspace: DirtyWorkspa
   await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
   await waitForWorkspaceTabsVisible(page);
   await openChangesPanel(page);
-  await expect(page.getByText("selection.ts")).toBeVisible({ timeout: 30_000 });
+  const diffPanel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  await expect(diffPanel.getByTestId("diff-file-0-name")).toHaveText("selection.ts", {
+    timeout: 30_000,
+  });
   await expectExpandedMountedTabDiff(page);
 }
 
