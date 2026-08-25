@@ -210,6 +210,7 @@ function evaluate(coordinator: FinishCoordinator): void {
 
   for (const watcher of candidates) {
     if (
+      !watcher.terminalReason &&
       hasUnsettledDescendant(
         watcher.childAgentId,
         dependencies,
