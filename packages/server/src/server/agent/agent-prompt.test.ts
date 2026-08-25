@@ -303,10 +303,7 @@ test("finish notification waits for an asynchronously woken dispatcher", async (
   const dispatcherPromptSent = createDeferred<void>();
   const parentPrompts: string[] = [];
   const dispatcherPrompts: string[] = [];
-  const subscribers = new Set<{
-    callback: (event: AgentManagerEvent) => void;
-    agentId?: string;
-  }>();
+  const subscribers = new Set<(event: AgentManagerEvent) => void>();
   let dispatcherResponse = "The dispatcher is waiting for its grandchild.";
 
   function createAgent(id: string, title: string, lifecycle: "idle" | "running"): ManagedAgent {
@@ -320,9 +317,7 @@ test("finish notification waits for an asynchronously woken dispatcher", async (
 
   function emitState(agent: ManagedAgent): void {
     for (const subscriber of subscribers) {
-      if (!subscriber.agentId || subscriber.agentId === agent.id) {
-        subscriber.callback({ type: "agent_state", agent });
-      }
+      subscriber({ type: "agent_state", agent });
     }
   }
 
@@ -337,17 +332,10 @@ test("finish notification waits for an asynchronously woken dispatcher", async (
     if (agentId === grandchild.id) return grandchild;
     return null;
   });
-  Reflect.set(
-    agentManager,
-    "subscribe",
-    (callback: (event: AgentManagerEvent) => void, options?: { agentId?: string }) => {
-      const subscriber = { callback, agentId: options?.agentId };
-      subscribers.add(subscriber);
-      return () => {
-        subscribers.delete(subscriber);
-      };
-    },
-  );
+  Reflect.set(agentManager, "subscribe", (callback: (event: AgentManagerEvent) => void) => {
+    subscribers.add(callback);
+    return () => subscribers.delete(callback);
+  });
   Reflect.set(agentManager, "listAgents", () => [caller, dispatcher, grandchild]);
   Reflect.set(agentManager, "getLastAssistantMessage", async (agentId: string) => {
     return agentId === dispatcher.id ? dispatcherResponse : null;

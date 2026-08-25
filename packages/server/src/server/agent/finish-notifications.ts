@@ -90,30 +90,20 @@ function refreshSubscription(coordinator: FinishCoordinator): void {
     coordinator.unsubscribe();
     coordinator.unsubscribe = null;
   }
-  if (coordinator.watchers.size === 0 && coordinator.pendingDeliveries.size === 0) {
-    coordinators.delete(coordinator.agentManager);
-  }
 }
 
 function handleEvent(coordinator: FinishCoordinator, event: AgentManagerEvent): void {
   if (event.type === "agent_state") {
     handleAgentState(coordinator, event.agent);
+    scheduleEvaluation(coordinator);
   } else if (event.type === "agent_stream") {
     handleAgentStream(coordinator, event.agentId, event.event);
   }
-  scheduleEvaluation(coordinator);
 }
 
 function handleAgentState(coordinator: FinishCoordinator, agent: ManagedAgent): void {
   for (const watcher of coordinator.watchers) {
     if (watcher.childAgentId !== agent.id) continue;
-    if (
-      watcher.requireParentOwnership &&
-      getParentAgentIdFromLabels(agent.labels) !== watcher.callerAgentId
-    ) {
-      coordinator.watchers.delete(watcher);
-      continue;
-    }
     for (const requestId of watcher.notifiedPermissionRequestIds) {
       if (!agent.pendingPermissions.has(requestId)) {
         watcher.notifiedPermissionRequestIds.delete(requestId);
@@ -127,7 +117,6 @@ function handleAgentState(coordinator: FinishCoordinator, agent: ManagedAgent): 
       watcher.terminalReason = "was closed";
     }
   }
-  refreshSubscription(coordinator);
 }
 
 function handleAgentStream(
@@ -251,7 +240,6 @@ function isTerminalCandidate(
   if (watcher.terminalReason) return true;
   const child = agentsById.get(watcher.childAgentId);
   if (!child || !watcher.hasSeenRunning || child.lifecycle !== "idle") return false;
-  if (coordinator.agentManager.hasInFlightRun(child.id)) return false;
   return !hasActiveReachableAgent(coordinator, child.id, agentsById, dependencies);
 }
 
@@ -261,8 +249,8 @@ function hasActiveReachableAgent(
   agentsById: Map<string, ManagedAgent>,
   dependencies: Map<string, Set<string>>,
 ): boolean {
-  const visited = new Set([rootAgentId]);
-  const pending = [...(dependencies.get(rootAgentId) ?? [])];
+  const visited = new Set<string>();
+  const pending = [rootAgentId];
   while (pending.length > 0) {
     const agentId = pending.pop()!;
     if (visited.has(agentId)) continue;
@@ -276,7 +264,7 @@ function hasActiveReachableAgent(
     }
     pending.push(...(dependencies.get(agentId) ?? []));
   }
-  return (coordinator.pendingDeliveries.get(rootAgentId) ?? 0) > 0;
+  return false;
 }
 
 function hasUnsettledDescendant(
