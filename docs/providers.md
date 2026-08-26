@@ -32,6 +32,12 @@ This Paseo version accepts these keys:
   `repo_clone`, `repo_overview`, `lsp`, `doom_loop`, and `skill`. See the
   [OpenCode permissions reference](https://opencode.ai/docs/permissions/). OpenCode permissions are
   application policy, not an OS sandbox.
+- **OpenCode 2:** `permission`, either one `ask`/`allow`/`deny` action or the native per-tool rule
+  object. Supported entries are `shell`, `edit`, `read`, `grep`, `glob`, `webfetch`, `websearch`,
+  `subagent`, `external_directory`, and `*`. v2 action names differ from v1 (`bash`, `list`,
+  `task`, `todowrite`, `question`, and the rest are v1-only). See the
+  [OpenCode 2 permissions reference](https://opencode.ai/v2/docs/permissions). Like v1, these are
+  application policy, not an OS sandbox.
 
 Each provider definition owns its option schema and exact MCP preapproval mapping. A new provider
 must fail closed for Hub unattended execution until it can approve one exact injected MCP server
@@ -53,7 +59,7 @@ ACP permission options are rendered as ordered actions and Paseo returns the sel
 
 Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
 
-Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
+Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `opencode-v2` (`opencode-v2-agent.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
 
 Claude first-party model metadata lives in `packages/server/src/server/agent/providers/claude/model-manifest.ts`. When adding or updating a Claude model, update that manifest only; the model picker thinking options and Claude-specific feature gates are derived from the manifest. Do not add model-specific Claude capability lists in feature code.
 
@@ -96,6 +102,53 @@ Provider adapters must terminalize every transient timeline row before emitting 
 Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.fetchCatalog`, `listCommands`, or `listFeatures` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs. `fetchCatalog` is the single discovery API for models and modes — provider implementations may use one process, separate upstream calls, or static data internally, but callers outside the provider do not get separate runtime model/mode probes. Draft command listing and scratch-session feature listing require an explicit draft model. Do not resolve a default model through catalog discovery. A client-level `listFeatures` implementation may return features from an incomplete, model-less draft and owns which features are valid in that state.
 
 Provider session import has its own contract. The picker calls `listImportableSessions` and receives rows only: provider handle, cwd, title, prompt previews, and last activity. Import calls `importSession({ providerHandleId, cwd })` for the selected row and must not call listing again. The provider returns the resumed session, storage config, persistence handle, and hydrated timeline for that one native session; `AgentManager.importProviderSession` seeds the daemon timeline and publishes the Paseo agent only after it is ready.
+
+## OpenCode 2
+
+`opencode-v2` is a separate provider for the `opencode2` binary, the v2 rewrite of opencode. It
+coexists with the v1 `opencode` provider; both stay registered and independent, and users pick
+either in the provider picker. The v1 integration cannot be reused: v2 is a different binary, a
+different HTTP surface (`/api/...`), a different SSE event contract (`session.*` events instead of
+`message.*`), HTTP Basic auth, and a new network client (`@opencode-ai/client`). The provider lives
+in `opencode-v2-agent.ts` plus the `opencode-v2/` helpers.
+
+- **Server.** Spawns `opencode2 serve --port <port>` with `OPENCODE_PASSWORD` set, waits for the
+  stdout readiness line `server listening on <url>`, and authenticates every request with HTTP
+  Basic `opencode:<password>`. Servers run in an isolated home (`$PASEO_HOME/opencode2-home`) so
+  v2 sessions never touch the user's real opencode config; the manager seeds the user's real
+  credentials into that home at spawn. Agents share one ref-counted server; the last release kills
+  it.
+- **Events.** v2 events are `session.*` (text/reasoning/tool/step/execution/status/inbox/
+  compaction/revert/shell/synthetic), `permission.asked/replied`, and `form.created/replied/
+cancelled`. There is no `message.updated`, `message.part.*`, `session.error`, `question.asked`,
+  or `todo.updated`. The translator maps `session.inbox.*` to user rows, `session.execution.*` and
+  `session.status` to turn lifecycle, `session.text/reasoning/tool.*` to parts, `permission.asked`
+  and `form.created` to permission requests, and `session.synthetic` to synthetic messages.
+- **Permissions and forms.** v2 has no per-prompt permission field (v1 had one); permissions are
+  per-agent config. Paseo maps the `permission` provider option and exact-MCP preapproval grants
+  into v2 rules (`{ action, resource, effect }`) and writes them into the isolated opencode2
+  config, which the config plugin reloads on change. Default is ask-by-default for sensitive
+  native actions (`shell`/`edit`/`webfetch`/`websearch`/`external_directory`) and allow for safe
+  reads (`read`/`glob`/`grep`/`subagent`/`question`). Replies map to `permission.reply` with
+  `once`/`always`/`reject`. `form.created` surfaces as a question-kind request; answers go through
+  keyed `form.reply`, cancel through `form.cancel`. `auto_accept` covers tool-kind requests only;
+  forms are never auto-approved.
+- **MCP.** Paseo MCP configs map to v2 `mcp.add` (local/remote) plus `mcp.connect` — unlike v1,
+  which must not follow `mcp.add` with `mcp.connect`. Injection is idempotent and session-scoped,
+  reconciled before the first prompt. Remote MCP is streamable HTTP, not legacy SSE. Exact-MCP
+  preapproval grants use the composite v2 action `<server>_<tool>`.
+- **Rewind.** Rewind runs `revert.stage` then `revert.commit`. Capability flags expose only "both"
+  (`supportsRewindBoth: true`). `revert.clear` is wired but has no daemon caller yet.
+- **Commands.** `command.list` plus `session.command`; built-in `compact`/`summarize` are handled
+  directly. Unknown slash commands fall back to plain text so the model can answer.
+- **Subagents.** Child sessions are discovered via `session.list({ parentID })`; completion comes
+  from the child's terminal events and tool metadata. `session.synthetic` with
+  `metadata.source === "subagent"` is a forward-compat path only.
+- **Resume and import.** Resume reconstructs history from `message.list`; import brings real
+  opencode2 sessions in. Archive/unarchive are no-ops: v2 has no archive API, so Paseo's own
+  stored-agent archive handles hiding.
+- **Terminal activity.** A v2 plugin installed into the opencode2 config dir reports activity via
+  `paseo hooks opencode-v2 <event>`. See [docs/terminal-activity.md](terminal-activity.md).
 
 ## Provider Helper Processes
 
@@ -365,7 +418,7 @@ case "my-provider":
   );
 ```
 
-Add to the `allProviders` array (current built-ins are `claude`, `codex`, `copilot`, `opencode`, `pi`, `omp`):
+Add to the `allProviders` array (current built-ins are `claude`, `codex`, `copilot`, `opencode`, `opencode-v2`, `pi`, `omp`):
 
 ```ts
 export const allProviders: AgentProvider[] = [
@@ -373,6 +426,7 @@ export const allProviders: AgentProvider[] = [
   "codex",
   "copilot",
   "opencode",
+  "opencode-v2",
   "pi",
   "my-provider",
 ];

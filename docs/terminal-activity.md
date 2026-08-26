@@ -72,6 +72,27 @@ OpenCode uses a server plugin instead of command hooks. The plugin listens to Op
 - `permission.asked` → `needs-input`
 - `permission.replied` → `running`
 
+OpenCode 2 (the `opencode2` binary) also uses a server plugin, but a separate file. The v1 and v2
+plugin APIs are incompatible, so Paseo installs `paseo-terminal-activity-v2.js` next to the v1
+file; the v2 binary auto-discovers every `.js` file in `plugins/`, so both coexist. The installed
+binary cannot resolve `@opencode-ai/plugin` from a standalone disk file, so the plugin defines a
+minimal `Plugin.define` shim that returns the `{ id, setup(ctx) }` definition the loader accepts,
+then subscribes to `ctx.event.subscribe()`.
+
+The v2 server reports busy/idle through `session.execution.*` events, not `session.status`. The
+plugin maps:
+
+- `session.execution.started` (and `session.step.started` as a warmup fallback) → `running`
+- `session.execution.succeeded` → `idle`
+- `session.status` with `busy` or `retry` → `running`
+- `session.status` with `idle` → `idle`
+- `permission.asked` → `needs-input`
+- `form.created` → `needs-input`
+- `permission.replied`, `form.replied`, `form.cancelled` → `running`
+
+The hook command is `paseo hooks opencode-v2 <event>`. The provider id is `opencode-v2`, not
+`opencode2` — the CLI resolves providers by id and would silently no-op on the wrong name.
+
 The daemon maps hook states onto terminal activity like an agent lifecycle plus unread attention: `running` → `state: working`, `idle` → `state: idle`, and `needs-input` → `state: idle` with `attentionReason: needs_input`. A `working` → `idle` transition records `state: idle` with `attentionReason: finished` until the user focuses that terminal; plain idle terminals still contribute no workspace status.
 
 ## Focus clearing
@@ -95,6 +116,7 @@ When enabled, Paseo installs provider hooks globally:
 - Claude hooks are written to `~/.claude/settings.json` (or `CLAUDE_CONFIG_DIR/settings.json` when that override is set).
 - Codex hooks are written to `~/.codex/hooks.json` (or `CODEX_HOME/hooks.json` when that override is set). Codex supports a native `commandWindows`, so each Paseo hook includes both POSIX and Windows commands. Non-managed Codex hooks are trust-gated by Codex; users may see Codex's hook review prompt before the hook runs.
 - OpenCode gets a self-contained plugin at `$XDG_CONFIG_HOME/opencode/plugins/paseo-terminal-activity.js` (or `~/.config/opencode/plugins/paseo-terminal-activity.js` when XDG is unset; `OPENCODE_CONFIG_DIR` still wins when set).
+- OpenCode 2 gets its own plugin at `$XDG_CONFIG_HOME/opencode/plugins/paseo-terminal-activity-v2.js` (same config dir, distinct file name — the v1 and v2 plugin shapes are incompatible, and the v2 binary auto-discovers every `.js` file in `plugins/`).
 
 Installation is marker-based/idempotent for config hooks and exact-file/idempotent for the OpenCode plugin. Paseo preserves user hooks, removes only its own marker-matched command hooks, and leaves hooks installed across daemon shutdown. Outside a Paseo terminal they are inert because the command or plugin is gated on `PASEO_TERMINAL_ID`.
 
