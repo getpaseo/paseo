@@ -27,6 +27,10 @@ On desktop, the shell is rendered outside the workspace split canvas so it divid
 workspace, including the header. It has its own persisted width and resize handle. Main-pane splits
 never read or modify that width.
 
+`packages/app/src/workspace-tabs/open-supporting-view.ts` owns semantic Changes and pull-request
+opens. Compact and wide native layouts select the matching Explorer tab; desktop layouts follow the
+source-specific side-pane preference. Callers request the content and never choose the shell.
+
 The persisted layout still contains the Explorer pane so tabs survive reloads. The renderer removes
 that pane from the workspace split tree and docks it separately. Persisted identifiers retain the
 literal `"explorer"` pane id and `explorerPaneIdByWorkspace` key for compatibility.
@@ -37,10 +41,11 @@ compatible tabs to main. Explorer tabs can be reordered, but the dock cannot be 
 an Explorer tab does not change workspace focus.
 
 Cmd+E selects Changes for Git workspaces and Files otherwise. Compact layouts use the combined
-full-screen Explorer overlay and close it after a file opens. Wide native layouts without pane
-splits use the same combined content in a resizable inline dock; opening a file leaves that dock
-visible. Both presentations keep their selection in the panel store and reuse the layout store's
-per-workspace Explorer width. They do not create a second Explorer lifecycle.
+full-screen Explorer overlay for Changes, Files, and pull requests, and close it after a file opens.
+Wide native layouts without pane splits use the same combined content in a resizable inline dock;
+opening a file leaves that dock visible. Both presentations keep their selection in the panel store
+and reuse the layout store's per-workspace Explorer width. They do not create a second Explorer
+lifecycle.
 
 ## Side pane
 

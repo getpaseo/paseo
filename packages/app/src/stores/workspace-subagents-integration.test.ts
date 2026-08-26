@@ -258,7 +258,7 @@ describe("workspace subagents integration", () => {
     ).toEqual([child.id]);
   });
 
-  it("falls back to the main pane when the Explorer is preferred for a subagent", () => {
+  it("opens a subagent in Explorer when Explorer is preferred", () => {
     const workspaceKey = buildWorkspaceTabPersistenceKey({
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
@@ -293,12 +293,12 @@ describe("workspace subagents integration", () => {
     const explorerSidebarPaneId = state.explorerSidebarPaneIdByWorkspace[workspaceKey!];
 
     expect(explorerSidebarPaneId).toBeTruthy();
-    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe("main");
+    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(explorerSidebarPaneId);
     expect(findPaneById(layout.root, explorerSidebarPaneId!)?.hidden).toBeUndefined();
     expect(layout.focusedPaneId).toBe("main");
   });
 
-  it("falls back to the main pane when the Explorer is preferred for a provider subagent", () => {
+  it("opens a provider subagent in Explorer when Explorer is preferred", () => {
     const workspaceKey = buildWorkspaceTabPersistenceKey({
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
@@ -320,7 +320,7 @@ describe("workspace subagents integration", () => {
     const explorerSidebarPaneId = state.explorerSidebarPaneIdByWorkspace[workspaceKey!];
 
     expect(explorerSidebarPaneId).toBeTruthy();
-    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe("main");
+    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(explorerSidebarPaneId);
     expect(findPaneById(layout.root, explorerSidebarPaneId!)?.hidden).toBeUndefined();
     expect(layout.focusedPaneId).toBe("main");
   });

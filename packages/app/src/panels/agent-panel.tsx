@@ -94,7 +94,7 @@ import {
 } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
+import { openWorkspaceSupportingView } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
@@ -1045,6 +1045,10 @@ function ChatAgentContent({
     streamViewRef.current?.scrollToBottom("message-sent");
   }, [agentId]);
 
+  const handleRewindComplete = useCallback(() => {
+    streamViewRef.current?.scrollToBottom("rewind");
+  }, []);
+
   const retryAgentLoad = useCallback(() => setMissingAgentState({ kind: "idle" }), []);
 
   const retryTimelineSync = useCallback(() => {
@@ -1185,6 +1189,7 @@ function ChatAgentContent({
       animatedContentStyle={animatedContentStyle}
       handleComposerHeightChange={handleComposerHeightChange}
       handleMessageSent={handleMessageSent}
+      handleRewindComplete={handleRewindComplete}
       showHistorySyncOverlay={showHistorySyncOverlay}
       showHistorySyncError={showHistorySyncError}
       isRetryingHistorySync={isRetryingHistorySync}
@@ -1214,6 +1219,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   animatedContentStyle,
   handleComposerHeightChange,
   handleMessageSent,
+  handleRewindComplete,
   showHistorySyncOverlay,
   showHistorySyncError,
   isRetryingHistorySync,
@@ -1239,6 +1245,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
   animatedContentStyle: object[];
   handleComposerHeightChange: (height: number) => void;
   handleMessageSent: () => void;
+  handleRewindComplete: () => void;
   showHistorySyncOverlay: boolean;
   showHistorySyncError: boolean;
   isRetryingHistorySync: boolean;
@@ -1349,6 +1356,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         <AgentTracks
           serverId={serverId}
           workspaceId={workspaceId}
+          cwd={cwd}
           subagentRows={subagentRows}
           tasks={tasks}
           archiveFinishedStatus={archiveFinishedSubagents.status}
@@ -1363,6 +1371,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     <RewindComposerRestoreProvider
       text={agentInputDraft.text}
       setText={agentInputDraft.replaceText}
+      onRewindComplete={handleRewindComplete}
     >
       <View style={styles.root}>
         <FileDropZone style={styles.container} disabled={isArchivingCurrentAgent}>
@@ -1617,15 +1626,15 @@ function ActiveAgentComposer({
       if (attachment.kind !== "review") {
         return;
       }
-      openPreferredWorkspaceTarget({
+      openWorkspaceSupportingView({
+        view: "changes",
         isCompact: isCompactFormFactor,
         workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
-        target: { kind: "working_diff" },
-        source: "changesLinks",
+        checkout: { serverId, cwd, isGit: true },
         preferences: openInSidePane,
       });
     },
-    [isCompactFormFactor, openInSidePane, serverId, workspaceId],
+    [cwd, isCompactFormFactor, openInSidePane, serverId, workspaceId],
   );
 
   const handleClientSlashCommand = useCallback(

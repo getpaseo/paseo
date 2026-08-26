@@ -59,6 +59,27 @@ describe("routeKeyboardShortcut — dispatch passthroughs", () => {
       action: expected,
     });
   });
+
+  it("closes desktop settings when Escape routes through agent interrupt", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "agent.interrupt", payload: null },
+        makeCtx({ pathname: "/settings/general" }),
+      ),
+    ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
+  });
+
+  it("keeps agent interrupt behavior on compact settings layouts", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "agent.interrupt", payload: null },
+        makeCtx({ pathname: "/settings/general", isMobile: true }),
+      ),
+    ).toEqual<ShortcutAction>({
+      kind: "dispatch",
+      action: { id: "agent.interrupt", scope: "global" },
+    });
+  });
 });
 
 describe("routeKeyboardShortcut — workspace.tab.navigate", () => {

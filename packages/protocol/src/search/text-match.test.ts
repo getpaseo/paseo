@@ -113,6 +113,15 @@ describe("scoreMatch typo tolerance", () => {
     expect(scoreMatch("confug", "revamp configuration editor", typoTolerant)?.tier).toBe(6);
   });
 
+  it("drops the subsequence tier when the caller opts out", () => {
+    // Callers that preselect a row need a near miss to read as no match, so they turn this off.
+    // Only the subsequence tier goes; every contiguous tier still scores the same.
+    expect(scoreMatch("confg", "revamp configuration editor", { subsequence: false })).toBeNull();
+    expect(scoreMatch("config", "revamp configuration editor", { subsequence: false })?.tier).toBe(
+      3,
+    );
+  });
+
   it("reports the offset and edit distance of the word it matched", () => {
     expect(scoreMatch("bulling", "add stripe billing", typoTolerant)).toEqual({
       tier: 6,
@@ -209,6 +218,14 @@ describe("scoreTextFields", () => {
       scoreTextFields("stipe bulling", ["add stripe billing"], { typoTolerant: true }),
     ).not.toBeNull();
     expect(scoreTextFields("stipe bulling", ["add stripe billing"])).toBeNull();
+  });
+
+  it("carries the subsequence opt-out down to each token", () => {
+    const fields = ["Label as Design"];
+    // Splitting on whitespace is what the opt-out keeps; only the run-together form goes.
+    expect(scoreTextFields("lab des", fields, { subsequence: false })).not.toBeNull();
+    expect(scoreTextFields("labdes", fields, { subsequence: false })).toBeNull();
+    expect(scoreTextFields("labdes", fields)).not.toBeNull();
   });
 });
 

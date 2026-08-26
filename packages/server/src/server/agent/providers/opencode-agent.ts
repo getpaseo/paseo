@@ -3853,11 +3853,11 @@ class OpenCodeAgentSession implements AgentSession {
       await withTimeout(
         this.events.ready(),
         OPENCODE_EVENT_STREAM_READY_TIMEOUT_MS,
-        "OpenCode event stream first record",
+        "OpenCode server.connected event",
       );
     } catch (error) {
       if (this.abortController === turnAbortController) this.abortController = null;
-      if (!(error instanceof Error) || error.message !== "OpenCode event stream first record") {
+      if (!(error instanceof Error) || error.message !== "OpenCode server.connected event") {
         throw error;
       }
       const diagnostics = this.events.diagnostics?.();
@@ -4162,11 +4162,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async consumeEventSourceInput(input: OpenCodeEventSourceInput): Promise<void> {
-    if ("type" in input && input.type === "reconnected") {
-      await this.reconcileAfterGap(++this.gapRepairRevision);
-      return;
-    }
-    if ("type" in input && input.type === "server-exited") {
+    if (!("payload" in input)) {
       if (this.turnState.status === "stopping") return this.finishStoppingTurn(this.turnState.stop);
       const turnId = this.activeForegroundTurnId;
       if (turnId) {
@@ -4175,6 +4171,10 @@ class OpenCodeAgentSession implements AgentSession {
           turnId,
         );
       }
+      return;
+    }
+    if (input.payload.type === "server.connected") {
+      await this.reconcileAfterGap(++this.gapRepairRevision);
       return;
     }
     await this.consumeOpenCodeStreamEvent({ rawEvent: input, eventCount: 0 });

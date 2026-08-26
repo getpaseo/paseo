@@ -1,5 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { buildForgeBlobUrl, buildForgeBranchTreeUrl, hasForgeWebUrls } from "./forge-url";
+import {
+  buildForgeBlobUrl,
+  buildForgeBranchTreeUrl,
+  buildForgeChecksUrl,
+  hasForgeWebUrls,
+} from "./forge-url";
+
+describe("buildForgeChecksUrl", () => {
+  it.each([
+    [
+      "github",
+      "https://github.com/acme/repo/pull/12",
+      "https://github.com/acme/repo/pull/12/checks",
+    ],
+    [
+      "gitlab",
+      "https://gitlab.com/acme/repo/-/merge_requests/12",
+      "https://gitlab.com/acme/repo/-/merge_requests/12/pipelines",
+    ],
+    ["codeberg", "https://codeberg.org/acme/repo/pulls/12", null],
+    ["bitbucket", "https://bitbucket.org/acme/repo/pull-requests/12", null],
+    ["gitlab", "not a url", null],
+  ] as const)("maps the %s checks URL", (forge, url, expected) => {
+    expect(buildForgeChecksUrl(forge, url)).toBe(expected);
+  });
+});
 
 describe("buildForgeBranchTreeUrl", () => {
   it("builds a branch-specific GitHub tree URL", () => {

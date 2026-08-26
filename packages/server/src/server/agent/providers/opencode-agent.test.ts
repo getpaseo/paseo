@@ -79,11 +79,21 @@ const TEST_MODEL = "opencode/big-pickle";
 function createDirectEventSource(client: OpencodeClient): OpenCodeEventSource {
   const listeners = new Set<(input: never) => void>();
   const abort = new AbortController();
+  let connected = false;
   void client.global
     .event({ signal: abort.signal, sseMaxRetryAttempts: 0 })
     .then(async ({ stream }) => {
       for await (const event of stream) {
-        for (const listener of listeners) listener(event as never);
+        const payload = "payload" in event ? event.payload : event;
+        if (!connected && payload.type === "server.connected") {
+          connected = true;
+          continue;
+        }
+        for (const listener of listeners) {
+          listener(
+            ("payload" in event ? event : { directory: "/tmp/test", payload: event }) as never,
+          );
+        }
       }
       return undefined;
     });
@@ -2964,7 +2974,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       await session.startTurn("/summarize");
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(countEvents(events, "turn_completed")).toBe(1));
 
       expect(openCode.calls.sessionMessages).toHaveLength(0);
@@ -3036,7 +3046,7 @@ describe("OpenCode adapter startTurn error handling", () => {
           return recoveredMessages;
         };
 
-        openCode.emitEvent({ type: "reconnected" });
+        openCode.emitEvent({ type: "server.connected", properties: {} });
         await vi.waitFor(() =>
           expect(failedRequest === "status" ? statusAttempts : messageAttempts).toBe(1),
         );
@@ -3073,7 +3083,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       await session.startTurn("missing dispatch");
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(countEvents(events, "turn_failed")).toBe(1));
       await vi.advanceTimersByTimeAsync(5_000);
 
@@ -3097,7 +3107,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       await session.startTurn("keep live ingress moving");
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(openCode.calls.sessionStatus).toHaveLength(1));
       openCode.emitEvent({ type: "session.idle", properties: { sessionID: session.id } });
       await vi.waitFor(() => expect(countEvents(events, "turn_completed")).toBe(1));
@@ -3135,7 +3145,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       await session.startTurn("first turn");
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await firstStatus.promise;
       openCode.emitEvent({ type: "session.idle", properties: { sessionID: session.id } });
       await firstCompletion.promise;
@@ -3177,7 +3187,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     try {
       await session.startTurn("first turn");
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(statusAttempts).toBe(1));
       await vi.advanceTimersByTimeAsync(100);
       await retryStarted.promise;
@@ -3216,12 +3226,12 @@ describe("OpenCode adapter startTurn error handling", () => {
     await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
 
     openCode.permissionListResponse = { error: new Error("snapshot failed") };
-    openCode.emitEvent({ type: "reconnected" });
+    openCode.emitEvent({ type: "server.connected", properties: {} });
     await vi.waitFor(() => expect(openCode.calls.permissionList).toHaveLength(1));
     expect(session.getPendingPermissions()).toHaveLength(1);
 
     openCode.permissionListResponse = { data: [] };
-    openCode.emitEvent({ type: "reconnected" });
+    openCode.emitEvent({ type: "server.connected", properties: {} });
     await vi.waitFor(() => expect(session.getPendingPermissions()).toHaveLength(0));
     expect(events).toContainEqual(
       expect.objectContaining({ type: "permission_resolved", requestId: "permission-1" }),
@@ -3316,7 +3326,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         ],
       };
 
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() =>
         expect(countChildStatuses(events, recoveryCase.status, childId)).toBeGreaterThanOrEqual(1),
       );
@@ -3338,7 +3348,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
       openCode.permissionListResponse = { error: new Error("permission snapshot failed") };
       openCode.questionListResponse = { error: new Error("question snapshot failed") };
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(openCode.calls.permissionList.length).toBeGreaterThan(1));
       expect(parent.getPendingPermissions()).toEqual([]);
 
@@ -3361,13 +3371,13 @@ describe("OpenCode adapter startTurn error handling", () => {
         },
       });
       await vi.waitFor(() => expect(parent.getPendingPermissions()).toHaveLength(2));
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(openCode.calls.permissionList.length).toBeGreaterThan(2));
       expect(parent.getPendingPermissions()).toHaveLength(2);
 
       openCode.permissionListResponse = { data: [] };
       openCode.questionListResponse = { data: [] };
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await vi.waitFor(() => expect(parent.getPendingPermissions()).toHaveLength(0));
       await parent.close();
     }
@@ -3411,7 +3421,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       ],
     };
 
-    openCode.emitEvent({ type: "reconnected" });
+    openCode.emitEvent({ type: "server.connected", properties: {} });
     await vi.waitFor(() => expect(countChildStatuses(events, "failed", childId)).toBe(1));
     const recoveredStatuses = events.flatMap((event) =>
       event.type === "provider_subagent" &&
@@ -3470,7 +3480,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       throw new Error("child messages unavailable");
     };
 
-    openCode.emitEvent({ type: "reconnected" });
+    openCode.emitEvent({ type: "server.connected", properties: {} });
     await vi.waitFor(() => expect(openCode.calls.sessionMessages).toHaveLength(1));
     const recoveredStatuses = events.flatMap((event) =>
       event.type === "provider_subagent" &&
@@ -3564,7 +3574,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     try {
       const dispatch = session.startTurn("wait for transport");
       const rejection = expect(dispatch).rejects.toThrow(
-        "OpenCode event stream first record; your message was not sent. opencode-stream attempt=2 phase=first-record elapsedMs=45000 lastOutcome=watchdog",
+        "OpenCode server.connected event; your message was not sent. opencode-stream attempt=2 phase=first-record elapsedMs=45000 lastOutcome=watchdog",
       );
       let settled = false;
       void dispatch.then(
@@ -3709,7 +3719,7 @@ describe("OpenCode adapter startTurn error handling", () => {
         await session.startTurn("keep running");
       }
 
-      openCode.emitEvent({ type: "reconnected" });
+      openCode.emitEvent({ type: "server.connected", properties: {} });
       await Promise.race([
         blocked.promise,
         new Promise((_, reject) =>
