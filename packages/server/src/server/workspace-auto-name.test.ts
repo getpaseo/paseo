@@ -128,6 +128,101 @@ test.each([
   },
 );
 
+test("auto-name quietly stops when its workspace disappeared", async () => {
+  const checked = deferred();
+  const logger = { warn: vi.fn() } as unknown as pino.Logger;
+  const autoName = new WorkspaceAutoName({
+    agentManager: {} as AgentManager,
+    workspaceRegistry: {
+      get: async () => {
+        checked.resolve();
+        return null;
+      },
+      update: vi.fn(async () => null),
+    },
+    workspaceGitDirectory: { bindRecord: vi.fn() },
+    providerSnapshotManager: {} as ProviderSnapshotManager,
+    readDaemonConfig: () => ({}),
+    gitMutation: { notifyGitMutation: vi.fn(async () => {}) },
+    emitWorkspaceUpdateForCwd: vi.fn(async () => {}),
+    emitWorkspaceUpdateForWorkspaceId: vi.fn(async () => {}),
+    logger,
+    generateWorkspaceName: vi.fn(async () => {
+      throw new Error("generation should not run");
+    }),
+  });
+
+  autoName.scheduleForDirectory({
+    workspaceId: "removed-workspace",
+    cwd: "/workspace/removed",
+    firstAgentContext: { prompt: "Name this workspace" },
+  });
+  await checked.promise;
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  expect(logger.warn).not.toHaveBeenCalled();
+});
+
+test("auto-name does not rename a worktree removed during generation", async () => {
+  let workspace: ReturnType<typeof createPersistedWorkspaceRecord> | null =
+    createPersistedWorkspaceRecord({
+      workspaceId: "removed-worktree",
+      projectId: "project-auto-name",
+      cwd: "/workspace/removed",
+      kind: "worktree",
+      displayName: "removed",
+      branch: "placeholder-branch",
+      createdAt: "2026-08-08T00:00:00.000Z",
+      updatedAt: "2026-08-08T00:00:00.000Z",
+      runtime: { runtimeId: "bubblewrap" },
+    });
+  const generationStarted = deferred();
+  const finishGeneration = deferred();
+  const renameBranch = vi.fn(async () => ({
+    previousBranch: "placeholder-branch",
+    currentBranch: "generated-branch",
+  }));
+  const logger = { warn: vi.fn() } as unknown as pino.Logger;
+  const autoName = new WorkspaceAutoName({
+    agentManager: {} as AgentManager,
+    workspaceRegistry: {
+      get: async () => workspace,
+      update: vi.fn(async () => workspace),
+    },
+    workspaceGitDirectory: {
+      bindRecord: () =>
+        ({
+          getCheckout: async () => ({ currentBranch: "placeholder-branch" }),
+          hasLocalBranch: async () => false,
+          renameBranch,
+        }) as unknown as WorkspaceGitWorkspace,
+    },
+    providerSnapshotManager: {} as ProviderSnapshotManager,
+    readDaemonConfig: () => ({}),
+    gitMutation: { notifyGitMutation: vi.fn(async () => {}) },
+    emitWorkspaceUpdateForCwd: vi.fn(async () => {}),
+    emitWorkspaceUpdateForWorkspaceId: vi.fn(async () => {}),
+    logger,
+    generateWorkspaceName: async () => {
+      generationStarted.resolve();
+      await finishGeneration.promise;
+      return { title: "Generated", branch: "generated-branch" };
+    },
+  });
+
+  autoName.scheduleForWorktree({
+    workspace,
+    firstAgentContext: { prompt: "Name this workspace" },
+  });
+  await generationStarted.promise;
+  workspace = null;
+  finishGeneration.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+
+  expect(renameBranch).not.toHaveBeenCalled();
+  expect(logger.warn).not.toHaveBeenCalled();
+});
+
 test("selected worktree auto-name renames through bound runtime Git", async () => {
   let workspace = createPersistedWorkspaceRecord({
     workspaceId: "workspace-auto-name",

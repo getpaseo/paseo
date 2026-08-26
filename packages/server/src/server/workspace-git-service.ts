@@ -58,7 +58,10 @@ import {
   type ForgeResolution,
   type ForgeResolver,
 } from "../services/forge-resolver.js";
-import { defaultResolveRemoteUrl } from "../services/forge-cli-command.js";
+import {
+  defaultResolveRemoteUrl,
+  isStableForgeAvailabilityError,
+} from "../services/forge-cli-command.js";
 import { createGitHubService } from "../services/github-service.js";
 import { createGitLabService } from "../services/gitlab-service.js";
 import { createGiteaService } from "../services/gitea-service.js";
@@ -3202,6 +3205,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (closed || !this.isActiveObservedWorkspaceTarget(target)) {
         return;
       }
+      let parked = false;
       try {
         const status = await service.getCurrentPullRequestStatus({
           cwd: target.cwd,
@@ -3232,8 +3236,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           },
           "Failed to run forge PR status self-heal refresh",
         );
+        parked = isStableForgeAvailabilityError(error);
       } finally {
-        schedule(computeGenericForgeNextInterval(latestStatus, consecutiveErrors));
+        if (!parked) {
+          schedule(computeGenericForgeNextInterval(latestStatus, consecutiveErrors));
+        }
       }
     };
 
@@ -3852,6 +3859,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const forgeService: ForgeService = resolution.service;
     const forceForge = request.force && request.includeForge;
     if (forceForge) {
+      this.stopForgePrStatusPollForTarget(target);
       forgeService.invalidate({ cwd: target.cwd });
     }
 

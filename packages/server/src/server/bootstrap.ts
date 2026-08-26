@@ -220,6 +220,7 @@ import {
 } from "./auth.js";
 import { createWebUiMiddleware } from "./web-ui.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
+import { isExpectedShutdownCancellation } from "./lifecycle-reasons.js";
 import { createGitMutationService } from "./session/git-mutation/git-mutation-service.js";
 import { workspaceIdsOnCheckout } from "./workspace-directory.js";
 import { configureGitProcessPolicy } from "../utils/run-git-command.js";
@@ -2092,7 +2093,11 @@ export async function createPaseoDaemon(
     await agentStorage.flush().catch(() => undefined);
     await providerSnapshotManager.shutdown();
     await providerProbe?.close().catch((error) => {
-      logger.warn({ err: error }, "Failed to pause provider probes during shutdown");
+      if (isExpectedShutdownCancellation(error, { processSignalExpected: true })) {
+        logger.debug({ err: error }, "Provider probes stopped during shutdown");
+      } else {
+        logger.warn({ err: error }, "Failed to pause provider probes during shutdown");
+      }
     });
     await terminalManager.killAll();
     speechService.stop();

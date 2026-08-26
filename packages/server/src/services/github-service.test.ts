@@ -919,6 +919,31 @@ describe("ForgeService", () => {
     service.dispose?.();
   });
 
+  it("parks PR status polling while the GitHub CLI is unavailable", async () => {
+    const resolveGhPath = vi.fn(async () => null);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: createRunner([]).runner,
+      resolveGhPath,
+    });
+    const onError = vi.fn();
+    const subscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/repo",
+      headRef: "feature/fork",
+      onError,
+    });
+
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_FAST_POLL_MS);
+    await vi.advanceTimersByTimeAsync(EXPECTED_GITHUB_ERROR_BACKOFF_CAP_MS * 2);
+
+    expect(resolveGhPath).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(onError).toHaveBeenCalledWith(expect.any(GitHubCliMissingError));
+
+    subscription?.unsubscribe();
+    service.dispose?.();
+  });
+
   it("unsubscribe clears the adaptive GitHub poll timer", async () => {
     let now = 0;
     const runner = createRunner([

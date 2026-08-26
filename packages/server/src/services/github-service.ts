@@ -16,6 +16,7 @@ import {
   parseCliJsonOutput,
   probeHostViaCliAuthStatus,
   ForgeCommandError,
+  isStableForgeAvailabilityError,
   type ForgeCommandFailureParams,
 } from "./forge-cli-command.js";
 import {
@@ -950,7 +951,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
       for (const callback of target.errorCallbacks) {
         callback(error);
       }
-      scheduleGitHubPoll(target);
+      if (!isStableForgeAvailabilityError(error)) scheduleGitHubPoll(target);
     }
   }
 

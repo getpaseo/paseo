@@ -3832,7 +3832,7 @@ export class CodexAppServerAgentSession implements AgentSession {
         );
         return;
       }
-      this.logger.warn({ error, threadId }, "Failed to resume persisted Codex thread");
+      this.logger.warn({ err: error, threadId }, "Failed to resume persisted Codex thread");
       throw new Error(`Failed to resume Codex thread ${threadId}: ${message}`, { cause: error });
     }
   }
