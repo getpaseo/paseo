@@ -20,7 +20,23 @@ interface DiffViewerProps {
   fillAvailableHeight?: boolean;
 }
 
-function DiffLineRow({ line }: { line: DiffLine }) {
+interface DiffLineRowProps {
+  line: DiffLine;
+  digits: number;
+}
+
+function DiffGutter({ line, digits }: { line: DiffLine; digits: number }) {
+  if (line.type === "header") {
+    return <Text style={styles.gutterText}>{`${"".padStart(digits)} `}</Text>;
+  }
+
+  const num = line.type === "remove" ? line.oldLineNumber : line.newLineNumber;
+  const numStr = num !== undefined ? String(num).padStart(digits) : "".padStart(digits);
+
+  return <Text style={styles.gutterText}>{numStr} </Text>;
+}
+
+function DiffLineRow({ line, digits }: DiffLineRowProps) {
   const lineContainerStyle = React.useMemo(
     () => [
       styles.line,
@@ -54,6 +70,7 @@ function DiffLineRow({ line }: { line: DiffLine }) {
   if (line.tokens) {
     return (
       <View style={lineContainerStyle}>
+        <DiffGutter line={line} digits={digits} />
         <Text style={styles.lineText}>
           <Text style={prefixStyle}>{diffLinePrefix(line)}</Text>
           <DiffTokens tokens={line.tokens} />
@@ -64,6 +81,7 @@ function DiffLineRow({ line }: { line: DiffLine }) {
 
   return (
     <View style={lineContainerStyle}>
+      <DiffGutter line={line} digits={digits} />
       {line.segments ? (
         <Text style={styles.lineText}>
           <Text style={line.type === "add" ? styles.addText : styles.removeText}>
@@ -132,6 +150,17 @@ export function DiffViewer({
     [],
   );
 
+  const maxLineNumber = React.useMemo(() => {
+    let max = 1;
+    for (const l of diffLines) {
+      if (l.oldLineNumber && l.oldLineNumber > max) max = l.oldLineNumber;
+      if (l.newLineNumber && l.newLineNumber > max) max = l.newLineNumber;
+    }
+    return max;
+  }, [diffLines]);
+
+  const digits = Math.max(2, String(maxLineNumber).length);
+
   const outerScrollStyle = React.useMemo(
     () => [
       styles.verticalScroll,
@@ -167,7 +196,7 @@ export function DiffViewer({
   const lines = (
     <View style={linesContainerStyle} dataSet={CODE_SURFACE_DATASET}>
       {keyedDiffLines.map(({ key, line }) => (
-        <DiffLineRow key={key} line={line} />
+        <DiffLineRow key={key} line={line} digits={digits} />
       ))}
     </View>
   );
@@ -221,8 +250,19 @@ const styles = StyleSheet.create((theme) => {
     },
     line: {
       minWidth: "100%",
+      flexDirection: "row" as const,
+      alignItems: "center" as const,
       paddingHorizontal: 0,
       paddingVertical: theme.spacing[1],
+    },
+    gutterText: {
+      fontFamily: theme.fontFamily.mono,
+      fontSize: theme.fontSize.code,
+      lineHeight: 18,
+      color: theme.colors.foregroundMuted,
+      opacity: 0.5,
+      userSelect: "none" as const,
+      flexShrink: 0,
     },
     lineText: {
       fontFamily: theme.fontFamily.mono,

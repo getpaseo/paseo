@@ -17,6 +17,7 @@ import { hasMeaningfulToolCallDetail } from "@/utils/tool-call-detail-state";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { extensionFromPath, highlightToKeyedLines } from "@/utils/highlight-cache";
+import { stripReadLineNumberGutter } from "@/utils/read-gutter";
 import { HighlightedLines } from "./highlighted-content";
 import { DiffViewer } from "./diff-viewer";
 import { getCodeInsets } from "./code-insets";
@@ -673,6 +674,7 @@ function buildDetailSections(
             ds={ds}
             wrapInSectionFill={false}
             filePath={detail.filePath}
+            startLine={1}
           />
         ) : null}
       </View>,
@@ -680,13 +682,16 @@ function buildDetailSections(
   }
   if (detail.type === "read") {
     if (!detail.content) return [];
+    const stripped = stripReadLineNumberGutter(detail.content);
+    const content = stripped?.content ?? detail.content;
+    const startLine = stripped?.startLine ?? detail.offset ?? 1;
     return [
       <ScrollableTextSection
         key="read"
-        content={detail.content}
+        content={content}
         ds={ds}
         filePath={detail.filePath}
-        startLine={detail.offset ?? 1}
+        startLine={startLine}
       />,
     ];
   }

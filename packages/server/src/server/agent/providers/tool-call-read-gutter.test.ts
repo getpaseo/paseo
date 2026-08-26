@@ -14,6 +14,16 @@ describe("stripReadLineNumberGutter", () => {
     });
   });
 
+  it("strips colon-space prefixed line numbers and reports the first line number", () => {
+    const result = stripReadLineNumberGutter(
+      ["1: import a from 'a';", "2: ", "3: const x = 1;"].join("\n"),
+    );
+    expect(result).toEqual({
+      content: ["import a from 'a';", "", "const x = 1;"].join("\n"),
+      startLine: 1,
+    });
+  });
+
   it("handles right-aligned numbers and a non-1 start offset", () => {
     const result = stripReadLineNumberGutter(["  41\tconst y = 2;", "  42\treturn y;"].join("\n"));
     expect(result).toEqual({
