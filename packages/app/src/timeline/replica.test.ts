@@ -4,6 +4,7 @@ import type { CachedTimeline } from "@/runtime/replica-cache";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
 import {
+  createTimelineReplica,
   createViewedTimelineOwner,
   type TimelineReplicaStorage,
   type ViewedTimelineOwner,
@@ -32,10 +33,14 @@ function cachedTimeline(): CachedTimeline {
 }
 
 function createOwner(storage: TimelineReplicaStorage): ViewedTimelineOwner {
-  return createViewedTimelineOwner({
+  const replica = createTimelineReplica({
     serverId: SERVER_ID,
     storage,
     prepareAgent: async () => undefined,
+  });
+  return createViewedTimelineOwner({
+    serverId: SERVER_ID,
+    replica,
     replaceDemandedAgentIds: () => undefined,
     drainQueuedAgentMessage: () => undefined,
     ports: {
@@ -65,6 +70,34 @@ function applySynced(agentId: string, seq: number): void {
 afterEach(() => useSessionStore.getState().clearSession(SERVER_ID));
 
 describe("viewed timeline persistence", () => {
+  it("shares an in-flight cache preparation with the viewed owner", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    let release!: (value: CachedTimeline) => void;
+    let reads = 0;
+    const read = new Promise<CachedTimeline>((resolve) => {
+      release = resolve;
+    });
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage: {
+        readTimeline: () => {
+          reads += 1;
+          return read;
+        },
+        commitTimeline: () => undefined,
+      },
+      prepareAgent: async () => undefined,
+    });
+
+    const routePreparation = replica.prepare(AGENT_ID);
+    const ownerPreparation = replica.prepare(AGENT_ID);
+    release(cachedTimeline());
+    await Promise.all([routePreparation, ownerPreparation]);
+
+    expect(reads).toBe(1);
+    expect(replica.readCursor(AGENT_ID)).toEqual({ epoch: "epoch-1", endSeq: 4 });
+  });
+
   it("paints cached history without claiming authoritative synchronization", async () => {
     useSessionStore.getState().initializeSession(SERVER_ID, null);
     const owner = createOwner({

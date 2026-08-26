@@ -48,7 +48,6 @@ import {
 } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { useAgentAttentionClear } from "@/hooks/use-agent-attention-clear";
-import { useAgentInitialization } from "@/hooks/use-agent-initialization";
 import { useAgentInputDraft, type AgentInputDraft } from "@/composer/draft/input-draft";
 import {
   type AgentScreenAgent,
@@ -851,10 +850,6 @@ function ChatAgentContent({
     findActiveCreateHandoff({ pendingByDraftId: state.pendingByDraftId, serverId, agentId }),
   );
   const hasSession = useSessionStore((state) => Boolean(state.sessions[serverId]));
-  const { ensureAgentIsInitialized } = useAgentInitialization({
-    serverId,
-    client: hasSession ? client : null,
-  });
   const [missingAgentState, setMissingAgentState] = useState<AgentScreenMissingState>({
     kind: "idle",
   });
@@ -1078,7 +1073,14 @@ function ChatAgentContent({
       }
       return;
     }
-    if (!client || !isPaneVisible || !isConnected || !hasSession) {
+    if (
+      !client ||
+      !viewedTimelineSync ||
+      !isPaneVisible ||
+      !isConnected ||
+      !hasSession ||
+      visibilityCatchUpStatus !== "ready"
+    ) {
       return;
     }
     if (
@@ -1092,7 +1094,7 @@ function ChatAgentContent({
     setMissingAgentState({ kind: "resolving" });
     const attemptToken = ++initAttemptTokenRef.current;
 
-    ensureAgentIsInitialized(agentId)
+    Promise.resolve()
       .then(async () => {
         if (attemptToken !== initAttemptTokenRef.current) {
           return;
@@ -1137,12 +1139,13 @@ function ChatAgentContent({
     hasAppliedAuthoritativeHistory,
     agentId,
     client,
-    ensureAgentIsInitialized,
     hasSession,
     isConnected,
     isPaneVisible,
     missingAgentState.kind,
     serverId,
+    viewedTimelineSync,
+    visibilityCatchUpStatus,
   ]);
 
   const animatedContentStyle = useMemo(

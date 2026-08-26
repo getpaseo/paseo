@@ -66,17 +66,15 @@ async function prepareCachedTimeline(input: {
   return stored;
 }
 
-export async function paintCachedTimeline(input: {
-  serverId: string;
-  agentId: string;
-  storage: TimelineReplicaStorage;
-  prepareAgent: (agentId: string) => Promise<void>;
-}): Promise<void> {
-  await prepareCachedTimeline(input);
+export interface TimelineReplica {
+  prepare(agentId: string): Promise<void>;
+  readCursor(agentId: string): { epoch: string; endSeq: number } | undefined;
+  timelineUpdated(agentId: string): void;
 }
 
-class TimelinePersistence {
+class TimelineReplicaOwner implements TimelineReplica {
   private readonly cachedCursors = new Map<string, { epoch: string; endSeq: number }>();
+  private readonly preparations = new Map<string, Promise<void>>();
 
   constructor(
     private readonly serverId: string,
@@ -85,6 +83,18 @@ class TimelinePersistence {
   ) {}
 
   async prepare(agentId: string): Promise<void> {
+    const existing = this.preparations.get(agentId);
+    if (existing) return existing;
+    const preparation = this.load(agentId).finally(() => {
+      if (this.preparations.get(agentId) === preparation) {
+        this.preparations.delete(agentId);
+      }
+    });
+    this.preparations.set(agentId, preparation);
+    return preparation;
+  }
+
+  private async load(agentId: string): Promise<void> {
     const stored = await prepareCachedTimeline({
       serverId: this.serverId,
       agentId,
@@ -116,6 +126,14 @@ class TimelinePersistence {
       hasOlder: timeline.older === "available",
     });
   }
+}
+
+export function createTimelineReplica(input: {
+  serverId: string;
+  storage: TimelineReplicaStorage;
+  prepareAgent: (agentId: string) => Promise<void>;
+}): TimelineReplica {
+  return new TimelineReplicaOwner(input.serverId, input.storage, input.prepareAgent);
 }
 
 export interface TimelinePageResult {
@@ -298,17 +316,15 @@ export interface ViewedTimelineOwner extends ViewedTimelineSync {
 
 export function createViewedTimelineOwner(input: {
   serverId: string;
-  storage: TimelineReplicaStorage;
-  prepareAgent: (agentId: string) => Promise<void>;
+  replica: TimelineReplica;
   replaceDemandedAgentIds: (agentIds: string[]) => void;
   drainQueuedAgentMessage: (agentId: string) => void;
   ports: ViewedTimelineOwnerPorts;
 }): ViewedTimelineOwner {
-  const persistence = new TimelinePersistence(input.serverId, input.storage, input.prepareAgent);
   const sync = createViewedTimelineSync({
     ...input.ports,
-    prepare: (agentId) => persistence.prepare(agentId),
-    readCursor: (agentId) => persistence.readCursor(agentId) ?? input.ports.readCursor(agentId),
+    prepare: (agentId) => input.replica.prepare(agentId),
+    readCursor: (agentId) => input.replica.readCursor(agentId) ?? input.ports.readCursor(agentId),
     replaceDemandedAgentIds: input.replaceDemandedAgentIds,
   });
   const streamQueue = createSessionAgentStreamReducerQueue({
@@ -316,7 +332,7 @@ export function createViewedTimelineOwner(input: {
     setAgentStreamState: (...args) => useSessionStore.getState().setAgentStreamState(...args),
     setAgentTimelineCursor: (...args) => useSessionStore.getState().setAgentTimelineCursor(...args),
     recoverTimelineGap: (agentId, cursor) => sync.recoverGap(agentId, cursor),
-    onCommitted: (agentId) => persistence.timelineUpdated(agentId),
+    onCommitted: (agentId) => input.replica.timelineUpdated(agentId),
   });
   return {
     ...sync,
@@ -327,7 +343,7 @@ export function createViewedTimelineOwner(input: {
         recoverGap: (agentId, cursor) => sync.recoverGap(agentId, cursor),
         drainQueuedAgentMessage: input.drainQueuedAgentMessage,
       });
-      if (accepted) persistence.timelineUpdated(payload.agentId);
+      if (accepted) input.replica.timelineUpdated(payload.agentId);
     },
     enqueueStreamEvent(agentId, event) {
       streamQueue.enqueue(agentId, event);

@@ -63,8 +63,9 @@ import { ReplicaCache } from "@/runtime/replica-cache";
 import type { ReplicaRowStore } from "@/runtime/replica-cache/row-store";
 import { createReplicaRowStore } from "@/runtime/replica-cache/row-store-factory";
 import {
+  createTimelineReplica,
   createViewedTimelineOwner,
-  paintCachedTimeline,
+  type TimelineReplica,
   type ViewedTimelineOwner,
   type ViewedTimelineOwnerPorts,
 } from "@/timeline/viewed-timeline-sync";
@@ -1369,6 +1370,7 @@ export class HostRuntimeStore {
   private connectionStatusStartedAtByServer = new Map<string, number>();
   private queuedAgentDrainInFlight = new Set<string>();
   private directorySyncByServer = new Map<string, DirectorySync>();
+  private timelineReplicaByServer = new Map<string, TimelineReplica>();
   private configuredOverrideBootstrapInFlight: Promise<void> | null = null;
   private bootPromise: Promise<void> | null = null;
   private storage: HostRuntimeStorage;
@@ -1621,6 +1623,7 @@ export class HostRuntimeStore {
     projectIconCache.reconcileServerId(oldServerId, newServerId);
     this.directorySyncByServer.get(oldServerId)?.dispose();
     this.directorySyncByServer.delete(oldServerId);
+    this.timelineReplicaByServer.delete(oldServerId);
     const directory = new DirectorySync(
       newServerId,
       {
@@ -1632,6 +1635,14 @@ export class HostRuntimeStore {
       this.replicaCache,
     );
     this.directorySyncByServer.set(newServerId, directory);
+    this.timelineReplicaByServer.set(
+      newServerId,
+      createTimelineReplica({
+        serverId: newServerId,
+        storage: this.replicaCache,
+        prepareAgent: (agentId) => directory.prepareAgentRoute(agentId),
+      }),
+    );
     controller.adoptReconciledServerId(newServerId);
     const snapshot = controller.getSnapshot();
     this.clearHostReplica(oldServerId);
@@ -1994,6 +2005,7 @@ export class HostRuntimeStore {
       this.connectionStatusStartedAtByServer.delete(serverId);
       this.directorySyncByServer.get(serverId)?.dispose();
       this.directorySyncByServer.delete(serverId);
+      this.timelineReplicaByServer.delete(serverId);
       this.clearHostReplica(serverId);
       void controller.stop();
       this.emit(serverId);
@@ -2029,6 +2041,14 @@ export class HostRuntimeStore {
         this.replicaCache,
       );
       this.directorySyncByServer.set(host.serverId, directory);
+      this.timelineReplicaByServer.set(
+        host.serverId,
+        createTimelineReplica({
+          serverId: host.serverId,
+          storage: this.replicaCache,
+          prepareAgent: (agentId) => directory.prepareAgentRoute(agentId),
+        }),
+      );
       const initialSnapshot = controller.getSnapshot();
       this.lastConnectionStatusByServer.set(host.serverId, initialSnapshot.connectionStatus);
       this.connectionStatusStartedAtByServer.set(host.serverId, Date.now());
@@ -2268,14 +2288,9 @@ export class HostRuntimeStore {
   }
 
   async prepareAgentTimeline(serverId: string, agentId: string): Promise<void> {
-    const directory = this.directorySyncByServer.get(serverId);
-    if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
-    await paintCachedTimeline({
-      serverId,
-      agentId,
-      storage: this.replicaCache,
-      prepareAgent: (id) => directory.prepareAgentRoute(id),
-    });
+    const replica = this.timelineReplicaByServer.get(serverId);
+    if (!replica) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    await replica.prepare(agentId);
   }
 
   fetchAgentTimeline(
@@ -2294,10 +2309,11 @@ export class HostRuntimeStore {
   ): ViewedTimelineOwner {
     const directory = this.directorySyncByServer.get(serverId);
     if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    const replica = this.timelineReplicaByServer.get(serverId);
+    if (!replica) throw new Error(`Unknown host runtime for serverId ${serverId}`);
     return createViewedTimelineOwner({
       serverId,
-      storage: this.replicaCache,
-      prepareAgent: (agentId) => directory.prepareAgentRoute(agentId),
+      replica,
       replaceDemandedAgentIds: (agentIds) => directory.setAgentRouteDemand(agentIds),
       drainQueuedAgentMessage: (agentId) => this.drainQueuedAgentMessage(serverId, agentId),
       ports,
