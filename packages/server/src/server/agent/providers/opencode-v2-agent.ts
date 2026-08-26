@@ -76,6 +76,7 @@ import {
   parseOpenCodeV2SlashCommandInput,
 } from "./opencode-v2/commands.js";
 import {
+  dedupeOpenCodeV2ModelInfos,
   filterOpenCodeV2ModelInfosByCredentials,
   isSelectableOpenCodeV2Agent,
   mapOpenCodeV2AgentToMode,
@@ -961,7 +962,7 @@ export class OpenCodeV2AgentClient implements AgentClient {
       response.data,
       credentialedProviderIds,
     );
-    return filtered.map(mapOpenCodeV2ModelToDefinition);
+    return dedupeOpenCodeV2ModelInfos(filtered).map(mapOpenCodeV2ModelToDefinition);
   }
 
   private async fetchModesFromClient(

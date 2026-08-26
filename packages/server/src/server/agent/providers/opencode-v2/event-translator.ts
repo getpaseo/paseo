@@ -1,5 +1,12 @@
 import type {
   FormCreated,
+  FormBooleanField1,
+  FormField1,
+  FormIntegerField1,
+  FormMultiselectField1,
+  FormNumberField1,
+  FormOption,
+  FormStringField1,
   PermissionAsked,
   SessionCompactionEnded,
   SessionCompactionFailed,
@@ -273,6 +280,132 @@ function appendOpenCodeV2PermissionAsked(
   });
 }
 
+/**
+ * Translate a v2 FormField1 into the app-facing question shape. The v2 field
+ * types carry multiselect `options` and field constraints (minLength/maxLength/
+ * pattern/minimum/maximum/minItems/maxItems/format/placeholder/default) that the
+ * app's question-form card consumes; they are translated here so v2 forms render
+ * with the correct input controls and answer keys.
+ */
+function mapOpenCodeV2FormFieldToQuestion(field: FormField1): Record<string, unknown> {
+  const question: Record<string, unknown> = {
+    key: field.key,
+    title: field.title ?? field.key,
+    type: field.type,
+  };
+  if (field.description) {
+    question.description = field.description;
+  }
+  if ("required" in field && field.required === true) {
+    question.required = true;
+  }
+  switch (field.type) {
+    case "string":
+      mapOpenCodeV2StringFieldConstraints(field, question);
+      break;
+    case "multiselect":
+      question.multiSelect = true;
+      mapOpenCodeV2MultiselectFieldConstraints(field, question);
+      break;
+    case "number":
+    case "integer":
+      mapOpenCodeV2NumberFieldConstraints(field, question);
+      break;
+    case "boolean":
+      mapOpenCodeV2BooleanFieldConstraints(field, question);
+      break;
+  }
+  return question;
+}
+
+function copyOpenCodeV2FormOptions(
+  field: { options?: Array<FormOption> },
+  question: Record<string, unknown>,
+): void {
+  if (Array.isArray(field.options) && field.options.length > 0) {
+    question.options = field.options.map(mapOpenCodeV2FormOption);
+  }
+}
+
+function mapOpenCodeV2StringFieldConstraints(
+  field: FormStringField1,
+  question: Record<string, unknown>,
+): void {
+  copyOpenCodeV2FormOptions(field, question);
+  if (field.custom === true) {
+    question.custom = true;
+  }
+  if (field.format !== undefined) {
+    question.format = field.format;
+  }
+  if (field.minLength !== undefined) {
+    question.minLength = field.minLength;
+  }
+  if (field.maxLength !== undefined) {
+    question.maxLength = field.maxLength;
+  }
+  if (field.pattern !== undefined) {
+    question.pattern = field.pattern;
+  }
+  if (field.placeholder !== undefined) {
+    question.placeholder = field.placeholder;
+  }
+  if (field.default !== undefined) {
+    question.default = field.default;
+  }
+}
+
+function mapOpenCodeV2MultiselectFieldConstraints(
+  field: FormMultiselectField1,
+  question: Record<string, unknown>,
+): void {
+  copyOpenCodeV2FormOptions(field, question);
+  if (field.custom === true) {
+    question.custom = true;
+  }
+  if (field.minItems !== undefined) {
+    question.minItems = field.minItems;
+  }
+  if (field.maxItems !== undefined) {
+    question.maxItems = field.maxItems;
+  }
+  if (field.default !== undefined) {
+    question.default = field.default;
+  }
+}
+
+function mapOpenCodeV2NumberFieldConstraints(
+  field: FormNumberField1 | FormIntegerField1,
+  question: Record<string, unknown>,
+): void {
+  if (field.minimum !== undefined) {
+    question.minimum = field.minimum;
+  }
+  if (field.maximum !== undefined) {
+    question.maximum = field.maximum;
+  }
+  if (field.default !== undefined) {
+    question.default = field.default;
+  }
+}
+
+function mapOpenCodeV2BooleanFieldConstraints(
+  field: FormBooleanField1,
+  question: Record<string, unknown>,
+): void {
+  if (field.default !== undefined) {
+    question.default = field.default;
+  }
+}
+
+function mapOpenCodeV2FormOption(option: FormOption): Record<string, unknown> {
+  return {
+    value: option.value,
+    label: option.label,
+    ...(option.description ? { description: option.description } : {}),
+  };
+}
+
 function appendOpenCodeV2FormCreated(
   event: FormCreated,
   state: OpenCodeV2EventTranslationState,
@@ -285,20 +418,7 @@ function appendOpenCodeV2FormCreated(
   const fields = Array.isArray(form.fields) ? form.fields : [];
   const questions = fields
     .filter((field) => field.type !== "external")
-    .map((field) => {
-      const question: Record<string, unknown> = {
-        key: field.key,
-        title: field.title ?? field.key,
-        type: field.type,
-      };
-      if (field.description) {
-        question.description = field.description;
-      }
-      if ("required" in field && field.required === true) {
-        question.required = true;
-      }
-      return question;
-    });
+    .map(mapOpenCodeV2FormFieldToQuestion);
 
   events.push({
     type: "permission_requested",

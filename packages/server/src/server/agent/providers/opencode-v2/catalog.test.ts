@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 
 import type { AgentMode } from "../../agent-sdk-types.js";
 import {
+  dedupeOpenCodeV2ModelInfos,
   filterOpenCodeV2ModelInfosByCredentials,
   isSelectableOpenCodeV2Agent,
   mapOpenCodeV2AgentToMode,
@@ -111,6 +112,29 @@ describe("opencode-v2 catalog mapping", () => {
     ];
     const filtered = filterOpenCodeV2ModelInfosByCredentials(models, new Set());
     expect(filtered.map((model) => model.providerID)).toEqual(["opencode"]);
+  });
+
+  test("dedupes models that share the same providerID/modelID", () => {
+    const models = [
+      buildModelInfo({ providerID: "openai", modelID: "gpt-5.6-sol", name: "GPT-5.6 Sol" }),
+      buildModelInfo({ providerID: "openai", modelID: "gpt-5.6-sol", name: "GPT-5.6 Sol Fast" }),
+      buildModelInfo({ providerID: "baseten", modelID: "deepseek-ai/DeepSeek-V4-Flash-0731" }),
+    ];
+    const deduped = dedupeOpenCodeV2ModelInfos(models);
+    expect(deduped).toHaveLength(2);
+    expect(deduped[0]?.name).toBe("GPT-5.6 Sol");
+    expect(deduped[1]?.providerID).toBe("baseten");
+  });
+
+  test("preserves distinct models and order when there are no duplicates", () => {
+    const models = [
+      buildModelInfo({ providerID: "baseten", modelID: "deepseek-ai/DeepSeek-V4-Flash-0731" }),
+      buildModelInfo({ providerID: "opencode", modelID: "x-preview-f-free" }),
+    ];
+    const deduped = dedupeOpenCodeV2ModelInfos(models);
+    expect(deduped).toHaveLength(2);
+    expect(deduped[0]?.modelID).toBe("deepseek-ai/DeepSeek-V4-Flash-0731");
+    expect(deduped[1]?.modelID).toBe("x-preview-f-free");
   });
 
   test("maps an agent to a mode and filters hidden agents", () => {

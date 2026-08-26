@@ -117,6 +117,28 @@ export function filterOpenCodeV2ModelInfosByCredentials(
 }
 
 /**
+ * The v2 `/api/model` can return multiple entries with the same
+ * `providerID/modelID` (e.g. "GPT-5.6 Sol" and "GPT-5.6 Sol Fast" both map to
+ * `openai/gpt-5.6-sol`). Paseo keys models by id, so collapse duplicates,
+ * keeping the first entry per id (the canonical name/variants). Without this,
+ * the catalog carries duplicate model ids, which crashes the app's command
+ * center (duplicate contribution ids) and makes model selection ambiguous.
+ */
+export function dedupeOpenCodeV2ModelInfos(models: readonly ModelInfo[]): ModelInfo[] {
+  const seen = new Set<string>();
+  const result: ModelInfo[] = [];
+  for (const model of models) {
+    const key = `${model.providerID}/${model.modelID}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(model);
+  }
+  return result;
+}
+
+/**
  * Resolve the set of provider ids that have stored credentials by running
  * `opencode2 auth list --format json` against the daemon's real environment
  * (the user's real opencode2 home). A failure resolves to an empty set so the
