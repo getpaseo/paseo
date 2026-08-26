@@ -2180,12 +2180,21 @@ export class PiRpcAgentSession implements AgentSession {
         this.completeTurn(turnId, event.messages ?? []);
         return;
       }
-      if (this.activeTurnId) {
-        this.pendingSettledMessages = event.messages ?? [];
-      }
+      // Snapshot the terminal messages regardless of whether the turn was
+      // started through Paseo's startTurn (activeTurnId set). Turns initiated
+      // out-of-band by a pi extension (e.g. an async background-task wake via
+      // sendUserMessage) run with activeTurnId === null; without settling them
+      // here, turn_completed is never emitted and the UI stays "working".
+      this.pendingSettledMessages = event.messages ?? [];
       return;
     }
-    if (this.activeTurnId) {
+    // Settle the turn whether it was user-initiated (activeTurnId set by
+    // startTurn) or pi-extension-initiated (activeTurnId null, but agent_start/
+    // turn_start seen -> activeTurnStarted). Gating on either also guards
+    // against settling a turn that never opened, and both are reset to false on
+    // completion so a stray duplicate agent_settled can't emit a second
+    // turn_completed.
+    if (this.activeTurnId || this.activeTurnStarted) {
       this.completeTurn(turnId, this.pendingSettledMessages ?? []);
     }
   }

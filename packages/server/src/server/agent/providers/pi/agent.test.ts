@@ -1084,6 +1084,27 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("settles out-of-band Pi turns not started by Paseo (e.g. extension wake)", async () => {
+    const { pi, events } = await createSession();
+    // Deliberately NOT calling session.startTurn(): an out-of-band turn is
+    // initiated by a pi extension (e.g. a background-task wake via
+    // sendUserMessage), so the adapter never sets activeTurnId.
+    const fakeSession = pi.latestSession();
+
+    fakeSession.emit({ type: "agent_start" });
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.finishTurn({
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "Wake response" }],
+    });
+
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId: undefined },
+      { type: "turn_completed", turnId: undefined },
+    ]);
+  });
+
   test("resumes by launching Pi with the persisted session file and cwd metadata", async () => {
     const pi = new FakePi();
     const client = createClient(pi);
