@@ -394,11 +394,21 @@ function mergeModelAdditions(
   baseModels: AgentModelDefinition[],
   modelAdditions: Array<ProviderProfileModel | AgentModelDefinition>,
 ): AgentModelDefinition[] {
+  // Runtime catalogs are external data and can temporarily contain the same
+  // model more than once while a provider refreshes its snapshot. Preserve the
+  // first row deterministically so every downstream provider/model identity is
+  // unique even when no configured model additions are present.
+  const mergedModels: AgentModelDefinition[] = [];
+  const modelIds = new Set<string>();
+  for (const model of baseModels) {
+    if (modelIds.has(model.id)) continue;
+    modelIds.add(model.id);
+    mergedModels.push(model);
+  }
   if (modelAdditions.length === 0) {
-    return baseModels;
+    return mergedModels;
   }
 
-  const mergedModels = [...baseModels];
   let hasAdditionalDefault = false;
 
   for (const model of modelAdditions) {
