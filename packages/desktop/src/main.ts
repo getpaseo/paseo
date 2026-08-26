@@ -1026,7 +1026,7 @@ async function bootstrap(): Promise<void> {
   registerWindowManager({ mode: DESKTOP_WINDOW_CHROME_MODE });
   registerDialogHandlers();
   registerNotificationHandlers();
-  registerOpenerHandlers();
+  registerOpenerHandlers({ settingsStore: getDesktopSettingsStore() });
   registerEditorTargetHandlers();
   registerBrowserAutomationIpc();
 
