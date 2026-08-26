@@ -64,6 +64,7 @@ import type { ReplicaRowStore } from "@/runtime/replica-cache/row-store";
 import { createReplicaRowStore } from "@/runtime/replica-cache/row-store-factory";
 import {
   createViewedTimelineOwner,
+  paintCachedTimeline,
   type ViewedTimelineOwner,
   type ViewedTimelineOwnerPorts,
 } from "@/timeline/viewed-timeline-sync";
@@ -2016,6 +2017,7 @@ export class HostRuntimeStore {
         onReconcileServerId: (oldId, newId) => this.reconcileServerId(oldId, newId),
       });
       this.controllers.set(host.serverId, controller);
+      useSessionStore.getState().initializeSession(host.serverId, null);
       const directory = new DirectorySync(
         host.serverId,
         {
@@ -2251,6 +2253,29 @@ export class HostRuntimeStore {
     const source = {};
     directory.setDemand(source, true);
     return () => directory.setDemand(source, false);
+  }
+
+  async prepareAgentRoute(serverId: string, agentId: string): Promise<void> {
+    const directory = this.directorySyncByServer.get(serverId);
+    if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    await directory.prepareAgentRoute(agentId);
+  }
+
+  async prepareWorkspaceRoute(serverId: string, workspaceId: string): Promise<void> {
+    const directory = this.directorySyncByServer.get(serverId);
+    if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    await directory.prepareWorkspaceRoute(workspaceId);
+  }
+
+  async prepareAgentTimeline(serverId: string, agentId: string): Promise<void> {
+    const directory = this.directorySyncByServer.get(serverId);
+    if (!directory) throw new Error(`Unknown host runtime for serverId ${serverId}`);
+    await paintCachedTimeline({
+      serverId,
+      agentId,
+      storage: this.replicaCache,
+      prepareAgent: (id) => directory.prepareAgentRoute(id),
+    });
   }
 
   fetchAgentTimeline(

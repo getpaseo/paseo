@@ -392,6 +392,43 @@ describe("DirectorySync session readiness", () => {
     directory.dispose();
   });
 
+  it("coalesces overlapping route and full-directory demand", async () => {
+    const serverId = "coalesced-directory-demand";
+    const { client, directory } = createDirectory(serverId);
+    const releaseAgents = client.holdAgentFetch();
+    const releaseWorkspaces = client.holdWorkspaceFetch();
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, client as unknown as DaemonClient, 1);
+    store.updateSessionServerInfo(serverId, {
+      serverId,
+      hostname: null,
+      version: "test",
+      features: { workspaceMultiplicity: true },
+    });
+
+    directory.setAgentRouteDemand(["agent-1"]);
+    directory.setDemand({}, true);
+    await expect.poll(() => client.fetchAgentsCalls).toBe(1);
+    await expect.poll(() => client.fetchWorkspacesCalls).toBe(1);
+
+    releaseAgents({
+      requestId: "agents",
+      entries: [],
+      pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+    });
+    releaseWorkspaces({
+      requestId: "workspaces",
+      entries: [],
+      emptyProjects: [],
+      pageInfo: { hasMore: false, nextCursor: null, prevCursor: null },
+    });
+    await directory.refreshDemand();
+
+    expect(client.fetchAgentsCalls).toBe(1);
+    expect(client.fetchWorkspacesCalls).toBe(1);
+    directory.dispose();
+  });
+
   it("publishes cached directory data before the authoritative request completes", async () => {
     const serverId = "cached-directory";
     serverIds.add(serverId);

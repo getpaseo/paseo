@@ -32,6 +32,49 @@ export interface TimelineReplicaStorage {
   commitTimeline(serverId: string, agentId: string, timeline: CachedTimeline): void;
 }
 
+async function prepareCachedTimeline(input: {
+  serverId: string;
+  agentId: string;
+  storage: TimelineReplicaStorage;
+  prepareAgent: (agentId: string) => Promise<void>;
+}): Promise<CachedTimeline | undefined> {
+  const before = useSessionStore.getState().sessions[input.serverId];
+  const beforeTimeline = selectAgentTimelineState(before, input.agentId);
+  if (beforeTimeline.status === "synced") return undefined;
+  const beforeHead = before?.agentStreamHead.get(input.agentId);
+  await input.prepareAgent(input.agentId);
+  const stored = await input.storage.readTimeline(input.serverId, input.agentId);
+  if (!stored) return undefined;
+  const session = useSessionStore.getState().sessions[input.serverId];
+  const currentTimeline = selectAgentTimelineState(session, input.agentId);
+  if (session?.agentStreamHead.get(input.agentId) !== beforeHead) return undefined;
+  if (beforeTimeline.status === "painted") {
+    return currentTimeline.status === "painted" && currentTimeline.items === beforeTimeline.items
+      ? stored
+      : undefined;
+  }
+  if (currentTimeline.status !== "cold") return undefined;
+  useSessionStore.getState().applyAgentTimelineResponseState(input.serverId, input.agentId, {
+    items: stored.items,
+    head: [],
+    range: stored.range,
+    older: stored.hasOlder ? "available" : "none",
+    newer: false,
+    synchronized: false,
+    acknowledgedClientMessageIds: [],
+  });
+  return stored;
+}
+
+export async function paintCachedTimeline(input: {
+  serverId: string;
+  agentId: string;
+  storage: TimelineReplicaStorage;
+  prepareAgent: (agentId: string) => Promise<void>;
+}): Promise<void> {
+  await prepareCachedTimeline(input);
+}
+
 class TimelinePersistence {
   private readonly cachedCursors = new Map<string, { epoch: string; endSeq: number }>();
 
@@ -42,30 +85,19 @@ class TimelinePersistence {
   ) {}
 
   async prepare(agentId: string): Promise<void> {
-    const before = useSessionStore.getState().sessions[this.serverId];
-    if (selectAgentTimelineState(before, agentId).status !== "cold") return;
-    const beforeHead = before?.agentStreamHead.get(agentId);
-    await this.prepareAgent(agentId);
-    const stored = await this.storage.readTimeline(this.serverId, agentId);
+    const stored = await prepareCachedTimeline({
+      serverId: this.serverId,
+      agentId,
+      storage: this.storage,
+      prepareAgent: this.prepareAgent,
+    });
     if (!stored) return;
-    const session = useSessionStore.getState().sessions[this.serverId];
-    if (selectAgentTimelineState(session, agentId).status !== "cold") return;
-    if (session?.agentStreamHead.get(agentId) !== beforeHead) return;
     if (stored.range) {
       this.cachedCursors.set(agentId, {
         epoch: stored.range.epoch,
         endSeq: stored.range.endSeq,
       });
     }
-    useSessionStore.getState().applyAgentTimelineResponseState(this.serverId, agentId, {
-      items: stored.items,
-      head: [],
-      range: stored.range,
-      older: stored.hasOlder ? "available" : "none",
-      newer: false,
-      synchronized: false,
-      acknowledgedClientMessageIds: [],
-    });
   }
 
   readCursor(agentId: string): { epoch: string; endSeq: number } | undefined {

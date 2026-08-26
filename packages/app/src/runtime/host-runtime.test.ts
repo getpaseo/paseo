@@ -1517,7 +1517,13 @@ describe("HostRuntimeStore", () => {
     await registryLoaded;
 
     expect(fullScans).toBe(0);
-    expect(useSessionStore.getState().sessions[host.serverId]).toBeUndefined();
+    expect(useSessionStore.getState().sessions[host.serverId]).toMatchObject({
+      client: null,
+      hasHydratedAgents: false,
+      hasHydratedWorkspaces: false,
+    });
+    expect(useSessionStore.getState().sessions[host.serverId]?.agents.size).toBe(0);
+    expect(useSessionStore.getState().sessions[host.serverId]?.workspaces.size).toBe(0);
 
     store.syncHosts([]);
     session.clearSession(host.serverId);
