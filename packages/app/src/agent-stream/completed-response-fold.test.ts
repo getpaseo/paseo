@@ -106,14 +106,28 @@ describe("projectCompletedResponseFolds", () => {
     });
 
     expect(result.tail.map((item) => item.id)).toEqual(["user", "final"]);
-    expect(result.foldsByAnchorItemId.get("final")).toEqual({
+    expect(result.foldsByAnchorItemId.get("user")).toEqual({
       responseId: "final",
       expanded: false,
+      anchorPlacement: "after",
       summary: {
         toolCallCount: 1,
         messageCount: 1,
         iconNames: ["wrench"],
       },
+    });
+    expect(result.foldsByAnchorItemId.has("final")).toBe(false);
+  });
+
+  it("places the fold before the first visible response row when no user message is mounted", () => {
+    const result = project({
+      tail: [thought("thought", 1), tool("tool", 2), assistant("final", 3)],
+    });
+
+    expect(result.tail.map((item) => item.id)).toEqual(["final"]);
+    expect(result.foldsByAnchorItemId.get("final")).toMatchObject({
+      responseId: "final",
+      anchorPlacement: "before",
     });
   });
 
@@ -129,9 +143,10 @@ describe("projectCompletedResponseFolds", () => {
     });
 
     expect(result.tail.map((item) => item.id)).toEqual(["user", "final-0", "final-1"]);
-    expect(result.foldsByAnchorItemId.get("final-0")).toEqual({
+    expect(result.foldsByAnchorItemId.get("user")).toEqual({
       responseId: "final-0",
       expanded: false,
+      anchorPlacement: "after",
       summary: {
         toolCallCount: 1,
         messageCount: 0,
@@ -152,7 +167,7 @@ describe("projectCompletedResponseFolds", () => {
       ],
     });
 
-    expect(result.foldsByAnchorItemId.get("final")?.summary.messageCount).toBe(1);
+    expect(result.foldsByAnchorItemId.get("user")?.summary.messageCount).toBe(1);
   });
 
   it("counts every call represented by an overview tool-call host", () => {
@@ -172,7 +187,7 @@ describe("projectCompletedResponseFolds", () => {
       ]),
     });
 
-    expect(result.foldsByAnchorItemId.get("final")?.summary).toEqual({
+    expect(result.foldsByAnchorItemId.get("user")?.summary).toEqual({
       toolCallCount: 3,
       messageCount: 0,
       iconNames: ["square_terminal", "eye"],
@@ -185,7 +200,7 @@ describe("projectCompletedResponseFolds", () => {
     const result = project({ tail, expandedResponseIds: new Set(["final"]) });
 
     expect(result.tail).toEqual(tail);
-    expect(result.foldsByAnchorItemId.get("final")?.expanded).toBe(true);
+    expect(result.foldsByAnchorItemId.get("user")?.expanded).toBe(true);
   });
 
   it("never folds the currently active visible response", () => {
@@ -244,7 +259,7 @@ describe("projectCompletedResponseFolds", () => {
     });
 
     expect(result.tail.map((item) => item.id)).toEqual(["user", "final"]);
-    expect(result.foldsByAnchorItemId.get("final")?.responseId).toBe("final");
+    expect(result.foldsByAnchorItemId.get("user")?.responseId).toBe("final");
   });
 
   it("folds a response that spans committed tail and live head lanes", () => {
@@ -255,7 +270,7 @@ describe("projectCompletedResponseFolds", () => {
 
     expect(result.tail.map((item) => item.id)).toEqual(["user"]);
     expect(result.head.map((item) => item.id)).toEqual(["final"]);
-    expect(result.foldsByAnchorItemId.get("final")?.responseId).toBe("final");
+    expect(result.foldsByAnchorItemId.get("user")?.responseId).toBe("final");
   });
 
   it("keeps response-level errors and still-running tools visible around a collapsed response", () => {
@@ -291,7 +306,7 @@ describe("projectCompletedResponseFolds", () => {
     });
 
     expect(result.tail.map((item) => item.id)).toEqual(["user", "final"]);
-    expect(result.foldsByAnchorItemId.get("final")?.expanded).toBe(false);
+    expect(result.foldsByAnchorItemId.get("user")?.expanded).toBe(false);
   });
 
   it("does not fold when work continues after the last assistant message", () => {
@@ -326,6 +341,6 @@ describe("projectCompletedResponseFolds", () => {
     });
 
     expect(result.tail.map((item) => item.id)).toEqual(["user", "final"]);
-    expect(result.foldsByAnchorItemId.has("final")).toBe(true);
+    expect(result.foldsByAnchorItemId.has("user")).toBe(true);
   });
 });

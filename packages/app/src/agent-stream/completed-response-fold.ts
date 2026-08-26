@@ -13,6 +13,7 @@ export interface CompletedResponseSummary extends ToolCallActivitySummary {
 export interface CompletedResponseFold {
   responseId: string;
   expanded: boolean;
+  anchorPlacement: "before" | "after";
   summary: CompletedResponseSummary;
 }
 
@@ -103,6 +104,24 @@ function countAssistantMessages(items: readonly StreamItem[]): number {
   return messageIds.size;
 }
 
+function findFoldAnchor(input: {
+  response: StreamItem[];
+  terminalAssistantItemIds: ReadonlySet<string>;
+  expanded: boolean;
+}): { itemId: string; placement: CompletedResponseFold["anchorPlacement"] } | null {
+  const userMessage = input.response.find((item) => item.kind === "user_message");
+  if (userMessage) {
+    return { itemId: userMessage.id, placement: "after" };
+  }
+
+  const firstVisibleItem = input.expanded
+    ? input.response[0]
+    : input.response.find(
+        (item) => input.terminalAssistantItemIds.has(item.id) || isProtectedPresentationItem(item),
+      );
+  return firstVisibleItem ? { itemId: firstVisibleItem.id, placement: "before" } : null;
+}
+
 /**
  * Builds a reversible presentation-only projection for settled responses.
  * Canonical stream rows are never mutated or discarded from the session store.
@@ -139,12 +158,19 @@ function projectResponseRows(input: {
     if (foldableItems.length === 0) continue;
 
     const expanded = input.expandedResponseIds.has(terminalAssistantGroup.anchorItemId);
+    const foldAnchor = findFoldAnchor({
+      response,
+      terminalAssistantItemIds: terminalAssistantGroup.itemIds,
+      expanded,
+    });
+    if (!foldAnchor) continue;
     const toolCalls = foldableItems.filter(
       (item): item is Extract<StreamItem, { kind: "tool_call" }> => item.kind === "tool_call",
     );
-    foldsByAnchorItemId.set(terminalAssistantGroup.anchorItemId, {
+    foldsByAnchorItemId.set(foldAnchor.itemId, {
       responseId: terminalAssistantGroup.anchorItemId,
       expanded,
+      anchorPlacement: foldAnchor.placement,
       summary: {
         ...summarizeFoldableToolCalls(toolCalls, input.toolCallGroupsByHostId),
         messageCount: countAssistantMessages(foldableItems),

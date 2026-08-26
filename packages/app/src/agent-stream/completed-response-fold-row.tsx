@@ -54,25 +54,29 @@ export const CompletedResponseFoldRow = memo(function CompletedResponseFoldRow({
     ? t("agentStream.completedResponse.hideSummary", { summary })
     : t("agentStream.completedResponse.showSummary", { summary });
   const accessibilityState = useMemo(() => ({ expanded: fold.expanded }), [fold.expanded]);
+  const button = (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      accessibilityState={accessibilityState}
+      onPress={handlePress}
+      style={foldButtonStyle}
+      testID={`completed-response-fold-${fold.responseId}`}
+    >
+      {fold.expanded ? (
+        <ThemedChevronDown size={14} strokeWidth={2} uniProps={iconColorMapping} />
+      ) : (
+        <ThemedChevronRight size={14} strokeWidth={2} uniProps={iconColorMapping} />
+      )}
+      <Text style={stylesheet.label}>{summary}</Text>
+      <ToolCallActivityIcons iconNames={fold.summary.iconNames} />
+    </Pressable>
+  );
   return (
     <>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={accessibilityLabel}
-        accessibilityState={accessibilityState}
-        onPress={handlePress}
-        style={foldButtonStyle}
-        testID={`completed-response-fold-${fold.responseId}`}
-      >
-        {fold.expanded ? (
-          <ThemedChevronDown size={14} strokeWidth={2} uniProps={iconColorMapping} />
-        ) : (
-          <ThemedChevronRight size={14} strokeWidth={2} uniProps={iconColorMapping} />
-        )}
-        <Text style={stylesheet.label}>{summary}</Text>
-        <ToolCallActivityIcons iconNames={fold.summary.iconNames} />
-      </Pressable>
+      {fold.anchorPlacement === "before" ? button : null}
       {children}
+      {fold.anchorPlacement === "after" ? button : null}
     </>
   );
 });
