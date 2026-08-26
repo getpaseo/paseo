@@ -67,6 +67,7 @@ export interface BuildGitActionsInput {
   mergeCapability: MergeCapability | null;
   hasRemote: boolean;
   isPaseoOwnedWorktree: boolean;
+  canMergeToBase: boolean;
   isOnBaseBranch: boolean;
   hasUncommittedChanges: boolean;
   baseRefAvailable: boolean;
@@ -337,7 +338,7 @@ function getPrimaryActionId(input: BuildGitActionsInput): GitActionId | null {
   if (input.shipDefault === "pr" && canUsePullRequestActionAsShipDefault(input)) {
     return "pr";
   }
-  if (!input.isOnBaseBranch && input.aheadCount > 0) {
+  if (input.canMergeToBase && !input.isOnBaseBranch && input.aheadCount > 0) {
     return "merge-branch";
   }
   if (!input.isOnBaseBranch && canMergeFromBase(input)) {
@@ -366,11 +367,10 @@ function getPullRequestActionIds(filter: {
 }
 
 function getFeatureActionIds(input: BuildGitActionsInput): GitActionId[] {
-  return [
-    "merge-from-base",
-    "merge-branch",
-    ...getPullRequestActionIds({ roles: ["status", "direct", "auto"], input }),
-  ];
+  const actionIds: GitActionId[] = ["merge-from-base"];
+  if (input.canMergeToBase) actionIds.push("merge-branch");
+  actionIds.push(...getPullRequestActionIds({ roles: ["status", "direct", "auto"], input }));
+  return actionIds;
 }
 
 function getDefaultDirectPullRequestMergeActionId(

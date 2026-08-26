@@ -146,6 +146,7 @@ describe("PersistedConfigSchema workspace runtime config", () => {
             type: "command",
             label: "Fixture",
             command: ["/trusted/runtime", "--fixture"],
+            agentTools: ["workspace", "agents", "permissions"],
             options: { arbitrary: { nested: [true, 3, null] } },
           },
         },
@@ -155,12 +156,20 @@ describe("PersistedConfigSchema workspace runtime config", () => {
         type: "command",
         label: "Fixture",
         command: ["/trusted/runtime", "--fixture"],
+        agentTools: ["workspace", "agents", "permissions"],
         options: { arbitrary: { nested: [true, 3, null] } },
       },
     });
     expect(() =>
       PersistedConfigSchema.parse({
         workspaceRuntimes: { invalid: { type: "command", command: [] } },
+      }),
+    ).toThrow();
+    expect(() =>
+      PersistedConfigSchema.parse({
+        workspaceRuntimes: {
+          invalid: { type: "command", command: ["runtime"], agentTools: ["unknown"] },
+        },
       }),
     ).toThrow();
     expect(() =>
@@ -180,6 +189,25 @@ describe("PersistedConfigSchema workspace runtime config", () => {
       PersistedConfigSchema.parse({ workspaceRuntimes: { bundled: null } }).workspaceRuntimes,
     ).toEqual({ bundled: null });
   });
+});
+
+describe("PersistedConfigSchema forge host config", () => {
+  test("normalizes exact host and SSH alias keys", () => {
+    expect(
+      PersistedConfigSchema.parse({
+        daemon: { forgeHosts: { "Git.Example.COM": "gitlab", "github-work": "github" } },
+      }).daemon?.forgeHosts,
+    ).toEqual({ "git.example.com": "gitlab", "github-work": "github" });
+  });
+
+  test.each(["https://git.example.com", "git.example.com:2222", "*.example.com", ".example.com"])(
+    "rejects non-exact forge host key %s",
+    (host) => {
+      expect(() =>
+        PersistedConfigSchema.parse({ daemon: { forgeHosts: { [host]: "gitlab" } } }),
+      ).toThrow();
+    },
+  );
 });
 
 describe("PersistedConfigSchema provider credentials", () => {

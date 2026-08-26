@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -160,6 +160,43 @@ posixDescribe("workspace-helper public capability", () => {
     await expect(
       client.files.subscribe({ paths: ["C:/outside"] }, () => undefined),
     ).rejects.toThrow("Workspace helper path must be relative");
+    await client.close();
+  });
+
+  test("entry mutations use the same confined workspace capability", async () => {
+    const { client, parent, root } = await fixture();
+    await expect(
+      client.files.createEntry({ parentPath: ".", name: "docs", kind: "directory" }),
+    ).resolves.toEqual({ status: "ok", path: "docs" });
+    await expect(
+      client.files.createEntry({ parentPath: "docs", name: "note.txt", kind: "file" }),
+    ).resolves.toEqual({ status: "ok", path: "docs/note.txt" });
+    await writeFile(path.join(root, "docs", "note.txt"), "content\n");
+    await expect(
+      client.files.renameEntry({ path: "docs/note.txt", name: "notes.txt" }),
+    ).resolves.toEqual({ status: "ok", path: "docs/notes.txt" });
+    await expect(client.files.duplicateEntry("docs/notes.txt")).resolves.toEqual({
+      status: "ok",
+      path: "docs/notes copy.txt",
+    });
+    expect(await readFile(path.join(root, "docs", "notes copy.txt"), "utf8")).toBe("content\n");
+    await expect(client.files.deleteEntry("docs/notes.txt")).resolves.toEqual({
+      status: "ok",
+      path: "docs/notes.txt",
+    });
+    expect(await readdir(path.join(root, "docs"))).toEqual(["notes copy.txt"]);
+
+    const outside = path.join(parent, "outside");
+    await mkdir(outside);
+    await symlink(outside, path.join(root, "outside-link"));
+    await expect(
+      client.files.createEntry({
+        parentPath: "outside-link",
+        name: "escaped.txt",
+        kind: "file",
+      }),
+    ).resolves.toEqual({ status: "error", error: "Access outside of workspace is not allowed" });
+    expect(await readdir(outside)).toEqual([]);
     await client.close();
   });
 

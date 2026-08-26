@@ -82,6 +82,38 @@ describe("createForgeResolver", () => {
     expect(probeForge).not.toHaveBeenCalled();
   });
 
+  it("uses an exact configured alias before resolving its SSH hostname", async () => {
+    const resolveSshHostname = createSshHostnameResolver({ "github-work": "gitlab.com" });
+    const resolver = createForgeResolver({
+      resolveRemoteUrl: async () => "git@github-work:acme/repo.git",
+      resolveForgeForHost: (host) => (host === "github-work" ? "github" : forgeForHost(host)),
+      resolveSshHostname,
+      probeForge: async () => null,
+    });
+
+    await expect(resolver.resolve("/repo")).resolves.toMatchObject({
+      forge: "github",
+      host: "github-work",
+    });
+    expect(resolveSshHostname).not.toHaveBeenCalled();
+  });
+
+  it("applies configured forge hosts after resolving an SSH alias", async () => {
+    const resolver = createForgeResolver({
+      resolveRemoteUrl: async () => "git@internal-work:acme/repo.git",
+      resolveForgeForHost: (host) => (host === "git.example.com" ? "gitlab" : forgeForHost(host)),
+      resolveSshHostname: createSshHostnameResolver({
+        "internal-work": "git.example.com",
+      }),
+      probeForge: async () => null,
+    });
+
+    await expect(resolver.resolve("/repo")).resolves.toMatchObject({
+      forge: "gitlab",
+      host: "git.example.com",
+    });
+  });
+
   it("probes the resolved host for an SSH alias to a self-managed forge", async () => {
     const probeForge = vi.fn(async () => "gitlab");
     const resolveSshHostname = createSshHostnameResolver({

@@ -29,6 +29,7 @@ import {
   resolveACPModelSelection,
   summarizeACPRequestError,
 } from "./acp-agent.js";
+import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
 import {
   COPILOT_AGENT_FEATURE_OPTION,
@@ -124,7 +125,10 @@ interface ACPConfiguredOverrideInternals {
   applyConfiguredOverrides(): Promise<void>;
 }
 
-function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
+function createSession(
+  terminateProcess?: ProcessTerminator,
+  runtimeSettings?: ProviderRuntimeSettings,
+): ACPAgentSession {
   return new ACPAgentSession(
     {
       provider: "claude-acp",
@@ -143,6 +147,7 @@ function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
         supportsReasoningStream: true,
         supportsToolInvocations: true,
       },
+      runtimeSettings,
       ...(terminateProcess ? { terminateProcess } : {}),
     },
   );
@@ -654,6 +659,33 @@ describe("ACPAgentSession terminal tools", () => {
       ["status", "--short"],
       expect.objectContaining({ cwd: "/repo" }),
     );
+  });
+
+  test("keeps file-backed provider secrets out of provider-created terminals", async () => {
+    const child = createTerminalChildStub();
+    const spawn = vi.spyOn(spawnUtils, "spawnProcess").mockReturnValue(child);
+    const session = createSession(undefined, {
+      env: { PASEO_ORDINARY_PROVIDER_ENV: "ordinary-visible" },
+      envFromFiles: { PASEO_FILE_PROVIDER_ENV: "/secret-is-not-read-for-terminals" },
+    });
+
+    await session.createTerminal({
+      sessionId: "session-1",
+      command: "git",
+      args: ["status", "--short"],
+      cwd: "/repo",
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      "git",
+      ["status", "--short"],
+      expect.objectContaining({
+        envOverlay: expect.objectContaining({
+          PASEO_ORDINARY_PROVIDER_ENV: "ordinary-visible",
+        }),
+      }),
+    );
+    expect(spawn.mock.calls[0]?.[2]?.envOverlay).not.toHaveProperty("PASEO_FILE_PROVIDER_ENV");
   });
 
   test("surfaces spawn errors through terminal output and waitForTerminalExit", async () => {

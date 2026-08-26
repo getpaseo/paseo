@@ -3,6 +3,7 @@ import type { WorkspaceFilesOwner, WorkspaceHelperProcess } from "./binding.js";
 import {
   describeSchema,
   directorySchema,
+  entryMutationResultSchema,
   fileStatSchema,
   resolvedCommandSchema,
   watchEventSchema,
@@ -125,6 +126,41 @@ export function createClient(options: {
         const result = writeResultSchema.parse(JSON.parse(body));
         if (result.status === "written") notifyWrite(writtenPath);
         return result;
+      },
+      createEntry(input) {
+        return json(
+          "fs-create-entry",
+          [
+            "--parent-path",
+            requireRelativePath(input.parentPath),
+            "--name",
+            input.name,
+            "--kind",
+            input.kind,
+          ],
+          entryMutationResultSchema,
+        );
+      },
+      renameEntry(input) {
+        return json(
+          "fs-rename-entry",
+          ["--path", requireRelativePath(input.path), "--name", input.name],
+          entryMutationResultSchema,
+        );
+      },
+      duplicateEntry(path) {
+        return json(
+          "fs-duplicate-entry",
+          ["--path", requireRelativePath(path)],
+          entryMutationResultSchema,
+        );
+      },
+      deleteEntry(path) {
+        return json(
+          "fs-delete-entry",
+          ["--path", requireRelativePath(path)],
+          entryMutationResultSchema,
+        );
       },
       async subscribe(input, listener) {
         if (closing) throw new Error("Workspace files client is closed");

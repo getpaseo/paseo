@@ -4,6 +4,7 @@ import { query, type Options, type Query, type SpawnOptions } from "@anthropic-a
 import {
   createProviderEnv,
   createProviderEnvSpec,
+  resolveProviderEnvironment,
   type ProviderRuntimeSettings,
 } from "../../provider-launch-config.js";
 import { buildSelfNodeCommand } from "../../../paseo-env.js";
@@ -96,7 +97,12 @@ function applyRuntimeSettingsToClaudeOptions(
               await resolveWorkspaceCommand(workspace, isDefaultRuntime ? "claude" : command),
               ...workspaceArgs,
             ],
-            environment: [providerWorkspaceEnvironment([runtimeSettings?.env, launchEnv])],
+            environment: [
+              providerWorkspaceEnvironment([
+                resolveProviderEnvironment(runtimeSettings),
+                launchEnv,
+              ]),
+            ],
             purpose: {
               kind: "agent" as const,
               agentId: context.agentId ?? "unidentified-agent",

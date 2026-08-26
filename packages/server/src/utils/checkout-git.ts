@@ -1114,10 +1114,11 @@ export async function localBranchExists(cwd: string, branchName: string): Promis
 export async function renameCurrentBranch(
   cwd: string,
   newName: string,
+  context?: CheckoutContext,
 ): Promise<{ previousBranch: string | null; currentBranch: string | null }> {
   const worktreeRoot = await requireGitWorktreeRoot(cwd);
 
-  const previousBranch = await getCurrentBranch(cwd);
+  const previousBranch = await getCurrentBranch(cwd, context);
   if (!previousBranch || previousBranch === "HEAD") {
     throw new Error("Cannot rename branch in detached HEAD state");
   }
@@ -1127,8 +1128,8 @@ export async function renameCurrentBranch(
     timeout: 120_000,
   });
 
-  const currentBranch = await getCurrentBranch(cwd);
-  if (currentBranch) {
+  const currentBranch = await getCurrentBranch(cwd, context);
+  if (currentBranch && context?.allowHostMetadata !== false) {
     rebindPaseoWorktreeChangeRequestHint(worktreeRoot, previousBranch, currentBranch);
   }
   return { previousBranch, currentBranch };

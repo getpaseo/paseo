@@ -6,6 +6,7 @@ import type {
 } from "../../../utils/checkout-git.js";
 import type { WorkspaceGitService, WorkspaceGitWorkspace } from "../../workspace-git-service.js";
 import { assertSafeGitRef as assertWorktreeSafeGitRef } from "../../worktree-session.js";
+import { isExpectedShutdownCancellation } from "../../lifecycle-reasons.js";
 
 /**
  * The git branch / working-tree mutation primitives a client session performs on a
@@ -87,6 +88,7 @@ export function createGitMutationService(deps: {
       try {
         await workspaceGit.getSnapshot({ force: true, reason });
       } catch (error) {
+        if (isExpectedShutdownCancellation(error)) return;
         logger.warn(
           { err: error, cwd: workspaceGit.cwd, reason },
           "Failed to force-refresh workspace git snapshot after mutation",
@@ -160,6 +162,7 @@ export function createGitMutationService(deps: {
     try {
       await workspaceGitService.getSnapshot(cwd, { force: true, reason });
     } catch (error) {
+      if (isExpectedShutdownCancellation(error)) return;
       logger.warn(
         { err: error, cwd, reason },
         "Failed to force-refresh workspace git snapshot after mutation",

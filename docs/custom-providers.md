@@ -41,6 +41,7 @@ catalog probe. `PASEO_PROVIDER_REFRESH_TIMEOUT_MS` sets it when the config field
 - [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint)
 - [Multiple profiles for the same provider](#multiple-profiles-for-the-same-provider)
 - [Custom binary for a provider](#custom-binary-for-a-provider)
+- [Secrets from files](#secrets-from-files)
 - [Disabling a provider](#disabling-a-provider)
 - [ACP providers](#acp-providers)
 - [Provider override reference](#provider-override-reference)
@@ -75,6 +76,31 @@ Required fields for custom providers:
 - `label` — display name in the UI
 
 See [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint) below for the dedicated Codex example.
+
+## Secrets from files
+
+Use `envFromFiles` when a provider needs a token that should not appear in `config.json`:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "claude": {
+        "envFromFiles": {
+          "CLAUDE_CODE_OAUTH_TOKEN": "/home/user/.local/state/paseo/secrets/claude-token"
+        }
+      }
+    }
+  }
+}
+```
+
+Paseo reads the file for each provider launch and never mounts or copies it into a workspace. The
+path must be absolute and canonical. The file must be a regular file owned by the daemon user with
+mode `0600`, and it must be no larger than 64 KiB. Symlinks, invalid UTF-8, and NUL bytes are
+rejected. One trailing newline is removed.
+
+Reload Paseo after changing the mapping. Changing only the file contents needs no reload.
 
 ---
 
@@ -680,6 +706,7 @@ Every entry under `agents.providers` accepts these fields:
 | `description`      | `string`                  | No                | Short description shown in the UI                                  |
 | `command`          | `string[]`                | Yes (ACP only)    | Command to spawn the agent process                                 |
 | `env`              | `Record<string, string>`  | No                | Environment variables to set for the agent process                 |
+| `envFromFiles`     | `Record<string, string>`  | No                | Provider environment variables read from protected host files      |
 | `params`           | `Record<string, unknown>` | No                | Provider-specific options such as `supportsMcpServers: false`      |
 | `models`           | `ProviderProfileModel[]`  | No                | Static model list (overrides runtime discovery)                    |
 | `additionalModels` | `ProviderProfileModel[]`  | No                | Static model additions (merged with runtime discovery or `models`) |

@@ -37,7 +37,7 @@ import {
   type NotificationPermissionRequest,
 } from "@getpaseo/protocol/agent-attention-notification";
 
-import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { isDaemonTransientError, type DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import type { GitSetupOptions } from "@getpaseo/protocol/messages";
 import type { AgentPermissionResponse } from "@getpaseo/protocol/agent-types";
@@ -711,6 +711,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
           forcedTimelineTailReplacements.current.delete(agentId);
         }
       },
+      isTransientError: isDaemonTransientError,
       reportError: (error) => {
         console.warn("[Session] viewed timeline synchronization failed", { serverId, error });
       },

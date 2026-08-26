@@ -146,6 +146,10 @@ export class ForgeAuthenticationError extends Error {
   }
 }
 
+export function isStableForgeAvailabilityError(error: unknown): boolean {
+  return error instanceof ForgeCliMissingError || error instanceof ForgeAuthenticationError;
+}
+
 export interface ForgeCommandFailureParams {
   args: string[];
   cwd: string;

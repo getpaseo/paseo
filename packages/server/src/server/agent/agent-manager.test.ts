@@ -56,6 +56,7 @@ interface Deferred<T> {
 function createTestProviderWorkspace(commandAvailable: boolean): ProviderWorkspace {
   return {
     cwd: ".",
+    processIsolation: true,
     async resolveExecutable(command) {
       if (!commandAvailable) throw new Error(`Provider command '${command}' was not found`);
       return "/provider";
@@ -1339,6 +1340,52 @@ test("listDraftFeatures uses client feature listing without a model", async () =
   ]);
 });
 
+test("listDraftFeatures binds selected workspace without probing virtual cwd on the host", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-runtime-draft-features-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const workspace = createTestProviderWorkspace(true);
+  const availabilityOptions: FetchCatalogOptions[] = [];
+  const launchContexts: Array<AgentLaunchContext | undefined> = [];
+  class RuntimeDraftFeatureClient extends TestAgentClient {
+    override async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
+      if (options) availabilityOptions.push(options);
+      return true;
+    }
+
+    async listFeatures(
+      _config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentFeature[]> {
+      launchContexts.push(launchContext);
+      return [];
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new RuntimeDraftFeatureClient() },
+    registry: storage,
+    logger,
+    resolveProviderWorkspace: async () => workspace,
+  });
+
+  await expect(
+    manager.listDraftFeatures(
+      { provider: "codex", cwd: "/workspace/not-visible-on-host" },
+      "workspace-runtime",
+    ),
+  ).resolves.toEqual([]);
+
+  expect(availabilityOptions).toEqual([
+    {
+      scope: "workspace",
+      cwd: "/workspace/not-visible-on-host",
+      workspaceId: "workspace-runtime",
+      workspace,
+      force: false,
+    },
+  ]);
+  expect(launchContexts).toEqual([{ workspace }]);
+});
+
 test("listDraftFeatures uses explicit model config without default model fetching", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-features-"));
   const storagePath = join(workdir, "agents");
@@ -2079,7 +2126,7 @@ test("createAgent injects paseo MCP server only into provider launch config", as
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents/agent",
     idFactory: () => "00000000-0000-4000-8000-000000000103",
   });
 
@@ -2107,7 +2154,7 @@ test("createAgent injects paseo MCP server only into provider launch config", as
   expect(client.lastConfig?.mcpServers).toEqual({
     paseo: {
       type: "http",
-      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+      url: "http://127.0.0.1:6767/mcp/agents/agent",
     },
     custom: {
       type: "stdio",
@@ -2321,7 +2368,7 @@ test("createAgent passes native Paseo tools through launch context without inter
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents/agent",
     paseoToolCatalogFactory: () => paseoTools,
     idFactory: () => "00000000-0000-4000-8000-000000000106",
   });
@@ -2364,7 +2411,7 @@ test("createAgent passes native Paseo tools through launch context without inter
   });
 });
 
-test("createAgent allows best-effort internal MCP when the provider session reports no support", async () => {
+test("internal MCP tokens rotate with the provider launch and revoke on close", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -2385,7 +2432,7 @@ test("createAgent allows best-effort internal MCP when the provider session repo
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents/agent",
     mcpAuthToken: "cap-token",
     idFactory: () => "00000000-0000-4000-8000-000000000104",
   });
@@ -2400,11 +2447,34 @@ test("createAgent allows best-effort internal MCP when the provider session repo
   );
 
   expect(manager.getMcpAuthToken()).toBe("cap-token");
-  expect(client.lastConfig?.mcpServers?.paseo).toEqual({
+  const paseoMcp = client.lastConfig?.mcpServers?.paseo;
+  expect(paseoMcp).toMatchObject({
     type: "http",
-    url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
-    headers: { Authorization: "Bearer cap-token" },
+    url: "http://127.0.0.1:6767/mcp/agents/agent",
   });
+  const authorization = paseoMcp && "headers" in paseoMcp ? paseoMcp.headers?.Authorization : null;
+  expect(authorization).toMatch(/^Bearer [A-Za-z0-9_-]{43}$/);
+  expect(manager.authenticateAgentMcpRequest(authorization ?? undefined)).toMatchObject({
+    agentId: snapshot.id,
+    workspaceId: null,
+    runtimeId: null,
+    launchGeneration: 1,
+  });
+
+  await manager.reloadAgentSession(snapshot.id);
+  const reloadedMcp = client.resumeOverrides.at(-1)?.mcpServers?.paseo;
+  const reloadedAuthorization =
+    reloadedMcp && "headers" in reloadedMcp ? reloadedMcp.headers?.Authorization : null;
+  expect(reloadedAuthorization).toMatch(/^Bearer [A-Za-z0-9_-]{43}$/);
+  expect(reloadedAuthorization).not.toBe(authorization);
+  expect(manager.authenticateAgentMcpRequest(authorization ?? undefined)).toBeNull();
+  expect(manager.authenticateAgentMcpRequest(reloadedAuthorization ?? undefined)).toMatchObject({
+    agentId: snapshot.id,
+    launchGeneration: 2,
+  });
+
+  await manager.closeAgent(snapshot.id);
+  expect(manager.authenticateAgentMcpRequest(reloadedAuthorization ?? undefined)).toBeNull();
 
   rmSync(workdir, { recursive: true, force: true });
 });
@@ -2420,7 +2490,7 @@ test("resumeAgentFromPersistence replaces stored internal paseo MCP with current
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6768/mcp/agents",
+    mcpBaseUrl: "http://127.0.0.1:6768/mcp/agents/agent",
     idFactory: () => "00000000-0000-4000-8000-000000000105",
   });
   const handle: AgentPersistenceHandle = {
@@ -2448,7 +2518,7 @@ test("resumeAgentFromPersistence replaces stored internal paseo MCP with current
   expect(client.resumeOverrides[0]?.mcpServers).toEqual({
     paseo: {
       type: "http",
-      url: `http://127.0.0.1:6768/mcp/agents?callerAgentId=${snapshot.id}`,
+      url: "http://127.0.0.1:6768/mcp/agents/agent",
     },
     custom: {
       type: "stdio",
@@ -2518,7 +2588,7 @@ test("createAgent preserves a user-provided paseo MCP config", async () => {
     },
     registry: storage,
     logger,
-    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents/agent",
     idFactory: () => "00000000-0000-4000-8000-000000000104",
   });
 

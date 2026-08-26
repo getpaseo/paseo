@@ -37,6 +37,7 @@ export function createService(
   const driversById = new Map(drivers.map((driver) => [driver.id, driver]));
   const processesByWorkspaceId = new Map<string, Set<WorkspaceDriverProcess>>();
   const workspaceTails = new Map<string, Promise<void>>();
+  const restoreFlights = new Map<string, Promise<void>>();
   const fileClients = new Map<string, { runtimeId: string; client: WorkspaceFilesOwner }>();
   const boundFiles = new Map<string, WorkspaceFiles>();
   const fileSubscriptions = new Map<
@@ -222,7 +223,15 @@ export function createService(
           if (ready.state.lifecycle === "ready") {
             const helper = bindWorkspaceHelper({
               command: driver.workspaceHelper.command,
-              launch: (argv) => launchHelper(driver, input.workspaceId, argv),
+              launch: (argv) =>
+                launchHelper(
+                  driver,
+                  input.workspaceId,
+                  argv,
+                  driver.provider.environment === "isolated"
+                    ? (ready.state.lifecycleEnvironment ?? {})
+                    : {},
+                ),
             });
             try {
               await helper.verify();
@@ -311,6 +320,15 @@ export function createService(
       }
       return { status: inspection.status };
     },
+    async canMergeToBase(workspaceId) {
+      const runtimeId = await records.resolveRuntimeId(workspaceId);
+      if (!runtimeId) return false;
+      const driver = requireRegistered(runtimeId);
+      if (!driver.mergeToBase) return false;
+      const inspection = await driver.inspect(workspaceId);
+      if (inspection.status !== "ready" && inspection.status !== "paused") return false;
+      return inspection.placement.localIntegrationTarget !== undefined;
+    },
     async requireHostVisiblePath(workspaceId) {
       const runtimeId = await records.resolveRuntimeId(workspaceId);
       if (!runtimeId) throw new Error(`Workspace runtime is not selected: ${workspaceId}`);
@@ -337,6 +355,15 @@ export function createService(
         unavailableFiles.delete(workspaceId);
       });
     },
+    async releaseBacking(workspaceId) {
+      await sequence(workspaceId, async () => {
+        const driver = await resolve(workspaceId);
+        if (!driver.releaseBacking) {
+          throw new Error(`Workspace runtime ${driver.id} cannot release backing storage`);
+        }
+        await driver.releaseBacking(workspaceId);
+      });
+    },
     async archive(workspaceId, archiveOptions) {
       await sequence(workspaceId, async () => {
         if (!records.archiveWorkspaceRecord) {
@@ -352,8 +379,27 @@ export function createService(
         await records.archiveWorkspaceRecord(workspaceId);
       });
     },
+    async mergeToBase(workspaceId) {
+      return sequence(workspaceId, async () => {
+        assertWorkspaceAvailable(workspaceId);
+        const driver = await resolve(workspaceId);
+        if (!driver.mergeToBase) {
+          throw new Error(`Workspace runtime ${driver.id} does not support Merge locally`);
+        }
+        const inspection = await driver.inspect(workspaceId);
+        if (
+          inspection.status !== "ready" ||
+          inspection.placement.localIntegrationTarget === undefined
+        ) {
+          throw new Error(`Workspace runtime ${driver.id} cannot merge this workspace locally`);
+        }
+        return driver.mergeToBase(workspaceId);
+      });
+    },
     async restore(workspaceId) {
-      await sequence(workspaceId, async () => {
+      const existing = restoreFlights.get(workspaceId);
+      if (existing) return existing;
+      const restore = sequence(workspaceId, async () => {
         if (!records.restoreWorkspaceRecord) {
           throw new Error("Workspace runtime record store cannot restore workspaces");
         }
@@ -369,6 +415,12 @@ export function createService(
           throw error;
         }
       });
+      restoreFlights.set(workspaceId, restore);
+      try {
+        await restore;
+      } finally {
+        if (restoreFlights.get(workspaceId) === restore) restoreFlights.delete(workspaceId);
+      }
     },
     async destroy(workspaceId) {
       await sequence(workspaceId, async () => {
@@ -481,6 +533,18 @@ export function createService(
       async write(input) {
         return (await requireFiles(workspaceId)).write(input);
       },
+      async createEntry(input) {
+        return (await requireFiles(workspaceId)).createEntry(input);
+      },
+      async renameEntry(input) {
+        return (await requireFiles(workspaceId)).renameEntry(input);
+      },
+      async duplicateEntry(path) {
+        return (await requireFiles(workspaceId)).duplicateEntry(path);
+      },
+      async deleteEntry(path) {
+        return (await requireFiles(workspaceId)).deleteEntry(path);
+      },
       async subscribe(input, listener) {
         const logical = { input, listener, bound: null as WorkspaceFilesSubscription | null };
         const subscriptions = fileSubscriptions.get(workspaceId) ?? new Set();
@@ -532,7 +596,14 @@ export function createService(
     const client = bindWorkspaceHelper({
       command: driver.workspaceHelper.command,
       launch: async (argv) => {
-        return launchHelper(driver, workspaceId, argv);
+        return launchHelper(
+          driver,
+          workspaceId,
+          argv,
+          driver.provider.environment === "isolated"
+            ? (inspection.state.lifecycleEnvironment ?? {})
+            : {},
+        );
       },
     });
     fileClients.set(workspaceId, {
@@ -612,11 +683,15 @@ export function createService(
     driver: WorkspaceRuntimeDriver,
     workspaceId: string,
     argv: readonly [string, ...string[]],
+    runtimeEnvironment: Readonly<Record<string, string>>,
   ) {
     const runtimeProcess = await driver.spawn({
       workspaceId,
       argv,
-      env: driver.workspaceHelper.env,
+      env: {
+        ...driver.workspaceHelper.env,
+        ...runtimeEnvironment,
+      },
       purpose: { kind: "workspace-helper" },
       stdio: { kind: "pipes" },
     });

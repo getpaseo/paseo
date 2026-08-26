@@ -62,7 +62,7 @@ export function useChatOutline({
   const prompts = enabled ? (index?.prompts ?? NO_PROMPTS) : NO_PROMPTS;
 
   useEffect(() => {
-    if (!isWeb || !enabled) {
+    if (!isWeb || !enabled || agentId.startsWith("draft_")) {
       setIndex(null);
       return;
     }

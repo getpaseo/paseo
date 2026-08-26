@@ -106,8 +106,8 @@ interface RecordedGitMutationCalls {
 }
 
 interface RecordedGeneratorCalls {
-  generateCommitMessage: string[];
-  generatePullRequestText: Array<{ cwd: string; baseRef?: string }>;
+  generateCommitMessage: Array<{ cwd: string; workspaceId?: string }>;
+  generatePullRequestText: Array<{ cwd: string; workspaceId?: string; baseRef?: string }>;
 }
 
 function makeCheckoutSession(options?: {
@@ -153,12 +153,16 @@ function makeCheckoutSession(options?: {
     ...options?.gitMutation,
   };
   const gitMetadataGenerator: GitMetadataGenerator = {
-    generateCommitMessage: async (cwd) => {
-      generatorCalls.generateCommitMessage.push(cwd);
+    generateCommitMessage: async ({ workspaceGit, workspaceId }) => {
+      generatorCalls.generateCommitMessage.push({ cwd: workspaceGit.cwd, workspaceId });
       return "";
     },
-    generatePullRequestText: async (cwd, baseRef) => {
-      generatorCalls.generatePullRequestText.push({ cwd, baseRef });
+    generatePullRequestText: async ({ workspaceGit, workspaceId, baseRef }) => {
+      generatorCalls.generatePullRequestText.push({
+        cwd: workspaceGit.cwd,
+        workspaceId,
+        baseRef,
+      });
       return { title: "", body: "" };
     },
     ...options?.gitMetadataGenerator,
@@ -213,12 +217,18 @@ function createGitSnapshot(
       isDirty: overrides?.isDirty ?? false,
       baseRef: null,
       aheadBehind: null,
+      upstreamRef: null,
       aheadOfOrigin: null,
       behindOfOrigin: null,
       hasRemote: false,
       diffStat: null,
     },
-    forge: { featuresEnabled: false, pullRequest: null, error: null },
+    forge: {
+      featuresEnabled: false,
+      authState: "no_remote",
+      pullRequest: null,
+      error: null,
+    },
   };
 }
 
@@ -813,6 +823,41 @@ describe("CheckoutSession", () => {
   });
 
   describe("commit", () => {
+    it("generates and commits a message inside a selected workspace", async () => {
+      const commits: Array<{ cwd: string; message: string; addAll: boolean }> = [];
+      const { checkout, emitted, generatorCalls } = makeCheckoutSession({
+        git: {
+          commit: async (cwd, options) => commits.push({ cwd, ...options }),
+        },
+        gitMetadataGenerator: {
+          generateCommitMessage: async ({ workspaceGit, workspaceId }) => {
+            generatorCalls.generateCommitMessage.push({ cwd: workspaceGit.cwd, workspaceId });
+            return "Generated message";
+          },
+        },
+      });
+
+      await checkout.handleCheckoutCommitRequest({
+        type: "checkout_commit_request",
+        workspaceId: "workspace-1",
+        cwd: "/workspace/workspace-1",
+        message: "",
+        addAll: true,
+        requestId: "selected-commit",
+      });
+
+      expect(generatorCalls.generateCommitMessage).toEqual([
+        { cwd: "/workspace/workspace-1", workspaceId: "workspace-1" },
+      ]);
+      expect(commits).toEqual([
+        { cwd: "/workspace/workspace-1", message: "Generated message", addAll: true },
+      ]);
+      expect(emitted.at(-1)).toMatchObject({
+        type: "checkout_commit_response",
+        payload: { success: true, error: null, requestId: "selected-commit" },
+      });
+    });
+
     it("fails when no message is supplied and none can be generated", async () => {
       const { checkout, emitted, generatorCalls } = makeCheckoutSession();
 
@@ -824,7 +869,7 @@ describe("CheckoutSession", () => {
         requestId: "c1",
       });
 
-      expect(generatorCalls.generateCommitMessage).toEqual(["/repo"]);
+      expect(generatorCalls.generateCommitMessage).toEqual([{ cwd: "/repo" }]);
       expect(emitted).toEqual([
         {
           type: "checkout_commit_response",
@@ -839,7 +884,116 @@ describe("CheckoutSession", () => {
     });
   });
 
+  describe("selected workspace integration", () => {
+    it("refreshes both the private checkout and source after Merge locally", async () => {
+      const { subscriber, refreshedCwds } = createFakeDiffSubscriber({
+        cwd: "",
+        files: [],
+        error: null,
+      });
+      const { checkout, gitMutationCalls } = makeCheckoutSession({
+        diff: subscriber,
+        git: {
+          getSnapshot: async (cwd) => createGitSnapshot(cwd, "paseo/workspace-1"),
+          mergeToBase: async () => "/source/repository",
+        },
+      });
+
+      await checkout.handleCheckoutMergeRequest({
+        type: "checkout_merge_request",
+        workspaceId: "workspace-1",
+        cwd: "/workspace/workspace-1",
+        requestId: "merge-local",
+      });
+
+      expect(gitMutationCalls.notifyGitMutation).toEqual([
+        {
+          cwd: "/source/repository",
+          reason: "merge-to-base",
+          options: { invalidateForge: true },
+        },
+        {
+          cwd: "/workspace/workspace-1",
+          reason: "merge-to-base",
+          options: { invalidateForge: true },
+        },
+      ]);
+      expect(refreshedCwds).toEqual(["/source/repository", "/workspace/workspace-1"]);
+    });
+
+    it("creates a pull request through selected workspace Git", async () => {
+      const createCalls: Array<{ cwd: string; title: string; body: string; base?: string }> = [];
+      const forge = createGitHubService();
+      const { checkout, generatorCalls } = makeCheckoutSession({
+        git: {
+          resolveForge: async () => ({ forge: "github", host: "github.com", service: forge }),
+          createPullRequest: async (cwd, options) => {
+            createCalls.push({ cwd, ...options });
+            return { url: "https://github.com/acme/repo/pull/1", number: 1 };
+          },
+        },
+        gitMetadataGenerator: {
+          generatePullRequestText: async ({ workspaceGit, workspaceId, baseRef }) => {
+            generatorCalls.generatePullRequestText.push({
+              cwd: workspaceGit.cwd,
+              workspaceId,
+              baseRef,
+            });
+            return { title: "Generated title", body: "Generated body" };
+          },
+        },
+      });
+
+      await checkout.handleCheckoutPrCreateRequest({
+        type: "checkout_pr_create_request",
+        workspaceId: "workspace-1",
+        cwd: "/workspace/workspace-1",
+        title: "",
+        body: "",
+        baseRef: "main",
+        requestId: "selected-pr",
+      });
+
+      expect(generatorCalls.generatePullRequestText).toEqual([
+        {
+          cwd: "/workspace/workspace-1",
+          workspaceId: "workspace-1",
+          baseRef: "main",
+        },
+      ]);
+      expect(createCalls).toEqual([
+        {
+          cwd: "/workspace/workspace-1",
+          title: "Generated title",
+          body: "Generated body",
+          base: "main",
+        },
+      ]);
+    });
+  });
+
   describe("merge preflight", () => {
+    it("still requires an explicit or discovered base for legacy checkouts", async () => {
+      const { checkout, emitted } = makeCheckoutSession({
+        git: { getSnapshot: async (cwd) => createGitSnapshot(cwd, "feature") },
+      });
+
+      await checkout.handleCheckoutMergeRequest({
+        type: "checkout_merge_request",
+        cwd: "/repo",
+        requestId: "legacy-no-base",
+      });
+
+      expect(emitted.at(-1)).toMatchObject({
+        type: "checkout_merge_response",
+        payload: {
+          success: false,
+          error: { message: "Base branch is required for merge" },
+          requestId: "legacy-no-base",
+        },
+      });
+    });
+
     it("fails when the target is not a git repository", async () => {
       const { checkout, emitted } = makeCheckoutSession({
         git: { getSnapshot: async (cwd) => createNoGitWorkspaceRuntimeSnapshot(cwd) },
@@ -1724,6 +1878,47 @@ describe("CheckoutSession", () => {
             authState: "authenticated",
             error: null,
             requestId: "gs2",
+          },
+        },
+      ]);
+    });
+
+    it("does not send selected legacy GitHub search through a different forge adapter", async () => {
+      let searched = false;
+      const { checkout, emitted } = makeCheckoutSession({
+        git: {
+          resolveForge: async () => ({
+            forge: "gitlab",
+            host: "gitlab.com",
+            service: {
+              searchIssuesAndPrs: async () => {
+                searched = true;
+                throw new Error("GitLab search must not serve the legacy GitHub RPC");
+              },
+            } as ForgeService,
+          }),
+        },
+      });
+
+      await checkout.handleForgeSearchRequest({
+        type: "github_search_request",
+        workspaceId: "workspace-1",
+        cwd: "/workspace/workspace-1",
+        query: "fix",
+        requestId: "selected-legacy-github-search",
+      });
+
+      expect(searched).toBe(false);
+      expect(emitted).toEqual([
+        {
+          type: "github_search_response",
+          payload: {
+            items: [],
+            featuresEnabled: false,
+            authState: "no_remote",
+            githubFeaturesEnabled: false,
+            error: null,
+            requestId: "selected-legacy-github-search",
           },
         },
       ]);

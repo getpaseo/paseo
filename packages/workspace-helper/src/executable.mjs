@@ -1,7 +1,19 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
 import { constants, watch } from "node:fs";
-import { access, open, realpath, readdir, rename, stat, unlink } from "node:fs/promises";
+import {
+  access,
+  cp,
+  lstat,
+  mkdir,
+  open,
+  realpath,
+  readdir,
+  rename,
+  rm,
+  stat,
+  unlink,
+} from "node:fs/promises";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -26,6 +38,20 @@ try {
   else if (operation === "fs-list") print(await list(root, argument("--path", ".")));
   else if (operation === "fs-read") await read(root, argument("--path"));
   else if (operation === "fs-write") await write(root, argument("--path"));
+  else if (operation === "fs-create-entry")
+    print(
+      await createEntry(
+        root,
+        argument("--parent-path", "."),
+        argument("--name"),
+        argument("--kind"),
+      ),
+    );
+  else if (operation === "fs-rename-entry")
+    print(await renameEntry(root, argument("--path"), argument("--name")));
+  else if (operation === "fs-duplicate-entry")
+    print(await duplicateEntry(root, argument("--path")));
+  else if (operation === "fs-delete-entry") print(await deleteEntry(root, argument("--path")));
   else if (operation === "watch") await runWatcher(root);
   else if (operation === "resolve-command")
     print({ path: await resolveCommand(root, argument("--name")) });
@@ -58,6 +84,9 @@ function allowedArguments(command) {
   if (command === "fs-stat" || command === "fs-list" || command === "fs-read") {
     return ["--path"];
   }
+  if (command === "fs-create-entry") return ["--parent-path", "--name", "--kind"];
+  if (command === "fs-rename-entry") return ["--path", "--name"];
+  if (command === "fs-duplicate-entry" || command === "fs-delete-entry") return ["--path"];
   if (command === "resolve-command") return ["--name"];
   return [];
 }
@@ -224,6 +253,129 @@ async function write(workspaceRoot, relativePath) {
     await handle?.close().catch(() => undefined);
     await unlink(temporary).catch(() => undefined);
   }
+}
+
+async function createEntry(workspaceRoot, parentPath, name, kind) {
+  let validatedName;
+  try {
+    validatedName = validateEntryName(name);
+    if (kind !== "file" && kind !== "directory") {
+      return { status: "error", error: "Invalid entry kind" };
+    }
+    const parent = await resolveScoped(workspaceRoot, parentPath);
+    const parentInfo = await stat(parent.absolute);
+    if (!parentInfo.isDirectory()) {
+      return { status: "error", error: "Parent path is not a directory" };
+    }
+    const relative = normalize(path.posix.join(parent.relative, validatedName));
+    const target = await resolveScoped(workspaceRoot, relative);
+    if (kind === "directory") {
+      await mkdir(target.absolute);
+    } else {
+      const handle = await open(target.absolute, "wx", 0o644);
+      await handle.close();
+    }
+    return { status: "ok", path: relative };
+  } catch (error) {
+    return entryError(error, validatedName);
+  }
+}
+
+async function renameEntry(workspaceRoot, relativePath, name) {
+  let validatedName;
+  try {
+    validatedName = validateEntryName(name);
+    const source = await resolveScoped(workspaceRoot, relativePath);
+    if (source.relative === ".") {
+      return { status: "error", error: "Cannot rename the workspace root" };
+    }
+    const targetRelative = normalize(
+      path.posix.join(path.posix.dirname(source.relative), validatedName),
+    );
+    const target = await resolveScoped(workspaceRoot, targetRelative);
+    const sourcePath = path.resolve(workspaceRoot, source.relative);
+    const targetPath = path.resolve(workspaceRoot, targetRelative);
+    const sourceInfo = await lstat(sourcePath);
+    const targetInfo = await lstat(targetPath).catch((error) =>
+      isMissing(error) ? null : Promise.reject(error),
+    );
+    if (targetInfo && (targetInfo.dev !== sourceInfo.dev || targetInfo.ino !== sourceInfo.ino)) {
+      return { status: "error", error: `"${validatedName}" already exists` };
+    }
+    if (source.relative !== target.relative) await rename(sourcePath, targetPath);
+    return { status: "ok", path: targetRelative };
+  } catch (error) {
+    return entryError(error, validatedName);
+  }
+}
+
+async function duplicateEntry(workspaceRoot, relativePath) {
+  try {
+    const source = await resolveScoped(workspaceRoot, relativePath);
+    if (source.relative === ".") {
+      return { status: "error", error: "Cannot duplicate the workspace root" };
+    }
+    const sourcePath = path.resolve(workspaceRoot, source.relative);
+    const sourceInfo = await lstat(sourcePath);
+    const sourceName = path.posix.basename(source.relative);
+    const extension = sourceInfo.isDirectory() ? "" : path.posix.extname(sourceName);
+    const baseName = extension ? sourceName.slice(0, -extension.length) : sourceName;
+    let targetRelative;
+    for (let copyNumber = 1; ; copyNumber += 1) {
+      const suffix = copyNumber === 1 ? " copy" : ` copy ${copyNumber}`;
+      targetRelative = normalize(
+        path.posix.join(path.posix.dirname(source.relative), `${baseName}${suffix}${extension}`),
+      );
+      await resolveScoped(workspaceRoot, targetRelative);
+      try {
+        await lstat(path.resolve(workspaceRoot, targetRelative));
+      } catch (error) {
+        if (isMissing(error)) break;
+        throw error;
+      }
+    }
+    await cp(sourcePath, path.resolve(workspaceRoot, targetRelative), {
+      recursive: sourceInfo.isDirectory(),
+      errorOnExist: true,
+      force: false,
+      preserveTimestamps: true,
+    });
+    return { status: "ok", path: targetRelative };
+  } catch (error) {
+    return entryError(error);
+  }
+}
+
+async function deleteEntry(workspaceRoot, relativePath) {
+  try {
+    const scoped = await resolveScoped(workspaceRoot, relativePath);
+    if (scoped.relative === ".") {
+      return { status: "error", error: "Cannot delete the workspace root" };
+    }
+    const target = path.resolve(workspaceRoot, scoped.relative);
+    const info = await lstat(target);
+    await rm(target, { recursive: info.isDirectory(), force: false });
+    return { status: "ok", path: scoped.relative };
+  } catch (error) {
+    return entryError(error);
+  }
+}
+
+function validateEntryName(name) {
+  const trimmed = name?.trim();
+  if (!trimmed || trimmed === "." || trimmed === "..") throw new Error("Invalid name");
+  if (trimmed.includes("/") || trimmed.includes("\\")) {
+    throw new Error("Name cannot contain path separators");
+  }
+  return trimmed;
+}
+
+function entryError(error, name) {
+  if (error?.code === "EEXIST") {
+    return { status: "error", error: `"${name ?? "Entry"}" already exists` };
+  }
+  if (isMissing(error)) return { status: "error", error: "File or folder no longer exists" };
+  return { status: "error", error: error instanceof Error ? error.message : String(error) };
 }
 
 async function runWatcher(workspaceRoot) {

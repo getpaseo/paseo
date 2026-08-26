@@ -18,6 +18,7 @@ posixDescribe("provider workspace placement capability", () => {
         capability: {
           environment: "isolated",
           sharedHostProviders: new Set(["fixture-host-service"]),
+          processIsolation: false,
         },
         hostEnvironment: { HOST_ONLY: "secret" },
       }),
@@ -47,7 +48,11 @@ posixDescribe("provider workspace placement capability", () => {
     const launches: Array<readonly string[]> = [];
     const bound = await service.bind("provider-state");
     const recordingRuntime: BoundWorkspaceRuntime = {
-      provider: { environment: "isolated", sharedHostProviders: new Set() },
+      provider: {
+        environment: "isolated",
+        sharedHostProviders: new Set(),
+        processIsolation: false,
+      },
       ...bound,
       resolveCommand(command) {
         return command === "node"

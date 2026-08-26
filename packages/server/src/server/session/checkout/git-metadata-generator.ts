@@ -11,9 +11,10 @@ import {
   type ResolveStructuredGenerationProvidersOptions,
   type StructuredGenerationDaemonConfig,
 } from "../../agent/structured-generation-providers.js";
-import type { WorkspaceGitService } from "../../workspace-git-service.js";
+import type { WorkspaceGitWorkspace } from "../../workspace-git-service.js";
 import {
   buildMetadataPrompt,
+  loadCommittedMetadataGeneration,
   type MetadataConfigKey,
 } from "../../../utils/build-metadata-prompt.js";
 
@@ -28,8 +29,15 @@ export interface PullRequestText {
  * commit/PR commands and asks this for the wording when the user left it blank.
  */
 export interface GitMetadataGenerator {
-  generateCommitMessage(cwd: string): Promise<string>;
-  generatePullRequestText(cwd: string, baseRef?: string): Promise<PullRequestText>;
+  generateCommitMessage(input: {
+    workspaceGit: Pick<WorkspaceGitWorkspace, "cwd" | "getCheckoutDiff" | "readHeadFile">;
+    workspaceId?: string;
+  }): Promise<string>;
+  generatePullRequestText(input: {
+    workspaceGit: Pick<WorkspaceGitWorkspace, "cwd" | "getCheckoutDiff" | "readHeadFile">;
+    workspaceId?: string;
+    baseRef?: string;
+  }): Promise<PullRequestText>;
 }
 
 /**
@@ -45,15 +53,16 @@ export interface StructuredTextGeneration {
 
 export interface StructuredTextGenerationRequest<T> {
   cwd: string;
+  workspaceId?: string;
   prompt: string;
   schema: z.ZodType<T>;
   schemaName: string;
   agentTitle: string;
 }
 
-type GitMetadataDiffSource = Pick<WorkspaceGitService, "getCheckoutDiff" | "resolveRepoRoot">;
-type CheckoutDiffOptions = Parameters<GitMetadataDiffSource["getCheckoutDiff"]>[1];
-type CheckoutDiff = Awaited<ReturnType<GitMetadataDiffSource["getCheckoutDiff"]>>;
+type MetadataWorkspaceGit = Pick<WorkspaceGitWorkspace, "cwd" | "getCheckoutDiff" | "readHeadFile">;
+type CheckoutDiffOptions = Parameters<MetadataWorkspaceGit["getCheckoutDiff"]>[0];
+type CheckoutDiff = Awaited<ReturnType<MetadataWorkspaceGit["getCheckoutDiff"]>>;
 
 const COMMIT_MESSAGE_SCHEMA = z.object({
   message: z
@@ -78,7 +87,7 @@ const MAX_COMMIT_PATCH_CHARS = 120_000;
 const MAX_PULL_REQUEST_PATCH_CHARS = 200_000;
 
 interface PromptForDiffInput {
-  cwd: string;
+  workspaceGit: MetadataWorkspaceGit;
   diffOptions: CheckoutDiffOptions;
   maxPatchChars: number;
   contract: string;
@@ -88,18 +97,17 @@ interface PromptForDiffInput {
 }
 
 export function createGitMetadataGenerator(deps: {
-  workspaceGitService: GitMetadataDiffSource;
   generation: StructuredTextGeneration;
 }): GitMetadataGenerator {
-  const { workspaceGitService, generation } = deps;
+  const { generation } = deps;
 
   async function buildPromptForDiff(input: PromptForDiffInput): Promise<string> {
-    const diff = await workspaceGitService.getCheckoutDiff(input.cwd, input.diffOptions);
+    const metadataGeneration = await loadCommittedMetadataGeneration(input.workspaceGit);
+    const diff = await input.workspaceGit.getCheckoutDiff(input.diffOptions);
     const fileList = renderFileList(diff.structured);
     const patch = truncatePatch(diff.diff, input.maxPatchChars);
     return buildMetadataPrompt({
-      cwd: input.cwd,
-      workspaceGitService,
+      metadataGeneration,
       contract: input.contract,
       styles: [{ configKey: input.styleConfigKey, default: input.styleDefault }],
       after: [
@@ -113,9 +121,10 @@ export function createGitMetadataGenerator(deps: {
   }
 
   return {
-    async generateCommitMessage(cwd) {
+    async generateCommitMessage({ workspaceGit, workspaceId }) {
+      const cwd = workspaceGit.cwd;
       const prompt = await buildPromptForDiff({
-        cwd,
+        workspaceGit,
         diffOptions: { mode: "uncommitted", includeStructured: true },
         maxPatchChars: MAX_COMMIT_PATCH_CHARS,
         contract: "Write a concise git commit message for the changes below.",
@@ -126,6 +135,7 @@ export function createGitMetadataGenerator(deps: {
       try {
         const result = await generation.generate({
           cwd,
+          workspaceId,
           prompt,
           schema: COMMIT_MESSAGE_SCHEMA,
           schemaName: "CommitMessage",
@@ -140,9 +150,10 @@ export function createGitMetadataGenerator(deps: {
       }
     },
 
-    async generatePullRequestText(cwd, baseRef) {
+    async generatePullRequestText({ workspaceGit, workspaceId, baseRef }) {
+      const cwd = workspaceGit.cwd;
       const prompt = await buildPromptForDiff({
-        cwd,
+        workspaceGit,
         diffOptions: { mode: "base", baseRef, includeStructured: true },
         maxPatchChars: MAX_PULL_REQUEST_PATCH_CHARS,
         contract: "Write a pull request title and body for the changes below.",
@@ -153,6 +164,7 @@ export function createGitMetadataGenerator(deps: {
       try {
         return await generation.generate({
           cwd,
+          workspaceId,
           prompt,
           schema: PULL_REQUEST_SCHEMA,
           schemaName: "PullRequest",
@@ -182,9 +194,10 @@ export function createAgentStructuredTextGeneration(deps: {
   ) => ResolveStructuredGenerationProvidersOptions["currentSelection"];
 }): StructuredTextGeneration {
   return {
-    async generate({ cwd, prompt, schema, schemaName, agentTitle }) {
+    async generate({ cwd, workspaceId, prompt, schema, schemaName, agentTitle }) {
       const providers = await resolveStructuredGenerationProviders({
         cwd,
+        ...(workspaceId ? { workspaceId } : {}),
         providerSnapshotManager: deps.providerSnapshotManager,
         daemonConfig: deps.readDaemonConfig(),
         currentSelection: deps.getFocusedSelection(cwd),
@@ -192,6 +205,7 @@ export function createAgentStructuredTextGeneration(deps: {
       return generateStructuredAgentResponseWithFallback({
         manager: deps.agentManager,
         cwd,
+        workspaceId,
         prompt,
         schema,
         schemaName,

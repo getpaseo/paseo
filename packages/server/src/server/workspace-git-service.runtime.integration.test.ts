@@ -193,6 +193,47 @@ test("workspace Git disposal waits for runtime observation teardown", async () =
   await workspaceRuntime.destroy(workspaceId);
 });
 
+test("releasing a selected workspace discards its bound Git service", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-release-"));
+  cleanupRoots.push(root);
+  const source = await createRepository(path.join(root, "source"));
+  const workspaceId = "runtime-git-release";
+  const runtimeIds = new Map<string, string>();
+  const workspaceRuntime = createWorkspaceRuntimeService({
+    paseoHome: path.join(root, "paseo-home"),
+    resolveRuntimeId: async (id) => runtimeIds.get(id) ?? null,
+    persistRuntimeId: async (id, runtimeId) => {
+      runtimeIds.set(id, runtimeId);
+    },
+    beginWorkspaceDeletion: async () => {},
+    removeWorkspaceRecord: async (id) => {
+      runtimeIds.delete(id);
+    },
+  });
+  await workspaceRuntime.create({
+    workspaceId,
+    runtimeId: "local",
+    project: { id: "release-project", source: { kind: "host-directory", path: source } },
+    placement: { kind: "existing" },
+  });
+  const workspaceGit = new WorkspaceGitServiceImpl({
+    logger: createLogger(),
+    paseoHome: path.join(root, "paseo-home"),
+    workspaceRuntime,
+  });
+  const first = workspaceGit.bindWorkspace({ workspaceId, cwd: "/workspace/release" });
+  await first.getSnapshot({ force: true, includeForge: false, reason: "before-release" });
+
+  await workspaceGit.releaseWorkspace(workspaceId);
+  await expect(first.getSnapshot()).rejects.toThrow("WorkspaceGitService is disposed");
+  const rebound = workspaceGit.bindWorkspace({ workspaceId, cwd: "/workspace/release" });
+  expect(rebound).not.toBe(first);
+  await expect(rebound.getSnapshot()).resolves.toMatchObject({ git: { isGit: true } });
+
+  await workspaceGit.dispose();
+  await workspaceRuntime.destroy(workspaceId);
+});
+
 test.each([
   ["local", "pause", "resume"],
   ["worktree", "archive", "restore"],
@@ -514,22 +555,62 @@ test("selected workspace Git reads stay inside its command runtime", async () =>
   expect(JSON.stringify(diff)).not.toContain("host edit");
 }, 20_000);
 
-test("selected workspace Git rejects mutations unsupported by its command runtime", async () => {
-  const { hostDecoy, selectedGit } = await createCommandRuntimeGitFixture();
+test("selected workspace reads committed files inside its command runtime", async () => {
+  const { hostDecoy, runtimeRepository, selectedGit } = await createCommandRuntimeGitFixture({
+    relativeCwd: "packages/app",
+  });
+  await writeFile(path.join(runtimeRepository, "paseo.json"), '{"source":"runtime"}\n');
+  git(runtimeRepository, "add", "paseo.json");
+  git(runtimeRepository, "commit", "-m", "add runtime config");
+  await writeFile(path.join(runtimeRepository, "paseo.json"), '{"source":"replacement"}\n');
+  git(runtimeRepository, "add", "paseo.json");
+  git(runtimeRepository, "commit", "-m", "create replacement commit");
+  const replacementCommit = git(runtimeRepository, "rev-parse", "HEAD");
+  git(runtimeRepository, "reset", "--hard", "HEAD~");
+  git(runtimeRepository, "replace", "HEAD", replacementCommit);
+  await writeFile(path.join(runtimeRepository, "paseo.json"), '{"source":"uncommitted"}\n');
+  await writeFile(path.join(hostDecoy, "paseo.json"), '{"source":"host"}\n');
+  git(hostDecoy, "add", "paseo.json");
+  git(hostDecoy, "commit", "-m", "add host config");
+
+  await expect(selectedGit.readHeadFile("paseo.json", { maxBytes: 1_024 })).resolves.toBe(
+    '{"source":"runtime"}\n',
+  );
+});
+
+test("legacy workspace reads committed files through host Git", async () => {
+  const { hostDecoy, service } = await createCommandRuntimeGitFixture();
+  await writeFile(path.join(hostDecoy, "paseo.json"), '{"source":"host"}\n');
+  git(hostDecoy, "add", "paseo.json");
+  git(hostDecoy, "commit", "-m", "add host config");
+
+  await expect(
+    service.bindLegacy(hostDecoy).readHeadFile("paseo.json", { maxBytes: 1_024 }),
+  ).resolves.toBe('{"source":"host"}\n');
+});
+
+test("selected workspace Git routes native mutations through its command runtime", async () => {
+  const { root, hostDecoy, runtimeRepository, selectedGit } =
+    await createCommandRuntimeGitFixture();
   git(hostDecoy, "branch", "host-only");
+  const remoteRepository = path.join(root, "runtime-mutations.git");
+  await mkdir(remoteRepository);
+  git(remoteRepository, "init", "--bare", "--initial-branch=main");
+  git(runtimeRepository, "remote", "add", "origin", remoteRepository);
+
   await expect(selectedGit.switchBranch("host-only")).rejects.toThrow(
     "Branch not found: host-only",
   );
-  await expect(selectedGit.mergeToBase({ baseRef: "main" })).rejects.toThrow(
-    "Selected workspace Git does not support merge to base",
+  await expect(selectedGit.mergeToBase()).rejects.toThrow("cannot merge this workspace locally");
+  await selectedGit.mergeFromBase({ baseRef: "main" });
+  await selectedGit.renameBranch("selected-rename");
+  await selectedGit.push();
+
+  expect(git(runtimeRepository, "branch", "--show-current")).toBe("selected-rename");
+  expect(git(hostDecoy, "branch", "--show-current")).toBe("main");
+  expect(git(remoteRepository, "show-ref", "--verify", "refs/heads/selected-rename")).toContain(
+    "refs/heads/selected-rename",
   );
-  await expect(selectedGit.mergeFromBase({ baseRef: "main" })).rejects.toThrow(
-    "Selected workspace Git does not support merge from base",
-  );
-  await expect(selectedGit.renameBranch("selected-rename")).rejects.toThrow(
-    "Selected workspace Git does not support branch rename",
-  );
-  await expect(selectedGit.push()).rejects.toThrow("Selected workspace Git does not support push");
 }, 20_000);
 
 test("selected workspace Git stash stays inside its command runtime", async () => {
@@ -811,10 +892,17 @@ test("selected workspaces with the same public cwd keep mutations and caches iso
   expect(cachedB.git.currentBranch).toBe("runtime-b-next");
 }, 30_000);
 
-async function createCommandRuntimeGitFixture() {
+async function createCommandRuntimeGitFixture(options?: { relativeCwd?: string }) {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-"));
   cleanupRoots.push(root);
   const runtimeRepository = await createRepository(path.join(root, "runtime-repository"));
+  if (options?.relativeCwd) {
+    const selectedDirectory = path.join(runtimeRepository, options.relativeCwd);
+    await mkdir(selectedDirectory, { recursive: true });
+    await writeFile(path.join(selectedDirectory, ".gitkeep"), "");
+    git(runtimeRepository, "add", ".");
+    git(runtimeRepository, "commit", "-m", "add selected subdirectory");
+  }
   const hostDecoy = await createRepository(path.join(root, "host-decoy"));
   const stateDirectory = path.join(root, "runtime-state");
   await mkdir(stateDirectory);
@@ -847,7 +935,10 @@ async function createCommandRuntimeGitFixture() {
         id: "runtime-git-project",
         source: { kind: "host-directory", path: runtimeRepository },
       },
-      placement: { kind: "existing" },
+      placement: {
+        kind: "existing",
+        ...(options?.relativeCwd ? { relativeCwd: options.relativeCwd } : {}),
+      },
     });
   await recreate();
   const service = new WorkspaceGitServiceImpl({
@@ -862,6 +953,7 @@ async function createCommandRuntimeGitFixture() {
     hostDecoy,
     recreate,
     runtimeRepository,
+    service,
     selectedGit,
     workspaceId,
     workspaceRuntime,

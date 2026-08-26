@@ -75,6 +75,16 @@ export const writeResultSchema = z
     return value;
   });
 
+export const entryMutationResultSchema = z
+  .discriminatedUnion("status", [
+    z.object({ ...version, status: z.literal("ok"), path: z.string() }),
+    z.object({ ...version, status: z.literal("error"), error: z.string() }),
+  ])
+  .transform((result) => {
+    const { protocolVersion: _protocolVersion, ...value } = result;
+    return value;
+  });
+
 export const watchEventSchema = z.discriminatedUnion("type", [
   z.object({ ...version, type: z.literal("ready") }),
   z.object({ ...version, type: z.literal("subscribed"), subscriptionId: z.string() }),

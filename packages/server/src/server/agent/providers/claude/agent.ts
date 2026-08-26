@@ -132,6 +132,7 @@ import {
   checkProviderLaunchAvailable,
   createProviderEnv,
   createProviderEnvSpec,
+  resolveProviderEnvironment,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
   type ResolvedProviderLaunch,
@@ -1586,7 +1587,7 @@ export class ClaudeAgentClient implements AgentClient {
         );
     const modes = detectIneligibleAutoModeTransport(
       workspace
-        ? providerWorkspaceEnvironment([this.runtimeSettings?.env])
+        ? providerWorkspaceEnvironment([resolveProviderEnvironment(this.runtimeSettings)])
         : createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
     )
       ? DEFAULT_MODES.filter((mode) => mode.id !== "auto")
@@ -1760,7 +1761,7 @@ async function resolveWorkspaceClaudeCodeVersion(
   const { stdout, stderr } = await runWorkspaceProviderCommand({
     workspace,
     argv: [executable, ...launch.args, "--version"],
-    env: runtimeSettings?.env,
+    env: resolveProviderEnvironment(runtimeSettings),
     provider: "claude",
   });
   const version = parseClaudeCodeVersion(`${stdout}\n${stderr}`);

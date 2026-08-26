@@ -211,6 +211,7 @@ const WorkspaceGitRuntimeSchema = z
     aheadBehind: z.strictObject({ ahead: z.number(), behind: z.number() }).nullable().optional(),
     aheadOfOrigin: z.number().nullable().optional(),
     behindOfOrigin: z.number().nullable().optional(),
+    canMergeToBase: z.boolean().optional(),
   })
   .nullable()
   .optional();

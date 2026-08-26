@@ -1,5 +1,8 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcess, ChildProcessWithoutNullStreams } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import type {
   Options,
@@ -108,47 +111,76 @@ describe("Claude spawn override", () => {
     expect(spawnOptions?.shell).toBe(false);
   });
 
-  test("forwards the Claude SDK abort signal into selected workspace placement", async () => {
-    let capturedOptions: Options | undefined;
-    let resolveLaunch!: (launch: ProviderWorkspaceLaunchInput) => void;
-    const launched = new Promise<ProviderWorkspaceLaunchInput>((resolve) => {
-      resolveLaunch = resolve;
-    });
-    const child = createChildProcessStub() as ChildProcessWithoutNullStreams;
-    const workspace = {
-      cwd: ".",
-      async resolveExecutable(command: string) {
-        return command;
-      },
-      launchDeferred(input: ProviderWorkspaceLaunchInput | Promise<ProviderWorkspaceLaunchInput>) {
-        void Promise.resolve(input).then(resolveLaunch);
-        return child;
-      },
-    } as ProviderWorkspace;
-    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
-      capturedOptions = options;
-      return createQueryMock([]);
-    });
-    const client = new ClaudeAgentClient({ logger: createTestLogger(), queryFactory });
-    const session = await client.createSession(
-      { provider: "claude", cwd: process.cwd() },
-      { agentId: "selected-claude", workspace },
-    );
-    const controller = new AbortController();
+  test.skipIf(process.platform === "win32")(
+    "forwards the Claude SDK abort signal and provider environment into selected workspace placement",
+    async () => {
+      const root = await mkdtemp(path.join(tmpdir(), "paseo-claude-provider-env-"));
+      const secret = path.join(root, "secret");
+      await writeFile(secret, "file-secret\n", { mode: 0o600 });
+      let capturedOptions: Options | undefined;
+      let resolveLaunch!: (launch: ProviderWorkspaceLaunchInput) => void;
+      const launched = new Promise<ProviderWorkspaceLaunchInput>((resolve) => {
+        resolveLaunch = resolve;
+      });
+      const child = createChildProcessStub() as ChildProcessWithoutNullStreams;
+      const workspace = {
+        cwd: ".",
+        async resolveExecutable(command: string) {
+          return command;
+        },
+        launchDeferred(
+          input: ProviderWorkspaceLaunchInput | Promise<ProviderWorkspaceLaunchInput>,
+        ) {
+          void Promise.resolve(input).then(resolveLaunch);
+          return child;
+        },
+      } as ProviderWorkspace;
+      const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+        capturedOptions = options;
+        return createQueryMock([]);
+      });
+      const client = new ClaudeAgentClient({
+        logger: createTestLogger(),
+        queryFactory,
+        runtimeSettings: {
+          env: { PASEO_ORDINARY_PROVIDER_ENV: "ordinary" },
+          envFromFiles: { PASEO_FILE_PROVIDER_ENV: secret },
+        },
+      });
+      const session = await client.createSession(
+        { provider: "claude", cwd: process.cwd() },
+        {
+          agentId: "selected-claude",
+          env: { PASEO_LAUNCH_ENV: "launch" },
+          workspace,
+        },
+      );
+      const controller = new AbortController();
 
-    try {
-      await session.listCommands?.();
-      capturedOptions?.spawnClaudeCodeProcess?.({
-        command: "node",
-        args: ["claude.js"],
-        cwd: process.cwd(),
-        env: {},
-        signal: controller.signal,
-      } satisfies ClaudeSpawnOptions);
-      await expect(launched).resolves.toMatchObject({ signal: controller.signal });
-    } finally {
-      child.emit("exit", 0, null);
-      await session.close();
-    }
-  });
+      try {
+        await session.listCommands?.();
+        capturedOptions?.spawnClaudeCodeProcess?.({
+          command: "node",
+          args: ["claude.js"],
+          cwd: process.cwd(),
+          env: {},
+          signal: controller.signal,
+        } satisfies ClaudeSpawnOptions);
+        await expect(launched).resolves.toMatchObject({
+          signal: controller.signal,
+          environment: [
+            expect.objectContaining({
+              PASEO_ORDINARY_PROVIDER_ENV: "ordinary",
+              PASEO_FILE_PROVIDER_ENV: "file-secret",
+              PASEO_LAUNCH_ENV: "launch",
+            }),
+          ],
+        });
+      } finally {
+        child.emit("exit", 0, null);
+        await session.close();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
 });

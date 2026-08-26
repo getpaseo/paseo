@@ -220,6 +220,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
     serverId: formState.selectedServerId,
     provider: formState.selectedProvider,
     cwd: workingDir,
+    workspaceId: composerOptions?.workspaceId,
     modeId: formState.selectedMode,
     modelId: effectiveModelId,
     thinkingOptionId: effectiveThinkingOptionId,
@@ -240,6 +241,7 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
         ? buildDraftCommandConfig({
             selection: providerSelection,
             cwd: workingDir,
+            workspaceId: composerOptions.workspaceId,
             effectiveModelId,
             effectiveThinkingOptionId,
             featureValues: draftFeatureValues,

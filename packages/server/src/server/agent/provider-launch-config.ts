@@ -1,4 +1,14 @@
-import { isAbsolute } from "node:path";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  openSync,
+  readSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import { isAbsolute, resolve } from "node:path";
+import { TextDecoder } from "node:util";
 import {
   executableExists,
   findExecutable,
@@ -152,6 +162,87 @@ export async function resolveProviderCommandPrefix(
 }
 
 let cachedShellEnv: Record<string, string> | null = null;
+const MAX_PROVIDER_SECRET_BYTES = 64 * 1024;
+
+function readProviderSecret(name: string, file: string): string {
+  if (!isAbsolute(file) || resolve(file) !== file) {
+    throw new Error(`envFromFiles.${name} must use an absolute normalized path`);
+  }
+  if (typeof process.getuid !== "function") {
+    throw new Error("Provider envFromFiles requires a POSIX daemon");
+  }
+
+  let canonicalPath: string;
+  try {
+    canonicalPath = realpathSync(file);
+  } catch (error) {
+    throw new Error(`Unable to resolve provider secret for ${name}`, { cause: error });
+  }
+  if (canonicalPath !== file) {
+    throw new Error(`Provider secret for ${name} must be canonical and not use symlinks`);
+  }
+
+  let descriptor: number;
+  try {
+    descriptor = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW);
+  } catch (error) {
+    throw new Error(`Unable to open provider secret for ${name}`, { cause: error });
+  }
+
+  try {
+    const info = fstatSync(descriptor);
+    if (!info.isFile()) throw new Error(`Provider secret for ${name} is not a regular file`);
+    if (info.uid !== process.getuid()) {
+      throw new Error(`Provider secret for ${name} must be owned by the daemon user`);
+    }
+    if ((info.mode & 0o7777) !== 0o600) {
+      throw new Error(`Provider secret for ${name} must have mode 0600`);
+    }
+    const pathInfo = statSync(file);
+    if (pathInfo.dev !== info.dev || pathInfo.ino !== info.ino) {
+      throw new Error(`Provider secret for ${name} changed while it was opened`);
+    }
+    if (info.size > MAX_PROVIDER_SECRET_BYTES) {
+      throw new Error(`Provider secret for ${name} exceeds 64 KiB`);
+    }
+
+    const content = Buffer.allocUnsafe(MAX_PROVIDER_SECRET_BYTES + 1);
+    let length = 0;
+    while (length < content.length) {
+      const bytesRead = readSync(descriptor, content, length, content.length - length, null);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > MAX_PROVIDER_SECRET_BYTES) {
+      throw new Error(`Provider secret for ${name} exceeds 64 KiB`);
+    }
+
+    let value: string;
+    try {
+      value = new TextDecoder("utf-8", { fatal: true }).decode(content.subarray(0, length));
+    } catch (error) {
+      throw new Error(`Provider secret for ${name} is not valid UTF-8`, { cause: error });
+    }
+    if (value.includes("\0")) throw new Error(`Provider secret for ${name} contains a NUL byte`);
+    if (value.endsWith("\r\n")) return value.slice(0, -2);
+    if (value.endsWith("\n")) return value.slice(0, -1);
+    return value;
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+export function resolveProviderEnvironment(
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+): Record<string, string> | undefined {
+  const files = runtimeSettings?.envFromFiles;
+  if (!runtimeSettings?.env && !files) return undefined;
+  const environment = { ...runtimeSettings?.env };
+  for (const [name, file] of Object.entries(files ?? {})) {
+    environment[name] = readProviderSecret(name, file);
+  }
+  return environment;
+}
 
 export function resolveShellEnv(): Record<string, string> {
   if (cachedShellEnv) {
@@ -225,7 +316,7 @@ function collectProviderEnvOverlays(
   runtimeSettings: ProviderRuntimeSettings | undefined,
   overlays: Array<ProcessEnvRecord | undefined>,
 ): ProcessEnvRecord[] {
-  return [runtimeSettings?.env, ...overlays].filter(
+  return [resolveProviderEnvironment(runtimeSettings), ...overlays].filter(
     (overlay): overlay is ProcessEnvRecord => !!overlay,
   );
 }

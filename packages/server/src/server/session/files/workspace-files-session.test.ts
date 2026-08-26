@@ -202,6 +202,48 @@ describe("WorkspaceFilesSession", () => {
       payload: { result: { status: "written", size: 6 } },
     });
 
+    const virtualCwd = "/workspace/selected-workspace";
+    await subsystem.handleFileEntryCreateRequest({
+      type: "fs.entry.create.request",
+      workspaceId: record.workspaceId,
+      cwd: virtualCwd,
+      parentPath: ".",
+      name: "created.txt",
+      kind: "file",
+      requestId: "selected-create",
+    });
+    await subsystem.handleFileEntryRenameRequest({
+      type: "fs.entry.rename.request",
+      workspaceId: record.workspaceId,
+      cwd: virtualCwd,
+      path: "created.txt",
+      name: "renamed.txt",
+      requestId: "selected-rename",
+    });
+    await subsystem.handleFileEntryDuplicateRequest({
+      type: "fs.entry.duplicate.request",
+      workspaceId: record.workspaceId,
+      cwd: virtualCwd,
+      path: "renamed.txt",
+      requestId: "selected-duplicate",
+    });
+    await subsystem.handleFileEntryDeleteRequest({
+      type: "fs.entry.delete.request",
+      workspaceId: record.workspaceId,
+      cwd: virtualCwd,
+      path: "renamed.txt",
+      requestId: "selected-delete",
+    });
+    expect(existsSync(join(cwd, "created.txt"))).toBe(false);
+    expect(existsSync(join(cwd, "renamed.txt"))).toBe(false);
+    expect(existsSync(join(cwd, "renamed copy.txt"))).toBe(true);
+    expect(emitted.slice(-4).map((message) => message.type)).toEqual([
+      "fs.entry.create.response",
+      "fs.entry.rename.response",
+      "fs.entry.duplicate.response",
+      "fs.entry.delete.response",
+    ]);
+
     await subsystem.handleFileDownloadTokenRequest({
       type: "file_download_token_request",
       workspaceId: record.workspaceId,
@@ -233,7 +275,7 @@ describe("WorkspaceFilesSession", () => {
     await runtime.destroy(record.workspaceId);
   });
 
-  test("never selects a workspace runtime from compatibility cwd", async () => {
+  test("never selects a workspace runtime from compatibility cwd or its descendants", async () => {
     const cwd = makeDir("workspace-files-selected-cwd-");
     writeFileSync(join(cwd, "runtime.txt"), "runtime only\n");
     const runtimeIds = new Map<string, string>();
@@ -285,16 +327,25 @@ describe("WorkspaceFilesSession", () => {
       mode: "file",
       requestId: "selected-without-id",
     });
+    await subsystem.handleFileExplorerRequest({
+      type: "file_explorer_request",
+      cwd: join(cwd, "nested"),
+      path: "runtime.txt",
+      mode: "file",
+      requestId: "selected-descendant-without-id",
+    });
 
-    expect(emitted).toEqual([
-      expect.objectContaining({
-        type: "file_explorer_response",
-        payload: expect.objectContaining({
-          requestId: "selected-without-id",
-          error: "workspaceId is required for a selected workspace file operation",
+    expect(emitted).toEqual(
+      ["selected-without-id", "selected-descendant-without-id"].map((requestId) =>
+        expect.objectContaining({
+          type: "file_explorer_response",
+          payload: expect.objectContaining({
+            requestId,
+            error: "workspaceId is required for a selected workspace file operation",
+          }),
         }),
-      }),
-    ]);
+      ),
+    );
     await subsystem.dispose();
     await runtime.destroy(record.workspaceId);
   });

@@ -17,6 +17,7 @@ import {
   CommandRuntimeDescribeResponseSchema,
   CommandRuntimeLifecycleRequestSchema,
   CommandRuntimeLifecycleResponseSchema,
+  CommandRuntimeMergeToBaseResponseSchema,
   CommandRuntimeProcessEventSchema,
   CommandRuntimeProjectSourceSchema,
   CommandRuntimePlacementIntentSchema,
@@ -54,6 +55,7 @@ test("documented lifecycle, fd3, control, and fd4 examples are exact newline-ter
     ["describeResponse", CommandRuntimeDescribeResponseSchema],
     ["lifecycleRequest", CommandRuntimeLifecycleRequestSchema],
     ["lifecycleResponse", CommandRuntimeLifecycleResponseSchema],
+    ["mergeToBaseResponse", CommandRuntimeMergeToBaseResponseSchema],
     ["pipeSpawnControl", CommandRuntimeControlSchema],
     ["ptySpawnControl", CommandRuntimeControlSchema],
     ["resizeControl", CommandRuntimeControlSchema],
@@ -305,6 +307,18 @@ test("every public v1 object rejects unknown authority at every nesting level", 
   };
   const strictCases = [
     ["describe", CommandRuntimeDescribeResponseSchema, examples.describeResponse, []],
+    [
+      "describe capabilities",
+      CommandRuntimeDescribeResponseSchema,
+      examples.describeResponse,
+      ["capabilities"],
+    ],
+    [
+      "describe requirements",
+      CommandRuntimeDescribeResponseSchema,
+      examples.describeResponse,
+      ["requirements"],
+    ],
     ["create request", CommandRuntimeLifecycleRequestSchema, examples.lifecycleRequest, []],
     [
       "create request input",
@@ -365,6 +379,12 @@ test("every public v1 object rejects unknown authority at every nesting level", 
     ],
     ["state", CommandRuntimeStateSchema, examples.lifecycleResponse.state, []],
     ["placement", CommandRuntimePlacementSchema, examples.lifecycleResponse.placement, []],
+    [
+      "merge-to-base response",
+      CommandRuntimeMergeToBaseResponseSchema,
+      examples.mergeToBaseResponse,
+      [],
+    ],
     [
       "create state response",
       CommandRuntimeLifecycleResponseSchema,
@@ -480,6 +500,7 @@ test("v1 extension maps stay explicit and future versions fail by protocol versi
     CommandRuntimeLifecycleRequestSchema.parse({
       protocolVersion: 1,
       runtimeInstanceId: examples.lifecycleRequest.runtimeInstanceId,
+      runtimeGeneration: examples.lifecycleRequest.runtimeGeneration,
       options: { root: "runtime-private-option", vendorExtension: { nested: true } },
     }).options,
     { root: "runtime-private-option", vendorExtension: { nested: true } },
@@ -507,6 +528,7 @@ test("v1 extension maps stay explicit and future versions fail by protocol versi
     [CommandRuntimeDescribeResponseSchema, examples.describeResponse],
     [CommandRuntimeLifecycleRequestSchema, examples.lifecycleRequest],
     [CommandRuntimeLifecycleResponseSchema, examples.lifecycleResponse],
+    [CommandRuntimeMergeToBaseResponseSchema, examples.mergeToBaseResponse],
     [CommandRuntimeControlSchema, examples.pipeSpawnControl],
     [CommandRuntimeProcessEventSchema, examples.startedEvent],
   ]) {

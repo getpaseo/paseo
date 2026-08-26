@@ -83,7 +83,7 @@ export class OmpCliRuntime implements OmpRuntime {
       ? await spawnWorkspaceProviderProcess({
           workspace: input.workspace,
           argv: [await resolveWorkspaceCommand(input.workspace, command), ...args],
-          env: providerWorkspaceEnvironment([this.options.runtimeSettings?.env, input.env]),
+          env: providerWorkspaceEnvironment([launch.env]),
           purpose: input.agentId
             ? { kind: "agent", agentId: input.agentId, provider: "omp" }
             : { kind: "provider-probe", provider: "omp" },

@@ -110,6 +110,7 @@ import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
   createProviderEnvSpec,
+  resolveProviderEnvironment,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
@@ -1035,18 +1036,21 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+  async listFeatures(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentFeature[]> {
     const autoAcceptFeature = buildACPAutoAcceptFeature(config);
     if (this.configFeatureOptions.length === 0) {
       return [autoAcceptFeature];
     }
 
     this.assertProvider(config);
-    const probe = await this.spawnProcess(PROBE_ENV);
+    const probe = await this.spawnProcess(PROBE_ENV, { workspace: launchContext?.workspace });
     try {
       const response = await this.runACPRequest(() =>
         probe.connection.newSession({
-          cwd: config.cwd,
+          cwd: launchContext?.workspace?.cwd ?? config.cwd,
           mcpServers: [],
         }),
       );
@@ -1159,7 +1163,10 @@ export class ACPAgentClient implements AgentClient {
       const child = await spawnWorkspaceProviderProcess({
         workspace,
         argv: [command, ...args],
-        env: providerWorkspaceEnvironment([this.runtimeSettings?.env, launchEnv]),
+        env: providerWorkspaceEnvironment([
+          resolveProviderEnvironment(this.runtimeSettings),
+          launchEnv,
+        ]),
         purpose: { kind: "provider-probe", provider: this.provider },
       });
       return this.createTransport(child, workspace);
@@ -2441,7 +2448,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       terminalCommand.shell === false ? [env, createStringCommandShellEnvOverlay()] : [env];
     const cwd = params.cwd ?? this.config.cwd;
     const envSpec = createProviderEnvSpec({
-      runtimeSettings: this.runtimeSettings,
+      runtimeSettings: this.runtimeSettings?.env ? { env: this.runtimeSettings.env } : undefined,
       overlays: commandEnvOverlays,
     });
 
@@ -2577,7 +2584,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       const child = await spawnWorkspaceProviderProcess({
         workspace: this.workspace,
         argv: [command, ...args],
-        env: providerWorkspaceEnvironment([this.runtimeSettings?.env, this.launchEnv]),
+        env: providerWorkspaceEnvironment([
+          resolveProviderEnvironment(this.runtimeSettings),
+          this.launchEnv,
+        ]),
         purpose: {
           kind: "agent",
           agentId: this.agentId ?? "unidentified-agent",

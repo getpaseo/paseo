@@ -275,6 +275,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       const payload = await client.createFileEntry({
         cwd: normalizedWorkspaceRoot,
+        ...(workspaceId ? { workspaceId } : {}),
         ...input,
       });
       if (payload.success) {
@@ -285,7 +286,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       return payload;
     },
-    [client, normalizedWorkspaceRoot, requestDirectoryListing],
+    [client, normalizedWorkspaceRoot, requestDirectoryListing, workspaceId],
   );
 
   const renameEntry = useCallback(
@@ -295,6 +296,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       const payload = await client.renameFileEntry({
         cwd: normalizedWorkspaceRoot,
+        ...(workspaceId ? { workspaceId } : {}),
         ...input,
       });
       if (payload.success) {
@@ -305,7 +307,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       return payload;
     },
-    [client, normalizedWorkspaceRoot, requestDirectoryListing],
+    [client, normalizedWorkspaceRoot, requestDirectoryListing, workspaceId],
   );
 
   const duplicateEntry = useCallback(
@@ -313,7 +315,11 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       if (!client || !normalizedWorkspaceRoot) {
         return null;
       }
-      const payload = await client.duplicateFileEntry({ cwd: normalizedWorkspaceRoot, path });
+      const payload = await client.duplicateFileEntry({
+        cwd: normalizedWorkspaceRoot,
+        path,
+        ...(workspaceId ? { workspaceId } : {}),
+      });
       if (payload.success) {
         await requestDirectoryListing(parentExplorerPath(path), {
           recordHistory: false,
@@ -322,7 +328,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       return payload;
     },
-    [client, normalizedWorkspaceRoot, requestDirectoryListing],
+    [client, normalizedWorkspaceRoot, requestDirectoryListing, workspaceId],
   );
 
   const deleteEntry = useCallback(
@@ -330,7 +336,11 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       if (!client || !normalizedWorkspaceRoot) {
         return null;
       }
-      const payload = await client.deleteFileEntry({ cwd: normalizedWorkspaceRoot, path });
+      const payload = await client.deleteFileEntry({
+        cwd: normalizedWorkspaceRoot,
+        path,
+        ...(workspaceId ? { workspaceId } : {}),
+      });
       if (payload.success) {
         await requestDirectoryListing(parentExplorerPath(path), {
           recordHistory: false,
@@ -339,7 +349,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
       }
       return payload;
     },
-    [client, normalizedWorkspaceRoot, requestDirectoryListing],
+    [client, normalizedWorkspaceRoot, requestDirectoryListing, workspaceId],
   );
 
   const selectExplorerEntry = useCallback(

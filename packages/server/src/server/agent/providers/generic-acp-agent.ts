@@ -2,7 +2,11 @@ import type { Logger } from "pino";
 import { z } from "zod";
 
 import type { AgentCapabilityFlags, FetchCatalogOptions } from "../agent-sdk-types.js";
-import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
+import {
+  checkProviderLaunchAvailable,
+  resolveProviderEnvironment,
+  resolveProviderLaunch,
+} from "../provider-launch-config.js";
 import {
   ACPAgentClient,
   type ACPCatalogModelResolver,
@@ -41,6 +45,7 @@ interface GenericACPAgentClientOptions {
   logger: Logger;
   command: [string, ...string[]];
   env?: Record<string, string>;
+  envFromFiles?: Record<string, string>;
   providerId?: string;
   label?: string;
   providerParams?: unknown;
@@ -66,6 +71,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       logger: options.logger,
       runtimeSettings: {
         env: options.env,
+        envFromFiles: options.envFromFiles,
       },
       defaultCommand: options.command,
       capabilities: buildGenericACPCapabilities(providerParams),
@@ -110,7 +116,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
           versionCommand: {
             command: versionProbe.command,
             args: versionProbe.args,
-            env: this.runtimeSettings?.env,
+            env: resolveProviderEnvironment(this.runtimeSettings),
           },
         })),
       );

@@ -75,6 +75,7 @@ export interface MaterializedProviderStateFile {
 /** Provider-owned placement capability. Adapters never receive a workspace runtime or its root. */
 export interface ProviderWorkspace {
   readonly cwd: string;
+  readonly processIsolation: boolean;
   resolveExecutable(command: string): Promise<string>;
   launch(input: ProviderWorkspaceLaunchInput): Promise<ChildProcessWithoutNullStreams>;
   launchDeferred(
@@ -123,6 +124,7 @@ export function bindProviderWorkspace(input: {
 
   return {
     cwd: input.cwd,
+    processIsolation: input.runtime.provider.processIsolation,
     async resolveExecutable(command) {
       const resolved = await input.runtime.resolveCommand(command);
       if (!resolved)

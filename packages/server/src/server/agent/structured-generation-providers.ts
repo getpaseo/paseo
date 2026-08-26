@@ -31,6 +31,7 @@ export const DEFAULT_STRUCTURED_GENERATION_PROVIDERS: readonly StructuredGenerat
 
 export interface ResolveStructuredGenerationProvidersOptions {
   cwd: string;
+  workspaceId?: string;
   providerSnapshotManager: Pick<ProviderSnapshotManager, "listProviders">;
   daemonConfig?: StructuredGenerationDaemonConfig | null;
   currentSelection?: {
@@ -46,6 +47,7 @@ export async function resolveStructuredGenerationProviders(
   const configuredProviders = readConfiguredProviders(options.daemonConfig);
   const providerEntries = await options.providerSnapshotManager.listProviders({
     cwd: options.cwd,
+    ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
     wait: true,
   });
   const enabledEntries = providerEntries.filter((entry) => entry.enabled);

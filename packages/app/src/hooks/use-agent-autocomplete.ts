@@ -87,6 +87,7 @@ function normalizeDraftCommandConfig(
   return {
     provider: draftConfig.provider,
     cwd,
+    ...(draftConfig.workspaceId ? { workspaceId: draftConfig.workspaceId } : {}),
     ...(modeId ? { modeId } : {}),
     ...(model ? { model } : {}),
     ...(thinkingOptionId ? { thinkingOptionId } : {}),

@@ -21,6 +21,7 @@ test("selected Git addresses cannot become legacy through empty or omitted ident
     workspaceGitService: {
       bindWorkspace: () => selected,
       bindLegacy: () => legacy,
+      releaseWorkspace: vi.fn(),
     },
   });
 
@@ -32,7 +33,29 @@ test("selected Git addresses cannot become legacy through empty or omitted ident
   await expect(directory.resolve({ kind: "legacy", cwd })).rejects.toThrow(
     "workspaceId is required for a selected workspace Git operation",
   );
+  await expect(directory.resolve({ kind: "legacy", cwd: `${cwd}/nested` })).rejects.toThrow(
+    "workspaceId is required for a selected workspace Git operation",
+  );
   expect(get).not.toHaveBeenCalled();
+});
+
+test("selected virtual paths do not capture sibling legacy Git workspaces", async () => {
+  const legacy = { cwd: "/workspace/project-copy" } as WorkspaceGitWorkspace;
+  const bindLegacy = vi.fn(() => legacy);
+  const record = {
+    workspaceId: "workspace-selected",
+    cwd: "/workspace/project",
+    runtime: { runtimeId: "command" },
+  };
+  const directory = createWorkspaceGitDirectory({
+    workspaceRegistry: { get: vi.fn(), list: async () => [record] },
+    workspaceGitService: { bindWorkspace: vi.fn(), bindLegacy, releaseWorkspace: vi.fn() },
+  });
+
+  await expect(directory.resolve({ kind: "legacy", cwd: "/workspace/project-copy" })).resolves.toBe(
+    legacy,
+  );
+  expect(bindLegacy).toHaveBeenCalledWith(resolve("/workspace/project-copy"));
 });
 
 test.each(["", "   "])(
@@ -44,6 +67,7 @@ test.each(["", "   "])(
       workspaceGitService: {
         bindWorkspace: vi.fn(),
         bindLegacy: vi.fn(),
+        releaseWorkspace: vi.fn(),
       },
     });
 
@@ -54,7 +78,7 @@ test.each(["", "   "])(
   },
 );
 
-test("legacy Git addresses remain available for host-visible runtime placements", async () => {
+test("selected runtime addresses never fall back to host Git", async () => {
   const cwd = "/shared";
   const legacy = { cwd } as WorkspaceGitWorkspace;
   const record = {
@@ -69,8 +93,10 @@ test("legacy Git addresses remain available for host-visible runtime placements"
     workspaceGitService: { bindWorkspace: vi.fn(), bindLegacy },
   });
 
-  await expect(directory.resolve({ kind: "legacy", cwd })).resolves.toBe(legacy);
-  expect(bindLegacy).toHaveBeenCalledWith(resolve(cwd));
+  await expect(directory.resolve({ kind: "legacy", cwd })).rejects.toThrow(
+    "workspaceId is required for a selected workspace Git operation",
+  );
+  expect(bindLegacy).not.toHaveBeenCalled();
 });
 
 test("selected Git addresses normalize both fields before registry lookup", async () => {
@@ -85,7 +111,7 @@ test("selected Git addresses normalize both fields before registry lookup", asyn
   const bindWorkspace = vi.fn(() => selected);
   const directory = createWorkspaceGitDirectory({
     workspaceRegistry: { get, list: vi.fn() },
-    workspaceGitService: { bindWorkspace, bindLegacy: vi.fn() },
+    workspaceGitService: { bindWorkspace, bindLegacy: vi.fn(), releaseWorkspace: vi.fn() },
   });
 
   await expect(

@@ -3,7 +3,7 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pino } from "pino";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import type {
   WorkspaceGitBranchValidationResult,
   WorkspaceGitRuntimeSnapshot,
@@ -107,6 +107,42 @@ afterEach(() => {
       rmSync(dir, { recursive: true, force: true });
     }
   }
+});
+
+test("does not warn when a forced refresh is canceled during shutdown", async () => {
+  const { git } = createFakeGit();
+  git.getSnapshot = async () => {
+    throw Object.assign(new Error("service disposed"), { name: "AbortError" });
+  };
+  const warn = vi.fn();
+  const service = createGitMutationService({
+    workspaceGitService: git,
+    logger: { warn } as unknown as pino.Logger,
+  });
+
+  await service.notifyGitMutation("/repo", "commit");
+
+  expect(warn).not.toHaveBeenCalled();
+});
+
+test("warns when a forced refresh fails with a process signal outside shutdown", async () => {
+  const { git } = createFakeGit();
+  const error = new Error("git exited with SIGTERM");
+  git.getSnapshot = async () => {
+    throw error;
+  };
+  const warn = vi.fn();
+  const service = createGitMutationService({
+    workspaceGitService: git,
+    logger: { warn } as unknown as pino.Logger,
+  });
+
+  await service.notifyGitMutation("/repo", "commit");
+
+  expect(warn).toHaveBeenCalledWith(
+    { err: error, cwd: "/repo", reason: "commit" },
+    "Failed to force-refresh workspace git snapshot after mutation",
+  );
 });
 
 describe("checkoutExistingBranch", () => {

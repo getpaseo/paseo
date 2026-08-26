@@ -35,6 +35,7 @@ describe("recoverWorkspaceSelection", () => {
     const operations: string[] = [];
 
     await recoverWorkspaceSelection({
+      recoveryKey: "server-1:workspace-1",
       workspaceId: "workspace-1",
       agentId: "agent-1",
       client: {
@@ -46,6 +47,40 @@ describe("recoverWorkspaceSelection", () => {
         },
       },
     });
+
+    expect(operations).toEqual(["workspace:workspace-1", "agent:agent-1"]);
+  });
+
+  it("coalesces concurrent recovery and refresh for one workspace", async () => {
+    let finishRestore!: () => void;
+    const restore = new Promise<void>((resolve) => {
+      finishRestore = resolve;
+    });
+    const operations: string[] = [];
+    const client = {
+      restoreWorkspace: async (workspaceId: string) => {
+        operations.push(`workspace:${workspaceId}`);
+        await restore;
+      },
+      refreshAgent: async (agentId: string) => {
+        operations.push(`agent:${agentId}`);
+      },
+    };
+
+    const first = recoverWorkspaceSelection({
+      client,
+      recoveryKey: "server-1:workspace-1",
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+    });
+    const second = recoverWorkspaceSelection({
+      client,
+      recoveryKey: "server-1:workspace-1",
+      workspaceId: "workspace-1",
+      agentId: "agent-1",
+    });
+    finishRestore();
+    await Promise.all([first, second]);
 
     expect(operations).toEqual(["workspace:workspace-1", "agent:agent-1"]);
   });

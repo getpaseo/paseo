@@ -19,17 +19,30 @@ exec --workspace-id <id>
 signal --workspace-id <id> --exec-id <id> --signal <signal>
 pause --workspace-id <id>
 resume --workspace-id <id>
+release-backing --workspace-id <id>
+merge-to-base --workspace-id <id>
 destroy --workspace-id <id>
 reconcile
 ```
 
 `describe` writes `CommandRuntimeDescribeResponse` JSON to stdout. Lifecycle commands read one `CommandRuntimeLifecycleRequest` JSON value from stdin and write one `CommandRuntimeLifecycleResponse` JSON value to stdout. `create` and `resume` return `state`; `inspect` returns `inspection`; `pause`, `destroy`, and `reconcile` return `ok`. Diagnostics go to stderr. A non-zero wrapper exit means the operation failed.
 
-Paseo sends options from trusted daemon configuration and a stable `runtimeInstanceId` for shared-resource ownership. Runtime implementations decide how that opaque instance token maps to their resource system. Secrets never belong in argv or temporary request files. The runtime must reject any `protocolVersion` other than `1` with a clear stderr diagnostic and non-zero exit. Every public v1 object schema is strict at every nested object boundary, so unknown keys fail instead of being stripped. Extensibility belongs only in the explicit `options`, workload `env`, and lifecycle-environment maps. The optional create `purpose: "discovery"` field marks a short-lived environment-discovery workspace without naming the higher-level consumer. Every `create` response must set `materializedFreshContent`: `true` only when that call created fresh workspace content/resources on which repo setup is permitted, and `false` when it adopted or reused existing content. `resume` state responses omit it.
+`describe.capabilities` declares reconciliation, backing release, Merge locally, and process isolation.
+`describe.requirements.daemonAuthentication` prevents registration when the daemon has no
+authentication. Paseo calls `release-backing` and `merge-to-base` only when their capabilities are
+true. Backing release returns `ok`. Merge locally returns the strict `merge-to-base` response with
+the trusted `localIntegrationTarget` that Paseo should refresh.
+
+Paseo sends options from trusted daemon configuration, a stable `runtimeInstanceId` for shared-resource ownership, and a fresh `runtimeGeneration` for each daemon-owned runtime instance. Runtime implementations use the generation to distinguish surviving workloads from the current daemon. They decide how the opaque instance token maps to their resource system. Secrets never belong in argv or temporary request files. The runtime must reject any `protocolVersion` other than `1` with a clear stderr diagnostic and non-zero exit. Every public v1 object schema is strict at every nested object boundary, so unknown keys fail instead of being stripped. Extensibility belongs only in the explicit `options`, workload `env`, and lifecycle-environment maps. The optional create `purpose: "discovery"` field marks a short-lived environment-discovery workspace without naming the higher-level consumer. Every `create` response must set `materializedFreshContent`: `true` only when that call created fresh workspace content/resources on which repo setup is permitted, and `false` when it adopted or reused existing content. `resume` state responses omit it.
 
 `project.source` is either a directory visible to the runtime wrapper or a Git URL plus a required revision string and optional subdirectory. An empty Git revision selects the remote's default state. Paseo derives this source before invoking the runtime; `placement.cwd` never overrides it. A `discovery` create must expose the same runtime environment as a user workspace but must not execute repository setup. The checked-in JSON example uses this purpose so wrappers can lock its exact bytes.
 
 A runtime owns the meaning of its `options`. Keep runtime-specific mount, container, VM, or supervisor authority out of lifecycle state and placement.
+
+`placement.cwd` may be a virtual path that exists only inside the runtime. The optional
+`localIntegrationTarget` is a host-side integration target for the runtime's typed `merge-to-base`
+operation; it is not a workspace execution path and does not make the runtime checkout
+host-visible.
 
 ## Exec file descriptors
 

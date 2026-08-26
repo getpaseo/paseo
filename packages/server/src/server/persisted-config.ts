@@ -96,6 +96,21 @@ const CommandWorkspaceRuntimeConfigSchema = z
       .min(1)
       .transform((command) => command as [string, ...string[]]),
     options: z.record(z.string(), z.json()).optional(),
+    agentTools: z
+      .array(
+        z.enum([
+          "workspace",
+          "agents",
+          "terminals",
+          "scripts",
+          "heartbeats",
+          "providers",
+          "permissions",
+          "browser",
+          "voice",
+        ]),
+      )
+      .optional(),
   })
   .strict();
 
@@ -113,6 +128,26 @@ const DaemonAuthSchema = z
     password: BcryptHashSchema.optional(),
   })
   .strict();
+
+const ForgeHostKeySchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_](?:[A-Za-z0-9._-]*[A-Za-z0-9_])?$/)
+  .max(253);
+const ForgeHostsSchema = z
+  .record(ForgeHostKeySchema, z.enum(["github", "gitlab", "gitea", "forgejo", "codeberg"]))
+  .superRefine((hosts, context) => {
+    const normalized = new Set<string>();
+    for (const host of Object.keys(hosts)) {
+      const key = host.toLowerCase();
+      if (normalized.has(key)) {
+        context.addIssue({ code: "custom", message: `Duplicate forge host: ${host}` });
+      }
+      normalized.add(key);
+    }
+  })
+  .transform((hosts) =>
+    Object.fromEntries(Object.entries(hosts).map(([host, forge]) => [host.toLowerCase(), forge])),
+  );
 
 const SpeechProviderIdSchema = z
   .string()
@@ -277,6 +312,7 @@ export const PersistedConfigSchema = z
           })
           .strict()
           .optional(),
+        forgeHosts: ForgeHostsSchema.optional(),
         autoArchiveAfterMerge: z.boolean().optional(),
         enableTerminalAgentHooks: z.boolean().optional(),
         appendSystemPrompt: z.string().optional(),

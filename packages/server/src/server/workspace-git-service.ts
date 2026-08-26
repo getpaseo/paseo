@@ -1,11 +1,16 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
+import type { Readable } from "node:stream";
 import { LRUCache } from "lru-cache";
 import pLimit from "p-limit";
 import type pino from "pino";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
-import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
+import {
+  normalizeHost,
+  parseGitHubRemoteUrl,
+  parseGitRemoteLocation,
+} from "@getpaseo/protocol/git-remote";
 import type { CheckoutContext } from "../utils/checkout-git.js";
 import {
   type BranchCheckoutResolution,
@@ -21,6 +26,7 @@ import {
   getCheckoutStatus,
   getCheckoutWorktreeState,
   getPullRequestStatus,
+  getCurrentBranch,
   forgeAuthStateFromError,
   hasOriginRemote,
   listBranchSuggestions,
@@ -29,6 +35,7 @@ import {
   resolveAbsoluteGitDir,
   checkoutResolvedBranch,
   commitChanges,
+  createPullRequest,
   discardChanges,
   getCommitFileDiff,
   listCheckoutCommits,
@@ -45,11 +52,19 @@ import type {
   PullRequestMergeable,
 } from "../services/forge-service.js";
 import { createForgeService } from "../services/forge-registry.js";
+import { forgeForHost } from "../services/forge-resolver.js";
 import {
   createForgeResolver,
   type ForgeResolution,
   type ForgeResolver,
 } from "../services/forge-resolver.js";
+import {
+  defaultResolveRemoteUrl,
+  isStableForgeAvailabilityError,
+} from "../services/forge-cli-command.js";
+import { createGitHubService } from "../services/github-service.js";
+import { createGitLabService } from "../services/gitlab-service.js";
+import { createGiteaService } from "../services/gitea-service.js";
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
 import {
   createRealpathAwarePathMatcher,
@@ -111,6 +126,90 @@ const WORKSPACE_GIT_INTERNAL_MIN_GAP_MS = 2_000;
 const WORKSPACE_GIT_CHECKOUT_DIFF_CACHE_MAX = 64;
 // Small values (booleans, short strings, small arrays); generous cap.
 const WORKSPACE_GIT_AUXILIARY_CACHE_MAX = 256;
+const RUNTIME_FORGE_COMMAND_TIMEOUT_MS = 30_000;
+const RUNTIME_FORGE_OUTPUT_LIMIT = 10 * 1024 * 1024;
+
+interface HeadTreeEntry {
+  objectId: string;
+}
+
+function validateHeadFileRead(path: string, maxBytes: number): void {
+  const segments = path.split("/");
+  const hasInvalidSegment = segments.some(
+    (segment) => segment.length === 0 || segment === "." || segment === "..",
+  );
+  if (path.includes("\0") || path.includes("\\") || path.startsWith("/") || hasInvalidSegment) {
+    throw new Error("Committed file path must be a normalized repository-relative path");
+  }
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error("Committed file byte limit must be a positive integer");
+  }
+}
+
+function parseHeadTreeEntry(stdout: string, expectedPath: string): HeadTreeEntry {
+  if (!stdout.endsWith("\0")) {
+    throw new Error(`Git returned a malformed tree entry: ${expectedPath}`);
+  }
+  const records = stdout.slice(0, -1).split("\0");
+  if (records.length !== 1) {
+    throw new Error(`Git returned multiple tree entries: ${expectedPath}`);
+  }
+  const separator = records[0]?.indexOf("\t") ?? -1;
+  if (separator < 0) {
+    throw new Error(`Git returned a malformed tree entry: ${expectedPath}`);
+  }
+  const header = records[0]!.slice(0, separator);
+  const returnedPath = records[0]!.slice(separator + 1);
+  const match = /^(\d{6}) (\S+) ([0-9a-f]{40}|[0-9a-f]{64})$/.exec(header);
+  if (!match || returnedPath !== expectedPath) {
+    throw new Error(`Git returned an unexpected tree entry: ${expectedPath}`);
+  }
+  const [, mode, type, objectId] = match;
+  if (type !== "blob" || (mode !== "100644" && mode !== "100755")) {
+    throw new Error(`Committed path is not a regular file: ${expectedPath}`);
+  }
+  return { objectId: objectId! };
+}
+
+class RuntimeForgeCommandError extends Error {
+  readonly code: string | number | null;
+  readonly killed: boolean;
+  readonly stdout: string;
+  readonly stderr: string;
+
+  constructor(input: {
+    binary: string;
+    code: string | number | null;
+    killed: boolean;
+    stdout: string;
+    stderr: string;
+  }) {
+    super(`${input.binary} exited with code ${input.code ?? "unknown"}`);
+    this.code = input.code;
+    this.killed = input.killed;
+    this.stdout = input.stdout;
+    this.stderr = input.stderr;
+  }
+}
+
+async function collectRuntimeOutput(
+  stream: Readable,
+  limit: number,
+  onLimit: () => void,
+): Promise<string> {
+  const chunks: Buffer[] = [];
+  let length = 0;
+  for await (const chunk of stream) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    const remaining = limit - length;
+    if (remaining > 0) {
+      chunks.push(buffer.subarray(0, remaining));
+      length += Math.min(buffer.length, remaining);
+    }
+    if (buffer.length > remaining) onLimit();
+  }
+  return Buffer.concat(chunks, length).toString("utf8");
+}
 
 function mergeSets<T>(
   left: ReadonlySet<T>,
@@ -139,6 +238,7 @@ export const getWorkspaceGitSelfHealPhaseMs = getWorkspaceGitObservationReensure
 
 export interface WorkspaceGitRuntimeSnapshot {
   cwd: string;
+  workspaceId?: string;
   git: {
     isGit: boolean;
     repoRoot: string | null;
@@ -194,6 +294,7 @@ export interface WorkspaceGitRuntimeSnapshot {
 
 export interface WorkspaceGitService {
   bindWorkspace(input: { workspaceId: string; cwd: string }): WorkspaceGitWorkspace;
+  releaseWorkspace(workspaceId: string): Promise<void>;
   bindLegacy(cwd: string): WorkspaceGitWorkspace;
   registerWorkspace(
     params: { cwd: string },
@@ -249,10 +350,15 @@ export interface WorkspaceGitService {
   ): ReturnType<typeof getCommitFileDiff>;
   stashPush(cwd: string, message: string): Promise<void>;
   stashPop(cwd: string, stashIndex: number): Promise<void>;
-  mergeToBase(cwd: string, options: Parameters<typeof mergeToBase>[1]): Promise<string>;
+  mergeToBase(cwd: string, options?: Parameters<typeof mergeToBase>[1]): Promise<string>;
   mergeFromBase(cwd: string, options: Parameters<typeof mergeFromBase>[1]): Promise<void>;
   pull(cwd: string): Promise<void>;
   push(cwd: string): Promise<void>;
+  createPullRequest(
+    cwd: string,
+    options: Parameters<typeof createPullRequest>[1],
+    forgeService: ForgeService,
+  ): ReturnType<typeof createPullRequest>;
   renameBranch(
     cwd: string,
     branch: string,
@@ -300,6 +406,7 @@ export interface WorkspaceGitWorkspace {
   resolveRepoRoot(options?: WorkspaceGitReadOptions): Promise<string>;
   resolveDefaultBranch(options?: WorkspaceGitReadOptions): Promise<string>;
   resolveRepoRemoteUrl(options?: WorkspaceGitReadOptions): Promise<string | null>;
+  readHeadFile(path: string, options: { maxBytes: number }): Promise<string | null>;
   commit(options: { message: string; addAll: boolean }): Promise<void>;
   discardChanges(paths: string[]): Promise<void>;
   createBranch(options: { branch: string; baseRef: string }): Promise<void>;
@@ -309,10 +416,14 @@ export interface WorkspaceGitWorkspace {
   getCommitFileDiff(input: { sha: string; path: string }): ReturnType<typeof getCommitFileDiff>;
   stashPush(message: string): Promise<void>;
   stashPop(stashIndex: number): Promise<void>;
-  mergeToBase(options: Parameters<typeof mergeToBase>[1]): Promise<string>;
+  mergeToBase(options?: Parameters<typeof mergeToBase>[1]): Promise<string>;
   mergeFromBase(options: Parameters<typeof mergeFromBase>[1]): Promise<void>;
   pull(): Promise<void>;
   push(): Promise<void>;
+  createPullRequest(
+    options: Parameters<typeof createPullRequest>[1],
+    forgeService: ForgeService,
+  ): ReturnType<typeof createPullRequest>;
   renameBranch(
     branch: string,
   ): Promise<{ previousBranch: string | null; currentBranch: string | null }>;
@@ -465,11 +576,13 @@ export interface WorkspaceGitServiceOptions {
   worktreesRoot?: string;
   fileObserver?: FileObserver;
   workspaceRuntime?: WorkspaceRuntimeService;
+  forgeHosts?: Readonly<Record<string, string>>;
   deps?: Partial<WorkspaceGitServiceDependencies>;
 }
 
 interface WorkspaceGitServiceBinding {
   workspaceId: string;
+  cwd: string;
   snapshotUpdatedListeners: Set<WorkspaceGitSnapshotUpdatedListener>;
 }
 
@@ -629,7 +742,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private readonly deps: WorkspaceGitServiceDependencies;
   private readonly forgeResolver: ForgeResolver;
   private readonly workspaceRuntime: WorkspaceRuntimeService | null;
+  private readonly forgeHosts: Readonly<Record<string, string>>;
   private readonly selectedWorkspaceId: string | null;
+  private readonly selectedWorkspaceCwd: string | null;
   private readonly selectedWorkspaces = new Map<
     string,
     { cwd: string; service: WorkspaceGitServiceImpl; capability: WorkspaceGitWorkspace }
@@ -691,7 +806,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     this.worktreesRoot = options.worktreesRoot;
     this.fileObserver = options.fileObserver ?? createFileObserver();
     this.workspaceRuntime = options.workspaceRuntime ?? null;
+    this.forgeHosts = options.forgeHosts ?? {};
     this.selectedWorkspaceId = binding?.workspaceId ?? null;
+    this.selectedWorkspaceCwd = binding?.cwd ?? null;
     this.snapshotUpdatedListeners =
       binding?.snapshotUpdatedListeners ?? new Set<WorkspaceGitSnapshotUpdatedListener>();
     this.ownsSnapshotUpdatedListeners = binding === undefined;
@@ -699,9 +816,31 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       this.fileObserver.subscribe.bind(this.fileObserver),
       options.deps,
     );
-    this.forgeResolver = createForgeResolver({
-      createService: (forge) => this.deps.forgeOverrides?.[forge] ?? createForgeService(forge),
-    });
+    this.forgeResolver = createForgeResolver(
+      this.selectedWorkspaceId
+        ? {
+            resolveRemoteUrl: (cwd) =>
+              this.withWorkspaceRuntime(cwd, () => defaultResolveRemoteUrl(cwd)),
+            createService: (forge) => this.createRuntimeForgeService(forge),
+            probeForge: async () => null,
+            resolveSshHostname: (host) => this.resolveRuntimeSshHostname(host),
+            resolveForgeForHost: (host) =>
+              this.forgeHosts[normalizeHost(host)] ?? forgeForHost(host),
+          }
+        : {
+            createService: (forge) =>
+              this.deps.forgeOverrides?.[forge] ?? createForgeService(forge),
+          },
+    );
+  }
+
+  private normalizeCwd(cwd: string): string {
+    if (!this.selectedWorkspaceCwd) return resolve(cwd);
+    const addressedCwd = cwd.trim();
+    if (addressedCwd !== this.selectedWorkspaceCwd) {
+      throw new Error(`Workspace Git cwd does not match ${this.selectedWorkspaceId}`);
+    }
+    return addressedCwd;
   }
 
   bindWorkspace(input: { workspaceId: string; cwd: string }): WorkspaceGitWorkspace {
@@ -709,7 +848,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     if (!this.workspaceRuntime) {
       throw new Error("Workspace runtime is not available");
     }
-    const cwd = resolve(input.cwd);
+    const cwd = input.cwd.trim();
+    if (cwd.length === 0) throw new Error("Workspace Git cwd is required");
     const existing = this.selectedWorkspaces.get(input.workspaceId);
     if (existing) {
       if (existing.cwd !== cwd) {
@@ -723,24 +863,33 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
         workspaceRuntime: this.workspaceRuntime,
+        forgeHosts: this.forgeHosts,
         deps: this.deps,
       },
       {
         workspaceId: input.workspaceId,
+        cwd,
         snapshotUpdatedListeners: this.snapshotUpdatedListeners,
       },
     );
-    const capability = this.createBoundWorkspaceCapability(service, cwd, true);
+    const capability = this.createBoundWorkspaceCapability(service, cwd);
     this.selectedWorkspaces.set(input.workspaceId, { cwd, service, capability });
     return capability;
   }
 
+  async releaseWorkspace(workspaceId: string): Promise<void> {
+    const selected = this.selectedWorkspaces.get(workspaceId);
+    if (!selected) return;
+    this.selectedWorkspaces.delete(workspaceId);
+    await selected.service.dispose();
+  }
+
   bindLegacy(cwd: string): WorkspaceGitWorkspace {
     this.assertNotDisposed();
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     let capability = this.legacyWorkspaces.get(normalizedCwd);
     if (!capability) {
-      capability = this.createBoundWorkspaceCapability(this, normalizedCwd, false);
+      capability = this.createBoundWorkspaceCapability(this, normalizedCwd);
       this.legacyWorkspaces.set(normalizedCwd, capability);
     }
     return capability;
@@ -749,10 +898,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   private createBoundWorkspaceCapability(
     service: WorkspaceGitServiceImpl,
     cwd: string,
-    selected: boolean,
   ): WorkspaceGitWorkspace {
-    const unsupported = (operation: string) =>
-      Promise.reject(new Error(`Selected workspace Git does not support ${operation}`));
     return {
       cwd,
       register: (listener) => service.registerWorkspace({ cwd }, listener),
@@ -760,7 +906,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       peekSnapshot: () => service.peekSnapshot(cwd),
       getCheckout: () => service.getCheckout(cwd),
       getSnapshot: (options) => service.getSnapshot(cwd, options),
-      resolveForge: () => (selected ? unsupported("forge resolution") : service.resolveForge(cwd)),
+      resolveForge: () => service.resolveForge(cwd),
       getCheckoutDiff: (options, readOptions) => service.getCheckoutDiff(cwd, options, readOptions),
       validateBranchRef: (ref, options) => service.validateBranchRef(cwd, ref, options),
       hasLocalBranch: (branch, options) => service.hasLocalBranch(cwd, branch, options),
@@ -768,11 +914,14 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         service.suggestBranchesForCwd(cwd, options, readOptions),
       listStashes: (options, readOptions) => service.listStashes(cwd, options, readOptions),
       listWorktrees: (options) =>
-        selected ? unsupported("worktree listing") : service.listWorktrees(cwd, options),
+        service.selectedWorkspaceId
+          ? Promise.reject(new Error("Selected workspace Git does not expose host worktrees"))
+          : service.listWorktrees(cwd, options),
       getProjectSlug: (options) => service.getProjectSlug(cwd, options),
       resolveRepoRoot: (options) => service.resolveRepoRoot(cwd, options),
       resolveDefaultBranch: (options) => service.resolveDefaultBranch(cwd, options),
       resolveRepoRemoteUrl: (options) => service.resolveRepoRemoteUrl(cwd, options),
+      readHeadFile: (path, options) => service.readHeadFile(cwd, path, options),
       commit: (options) => service.commit(cwd, options),
       discardChanges: (paths) => service.discardChanges(cwd, paths),
       createBranch: (options) => service.createBranch(cwd, options),
@@ -782,37 +931,32 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       getCommitFileDiff: (input) => service.getCommitFileDiff(cwd, input),
       stashPush: (message) => service.stashPush(cwd, message),
       stashPop: (stashIndex) => service.stashPop(cwd, stashIndex),
-      mergeToBase: (options) =>
-        selected ? unsupported("merge to base") : service.mergeToBase(cwd, options),
-      mergeFromBase: (options) =>
-        selected ? unsupported("merge from base") : service.mergeFromBase(cwd, options),
+      mergeToBase: (options) => service.mergeToBase(cwd, options),
+      mergeFromBase: (options) => service.mergeFromBase(cwd, options),
       pull: () => service.pull(cwd),
-      push: () => (selected ? unsupported("push") : service.push(cwd)),
-      renameBranch: (branch) =>
-        selected ? unsupported("branch rename") : service.renameBranch(cwd, branch),
+      push: () => service.push(cwd),
+      createPullRequest: (options, forgeService) =>
+        service.createPullRequest(cwd, options, forgeService),
+      renameBranch: (branch) => service.renameBranch(cwd, branch),
       refresh: async (options) => {
-        if (!selected) {
-          (await service.resolveForge(cwd))?.service.invalidate({ cwd });
-        }
+        (await service.resolveForge(cwd))?.service.invalidate({ cwd });
         await service.fetch(cwd);
         await service.getSnapshot(cwd, {
           force: true,
-          includeForge: !selected,
+          includeForge: true,
           reason: options?.priority === "high" ? "manual-refresh-high" : "manual-refresh",
         });
       },
       requestWorkingTreeWatch: (onChange) => service.requestWorkingTreeWatch(cwd, onChange),
       scheduleRefresh: () => service.scheduleRefreshForCwd(cwd),
       stateMayHaveChanged: () => service.onWorkspaceStateMayHaveChanged(cwd),
-      invalidateForge: () => {
-        if (!selected) service.invalidateForge(cwd);
-      },
+      invalidateForge: () => service.invalidateForge(cwd),
     };
   }
 
   resolveForge(cwd: string): Promise<ForgeResolution | null> {
     this.assertNotDisposed();
-    return this.forgeResolver.resolve(resolve(cwd));
+    return this.forgeResolver.resolve(this.normalizeCwd(cwd));
   }
 
   registerWorkspace(
@@ -820,7 +964,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     listener: WorkspaceGitListener,
   ): WorkspaceGitSubscription {
     this.assertNotDisposed();
-    const cwd = resolve(params.cwd);
+    const cwd = this.normalizeCwd(params.cwd);
     const target = this.ensureWorkspaceTarget(cwd);
     target.listeners.add(listener);
     if (target.listeners.size === 1) {
@@ -843,7 +987,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     listener: WorkspaceGitListener,
   ): Promise<WorkspaceGitSubscription> {
     const subscription = this.registerWorkspace({ cwd }, listener);
-    const target = this.workspaceTargets.get(resolve(cwd));
+    const target = this.workspaceTargets.get(this.normalizeCwd(cwd));
     try {
       await target?.observationSetupPromise;
       return subscription;
@@ -923,10 +1067,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     options?: WorkspaceGitSnapshotOptions,
   ): Promise<WorkspaceGitRuntimeSnapshot> {
     this.assertNotDisposed();
-    if (this.selectedWorkspaceId && options?.includeForge === true) {
-      throw new Error("Selected workspace Git does not support forge refresh");
-    }
-    cwd = resolve(cwd);
+    cwd = this.normalizeCwd(cwd);
     const runtime = this.selectedWorkspaceId ? await this.resolveBoundRuntime() : null;
     const runtimeIdentity = runtime?.runtime ?? null;
     const request = this.normalizeRefreshRequest(options, "getSnapshot", true);
@@ -952,7 +1093,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   async getCheckout(cwd: string): Promise<ProjectCheckoutLitePayload> {
     this.assertNotDisposed();
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     const status = await this.withWorkspaceRuntime(normalizedCwd, () =>
       this.deps.getCheckoutStatus(normalizedCwd, {
         paseoHome: this.paseoHome,
@@ -986,7 +1127,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   peekSnapshot(cwd: string): WorkspaceGitRuntimeSnapshot | null {
-    cwd = resolve(cwd);
+    cwd = this.normalizeCwd(cwd);
     return this.workspaceTargets.get(cwd)?.latestSnapshot ?? null;
   }
 
@@ -996,7 +1137,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     readOptions?: WorkspaceGitReadOptions,
   ): Promise<CheckoutDiffResult> {
     this.assertNotDisposed();
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     const normalizedOptions = this.normalizeCheckoutDiffOptions(options);
     const key = this.buildCheckoutDiffCacheKey(
       await this.runtimeCacheKey(normalizedCwd),
@@ -1014,8 +1155,57 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     );
   }
 
+  async readHeadFile(
+    cwd: string,
+    path: string,
+    options: { maxBytes: number },
+  ): Promise<string | null> {
+    this.assertNotDisposed();
+    const normalizedCwd = this.normalizeCwd(cwd);
+    validateHeadFileRead(path, options.maxBytes);
+    return this.withWorkspaceRuntime(normalizedCwd, async () => {
+      const pathspec = `:(top,literal)${path}`;
+      const treeResult = await this.deps.runGitCommand(
+        [
+          "--no-pager",
+          "--no-replace-objects",
+          "ls-tree",
+          "--full-tree",
+          "--abbrev=64",
+          "-z",
+          "HEAD",
+          "--",
+          pathspec,
+        ],
+        {
+          cwd: normalizedCwd,
+          envOverlay: READ_ONLY_GIT_ENV,
+          maxOutputBytes: Math.max(1_024, Buffer.byteLength(path) + 128),
+        },
+      );
+      if (treeResult.truncated) {
+        throw new Error(`Git tree entry exceeded the output limit: ${path}`);
+      }
+      if (treeResult.stdout.length === 0) return null;
+
+      const entry = parseHeadTreeEntry(treeResult.stdout, path);
+      const blobResult = await this.deps.runGitCommand(
+        ["--no-pager", "--no-replace-objects", "cat-file", "blob", entry.objectId],
+        {
+          cwd: normalizedCwd,
+          envOverlay: READ_ONLY_GIT_ENV,
+          maxOutputBytes: options.maxBytes,
+        },
+      );
+      if (blobResult.truncated || Buffer.byteLength(blobResult.stdout) > options.maxBytes) {
+        throw new Error(`Committed file exceeds ${options.maxBytes} bytes: ${path}`);
+      }
+      return blobResult.stdout;
+    });
+  }
+
   async commit(cwd: string, options: { message: string; addAll: boolean }): Promise<void> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     await this.withWorkspaceRuntime(normalizedCwd, () => commitChanges(normalizedCwd, options));
     await this.getSnapshot(normalizedCwd, {
       force: true,
@@ -1025,7 +1215,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   async discardChanges(cwd: string, paths: string[]): Promise<void> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     await this.withWorkspaceRuntime(normalizedCwd, () => discardChanges(normalizedCwd, paths));
     await this.getSnapshot(normalizedCwd, {
       force: true,
@@ -1035,7 +1225,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   async createBranch(cwd: string, options: { branch: string; baseRef: string }): Promise<void> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     await this.withWorkspaceRuntime(normalizedCwd, () =>
       runGitCommand(["checkout", "-b", options.branch, options.baseRef], {
         cwd: normalizedCwd,
@@ -1050,7 +1240,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   async switchBranch(cwd: string, branch: string): Promise<CheckoutExistingBranchResult> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     const resolution = await this.validateBranchRef(normalizedCwd, branch, {
       force: true,
       reason: "switch-branch",
@@ -1068,7 +1258,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   async fetch(cwd: string): Promise<void> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     await this.withWorkspaceRuntime(normalizedCwd, () =>
       this.deps
         .runGitFetch(normalizedCwd, { onRefSnapshot: () => undefined })
@@ -1082,7 +1272,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   async listCommits(cwd: string): ReturnType<typeof listCheckoutCommits> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     return this.withWorkspaceRuntime(normalizedCwd, () =>
       listCheckoutCommits({ cwd: normalizedCwd }),
     );
@@ -1092,7 +1282,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     cwd: string,
     input: { sha: string; path: string },
   ): ReturnType<typeof getCommitFileDiff> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     return this.withWorkspaceRuntime(normalizedCwd, () =>
       getCommitFileDiff({
         cwd: normalizedCwd,
@@ -1104,7 +1294,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   async stashPush(cwd: string, message: string): Promise<void> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     await this.withWorkspaceRuntime(normalizedCwd, () =>
       runGitCommand(["stash", "push", "--include-untracked", "-m", message], {
         cwd: normalizedCwd,
@@ -1114,7 +1304,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
   }
 
   async stashPop(cwd: string, stashIndex: number): Promise<void> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     await this.withWorkspaceRuntime(normalizedCwd, () =>
       runGitCommand(["stash", "pop", `stash@{${stashIndex}}`], {
         cwd: normalizedCwd,
@@ -1123,45 +1313,65 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     );
   }
 
-  async mergeToBase(cwd: string, options: Parameters<typeof mergeToBase>[1]): Promise<string> {
-    const normalizedCwd = resolve(cwd);
-    const selected = this.selectedWorkspaceId !== null;
+  async mergeToBase(cwd: string, options?: Parameters<typeof mergeToBase>[1]): Promise<string> {
+    const normalizedCwd = this.normalizeCwd(cwd);
+    if (this.selectedWorkspaceId) {
+      if (!this.workspaceRuntime) throw new Error("Workspace runtime is not available");
+      return this.workspaceRuntime.mergeToBase(this.selectedWorkspaceId);
+    }
+    if (!options) throw new Error("Merge options are required for a legacy checkout");
     const mutatedCwd = await this.withWorkspaceRuntime(normalizedCwd, () =>
       mergeToBase(normalizedCwd, options, {
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
       }),
     );
-    return selected ? normalizedCwd : mutatedCwd;
+    return mutatedCwd;
   }
 
   async mergeFromBase(cwd: string, options: Parameters<typeof mergeFromBase>[1]): Promise<void> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     await this.withWorkspaceRuntime(normalizedCwd, () =>
       mergeFromBase(normalizedCwd, options, {
         paseoHome: this.paseoHome,
         worktreesRoot: this.worktreesRoot,
+        allowHostMetadata: this.selectedWorkspaceId === null,
       }),
     );
   }
 
   async pull(cwd: string): Promise<void> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     await this.withWorkspaceRuntime(normalizedCwd, () => pullCurrentBranch(normalizedCwd));
   }
 
   async push(cwd: string): Promise<void> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     await this.withWorkspaceRuntime(normalizedCwd, () => pushCurrentBranch(normalizedCwd));
+  }
+
+  async createPullRequest(
+    cwd: string,
+    options: Parameters<typeof createPullRequest>[1],
+    forgeService: ForgeService,
+  ): ReturnType<typeof createPullRequest> {
+    const normalizedCwd = this.normalizeCwd(cwd);
+    return this.withWorkspaceRuntime(normalizedCwd, () =>
+      createPullRequest(normalizedCwd, options, forgeService, {
+        allowHostMetadata: this.selectedWorkspaceId === null,
+      }),
+    );
   }
 
   async renameBranch(
     cwd: string,
     branch: string,
   ): Promise<{ previousBranch: string | null; currentBranch: string | null }> {
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     return this.withWorkspaceRuntime(normalizedCwd, () =>
-      renameCurrentBranch(normalizedCwd, branch),
+      renameCurrentBranch(normalizedCwd, branch, {
+        allowHostMetadata: this.selectedWorkspaceId === null,
+      }),
     );
   }
 
@@ -1209,7 +1419,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     options?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitBranchValidationResult> {
     this.assertNotDisposed();
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     const normalizedRef = ref.trim();
     const key = JSON.stringify([
       "branch-validation",
@@ -1229,7 +1439,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     options?: WorkspaceGitReadOptions,
   ): Promise<boolean> {
     this.assertNotDisposed();
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     const normalizedBranch = branch.trim();
     const ref = `refs/heads/${normalizedBranch}`;
     const key = JSON.stringify(["local-branch", await this.runtimeCacheKey(normalizedCwd), ref]);
@@ -1251,7 +1461,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     readOptions?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitBranchSuggestion[]> {
     this.assertNotDisposed();
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     const query = options?.query ?? "";
     const limit = options?.limit;
     const key = JSON.stringify([
@@ -1273,7 +1483,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     readOptions?: WorkspaceGitReadOptions,
   ): Promise<WorkspaceGitStashEntry[]> {
     this.assertNotDisposed();
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     const paseoOnly = options?.paseoOnly !== false;
     const key = JSON.stringify(["stashes", await this.runtimeCacheKey(normalizedCwd), paseoOnly]);
     return this.readAuxiliaryCache(this.stashListCache, key, readOptions, () =>
@@ -1312,8 +1522,8 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     }
 
     return snapshot.git.isPaseoOwnedWorktree
-      ? (snapshot.git.mainRepoRoot ?? snapshot.git.repoRoot ?? resolve(cwd))
-      : (snapshot.git.repoRoot ?? resolve(cwd));
+      ? (snapshot.git.mainRepoRoot ?? snapshot.git.repoRoot ?? this.normalizeCwd(cwd))
+      : (snapshot.git.repoRoot ?? this.normalizeCwd(cwd));
   }
 
   async resolveDefaultBranch(
@@ -1321,7 +1531,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     options?: WorkspaceGitReadOptions,
   ): Promise<string> {
     this.assertNotDisposed();
-    const cwd = resolve(cwdOrRepoRoot);
+    const cwd = this.normalizeCwd(cwdOrRepoRoot);
     const key = JSON.stringify(["default-branch", await this.runtimeCacheKey(cwd)]);
     return this.readAuxiliaryCache(this.defaultBranchCache, key, options, () =>
       this.withWorkspaceRuntime(cwd, async () => {
@@ -1334,7 +1544,10 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   async getProjectSlug(cwd: string, options?: WorkspaceGitReadOptions): Promise<string> {
     const snapshot = await this.getSnapshot(cwd, options);
-    return deriveProjectSlug(resolve(cwd), snapshot.git.isGit ? snapshot.git.remoteUrl : null);
+    return deriveProjectSlug(
+      this.normalizeCwd(cwd),
+      snapshot.git.isGit ? snapshot.git.remoteUrl : null,
+    );
   }
 
   async resolveRepoRemoteUrl(
@@ -1347,7 +1560,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   async refresh(cwd: string, _options?: { priority?: "normal" | "high" }): Promise<void> {
     this.assertNotDisposed();
-    cwd = resolve(cwd);
+    cwd = this.normalizeCwd(cwd);
     const target = this.ensureWorkspaceTarget(cwd);
     await this.refreshWorkspaceTarget(target, {
       force: false,
@@ -1367,7 +1580,15 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     onChange: () => void,
   ): Promise<{ repoRoot: string | null; unsubscribe: () => void }> {
     this.assertNotDisposed();
-    cwd = resolve(cwd);
+    cwd = this.normalizeCwd(cwd);
+    const bound = await this.resolveBoundRuntime();
+    if (bound) {
+      const observation = await observeWorkspaceGit(bound.runtime, onChange);
+      return {
+        repoRoot: cwd,
+        unsubscribe: () => void observation.unsubscribe(),
+      };
+    }
     const target = await this.ensureWorkingTreeWatchTarget(cwd);
     target.listeners.add(onChange);
 
@@ -1381,7 +1602,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   scheduleRefreshForCwd(cwd: string): void {
     this.assertNotDisposed();
-    cwd = resolve(cwd);
+    cwd = this.normalizeCwd(cwd);
     const target = this.workspaceTargets.get(cwd);
     if (target) {
       this.scheduleWorkspaceRefresh(target, { queueIfBusy: false });
@@ -1390,7 +1611,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
   onWorkspaceStateMayHaveChanged(cwd: string): void {
     this.assertNotDisposed();
-    const normalizedCwd = resolve(cwd);
+    const normalizedCwd = this.normalizeCwd(cwd);
     const target = this.workspaceTargets.get(normalizedCwd);
     if (!target || target.closed) {
       return;
@@ -1410,7 +1631,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
    */
   invalidateForge(cwd: string): void {
     this.assertNotDisposed();
-    this.forgeResolver.invalidate(resolve(cwd));
+    this.forgeResolver.invalidate(this.normalizeCwd(cwd));
   }
 
   dispose(): Promise<void> {
@@ -1634,7 +1855,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         force: false,
         refreshStructure: true,
         refreshWorktree: true,
-        includeForge: this.selectedWorkspaceId === null,
+        includeForge: true,
         reason: "initial",
         notify: true,
         queueIfBusy: false,
@@ -2984,6 +3205,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       if (closed || !this.isActiveObservedWorkspaceTarget(target)) {
         return;
       }
+      let parked = false;
       try {
         const status = await service.getCurrentPullRequestStatus({
           cwd: target.cwd,
@@ -3014,8 +3236,11 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
           },
           "Failed to run forge PR status self-heal refresh",
         );
+        parked = isStableForgeAvailabilityError(error);
       } finally {
-        schedule(computeGenericForgeNextInterval(latestStatus, consecutiveErrors));
+        if (!parked) {
+          schedule(computeGenericForgeNextInterval(latestStatus, consecutiveErrors));
+        }
       }
     };
 
@@ -3161,7 +3386,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       force,
       refreshStructure: true,
       refreshWorktree: true,
-      includeForge: options?.includeForge ?? this.selectedWorkspaceId === null,
+      includeForge: options?.includeForge ?? true,
       reason: options?.reason ?? defaultReason,
       notify,
       queueIfBusy: false,
@@ -3347,6 +3572,123 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     );
   }
 
+  private createRuntimeForgeService(forge: string): ForgeService | null {
+    const resolveCommand = (command: string) => this.resolveRuntimeCommand(command);
+    const resolveRemoteUrl = (cwd: string) =>
+      this.withWorkspaceRuntime(cwd, () => defaultResolveRemoteUrl(cwd));
+    if (forge === "github") {
+      return createGitHubService({
+        runner: (args, options) => this.runRuntimeForgeCommand("gh", args, options),
+        resolveGhPath: () => resolveCommand("gh"),
+        resolveRepoHost: (cwd) => this.resolveRuntimeRepoHost(cwd),
+        resolveRepoSlug: async (cwd) => {
+          const remoteUrl = await resolveRemoteUrl(cwd);
+          return remoteUrl ? (parseGitHubRemoteUrl(remoteUrl)?.repo ?? null) : null;
+        },
+      });
+    }
+    if (forge === "gitlab") {
+      return createGitLabService({
+        runner: (args, options) => this.runRuntimeForgeCommand("glab", args, options),
+        resolveGlabPath: () => resolveCommand("glab"),
+        resolveRemoteUrl,
+      });
+    }
+    if (["gitea", "forgejo", "codeberg"].includes(forge)) {
+      return createGiteaService({
+        runner: (args, options) => this.runRuntimeForgeCommand("tea", args, options),
+        resolveTeaPath: () => resolveCommand("tea"),
+        resolveRemoteUrl,
+        resolveCurrentBranch: (cwd) => this.withWorkspaceRuntime(cwd, () => getCurrentBranch(cwd)),
+      });
+    }
+    return null;
+  }
+
+  private async resolveRuntimeCommand(command: string): Promise<string | null> {
+    const bound = await this.resolveBoundRuntime();
+    return bound?.runtime.resolveCommand(command) ?? null;
+  }
+
+  private async resolveRuntimeRepoHost(cwd: string): Promise<string | null> {
+    const remoteUrl = await this.withWorkspaceRuntime(cwd, () => defaultResolveRemoteUrl(cwd));
+    if (!remoteUrl) return null;
+    const location = parseGitRemoteLocation(remoteUrl);
+    if (!location) return null;
+    const host =
+      location.transport === "scp" || location.transport === "ssh"
+        ? ((await this.resolveRuntimeSshHostname(location.host)) ?? location.host)
+        : location.host;
+    return normalizeHost(host) === "github.com" ? null : host;
+  }
+
+  private async resolveRuntimeSshHostname(host: string): Promise<string | null> {
+    try {
+      const result = await this.runRuntimeForgeCommand("ssh", ["-G", "--", host], {});
+      for (const line of result.stdout.split("\n")) {
+        const [key, value] = line.trim().split(/\s+/, 2);
+        if (key?.toLowerCase() === "hostname" && value) return value;
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async runRuntimeForgeCommand(
+    binary: string,
+    args: string[],
+    options: { cwd?: string; envOverlay?: Record<string, string> },
+  ): Promise<{ stdout: string; stderr: string }> {
+    const bound = await this.resolveBoundRuntime();
+    if (!bound) throw new Error("Workspace runtime is not available");
+    const executable = await bound.runtime.resolveCommand(binary);
+    if (!executable) {
+      throw new RuntimeForgeCommandError({
+        binary,
+        code: "ENOENT",
+        killed: false,
+        stdout: "",
+        stderr: `Runtime command is unavailable: ${binary}`,
+      });
+    }
+    const env = {
+      GIT_TERMINAL_PROMPT: "0",
+      ...(binary === "glab" ? { GLAB_CHECK_UPDATE: "0" } : {}),
+      ...options.envOverlay,
+    };
+    const process = await bound.runtime.run({
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+      argv: [executable, ...args],
+      env,
+      purpose: { kind: "git" },
+    });
+    process.stdin.end();
+    let killed = false;
+    const kill = () => {
+      if (killed) return;
+      killed = true;
+      process.kill("SIGKILL");
+    };
+    const timer = setTimeout(kill, RUNTIME_FORGE_COMMAND_TIMEOUT_MS);
+    timer.unref();
+    const [stdout, stderr, exit] = await Promise.all([
+      collectRuntimeOutput(process.stdout, RUNTIME_FORGE_OUTPUT_LIMIT, kill),
+      collectRuntimeOutput(process.stderr, RUNTIME_FORGE_OUTPUT_LIMIT, kill),
+      process.exited,
+    ]).finally(() => clearTimeout(timer));
+    if (killed || exit.code !== 0) {
+      throw new RuntimeForgeCommandError({
+        binary,
+        code: exit.code,
+        killed,
+        stdout,
+        stderr,
+      });
+    }
+    return { stdout, stderr };
+  }
+
   private async resolveBoundRuntime(): Promise<{
     workspaceId: string;
     runtime: BoundWorkspaceRuntime;
@@ -3517,6 +3859,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     const forgeService: ForgeService = resolution.service;
     const forceForge = request.force && request.includeForge;
     if (forceForge) {
+      this.stopForgePrStatusPollForTarget(target);
       forgeService.invalidate({ cwd: target.cwd });
     }
 
@@ -3542,6 +3885,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
 
     const snapshot = {
       cwd: target.cwd,
+      ...(this.selectedWorkspaceId ? { workspaceId: this.selectedWorkspaceId } : {}),
       git: target.latestGit,
       forge: target.latestForge ?? buildForgeUnavailableSnapshot(),
     };

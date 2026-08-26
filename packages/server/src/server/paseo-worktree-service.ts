@@ -50,6 +50,32 @@ export interface AttemptFirstAgentBranchAutoNameResult {
   branchName: string | null;
 }
 
+function resolveFirstAgentBranchPlaceholder(
+  cwd: string,
+  runtimePlaceholder: string | undefined,
+): { branch: string; markAttempted: () => void } | null {
+  const branch = runtimePlaceholder?.trim();
+  if (branch) return { branch, markAttempted: () => {} };
+
+  let metadata: ReturnType<typeof readPaseoWorktreeMetadata>;
+  try {
+    metadata = readPaseoWorktreeMetadata(cwd);
+  } catch {
+    return null;
+  }
+  if (
+    !metadata ||
+    metadata.version !== 2 ||
+    metadata.firstAgentBranchAutoName?.status !== "pending"
+  ) {
+    return null;
+  }
+  return {
+    branch: metadata.firstAgentBranchAutoName.placeholderBranchName,
+    markAttempted: () => markPaseoWorktreeFirstAgentBranchAutoNameAttempted(cwd),
+  };
+}
+
 export interface CreatePaseoWorktreeDeps extends CreateWorktreeCoreDeps {
   workspaceGitService: WorkspaceGitService;
   workspaceProvisioning: Pick<WorkspaceProvisioningService, "reserveRuntimeWorktreeWorkspace">;
@@ -153,6 +179,7 @@ async function planWorkspaceCwdForWorktree(
 
 export async function attemptFirstAgentBranchAutoName(options: {
   cwd: string;
+  placeholderBranchName?: string;
   firstAgentContext: FirstAgentContext | undefined;
   generateBranchNameFromContext: (input: {
     cwd: string;
@@ -167,28 +194,20 @@ export async function attemptFirstAgentBranchAutoName(options: {
     return { attempted: false, renamed: false, branchName: null };
   }
 
-  let metadata: ReturnType<typeof readPaseoWorktreeMetadata>;
-  try {
-    metadata = readPaseoWorktreeMetadata(options.cwd);
-  } catch {
-    return { attempted: false, renamed: false, branchName: null };
-  }
-  if (
-    !metadata ||
-    metadata.version !== 2 ||
-    metadata.firstAgentBranchAutoName?.status !== "pending"
-  ) {
-    return { attempted: false, renamed: false, branchName: null };
-  }
+  const placeholder = resolveFirstAgentBranchPlaceholder(
+    options.cwd,
+    options.placeholderBranchName,
+  );
+  if (!placeholder) return { attempted: false, renamed: false, branchName: null };
+  const placeholderBranchName = placeholder.branch;
 
   const getCurrentBranchImpl = options.getCurrentBranch ?? getCurrentBranch;
-  const placeholderBranchName = metadata.firstAgentBranchAutoName.placeholderBranchName;
   if ((await getCurrentBranchImpl(options.cwd)) !== placeholderBranchName) {
-    markPaseoWorktreeFirstAgentBranchAutoNameAttempted(options.cwd);
+    placeholder.markAttempted();
     return { attempted: true, renamed: false, branchName: null };
   }
 
-  markPaseoWorktreeFirstAgentBranchAutoNameAttempted(options.cwd);
+  placeholder.markAttempted();
 
   const branchName = await options.generateBranchNameFromContext({
     cwd: options.cwd,

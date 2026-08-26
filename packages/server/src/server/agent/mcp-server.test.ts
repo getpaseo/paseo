@@ -46,6 +46,7 @@ import {
 } from "../worktree-session.js";
 import { WorkspaceGitServiceImpl } from "../workspace-git-service.js";
 import { WorkspaceAutoName } from "../workspace-auto-name.js";
+import { createWorkspaceGitDirectory } from "../workspace-git-directory.js";
 import { createGitMutationService } from "../session/git-mutation/git-mutation-service.js";
 import type { GeneratedWorkspaceName } from "../worktree-branch-name-generator.js";
 import type { ForgeService } from "../../services/forge-service.js";
@@ -780,7 +781,10 @@ function createPaseoWorktreeForMcpTest(options: {
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: buildAgentManagerSpies() as unknown as AgentManager,
     workspaceRegistry,
-    workspaceGitService,
+    workspaceGitDirectory: createWorkspaceGitDirectory({
+      workspaceRegistry,
+      workspaceGitService,
+    }),
     providerSnapshotManager: createOpenCodeManager().manager,
     readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
     gitMutation: createGitMutationService({
@@ -2198,18 +2202,27 @@ describe("create_agent MCP tool", () => {
       paseoHome: join(tempDir, ".paseo"),
       deps: { github: createGitHubServiceStub() },
     });
+    const workspaceRegistry = {
+      get: async (workspaceId: string) => workspaceRecords.get(workspaceId) ?? null,
+      list: async () => Array.from(workspaceRecords.values()),
+      update: async (
+        workspaceId: string,
+        updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
+      ) => {
+        const current = workspaceRecords.get(workspaceId);
+        if (!current) return null;
+        const updated = updater(current);
+        workspaceRecords.set(workspaceId, updated);
+        return updated;
+      },
+    };
     const workspaceAutoName = new WorkspaceAutoName({
       agentManager,
-      workspaceRegistry: {
-        update: async (workspaceId, updater) => {
-          const current = workspaceRecords.get(workspaceId);
-          if (!current) return null;
-          const updated = updater(current);
-          workspaceRecords.set(workspaceId, updated);
-          return updated;
-        },
-      },
-      workspaceGitService,
+      workspaceRegistry,
+      workspaceGitDirectory: createWorkspaceGitDirectory({
+        workspaceRegistry,
+        workspaceGitService,
+      }),
       providerSnapshotManager: createOpenCodeManager().manager,
       readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
       gitMutation: createGitMutationService({

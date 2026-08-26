@@ -1,20 +1,17 @@
-import { readPaseoConfigJson } from "./paseo-config-file.js";
 import {
+  PaseoConfigRawSchema,
   PaseoConfigSchema,
+  PaseoMetadataGenerationEntrySchema,
+  PaseoMetadataGenerationSchema,
   type PaseoMetadataGeneration,
 } from "@getpaseo/protocol/paseo-config-schema";
 
 export type MetadataConfigKey = "title" | "branchName" | "commitMessage" | "pullRequest";
 
-export interface RepoRootResolver {
-  resolveRepoRoot: (cwd: string) => Promise<string>;
+export interface CommittedFileReader {
+  readHeadFile(path: string, options: { maxBytes: number }): Promise<string | null>;
 }
 
-// A style section carries the default guidance for one artifact. The project
-// owner replaces it wholesale via paseo.json metadataGeneration.<configKey>.instructions
-// — their text is used instead of the default, never appended alongside it, so the
-// two never conflict. The contract block (what to produce, the JSON shape, and any
-// correctness/safety rules) lives outside the sections and is never overridable.
 export interface MetadataStyleSection {
   configKey: MetadataConfigKey;
   default: string;
@@ -22,41 +19,59 @@ export interface MetadataStyleSection {
 }
 
 export interface BuildMetadataPromptOptions {
-  cwd: string;
   contract: string;
   styles: MetadataStyleSection[];
   after: string;
   trailing?: string;
-  workspaceGitService?: RepoRootResolver;
+  metadataGeneration?: PaseoMetadataGeneration;
 }
 
-export async function buildMetadataPrompt(options: BuildMetadataPromptOptions): Promise<string> {
-  const overrides = await readProjectMetadataOverrides(options);
+const MAX_PASEO_CONFIG_BYTES = 1024 * 1024;
+const CommittedMetadataGenerationSchema = PaseoMetadataGenerationSchema.unwrap().extend({
+  title: PaseoMetadataGenerationEntrySchema.unwrap().optional(),
+  branchName: PaseoMetadataGenerationEntrySchema.unwrap().optional(),
+  commitMessage: PaseoMetadataGenerationEntrySchema.unwrap().optional(),
+  pullRequest: PaseoMetadataGenerationEntrySchema.unwrap().optional(),
+});
+
+export function buildMetadataPrompt(options: BuildMetadataPromptOptions): string {
   const styleBlocks = options.styles.map((section) =>
-    renderStyleSection(section, overrides?.[section.configKey]?.instructions),
+    renderStyleSection(section, options.metadataGeneration?.[section.configKey]?.instructions),
   );
   const head = [options.contract, ...styleBlocks, options.after].join("\n\n");
   return options.trailing ? `${head}\n\n${options.trailing}` : head;
 }
 
+export async function loadCommittedMetadataGeneration(
+  reader: CommittedFileReader,
+): Promise<PaseoMetadataGeneration | undefined> {
+  const source = await reader.readHeadFile("paseo.json", {
+    maxBytes: MAX_PASEO_CONFIG_BYTES,
+  });
+  if (source === null) {
+    return undefined;
+  }
+
+  let json: unknown;
+  try {
+    json = JSON.parse(source);
+  } catch {
+    throw new Error("Committed paseo.json contains invalid JSON");
+  }
+
+  try {
+    const rawConfig = PaseoConfigRawSchema.parse(json);
+    const metadataGeneration = (json as Record<string, unknown>).metadataGeneration;
+    CommittedMetadataGenerationSchema.optional().parse(metadataGeneration);
+    return PaseoConfigSchema.parse(rawConfig).metadataGeneration;
+  } catch {
+    throw new Error("Committed paseo.json does not match the Paseo configuration schema");
+  }
+}
+
 function renderStyleSection(section: MetadataStyleSection, override: string | undefined): string {
   const body = isNonEmptyString(override) ? override.trim() : section.default;
   return section.label ? `${section.label}:\n${body}` : body;
-}
-
-async function readProjectMetadataOverrides(
-  options: Pick<BuildMetadataPromptOptions, "cwd" | "workspaceGitService">,
-): Promise<PaseoMetadataGeneration | undefined> {
-  if (!options.workspaceGitService) {
-    return undefined;
-  }
-  try {
-    const repoRoot = await options.workspaceGitService.resolveRepoRoot(options.cwd);
-    const json = readPaseoConfigJson(repoRoot);
-    return PaseoConfigSchema.parse(json).metadataGeneration;
-  } catch {
-    return undefined;
-  }
 }
 
 function isNonEmptyString(value: unknown): value is string {

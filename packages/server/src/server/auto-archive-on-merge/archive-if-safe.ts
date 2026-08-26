@@ -53,13 +53,14 @@ const defaultDependencies: ArchiveIfSafeDependencies = {
 
 export async function archiveIfSafe(input: {
   cwd: string;
+  workspaceId?: string;
   pullRequest: WorkspaceGitRuntimeSnapshot["forge"]["pullRequest"];
   inFlight: Set<string>;
   options: AutoArchiveArchiveOptions;
   log: Logger;
   deps?: ArchiveIfSafeDependencies;
 }): Promise<void> {
-  const { cwd, pullRequest, inFlight, options, log } = input;
+  const { cwd, workspaceId: selectedWorkspaceId, pullRequest, inFlight, options, log } = input;
   const deps = input.deps ?? defaultDependencies;
 
   if (!pullRequest?.isMerged) {
@@ -76,9 +77,13 @@ export async function archiveIfSafe(input: {
   try {
     let snapshot: Awaited<ReturnType<typeof options.workspaceGitService.getSnapshot>> | null;
     try {
-      snapshot = await options.workspaceGitService.getSnapshot(cwd, {
-        reason: "auto-archive-on-merge",
-      });
+      snapshot = selectedWorkspaceId
+        ? await options.workspaceGitService
+            .bindWorkspace({ workspaceId: selectedWorkspaceId, cwd })
+            .getSnapshot({ reason: "auto-archive-on-merge" })
+        : await options.workspaceGitService.getSnapshot(cwd, {
+            reason: "auto-archive-on-merge",
+          });
     } catch (error) {
       log.warn({ err: error, cwd }, "Failed to read snapshot for auto-archive; skipping");
       return;
@@ -94,22 +99,24 @@ export async function archiveIfSafe(input: {
       return;
     }
 
-    const ownership = await deps.isPaseoOwnedWorktreeCwd(cwd, {
-      paseoHome: options.paseoHome,
-      worktreesRoot: options.paseoWorktreesBaseRoot,
-    });
-    if (!ownership.allowed) {
-      return;
+    if (!selectedWorkspaceId) {
+      const ownership = await deps.isPaseoOwnedWorktreeCwd(cwd, {
+        paseoHome: options.paseoHome,
+        worktreesRoot: options.paseoWorktreesBaseRoot,
+      });
+      if (!ownership.allowed) return;
     }
 
     try {
-      const workspaceId = await deps.resolveWorkspaceIdAtPath(
-        {
-          findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
-          listActiveWorkspaces: options.listActiveWorkspaces,
-        },
-        cwd,
-      );
+      const workspaceId =
+        selectedWorkspaceId ??
+        (await deps.resolveWorkspaceIdAtPath(
+          {
+            findWorkspaceIdForCwd: options.findWorkspaceIdForCwd,
+            listActiveWorkspaces: options.listActiveWorkspaces,
+          },
+          cwd,
+        ));
       if (!workspaceId) {
         log.warn({ cwd }, "Auto-archive could not resolve a workspace for cwd; skipping");
         return;

@@ -48,7 +48,7 @@ export interface ProviderCatalogSessionHost {
   supportsCustomModeIcons(): boolean;
   supportsCompactProviderSnapshots(): boolean;
   listProviderAvailability(): Promise<ProviderAvailability[]>;
-  listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]>;
+  listDraftFeatures(config: AgentSessionConfig, workspaceId?: string): Promise<AgentFeature[]>;
 }
 
 export interface ProviderCatalogSessionOptions {
@@ -314,6 +314,7 @@ export class ProviderCatalogSession {
   private buildDraftAgentSessionConfig(draftConfig: {
     provider: AgentProvider;
     cwd: string;
+    workspaceId?: string;
     modeId?: string;
     model?: string;
     thinkingOptionId?: string;
@@ -335,7 +336,10 @@ export class ProviderCatalogSession {
     const fetchedAt = new Date().toISOString();
     try {
       const sessionConfig = this.buildDraftAgentSessionConfig(msg.draftConfig);
-      const features = await this.host.listDraftFeatures(sessionConfig);
+      const features = await this.host.listDraftFeatures(
+        sessionConfig,
+        msg.draftConfig.workspaceId,
+      );
       this.host.emit({
         type: "list_provider_features_response",
         payload: {

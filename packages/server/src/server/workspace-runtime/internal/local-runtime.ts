@@ -60,6 +60,7 @@ export function createLocalRuntime(
     provider: {
       environment: "inherit-sanitized-host",
       sharedHostProviders: new Set(["opencode"]),
+      processIsolation: false,
     },
     async create(input: WorkspaceDriverCreateInput) {
       const existing = await inspect(input.workspaceId);

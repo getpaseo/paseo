@@ -84,6 +84,7 @@ export function createWorktreeRuntime(options: {
     provider: {
       environment: "inherit-sanitized-host",
       sharedHostProviders: new Set(["opencode"]),
+      processIsolation: false,
     },
     setupEnvironment: () => createStringCommandShellEnv(createExternalProcessEnv(process.env)),
     async create(input: WorkspaceDriverCreateInput) {

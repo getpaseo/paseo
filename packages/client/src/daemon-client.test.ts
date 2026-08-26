@@ -2,6 +2,7 @@ import { afterEach, expect, expectTypeOf, test, vi } from "vitest";
 import { z } from "zod";
 import {
   DaemonClient,
+  isDaemonTransientError,
   type DaemonClientTrace,
   type DaemonTransport,
   type Logger,
@@ -962,7 +963,11 @@ test("keeps the transport connected when a session RPC ping times out", async ()
   await connectPromise;
   expect(client.getConnectionState().status).toBe("connected");
 
-  await expect(client.ping({ timeoutMs: 1 })).rejects.toThrow("Timeout waiting for message");
+  const timeout = await client.ping({ timeoutMs: 1 }).catch((error: unknown) => error);
+  expect(timeout).toBeInstanceOf(Error);
+  expect((timeout as Error).message).toContain("Timeout waiting for message");
+  expect(isDaemonTransientError(timeout)).toBe(true);
+  expect(isDaemonTransientError(new Error("Workspace runtime is paused"))).toBe(false);
 
   expect(client.getConnectionState().status).toBe("connected");
 });
@@ -5071,6 +5076,7 @@ test("lists commands with draft config via RPC", async () => {
     draftConfig: {
       provider: "codex",
       cwd: "/tmp/project",
+      workspaceId: "workspace-runtime",
       modeId: "bypassPermissions",
       model: "gpt-5",
       thinkingOptionId: "off",
@@ -5084,6 +5090,7 @@ test("lists commands with draft config via RPC", async () => {
   expect(request.draftConfig).toEqual({
     provider: "codex",
     cwd: "/tmp/project",
+    workspaceId: "workspace-runtime",
     modeId: "bypassPermissions",
     model: "gpt-5",
     thinkingOptionId: "off",

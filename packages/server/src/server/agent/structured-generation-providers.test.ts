@@ -7,12 +7,12 @@ const READY = "ready" as const;
 const ERROR = "error" as const;
 
 class ProviderSnapshots {
-  readonly calls: Array<{ cwd?: string; wait?: boolean }> = [];
+  readonly calls: Array<{ cwd?: string; workspaceId?: string; wait?: boolean }> = [];
 
   constructor(private readonly entries: ProviderSnapshotEntry[]) {}
 
-  async listProviders(input: { cwd?: string; wait?: boolean } = {}) {
-    this.calls.push({ cwd: input.cwd, wait: input.wait });
+  async listProviders(input: { cwd?: string; workspaceId?: string; wait?: boolean } = {}) {
+    this.calls.push({ cwd: input.cwd, workspaceId: input.workspaceId, wait: input.wait });
     return this.entries;
   }
 }
@@ -44,7 +44,7 @@ describe("resolveStructuredGenerationProviders", () => {
       { provider: "mock", model: "ten-second-stream" },
       { provider: "work-claude", model: "claude-haiku-2026" },
     ]);
-    expect(snapshots.calls).toEqual([{ cwd: "/tmp/repo", wait: true }]);
+    expect(snapshots.calls).toEqual([{ cwd: "/tmp/repo", workspaceId: undefined, wait: true }]);
   });
 
   test("falls back to dynamic defaults and current selection when no provider is configured", async () => {

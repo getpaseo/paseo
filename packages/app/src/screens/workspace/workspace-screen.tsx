@@ -148,6 +148,7 @@ import {
 import { renderWorkspaceRouteGate } from "@/screens/workspace/workspace-route-state-views";
 import { useWorkspaceRecovery } from "@/workspace-recovery/use-workspace-recovery";
 import type { WorkspaceRecoveryModel } from "@/workspace-recovery/model";
+import type { ViewedTimelineUiBridge } from "@/timeline/viewed-timeline-sync";
 import {
   buildWorkspaceTabSnapshot,
   deriveWorkspaceAgentVisibility,
@@ -209,9 +210,33 @@ import { useWorkspaceCheckoutStatus } from "@/screens/workspace/use-workspace-ch
 const WORKSPACE_SETUP_AUTO_OPEN_WINDOW_MS = 30_000;
 const WORKSPACE_FLOATING_PANEL_PORTAL_HOST_PREFIX = "workspace-floating-panels";
 const EMPTY_UI_TABS: WorkspaceTab[] = [];
+const EMPTY_VISIBLE_AGENT_IDS: string[] = [];
 const EMPTY_WORKSPACE_SCRIPTS: WorkspaceDescriptor["scripts"] = [];
 const EMPTY_PINNED_AGENT_IDS = new Set<string>();
 const EMPTY_SET = new Set<string>();
+
+function useWorkspaceTimelineVisibility(input: {
+  persistenceKey: string | null;
+  viewedTimelineSync: ViewedTimelineUiBridge | null;
+  visibleAgentIds: string[];
+  ready: boolean;
+}): void {
+  const synchronizedAgentIds = input.ready ? input.visibleAgentIds : EMPTY_VISIBLE_AGENT_IDS;
+  const { persistenceKey, viewedTimelineSync } = input;
+  useLayoutEffect(() => {
+    if (!persistenceKey || !viewedTimelineSync) return;
+    viewedTimelineSync.replaceVisibleAgentIds(persistenceKey, synchronizedAgentIds, {
+      preserveHot: input.ready,
+    });
+  }, [input.ready, persistenceKey, synchronizedAgentIds, viewedTimelineSync]);
+  useEffect(() => {
+    if (!persistenceKey || !viewedTimelineSync) return;
+    return () =>
+      viewedTimelineSync.replaceVisibleAgentIds(persistenceKey, [], {
+        preserveHot: false,
+      });
+  }, [persistenceKey, viewedTimelineSync]);
+}
 
 function getWorkspaceScripts(
   workspaceDescriptor: WorkspaceDescriptor | null | undefined,
@@ -2074,18 +2099,12 @@ function WorkspaceScreenContent({
       }),
     [isFocusModeEnabled, isMobile, isRouteFocused, uiTabs, workspaceLayout],
   );
-  useLayoutEffect(() => {
-    if (!persistenceKey || !viewedTimelineSync) {
-      return;
-    }
-    viewedTimelineSync.replaceVisibleAgentIds(persistenceKey, visibleAgentIds);
-  }, [persistenceKey, viewedTimelineSync, visibleAgentIds]);
-  useEffect(() => {
-    if (!persistenceKey || !viewedTimelineSync) {
-      return;
-    }
-    return () => viewedTimelineSync.replaceVisibleAgentIds(persistenceKey, []);
-  }, [persistenceKey, viewedTimelineSync]);
+  useWorkspaceTimelineVisibility({
+    persistenceKey,
+    viewedTimelineSync,
+    visibleAgentIds,
+    ready: workspaceRouteState.kind === "ready",
+  });
   const setFocusedAgentId = useSessionStore((state) => state.setFocusedAgentId);
   const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
   const focusedPaneAgentId = useMemo(() => {
@@ -2895,6 +2914,7 @@ function WorkspaceScreenContent({
             ? { cursor: { epoch: currentCursor.epoch, seq: currentCursor.endSeq } }
             : {}),
         });
+        viewedTimelineSync?.markAgentCurrent(agentId);
         toast.show(t("workspace.tabs.toasts.reloadedAgent"), { variant: "success" });
       } catch (error) {
         toast.error(
@@ -2902,7 +2922,7 @@ function WorkspaceScreenContent({
         );
       }
     },
-    [client, isConnected, normalizedServerId, toast, t],
+    [client, isConnected, normalizedServerId, toast, t, viewedTimelineSync],
   );
 
   const handleCopyWorkspacePath = useCallback(async () => {

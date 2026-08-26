@@ -63,6 +63,7 @@ export function useWorkspaceRecovery(input: {
       await waitForMinimumRecoveryLoadingTime();
       await recoverWorkspaceSelection({
         client,
+        recoveryKey: `${input.serverId}:${input.workspaceId}`,
         workspaceId: input.workspaceId,
         agentId: input.agentId,
       });
