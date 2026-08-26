@@ -25,6 +25,10 @@ export const OPENCODE_V2_SERVER_STARTUP_TIMEOUT_MS = 30_000;
 export const OPENCODE_V2_EVENT_STREAM_READY_TIMEOUT_MS = 45_000;
 const OPENCODE_V2_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 const OPENCODE_V2_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
+/** How often to poll for the opencode2 database to appear after readiness. */
+export const OPENCODE_V2_CREDENTIAL_DB_POLL_INTERVAL_MS = 250;
+/** Max polls for the opencode2 database before giving up (~2s total). */
+export const OPENCODE_V2_CREDENTIAL_DB_POLL_ATTEMPTS = 8;
 
 export type OpenCodeV2EventSourceInput =
   | { type: "server-exited"; error: Error }
@@ -103,6 +107,10 @@ export interface OpenCodeV2ServerManagerOptions {
   resolveHomeDir?: () => string;
   /** Resolve the real user's opencode2 auth file to seed into the isolated home. */
   resolveCredentialSourcePath?: () => string;
+  /** Poll interval for the opencode2 database to appear after readiness. */
+  credentialDbPollIntervalMs?: number;
+  /** Max polls for the opencode2 database before giving up. */
+  credentialDbPollAttempts?: number;
   spawnServerProcess?: OpenCodeV2ServerProcessSpawner;
   createEventSource?: OpenCodeV2EventConsumerFactory;
 }
@@ -124,6 +132,8 @@ export class OpenCodeV2ServerManager implements OpenCodeV2ServerManagerLike {
   private readonly resolveCommandPrefix: OpenCodeV2CommandPrefixResolver;
   private readonly resolveHomeDir: () => string;
   private readonly resolveCredentialSourcePath: () => string;
+  private readonly credentialDbPollIntervalMs: number;
+  private readonly credentialDbPollAttempts: number;
   private readonly spawnServerProcess: OpenCodeV2ServerProcessSpawner;
   private readonly createEventSource: OpenCodeV2EventConsumerFactory;
 
@@ -153,6 +163,10 @@ export class OpenCodeV2ServerManager implements OpenCodeV2ServerManagerLike {
       });
     this.resolveCredentialSourcePath =
       options.resolveCredentialSourcePath ?? resolveOpenCodeV2CredentialSourcePath;
+    this.credentialDbPollIntervalMs =
+      options.credentialDbPollIntervalMs ?? OPENCODE_V2_CREDENTIAL_DB_POLL_INTERVAL_MS;
+    this.credentialDbPollAttempts =
+      options.credentialDbPollAttempts ?? OPENCODE_V2_CREDENTIAL_DB_POLL_ATTEMPTS;
     this.spawnServerProcess = options.spawnServerProcess ?? spawnProcess;
     this.createEventSource =
       options.createEventSource ?? ((input) => new OpenCodeV2ServerEventSource(input));
@@ -555,7 +569,9 @@ export class OpenCodeV2ServerManager implements OpenCodeV2ServerManagerLike {
    * complete, so the legacy auth.json import never runs. After the server is
    * ready (its database exists), copy the credential rows in directly so
    * credentialed-provider models (Baseten, OpenAI) work through the daemon.
-   * Graceful no-op when the source auth file or the database is missing.
+   * The database can lag readiness by a moment on slow machines or version
+   * changes, so poll for it to appear (bounded) before seeding. Graceful no-op
+   * when the source auth file is missing or the database never appears.
    */
   private async seedCredentialsIntoDatabase(dataHome: string): Promise<void> {
     const source = this.resolveCredentialSourcePath();
@@ -563,10 +579,14 @@ export class OpenCodeV2ServerManager implements OpenCodeV2ServerManagerLike {
       return; // the file-copy step already logged the skip
     }
     const dbPath = path.join(dataHome, "opencode", "opencode.db");
-    if (!existsSync(dbPath)) {
-      this.logger.debug(
+    const dbAppeared = await waitForOpenCodeV2Database(dbPath, {
+      intervalMs: this.credentialDbPollIntervalMs,
+      attempts: this.credentialDbPollAttempts,
+    });
+    if (!dbAppeared) {
+      this.logger.warn(
         { dbPath },
-        "OpenCode 2 database not found; skipping credential DB seeding",
+        "OpenCode 2 database never appeared after server readiness; skipping credential DB seeding (free/default models still work)",
       );
       return;
     }
@@ -928,6 +948,31 @@ async function pathExists(filePath: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * Poll for the opencode2 database to appear after server readiness. The server
+ * creates it shortly after it starts; on slow machines or version changes it
+ * can lag the readiness line by a moment. Bounded so a database that never
+ * appears cannot block startup indefinitely.
+ */
+async function waitForOpenCodeV2Database(
+  dbPath: string,
+  options: { intervalMs: number; attempts: number },
+): Promise<boolean> {
+  for (let attempt = 0; attempt < options.attempts; attempt++) {
+    if (existsSync(dbPath)) {
+      return true;
+    }
+    if (attempt < options.attempts - 1) {
+      await delay(options.intervalMs);
+    }
+  }
+  return false;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function findAvailablePort(): Promise<number> {

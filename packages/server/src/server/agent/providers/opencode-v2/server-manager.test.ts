@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import type { Logger } from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
@@ -518,6 +519,102 @@ describe("OpenCodeV2ServerManager credential seeding", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  test("seeds credentials when the database appears after readiness (bounded retry)", async () => {
+    vi.useFakeTimers();
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "opencode-v2-cred-db-late-"));
+    const sourcePath = path.join(tempDir, "source", "opencode", "auth.json");
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(
+      sourcePath,
+      JSON.stringify({
+        baseten: { type: "api", key: "fake-baseten-key" },
+      }),
+      "utf8",
+    );
+    const opencodeV2HomeDir = path.join(tempDir, "opencode2-home");
+    const dbPath = path.join(opencodeV2HomeDir, ".local", "share", "opencode", "opencode.db");
+    try {
+      const { manager, runtime } = createTestManager([4046], {
+        opencodeV2HomeDir,
+        credentialSourcePath: sourcePath,
+        autoAnnounce: false,
+        credentialDbPollIntervalMs: 250,
+        credentialDbPollAttempts: 8,
+      });
+
+      const acquisitionPromise = manager.acquireCurrent();
+      await runtime.settle();
+      runtime.processForPort(4046).announceListening();
+      await runtime.settle();
+
+      // The database appears only after the first poll attempt misses it.
+      mkdirSync(path.dirname(dbPath), { recursive: true });
+      const { DatabaseSync } = await import("node:sqlite");
+      const lateDb = new DatabaseSync(dbPath);
+      lateDb.exec(
+        "CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT NOT NULL, value TEXT NOT NULL, connector_id TEXT, method_id TEXT, active INTEGER, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL)",
+      );
+      lateDb.close();
+
+      await vi.advanceTimersByTimeAsync(250);
+
+      const acquisition = await acquisitionPromise;
+
+      const seededDb = new DatabaseSync(dbPath, { readOnly: true });
+      const rows = seededDb.prepare("SELECT integration_id FROM credential").all();
+      seededDb.close();
+      expect(rows).toEqual([{ integration_id: "baseten" }]);
+      await acquisition.release();
+      await manager.shutdown();
+    } finally {
+      vi.useRealTimers();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("logs a warning and does not crash when the database never appears", async () => {
+    vi.useFakeTimers();
+    const tempDir = mkdtempSync(path.join(os.tmpdir(), "opencode-v2-cred-db-never-"));
+    const sourcePath = path.join(tempDir, "source", "opencode", "auth.json");
+    mkdirSync(path.dirname(sourcePath), { recursive: true });
+    writeFileSync(
+      sourcePath,
+      JSON.stringify({ baseten: { type: "api", key: "fake-baseten-key" } }),
+      "utf8",
+    );
+    const opencodeV2HomeDir = path.join(tempDir, "opencode2-home");
+    const { logger, warnings } = createCapturingLogger();
+    try {
+      const { manager, runtime } = createTestManager([4047], {
+        opencodeV2HomeDir,
+        credentialSourcePath: sourcePath,
+        autoAnnounce: false,
+        credentialDbPollIntervalMs: 250,
+        credentialDbPollAttempts: 8,
+        logger,
+      });
+
+      const acquisitionPromise = manager.acquireCurrent();
+      await runtime.settle();
+      runtime.processForPort(4047).announceListening();
+      await runtime.settle();
+
+      await vi.advanceTimersByTimeAsync(250 * 8);
+
+      const acquisition = await acquisitionPromise;
+      expect(acquisition.server.url).toBe("http://127.0.0.1:4047");
+
+      expect(
+        warnings.some((message) => message.includes("never appeared after server readiness")),
+      ).toBe(true);
+      await acquisition.release();
+      await manager.shutdown();
+    } finally {
+      vi.useRealTimers();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("toOpenCodeV2CredentialValue", () => {
@@ -570,19 +667,45 @@ describe("resolveOpenCodeV2CredentialSourcePath", () => {
   });
 });
 
+function createCapturingLogger(): { logger: Logger; warnings: string[] } {
+  const warnings: string[] = [];
+  const logger = {
+    debug: () => {},
+    info: () => {},
+    warn: (_obj: unknown, message?: string) => {
+      if (typeof message === "string") {
+        warnings.push(message);
+      }
+    },
+    error: () => {},
+    child: () => logger,
+  } as unknown as Logger;
+  return { logger, warnings };
+}
+
 function createTestManager(
   ports: number[],
   options: {
     autoAnnounce?: boolean;
     opencodeV2HomeDir?: string;
     credentialSourcePath?: string;
+    credentialDbPollIntervalMs?: number;
+    credentialDbPollAttempts?: number;
     runtimeSettings?: ProviderRuntimeSettings;
+    logger?: Logger;
   } = {},
 ): {
   manager: OpenCodeV2ServerManager;
   runtime: FakeOpenCodeV2ServerRuntime;
 } {
-  const { opencodeV2HomeDir, credentialSourcePath, runtimeSettings } = options;
+  const {
+    opencodeV2HomeDir,
+    credentialSourcePath,
+    credentialDbPollIntervalMs,
+    credentialDbPollAttempts,
+    runtimeSettings,
+    logger,
+  } = options;
   const runtime = new FakeOpenCodeV2ServerRuntime(ports, {
     autoAnnounce: options.autoAnnounce ?? true,
   });
@@ -590,13 +713,15 @@ function createTestManager(
     credentialSourcePath ?? path.join(os.tmpdir(), "opencode-v2-no-auth-source.json");
   return {
     manager: new OpenCodeV2ServerManager({
-      logger: createTestLogger(),
+      logger: logger ?? createTestLogger(),
       runtimeSettings,
       managedProcesses: runtime.managedProcesses,
       portAllocator: runtime.allocatePort,
       resolveCommandPrefix: runtime.resolveCommandPrefix,
       ...(opencodeV2HomeDir ? { resolveHomeDir: () => opencodeV2HomeDir } : {}),
       resolveCredentialSourcePath: () => credentialSource,
+      ...(credentialDbPollIntervalMs !== undefined ? { credentialDbPollIntervalMs } : {}),
+      ...(credentialDbPollAttempts !== undefined ? { credentialDbPollAttempts } : {}),
       spawnServerProcess: runtime.spawnServerProcess,
       terminateProcess: runtime.terminateProcess,
     }),
