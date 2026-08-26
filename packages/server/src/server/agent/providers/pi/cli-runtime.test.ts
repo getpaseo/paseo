@@ -293,6 +293,49 @@ describe("PiCliRuntime", () => {
     await rejection;
   });
 
+  test("prompt waits beyond the default timeout when Pi auto-compacts before accepting", async () => {
+    vi.useFakeTimers();
+    const child = createPiChild();
+    const pendingPrompt = capturePendingCommand(child, "prompt");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    try {
+      const promptPromise = session.prompt("continue after compaction");
+      const promptCommand = await pendingPrompt;
+      await vi.advanceTimersByTimeAsync(35_000);
+
+      expect(promptCommand).toMatchObject({
+        type: "prompt",
+        message: "continue after compaction",
+        id: expect.any(String),
+      });
+
+      writePiResponse(child, promptCommand, { agentInvoked: true });
+
+      await expect(promptPromise).resolves.toEqual({
+        requestId: promptCommand.id,
+        agentInvoked: true,
+      });
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
+  });
+
+  test("prompt without a wall-clock timeout rejects when the session closes", async () => {
+    const child = createPiChild();
+    const pendingPrompt = capturePendingCommand(child, "prompt");
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const promptPromise = session.prompt("continue after compaction");
+    await pendingPrompt;
+
+    const rejection = expect(promptPromise).rejects.toThrow("Pi RPC session is closed");
+    await session.close();
+
+    await rejection;
+  });
+
   test("compact waits beyond the default control-plane timeout for a late response", async () => {
     vi.useFakeTimers();
     const child = createPiChild();

@@ -32,10 +32,14 @@ const DEFAULT_COMMANDS_RPC_NAME = "get_commands";
 
 /**
  * Pi RPC timeout policy:
- * - Control-plane / accept-and-stream (`prompt`, `get_state`, `abort`, …): default 30s
- * - Long-running blocking LLM jobs (`compact`): no wall-clock timeout — complete on
- *   response, process death, or session close (`JsonlRpcProcess.failAll` / `close`).
+ * - Prompt acceptance and explicit compaction: no wall-clock timeout. Pi may run
+ *   automatic LLM-backed compaction before acknowledging a prompt.
+ * - Other control-plane calls (`get_state`, `abort`, …): default 30s.
+ *
+ * Requests without a wall-clock timeout still complete on response, process
+ * death, or session close (`JsonlRpcProcess.failAll` / `close`).
  */
+const PI_PROMPT_REQUEST_TIMEOUT_MS = JSONL_RPC_NO_TIMEOUT;
 const PI_COMPACT_REQUEST_TIMEOUT_MS = JSONL_RPC_NO_TIMEOUT;
 
 export interface PiCliRuntimeOptions {
@@ -112,11 +116,14 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     message: string,
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): Promise<PiPromptAck> {
-    const { id: requestId, promise } = this.process.startRequest({
-      type: "prompt",
-      message,
-      ...(images?.length ? { images } : {}),
-    });
+    const { id: requestId, promise } = this.process.startRequest(
+      {
+        type: "prompt",
+        message,
+        ...(images?.length ? { images } : {}),
+      },
+      PI_PROMPT_REQUEST_TIMEOUT_MS,
+    );
     const data = await promise;
     if (typeof data === "object" && data !== null && !Array.isArray(data)) {
       const { agentInvoked } = data as Record<string, unknown>;
