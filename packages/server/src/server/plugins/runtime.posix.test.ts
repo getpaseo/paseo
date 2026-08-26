@@ -63,7 +63,7 @@ function createReloadChild(name: string, events: string[], methods: string[] = [
 }
 
 function createTestRuntime(
-  dependencies: NonNullable<ConstructorParameters<typeof PluginRuntime>[1]> = {},
+  dependencies: NonNullable<ConstructorParameters<typeof PluginRuntime>[2]> = {},
   logger = pino({ level: "silent" }),
 ): PluginRuntime {
   return new PluginRuntime(logger, "0.4.0", {
