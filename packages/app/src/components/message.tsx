@@ -1,4 +1,5 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { CollapsibleText } from "@/components/collapsible-text";
 import { TaskListRow } from "@/components/task-list-row";
 import {
   View,
@@ -536,9 +537,12 @@ export const UserMessage = memo(function UserMessage({
             </View>
           ) : null}
           {hasText ? (
-            <Text selectable style={userMessageStylesheet.text}>
-              {message}
-            </Text>
+            <CollapsibleText
+              text={message}
+              style={userMessageStylesheet.text}
+              expandLabel={t("common.actions.showMore", "Show more")}
+              collapseLabel={t("common.actions.showLess", "Show less")}
+            />
           ) : null}
         </View>
         {hasText ? (

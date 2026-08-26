@@ -338,6 +338,9 @@ export function openComposerAttachment(input: OpenComposerAttachmentInput): void
     input.openWorkspaceAttachment({ attachment: input.attachment });
     return;
   }
+  if (input.attachment.kind === "pasted_text") {
+    return;
+  }
   input.openExternalUrl(input.attachment.item.url);
 }
 

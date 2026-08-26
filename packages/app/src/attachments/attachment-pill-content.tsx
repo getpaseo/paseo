@@ -140,6 +140,22 @@ export function getWorkspaceAttachmentPillContent(
   };
 }
 
+export function getPastedTextAttachmentPillContent(
+  attachment: { text: string; lineCount: number; byteSize: number; title?: string },
+  _t?: TFunction,
+): AttachmentPillContent {
+  const lineLabel = attachment.lineCount === 1 ? "1 line" : `${attachment.lineCount} lines`;
+  const sizeLabel =
+    attachment.byteSize < 1024
+      ? `${attachment.byteSize} B`
+      : `${(attachment.byteSize / 1024).toFixed(1)} KB`;
+  return {
+    icon: attachmentFileIcon,
+    title: attachment.title ?? "Pasted text",
+    subtitle: `${lineLabel} • ${sizeLabel}`,
+  };
+}
+
 const ThemedAttachmentFileText = withUnistyles(FileText);
 const ThemedAttachmentGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedAttachmentCircleDot = withUnistyles(CircleDot);
