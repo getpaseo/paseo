@@ -1010,6 +1010,33 @@ test("isolated command runtimes apply lifecycle environment to pipes and PTY", a
   await fixture.service.destroy(fixture.workspaceId);
 }, 15_000);
 
+test("isolated command runtimes apply lifecycle environment to workspace helpers", async () => {
+  const fixture = await createFixture("helper-lifecycle-environment", false, "pty", {
+    processIsolation: true,
+    lifecycleEnvironment: {
+      PATH: "/runtime/bin",
+      RUNTIME_HELPER_VALUE: "runtime",
+    },
+  });
+  await fixture.service.create(fixture.createInput);
+  await expect(fixture.service.files(fixture.workspaceId).list(".")).resolves.toMatchObject({
+    path: ".",
+  });
+
+  const launch = JSON.parse(
+    await readFile(path.join(fixture.source, ".runtime-launch.json"), "utf8"),
+  ) as { purpose: unknown; env: Record<string, string> };
+  expect(launch).toMatchObject({
+    purpose: { kind: "workspace-helper" },
+    env: {
+      PATH: "/runtime/bin",
+      RUNTIME_HELPER_VALUE: "runtime",
+    },
+  });
+
+  await fixture.service.destroy(fixture.workspaceId);
+});
+
 async function createFixture(
   name: string,
   withBarrier = false,

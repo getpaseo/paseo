@@ -222,7 +222,15 @@ export function createService(
           if (ready.state.lifecycle === "ready") {
             const helper = bindWorkspaceHelper({
               command: driver.workspaceHelper.command,
-              launch: (argv) => launchHelper(driver, input.workspaceId, argv),
+              launch: (argv) =>
+                launchHelper(
+                  driver,
+                  input.workspaceId,
+                  argv,
+                  driver.provider.environment === "isolated"
+                    ? (ready.state.lifecycleEnvironment ?? {})
+                    : {},
+                ),
             });
             try {
               await helper.verify();
@@ -579,7 +587,14 @@ export function createService(
     const client = bindWorkspaceHelper({
       command: driver.workspaceHelper.command,
       launch: async (argv) => {
-        return launchHelper(driver, workspaceId, argv);
+        return launchHelper(
+          driver,
+          workspaceId,
+          argv,
+          driver.provider.environment === "isolated"
+            ? (inspection.state.lifecycleEnvironment ?? {})
+            : {},
+        );
       },
     });
     fileClients.set(workspaceId, {
@@ -659,11 +674,15 @@ export function createService(
     driver: WorkspaceRuntimeDriver,
     workspaceId: string,
     argv: readonly [string, ...string[]],
+    runtimeEnvironment: Readonly<Record<string, string>>,
   ) {
     const runtimeProcess = await driver.spawn({
       workspaceId,
       argv,
-      env: driver.workspaceHelper.env,
+      env: {
+        ...driver.workspaceHelper.env,
+        ...runtimeEnvironment,
+      },
       purpose: { kind: "workspace-helper" },
       stdio: { kind: "pipes" },
     });

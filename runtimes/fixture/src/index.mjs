@@ -255,7 +255,7 @@ async function execute(id) {
   if (envelope.options.recordLaunchInWorkspace !== false) {
     await writeFile(
       path.join(state.root, ".runtime-launch.json"),
-      JSON.stringify({ argv: process.argv, purpose: envelope.purpose }),
+      JSON.stringify({ argv: process.argv, purpose: envelope.purpose, env: envelope.env }),
     );
   }
   if (envelope.stdio.kind === "pty") {
