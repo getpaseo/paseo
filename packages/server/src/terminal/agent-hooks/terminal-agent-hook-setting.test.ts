@@ -37,6 +37,7 @@ function hookPaths(root: string) {
     claude: join(root, "claude", "settings.json"),
     codex: join(root, "codex", "hooks.json"),
     opencode: join(root, "opencode", "plugins", "paseo-terminal-activity.js"),
+    opencodeV2: join(root, "opencode", "plugins", "paseo-terminal-activity-v2.js"),
   };
 }
 
@@ -66,6 +67,7 @@ describe("applyTerminalAgentHookSetting", () => {
     expect(existsSync(paths.claude)).toBe(false);
     expect(existsSync(paths.codex)).toBe(false);
     expect(existsSync(paths.opencode)).toBe(false);
+    expect(existsSync(paths.opencodeV2)).toBe(false);
   });
 
   it("installs agent hooks when the setting is enabled", () => {
@@ -78,6 +80,7 @@ describe("applyTerminalAgentHookSetting", () => {
     expect(existsSync(paths.claude)).toBe(true);
     expect(existsSync(paths.codex)).toBe(true);
     expect(existsSync(paths.opencode)).toBe(true);
+    expect(existsSync(paths.opencodeV2)).toBe(true);
   });
 
   it("installs on enable and removes hooks on disable when toggled live", () => {
@@ -87,12 +90,15 @@ describe("applyTerminalAgentHookSetting", () => {
 
     applyTerminalAgentHookSetting({ store, install: createInstallEnv(root) });
     expect(existsSync(paths.opencode)).toBe(false);
+    expect(existsSync(paths.opencodeV2)).toBe(false);
 
     store.patch({ enableTerminalAgentHooks: true });
     expect(existsSync(paths.codex)).toBe(true);
     expect(existsSync(paths.opencode)).toBe(true);
+    expect(existsSync(paths.opencodeV2)).toBe(true);
 
     store.patch({ enableTerminalAgentHooks: false });
     expect(existsSync(paths.opencode)).toBe(false);
+    expect(existsSync(paths.opencodeV2)).toBe(false);
   });
 });

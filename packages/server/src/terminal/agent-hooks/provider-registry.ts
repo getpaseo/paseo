@@ -12,6 +12,7 @@ import {
 import { claudeAgentHookProvider } from "./claude/claude.js";
 import { codexAgentHookProvider } from "./codex/codex.js";
 import { opencodeAgentHookProvider } from "./opencode/opencode.js";
+import { opencodeV2AgentHookProvider } from "./opencode-v2/opencode-v2.js";
 
 export type {
   AgentHookActivityInput,
@@ -23,6 +24,7 @@ export const AGENT_HOOK_PROVIDERS = {
   [claudeAgentHookProvider.id]: claudeAgentHookProvider,
   [codexAgentHookProvider.id]: codexAgentHookProvider,
   [opencodeAgentHookProvider.id]: opencodeAgentHookProvider,
+  [opencodeV2AgentHookProvider.id]: opencodeV2AgentHookProvider,
 } satisfies Record<string, AgentHookProvider>;
 
 export type AgentHookProviderId = keyof typeof AGENT_HOOK_PROVIDERS;

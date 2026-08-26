@@ -60,9 +60,13 @@ describe("terminal agent hook provider registry", () => {
     expect(results.map((result) => result.configPath)).toEqual([
       join(codexHome, "hooks.json"),
       join(opencodeConfigDir, "plugins", "paseo-terminal-activity.js"),
+      join(opencodeConfigDir, "plugins", "paseo-terminal-activity-v2.js"),
     ]);
     expect(existsSync(join(codexHome, "hooks.json"))).toBe(true);
     expect(existsSync(join(opencodeConfigDir, "plugins", "paseo-terminal-activity.js"))).toBe(true);
+    expect(existsSync(join(opencodeConfigDir, "plugins", "paseo-terminal-activity-v2.js"))).toBe(
+      true,
+    );
     expect(logger.entries).toEqual([
       {
         bindings: expect.objectContaining({ err: expect.any(Error), provider: "claude" }),

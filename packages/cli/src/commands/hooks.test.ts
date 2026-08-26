@@ -37,6 +37,7 @@ interface RecordingFetch {
 const claudeProvider = AGENT_HOOK_PROVIDERS.claude;
 const codexProvider = AGENT_HOOK_PROVIDERS.codex;
 const opencodeProvider = AGENT_HOOK_PROVIDERS.opencode;
+const opencodeV2Provider = AGENT_HOOK_PROVIDERS["opencode-v2"];
 
 function createFetch(): RecordingFetch {
   const calls: FetchCall[] = [];
@@ -115,6 +116,21 @@ describe("runHooksCommand", () => {
     ["permission.replied", "running"],
   ])("maps OpenCode %s to %s", async (event, state) => {
     const send = await runHook(opencodeProvider.id, event);
+
+    expectPostedState(send, state);
+  });
+
+  it.each([
+    ["session.status.busy", "running"],
+    ["session.status.retry", "running"],
+    ["session.status.idle", "idle"],
+    ["permission.asked", "needs-input"],
+    ["form.created", "needs-input"],
+    ["permission.replied", "running"],
+    ["form.replied", "running"],
+    ["form.cancelled", "running"],
+  ])("maps OpenCode v2 %s to %s", async (event, state) => {
+    const send = await runHook(opencodeV2Provider.id, event);
 
     expectPostedState(send, state);
   });
