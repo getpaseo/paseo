@@ -2,6 +2,7 @@ import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { persistAttachmentFromBytes } from "@/attachments/service";
 import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
+import { isRenderedPdfFile } from "@/components/file-pane-render-mode";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
 import type { ExplorerFile } from "@/stores/session-store";
 import type { LiveFileSnapshot } from "../live-file/model";
@@ -9,6 +10,7 @@ import type { LiveFileSnapshot } from "../live-file/model";
 export interface FilePanePreview {
   file: ExplorerFile;
   imageAttachment: AttachmentMetadata | null;
+  pdfAttachment: AttachmentMetadata | null;
 }
 
 export type FilePreviewLifecycleSnapshot =
@@ -24,24 +26,42 @@ const initialSnapshot: FilePreviewLifecycleSnapshot = { status: "initial" };
 /** Converts a completed raw read into the preview resources consumed by FilePane. */
 export async function createFilePanePreview(file: FileReadResult): Promise<FilePanePreview | null> {
   const explorerFile = explorerFileFromReadResult(file);
-  if (file.kind !== "image") {
-    return { file: explorerFile, imageAttachment: null };
+  if (file.kind === "image") {
+    return {
+      file: explorerFile,
+      imageAttachment: await persistPreviewAttachment({ file, mimeType: file.mime }),
+      pdfAttachment: null,
+    };
   }
 
-  const imageAttachment = await persistAttachmentFromBytes({
+  if (isRenderedPdfFile(file.path)) {
+    return {
+      file: explorerFile,
+      imageAttachment: null,
+      pdfAttachment: await persistPreviewAttachment({ file, mimeType: "application/pdf" }),
+    };
+  }
+
+  return { file: explorerFile, imageAttachment: null, pdfAttachment: null };
+}
+
+async function persistPreviewAttachment(input: {
+  file: FileReadResult;
+  mimeType: string;
+}): Promise<AttachmentMetadata> {
+  const { file, mimeType } = input;
+  return await persistAttachmentFromBytes({
     id: createPreviewAttachmentId({
-      mimeType: file.mime,
+      mimeType,
       path: file.path,
       size: file.size,
       modifiedAt: file.modifiedAt,
       contentLength: file.bytes.byteLength,
     }),
     bytes: file.bytes,
-    mimeType: file.mime,
+    mimeType,
     fileName: getFileNameFromPath(file.path),
   });
-
-  return { file: explorerFile, imageAttachment };
 }
 
 /** Owns conversion after LiveFileModel has produced a raw file snapshot. */
@@ -136,9 +156,10 @@ export function filePreviewFromLifecycle(
 export function resolveFilePreviewLifecycle(snapshot: FilePreviewLifecycleSnapshot): {
   file: ExplorerFile | null;
   imageAttachment: AttachmentMetadata | null;
+  pdfAttachment: AttachmentMetadata | null;
 } {
   const preview = filePreviewFromLifecycle(snapshot);
-  return preview ?? { file: null, imageAttachment: null };
+  return preview ?? { file: null, imageAttachment: null, pdfAttachment: null };
 }
 
 function getReadySource(input: {

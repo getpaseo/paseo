@@ -30,6 +30,7 @@ import { resolveFilePreviewLifecycle } from "./preview-lifecycle/model";
 import { FilePanelBar } from "./bar";
 import { FileHtmlPreview } from "./html-preview";
 import { FileMarkdownPreview } from "./markdown-preview";
+import { FilePdfPreview } from "./pdf-preview";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
@@ -53,6 +54,7 @@ interface FilePreviewBodyProps {
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  pdfPreviewUri: string | null;
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
@@ -134,15 +136,14 @@ function FilePreviewBody({
   location,
   navigationRevision,
   imagePreviewUri,
+  pdfPreviewUri,
 }: FilePreviewBodyProps) {
   const { t } = useTranslation();
   const filePath = location.path;
   // A line target means the caller wants to land on that line, so fall back to
   // the highlighted source view even for renderable files.
   const renderKind =
-    preview?.kind === "text" && !location.lineStart && mode !== "source"
-      ? filePreviewRenderKind(filePath)
-      : null;
+    !location.lineStart && mode !== "source" ? filePreviewRenderKind(filePath) : null;
 
   const previewScrollRef = useRef<RNScrollView>(null);
 
@@ -164,6 +165,23 @@ function FilePreviewBody({
     return (
       <View style={styles.centerState} testID="file-preview-unsupported">
         <Text style={styles.emptyText}>{t("panels.file.noPreview")}</Text>
+      </View>
+    );
+  }
+
+  if (renderKind === "pdf") {
+    if (!pdfPreviewUri) {
+      return (
+        <View style={styles.centerState}>
+          <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+          <Text style={styles.loadingText}>{t("panels.file.loading")}</Text>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.previewScrollContainer}>
+        <FilePdfPreview uri={pdfPreviewUri} testID="file-pdf-preview" />
       </View>
     );
   }
@@ -297,8 +315,13 @@ export function FilePane({
 
   useEffect(() => setPreviewMode("preview"), [targetKey]);
 
-  const { file: preview, imageAttachment } = resolveFilePreviewLifecycle(previewLifecycle);
+  const {
+    file: preview,
+    imageAttachment,
+    pdfAttachment,
+  } = resolveFilePreviewLifecycle(previewLifecycle);
   const imagePreviewUri = useAttachmentPreviewUrl(imageAttachment);
+  const pdfPreviewUri = useAttachmentPreviewUrl(pdfAttachment);
   const isRenderable = isRenderablePreview(preview, location.path);
   const editable = isEditableTextFile({
     preview,
@@ -335,6 +358,7 @@ export function FilePane({
       location={location}
       navigationRevision={navigationRevision}
       imagePreviewUri={imagePreviewUri}
+      pdfPreviewUri={pdfPreviewUri}
     />
   );
 }
@@ -376,6 +400,7 @@ function FilePanePresentation({
   location,
   navigationRevision,
   imagePreviewUri,
+  pdfPreviewUri,
 }: {
   serverId: string;
   client: DaemonClient | null;
@@ -397,6 +422,7 @@ function FilePanePresentation({
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  pdfPreviewUri: string | null;
 }) {
   if (!client && readTarget) {
     return (
@@ -468,6 +494,7 @@ function FilePanePresentation({
         location={location}
         navigationRevision={navigationRevision}
         imagePreviewUri={imagePreviewUri}
+        pdfPreviewUri={pdfPreviewUri}
       />
     </View>
   );
@@ -641,6 +668,7 @@ function EditableFilePane({
           location={location}
           navigationRevision={navigationRevision}
           imagePreviewUri={null}
+          pdfPreviewUri={null}
         />
       )}
     </View>

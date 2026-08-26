@@ -19,6 +19,10 @@ const BLUE_PIXEL = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
+const MINIMAL_PDF = Buffer.from(
+  "%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\ntrailer\n<< /Root 1 0 R >>\n%%EOF\n",
+  "utf8",
+);
 const BLOCKED_PREVIEW_URL = "https://html-preview.invalid/leak";
 
 interface LinkedFile {
@@ -576,6 +580,20 @@ test.describe("CodeMirror workspace file editing", () => {
     await expect(preview.host).toHaveCount(0);
     await selectFileView(page, "Preview");
     await expect(preview.host).toBeVisible();
+  });
+
+  test("previews a PDF inline", async ({ page, withWorkspace }) => {
+    test.setTimeout(90_000);
+    const workspace = await withWorkspace({ prefix: "file-editing-pdf-preview-" });
+    await writeFile(path.join(workspace.repoPath, "guide.pdf"), MINIMAL_PDF);
+    await workspace.navigateTo();
+    await openWorkspaceFile(page, "guide.pdf");
+
+    const visibleFilePane = page.getByTestId("workspace-file-pane").filter({ visible: true });
+    const pdfPreview = visibleFilePane.getByTestId("file-pdf-preview");
+    await expect(pdfPreview).toBeVisible();
+    await expect(pdfPreview).not.toHaveAttribute("sandbox");
+    await expect(visibleFilePane.getByTestId("file-mode-preview")).toHaveCount(0);
   });
 
   test("runs inline scripts without allowing fetch egress", async ({ page, withWorkspace }) => {

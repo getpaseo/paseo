@@ -78,6 +78,10 @@ Native builds narrow this gap rather than closing it outright. The WebView refus
 
 If you don't trust a page, read it in `Source`, which executes nothing. Source is available as an editable view on supported web hosts and a read-only view everywhere else.
 
+## PDF file preview
+
+PDF previews keep the file bytes in Paseo's local attachment store and open them in the platform PDF viewer inside the file pane. Browser and Electron previews use an unsandboxed iframe because Chromium's built-in PDF viewer does not render inside a sandbox. The app does not decode PDFs as source text or send them to an external viewer. PDF links and other viewer actions can still leave the local machine, so treat documents and their links as untrusted content.
+
 ## Agent authentication
 
 Paseo wraps agent CLIs (Claude Code, Codex, OpenCode) but does not manage their authentication. Each agent provider handles its own credentials. Paseo never stores or transmits provider API keys. Agents run in your user context with your existing credentials.

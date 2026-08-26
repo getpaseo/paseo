@@ -19,6 +19,7 @@ import {
   duplicateExplorerEntry,
   getExplorerFileVersion,
   readExplorerFile,
+  readExplorerFileBytes,
   renameExplorerEntry,
   streamExplorerFile,
   writeExplorerFile,
@@ -207,6 +208,46 @@ describe("file explorer service", () => {
       expect(result.encoding).toBe("none");
       expect(result.content).toBeUndefined();
       expect(result.mimeType).toBe("application/octet-stream");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reads PDF files as binary with an application/pdf MIME type", async () => {
+    const root = await createTempDir("paseo-file-pdf-");
+
+    try {
+      const filePath = path.join(root, "guide.pdf");
+      const content = Buffer.from("%PDF-1.7\n%%EOF\n");
+      await writeFile(filePath, content);
+
+      const result = await readExplorerFile({
+        root,
+        relativePath: "guide.pdf",
+      });
+
+      expect(result.kind).toBe("binary");
+      expect(result.encoding).toBe("none");
+      expect(result.content).toBeUndefined();
+      expect(result.mimeType).toBe("application/pdf");
+
+      const bytesResult = await readExplorerFileBytes({
+        root,
+        relativePath: "guide.pdf",
+      });
+      expect(bytesResult.mimeType).toBe("application/pdf");
+      expect(Buffer.from(bytesResult.bytes)).toEqual(content);
+
+      const streamedChunks: Uint8Array[] = [];
+      await streamExplorerFile({ root, relativePath: "guide.pdf" }, async (stream) => {
+        expect(stream.kind).toBe("binary");
+        expect(stream.encoding).toBe("binary");
+        expect(stream.mimeType).toBe("application/pdf");
+        for await (const chunk of stream.chunks) {
+          streamedChunks.push(chunk);
+        }
+      });
+      expect(Buffer.concat(streamedChunks.map((chunk) => Buffer.from(chunk)))).toEqual(content);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

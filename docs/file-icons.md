@@ -63,7 +63,7 @@ cat node_modules/material-icon-theme/icons/ICON_NAME.svg
 
 ## Currently included icons
 
-53 unique icons covering these extensions:
+54 unique icons covering these extensions:
 
 | Extension(s)                               | Icon        |
 | ------------------------------------------ | ----------- |
@@ -94,6 +94,7 @@ cat node_modules/material-icon-theme/icons/ICON_NAME.svg
 | `lua`                                      | lua         |
 | `zig`                                      | zig         |
 | `nix`                                      | nix         |
+| `pdf`                                      | pdf         |
 | `php`                                      | php         |
 | `html`                                     | html        |
 | `css`                                      | css         |

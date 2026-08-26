@@ -1,11 +1,40 @@
 import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import type { LiveFileSnapshot } from "../live-file/model";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import type { AttachmentMetadata, AttachmentStore, SaveAttachmentInput } from "@/attachments/types";
+import { __setAttachmentStoreForTests } from "@/attachments/store";
 import {
+  createFilePanePreview,
   FilePreviewLifecycleModel,
   type FilePanePreview,
   type FilePreviewLifecycleSnapshot,
 } from "./model";
+
+function createRecordingAttachmentStore(savedSources: SaveAttachmentInput[]): AttachmentStore {
+  return {
+    storageType: "web-indexeddb",
+    async save(input) {
+      savedSources.push(input);
+      return {
+        id: input.id ?? "preview",
+        mimeType: input.mimeType ?? "application/octet-stream",
+        storageType: "web-indexeddb",
+        storageKey: input.id ?? "preview",
+        fileName: input.fileName ?? null,
+        byteSize: input.source.kind === "bytes" ? input.source.bytes.byteLength : null,
+        createdAt: 0,
+      } satisfies AttachmentMetadata;
+    },
+    async encodeBase64() {
+      return "";
+    },
+    async resolvePreviewUrl() {
+      return "blob:preview";
+    },
+    async delete() {},
+    async garbageCollect() {},
+  };
+}
 
 function previewFile(content: string) {
   return {
@@ -80,6 +109,41 @@ function source(
 }
 
 describe("FilePreviewLifecycleModel", () => {
+  afterEach(() => {
+    __setAttachmentStoreForTests(null);
+  });
+
+  it("keeps PDF bytes in a local attachment for inline rendering", async () => {
+    const savedSources: SaveAttachmentInput[] = [];
+    __setAttachmentStoreForTests(createRecordingAttachmentStore(savedSources));
+    const bytes = new TextEncoder().encode("%PDF-1.7\n%%EOF\n");
+
+    const preview = await createFilePanePreview({
+      bytes,
+      mime: "application/pdf",
+      size: bytes.byteLength,
+      path: "docs/guide.pdf",
+      kind: "binary",
+      modifiedAt: "2026-08-20T00:00:00.000Z",
+      revision: "pdf-revision",
+    });
+
+    expect(preview?.pdfAttachment).toMatchObject({
+      mimeType: "application/pdf",
+      fileName: "guide.pdf",
+      byteSize: bytes.byteLength,
+    });
+    expect(preview?.imageAttachment).toBeNull();
+    expect(savedSources).toEqual([
+      {
+        id: expect.any(String),
+        mimeType: "application/pdf",
+        fileName: "guide.pdf",
+        source: { kind: "bytes", bytes },
+      },
+    ]);
+  });
+
   it("represents pending raw reads, preparation, ready previews, unsupported files, and conversion failures", async () => {
     const first = deferred<FilePanePreview | null>();
     const second = deferred<FilePanePreview | null>();
@@ -89,6 +153,7 @@ describe("FilePreviewLifecycleModel", () => {
     const preview: FilePanePreview = {
       file: previewFile("preview"),
       imageAttachment: null,
+      pdfAttachment: null,
     };
 
     model.setSource(source("/workspace:file.ts", pending()));
@@ -135,11 +200,12 @@ describe("FilePreviewLifecycleModel", () => {
     const nextPreview: FilePanePreview = {
       file: previewFile("two"),
       imageAttachment: null,
+      pdfAttachment: null,
     };
 
     model.setSource(source("/workspace:file.ts", completed(file("one"))));
     model.setSource(source("/workspace:second.ts", completed(file("two", "second.ts"))));
-    first.resolve({ file: previewFile("one"), imageAttachment: null });
+    first.resolve({ file: previewFile("one"), imageAttachment: null, pdfAttachment: null });
     await Promise.resolve();
     expect(model.getSnapshot()).toEqual({ status: "preparing" });
 

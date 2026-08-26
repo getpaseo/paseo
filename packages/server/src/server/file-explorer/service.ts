@@ -123,6 +123,10 @@ const IMAGE_MIME_TYPES: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
+const KNOWN_BINARY_MIME_TYPES: Record<string, string> = {
+  ".pdf": "application/pdf",
+};
+
 interface ScopedPathParams {
   root: string;
   relativePath?: string;
@@ -266,6 +270,16 @@ export async function readExplorerFileBytes({
       };
     }
 
+    if (ext in KNOWN_BINARY_MIME_TYPES) {
+      return {
+        ...basePayload,
+        kind: "binary",
+        encoding: "binary",
+        bytes: buffer,
+        mimeType: KNOWN_BINARY_MIME_TYPES[ext],
+      };
+    }
+
     if (isLikelyBinary(buffer) || !isValidUtf8(buffer)) {
       return {
         ...basePayload,
@@ -305,7 +319,9 @@ export async function streamExplorerFile(
     const advertisedRevision = fileRevision(stats);
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
     const isImage = ext in IMAGE_MIME_TYPES;
-    const isBinary = isImage || (await isFileHandleBinary(handle, advertisedSize));
+    const knownBinaryMimeType = KNOWN_BINARY_MIME_TYPES[ext];
+    const isBinary =
+      isImage || Boolean(knownBinaryMimeType) || (await isFileHandleBinary(handle, advertisedSize));
     let kind: ExplorerFileKind = "text";
     let mimeType = textMimeTypeForExtension(ext);
     if (isImage) {
@@ -313,7 +329,7 @@ export async function streamExplorerFile(
       mimeType = IMAGE_MIME_TYPES[ext];
     } else if (isBinary) {
       kind = "binary";
-      mimeType = "application/octet-stream";
+      mimeType = knownBinaryMimeType ?? "application/octet-stream";
     }
 
     await consume({
@@ -549,10 +565,10 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
     }
 
     const ext = path.extname(filePath.resolvedPath).toLowerCase();
-    let mimeType = "application/octet-stream";
+    let mimeType = KNOWN_BINARY_MIME_TYPES[ext] ?? "application/octet-stream";
     if (ext in IMAGE_MIME_TYPES) {
       mimeType = IMAGE_MIME_TYPES[ext];
-    } else {
+    } else if (!(ext in KNOWN_BINARY_MIME_TYPES)) {
       const sample = Buffer.alloc(FILE_TYPE_SAMPLE_BYTES);
       const { bytesRead } = await handle.read(sample, 0, sample.length, 0);
       const chunk = bytesRead < sample.length ? sample.subarray(0, bytesRead) : sample;
