@@ -6,10 +6,15 @@ import type { PluginRpcContract } from "./rpc.js";
 export interface PluginTheme {
   readonly colors: {
     readonly surface0: string;
+    readonly surface1: string;
+    readonly surface2: string;
+    readonly border: string;
     readonly foreground: string;
     readonly foregroundMuted: string;
     readonly accent: string;
     readonly accentForeground: string;
+    readonly statusSuccess: string;
+    readonly statusWarning: string;
     readonly statusDanger: string;
   };
 }
