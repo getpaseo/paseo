@@ -560,6 +560,56 @@ export default function contribute(plugin: any) {
     await runtime.stopAll();
   });
 
+  it("delivers context.emit(eventName, data) to subscribeToEvents and strips it from the client bundle", async () => {
+    const directory = await createPlugin(
+      "ping-plugin",
+      `import { z } from "zod";
+import { defineRpc, type PluginContext } from "@getpaseo/plugin";
+
+const pingRpc = defineRpc({
+  name: "ping",
+  input: z.object({ value: z.number() }),
+  output: z.object({ ok: z.boolean() }),
+});
+
+export default function contribute(plugin: PluginContext) {
+  plugin.handle(pingRpc, async (input) => {
+    plugin.emit("pong", { echo: input.value, marker: "EMIT_PAYLOAD_MARKER" });
+    return { ok: true };
+  });
+  plugin.emit("boot", { phase: "contribute" });
+  return () => undefined;
+}`,
+    );
+    const runtime = createTestRuntime();
+    const received: Array<[string, string, unknown]> = [];
+    const unsubscribe = runtime.subscribeToEvents((pluginId, eventName, data) => {
+      received.push([pluginId, eventName, data]);
+    });
+
+    await runtime.startPlugin("ping-plugin", directory);
+
+    // The client bundle must never see an emit() call execute: it strips the whole
+    // statement the same way it strips handle() registrations from the client target.
+    expect(runtime.catalog()[0]?.clientBundle).not.toContain("EMIT_PAYLOAD_MARKER");
+
+    // Events emitted synchronously from contribute() arrive before the ready
+    // handshake completes — they must be delivered, not dropped.
+    expect(received).toEqual([["ping-plugin", "boot", { phase: "contribute" }]]);
+
+    await expect(runtime.invoke("ping-plugin", "ping", { value: 5 })).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(received).toEqual([
+      ["ping-plugin", "boot", { phase: "contribute" }],
+      ["ping-plugin", "pong", { echo: 5, marker: "EMIT_PAYLOAD_MARKER" }],
+    ]);
+
+    unsubscribe();
+    await runtime.stopAll();
+  });
+
   // COMPAT(plugin-sdk-scope): plugins scaffolded through 0.5.0-beta.1 import the unpublished
   // @paseo/plugin name. Drop with the specifiers in plugin-sdk-specifiers.ts.
   it("loads a plugin that imports the pre-rename @paseo/plugin specifier", async () => {

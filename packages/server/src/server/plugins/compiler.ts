@@ -74,7 +74,8 @@ interface SourceRange {
 }
 
 const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<string>> = {
-  client: new Set(["handle"]),
+  // handle and emit run only in the server subprocess.
+  client: new Set(["handle", "emit"]),
   server: new Set([
     "addSurface",
     "addSidebarItem",

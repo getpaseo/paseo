@@ -10,5 +10,6 @@ export type PluginProcessMessage =
   | { type: "result"; requestId: string; output: unknown }
   | { type: "error"; requestId: string; error: string }
   | { type: "fatal"; error: string }
+  | { type: "plugin_event"; eventName: string; data: unknown }
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }
   | { type: "paseo_close" };

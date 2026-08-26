@@ -62,6 +62,15 @@ function register(contract: PluginRpcContract, handler: RpcHandler): void {
   handlers.set(method, { contract: { ...contract, name: method }, handler });
 }
 
+const EVENT_NAME = /^[a-z][a-z0-9._-]*$/;
+
+function emitEvent(eventName: string, data: unknown): void {
+  if (!EVENT_NAME.test(eventName)) {
+    throw new Error(`Invalid plugin event name: ${eventName}`);
+  }
+  send({ type: "plugin_event", eventName, data });
+}
+
 const pluginAuthorRuntime = { defineAttachmentSource, defineRpc };
 
 function runtimeRequire(name: string): unknown {
@@ -79,7 +88,7 @@ function evaluateBundle(bundle: string): void {
   if (typeof setup !== "function") {
     throw new Error("Plugin server bundle must default export a function");
   }
-  const contributedCleanup = setup({ handle: register });
+  const contributedCleanup = setup({ handle: register, emit: emitEvent });
   if (typeof contributedCleanup !== "function") {
     throw new Error("Plugin contribution must return a cleanup function");
   }
