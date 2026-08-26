@@ -66,7 +66,7 @@ function createTestRuntime(
   dependencies: NonNullable<ConstructorParameters<typeof PluginRuntime>[1]> = {},
   logger = pino({ level: "silent" }),
 ): PluginRuntime {
-  return new PluginRuntime(logger, {
+  return new PluginRuntime(logger, "0.4.0", {
     ...dependencies,
     sessionHost: dependencies.sessionHost ?? {
       async attachPluginSocket(_pluginId, socket) {

@@ -204,7 +204,11 @@ export class PluginRuntime {
   private sessionHost: PluginPaseoSessionHost | null;
   private readonly listeners = new Set<(pluginId: string, error?: string) => void>();
 
-  constructor(logger: pino.Logger, dependencies: PluginRuntimeDependencies = {}) {
+  constructor(
+    logger: pino.Logger,
+    private readonly daemonVersion: string,
+    dependencies: PluginRuntimeDependencies = {},
+  ) {
     this.logger = logger.child({ module: "plugins" });
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
     this.sessionHost = dependencies.sessionHost ?? null;
@@ -363,6 +367,7 @@ export class PluginRuntime {
         void send(child, {
           type: "initialize",
           pluginId,
+          appVersion: this.daemonVersion,
           bundle: bundles.serverBundle,
         }).catch(fail);
       });
