@@ -419,6 +419,127 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     vi.useRealTimers();
   });
 
+  test("readHeadFile resolves a literal regular blob with bounded read-only Git commands", async () => {
+    const objectId = "0123456789abcdef0123456789abcdef01234567";
+    const runGitCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: `100644 blob ${objectId}\tpaseo.json\0`,
+        stderr: "",
+        truncated: false,
+        exitCode: 0,
+        signal: null,
+      })
+      .mockResolvedValueOnce({
+        stdout: '{"metadataGeneration":{}}\n',
+        stderr: "",
+        truncated: false,
+        exitCode: 0,
+        signal: null,
+      });
+    const service = createService({ runGitCommand });
+
+    await expect(
+      service.bindLegacy(REPO_CWD).readHeadFile("paseo.json", { maxBytes: 1_048_576 }),
+    ).resolves.toBe('{"metadataGeneration":{}}\n');
+    expect(runGitCommand).toHaveBeenNthCalledWith(
+      1,
+      [
+        "--no-pager",
+        "--no-replace-objects",
+        "ls-tree",
+        "--full-tree",
+        "--abbrev=64",
+        "-z",
+        "HEAD",
+        "--",
+        ":(top,literal)paseo.json",
+      ],
+      {
+        cwd: REPO_CWD,
+        envOverlay: { GIT_OPTIONAL_LOCKS: "0" },
+        maxOutputBytes: 1_024,
+      },
+    );
+    expect(runGitCommand).toHaveBeenNthCalledWith(
+      2,
+      ["--no-pager", "--no-replace-objects", "cat-file", "blob", objectId],
+      {
+        cwd: REPO_CWD,
+        envOverlay: { GIT_OPTIONAL_LOCKS: "0" },
+        maxOutputBytes: 1_048_576,
+      },
+    );
+
+    service.dispose();
+  });
+
+  test("readHeadFile returns null when the committed path is missing", async () => {
+    const missingGit = vi.fn(async () => ({
+      stdout: "",
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const missingService = createService({ runGitCommand: missingGit });
+    await expect(
+      missingService.bindLegacy(REPO_CWD).readHeadFile("paseo.json", { maxBytes: 1_024 }),
+    ).resolves.toBeNull();
+    missingService.dispose();
+  });
+
+  test.each([
+    ["symlink", "120000", "blob"],
+    ["tree", "040000", "tree"],
+    ["gitlink", "160000", "commit"],
+  ])("readHeadFile rejects a committed %s", async (_entryKind, mode, type) => {
+    const runGitCommand = vi.fn(async () => ({
+      stdout: `${mode} ${type} 0123456789abcdef0123456789abcdef01234567\tpaseo.json\0`,
+      stderr: "",
+      truncated: false,
+      exitCode: 0,
+      signal: null,
+    }));
+    const service = createService({ runGitCommand });
+    await expect(
+      service.bindLegacy(REPO_CWD).readHeadFile("paseo.json", { maxBytes: 1_024 }),
+    ).rejects.toThrow("Committed path is not a regular file: paseo.json");
+    service.dispose();
+  });
+
+  test("readHeadFile rejects truncated content and unsafe paths", async () => {
+    const objectId = "0123456789abcdef0123456789abcdef01234567";
+    const runGitCommand = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: `100755 blob ${objectId}\tpaseo.json\0`,
+        stderr: "",
+        truncated: false,
+        exitCode: 0,
+        signal: null,
+      })
+      .mockResolvedValueOnce({
+        stdout: "x".repeat(16),
+        stderr: "",
+        truncated: true,
+        exitCode: null,
+        signal: "SIGKILL",
+      });
+    const service = createService({ runGitCommand });
+    const workspace = service.bindLegacy(REPO_CWD);
+
+    await expect(workspace.readHeadFile("paseo.json", { maxBytes: 16 })).rejects.toThrow(
+      "Committed file exceeds 16 bytes: paseo.json",
+    );
+    await expect(workspace.readHeadFile("../paseo.json", { maxBytes: 16 })).rejects.toThrow(
+      "Committed file path must be a normalized repository-relative path",
+    );
+    expect(runGitCommand).toHaveBeenCalledTimes(2);
+
+    service.dispose();
+  });
+
   test("getCheckout surfaces an unexpected Git read failure", async () => {
     const service = createService({
       getCheckoutStatus: vi.fn(async () => {

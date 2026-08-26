@@ -555,6 +555,40 @@ test("selected workspace Git reads stay inside its command runtime", async () =>
   expect(JSON.stringify(diff)).not.toContain("host edit");
 }, 20_000);
 
+test("selected workspace reads committed files inside its command runtime", async () => {
+  const { hostDecoy, runtimeRepository, selectedGit } = await createCommandRuntimeGitFixture({
+    relativeCwd: "packages/app",
+  });
+  await writeFile(path.join(runtimeRepository, "paseo.json"), '{"source":"runtime"}\n');
+  git(runtimeRepository, "add", "paseo.json");
+  git(runtimeRepository, "commit", "-m", "add runtime config");
+  await writeFile(path.join(runtimeRepository, "paseo.json"), '{"source":"replacement"}\n');
+  git(runtimeRepository, "add", "paseo.json");
+  git(runtimeRepository, "commit", "-m", "create replacement commit");
+  const replacementCommit = git(runtimeRepository, "rev-parse", "HEAD");
+  git(runtimeRepository, "reset", "--hard", "HEAD~");
+  git(runtimeRepository, "replace", "HEAD", replacementCommit);
+  await writeFile(path.join(runtimeRepository, "paseo.json"), '{"source":"uncommitted"}\n');
+  await writeFile(path.join(hostDecoy, "paseo.json"), '{"source":"host"}\n');
+  git(hostDecoy, "add", "paseo.json");
+  git(hostDecoy, "commit", "-m", "add host config");
+
+  await expect(selectedGit.readHeadFile("paseo.json", { maxBytes: 1_024 })).resolves.toBe(
+    '{"source":"runtime"}\n',
+  );
+});
+
+test("legacy workspace reads committed files through host Git", async () => {
+  const { hostDecoy, service } = await createCommandRuntimeGitFixture();
+  await writeFile(path.join(hostDecoy, "paseo.json"), '{"source":"host"}\n');
+  git(hostDecoy, "add", "paseo.json");
+  git(hostDecoy, "commit", "-m", "add host config");
+
+  await expect(
+    service.bindLegacy(hostDecoy).readHeadFile("paseo.json", { maxBytes: 1_024 }),
+  ).resolves.toBe('{"source":"host"}\n');
+});
+
 test("selected workspace Git routes native mutations through its command runtime", async () => {
   const { root, hostDecoy, runtimeRepository, selectedGit } =
     await createCommandRuntimeGitFixture();
@@ -858,10 +892,17 @@ test("selected workspaces with the same public cwd keep mutations and caches iso
   expect(cachedB.git.currentBranch).toBe("runtime-b-next");
 }, 30_000);
 
-async function createCommandRuntimeGitFixture() {
+async function createCommandRuntimeGitFixture(options?: { relativeCwd?: string }) {
   const root = await mkdtemp(path.join(tmpdir(), "paseo-runtime-git-"));
   cleanupRoots.push(root);
   const runtimeRepository = await createRepository(path.join(root, "runtime-repository"));
+  if (options?.relativeCwd) {
+    const selectedDirectory = path.join(runtimeRepository, options.relativeCwd);
+    await mkdir(selectedDirectory, { recursive: true });
+    await writeFile(path.join(selectedDirectory, ".gitkeep"), "");
+    git(runtimeRepository, "add", ".");
+    git(runtimeRepository, "commit", "-m", "add selected subdirectory");
+  }
   const hostDecoy = await createRepository(path.join(root, "host-decoy"));
   const stateDirectory = path.join(root, "runtime-state");
   await mkdir(stateDirectory);
@@ -894,7 +935,10 @@ async function createCommandRuntimeGitFixture() {
         id: "runtime-git-project",
         source: { kind: "host-directory", path: runtimeRepository },
       },
-      placement: { kind: "existing" },
+      placement: {
+        kind: "existing",
+        ...(options?.relativeCwd ? { relativeCwd: options.relativeCwd } : {}),
+      },
     });
   await recreate();
   const service = new WorkspaceGitServiceImpl({
@@ -909,6 +953,7 @@ async function createCommandRuntimeGitFixture() {
     hostDecoy,
     recreate,
     runtimeRepository,
+    service,
     selectedGit,
     workspaceId,
     workspaceRuntime,

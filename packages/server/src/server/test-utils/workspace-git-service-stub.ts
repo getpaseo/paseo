@@ -178,6 +178,7 @@ export function bindWorkspaceGitService(
     resolveRepoRoot: (options) => service.resolveRepoRoot(cwd, options),
     resolveDefaultBranch: (options) => service.resolveDefaultBranch(cwd, options),
     resolveRepoRemoteUrl: (options) => service.resolveRepoRemoteUrl(cwd, options),
+    readHeadFile: async () => null,
     commit: (options) => service.commit(cwd, options),
     discardChanges: (paths) => service.discardChanges(cwd, paths),
     createBranch: (options) => service.createBranch(cwd, options),

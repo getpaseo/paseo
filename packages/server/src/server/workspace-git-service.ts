@@ -126,6 +126,48 @@ const WORKSPACE_GIT_AUXILIARY_CACHE_MAX = 256;
 const RUNTIME_FORGE_COMMAND_TIMEOUT_MS = 30_000;
 const RUNTIME_FORGE_OUTPUT_LIMIT = 10 * 1024 * 1024;
 
+interface HeadTreeEntry {
+  objectId: string;
+}
+
+function validateHeadFileRead(path: string, maxBytes: number): void {
+  const segments = path.split("/");
+  const hasInvalidSegment = segments.some(
+    (segment) => segment.length === 0 || segment === "." || segment === "..",
+  );
+  if (path.includes("\0") || path.includes("\\") || path.startsWith("/") || hasInvalidSegment) {
+    throw new Error("Committed file path must be a normalized repository-relative path");
+  }
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new Error("Committed file byte limit must be a positive integer");
+  }
+}
+
+function parseHeadTreeEntry(stdout: string, expectedPath: string): HeadTreeEntry {
+  if (!stdout.endsWith("\0")) {
+    throw new Error(`Git returned a malformed tree entry: ${expectedPath}`);
+  }
+  const records = stdout.slice(0, -1).split("\0");
+  if (records.length !== 1) {
+    throw new Error(`Git returned multiple tree entries: ${expectedPath}`);
+  }
+  const separator = records[0]?.indexOf("\t") ?? -1;
+  if (separator < 0) {
+    throw new Error(`Git returned a malformed tree entry: ${expectedPath}`);
+  }
+  const header = records[0]!.slice(0, separator);
+  const returnedPath = records[0]!.slice(separator + 1);
+  const match = /^(\d{6}) (\S+) ([0-9a-f]{40}|[0-9a-f]{64})$/.exec(header);
+  if (!match || returnedPath !== expectedPath) {
+    throw new Error(`Git returned an unexpected tree entry: ${expectedPath}`);
+  }
+  const [, mode, type, objectId] = match;
+  if (type !== "blob" || (mode !== "100644" && mode !== "100755")) {
+    throw new Error(`Committed path is not a regular file: ${expectedPath}`);
+  }
+  return { objectId: objectId! };
+}
+
 class RuntimeForgeCommandError extends Error {
   readonly code: string | number | null;
   readonly killed: boolean;
@@ -361,6 +403,7 @@ export interface WorkspaceGitWorkspace {
   resolveRepoRoot(options?: WorkspaceGitReadOptions): Promise<string>;
   resolveDefaultBranch(options?: WorkspaceGitReadOptions): Promise<string>;
   resolveRepoRemoteUrl(options?: WorkspaceGitReadOptions): Promise<string | null>;
+  readHeadFile(path: string, options: { maxBytes: number }): Promise<string | null>;
   commit(options: { message: string; addAll: boolean }): Promise<void>;
   discardChanges(paths: string[]): Promise<void>;
   createBranch(options: { branch: string; baseRef: string }): Promise<void>;
@@ -875,6 +918,7 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       resolveRepoRoot: (options) => service.resolveRepoRoot(cwd, options),
       resolveDefaultBranch: (options) => service.resolveDefaultBranch(cwd, options),
       resolveRepoRemoteUrl: (options) => service.resolveRepoRemoteUrl(cwd, options),
+      readHeadFile: (path, options) => service.readHeadFile(cwd, path, options),
       commit: (options) => service.commit(cwd, options),
       discardChanges: (paths) => service.discardChanges(cwd, paths),
       createBranch: (options) => service.createBranch(cwd, options),
@@ -1106,6 +1150,55 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         }),
       ),
     );
+  }
+
+  async readHeadFile(
+    cwd: string,
+    path: string,
+    options: { maxBytes: number },
+  ): Promise<string | null> {
+    this.assertNotDisposed();
+    const normalizedCwd = this.normalizeCwd(cwd);
+    validateHeadFileRead(path, options.maxBytes);
+    return this.withWorkspaceRuntime(normalizedCwd, async () => {
+      const pathspec = `:(top,literal)${path}`;
+      const treeResult = await this.deps.runGitCommand(
+        [
+          "--no-pager",
+          "--no-replace-objects",
+          "ls-tree",
+          "--full-tree",
+          "--abbrev=64",
+          "-z",
+          "HEAD",
+          "--",
+          pathspec,
+        ],
+        {
+          cwd: normalizedCwd,
+          envOverlay: READ_ONLY_GIT_ENV,
+          maxOutputBytes: Math.max(1_024, Buffer.byteLength(path) + 128),
+        },
+      );
+      if (treeResult.truncated) {
+        throw new Error(`Git tree entry exceeded the output limit: ${path}`);
+      }
+      if (treeResult.stdout.length === 0) return null;
+
+      const entry = parseHeadTreeEntry(treeResult.stdout, path);
+      const blobResult = await this.deps.runGitCommand(
+        ["--no-pager", "--no-replace-objects", "cat-file", "blob", entry.objectId],
+        {
+          cwd: normalizedCwd,
+          envOverlay: READ_ONLY_GIT_ENV,
+          maxOutputBytes: options.maxBytes,
+        },
+      );
+      if (blobResult.truncated || Buffer.byteLength(blobResult.stdout) > options.maxBytes) {
+        throw new Error(`Committed file exceeds ${options.maxBytes} bytes: ${path}`);
+      }
+      return blobResult.stdout;
+    });
   }
 
   async commit(cwd: string, options: { message: string; addAll: boolean }): Promise<void> {
