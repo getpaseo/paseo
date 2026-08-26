@@ -23,6 +23,7 @@ interface GitActionsSplitButtonProps {
   gitActions: GitActions;
   hideLabels?: boolean;
   menuOnly?: boolean;
+  onMenuOpen?: () => void;
 }
 
 interface GitActionMenuItemProps {
@@ -79,6 +80,7 @@ export function GitActionsSplitButton({
   gitActions,
   hideLabels,
   menuOnly = false,
+  onMenuOpen,
 }: GitActionsSplitButtonProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -137,6 +139,14 @@ export function GitActionsSplitButton({
     ],
     [gitActions.menu, gitActions.primary, gitActions.secondary],
   );
+  const handleMenuOpenChange = useCallback(
+    (open: boolean) => {
+      if (open) {
+        onMenuOpen?.();
+      }
+    },
+    [onMenuOpen],
+  );
 
   if (menuOnly) {
     if (menuOnlyActions.length === 0) {
@@ -144,7 +154,7 @@ export function GitActionsSplitButton({
     }
 
     return (
-      <DropdownMenu>
+      <DropdownMenu onOpenChange={handleMenuOpenChange}>
         <DropdownMenuTrigger
           testID="changes-actions-menu-trigger"
           style={menuOnlyTriggerStyle}
@@ -210,7 +220,7 @@ export function GitActionsSplitButton({
             )}
           </Pressable>
           {gitActions.secondary.length > 0 ? (
-            <DropdownMenu>
+            <DropdownMenu onOpenChange={handleMenuOpenChange}>
               <DropdownMenuTrigger
                 testID="changes-primary-cta-caret"
                 style={caretTriggerStyle}
@@ -242,7 +252,7 @@ export function GitActionsSplitButton({
         </View>
       ) : null}
       {gitActions.menu.length > 0 ? (
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={handleMenuOpenChange}>
           <DropdownMenuTrigger
             testID="changes-overflow-menu"
             hitSlop={8}

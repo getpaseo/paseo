@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import pino from "pino";
 import {
   type CheckoutDiffSubscriber,
@@ -200,6 +200,10 @@ function createGitSnapshot(
     },
     forge: { featuresEnabled: false, pullRequest: null, error: null },
   };
+}
+
+async function createMainGitSnapshot(cwd: string): Promise<WorkspaceGitRuntimeSnapshot> {
+  return createGitSnapshot(cwd, "main");
 }
 
 describe("CheckoutSession", () => {
@@ -1413,8 +1417,9 @@ describe("CheckoutSession", () => {
 
   describe("pr status", () => {
     it("builds a pr status response from the git snapshot", async () => {
+      const getSnapshot = vi.fn(createMainGitSnapshot);
       const { checkout, emitted } = makeCheckoutSession({
-        git: { getSnapshot: async (cwd) => createGitSnapshot(cwd, "main") },
+        git: { getSnapshot },
       });
 
       await checkout.handleCheckoutPrStatusRequest({
@@ -1429,6 +1434,11 @@ describe("CheckoutSession", () => {
           payload: expect.objectContaining({ cwd: "/repo", requestId: "ps1" }),
         },
       ]);
+      expect(getSnapshot).toHaveBeenCalledWith("/repo", {
+        force: true,
+        includeForge: true,
+        reason: "pr-status",
+      });
     });
 
     it("reports non-auth status errors as errors instead of sign-in setup", async () => {

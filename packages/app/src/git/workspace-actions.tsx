@@ -8,11 +8,11 @@ interface WorkspaceActionsProps {
 }
 
 export function WorkspaceActions({ serverId, cwd }: WorkspaceActionsProps) {
-  const { gitActions } = useGitActions({
+  const { gitActions, refreshPrStatus } = useGitActions({
     serverId,
     cwd,
     icons: GIT_ACTION_ICONS,
   });
 
-  return <GitActionsSplitButton gitActions={gitActions} />;
+  return <GitActionsSplitButton gitActions={gitActions} onMenuOpen={refreshPrStatus} />;
 }

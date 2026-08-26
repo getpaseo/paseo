@@ -1095,7 +1095,11 @@ export class CheckoutSession {
     const { cwd, requestId } = msg;
 
     try {
-      const snapshot = await this.workspaceGitService.getSnapshot(cwd);
+      const snapshot = await this.workspaceGitService.getSnapshot(cwd, {
+        force: true,
+        includeForge: true,
+        reason: "pr-status",
+      });
       this.host.emit({
         type: "checkout_pr_status_response",
         payload: buildCheckoutPrStatusPayloadFromSnapshot({

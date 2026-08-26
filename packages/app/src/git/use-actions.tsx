@@ -205,6 +205,7 @@ interface UseGitActionsResult {
   gitActions: GitActions;
   branchLabel: string;
   isGit: boolean;
+  refreshPrStatus: () => void;
 }
 
 interface UseWorkspaceScreenArchiveControllerInput {
@@ -331,11 +332,15 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     status: prStatus,
     githubFeaturesEnabled,
     forge,
+    refetch: refetchPrStatus,
   } = useCheckoutPrStatusQuery({
     serverId,
     cwd,
     enabled: isGit,
   });
+  const refreshPrStatus = useCallback(() => {
+    void refetchPrStatus();
+  }, [refetchPrStatus]);
   const prIcon = useMemo(() => renderForgePrIcon(forge), [forge]);
   const baseRefLabel = useMemo(
     () => formatBaseRefLabel(baseRef, t("workspace.git.diff.base")),
@@ -865,7 +870,7 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     [gitActionsInput, baseRefLabel, hasPullRequest, forge, t],
   );
 
-  return { gitActions, branchLabel, isGit };
+  return { gitActions, branchLabel, isGit, refreshPrStatus };
 }
 
 function translateGitActions(

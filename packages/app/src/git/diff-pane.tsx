@@ -468,6 +468,7 @@ interface ChangesRepositoryToolbarModel {
   branchName: string | null;
   cwd: string;
   gitActions: GitActions | null;
+  onRefreshPrStatus: (() => void) | null;
   pullRequest: ChangesPullRequestLinkModel | null;
   serverId: string;
   workspaceId?: string | null;
@@ -498,6 +499,7 @@ interface BuildChangesHeaderModelInput {
   gitActions: GitActions;
   mode: ChangesToolbarMode;
   onOpenPullRequest: () => void;
+  onRefreshPrStatus: () => void;
   onSelectBase: () => void;
   onSelectUncommitted: () => void;
   pullRequest: PrHint | null;
@@ -515,6 +517,7 @@ function buildChangesHeaderModel(input: BuildChangesHeaderModelInput): {
       branchName: input.branchName,
       cwd: input.cwd,
       gitActions: input.compact ? input.gitActions : null,
+      onRefreshPrStatus: input.compact ? input.onRefreshPrStatus : null,
       pullRequest: input.pullRequest
         ? { ...input.pullRequest, onOpen: input.onOpenPullRequest }
         : null,
@@ -645,7 +648,13 @@ function ChangesRepositoryToolbar({
             <ChangesPullRequestExternalLink compact={compact} model={model.pullRequest} />
           </>
         ) : null}
-        {model.gitActions ? <GitActionsSplitButton gitActions={model.gitActions} menuOnly /> : null}
+        {model.gitActions ? (
+          <GitActionsSplitButton
+            gitActions={model.gitActions}
+            menuOnly
+            onMenuOpen={model.onRefreshPrStatus ?? undefined}
+          />
+        ) : null}
       </ChangesToolbarTrailing>
     </ChangesToolbarRow>
   );
@@ -1880,7 +1889,7 @@ export function ChangesSurface({
     () => computeBaseRefLabel(baseRef, t("workspace.git.diff.base")),
     [baseRef, t],
   );
-  const { gitActions, branchLabel } = useGitActions({
+  const { gitActions, branchLabel, refreshPrStatus } = useGitActions({
     serverId,
     cwd,
     icons: GIT_ACTION_ICONS,
@@ -2003,6 +2012,7 @@ export function ChangesSurface({
         gitActions,
         mode: toolbarMode,
         onOpenPullRequest: handleOpenPullRequest,
+        onRefreshPrStatus: refreshPrStatus,
         onSelectBase: handleSelectBase,
         onSelectUncommitted: handleSelectUncommitted,
         pullRequest: selectPrHintFromStatus(pullRequestStatus, forge),
@@ -2022,6 +2032,7 @@ export function ChangesSurface({
       isMobile,
       forge,
       pullRequestStatus,
+      refreshPrStatus,
       selectedDiffStat,
       serverId,
       toolbarMode,
