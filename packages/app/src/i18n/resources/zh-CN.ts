@@ -585,7 +585,7 @@ export const zhCN: TranslationResources = {
         closeOthers: "关闭其他标签",
         moveToMain: "移至主面板",
         reloadAgent: "重新加载 Agent",
-        reloadAgentTooltip: "重新加载 Agent 以更新 skills、MCPs 或登录状态。",
+        reloadAgentTooltip: "重新加载 Agent 以更新 skills、MCP 服务器或登录状态。",
         close: "关闭",
         renameTerminal: "重命名 Terminal",
         renameAgent: "重命名 Agent",
@@ -1802,6 +1802,27 @@ export const zhCN: TranslationResources = {
   },
   sidebarCallout: {
     dismiss: "关闭",
+  },
+  mcpServers: {
+    agentNotRunning: "代理未在运行",
+    source: {
+      configured: "已配置的服务器。此代理的提供方不会报告它们是否已连接。",
+      startup: "为会话启动时的状态，之后可能已变化。",
+    },
+    title: "MCP 服务器",
+    open: "MCP 服务器",
+    refresh: "刷新 MCP 服务器",
+    loading: "正在检查 MCP 服务器…",
+    empty: "没有 MCP 服务器",
+    status: {
+      connected: "已连接",
+      configuredRow: "已配置；未报告连接状态",
+      connecting: "连接中",
+      needsAuth: "需要授权",
+      failed: "失败",
+      disabled: "已禁用",
+      unknown: "未知",
+    },
   },
   contextWindow: {
     title: "上下文窗口",

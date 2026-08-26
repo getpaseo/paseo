@@ -137,6 +137,7 @@ function agent(id: string, workspaceId = "workspace-1", cwd = "/repo/paseo") {
           supportsSessionPersistence: true,
           supportsDynamicModes: true,
           supportsMcpServers: true,
+          supportsMcpStatus: true,
           supportsReasoningStream: true,
           supportsToolInvocations: true,
         },
@@ -1083,5 +1084,25 @@ describe("ReplicaCache", () => {
     await replicaCache.flush();
 
     expect(cleanups).toBe(1);
+  });
+
+  it("round-trips optional capabilities so a cached agent keeps its controls", async () => {
+    const storage = new MemoryStorage();
+    const writer = new ReplicaCache(storage);
+    writer.setHosts([SERVER_ID]);
+    seedSession();
+    await writer.flush();
+    writer.setHosts([]);
+
+    useSessionStore.getState().clearSession(SERVER_ID);
+    const reader = new ReplicaCache(storage);
+    reader.setHosts([SERVER_ID]);
+    await reader.restore();
+
+    // Dropped here, the MCP panel would stay hidden on a cached agent until a live
+    // snapshot arrived — the flag is absent-or-true, so it cannot be defaulted back.
+    const restored = useSessionStore.getState().sessions[SERVER_ID]?.agents?.get("agent-1");
+    expect(restored?.capabilities.supportsMcpStatus).toBe(true);
+    reader.setHosts([]);
   });
 });

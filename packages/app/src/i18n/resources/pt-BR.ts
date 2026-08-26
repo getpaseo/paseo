@@ -589,7 +589,8 @@ export const ptBR: TranslationResources = {
         closeOthers: "Fechar outras abas",
         moveToMain: "Mover para o painel principal",
         reloadAgent: "Recarregar agente",
-        reloadAgentTooltip: "Recarregue o agente para atualizar skills, MCPs ou status de login.",
+        reloadAgentTooltip:
+          "Recarregue o agente para atualizar skills, servidores MCP ou status de login.",
         close: "Fechar",
         renameTerminal: "Renomear terminal",
         renameAgent: "Renomear agente",
@@ -1855,6 +1856,28 @@ export const ptBR: TranslationResources = {
   },
   sidebarCallout: {
     dismiss: "Dispensar",
+  },
+  mcpServers: {
+    agentNotRunning: "O agente não está em execução",
+    source: {
+      configured:
+        "Servidores configurados. O provedor deste agente não informa se eles estão conectados.",
+      startup: "Informado no início da sessão; as conexões podem ter mudado desde então.",
+    },
+    title: "Servidores MCP",
+    open: "Servidores MCP",
+    refresh: "Atualizar servidores MCP",
+    loading: "Verificando servidores MCP…",
+    empty: "Nenhum servidor MCP",
+    status: {
+      connected: "Conectado",
+      configuredRow: "Configurado; conexão não informada",
+      connecting: "Conectando",
+      needsAuth: "Requer autenticação",
+      failed: "Falhou",
+      disabled: "Desativado",
+      unknown: "Desconhecido",
+    },
   },
   contextWindow: {
     title: "Janela de contexto",

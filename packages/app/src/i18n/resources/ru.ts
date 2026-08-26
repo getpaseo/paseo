@@ -1855,6 +1855,27 @@ export const ru: TranslationResources = {
   sidebarCallout: {
     dismiss: "Закрыть",
   },
+  mcpServers: {
+    agentNotRunning: "Агент не запущен",
+    source: {
+      configured: "Настроенные серверы. Провайдер этого агента не сообщает, подключились ли они.",
+      startup: "Данные на момент запуска сессии; с тех пор подключения могли измениться.",
+    },
+    title: "Серверы MCP",
+    open: "Серверы MCP",
+    refresh: "Обновить серверы MCP",
+    loading: "Проверка серверов MCP…",
+    empty: "Нет серверов MCP",
+    status: {
+      connected: "Подключено",
+      configuredRow: "Настроено; подключение не сообщается",
+      connecting: "Подключение",
+      needsAuth: "Нужна авторизация",
+      failed: "Ошибка",
+      disabled: "Отключён",
+      unknown: "Неизвестно",
+    },
+  },
   contextWindow: {
     title: "Контекстное окно",
     used: "Использовано: {{percentage}}%",

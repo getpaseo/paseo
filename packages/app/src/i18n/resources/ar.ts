@@ -585,7 +585,8 @@ export const ar: TranslationResources = {
         closeOthers: "أغلق علامات التبويب الأخرى",
         moveToMain: "Move to main panel",
         reloadAgent: "إعادة تحميل الوكيل",
-        reloadAgentTooltip: "قم بإعادة تحميل الوكيل لتحديث المهارات أو MCPs أو حالة تسجيل الدخول.",
+        reloadAgentTooltip:
+          "قم بإعادة تحميل الوكيل لتحديث المهارات أو خوادم MCP أو حالة تسجيل الدخول.",
         close: "يغلق",
         renameTerminal: "إعادة تسمية المحطة",
         renameAgent: "إعادة تسمية الوكيل",
@@ -1823,6 +1824,27 @@ export const ar: TranslationResources = {
   },
   sidebarCallout: {
     dismiss: "رفض",
+  },
+  mcpServers: {
+    agentNotRunning: "الوكيل ليس قيد التشغيل",
+    source: {
+      configured: "خوادم مهيّأة. مزوّد هذا الوكيل لا يبلّغ عمّا إذا كانت قد اتّصلت.",
+      startup: "مُبلّغ عند بدء الجلسة؛ وقد تكون الاتّصالات قد تغيّرت.",
+    },
+    title: "خوادم MCP",
+    open: "خوادم MCP",
+    refresh: "تحديث خوادم MCP",
+    loading: "جارٍ فحص خوادم MCP…",
+    empty: "لا توجد خوادم MCP",
+    status: {
+      connected: "متّصل",
+      configuredRow: "مهيّأ; لم يُبلّغ عن الاتّصال",
+      connecting: "جارٍ الاتصال",
+      needsAuth: "يتطلب مصادقة",
+      failed: "فشل",
+      disabled: "معطّل",
+      unknown: "غير معروف",
+    },
   },
   contextWindow: {
     title: "نافذة السياق",

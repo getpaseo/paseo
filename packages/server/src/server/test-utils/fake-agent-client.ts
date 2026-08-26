@@ -17,6 +17,8 @@ import type {
   AgentSession,
   AgentSessionConfig,
   AgentStreamEvent,
+  AgentMcpReport,
+  AgentMcpServer,
   AgentSlashCommand,
   AgentUsage,
   FetchCatalogOptions,
@@ -55,6 +57,10 @@ interface FakeAgentSessionOptions {
   providerName: string;
   config: AgentSessionConfig;
   supportsMcpServers?: boolean;
+  /** When set, the session reports MCP status and answers with exactly this list. */
+  mcpServerStatus?: AgentMcpServer[];
+  /** Called on every provider-level MCP status read, for asserting cache behaviour. */
+  onListMcpServers?: () => void;
   sessionId?: string;
   memoryMarker?: string | null;
   closeSession?: () => Promise<void>;
@@ -65,6 +71,8 @@ export interface TestAgentClientOptions {
   closeSession?: () => Promise<void>;
   onStartTurn?: (prompt: AgentPromptInput) => void;
   supportsMcpServers?: boolean;
+  mcpServerStatus?: AgentMcpServer[];
+  onListMcpServers?: () => void;
 }
 
 function createDeferred<T>(): Deferred<T> {
@@ -338,11 +346,26 @@ class FakeAgentSession implements AgentSession {
   private readonly closeSession: (() => Promise<void>) | undefined;
   private readonly onStartTurn: ((prompt: AgentPromptInput) => void) | undefined;
 
+  /**
+   * Assigned only when the test asked for MCP status, so the daemon's
+   * method-presence check sees the same shape a provider without a source has.
+   */
+  listMcpServers: (() => Promise<AgentMcpReport>) | undefined;
+
   constructor(options: FakeAgentSessionOptions) {
     this.capabilities = {
       ...TEST_CAPABILITIES,
       supportsMcpServers: options.supportsMcpServers === true,
+      ...(options.mcpServerStatus ? { supportsMcpStatus: true } : {}),
     };
+    const mcpServerStatus = options.mcpServerStatus;
+    const onListMcpServers = options.onListMcpServers;
+    this.listMcpServers = mcpServerStatus
+      ? async () => {
+          onListMcpServers?.();
+          return { servers: mcpServerStatus, source: "live" as const };
+        }
+      : undefined;
     this.providerName = options.providerName;
     this.config = options.config;
     this.id = options.sessionId ?? randomUUID();
@@ -1206,6 +1229,8 @@ class FakeAgentClient implements AgentClient {
       providerName: this.provider,
       config: { ...config },
       supportsMcpServers: this.options.supportsMcpServers,
+      mcpServerStatus: this.options.mcpServerStatus,
+      onListMcpServers: this.options.onListMcpServers,
       closeSession: this.options.closeSession,
       onStartTurn: this.options.onStartTurn,
     });
@@ -1229,6 +1254,8 @@ class FakeAgentClient implements AgentClient {
       providerName: this.provider,
       config: cfg,
       supportsMcpServers: this.options.supportsMcpServers,
+      mcpServerStatus: this.options.mcpServerStatus,
+      onListMcpServers: this.options.onListMcpServers,
       sessionId: handle.sessionId,
       memoryMarker: typeof marker === "string" ? marker : null,
       closeSession: this.options.closeSession,
