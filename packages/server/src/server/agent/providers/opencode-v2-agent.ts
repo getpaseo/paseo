@@ -1,5 +1,10 @@
 import type { SessionMessageInfo } from "@opencode-ai/client";
-import { ClientError, type SessionInfo, type V2Event } from "@opencode-ai/client";
+import {
+  ClientError,
+  type AgentListOutput,
+  type SessionInfo,
+  type V2Event,
+} from "@opencode-ai/client";
 import { isDeepStrictEqual } from "node:util";
 import type { Logger } from "pino";
 
@@ -146,6 +151,18 @@ const EMPTY_OPENCODE_V2_EVENT_SOURCE: OpenCodeV2EventSource = {
  */
 const OPENCODE_V2_MODE_REFRESH_ATTEMPTS = 5;
 const OPENCODE_V2_MODE_REFRESH_RETRY_DELAY_MS = 100;
+
+/**
+ * Cold-start catalog mode budget. The freshly spawned opencode2 server prints
+ * its readiness line before /api/agent is fully loaded (agents appear ~500ms
+ * later), so a catalog fetch that runs immediately after readiness can observe
+ * an empty agent list. That leaves the provider snapshot with no modes, which
+ * rejects an explicit modeId at create time (e.g. the ui-action-stress e2e
+ * creates with modeId "build"). Retry with a bounded poll until agents appear,
+ * mirroring the credential-DB seeding poll in server-manager.ts.
+ */
+const OPENCODE_V2_CATALOG_MODE_RETRY_ATTEMPTS = 8;
+const OPENCODE_V2_CATALOG_MODE_RETRY_DELAY_MS = 250;
 
 const OPENCODE_V2_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
 
@@ -970,10 +987,23 @@ export class OpenCodeV2AgentClient implements AgentClient {
     location: { directory: string },
     context?: ProviderRefreshContext,
   ): Promise<AgentMode[]> {
-    const response = await runProviderRefreshActivity(context, "agent.list", () =>
-      raceProviderRefreshAbort(context?.signal, client.agent.list({ location })),
-    );
-    const discovered = response.data
+    // The freshly spawned opencode2 server can print its readiness line before
+    // /api/agent is loaded; a cold-start catalog fetch can then observe an
+    // empty agent list, leaving the provider snapshot with no modes (which
+    // rejects an explicit modeId at create time). Retry with a bounded poll so
+    // the snapshot carries real modes. A genuinely empty agent config still
+    // resolves to [] after the budget.
+    let response: AgentListOutput | undefined;
+    for (let attempt = 0; attempt < OPENCODE_V2_CATALOG_MODE_RETRY_ATTEMPTS; attempt += 1) {
+      response = await runProviderRefreshActivity(context, "agent.list", () =>
+        raceProviderRefreshAbort(context?.signal, client.agent.list({ location })),
+      );
+      if (response.data.length > 0 || attempt >= OPENCODE_V2_CATALOG_MODE_RETRY_ATTEMPTS - 1) {
+        break;
+      }
+      await delayOpenCodeV2ModeRefresh(OPENCODE_V2_CATALOG_MODE_RETRY_DELAY_MS);
+    }
+    const discovered = (response?.data ?? [])
       .filter(isSelectableOpenCodeV2Agent)
       .map(mapOpenCodeV2AgentToMode);
     return sortOpenCodeV2Modes(discovered);

@@ -106,6 +106,57 @@ function longRunningPrompt(sleepSeconds: number, token: string): string {
   ].join(" ");
 }
 
+/**
+ * Agent config for the UI action stress scenarios. OpenCode 2's default ask
+ * rules prompt on shell (the overlap scenario drives `sleep N` via Bash), so
+ * the opencode-v2 agent is created with auto_accept (tool-only auto-approval)
+ * so the scenario completes unattended. Forms are never auto-approved. The
+ * v1 opencode scenario is unchanged.
+ */
+function getUiStressAgentConfig(provider: RealProvider) {
+  const base = getRealProviderConfig(provider);
+  if (provider !== "opencode-v2") {
+    return base;
+  }
+  return {
+    ...base,
+    featureValues: { auto_accept: true },
+  };
+}
+
+/**
+ * Create the agent for a UI action stress scenario. The opencode2 binary can
+ * briefly report the provider unavailable right after a daemon spawn
+ * (cold-start; see library/opencode-v2-mcp.md gotcha #5), so the opencode-v2
+ * create is retried. The v1 opencode scenario is unchanged.
+ */
+async function createUiStressAgent(
+  client: DaemonClient,
+  provider: RealProvider,
+  cwd: string,
+  title: string,
+): Promise<Awaited<ReturnType<DaemonClient["createAgent"]>>> {
+  const options = { cwd, title, ...getUiStressAgentConfig(provider) };
+  if (provider !== "opencode-v2") {
+    return client.createAgent(options);
+  }
+  // Only retry the transient provider-unavailable cold-start; genuine
+  // model/mode errors must surface immediately.
+  const unavailablePrefix = `Provider '${provider}' is not available`;
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    try {
+      return await client.createAgent(options);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.startsWith(unavailablePrefix) || Date.now() >= deadline) {
+        throw error;
+      }
+      await sleep(1500);
+    }
+  }
+}
+
 function buildNormalUsageScenario(provider: RealProvider, seed: number): UiScenario {
   const token1 = `UI_${provider}_${seed}_A`;
   const token2 = `UI_${provider}_${seed}_B`;
@@ -156,7 +207,12 @@ function buildOverlapScenario(
   const firstForbidden = [oldToken, secondExpected];
   const secondForbidden = [oldToken, firstExpected];
 
-  if (provider === "opencode") {
+  // OpenCode (v1) and OpenCode 2 steer an active turn instead of replacing it
+  // (the send is appended to the running session and the model decides which
+  // instruction to follow), so the queued-now outcome is inherently
+  // non-deterministic. Assert that it resolves to either the queued or the
+  // active turn rather than requiring the queued prompt to win.
+  if (provider === "opencode" || provider === "opencode-v2") {
     return {
       name: `overlap-${provider}-${seed}-single`,
       actions: [
@@ -461,18 +517,21 @@ describe.each(realProviders)("daemon E2E (real %s) - UI action stress", (provide
       agentClients: createRealProviderClients([provider], logger),
       logger,
     });
-    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    // Report a current app version so the daemon exposes all providers
+    // (opencode-v2 included) instead of only the legacy provider set; without
+    // it, opencode-v2 agents are invisible to the client and waitForFinish
+    // reports the agent as "disappeared".
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.5.2",
+    });
 
     try {
       await client.connect();
       await client.fetchAgents({
         subscribe: { subscriptionId: `ui-stress-normal-${provider}` },
       });
-      const agent = await client.createAgent({
-        cwd,
-        title: `uist-n-${provider}`,
-        ...getRealProviderConfig(provider),
-      });
+      const agent = await createUiStressAgent(client, provider, cwd, `uist-n-${provider}`);
 
       await runUiScenario({
         client,
@@ -495,7 +554,12 @@ describe.each(realProviders)("daemon E2E (real %s) - UI action stress", (provide
       agentClients: createRealProviderClients([provider], logger),
       logger,
     });
-    const client = new DaemonClient({ url: `ws://127.0.0.1:${daemon.port}/ws` });
+    // Report a current app version so the daemon exposes all providers
+    // (opencode-v2 included); see the normal-path test for details.
+    const client = new DaemonClient({
+      url: `ws://127.0.0.1:${daemon.port}/ws`,
+      appVersion: "0.5.2",
+    });
     const scenarios = [
       buildOverlapScenario(provider, 17, "last"),
       buildOverlapScenario(provider, 31, "first"),
@@ -508,11 +572,7 @@ describe.each(realProviders)("daemon E2E (real %s) - UI action stress", (provide
       });
 
       for (const scenario of scenarios) {
-        const agent = await client.createAgent({
-          cwd,
-          title: `uist-o-${provider}`,
-          ...getRealProviderConfig(provider),
-        });
+        const agent = await createUiStressAgent(client, provider, cwd, `uist-o-${provider}`);
 
         await runUiScenario({
           client,

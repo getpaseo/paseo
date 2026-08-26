@@ -901,6 +901,11 @@ describe("OpenCodeV2AgentClient session core", () => {
   test("fetchCatalog acquires a new server when force is set", async () => {
     const runtime = new TestOpenCodeV2Harness();
     const openCode = new TestOpenCodeV2Client();
+    // Non-empty agent list so the cold-start retry does not add extra calls.
+    openCode.agentListResponse = {
+      ...openCode.agentListResponse,
+      data: [buildAgentInfo({ name: "build" })],
+    };
     runtime.enqueueClient(openCode);
     const client = new OpenCodeV2AgentClient(createTestLogger(), undefined, {
       serverManager: runtime,
@@ -913,6 +918,36 @@ describe("OpenCodeV2AgentClient session core", () => {
     expect(runtime.acquisitions[0]?.kind).toBe("new");
     expect(openCode.calls.modelList).toEqual([{ location: { directory: "/workspace/repo" } }]);
     expect(openCode.calls.agentList).toEqual([{ location: { directory: "/workspace/repo" } }]);
+  });
+
+  test("fetchCatalog retries agent.list when the cold-start server returns no agents yet", async () => {
+    const runtime = new TestOpenCodeV2Harness();
+    const openCode = new TestOpenCodeV2Client();
+    let agentListCalls = 0;
+    openCode.agentListImplementation = async () => {
+      agentListCalls += 1;
+      if (agentListCalls === 1) {
+        // The freshly spawned opencode2 server prints its readiness line before
+        // /api/agent is loaded; the first catalog fetch can observe an empty
+        // agent list, which would leave the provider snapshot with no modes.
+        return { ...openCode.agentListResponse, data: [] };
+      }
+      return {
+        ...openCode.agentListResponse,
+        data: [buildAgentInfo({ name: "plan" }), buildAgentInfo({ name: "build" })],
+      };
+    };
+    runtime.enqueueClient(openCode);
+    const client = new OpenCodeV2AgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+      readCredentialedProviderIds: async () => new Set(),
+    });
+
+    const catalog = await client.fetchCatalog({ scope: "global", force: false });
+
+    expect(catalog.modes.map((mode) => mode.id)).toEqual(["build", "plan"]);
+    expect(agentListCalls).toBeGreaterThan(1);
   });
 
   test("getAvailableModes lists selectable agents from agent.list sorted build/plan first", async () => {
