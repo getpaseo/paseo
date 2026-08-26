@@ -44,14 +44,15 @@ function getPullRequestContextSubtitle(attachment: WorkspaceComposerAttachment):
   return "Review";
 }
 
-function getTextAttachmentSubtitle(
-  attachment: Extract<AgentAttachment, { type: "text" }>,
-  t: TFunction,
-): string {
+function getTextAttachmentSubtitle(attachment: Extract<AgentAttachment, { type: "text" }>): string {
   if (attachment.contextKind === "chat_history") {
     return "Previous conversation";
   }
-  return t("message.attachments.text");
+  const lines = attachment.text.split("\n").length;
+  const lineStr = lines === 1 ? "1 line" : `${lines} lines`;
+  const size = attachment.text.length;
+  const sizeStr = size < 1024 ? `${size} B` : `${(size / 1024).toFixed(1)} KB`;
+  return `${lineStr} • ${sizeStr}`;
 }
 
 export function getAgentAttachmentPillContent(
@@ -97,7 +98,7 @@ export function getAgentAttachmentPillContent(
       return {
         icon: attachmentFileIcon,
         title: attachment.title ?? t("message.attachments.textAttachment"),
-        subtitle: getTextAttachmentSubtitle(attachment, t),
+        subtitle: getTextAttachmentSubtitle(attachment),
       };
     case "uploaded_file":
       return {

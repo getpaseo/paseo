@@ -105,6 +105,7 @@ import {
   AttachmentThumbnail,
 } from "@/components/attachment-pill";
 import { AttachmentLightbox } from "@/components/attachment-lightbox";
+import { TextAttachmentModal } from "@/components/text-attachment-modal";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
@@ -441,7 +442,19 @@ export const UserMessage = memo(function UserMessage({
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
+  const [textModalState, setTextModalState] = useState<{
+    visible: boolean;
+    title?: string;
+    text: string | null;
+  }>({
+    visible: false,
+    title: undefined,
+    text: null,
+  });
   const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
+  const handleCloseTextModal = useCallback(() => {
+    setTextModalState((prev) => ({ ...prev, visible: false }));
+  }, []);
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
@@ -522,9 +535,25 @@ export const UserMessage = memo(function UserMessage({
             <View style={attachmentPreviewContainerStyle}>
               {attachments.map((attachment, index) => {
                 const content = getAgentAttachmentPillContent(attachment, t);
+                const handleOpen = () => {
+                  if (attachment.type === "text") {
+                    setTextModalState({
+                      visible: true,
+                      title: attachment.title ?? "Pasted text",
+                      text: attachment.text,
+                    });
+                  }
+                };
                 return (
                   <AttachmentFrame
                     key={`${attachment.type}:${"number" in attachment ? attachment.number : index}`}
+                    onPress={attachment.type === "text" ? handleOpen : undefined}
+                    accessibilityRole={attachment.type === "text" ? "button" : undefined}
+                    accessibilityLabel={
+                      attachment.type === "text"
+                        ? `Open ${attachment.title ?? "pasted text"}`
+                        : undefined
+                    }
                   >
                     <AttachmentLabel
                       icon={content.icon}
@@ -571,6 +600,12 @@ export const UserMessage = memo(function UserMessage({
         ) : null}
       </View>
       <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
+      <TextAttachmentModal
+        visible={textModalState.visible}
+        title={textModalState.title}
+        text={textModalState.text}
+        onClose={handleCloseTextModal}
+      />
     </View>
   );
 });

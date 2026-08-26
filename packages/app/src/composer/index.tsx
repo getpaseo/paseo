@@ -125,6 +125,7 @@ import { getFileTypeLabel } from "@/attachments/file-types";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
 import { AttachmentLightbox } from "@/components/attachment-lightbox";
+import { TextAttachmentModal } from "@/components/text-attachment-modal";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
@@ -423,6 +424,7 @@ function renderComposerAttachmentPill(args: RenderComposerAttachmentPillArgs): R
         attachment={attachment}
         index={index}
         disabled={disabled}
+        onOpen={onOpen}
         onRemove={onRemove}
         removeLabel={labels.removeFile}
       />
@@ -844,6 +846,7 @@ interface PastedTextAttachmentPillProps {
   attachment: Extract<ComposerAttachment, { kind: "pasted_text" }>;
   index: number;
   disabled: boolean;
+  onOpen?: (attachment: ComposerAttachment) => void;
   onRemove: (index: number) => void;
   removeLabel: string;
 }
@@ -852,9 +855,13 @@ function PastedTextAttachmentPill({
   attachment,
   index,
   disabled,
+  onOpen,
   onRemove,
   removeLabel,
 }: PastedTextAttachmentPillProps) {
+  const handleOpen = useCallback(() => {
+    onOpen?.(attachment);
+  }, [onOpen, attachment]);
   const handleRemove = useCallback(() => {
     onRemove(index);
   }, [onRemove, index]);
@@ -866,7 +873,7 @@ function PastedTextAttachmentPill({
   return (
     <AttachmentPill
       testID="composer-pasted-text-attachment-pill"
-      onOpen={noopCallback}
+      onOpen={handleOpen}
       onRemove={handleRemove}
       openAccessibilityLabel="Pasted text"
       removeAccessibilityLabel={removeLabel}
@@ -1311,6 +1318,19 @@ function ComposerContentImpl({
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
   const [githubSearchQuery, setGithubSearchQuery] = useState("");
   const [lightboxMetadata, setLightboxMetadata] = useState<AttachmentMetadata | null>(null);
+  const [textModalState, setTextModalState] = useState<{
+    visible: boolean;
+    title?: string;
+    text: string | null;
+  }>({
+    visible: false,
+    title: undefined,
+    text: null,
+  });
+
+  const handleCloseTextModal = useCallback(() => {
+    setTextModalState((prev) => ({ ...prev, visible: false }));
+  }, []);
   const attachButtonRef = useRef<View | null>(null);
   const messageInputRef = useRef<MessageInputRef>(null);
   const pluginAttachments = usePluginAttachmentPicker({
@@ -1804,6 +1824,14 @@ function ComposerContentImpl({
 
   const handleOpenAttachment = useCallback(
     (attachment: ComposerAttachment) => {
+      if (attachment.kind === "pasted_text") {
+        setTextModalState({
+          visible: true,
+          title: attachment.title ?? "Pasted text",
+          text: attachment.text,
+        });
+        return;
+      }
       openComposerAttachment({
         attachment,
         setLightboxMetadata,
@@ -2430,6 +2458,12 @@ function ComposerContentImpl({
           </View>
         </View>
       </Animated.View>
+      <TextAttachmentModal
+        visible={textModalState.visible}
+        title={textModalState.title}
+        text={textModalState.text}
+        onClose={handleCloseTextModal}
+      />
     </>
   );
 }
