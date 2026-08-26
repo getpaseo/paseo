@@ -398,4 +398,24 @@ describe("ProviderCatalogSession", () => {
     expect(res?.payload.error).toBe("feature probe failed");
     expect(res?.payload.requestId).toBe("f1");
   });
+
+  it("forwards selected workspace identity to draft feature discovery", async () => {
+    const listDraftFeatures = vi.fn(async () => []);
+    const { subsystem } = makeSubsystem({ host: { listDraftFeatures } });
+
+    await subsystem.handleListProviderFeaturesRequest({
+      type: "list_provider_features_request",
+      requestId: "f-runtime",
+      draftConfig: {
+        provider: "codex",
+        cwd: "/workspace/project",
+        workspaceId: "workspace-runtime",
+      },
+    });
+
+    expect(listDraftFeatures).toHaveBeenCalledWith(
+      { provider: "codex", cwd: "/workspace/project" },
+      "workspace-runtime",
+    );
+  });
 });

@@ -56,6 +56,7 @@ interface Deferred<T> {
 function createTestProviderWorkspace(commandAvailable: boolean): ProviderWorkspace {
   return {
     cwd: ".",
+    processIsolation: true,
     async resolveExecutable(command) {
       if (!commandAvailable) throw new Error(`Provider command '${command}' was not found`);
       return "/provider";
@@ -1337,6 +1338,52 @@ test("listDraftFeatures uses client feature listing without a model", async () =
       cwd: workdir,
     },
   ]);
+});
+
+test("listDraftFeatures binds selected workspace without probing virtual cwd on the host", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-runtime-draft-features-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const workspace = createTestProviderWorkspace(true);
+  const availabilityOptions: FetchCatalogOptions[] = [];
+  const launchContexts: Array<AgentLaunchContext | undefined> = [];
+  class RuntimeDraftFeatureClient extends TestAgentClient {
+    override async isAvailable(options?: FetchCatalogOptions): Promise<boolean> {
+      if (options) availabilityOptions.push(options);
+      return true;
+    }
+
+    async listFeatures(
+      _config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentFeature[]> {
+      launchContexts.push(launchContext);
+      return [];
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new RuntimeDraftFeatureClient() },
+    registry: storage,
+    logger,
+    resolveProviderWorkspace: async () => workspace,
+  });
+
+  await expect(
+    manager.listDraftFeatures(
+      { provider: "codex", cwd: "/workspace/not-visible-on-host" },
+      "workspace-runtime",
+    ),
+  ).resolves.toEqual([]);
+
+  expect(availabilityOptions).toEqual([
+    {
+      scope: "workspace",
+      cwd: "/workspace/not-visible-on-host",
+      workspaceId: "workspace-runtime",
+      workspace,
+      force: false,
+    },
+  ]);
+  expect(launchContexts).toEqual([{ workspace }]);
 });
 
 test("listDraftFeatures uses explicit model config without default model fetching", async () => {

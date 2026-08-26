@@ -39,6 +39,8 @@ describe("agent command query keys", () => {
       "server-1",
       "draft",
       "codex",
+      "workspace",
+      null,
       "cwd",
       "/repo",
       "mode",
@@ -50,6 +52,23 @@ describe("agent command query keys", () => {
       "features",
       null,
     ]);
+  });
+
+  it("keeps runtime-bound drafts separate from host-native drafts", () => {
+    const host = draftAgentCommandsQueryKey({
+      serverId: "server-1",
+      draftConfig: { provider: "codex", cwd: "/workspace/repo" },
+    });
+    const selected = draftAgentCommandsQueryKey({
+      serverId: "server-1",
+      draftConfig: {
+        provider: "codex",
+        cwd: "/workspace/repo",
+        workspaceId: "workspace-runtime",
+      },
+    });
+
+    expect(selected).not.toEqual(host);
   });
 
   it("normalizes cwd values so equivalent workspace paths share one draft scope", () => {

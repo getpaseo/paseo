@@ -1036,18 +1036,21 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
+  async listFeatures(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentFeature[]> {
     const autoAcceptFeature = buildACPAutoAcceptFeature(config);
     if (this.configFeatureOptions.length === 0) {
       return [autoAcceptFeature];
     }
 
     this.assertProvider(config);
-    const probe = await this.spawnProcess(PROBE_ENV);
+    const probe = await this.spawnProcess(PROBE_ENV, { workspace: launchContext?.workspace });
     try {
       const response = await this.runACPRequest(() =>
         probe.connection.newSession({
-          cwd: config.cwd,
+          cwd: launchContext?.workspace?.cwd ?? config.cwd,
           mcpServers: [],
         }),
       );

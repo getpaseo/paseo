@@ -1021,13 +1021,32 @@ export class AgentManager {
     }
   }
 
-  async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
-    const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
+  async listDraftCommands(
+    config: AgentSessionConfig,
+    workspaceId?: string,
+  ): Promise<AgentSlashCommand[]> {
+    const normalizedConfig = await this.normalizeConfig(config, {
+      resolveDefaultModel: false,
+      validateHostCwd: !workspaceId,
+    });
     const client = this.requireClient(normalizedConfig.provider);
     if (!normalizedConfig.model) {
       return [];
     }
-    const available = await client.isAvailable();
+    const workspace = workspaceId
+      ? await this.requireProviderWorkspace(workspaceId, normalizedConfig.cwd)
+      : undefined;
+    const available = await client.isAvailable(
+      workspace
+        ? {
+            scope: "workspace",
+            cwd: normalizedConfig.cwd,
+            workspaceId,
+            workspace,
+            force: false,
+          }
+        : undefined,
+    );
     if (!available) {
       throw new Error(
         `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
@@ -1035,10 +1054,13 @@ export class AgentManager {
     }
 
     if (client.listCommands) {
-      return await client.listCommands(normalizedConfig);
+      return await client.listCommands(normalizedConfig, workspace ? { workspace } : undefined);
     }
 
-    const session = await client.createSession(normalizedConfig);
+    const session = await client.createSession(
+      normalizedConfig,
+      workspace ? { workspace } : undefined,
+    );
     try {
       if (!session.listCommands) {
         throw new Error(
@@ -1058,13 +1080,32 @@ export class AgentManager {
     }
   }
 
-  async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
+  async listDraftFeatures(
+    config: AgentSessionConfig,
+    workspaceId?: string,
+  ): Promise<AgentFeature[]> {
+    const normalizedConfig = await this.normalizeConfig(config, {
+      resolveDefaultModel: false,
+      validateHostCwd: !workspaceId,
+    });
     const client = this.requireClient(normalizedConfig.provider);
     if (!normalizedConfig.model && !client.listFeatures) {
       return [];
     }
-    const available = await client.isAvailable();
+    const workspace = workspaceId
+      ? await this.requireProviderWorkspace(workspaceId, normalizedConfig.cwd)
+      : undefined;
+    const available = await client.isAvailable(
+      workspace
+        ? {
+            scope: "workspace",
+            cwd: normalizedConfig.cwd,
+            workspaceId,
+            workspace,
+            force: false,
+          }
+        : undefined,
+    );
     if (!available) {
       throw new Error(
         `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
@@ -1072,10 +1113,13 @@ export class AgentManager {
     }
 
     if (client.listFeatures) {
-      return await client.listFeatures(normalizedConfig);
+      return await client.listFeatures(normalizedConfig, workspace ? { workspace } : undefined);
     }
 
-    const session = await client.createSession(normalizedConfig);
+    const session = await client.createSession(
+      normalizedConfig,
+      workspace ? { workspace } : undefined,
+    );
     try {
       return session.features ?? [];
     } finally {
@@ -4802,6 +4846,20 @@ export class AgentManager {
     return Array.from(new Set([...this.providerEnabled.keys(), ...this.clients.keys()]));
   }
 
+  private async requireProviderWorkspace(
+    workspaceId: string,
+    cwd: string,
+  ): Promise<ProviderWorkspace> {
+    if (!this.resolveProviderWorkspace) {
+      throw new Error(`workspace runtime capability is unavailable: ${workspaceId}`);
+    }
+    const workspace = await this.resolveProviderWorkspace(workspaceId, cwd);
+    if (!workspace) {
+      throw new Error(`workspace runtime capability is unavailable: ${workspaceId}`);
+    }
+    return workspace;
+  }
+
   private requireClient(provider: AgentProvider): AgentClient {
     const client = this.clients.get(provider);
     if (!client) {
@@ -4831,7 +4889,7 @@ export class AgentManager {
       await client.archiveNativeSession(persistence, launchContext);
     } catch (error) {
       this.logger.warn(
-        { error, provider, sessionId: persistence.sessionId },
+        { err: error, provider, sessionId: persistence.sessionId },
         "Failed to archive native session (best-effort)",
       );
     }

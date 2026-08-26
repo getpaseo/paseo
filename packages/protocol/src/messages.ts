@@ -2633,6 +2633,7 @@ export const PingMessageSchema = z.object({
 const ListCommandsDraftConfigSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
+  workspaceId: z.string().optional(),
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),

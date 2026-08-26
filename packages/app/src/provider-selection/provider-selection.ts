@@ -286,6 +286,7 @@ export function resolveEffectiveComposerThinkingOptionId(
 export function buildDraftCommandConfig(input: {
   selection: ProviderSelectionState;
   cwd: string;
+  workspaceId?: string | null;
   effectiveModelId: string;
   effectiveThinkingOptionId: string;
   featureValues?: Record<string, unknown>;
@@ -298,6 +299,7 @@ export function buildDraftCommandConfig(input: {
   return {
     provider: input.selection.provider,
     cwd,
+    ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
     ...(input.selection.modeOptions.length > 0 && input.selection.modeId !== ""
       ? { modeId: input.selection.modeId }
       : {}),

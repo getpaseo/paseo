@@ -6,6 +6,7 @@ export const AGENT_COMMANDS_QUERY_ROOT = "agentCommands";
 export interface AgentCommandsDraftConfig {
   provider: AgentProvider;
   cwd: string;
+  workspaceId?: string;
   modeId?: string;
   model?: string;
   thinkingOptionId?: string;
@@ -33,6 +34,8 @@ export function draftAgentCommandsQueryKey(input: {
     ...agentCommandsQueryRoot(input.serverId),
     "draft",
     draftConfig.provider,
+    "workspace",
+    draftConfig.workspaceId ?? null,
     "cwd",
     normalizeAgentCommandsCwd(draftConfig.cwd),
     "mode",

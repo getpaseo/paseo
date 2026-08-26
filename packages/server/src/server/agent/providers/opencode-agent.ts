@@ -1472,7 +1472,15 @@ export class OpenCodeAgentClient implements AgentClient {
     }
   }
 
-  async listCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
+  async listCommands(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSlashCommand[]> {
+    if (launchContext?.workspace && !launchContext.workspace.allowsHostService("opencode")) {
+      throw new Error(
+        "OpenCode command discovery is unavailable in the selected workspace runtime",
+      );
+    }
     const openCodeConfig = this.assertConfig(config);
     const acquisition = await this.serverManager.acquireCurrent();
     const { url } = acquisition.server;

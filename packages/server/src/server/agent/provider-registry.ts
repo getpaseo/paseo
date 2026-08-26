@@ -494,6 +494,7 @@ function wrapClientProvider(
 ): AgentClient {
   const listImportableSessions = inner.listImportableSessions?.bind(inner);
   const importSession = inner.importSession?.bind(inner);
+  const listCommands = inner.listCommands?.bind(inner);
   const listFeatures = inner.listFeatures?.bind(inner);
 
   return {
@@ -549,8 +550,13 @@ function wrapClientProvider(
     resolveCreateConfig: inner.resolveCreateConfig?.bind(inner),
     resolveConfiguredModel: inner.resolveConfiguredModel?.bind(inner),
     isCreateConfigUnattended: inner.isCreateConfigUnattended?.bind(inner),
+    listCommands: listCommands
+      ? async (config, launchContext) =>
+          await listCommands({ ...config, provider: inner.provider }, launchContext)
+      : undefined,
     listFeatures: listFeatures
-      ? async (config) => await listFeatures({ ...config, provider: inner.provider })
+      ? async (config, launchContext) =>
+          await listFeatures({ ...config, provider: inner.provider }, launchContext)
       : undefined,
     listImportableSessions: listImportableSessions
       ? async (options) => await listImportableSessions(options)
@@ -583,7 +589,7 @@ function wrapClientProvider(
           };
         }
       : undefined,
-    isAvailable: (signal) => inner.isAvailable(signal),
+    isAvailable: (options, signal) => inner.isAvailable(options, signal),
     getDiagnostic: inner.getDiagnostic?.bind(inner),
   };
 }

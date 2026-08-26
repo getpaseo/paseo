@@ -890,7 +890,8 @@ export class Session {
         supportsCustomModeIcons: () => this.supports(CLIENT_CAPS.customModeIcons),
         supportsCompactProviderSnapshots: () => this.supports(CLIENT_CAPS.compactProviderSnapshots),
         listProviderAvailability: () => this.agentManager.listProviderAvailability(),
-        listDraftFeatures: (config) => this.agentManager.listDraftFeatures(config),
+        listDraftFeatures: (config, workspaceId) =>
+          this.agentManager.listDraftFeatures(config, workspaceId),
       },
       providerSnapshotManager,
       providerUsageService,
@@ -4054,7 +4055,10 @@ export class Session {
             : {}),
         };
 
-        const commands = await this.agentManager.listDraftCommands(sessionConfig);
+        const commands = await this.agentManager.listDraftCommands(
+          sessionConfig,
+          draftConfig.workspaceId,
+        );
         this.emit({
           type: "list_commands_response",
           payload: {

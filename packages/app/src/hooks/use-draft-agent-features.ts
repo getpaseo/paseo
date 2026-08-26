@@ -13,20 +13,29 @@ import {
 type DraftFeatureConfig = Pick<
   AgentSessionConfig,
   "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId"
->;
+> & { workspaceId?: string };
 
 export function useDraftAgentFeatures(input: {
   serverId: string | null | undefined;
   provider: AgentProvider | null;
   cwd: string | null | undefined;
+  workspaceId?: string | null;
   modeId: string | null | undefined;
   modelId: string | null | undefined;
   thinkingOptionId: string | null | undefined;
   initialFeatureValues?: Record<string, unknown>;
 }) {
   const { t } = useTranslation();
-  const { serverId, provider, cwd, modeId, modelId, thinkingOptionId, initialFeatureValues } =
-    input;
+  const {
+    serverId,
+    provider,
+    cwd,
+    workspaceId,
+    modeId,
+    modelId,
+    thinkingOptionId,
+    initialFeatureValues,
+  } = input;
   const [localFeatureValues, setLocalFeatureValues] = useState<Record<string, unknown>>(
     () => initialFeatureValues ?? {},
   );
@@ -49,17 +58,19 @@ export function useDraftAgentFeatures(input: {
     return {
       provider: normalizedProvider,
       cwd: normalizedCwd,
+      ...(workspaceId ? { workspaceId } : {}),
       ...(modeId ? { modeId } : {}),
       ...(modelId ? { model: modelId } : {}),
       ...(thinkingOptionId ? { thinkingOptionId } : {}),
     };
-  }, [modeId, modelId, normalizedCwd, normalizedProvider, thinkingOptionId]);
+  }, [modeId, modelId, normalizedCwd, normalizedProvider, thinkingOptionId, workspaceId]);
 
   const featuresQuery = useQuery({
     queryKey: [
       "providerFeatures",
       serverId ?? null,
       normalizedProvider,
+      workspaceId ?? null,
       normalizedCwd || null,
       modeId ?? null,
       modelId ?? null,
