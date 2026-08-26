@@ -10,7 +10,13 @@ describe("assistant image layout", () => {
   it("groups image-only paragraphs containing multiple images", () => {
     expect(
       isAssistantImageGalleryParagraph({
-        children: [{ type: "image" }, { type: "softbreak" }, { type: "image" }, { type: "image" }],
+        children: [
+          { type: "image" },
+          { type: "textgroup", children: [{ type: "text", content: " " }] },
+          { type: "image" },
+          { type: "softbreak" },
+          { type: "image" },
+        ],
       }),
     ).toBe(true);
   });
@@ -19,7 +25,16 @@ describe("assistant image layout", () => {
     expect(isAssistantImageGalleryParagraph({ children: [{ type: "image" }] })).toBe(false);
     expect(
       isAssistantImageGalleryParagraph({
-        children: [{ type: "text", content: "Screenshots:" }, { type: "image" }, { type: "image" }],
+        children: [
+          {
+            type: "inline",
+            children: [
+              { type: "text", content: "Screenshots:" },
+              { type: "image" },
+              { type: "image" },
+            ],
+          },
+        ],
       }),
     ).toBe(false);
   });

@@ -37,11 +37,12 @@ export function constrainAssistantImageSize(input: {
 export function isAssistantImageGalleryParagraph(
   node: AssistantImageAstNode | null | undefined,
 ): boolean {
-  const children = node?.children;
-  if (!Array.isArray(children)) {
-    return false;
-  }
+  const imageCount = countImageOnlyChildren(node?.children);
+  return imageCount !== null && imageCount > 1;
+}
 
+function countImageOnlyChildren(children: AssistantImageAstNode[] | undefined): number | null {
+  if (!Array.isArray(children)) return null;
   let imageCount = 0;
   for (const child of children) {
     if (child.type === "image") {
@@ -50,9 +51,11 @@ export function isAssistantImageGalleryParagraph(
     }
     const isWhitespaceText = child.type === "text" && !child.content?.trim();
     const isLineBreak = child.type === "softbreak" || child.type === "hardbreak";
-    if (!isWhitespaceText && !isLineBreak) {
-      return false;
-    }
+    if (isWhitespaceText || isLineBreak) continue;
+    if (child.type !== "inline" && child.type !== "textgroup") return null;
+    const nestedImageCount = countImageOnlyChildren(child.children);
+    if (nestedImageCount === null) return null;
+    imageCount += nestedImageCount;
   }
-  return imageCount > 1;
+  return imageCount;
 }
