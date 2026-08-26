@@ -21,7 +21,6 @@ import { createOpenCodeV2Client } from "./opencode-v2/client.js";
 import { OpenCodeV2EventConsumer } from "./opencode-v2/event-consumer.js";
 import { OpenCodeV2ServerManager } from "./opencode-v2/server-manager.js";
 
-const PINNED_OPENCODE2_VERSION = "0.0.0-beta-18155";
 const MODEL = "baseten/deepseek-ai/DeepSeek-V4-Flash-0731";
 const NORMAL_SENTINEL = "PASEO_OPENCODE_V2_SENTINEL_7F31";
 const TIMEOUT_MS = 240_000;
@@ -285,6 +284,7 @@ describe.sequential("OpenCode 2 real e2e", () => {
 
 async function createRealHarness() {
   const artifactDir = mkdtempSync(path.join(os.tmpdir(), "paseo-opencode-v2-"));
+  const logger = pino({ level: "info" });
   const runtime = createDisposableRuntime();
   const { runtimeDir, home, paseoHome, xdgConfig, xdgData, xdgCache, xdgState, workspace } =
     runtime;
@@ -319,7 +319,7 @@ async function createRealHarness() {
       env: isolatedEnv,
       encoding: "utf8",
     }).trim();
-    expect(openCode2Version).toContain(PINNED_OPENCODE2_VERSION);
+    logger.info({ openCode2Version }, "detected opencode2 binary version");
 
     const manager = new OpenCodeV2ServerManager({
       logger: pino({ level: "silent" }),

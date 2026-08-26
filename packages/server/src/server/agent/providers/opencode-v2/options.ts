@@ -7,7 +7,7 @@ const PermissionRuleSchema = z.union([
   z.record(z.string(), PermissionActionSchema),
 ]);
 
-// OpenCode v2 Config.permission, maintained against @opencode-ai/client 0.0.0-beta-18155.
+// OpenCode v2 Config.permission, maintained against the installed @opencode-ai/client (beta tag).
 // v2 action names differ from v1: shell/edit/read/grep/glob/webfetch/websearch/subagent/
 // external_directory plus the "*" catch-all. v2 has no bash/list/task/todowrite/question
 // actions (those are v1 concepts).
