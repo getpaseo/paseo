@@ -18,7 +18,7 @@ import type { TodoEntry } from "@/types/stream";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
-import { openWorkspaceSupportingView } from "@/workspace-tabs/open-supporting-view";
+import { openComposerChanges } from "@/workspace-tabs/open-supporting-view";
 
 /**
  * The pane's ambient context — workspace changes, subagents, and tasks — as a row of pills above
@@ -99,8 +99,7 @@ export const AgentTracks = memo(function AgentTracks({
     if (!workspaceKey) {
       return;
     }
-    openWorkspaceSupportingView({
-      view: "changes",
+    openComposerChanges({
       isCompact,
       workspaceKey,
       checkout: { serverId, cwd, isGit: true },

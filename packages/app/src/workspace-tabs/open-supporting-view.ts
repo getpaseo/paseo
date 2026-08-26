@@ -1,66 +1,69 @@
-import type { OpenInSidePanePreferences } from "@/hooks/use-settings";
+import type { OpenInSidePanePreferences, PullRequestOpenLocation } from "@/hooks/use-settings";
 import type { ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import {
+  isExplorerSidebarOpen,
   openExplorerSidebarView,
   usesCompactExplorerSidebar,
   type ExplorerSidebarView,
 } from "@/workspace-tabs/explorer-sidebar";
-import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import {
   openPreferredWorkspaceTarget,
-  type OpenInSidePaneSource,
+  openWorkspaceTargetAtLocation,
 } from "@/workspace-tabs/open-beside";
 
-export type WorkspaceSupportingView = "changes" | "pull-request";
-
-interface SupportingViewRoute {
-  explorerView: ExplorerSidebarView;
-  target: WorkspaceTabTarget;
-  source: OpenInSidePaneSource;
-}
-
-const SUPPORTING_VIEW_ROUTES: Record<WorkspaceSupportingView, SupportingViewRoute> = {
-  changes: {
-    explorerView: "changes",
-    target: { kind: "working_diff" },
-    source: "changesLinks",
-  },
-  "pull-request": {
-    explorerView: "pr",
-    target: { kind: "pull_request" },
-    source: "pullRequests",
-  },
-};
-
-interface OpenWorkspaceSupportingViewInput {
-  view: WorkspaceSupportingView;
+interface WorkspaceViewInput {
   isCompact: boolean;
   workspaceKey: string | null;
   checkout: ExplorerCheckoutContext | null;
-  preferences: OpenInSidePanePreferences;
   supportsPaneSplits?: boolean;
 }
 
-/** Opens supporting workspace content in the shell appropriate for the current layout. */
-export function openWorkspaceSupportingView(
-  input: OpenWorkspaceSupportingViewInput,
-): string | null {
-  const route = SUPPORTING_VIEW_ROUTES[input.view];
+interface OpenWorkspaceChangesInput extends WorkspaceViewInput {
+  preferences: OpenInSidePanePreferences;
+}
+
+interface OpenWorkspacePullRequestInput extends WorkspaceViewInput {
+  destination: PullRequestOpenLocation;
+}
+
+function openExplorerView(input: WorkspaceViewInput, view: ExplorerSidebarView): void {
+  openExplorerSidebarView({ ...input, view });
+}
+
+/** Opens the workspace Changes view according to the current layout and diff preference. */
+export function openWorkspaceChanges(input: OpenWorkspaceChangesInput): string | null {
   if (usesCompactExplorerSidebar(input)) {
-    openExplorerSidebarView({
-      isCompact: input.isCompact,
-      supportsPaneSplits: input.supportsPaneSplits,
-      workspaceKey: input.workspaceKey,
-      checkout: input.checkout,
-      view: route.explorerView,
-    });
+    openExplorerView(input, "changes");
     return null;
   }
   return openPreferredWorkspaceTarget({
     isCompact: input.isCompact,
     workspaceKey: input.workspaceKey,
-    target: route.target,
-    source: route.source,
+    target: { kind: "working_diff" },
+    source: "diffs",
     preferences: input.preferences,
+  });
+}
+
+/** Reveals Changes from the composer, then opens its diff on a subsequent desktop action. */
+export function openComposerChanges(input: OpenWorkspaceChangesInput): string | null {
+  if (usesCompactExplorerSidebar(input) || isExplorerSidebarOpen(input)) {
+    return openWorkspaceChanges(input);
+  }
+  openExplorerView(input, "changes");
+  return null;
+}
+
+/** Opens the workspace pull request at its semantic destination. */
+export function openWorkspacePullRequest(input: OpenWorkspacePullRequestInput): string | null {
+  if (usesCompactExplorerSidebar(input) || input.destination === "explorer") {
+    openExplorerView(input, "pr");
+    return null;
+  }
+  return openWorkspaceTargetAtLocation({
+    isCompact: input.isCompact,
+    workspaceKey: input.workspaceKey,
+    target: { kind: "pull_request" },
+    location: input.destination,
   });
 }

@@ -95,11 +95,10 @@ export function toggleExplorerSidebar(input: ExplorerSidebarInput): void {
     return;
   }
   if (!input.workspaceKey) return;
-  const view: ExplorerSidebarView = input.checkout?.isGit ? "changes" : "files";
   if (isExplorerSidebarOpen(input)) {
     hideExplorerSidebar(input);
   } else {
-    openExplorerSidebarView({ ...input, view });
+    showExplorerSidebar(input);
   }
 }
 

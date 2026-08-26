@@ -94,7 +94,7 @@ import {
 } from "@/stores/session-store";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import { openWorkspaceSupportingView } from "@/workspace-tabs/open-supporting-view";
+import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
@@ -1626,8 +1626,7 @@ function ActiveAgentComposer({
       if (attachment.kind !== "review") {
         return;
       }
-      openWorkspaceSupportingView({
-        view: "changes",
+      openWorkspaceChanges({
         isCompact: isCompactFormFactor,
         workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId }),
         checkout: { serverId, cwd, isGit: true },
