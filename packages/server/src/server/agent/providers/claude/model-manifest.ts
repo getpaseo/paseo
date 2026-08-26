@@ -46,6 +46,16 @@ export const CLAUDE_MODEL_MANIFEST = [
     supportsFastMode: true,
   },
   {
+    id: "claude-opus-5[1m]",
+    label: "Opus 5 1M",
+    description: "Opus 5 with 1M context window",
+    minimumClaudeCodeVersion: "2.1.219",
+    contextWindowMaxTokens: 1_000_000,
+    effortLevels: CLAUDE_EFFORT_LEVELS.xhigh,
+    supportsThinkingDisabled: true,
+    supportsFastMode: true,
+  },
+  {
     id: "claude-fable-5",
     // COMPAT(claudeFable5OneMillionId): added in v0.3.0, remove after 2027-02-06 once pre-v0.3.0 app preferences are outside support.
     aliases: ["claude-fable-5[1m]"],
