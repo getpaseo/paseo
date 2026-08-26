@@ -547,6 +547,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   const agentHistory = useAgentHistory({
     serverId,
     enabled: resolveAgentHistoryEnabled({ mode, canSelectAgents, serverId }),
+    search: debouncedFileFilterQuery,
   });
 
   const agentSuggestions = useMemo<AgentMentionSelection[]>(() => {

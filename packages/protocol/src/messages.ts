@@ -1339,9 +1339,10 @@ export const FetchAgentHistoryRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_history_request"),
   requestId: z.string(),
   filter: AgentDirectoryFilterSchema.optional(),
-  // A ranked free-text query over agent title, workspace name, branch, and
-  // project name. Present only on history: agent subscriptions filter on
-  // structure, not on relevance. Ranking replaces `sort` when it is set.
+  // A ranked free-text query over agent title, workspace name, branch, project
+  // name, working directory, and id. Highlight matches identify rendered names
+  // only. Present only on history: agent subscriptions filter on structure, not
+  // on relevance. Ranking replaces `sort` when it is set.
   search: z.string().optional(),
   sort: z
     .array(

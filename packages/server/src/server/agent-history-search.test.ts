@@ -7,6 +7,8 @@ import {
 } from "./agent-history-search.js";
 
 function candidate(input: {
+  id?: string;
+  cwd?: string;
   title?: string | null;
   workspaceName?: string | null;
   branch?: string | null;
@@ -16,8 +18,9 @@ function candidate(input: {
   const branch = input.branch ?? null;
   return {
     agent: {
-      id: input.title ?? "agent",
+      id: input.id ?? input.title ?? "agent",
       title: input.title ?? null,
+      cwd: input.cwd ?? "/tmp/repo",
       updatedAt: input.updatedAt ?? "2026-08-07T00:00:00.000Z",
     },
     project: {
@@ -34,8 +37,8 @@ function candidate(input: {
         mainRepoRoot: null,
       },
     },
-    // The module only reads the four names; the rest of the payload is the
-    // session's business.
+    // The module only reads these searchable session fields; the rest of the
+    // payload is the session's business.
   } as unknown as AgentHistorySearchCandidate & { agent: { id: string; updatedAt: string } };
 }
 
@@ -67,6 +70,13 @@ describe("scoreAgentHistoryCandidate", () => {
     expect(
       scoreAgentHistoryCandidate("paseo", candidate({ projectName: "getpaseo/paseo" })),
     ).not.toBeNull();
+  });
+
+  it("matches agent working directories and ids for @ mention parity", () => {
+    expect(
+      scoreAgentHistoryCandidate("auth-service", candidate({ cwd: "/repos/acme/auth-service" })),
+    ).not.toBeNull();
+    expect(scoreAgentHistoryCandidate("agent-123", candidate({ id: "agent-123" }))).not.toBeNull();
   });
 
   it("requires every token to match somewhere", () => {
@@ -154,6 +164,18 @@ describe("rankAgentHistoryCandidates", () => {
       "stripe one",
     ]);
   });
+
+  it("keeps working-directory matches in ranked results", () => {
+    const ranked = rankAgentHistoryCandidates(
+      "auth-service",
+      [
+        candidate({ id: "cwd-match", cwd: "/repos/acme/auth-service" }),
+        candidate({ id: "other", cwd: "/repos/acme/payments" }),
+      ],
+      byUpdatedAtDesc,
+    );
+    expect(ranked.map((result) => result.candidate.agent.id)).toEqual(["cwd-match"]);
+  });
 });
 
 describe("describeAgentHistoryMatches", () => {
@@ -191,5 +213,21 @@ describe("describeAgentHistoryMatches", () => {
     expect(
       describeAgentHistoryMatches("rosetta", candidate({ title: "customer billing" })),
     ).toEqual([]);
+  });
+
+  it("does not emit a display highlight for an id or working-directory match", () => {
+    expect(describeAgentHistoryMatches("agent-123", candidate({ id: "agent-123" }))).toEqual([]);
+    expect(
+      describeAgentHistoryMatches("auth-service", candidate({ cwd: "/repos/acme/auth-service" })),
+    ).toEqual([]);
+  });
+
+  it("only highlights rendered fields from a mixed match", () => {
+    expect(
+      describeAgentHistoryMatches(
+        "stripe agent-123",
+        candidate({ title: "Add Stripe billing", id: "agent-123" }),
+      ),
+    ).toEqual([{ field: "title", ranges: [{ start: 4, length: 6 }] }]);
   });
 });
