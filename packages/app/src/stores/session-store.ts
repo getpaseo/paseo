@@ -205,21 +205,22 @@ function preserveWorkspaceDescriptorIdentity(
   return incoming;
 }
 
-function preserveWorkspaceMapIdentity(
-  existing: Map<string, WorkspaceDescriptor>,
-  incoming: Map<string, WorkspaceDescriptor>,
-): Map<string, WorkspaceDescriptor> {
+function preserveMapIdentity<Key, Value>(
+  existing: Map<Key, Value>,
+  incoming: Map<Key, Value>,
+): Map<Key, Value> {
   if (existing === incoming) {
     return existing;
   }
 
-  const next = new Map<string, WorkspaceDescriptor>();
+  const next = new Map<Key, Value>();
   let changed = existing.size !== incoming.size;
   const existingEntries = existing.entries();
 
   for (const [key, workspace] of incoming) {
     const existingWorkspace = existing.get(key);
-    const nextWorkspace = preserveWorkspaceDescriptorIdentity(workspace, existingWorkspace);
+    const nextWorkspace =
+      existingWorkspace && equal(existingWorkspace, workspace) ? existingWorkspace : workspace;
     next.set(key, nextWorkspace);
     const existingEntry = existingEntries.next().value;
     if (!existingEntry || existingEntry[0] !== key || existingEntry[1] !== nextWorkspace) {
@@ -228,17 +229,6 @@ function preserveWorkspaceMapIdentity(
   }
 
   return changed ? next : existing;
-}
-
-function projectMapsEqual(
-  left: ReadonlyMap<string, ProjectDescriptor>,
-  right: ReadonlyMap<string, ProjectDescriptor>,
-): boolean {
-  if (left.size !== right.size) return false;
-  for (const [projectId, project] of right) {
-    if (!equal(left.get(projectId), project)) return false;
-  }
-  return true;
 }
 
 export type ExplorerEntryKind = "file" | "directory";
@@ -1659,10 +1649,7 @@ export const useSessionStore = create<SessionStore>()(
           }
           const nextWorkspaces =
             typeof workspaces === "function" ? workspaces(session.workspaces) : workspaces;
-          const preservedWorkspaces = preserveWorkspaceMapIdentity(
-            session.workspaces,
-            nextWorkspaces,
-          );
+          const preservedWorkspaces = preserveMapIdentity(session.workspaces, nextWorkspaces);
           if (session.workspaces === preservedWorkspaces) {
             return prev;
           }
@@ -1681,10 +1668,15 @@ export const useSessionStore = create<SessionStore>()(
         for (const project of projects) next.set(project.projectId, project);
         set((prev) => {
           const session = prev.sessions[serverId];
-          if (!session || projectMapsEqual(session.projects, next)) return prev;
+          if (!session) return prev;
+          const preservedProjects = preserveMapIdentity(session.projects, next);
+          if (session.projects === preservedProjects) return prev;
           return {
             ...prev,
-            sessions: { ...prev.sessions, [serverId]: { ...session, projects: next } },
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, projects: preservedProjects },
+            },
           };
         });
       },

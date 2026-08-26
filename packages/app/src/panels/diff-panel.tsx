@@ -100,8 +100,7 @@ function ChangesPanel() {
   const isTree = target.kind === "changes_tree";
 
   const handleOpenFile = useCallback(
-    (path: string) =>
-      openPreferredTarget({ kind: "file", path }, isTree ? "explorerChanges" : "diffFiles"),
+    (path: string) => openPreferredTarget({ kind: "file", path }, isTree ? "diffs" : "diffFiles"),
     [isTree, openPreferredTarget],
   );
 
@@ -109,7 +108,7 @@ function ChangesPanel() {
     (path: string) =>
       openPreferredTarget(
         { kind: "working_diff", focusPath: path, focusRequestId: Date.now() },
-        "explorerChanges",
+        "diffs",
       ),
     [openPreferredTarget],
   );

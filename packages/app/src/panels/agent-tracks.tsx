@@ -18,6 +18,7 @@ import type { TodoEntry } from "@/types/stream";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
+import { openComposerChanges } from "@/workspace-tabs/open-supporting-view";
 
 /**
  * The pane's ambient context — workspace changes, subagents, and tasks — as a row of pills above
@@ -29,6 +30,7 @@ import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
 export const AgentTracks = memo(function AgentTracks({
   serverId,
   workspaceId,
+  cwd,
   subagentRows,
   tasks,
   archiveFinishedStatus,
@@ -36,6 +38,7 @@ export const AgentTracks = memo(function AgentTracks({
 }: {
   serverId: string;
   workspaceId: string;
+  cwd: string;
   subagentRows: SubagentRow[];
   tasks: TodoEntry[] | undefined;
   archiveFinishedStatus: ArchiveFinishedStatus;
@@ -96,14 +99,13 @@ export const AgentTracks = memo(function AgentTracks({
     if (!workspaceKey) {
       return;
     }
-    openPreferredWorkspaceTarget({
+    openComposerChanges({
       isCompact,
       workspaceKey,
-      target: { kind: "working_diff" },
-      source: "changesLinks",
+      checkout: { serverId, cwd, isGit: true },
       preferences: openInSidePane,
     });
-  }, [isCompact, openInSidePane, workspaceKey]);
+  }, [cwd, isCompact, openInSidePane, serverId, workspaceKey]);
 
   if (!hasWorkspaceDiffStat && !hasAgentTracks({ subagentRows, tasks, archiveFinishedStatus })) {
     return null;

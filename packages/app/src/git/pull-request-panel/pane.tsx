@@ -66,6 +66,7 @@ import { ChecksSection, getCheckIdentity } from "./checks-section";
 import { getActivityVerb, getStateLabel } from "./data";
 import type { PrPaneActivity, PrPaneCheck, PrPaneData, PrState } from "./data";
 import type { ForgeSpecificStatusFacts } from "@/git/merge-capability";
+import { CheckPresentationIcon } from "@/git/check-presentation.view";
 import {
   buildPrTimeline,
   type PrReviewEntry,
@@ -74,8 +75,6 @@ import {
 } from "./timeline";
 import {
   Section,
-  SUMMARY_DANGER_ICON,
-  SUMMARY_SUCCESS_ICON,
   SummaryPill,
   dangerColorMapping,
   foregroundMutedColorMapping,
@@ -129,6 +128,8 @@ const PR_STATE_PRESENTATION: Record<PrState, PrStatePresentation> = {
 const SUMMARY_COMMENT_ICON = (
   <ThemedMessageSquare size={11} uniProps={foregroundMutedColorMapping} />
 );
+const SUMMARY_APPROVAL_ICON = <CheckPresentationIcon presentation="success" size={12} />;
+const SUMMARY_CHANGES_REQUESTED_ICON = <CheckPresentationIcon presentation="failure" size={12} />;
 const ADD_TO_CHAT_MENU_ICON = (
   <ThemedMessageSquarePlus size={14} uniProps={foregroundMutedColorMapping} />
 );
@@ -205,8 +206,9 @@ export function PullRequestPane({
   );
   const toast = useToast();
   const daemonClient = useHostRuntimeClient(serverId);
-  // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
-  // all supported clients use checkout.forge.get_check_details.*.
+  // COMPAT(githubCheckDetailsRpc): recognize the legacy capability on daemons
+  // predating checkout.forge.get_check_details.*. Remove after 2027-01-17 once
+  // the supported daemon floor is >= v0.2.0.
   const canFetchGitHubCheckDetails = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.githubCheckDetails === true,
   );
@@ -395,8 +397,9 @@ export function PullRequestPane({
               workflowRunId: ref.workflowRunId,
               changeRequestNumber: data.number,
             };
-            // COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
-            // all supported clients use checkout.forge.get_check_details.*.
+            // COMPAT(githubCheckDetailsRpc): use the legacy GitHub RPC with
+            // daemons predating checkout.forge.get_check_details.*. Remove after
+            // 2027-01-17 once the supported daemon floor is >= v0.2.0.
             const payload = canFetchForgeCheckDetails
               ? await daemonClient.checkoutForgeGetCheckDetails(request)
               : await daemonClient.checkoutGithubGetCheckDetails(request);
@@ -570,8 +573,12 @@ export function PullRequestPane({
           onToggle={handleToggleActivity}
           summary={
             <>
-              <SummaryPill count={approvals} icon={SUMMARY_SUCCESS_ICON} variant="success" />
-              <SummaryPill count={changesRequested} icon={SUMMARY_DANGER_ICON} variant="danger" />
+              <SummaryPill count={approvals} icon={SUMMARY_APPROVAL_ICON} variant="success" />
+              <SummaryPill
+                count={changesRequested}
+                icon={SUMMARY_CHANGES_REQUESTED_ICON}
+                variant="danger"
+              />
               <SummaryPill count={commentCount} icon={SUMMARY_COMMENT_ICON} variant="muted" />
             </>
           }

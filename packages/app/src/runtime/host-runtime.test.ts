@@ -22,6 +22,7 @@ import {
   type HostRuntimeStorage,
 } from "./host-runtime";
 import { ReplicaCache } from "./replica-cache";
+import type { ReplicaRow, ReplicaRowStore } from "./replica-cache/row-store";
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -448,6 +449,40 @@ function createMemoryHostRuntimeStorage(entries: Record<string, string> = {}): H
     removeItem: async (key) => {
       values.delete(key);
     },
+  };
+}
+
+function createMemoryReplicaRowStore(): ReplicaRowStore {
+  const rows = new Map<string, ReplicaRow>();
+  const keyOf = (row: Pick<ReplicaRow, "serverId" | "kind" | "id">) =>
+    `${row.serverId}:${row.kind}:${row.id}`;
+  return {
+    open: async () => undefined,
+    readAll: async () => {
+      const hosts = new Map<string, ReplicaRow[]>();
+      for (const row of rows.values()) {
+        const hostRows = hosts.get(row.serverId) ?? [];
+        hostRows.push(row);
+        hosts.set(row.serverId, hostRows);
+      }
+      return [...hosts].map(([serverId, hostRows]) => ({ serverId, rows: hostRows }));
+    },
+    apply: async (changes) => {
+      for (const key of changes.deletes) rows.delete(keyOf(key));
+      for (const row of changes.upserts) rows.set(keyOf(row), row);
+    },
+    deleteHost: async (serverId) => {
+      for (const [key, row] of rows) if (row.serverId === serverId) rows.delete(key);
+    },
+    renameHost: async (oldServerId, newServerId) => {
+      for (const [key, row] of rows) {
+        if (row.serverId !== oldServerId) continue;
+        rows.delete(key);
+        const renamed = { ...row, serverId: newServerId };
+        rows.set(keyOf(renamed), renamed);
+      }
+    },
+    clear: async () => rows.clear(),
   };
 }
 
@@ -1438,6 +1473,7 @@ describe("HostRuntimeStore", () => {
   it("restores the display replica before declaring the host registry loaded", async () => {
     const host = makeHost();
     const storage = createMemoryHostRuntimeStorage();
+    const replicaRowStore = createMemoryReplicaRowStore();
     await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
     await storage.setItem("@paseo:e2e", "1");
 
@@ -1470,13 +1506,14 @@ describe("HostRuntimeStore", () => {
         ],
       ]),
     );
-    const cache = new ReplicaCache(storage);
+    const cache = new ReplicaCache(replicaRowStore, { clearLegacyCache: async () => undefined });
     cache.setHosts([host.serverId]);
     await cache.flush();
     session.clearSession(host.serverId);
 
     const store = new HostRuntimeStore({
       storage,
+      replicaRowStore,
       deps: {
         createClient: () => {
           throw new Error("createClient should not be called");

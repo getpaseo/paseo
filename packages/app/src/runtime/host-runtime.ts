@@ -62,7 +62,8 @@ import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/su
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
-import { replicaCacheStorage } from "@/runtime/replica-cache/storage";
+import type { ReplicaRowStore } from "@/runtime/replica-cache/row-store";
+import { createReplicaRowStore } from "@/runtime/replica-cache/row-store-factory";
 import { projectIconCache } from "@/projects/icon-cache";
 import { nativePerformanceTrace } from "@/performance/native-trace";
 import { revokePushNotifications } from "@/push-notifications";
@@ -482,6 +483,7 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
     : undefined;
   const appCapabilities = {
     [CLIENT_CAPS.selectiveAgentTimeline]: true,
+    [CLIENT_CAPS.timelineReplacementInvalidation]: true,
     // Every build of this app parses `browser.tabs.changed`, host or not.
     [CLIENT_CAPS.browserMirror]: true,
     ...browserAutomationCapabilities,
@@ -1380,11 +1382,12 @@ export class HostRuntimeStore {
   constructor(input?: {
     deps?: HostRuntimeControllerDeps;
     storage?: HostRuntimeStorage;
+    replicaRowStore?: ReplicaRowStore;
     revokePushNotifications?: typeof revokePushNotifications;
   }) {
     this.deps = input?.deps ?? createDefaultDeps();
     this.storage = input?.storage ?? AsyncStorage;
-    this.replicaCache = new ReplicaCache(input?.storage ?? replicaCacheStorage);
+    this.replicaCache = new ReplicaCache(input?.replicaRowStore ?? createReplicaRowStore());
     this.revokePushNotifications = input?.revokePushNotifications ?? revokePushNotifications;
   }
 
