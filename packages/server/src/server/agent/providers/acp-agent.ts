@@ -94,6 +94,8 @@ import {
   type ProviderCatalog,
   type ResolveAgentCreateConfigInput,
   type ResolveAgentCreateConfigResult,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type ToolCallDetail,
   type ToolCallTimelineItem,
 } from "../agent-sdk-types.js";
@@ -1456,6 +1458,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private steeringSupported = false;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -1506,6 +1509,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.steeringSupported =
+        readRecord(readRecord(spawned.initialize._meta)?.steering)?.supported === true;
 
       const response = await this.runACPRequest(() =>
         this.connection!.newSession({
@@ -1540,6 +1545,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.child = spawned.child;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+      this.steeringSupported =
+        readRecord(readRecord(spawned.initialize._meta)?.steering)?.supported === true;
       this.sessionId = handle.sessionId;
       this.bootstrapThreadEventPending = true;
 
@@ -1652,6 +1659,29 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       });
 
     return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (
+      !this.connection ||
+      !this.sessionId ||
+      !this.steeringSupported ||
+      this.activeForegroundTurnId !== options.expectedTurnId
+    ) {
+      return { status: "unavailable" };
+    }
+    const response = await this.runACPRequest(() =>
+      this.connection!.extMethod("_session/steering", {
+        sessionId: this.sessionId,
+        prompt: toACPContentBlocks(prompt),
+      }),
+    );
+    return response.outcome === "injected" || response.outcome === "startedNewTurn"
+      ? { status: "accepted" }
+      : { status: "unavailable" };
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {

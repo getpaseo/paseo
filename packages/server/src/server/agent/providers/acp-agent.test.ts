@@ -93,6 +93,15 @@ interface ACPSessionInternals {
   acpMcpServers(): unknown[];
 }
 
+interface ACPSteerInternals {
+  sessionId: string | null;
+  connection: {
+    extMethod: (method: string, params: unknown) => Promise<{ outcome: string }>;
+  };
+  steeringSupported: boolean;
+  activeForegroundTurnId: string | null;
+}
+
 interface ACPModelSelectionInternals {
   sessionId: string | null;
   connection: {
@@ -147,6 +156,79 @@ function createSession(terminateProcess?: ProcessTerminator): ACPAgentSession {
     },
   );
 }
+
+describe("ACPAgentSession.steerActiveTurn", () => {
+  function primeForSteer(
+    session: ACPAgentSession,
+    overrides: Partial<ACPSteerInternals> = {},
+  ): { internals: ACPSteerInternals; extMethod: ReturnType<typeof vi.fn> } {
+    const extMethod = vi.fn(async () => ({ outcome: "injected" }));
+    const internals = asInternals<ACPSteerInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { extMethod };
+    internals.steeringSupported = true;
+    internals.activeForegroundTurnId = "turn-1";
+    Object.assign(internals, overrides);
+    return { internals, extMethod };
+  }
+
+  test("returns unavailable when the agent never advertised steering support", async () => {
+    const session = createSession();
+    primeForSteer(session, { steeringSupported: false });
+
+    const result = await session.steerActiveTurn("steer this", { expectedTurnId: "turn-1" });
+
+    expect(result).toEqual({ status: "unavailable" });
+  });
+
+  test("returns unavailable when the caller's expected turn doesn't match the live one", async () => {
+    // Guards against steering into the wrong turn: the caller's belief about
+    // what's running raced with the agent's own turn boundary.
+    const session = createSession();
+    const { extMethod } = primeForSteer(session, { activeForegroundTurnId: "turn-2" });
+
+    const result = await session.steerActiveTurn("steer this", { expectedTurnId: "turn-1" });
+
+    expect(result).toEqual({ status: "unavailable" });
+    expect(extMethod).not.toHaveBeenCalled();
+  });
+
+  test("returns unavailable when there is no live connection", async () => {
+    const session = createSession();
+    primeForSteer(session, { connection: undefined as never });
+
+    const result = await session.steerActiveTurn("steer this", { expectedTurnId: "turn-1" });
+
+    expect(result).toEqual({ status: "unavailable" });
+  });
+
+  test("forwards to _session/steering with the session id and prompt content", async () => {
+    const session = createSession();
+    const { extMethod } = primeForSteer(session);
+
+    await session.steerActiveTurn("steer this", { expectedTurnId: "turn-1" });
+
+    expect(extMethod).toHaveBeenCalledWith("_session/steering", {
+      sessionId: "session-1",
+      prompt: [{ type: "text", text: "steer this" }],
+    });
+  });
+
+  test.each([
+    ["injected", "accepted"],
+    ["startedNewTurn", "accepted"],
+    ["promptRequired", "unavailable"],
+    ["failed", "unavailable"],
+  ] as const)("maps agent outcome %s to status %s", async (outcome, status) => {
+    const session = createSession();
+    const { extMethod } = primeForSteer(session);
+    extMethod.mockResolvedValue({ outcome });
+
+    const result = await session.steerActiveTurn("steer this", { expectedTurnId: "turn-1" });
+
+    expect(result).toEqual({ status });
+  });
+});
 
 // Typed substitute for the real tree-kill terminator. Records which child
 // processes it was asked to terminate, so tests assert on observable state
