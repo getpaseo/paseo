@@ -11,9 +11,10 @@ import {
   type ResolveStructuredGenerationProvidersOptions,
   type StructuredGenerationDaemonConfig,
 } from "../../agent/structured-generation-providers.js";
-import type { WorkspaceGitService, WorkspaceGitWorkspace } from "../../workspace-git-service.js";
+import type { WorkspaceGitWorkspace } from "../../workspace-git-service.js";
 import {
   buildMetadataPrompt,
+  loadCommittedMetadataGeneration,
   type MetadataConfigKey,
 } from "../../../utils/build-metadata-prompt.js";
 
@@ -29,11 +30,11 @@ export interface PullRequestText {
  */
 export interface GitMetadataGenerator {
   generateCommitMessage(input: {
-    workspaceGit: Pick<WorkspaceGitWorkspace, "cwd" | "getCheckoutDiff" | "resolveRepoRoot">;
+    workspaceGit: Pick<WorkspaceGitWorkspace, "cwd" | "getCheckoutDiff" | "readHeadFile">;
     workspaceId?: string;
   }): Promise<string>;
   generatePullRequestText(input: {
-    workspaceGit: Pick<WorkspaceGitWorkspace, "cwd" | "getCheckoutDiff" | "resolveRepoRoot">;
+    workspaceGit: Pick<WorkspaceGitWorkspace, "cwd" | "getCheckoutDiff" | "readHeadFile">;
     workspaceId?: string;
     baseRef?: string;
   }): Promise<PullRequestText>;
@@ -59,9 +60,9 @@ export interface StructuredTextGenerationRequest<T> {
   agentTitle: string;
 }
 
-type GitMetadataDiffSource = Pick<WorkspaceGitService, "getCheckoutDiff" | "resolveRepoRoot">;
-type CheckoutDiffOptions = Parameters<GitMetadataDiffSource["getCheckoutDiff"]>[1];
-type CheckoutDiff = Awaited<ReturnType<GitMetadataDiffSource["getCheckoutDiff"]>>;
+type MetadataWorkspaceGit = Pick<WorkspaceGitWorkspace, "cwd" | "getCheckoutDiff" | "readHeadFile">;
+type CheckoutDiffOptions = Parameters<MetadataWorkspaceGit["getCheckoutDiff"]>[0];
+type CheckoutDiff = Awaited<ReturnType<MetadataWorkspaceGit["getCheckoutDiff"]>>;
 
 const COMMIT_MESSAGE_SCHEMA = z.object({
   message: z
@@ -86,8 +87,7 @@ const MAX_COMMIT_PATCH_CHARS = 120_000;
 const MAX_PULL_REQUEST_PATCH_CHARS = 200_000;
 
 interface PromptForDiffInput {
-  cwd: string;
-  workspaceGit?: Pick<WorkspaceGitWorkspace, "getCheckoutDiff" | "resolveRepoRoot">;
+  workspaceGit: MetadataWorkspaceGit;
   diffOptions: CheckoutDiffOptions;
   maxPatchChars: number;
   contract: string;
@@ -97,23 +97,17 @@ interface PromptForDiffInput {
 }
 
 export function createGitMetadataGenerator(deps: {
-  workspaceGitService: GitMetadataDiffSource;
   generation: StructuredTextGeneration;
 }): GitMetadataGenerator {
-  const { workspaceGitService, generation } = deps;
+  const { generation } = deps;
 
   async function buildPromptForDiff(input: PromptForDiffInput): Promise<string> {
-    const workspaceGit = input.workspaceGit;
-    const diff = workspaceGit
-      ? await workspaceGit.getCheckoutDiff(input.diffOptions)
-      : await workspaceGitService.getCheckoutDiff(input.cwd, input.diffOptions);
+    const metadataGeneration = await loadCommittedMetadataGeneration(input.workspaceGit);
+    const diff = await input.workspaceGit.getCheckoutDiff(input.diffOptions);
     const fileList = renderFileList(diff.structured);
     const patch = truncatePatch(diff.diff, input.maxPatchChars);
     return buildMetadataPrompt({
-      cwd: input.cwd,
-      workspaceGitService: workspaceGit
-        ? { resolveRepoRoot: () => workspaceGit.resolveRepoRoot() }
-        : workspaceGitService,
+      metadataGeneration,
       contract: input.contract,
       styles: [{ configKey: input.styleConfigKey, default: input.styleDefault }],
       after: [
@@ -130,7 +124,6 @@ export function createGitMetadataGenerator(deps: {
     async generateCommitMessage({ workspaceGit, workspaceId }) {
       const cwd = workspaceGit.cwd;
       const prompt = await buildPromptForDiff({
-        cwd,
         workspaceGit,
         diffOptions: { mode: "uncommitted", includeStructured: true },
         maxPatchChars: MAX_COMMIT_PATCH_CHARS,
@@ -160,7 +153,6 @@ export function createGitMetadataGenerator(deps: {
     async generatePullRequestText({ workspaceGit, workspaceId, baseRef }) {
       const cwd = workspaceGit.cwd;
       const prompt = await buildPromptForDiff({
-        cwd,
         workspaceGit,
         diffOptions: { mode: "base", baseRef, includeStructured: true },
         maxPatchChars: MAX_PULL_REQUEST_PATCH_CHARS,

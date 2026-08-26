@@ -307,6 +307,7 @@ interface SessionForTestOptions {
     hasLocalBranch?: ReturnType<typeof vi.fn>;
     resolveRepoRemoteUrl?: ReturnType<typeof vi.fn>;
     resolveRepoRoot?: ReturnType<typeof vi.fn>;
+    readHeadFile?: ReturnType<typeof vi.fn>;
     resolveForge?: ReturnType<typeof vi.fn>;
     getWorkspaceGitMetadata?: ReturnType<typeof vi.fn>;
     getProjectSlug?: ReturnType<typeof vi.fn>;
@@ -388,6 +389,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     hasLocalBranch: vi.fn(),
     resolveRepoRemoteUrl: vi.fn(),
     resolveRepoRoot: vi.fn(),
+    readHeadFile: vi.fn().mockResolvedValue(null),
     getWorkspaceGitMetadata: vi.fn(),
     resolveForge: vi.fn().mockResolvedValue({ forge: "github", service: github }),
     // Mirror production: invalidateForge resolves the forge and busts the
@@ -2217,6 +2219,11 @@ describe("session checkout merge handling", () => {
   });
 });
 
+function committedConfigContents(config: unknown): string | null {
+  if (config === undefined) return null;
+  return typeof config === "string" ? config : JSON.stringify(config);
+}
+
 describe("session checkout commit handling", () => {
   const tempDirs: string[] = [];
   const PRE_CHANGE_COMMIT_PROMPT = `Write a concise git commit message for the changes below.
@@ -2244,17 +2251,9 @@ diff --git a/file.txt b/file.txt
     return root;
   }
 
-  function writeConfig(repoRoot: string, config: unknown): void {
-    writeFileSync(join(repoRoot, "paseo.json"), `${JSON.stringify(config)}\n`);
-  }
-
   async function generateCommitPromptWithConfig(config: unknown): Promise<string> {
     const repoRoot = makeRoot();
-    if (typeof config === "string") {
-      writeFileSync(join(repoRoot, "paseo.json"), config);
-    } else if (config !== undefined) {
-      writeConfig(repoRoot, config);
-    }
+    const committedConfig = committedConfigContents(config);
 
     const workspaceGitService = {
       getCheckoutDiff: vi.fn().mockResolvedValue({
@@ -2272,7 +2271,7 @@ diff --git a/file.txt b/file.txt
         ],
       }),
       getSnapshot: vi.fn().mockResolvedValue({}),
-      resolveRepoRoot: vi.fn().mockResolvedValue(repoRoot),
+      readHeadFile: vi.fn().mockResolvedValue(committedConfig),
     };
     agentResponseMocks.generateStructuredAgentResponseWithFallback.mockResolvedValue({
       message: "Update file",
@@ -2394,9 +2393,7 @@ diff --git a/file.txt b/file.txt
 
   test.each([
     ["paseo.json missing", undefined],
-    ["paseo.json exists but invalid JSON", "{ nope"],
     ["paseo.json valid but missing metadataGeneration", {}],
-    ["metadataGeneration is schema-invalid", { metadataGeneration: "not an object" }],
     [
       "metadataGeneration exists but missing commitMessage",
       { metadataGeneration: { pullRequest: { instructions: "Write a punchy PR." } } },
@@ -2442,6 +2439,39 @@ diff --git a/file.txt b/file.txt
     expect(styleIndex).toBeLessThan(jsonContractIndex);
     expect(jsonContractIndex).toBeLessThan(fileListIndex);
     expect(fileListIndex).toBeLessThan(patchIndex);
+  });
+
+  test("does not commit when committed metadata configuration is invalid", async () => {
+    const messages: unknown[] = [];
+    const workspaceGitService = {
+      readHeadFile: vi.fn().mockResolvedValue("{ invalid"),
+    };
+    checkoutGitMocks.commitChanges.mockClear();
+    agentResponseMocks.generateStructuredAgentResponseWithFallback.mockClear();
+    const session = createSessionForTest({ workspaceGitService, messages });
+
+    await session.handleMessage({
+      type: "checkout_commit_request",
+      cwd: REQUEST_WORKTREE_CWD,
+      message: "",
+      addAll: true,
+      requestId: "request-invalid-generated-commit",
+    });
+
+    expect(agentResponseMocks.generateStructuredAgentResponseWithFallback).not.toHaveBeenCalled();
+    expect(checkoutGitMocks.commitChanges).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "checkout_commit_response",
+      payload: {
+        cwd: REQUEST_WORKTREE_CWD,
+        success: false,
+        error: {
+          code: "UNKNOWN",
+          message: "Committed paseo.json contains invalid JSON",
+        },
+        requestId: "request-invalid-generated-commit",
+      },
+    });
   });
 
   test("keeps the commit fallback when structured generation fails", async () => {
@@ -2540,17 +2570,9 @@ diff --git a/file.txt b/file.txt
     return root;
   }
 
-  function writeConfig(repoRoot: string, config: unknown): void {
-    writeFileSync(join(repoRoot, "paseo.json"), `${JSON.stringify(config)}\n`);
-  }
-
   async function generatePullRequestCallWithConfig(config: unknown): Promise<unknown> {
     const repoRoot = makeRoot();
-    if (typeof config === "string") {
-      writeFileSync(join(repoRoot, "paseo.json"), config);
-    } else if (config !== undefined) {
-      writeConfig(repoRoot, config);
-    }
+    const committedConfig = committedConfigContents(config);
 
     const workspaceGitService = {
       getCheckoutDiff: vi.fn().mockResolvedValue({
@@ -2567,7 +2589,7 @@ diff --git a/file.txt b/file.txt
           },
         ],
       }),
-      resolveRepoRoot: vi.fn().mockResolvedValue(repoRoot),
+      readHeadFile: vi.fn().mockResolvedValue(committedConfig),
     };
     agentResponseMocks.generateStructuredAgentResponseWithFallback.mockResolvedValue({
       title: "Update file",
@@ -2671,9 +2693,7 @@ diff --git a/file.txt b/file.txt
 
   test.each([
     ["paseo.json missing", undefined],
-    ["paseo.json exists but invalid JSON", "{ nope"],
     ["paseo.json valid but missing metadataGeneration", {}],
-    ["metadataGeneration is schema-invalid", { metadataGeneration: "not an object" }],
     [
       "metadataGeneration exists but missing pullRequest",
       { metadataGeneration: { commitMessage: { instructions: "Use conventional commits." } } },
@@ -2719,6 +2739,41 @@ diff --git a/file.txt b/file.txt
     expect(styleIndex).toBeLessThan(jsonContractIndex);
     expect(jsonContractIndex).toBeLessThan(fileListIndex);
     expect(fileListIndex).toBeLessThan(patchIndex);
+  });
+
+  test("does not create a pull request when committed metadata configuration is invalid", async () => {
+    const messages: unknown[] = [];
+    const workspaceGitService = {
+      readHeadFile: vi.fn().mockResolvedValue("{ invalid"),
+    };
+    checkoutGitMocks.createPullRequest.mockClear();
+    agentResponseMocks.generateStructuredAgentResponseWithFallback.mockClear();
+    const session = createSessionForTest({ workspaceGitService, messages });
+
+    await session.handleMessage({
+      type: "checkout_pr_create_request",
+      cwd: REQUEST_WORKTREE_CWD,
+      baseRef: "main",
+      title: "",
+      body: "",
+      requestId: "request-invalid-generated-pr",
+    });
+
+    expect(agentResponseMocks.generateStructuredAgentResponseWithFallback).not.toHaveBeenCalled();
+    expect(checkoutGitMocks.createPullRequest).not.toHaveBeenCalled();
+    expect(messages).toContainEqual({
+      type: "checkout_pr_create_response",
+      payload: {
+        cwd: REQUEST_WORKTREE_CWD,
+        url: null,
+        number: null,
+        error: {
+          code: "UNKNOWN",
+          message: "Committed paseo.json contains invalid JSON",
+        },
+        requestId: "request-invalid-generated-pr",
+      },
+    });
   });
 
   test("keeps PR generation as one structured call with title and body schema", async () => {

@@ -10,8 +10,12 @@ import {
   type AttemptFirstAgentBranchAutoNameResult,
 } from "./paseo-worktree-service.js";
 import type { GitMutationService } from "./session/git-mutation/git-mutation-service.js";
-import type { WorkspaceGitService } from "./workspace-git-service.js";
-import type { PersistedWorkspaceRecord, WorkspaceRegistry } from "./workspace-registry.js";
+import type { WorkspaceGitDirectory } from "./workspace-git-directory.js";
+import {
+  type PersistedWorkspaceRecord,
+  resolveSelectedWorkspaceRuntimeId,
+  type WorkspaceRegistry,
+} from "./workspace-registry.js";
 import {
   generateBranchNameFromFirstAgentContext,
   type GeneratedWorkspaceName,
@@ -24,8 +28,8 @@ type CurrentSelection = GenerateBranchNameFromFirstAgentContextOptions["currentS
 
 interface WorkspaceAutoNameOptions {
   agentManager: AgentManager;
-  workspaceRegistry: Pick<WorkspaceRegistry, "update">;
-  workspaceGitService: WorkspaceGitService;
+  workspaceRegistry: Pick<WorkspaceRegistry, "get" | "update">;
+  workspaceGitDirectory: Pick<WorkspaceGitDirectory, "bindRecord">;
   providerSnapshotManager: ProviderSnapshotManager;
   readDaemonConfig: () => StructuredGenerationDaemonConfig;
   gitMutation: Pick<GitMutationService, "notifyGitMutation">;
@@ -41,8 +45,8 @@ interface ScheduleContext {
 
 export class WorkspaceAutoName {
   private readonly agentManager: AgentManager;
-  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "update">;
-  private readonly workspaceGitService: WorkspaceGitService;
+  private readonly workspaceRegistry: Pick<WorkspaceRegistry, "get" | "update">;
+  private readonly workspaceGitDirectory: Pick<WorkspaceGitDirectory, "bindRecord">;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly readDaemonConfig: () => StructuredGenerationDaemonConfig;
   private readonly gitMutation: Pick<GitMutationService, "notifyGitMutation">;
@@ -54,7 +58,7 @@ export class WorkspaceAutoName {
   constructor(options: WorkspaceAutoNameOptions) {
     this.agentManager = options.agentManager;
     this.workspaceRegistry = options.workspaceRegistry;
-    this.workspaceGitService = options.workspaceGitService;
+    this.workspaceGitDirectory = options.workspaceGitDirectory;
     this.providerSnapshotManager = options.providerSnapshotManager;
     this.readDaemonConfig = options.readDaemonConfig;
     this.gitMutation = options.gitMutation;
@@ -108,25 +112,45 @@ export class WorkspaceAutoName {
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
   }): Promise<void> {
-    const worktreeRoot = input.workspace.worktreeRoot ?? input.workspace.cwd;
+    const selectedRuntimeId = resolveSelectedWorkspaceRuntimeId(input.workspace);
+    const workspaceGit = selectedRuntimeId
+      ? this.workspaceGitDirectory.bindRecord(input.workspace)
+      : null;
+    const worktreeRoot = selectedRuntimeId
+      ? input.workspace.cwd
+      : (input.workspace.worktreeRoot ?? input.workspace.cwd);
+    const runtimePlaceholderBranch = selectedRuntimeId ? input.workspace.branch?.trim() : null;
     let generated: GeneratedWorkspaceName | null = null;
-    const result: AttemptFirstAgentBranchAutoNameResult = await attemptFirstAgentBranchAutoName({
-      cwd: worktreeRoot,
-      firstAgentContext: input.firstAgentContext,
-      generateBranchNameFromContext: ({ firstAgentContext }) => {
-        return this.generateFromContext({
-          cwd: input.workspace.cwd,
-          firstAgentContext,
-          currentSelection: input.currentSelection,
-        }).then((nextGenerated) => {
-          generated = nextGenerated;
-          return nextGenerated?.branch ?? null;
-        });
-      },
-    });
+    const result: AttemptFirstAgentBranchAutoNameResult =
+      selectedRuntimeId && !runtimePlaceholderBranch
+        ? { attempted: false, renamed: false, branchName: null }
+        : await attemptFirstAgentBranchAutoName({
+            cwd: worktreeRoot,
+            ...(workspaceGit && runtimePlaceholderBranch
+              ? {
+                  placeholderBranchName: runtimePlaceholderBranch,
+                  getCurrentBranch: async () => (await workspaceGit.getCheckout()).currentBranch,
+                  localBranchExists: async (_cwd, branch) => workspaceGit.hasLocalBranch(branch),
+                  renameCurrentBranch: async (_cwd, branch) => workspaceGit.renameBranch(branch),
+                }
+              : {}),
+            firstAgentContext: input.firstAgentContext,
+            generateBranchNameFromContext: ({ firstAgentContext }) => {
+              return this.generateFromContext({
+                workspaceId: input.workspace.workspaceId,
+                cwd: input.workspace.cwd,
+                firstAgentContext,
+                currentSelection: input.currentSelection,
+              }).then((nextGenerated) => {
+                generated = nextGenerated;
+                return nextGenerated?.branch ?? null;
+              });
+            },
+          });
 
     if (!generated) {
       generated = await this.generateFromContext({
+        workspaceId: input.workspace.workspaceId,
         cwd: input.workspace.cwd,
         firstAgentContext: input.firstAgentContext,
         currentSelection: input.currentSelection,
@@ -147,7 +171,11 @@ export class WorkspaceAutoName {
       promptTitle: resolveFirstAgentPromptTitle(input.firstAgentContext),
     });
     if (result.renamed) {
-      await this.gitMutation.notifyGitMutation(worktreeRoot, "rename-branch");
+      if (workspaceGit) {
+        await workspaceGit.getSnapshot({ force: true, reason: "rename-branch" });
+      } else {
+        await this.gitMutation.notifyGitMutation(worktreeRoot, "rename-branch");
+      }
     }
     await this.emitWorkspaceUpdateForCwd(input.workspace.cwd);
   }
@@ -159,6 +187,7 @@ export class WorkspaceAutoName {
     currentSelection: CurrentSelection;
   }): Promise<void> {
     const generated = await this.generateFromContext({
+      workspaceId: input.workspaceId,
       cwd: input.cwd,
       firstAgentContext: input.firstAgentContext,
       currentSelection: input.currentSelection,
@@ -194,15 +223,25 @@ export class WorkspaceAutoName {
     });
   }
 
-  private generateFromContext(input: {
+  private async generateFromContext(input: {
+    workspaceId: string;
     cwd: string;
     firstAgentContext: FirstAgentContext;
     currentSelection: CurrentSelection;
   }): Promise<GeneratedWorkspaceName | null> {
+    const workspace = await this.workspaceRegistry.get(input.workspaceId);
+    if (!workspace || workspace.cwd !== input.cwd) {
+      throw new Error(`Workspace not found for auto-name: ${input.workspaceId}`);
+    }
+    const workspaceGit = this.workspaceGitDirectory.bindRecord(workspace);
+    const workspaceId = resolveSelectedWorkspaceRuntimeId(workspace)
+      ? workspace.workspaceId
+      : undefined;
     return this.generateWorkspaceName({
       agentManager: this.agentManager,
       cwd: input.cwd,
-      workspaceGitService: this.workspaceGitService,
+      ...(workspaceId ? { workspaceId } : {}),
+      workspaceGit,
       providerSnapshotManager: this.providerSnapshotManager,
       daemonConfig: this.readDaemonConfig(),
       currentSelection: input.currentSelection ?? undefined,

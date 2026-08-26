@@ -857,7 +857,6 @@ export class Session {
       github: this.github,
       checkoutDiffManager,
       gitMetadataGenerator: createGitMetadataGenerator({
-        workspaceGitService: this.workspaceGitService,
         generation: createAgentStructuredTextGeneration({
           agentManager: this.agentManager,
           providerSnapshotManager,

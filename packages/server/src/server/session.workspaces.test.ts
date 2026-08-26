@@ -54,6 +54,7 @@ import {
 import type { WorkspaceGitRuntimeSnapshot } from "./workspace-git-service.js";
 import type { GeneratedWorkspaceName } from "./worktree-branch-name-generator.js";
 import { WorkspaceAutoName } from "./workspace-auto-name.js";
+import { createWorkspaceGitDirectory } from "./workspace-git-directory.js";
 import type { ForgeService } from "../services/forge-service.js";
 import { createNoopWorkspaceGitService } from "./test-utils/workspace-git-service-stub.js";
 import { deriveProjectKey } from "./project-key.js";
@@ -766,7 +767,10 @@ function createSessionForWorkspaceTests(
       workspaceAutoName: new WorkspaceAutoName({
         agentManager,
         workspaceRegistry,
-        workspaceGitService,
+        workspaceGitDirectory: createWorkspaceGitDirectory({
+          workspaceRegistry,
+          workspaceGitService,
+        }),
         providerSnapshotManager,
         readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
         gitMutation: { notifyGitMutation: async () => {} },
@@ -1265,7 +1269,10 @@ test("create_agent_request launches from an exact subdirectory in a created work
       workspaceAutoName: new WorkspaceAutoName({
         agentManager,
         workspaceRegistry,
-        workspaceGitService,
+        workspaceGitDirectory: createWorkspaceGitDirectory({
+          workspaceRegistry,
+          workspaceGitService,
+        }),
         providerSnapshotManager: createProviderSnapshotManagerStub().manager,
         readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
         gitMutation: { notifyGitMutation: async () => {} },
@@ -9191,18 +9198,28 @@ test("workspace auto-name keeps a manual title written before the scheduled titl
   });
   const stored = new Map([[workspace.workspaceId, workspace]]);
   const emittedWorkspaceIds: string[] = [];
+  const workspaceGitService = createNoopWorkspaceGitService();
+  const workspaceRegistry = {
+    get: async (workspaceId: string) => stored.get(workspaceId) ?? null,
+    list: async () => Array.from(stored.values()),
+    update: async (
+      workspaceId: string,
+      updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
+    ) => {
+      const current = stored.get(workspaceId);
+      if (!current) return null;
+      const updated = updater(current);
+      stored.set(workspaceId, updated);
+      return updated;
+    },
+  };
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
-    workspaceRegistry: {
-      update: async (workspaceId, updater) => {
-        const current = stored.get(workspaceId);
-        if (!current) return null;
-        const updated = updater(current);
-        stored.set(workspaceId, updated);
-        return updated;
-      },
-    },
-    workspaceGitService: createNoopWorkspaceGitService(),
+    workspaceRegistry,
+    workspaceGitDirectory: createWorkspaceGitDirectory({
+      workspaceRegistry,
+      workspaceGitService,
+    }),
     providerSnapshotManager: createProviderSnapshotManagerStub().manager,
     readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
     gitMutation: { notifyGitMutation: async () => {} },
@@ -9247,18 +9264,28 @@ test("workspace auto-name replaces the unchanged prompt title", async () => {
     updatedAt: "2026-03-01T12:00:00.000Z",
   });
   const stored = new Map([[workspace.workspaceId, workspace]]);
+  const workspaceGitService = createNoopWorkspaceGitService();
+  const workspaceRegistry = {
+    get: async (workspaceId: string) => stored.get(workspaceId) ?? null,
+    list: async () => Array.from(stored.values()),
+    update: async (
+      workspaceId: string,
+      updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
+    ) => {
+      const current = stored.get(workspaceId);
+      if (!current) return null;
+      const updated = updater(current);
+      stored.set(workspaceId, updated);
+      return updated;
+    },
+  };
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
-    workspaceRegistry: {
-      update: async (workspaceId, updater) => {
-        const current = stored.get(workspaceId);
-        if (!current) return null;
-        const updated = updater(current);
-        stored.set(workspaceId, updated);
-        return updated;
-      },
-    },
-    workspaceGitService: createNoopWorkspaceGitService(),
+    workspaceRegistry,
+    workspaceGitDirectory: createWorkspaceGitDirectory({
+      workspaceRegistry,
+      workspaceGitService,
+    }),
     providerSnapshotManager: createProviderSnapshotManagerStub().manager,
     readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
     gitMutation: { notifyGitMutation: async () => {} },
@@ -9322,18 +9349,28 @@ test("workspace auto-name uses the backing root for a nested worktree", async ()
   let generateCalls = 0;
   const gitMutations: string[] = [];
   const emittedCwds: string[] = [];
+  const workspaceGitService = createNoopWorkspaceGitService();
+  const workspaceRegistry = {
+    get: async (workspaceId: string) => stored.get(workspaceId) ?? null,
+    list: async () => Array.from(stored.values()),
+    update: async (
+      workspaceId: string,
+      updater: (record: PersistedWorkspaceRecord) => PersistedWorkspaceRecord,
+    ) => {
+      const current = stored.get(workspaceId);
+      if (!current) return null;
+      const updated = updater(current);
+      stored.set(workspaceId, updated);
+      return updated;
+    },
+  };
   const workspaceAutoName = new WorkspaceAutoName({
     agentManager: asAgentManager({}),
-    workspaceRegistry: {
-      update: async (workspaceId, updater) => {
-        const current = stored.get(workspaceId);
-        if (!current) return null;
-        const updated = updater(current);
-        stored.set(workspaceId, updated);
-        return updated;
-      },
-    },
-    workspaceGitService: createNoopWorkspaceGitService(),
+    workspaceRegistry,
+    workspaceGitDirectory: createWorkspaceGitDirectory({
+      workspaceRegistry,
+      workspaceGitService,
+    }),
     providerSnapshotManager: createProviderSnapshotManagerStub().manager,
     readDaemonConfig: () => ({ metadataGeneration: { providers: [] } }),
     gitMutation: {
