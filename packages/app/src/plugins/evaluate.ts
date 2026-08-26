@@ -24,7 +24,7 @@ import {
 import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo/plugin/host";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
-import { resolvePluginIcon } from "./icons";
+import { Icon, resolvePluginIcon } from "./icons";
 import { parsePluginThemeContribution } from "./themes";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
@@ -247,6 +247,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
       return {
         defineAttachmentSource,
         defineRpc,
+        Icon,
         usePaseo,
         useAgent,
         useWorkspace,

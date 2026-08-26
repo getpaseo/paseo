@@ -103,6 +103,12 @@ declare module "@getpaseo/plugin" {
 
   export interface PluginSurfaceProps extends PluginHostProps {}
 
+  export interface PluginIconProps {
+    name: string;
+    size?: number;
+    color?: string;
+  }
+
   export interface PluginWorkspaceSnapshot {
     readonly id: string;
     readonly projectId: string;
@@ -260,6 +266,8 @@ declare module "@getpaseo/plugin" {
 
   export type PluginCleanup = () => void | Promise<void>;
   export type PluginContribution = (plugin: PluginContext) => PluginCleanup;
+
+  export const Icon: ComponentType<PluginIconProps>;
 
   export function useRpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,

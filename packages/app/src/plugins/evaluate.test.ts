@@ -333,6 +333,28 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("must return a cleanup function");
   });
 
+  it("provides the host Icon component through @getpaseo/plugin", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { Icon } = require("@getpaseo/plugin");
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addSurface("main", function Surface() {
+            return Icon({ name: "Settings", size: 18, color: "#123456" });
+          });
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    const Component = plugin.surfaces[0]?.Component;
+    expect(Component).toBeTypeOf("function");
+    const element = (Component as (props: never) => { props: unknown })({} as never);
+    expect(element).toMatchObject({ props: { size: 18, color: "#123456" } });
+  });
+
   it("resolves @getpaseo/plugin/server for shared RPC contracts", () => {
     const plugin = evaluatePluginClientBundle(
       "example",

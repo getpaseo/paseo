@@ -121,14 +121,16 @@ code lives behind filename boundaries:
 | `*.server.ts`  | Node APIs, filesystem and process access, credentials, and handlers. |
 | `*.shared.ts`  | Zod RPC contracts and plain values used by both runtimes.            |
 
-Shared files import contracts from `@getpaseo/plugin/server`. Client files import hooks from
-`@getpaseo/plugin`. Plugin UI runs on desktop and mobile across multiple themes: color every
-`Text` from `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from
-`layout.compact`. See `public-docs/plugins/reference.md`.
+Shared files import contracts from `@getpaseo/plugin/server`. Client files import hooks and the
+host-provided `Icon` component from `@getpaseo/plugin`. `Icon` resolves a Lucide name using the
+client's installed icon set; an unknown name renders nothing so it cannot break the plugin surface.
+Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
+`theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
+See `public-docs/plugins/reference.md`.
 
 | Module                    | Use it for                                               |
 | ------------------------- | -------------------------------------------------------- |
-| `@getpaseo/plugin`        | hooks and UI types                                       |
+| `@getpaseo/plugin`        | host UI components, hooks, and UI types                  |
 | `@getpaseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, and handler types |
 
 The compiler removes client registrations and imports from the server entry point, and server

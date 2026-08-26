@@ -34,6 +34,12 @@ export interface PluginHostProps {
 
 export interface PluginSurfaceProps extends PluginHostProps {}
 
+export interface PluginIconProps {
+  name: string;
+  size?: number;
+  color?: string;
+}
+
 export interface PluginWorkspaceSnapshot {
   readonly id: string;
   readonly projectId: string;

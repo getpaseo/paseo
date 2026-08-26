@@ -67,15 +67,15 @@ Paseo builds separate client and server bundles from `index.ts`. It rejects impo
 
 Paseo provides these modules to client code:
 
-| Module                    | Use it for                          |
-| ------------------------- | ----------------------------------- |
-| `@getpaseo/plugin`        | Hooks and UI types                  |
-| `@getpaseo/plugin/server` | Shared RPC and attachment contracts |
-| `@tanstack/react-query`   | Request state and caching           |
-| `react`                   | Components and hooks                |
-| `react/jsx-runtime`       | Compiled JSX                        |
-| `react-native`            | Cross-platform UI                   |
-| `zod`                     | Shared schemas                      |
+| Module                    | Use it for                              |
+| ------------------------- | --------------------------------------- |
+| `@getpaseo/plugin`        | Host UI components, hooks, and UI types |
+| `@getpaseo/plugin/server` | Shared RPC and attachment contracts     |
+| `@tanstack/react-query`   | Request state and caching               |
+| `react`                   | Components and hooks                    |
+| `react/jsx-runtime`       | Compiled JSX                            |
+| `react-native`            | Cross-platform UI                       |
+| `zod`                     | Shared schemas                          |
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
@@ -165,6 +165,16 @@ export default function contribute(plugin: PluginContext) {
 | `layout` | `compact` and the `ios`, `android`, or `web` platform.       |
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
+
+Use the host-provided `Icon` component for Lucide icons inside client surfaces. It renders the icon from Paseo's installed Lucide version, so plugin bundles do not import `lucide-react-native` or `react-native-svg`. An unknown name renders nothing instead of failing the plugin surface.
+
+```tsx
+import { Icon } from "@getpaseo/plugin";
+
+<Icon name="Settings" size={18} color={theme.colors.foreground} />;
+```
+
+Keep `Icon` in a `*.client.tsx` module.
 
 ## Timeline items
 

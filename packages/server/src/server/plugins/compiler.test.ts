@@ -83,7 +83,7 @@ describe("plugin author module externals", () => {
       const entryPath = path.join(directory, "index.ts");
       await writeFile(
         entryPath,
-        `import type { PluginContext } from "${sdk}";
+        `import { Icon, type PluginContext } from "${sdk}";
 import { defineRpc } from "${sdk}/server";
 import { z } from "zod";
 
@@ -93,8 +93,13 @@ const ping = defineRpc({
   output: z.object({ ok: z.boolean() }),
 });
 
+function Surface() {
+  return Icon({ name: "Settings", size: 18 });
+}
+
 export default function contribute(plugin: PluginContext) {
   plugin.handle(ping, async () => ({ ok: true }));
+  plugin.addSurface("main", Surface);
   return () => undefined;
 }
 `,
@@ -103,6 +108,8 @@ export default function contribute(plugin: PluginContext) {
       const { clientBundle, serverBundle } = await compilePlugin(entryPath);
       expect(clientBundle).toContain(`${sdk}/server`);
       expect(serverBundle).toContain(`${sdk}/server`);
+      expect(clientBundle).toContain("Settings");
+      expect(serverBundle).not.toContain("Settings");
       expect(clientBundle).not.toContain("Invalid plugin RPC method");
       expect(serverBundle).not.toContain("Invalid plugin RPC method");
     },
