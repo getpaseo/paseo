@@ -780,12 +780,7 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   imageGallerySurface: {
-    overflow: "hidden",
     position: "relative",
-    borderRadius: theme.borderRadius.lg,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    backgroundColor: theme.colors.surface1,
   },
   imageSurface: {
     width: "100%",
