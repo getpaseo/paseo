@@ -5923,6 +5923,23 @@ test("applies live autonomous events and preserves usage omitted from completion
     contextWindowMaxTokens: 200_000,
     contextWindowUsedTokens: 175,
   });
+
+  // Emitting usage_updated with partial usage (e.g. after compaction) merges and preserves contextWindowMaxTokens
+  capturedSession!.pushEvent({
+    type: "usage_updated",
+    provider: "codex",
+    usage: {
+      contextWindowUsedTokens: 80,
+    },
+    turnId: autonomousTurnId,
+  });
+  const afterCompactionUsage = manager.getAgent(snapshot.id);
+  expect(afterCompactionUsage?.lastUsage).toEqual({
+    inputTokens: 10,
+    contextWindowMaxTokens: 200_000,
+    contextWindowUsedTokens: 80,
+  });
+
   expect(manager.getTimeline(snapshot.id)).toContainEqual({
     type: "assistant_message",
     text: "AUTONOMOUS_PUMP_MESSAGE",
