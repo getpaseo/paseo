@@ -248,7 +248,7 @@ const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
     readTextFile: false,
     writeTextFile: false,
   },
-  terminal: false,
+  terminal: true,
 };
 
 export type ACPClientCapabilityMeta = Record<string, unknown>;

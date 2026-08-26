@@ -218,4 +218,16 @@ describe("KimiACPAgentClient per-model thinking options", () => {
       expect.objectContaining({ id: "on", isDefault: false }),
     ]);
   });
+
+  test("advertises client terminal capability by default for ACP shell tools", () => {
+    const client = new KimiACPAgentClient({
+      logger: createTestLogger(),
+      command: ["kimi", "acp"],
+      providerId: "kimi",
+      label: "Kimi Code CLI",
+    });
+
+    const session = client.createSession({ provider: "acp", cwd: "/tmp/acp-kimi-terminal" });
+    expect(session).toBeDefined();
+  });
 });
