@@ -71,6 +71,7 @@ class TimelineWorld {
         limit: 40,
         projection: "projected",
       }),
+    isTransientError: (error) => error instanceof Error && error.message.startsWith("transient:"),
     reportError: (error) => {
       this.errors.push(error instanceof Error ? error.message : String(error));
       const waiter = this.errorWaiters.shift();
@@ -139,6 +140,10 @@ class TimelineWorld {
 
   expectNoPendingFetch(): void {
     expect(this.fetches).toEqual([]);
+  }
+
+  expectNoScheduledRetry(): void {
+    expect(this.scheduled).toEqual([]);
   }
 
   nextError(): Promise<string> {
@@ -394,7 +399,7 @@ test("a failed catch-up reports once and retries through the explicit retry poli
   const membership = await world.nextMembership();
   membership.succeed();
   const failed = await world.nextFetch("agent-a");
-  failed.fail("timeline unavailable");
+  failed.fail("transient: timeline unavailable");
   const [error, retryCatchUp] = await Promise.all([world.nextError(), world.nextRetry()]);
   expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("error");
 
@@ -405,10 +410,72 @@ test("a failed catch-up reports once and retries through the explicit retry poli
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
 
   expect({ error, retryDirection: retry.request.direction }).toEqual({
-    error: "timeline unavailable",
+    error: "transient: timeline unavailable",
     retryDirection: "tail",
   });
   world.expectNoPendingMembership();
+});
+
+test("a terminal catch-up failure stays parked until visibility changes", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const failed = await world.nextFetch("agent-a");
+  failed.fail("Provider is unavailable in the selected workspace runtime");
+  await world.nextError();
+
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  world.elapse(60_000);
+  world.expectNoPendingFetch();
+  world.expectNoScheduledRetry();
+
+  world.sync.setConnected(false);
+  world.sync.setConnected(true);
+  const restored = await world.nextMembership();
+  restored.succeed();
+  const retry = await world.nextFetch("agent-a");
+  retry.respond({ hasNewer: false });
+});
+
+test("a successful explicit refresh clears a parked catch-up", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const failed = await world.nextFetch("agent-a");
+  failed.fail("Provider is unavailable in the selected workspace runtime");
+  await world.nextError();
+
+  world.sync.markAgentCurrent("agent-a");
+
+  expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready");
+  world.expectNoPendingFetch();
+  world.expectNoScheduledRetry();
+});
+
+test("a terminal membership failure stays parked until membership changes", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const failed = await world.nextMembership();
+  failed.fail("Workspace runtime is paused");
+  await world.nextError();
+
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  world.elapse(60_000);
+  world.expectNoPendingMembership();
+  world.expectNoScheduledRetry();
+
+  world.sync.setConnected(false);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-b"], { preserveHot: false });
+  world.sync.setConnected(true);
+  const retry = await world.nextMembership();
+  retry.succeed();
+  const catchUp = await world.nextFetch("agent-b");
+  catchUp.respond({ hasNewer: false });
 });
 
 test("gap recovery supersedes completed catch-up and pages through the current tail", async () => {
@@ -467,7 +534,7 @@ test("membership failure autonomously retries without another visibility declara
   world.sync.setConnected(true);
   world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
   const failed = await world.nextMembership();
-  failed.fail("subscription unavailable");
+  failed.fail("transient: subscription unavailable");
   const [error, retryMembership] = await Promise.all([world.nextError(), world.nextRetry()]);
   expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("error");
 
@@ -480,7 +547,7 @@ test("membership failure autonomously retries without another visibility declara
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
 
   expect({ error, failed: failed.agentIds, retry: retry.agentIds }).toEqual({
-    error: "subscription unavailable",
+    error: "transient: subscription unavailable",
     failed: ["agent-a"],
     retry: ["agent-a"],
   });
@@ -511,12 +578,29 @@ test("backgrounding preserves the hot membership without catch-up on return", as
   world.expectNoPendingFetch();
 });
 
+test("authoritative suspension removes a visible agent from the hot membership", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const visible = await world.nextMembership();
+  visible.succeed();
+  const catchUp = await world.nextFetch("agent-a");
+  catchUp.respond({ hasNewer: false });
+
+  world.sync.replaceVisibleAgentIds("workspace", [], { preserveHot: false });
+  const suspended = await world.nextMembership();
+  suspended.succeed();
+
+  expect(suspended.agentIds).toEqual([]);
+  world.expectNoPendingFetch();
+});
+
 test("stale membership retry cannot overwrite a newer effective set", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);
   world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
   const failed = await world.nextMembership();
-  failed.fail("subscription unavailable");
+  failed.fail("transient: subscription unavailable");
   const staleRetry = await world.nextRetry();
 
   world.sync.replaceVisibleAgentIds("workspace", ["agent-b"]);
@@ -539,7 +623,7 @@ test("membership retry cannot run while disconnected", async () => {
   world.sync.setConnected(true);
   world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
   const failed = await world.nextMembership();
-  failed.fail("subscription unavailable");
+  failed.fail("transient: subscription unavailable");
   const disconnectedRetry = await world.nextRetry();
 
   world.sync.setConnected(false);

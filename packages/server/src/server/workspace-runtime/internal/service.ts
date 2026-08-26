@@ -37,6 +37,7 @@ export function createService(
   const driversById = new Map(drivers.map((driver) => [driver.id, driver]));
   const processesByWorkspaceId = new Map<string, Set<WorkspaceDriverProcess>>();
   const workspaceTails = new Map<string, Promise<void>>();
+  const restoreFlights = new Map<string, Promise<void>>();
   const fileClients = new Map<string, { runtimeId: string; client: WorkspaceFilesOwner }>();
   const boundFiles = new Map<string, WorkspaceFiles>();
   const fileSubscriptions = new Map<
@@ -396,7 +397,9 @@ export function createService(
       });
     },
     async restore(workspaceId) {
-      await sequence(workspaceId, async () => {
+      const existing = restoreFlights.get(workspaceId);
+      if (existing) return existing;
+      const restore = sequence(workspaceId, async () => {
         if (!records.restoreWorkspaceRecord) {
           throw new Error("Workspace runtime record store cannot restore workspaces");
         }
@@ -412,6 +415,12 @@ export function createService(
           throw error;
         }
       });
+      restoreFlights.set(workspaceId, restore);
+      try {
+        await restore;
+      } finally {
+        if (restoreFlights.get(workspaceId) === restore) restoreFlights.delete(workspaceId);
+      }
     },
     async destroy(workspaceId) {
       await sequence(workspaceId, async () => {

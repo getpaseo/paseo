@@ -39,14 +39,30 @@ export interface WorkspaceSelectionRecoveryClient {
   refreshAgent: (agentId: string) => Promise<unknown>;
 }
 
+const recoveryFlights = new Map<string, Promise<void>>();
+
 export async function recoverWorkspaceSelection(input: {
   client: WorkspaceSelectionRecoveryClient;
+  recoveryKey: string;
   workspaceId: string;
   agentId?: string | null;
 }): Promise<void> {
-  await input.client.restoreWorkspace(input.workspaceId);
-  if (input.agentId) {
-    await input.client.refreshAgent(input.agentId);
+  const existing = recoveryFlights.get(input.recoveryKey);
+  if (existing) return existing;
+
+  const recovery = (async () => {
+    await input.client.restoreWorkspace(input.workspaceId);
+    if (input.agentId) {
+      await input.client.refreshAgent(input.agentId);
+    }
+  })();
+  recoveryFlights.set(input.recoveryKey, recovery);
+  try {
+    await recovery;
+  } finally {
+    if (recoveryFlights.get(input.recoveryKey) === recovery) {
+      recoveryFlights.delete(input.recoveryKey);
+    }
   }
 }
 

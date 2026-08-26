@@ -471,7 +471,7 @@ type ListCommandsPayload = ListCommandsResponse["payload"];
 type ListCommandsDraftConfig = Pick<
   AgentSessionConfig,
   "provider" | "cwd" | "modeId" | "model" | "thinkingOptionId" | "featureValues"
->;
+> & { workspaceId?: string };
 export interface WriteProjectConfigInput {
   repoRoot: string;
   config: PaseoConfigRaw;
@@ -869,6 +869,24 @@ class DaemonProtocolError extends Error {
     this.requestId = identity.requestId;
     this.responseType = identity.responseType;
   }
+}
+
+class DaemonTransportError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "DaemonTransportError";
+  }
+}
+
+class DaemonTimeoutError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DaemonTimeoutError";
+  }
+}
+
+export function isDaemonTransientError(error: unknown): boolean {
+  return error instanceof DaemonTransportError || error instanceof DaemonTimeoutError;
 }
 
 class PingTimeoutError extends Error {
@@ -1583,8 +1601,16 @@ export class DaemonClient {
     // If connected, send immediately
     if (this.transport && status === "connected") {
       const payload = SessionInboundMessageSchema.parse(message);
-      this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
-      return Promise.resolve();
+      try {
+        this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
+        return Promise.resolve();
+      } catch (error) {
+        return Promise.reject(
+          new DaemonTransportError(error instanceof Error ? error.message : String(error), {
+            cause: error,
+          }),
+        );
+      }
     }
 
     // If connecting, queue the message to be sent once connected
@@ -1596,7 +1622,7 @@ export class DaemonClient {
           if (idx !== -1) {
             this.pendingSendQueue.splice(idx, 1);
           }
-          reject(new Error(`Timed out waiting for connection to send message`));
+          reject(new DaemonTimeoutError("Timed out waiting for connection to send message"));
         }, DEFAULT_SEND_QUEUE_TIMEOUT_MS);
 
         this.pendingSendQueue.push({ message, resolve, reject, timeoutHandle });
@@ -1604,7 +1630,7 @@ export class DaemonClient {
     }
 
     // Not connected and not connecting - fail immediately
-    return Promise.reject(new Error(`Transport not connected (status: ${status})`));
+    return Promise.reject(new DaemonTransportError(`Transport not connected (status: ${status})`));
   }
 
   /**
@@ -1622,7 +1648,7 @@ export class DaemonClient {
           this.sendJsonMessage("session", payload.type, { type: "session", message: payload });
           pending.resolve();
         } else {
-          pending.reject(new Error("Connection lost before message could be sent"));
+          pending.reject(new DaemonTransportError("Connection lost before message could be sent"));
         }
       } catch (error) {
         pending.reject(error instanceof Error ? error : new Error(String(error)));
@@ -6016,9 +6042,9 @@ export class DaemonClient {
 
     // Clear all pending waiters and queued sends since the connection was lost
     // and responses from the previous connection will never arrive.
-    this.clearWaiters(new Error(reason ?? "Connection lost"));
-    this.rejectPendingSendQueue(new Error(reason ?? "Connection lost"));
-    this.rejectPingProbe(new Error(reason ?? "Connection lost"));
+    this.clearWaiters(new DaemonTransportError(reason ?? "Connection lost"));
+    this.rejectPendingSendQueue(new DaemonTransportError(reason ?? "Connection lost"));
+    this.rejectPingProbe(new DaemonTransportError(reason ?? "Connection lost"));
     this.terminalStreams.clearSlots();
     this.lastServerInfoMessage = null;
 
@@ -6273,7 +6299,7 @@ export class DaemonClient {
     options?: WaitOptions,
   ): WaitHandle<T> {
     // Capture stack trace at call site, not inside setTimeout
-    const timeoutError = new Error(`Timeout waiting for message (${timeout}ms)`);
+    const timeoutError = new DaemonTimeoutError(`Timeout waiting for message (${timeout}ms)`);
 
     let waiter: Waiter<T> | null = null;
     let settled = false;

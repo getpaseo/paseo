@@ -132,6 +132,20 @@ test("command runtime capabilities drive process isolation and typed lifecycle o
   });
 });
 
+test("concurrent command runtime restores share one record transition", async () => {
+  const fixture = await createFixture("single-flight-restore");
+  await fixture.service.create(fixture.createInput);
+  await fixture.service.archive(fixture.workspaceId);
+
+  await Promise.all([
+    fixture.service.restore(fixture.workspaceId),
+    fixture.service.restore(fixture.workspaceId),
+  ]);
+
+  expect(fixture.restoreRecordCalls()).toBe(1);
+  await fixture.service.destroy(fixture.workspaceId);
+});
+
 test("workspaces without a local integration target cannot merge locally", async () => {
   const fixture = await createFixture("no-local-integration-target");
   await fixture.service.create(fixture.createInput);
@@ -1052,6 +1066,7 @@ async function createFixture(
   await Promise.all([mkdir(source), mkdir(stateDirectory), mkdir(barrierDirectory)]);
   const runtimeIds = new Map<string, string>();
   const archivedWorkspaceIds = new Set<string>();
+  let restoreRecordCalls = 0;
   const workspaceId = `${name}-workspace`;
   const service = createWorkspaceRuntimeService({
     paseoHome: path.join(root, "paseo-home"),
@@ -1062,7 +1077,10 @@ async function createFixture(
     },
     beginWorkspaceDeletion: async () => {},
     archiveWorkspaceRecord: async (id) => void archivedWorkspaceIds.add(id),
-    restoreWorkspaceRecord: async (id) => void archivedWorkspaceIds.delete(id),
+    restoreWorkspaceRecord: async (id) => {
+      restoreRecordCalls += 1;
+      archivedWorkspaceIds.delete(id);
+    },
     removeWorkspaceRecord: async (id) => {
       runtimeIds.delete(id);
       archivedWorkspaceIds.delete(id);
@@ -1102,6 +1120,7 @@ async function createFixture(
     barrierDirectory,
     workspaceId,
     archivedWorkspaceIds,
+    restoreRecordCalls: () => restoreRecordCalls,
     service,
     createInput: {
       workspaceId,
