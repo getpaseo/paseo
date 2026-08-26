@@ -139,6 +139,8 @@ declare module "@getpaseo/plugin" {
     theme: PluginTheme;
     host: { id: string; label: string };
     layout: { compact: boolean; platform: "ios" | "android" | "web" };
+    /** Client-owned navigation. Undefined on older hosts; hide dependent affordances when absent. */
+    readonly navigation?: { readonly openAgent: (agentId: string) => void };
   }
 
   export interface PluginSurfaceProps extends PluginHostProps {}
