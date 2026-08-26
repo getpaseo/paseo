@@ -165,6 +165,8 @@ import {
   createGitMetadataGenerator,
 } from "./session/checkout/git-metadata-generator.js";
 import { ScheduleSession } from "./session/schedule/schedule-session.js";
+import { WatchdogSession } from "./session/watchdog/watchdog-session.js";
+import type { WatchdogService } from "./watchdog/service.js";
 import { ProviderCatalogSession } from "./session/provider/provider-catalog-session.js";
 import { WorkspaceFilesSession } from "./session/files/workspace-files-session.js";
 import { AgentConfigSession } from "./session/agent-config/agent-config-session.js";
@@ -457,6 +459,7 @@ export interface SessionOptions {
   workspaceLabelService?: WorkspaceLabelService;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
+  watchdogService?: WatchdogService;
   checkoutDiffManager: CheckoutDiffManager;
   github?: ForgeService;
   createAgentMcpTransport?: AgentMcpTransportFactory;
@@ -609,6 +612,14 @@ function resolveDirectorySync(service: DirectorySyncService | undefined): Direct
   return service ?? new DirectorySyncService();
 }
 
+function createOptionalWatchdogSession(
+  service: WatchdogService | undefined,
+  emit: (message: SessionOutboundMessage) => void,
+  logger: pino.Logger,
+): WatchdogSession | null {
+  return service ? new WatchdogSession({ emit }, service, logger) : null;
+}
+
 function describeRegistryTransition(record: ArchivedRecordSnapshot | null): RegistryTransition {
   if (!record) {
     return "created";
@@ -729,6 +740,7 @@ export class Session {
   private readonly voiceSession: VoiceSession;
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
+  private readonly watchdogSession: WatchdogSession | null;
   private readonly providerCatalogSession: ProviderCatalogSession;
   private readonly workspaceFilesSession: WorkspaceFilesSession;
   private readonly agentConfigSession: AgentConfigSession;
@@ -764,6 +776,7 @@ export class Session {
       workspaceLabelService,
       filesystem,
       scheduleService,
+      watchdogService,
       checkoutDiffManager,
       github,
       renameCurrentBranch,
@@ -902,6 +915,11 @@ export class Session {
       scheduleService,
       logger: this.sessionLogger,
     });
+    this.watchdogSession = createOptionalWatchdogSession(
+      watchdogService,
+      (msg) => this.emit(msg),
+      this.sessionLogger,
+    );
     this.providerCatalogSession = new ProviderCatalogSession({
       host: {
         emit: (msg) => this.emit(msg),
@@ -1929,7 +1947,7 @@ export class Session {
       this.dispatchPluginDirectoryMessage(msg) ??
       this.dispatchPluginMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
-      this.dispatchScheduleMessage(msg) ??
+      this.dispatchDurableAutomationMessage(msg) ??
       this.dispatchMiscMessage(msg);
     if (promise) await promise;
   }
@@ -2562,6 +2580,26 @@ export class Session {
         return this.scheduleSession.handleScheduleRunOnceRequest(msg);
       case "schedule/update":
         return this.scheduleSession.handleScheduleUpdateRequest(msg);
+      default:
+        return undefined;
+    }
+  }
+
+  private dispatchDurableAutomationMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    return this.dispatchScheduleMessage(msg) ?? this.dispatchWatchdogMessage(msg);
+  }
+
+  private dispatchWatchdogMessage(msg: SessionInboundMessage): Promise<void> | undefined {
+    if (!this.watchdogSession) return undefined;
+    switch (msg.type) {
+      case "watchdog.start.request":
+        return this.watchdogSession.handleStart(msg);
+      case "watchdog.list.request":
+        return this.watchdogSession.handleList(msg);
+      case "watchdog.inspect.request":
+        return this.watchdogSession.handleInspect(msg);
+      case "watchdog.cancel.request":
+        return this.watchdogSession.handleCancel(msg);
       default:
         return undefined;
     }

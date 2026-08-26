@@ -198,6 +198,12 @@ export interface SendPromptToAgentParams {
    * schedule fires, notify-on-finish).
    */
   unarchive?: boolean;
+  /**
+   * Default true. Watchdog completion wakes pass false so a busy agent is not
+   * interrupted; callers that need non-interruptible delivery must also check
+   * busy/permission state before invoking this helper.
+   */
+  replaceRunning?: boolean;
   /** See {@link StartAgentRunOptions.clearPendingPermissions}. */
   clearPendingPermissions?: boolean;
   logger: Logger;
@@ -288,7 +294,7 @@ export async function sendPromptToAgent(
     : params.runOptions;
 
   return await startAgentRun(params.agentManager, params.agentId, params.prompt, params.logger, {
-    replaceRunning: true,
+    replaceRunning: params.replaceRunning ?? true,
     activeTurnBehavior: params.activeTurnBehavior,
     clearPendingPermissions: params.clearPendingPermissions,
     runOptions,

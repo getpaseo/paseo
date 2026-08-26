@@ -43,6 +43,16 @@ import {
   ScheduleUpdateResponseSchema,
 } from "./schedule/rpc-schemas.js";
 import {
+  WatchdogStartRequestSchema,
+  WatchdogListRequestSchema,
+  WatchdogInspectRequestSchema,
+  WatchdogCancelRequestSchema,
+  WatchdogStartResponseSchema,
+  WatchdogListResponseSchema,
+  WatchdogInspectResponseSchema,
+  WatchdogCancelResponseSchema,
+} from "./watchdog/rpc-schemas.js";
+import {
   LoopRunRequestSchema,
   LoopListRequestSchema,
   LoopInspectRequestSchema,
@@ -3136,6 +3146,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ScheduleDeleteRequestSchema,
   ScheduleRunOnceRequestSchema,
   ScheduleUpdateRequestSchema,
+  WatchdogStartRequestSchema,
+  WatchdogListRequestSchema,
+  WatchdogInspectRequestSchema,
+  WatchdogCancelRequestSchema,
   LoopRunRequestSchema,
   LoopListRequestSchema,
   LoopInspectRequestSchema,
@@ -3338,6 +3352,8 @@ export const ServerInfoStatusPayloadSchema = z
         daemonStatusRpc: z.boolean().optional(),
         // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
         daemonConfigReload: z.boolean().optional(),
+        // COMPAT(durableCommands): added in v0.6.1, remove gate after 2027-02-26.
+        durableCommands: z.boolean().optional(),
         // COMPAT(relayConfig): added in v0.2.6, remove gate after 2027-01-31.
         relayConfig: z.boolean().optional(),
         // COMPAT(pushTokenRevocation): added in v0.3.2, remove gate after 2027-02-10.
@@ -6400,6 +6416,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ScheduleDeleteResponseSchema,
   ScheduleRunOnceResponseSchema,
   ScheduleUpdateResponseSchema,
+  WatchdogStartResponseSchema,
+  WatchdogListResponseSchema,
+  WatchdogInspectResponseSchema,
+  WatchdogCancelResponseSchema,
   LoopRunResponseSchema,
   LoopListResponseSchema,
   LoopInspectResponseSchema,
@@ -6573,6 +6593,10 @@ export type ScheduleResumeResponse = z.infer<typeof ScheduleResumeResponseSchema
 export type ScheduleDeleteResponse = z.infer<typeof ScheduleDeleteResponseSchema>;
 export type ScheduleRunOnceResponse = z.infer<typeof ScheduleRunOnceResponseSchema>;
 export type ScheduleUpdateResponse = z.infer<typeof ScheduleUpdateResponseSchema>;
+export type WatchdogStartResponse = z.infer<typeof WatchdogStartResponseSchema>;
+export type WatchdogListResponse = z.infer<typeof WatchdogListResponseSchema>;
+export type WatchdogInspectResponse = z.infer<typeof WatchdogInspectResponseSchema>;
+export type WatchdogCancelResponse = z.infer<typeof WatchdogCancelResponseSchema>;
 export type LoopRunResponse = z.infer<typeof LoopRunResponseSchema>;
 export type LoopListResponse = z.infer<typeof LoopListResponseSchema>;
 export type LoopInspectResponse = z.infer<typeof LoopInspectResponseSchema>;
@@ -6641,6 +6665,10 @@ export type ScheduleResumeRequest = z.infer<typeof ScheduleResumeRequestSchema>;
 export type ScheduleDeleteRequest = z.infer<typeof ScheduleDeleteRequestSchema>;
 export type ScheduleRunOnceRequest = z.infer<typeof ScheduleRunOnceRequestSchema>;
 export type ScheduleUpdateRequest = z.infer<typeof ScheduleUpdateRequestSchema>;
+export type WatchdogStartRequest = z.infer<typeof WatchdogStartRequestSchema>;
+export type WatchdogListRequest = z.infer<typeof WatchdogListRequestSchema>;
+export type WatchdogInspectRequest = z.infer<typeof WatchdogInspectRequestSchema>;
+export type WatchdogCancelRequest = z.infer<typeof WatchdogCancelRequestSchema>;
 export type LoopRunRequest = z.infer<typeof LoopRunRequestSchema>;
 export type LoopListRequest = z.infer<typeof LoopListRequestSchema>;
 export type LoopInspectRequest = z.infer<typeof LoopInspectRequestSchema>;
