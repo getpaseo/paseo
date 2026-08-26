@@ -409,6 +409,156 @@ describe("opencode-v2 permission session behavior", () => {
     await session.close();
   });
 
+  test("deny with a message records a timeline notice containing the message", async () => {
+    const { session, openCode } = await createSession();
+    const timelineEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      if (event.type === "timeline") {
+        timelineEvents.push(event);
+      }
+    });
+
+    const runPromise = session.run("Run a shell command");
+    openCode.emitEvent(permissionAskedEvent("session-1", "perm-1"));
+    await waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await session.respondToPermission("perm-1", { behavior: "deny", message: "not now" });
+    expect(openCode.calls.permissionReply).toEqual([
+      { sessionID: "session-1", requestID: "perm-1", reply: "reject", message: "not now" },
+    ]);
+    expect(session.getPendingPermissions()).toHaveLength(0);
+
+    const denyNotices = timelineEvents.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "permission_denied",
+    );
+    expect(denyNotices).toHaveLength(1);
+    const notice = denyNotices[0]!;
+    if (notice.type === "timeline" && notice.item.type === "tool_call") {
+      expect(notice.item.status).toBe("completed");
+      expect(notice.item.detail).toMatchObject({
+        type: "plain_text",
+        label: expect.stringContaining("not now"),
+        text: "not now",
+      });
+      expect(notice.item.metadata).toMatchObject({ synthetic: true });
+    }
+
+    openCode.emitEvent(
+      v2Event({
+        type: "session.text.delta",
+        data: {
+          sessionID: "session-1",
+          assistantMessageID: "assistant-1",
+          ordinal: 0,
+          delta: "done",
+        },
+      }),
+    );
+    openCode.emitEvent(
+      v2Event({ type: "session.execution.succeeded", data: { sessionID: "session-1" } }),
+    );
+    await runPromise;
+    await session.close();
+  });
+
+  test("deny without a message emits no timeline notice", async () => {
+    const { session, openCode } = await createSession();
+    const timelineEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      if (event.type === "timeline") {
+        timelineEvents.push(event);
+      }
+    });
+
+    const runPromise = session.run("Run a shell command");
+    openCode.emitEvent(permissionAskedEvent("session-1", "perm-1"));
+    await waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await session.respondToPermission("perm-1", { behavior: "deny" });
+    expect(openCode.calls.permissionReply).toEqual([
+      { sessionID: "session-1", requestID: "perm-1", reply: "reject" },
+    ]);
+    expect(session.getPendingPermissions()).toHaveLength(0);
+
+    const denyNotices = timelineEvents.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "permission_denied",
+    );
+    expect(denyNotices).toHaveLength(0);
+
+    openCode.emitEvent(
+      v2Event({
+        type: "session.text.delta",
+        data: {
+          sessionID: "session-1",
+          assistantMessageID: "assistant-1",
+          ordinal: 0,
+          delta: "done",
+        },
+      }),
+    );
+    openCode.emitEvent(
+      v2Event({ type: "session.execution.succeeded", data: { sessionID: "session-1" } }),
+    );
+    await runPromise;
+    await session.close();
+  });
+
+  test("deny with a message and interrupt still interrupts (PERM-007 unchanged)", async () => {
+    const { session, openCode } = await createSession();
+    const timelineEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      if (event.type === "timeline") {
+        timelineEvents.push(event);
+      }
+    });
+
+    const runPromise = session.run("Run a shell command");
+    openCode.emitEvent(permissionAskedEvent("session-1", "perm-1"));
+    await waitFor(() => expect(session.getPendingPermissions()).toHaveLength(1));
+
+    await session.respondToPermission("perm-1", {
+      behavior: "deny",
+      message: "not now",
+      interrupt: true,
+    });
+    expect(openCode.calls.permissionReply).toEqual([
+      { sessionID: "session-1", requestID: "perm-1", reply: "reject", message: "not now" },
+    ]);
+    expect(openCode.calls.sessionInterrupt).toEqual([{ sessionID: "session-1", continue: true }]);
+    expect(session.getPendingPermissions()).toHaveLength(0);
+
+    const denyNotices = timelineEvents.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.name === "permission_denied",
+    );
+    expect(denyNotices).toHaveLength(1);
+
+    openCode.emitEvent(
+      v2Event({
+        type: "session.text.delta",
+        data: {
+          sessionID: "session-1",
+          assistantMessageID: "assistant-1",
+          ordinal: 0,
+          delta: "done",
+        },
+      }),
+    );
+    openCode.emitEvent(
+      v2Event({ type: "session.execution.succeeded", data: { sessionID: "session-1" } }),
+    );
+    await runPromise;
+    await session.close();
+  });
+
   test("allow-always replies 'always'", async () => {
     const { session, openCode } = await createSession();
 

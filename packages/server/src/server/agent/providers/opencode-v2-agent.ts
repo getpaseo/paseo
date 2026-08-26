@@ -503,6 +503,32 @@ function buildOpenCodeV2ToolReplayItem(
 
 const OPENCODE_V2_PERSISTED_SESSION_LIMIT = 200;
 
+/**
+ * Build the timeline notice that records a deny-with-message reply. The v2
+ * binary wraps reject feedback into a generic ToolFailure that never reaches
+ * the model (VAL-OC2-PERM-006), so the denial message is surfaced here as a
+ * provider notice instead of being silently dropped. Mirrors the OMP notice
+ * pattern: a synthetic tool_call with plain_text detail. The label carries the
+ * message so CLI `logs` (curateAgentActivity) and the app row show it; the text
+ * carries it for the app's details sheet.
+ */
+function buildOpenCodeV2DenyMessageNotice(requestId: string, message: string): AgentTimelineItem {
+  return {
+    type: "tool_call",
+    callId: `permission-deny:${requestId}`,
+    name: "permission_denied",
+    status: "completed",
+    error: null,
+    detail: {
+      type: "plain_text",
+      label: `Permission denied: ${message}`,
+      text: message,
+      icon: "sparkles",
+    },
+    metadata: { synthetic: true, source: "permission_denied" },
+  };
+}
+
 function normalizeOpenCodeV2SessionTitle(title: string | null | undefined): string | null {
   const normalized = title?.trim();
   return normalized ? normalized : null;
@@ -1734,6 +1760,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
     }
 
     const reply = resolveOpenCodeV2PermissionReply(response);
+    let replySucceeded = false;
     try {
       await this.client.permission.reply({
         sessionID: this.sessionId,
@@ -1741,6 +1768,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
         reply,
         ...(response.behavior === "deny" && response.message ? { message: response.message } : {}),
       });
+      replySucceeded = true;
     } catch (error) {
       if (!isOpenCodeV2StalePermissionError(error)) {
         throw error;
@@ -1753,6 +1781,20 @@ export class OpenCodeV2AgentSession implements AgentSession {
       );
     }
     this.pendingPermissions.delete(requestId);
+    // Record the denial message in the timeline as a provider notice so it is
+    // never silently dropped: the v2 binary wraps reject feedback into a
+    // generic ToolFailure that never reaches the model (VAL-OC2-PERM-006).
+    // Only on a successful reply — a stale reply never delivered the message.
+    if (response.behavior === "deny" && response.message && replySucceeded) {
+      this.notifySubscribers(
+        {
+          type: "timeline",
+          provider: "opencode-v2",
+          item: buildOpenCodeV2DenyMessageNotice(requestId, response.message),
+        },
+        null,
+      );
+    }
     if (response.behavior === "deny" && response.interrupt) {
       await this.interrupt();
     }
