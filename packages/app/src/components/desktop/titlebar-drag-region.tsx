@@ -17,15 +17,20 @@ import { isNative } from "@/constants/platform";
  * On macOS, Electron handles edge resize natively.
  */
 
+export const titlebarDragSurfaceStyle: React.CSSProperties = {
+  cursor: "default",
+  // @ts-expect-error — WebkitAppRegion is not in CSSProperties
+  WebkitAppRegion: "drag",
+};
+
 const DRAG_OVERLAY_STYLE: React.CSSProperties = {
+  ...titlebarDragSurfaceStyle,
   top: 0,
   left: 0,
   display: "block",
   position: "absolute",
   width: "100%",
   height: "100%",
-  // @ts-expect-error — WebkitAppRegion is not in CSSProperties
-  WebkitAppRegion: "drag",
 };
 
 const TOP_RESIZER_STYLE: React.CSSProperties = {

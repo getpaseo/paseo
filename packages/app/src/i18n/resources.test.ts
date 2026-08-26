@@ -310,6 +310,16 @@ describe("translation resources", () => {
     expect(en.workspace.git.pr.empty.pipelineJobsLoadFailed).toBe("Could not load pipeline jobs");
     expect(en.workspace.git.pr.empty.allowedToFail).toBe("allowed to fail");
     expect(en.workspace.git.pr.approvals).toBe("{{given}} of {{required}} approvals");
+    expect(en.workspace.git.pr.accessibility.checkStatus).toEqual({
+      passed: "Passed",
+      failed: "Failed",
+      warning: "Warning",
+      actionRequired: "Action required",
+      manual: "Manual",
+      pending: "Pending",
+      skipped: "Skipped",
+      cancelled: "Cancelled",
+    });
     expect(en.review.comment.placeholder).toBe("Leave a comment");
   });
 
@@ -438,6 +448,14 @@ describe("translation resources", () => {
     expect(en.sidebar.workspace.actions.createWorkspaceFor).toBe(
       "Create a new workspace for {{projectName}}",
     );
+    expect(en.sidebar.workspace.checks).toEqual({
+      passed: "Passed: {{count}}",
+      failed: "Failed: {{count}}",
+      warning: "Warnings: {{count}}",
+      actionRequired: "Action required: {{count}}",
+      manual: "Manual: {{count}}",
+      pending: "Pending: {{count}}",
+    });
     expect(en.sidebar.project.empty.title).toBe("No projects yet");
     expect(en.sidebar.project.empty.description).toBe("Add a project to get started");
     expect(en.settings.projectList.hostLoadFailed).toBe(
@@ -493,13 +511,10 @@ describe("translation resources", () => {
     expect(en.agentList.dateSections.recent).toBe("Recent");
     expect(en.message.attachments.imagePreviewUnavailable).toBe("Image preview unavailable.");
     expect(en.message.attachments.imagePreviewLoadFailed).toBe("Unable to load image preview.");
-    expect(en.workspace.tabs.sidePanel.changes).toBe("Changes");
-    expect(en.workspace.tabs.sidePanel.files).toBe("Files");
+    expect(en.workspace.tabs.explorerSidebar.changes).toBe("Changes");
+    expect(en.workspace.tabs.explorerSidebar.files).toBe("Files");
     expect(en.workspace.tabs.actions.maximizePane).toBe("Maximize pane");
     expect(en.workspace.tabs.actions.restorePane).toBe("Restore pane");
-    expect(en.settings.shortcuts.help.toggleExplorerPaneMaximization).toBe(
-      "Toggle Side panel maximization",
-    );
     expect(en.branchSwitcher.triggerTooltip).toBe("Switch workspace branch");
     expect(en.branchSwitcher.uncommittedTitle).toBe("Uncommitted changes");
     expect(en.branchSwitcher.uncommittedMessage).toBe(

@@ -121,6 +121,41 @@ test.describe("Settings sidebar navigation", () => {
     await clickSettingsBackToWorkspace(page);
     await expect(page).not.toHaveURL(/\/settings(\/|$)/);
   });
+
+  test("pressing Escape closes settings", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await page.keyboard.press("Escape");
+    await expect(page).not.toHaveURL(/\/settings(\/|$)/);
+  });
+
+  test("Escape lets settings dropdowns and modals close before leaving settings", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+
+    await test.step("a dropdown owns Escape", async () => {
+      await openSettingsSection(page, "appearance");
+      await page.getByLabel(/Theme:/).click();
+      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toBeVisible();
+
+      await page.keyboard.press("Escape");
+
+      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toHaveCount(0);
+      await expect(page).toHaveURL(/\/settings(\/|$)/);
+    });
+
+    await test.step("a modal owns Escape", async () => {
+      await openAddHostFlow(page);
+      await expect(page.getByText("Add connection", { exact: true })).toBeVisible();
+
+      await page.keyboard.press("Escape");
+
+      await expect(page.getByText("Add connection", { exact: true })).toHaveCount(0);
+      await expect(page).toHaveURL(/\/settings(\/|$)/);
+    });
+  });
 });
 
 test.describe("Settings — compact master-detail", () => {

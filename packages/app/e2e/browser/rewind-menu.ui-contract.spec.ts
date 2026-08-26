@@ -153,6 +153,7 @@ test.describe("Rewind sheet", () => {
       repoPrefix: "rewind-e2e-",
       title: "Rewind e2e",
       initialPrompt: firstPrompt,
+      model: "ten-second-stream",
     });
 
     try {

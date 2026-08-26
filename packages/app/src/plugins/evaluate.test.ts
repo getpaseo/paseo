@@ -77,13 +77,22 @@ describe("evaluatePluginClientBundle", () => {
     );
 
     expect(
-      plugin.workspacePanels.map(({ id, title, icon, context }) => ({
+      plugin.workspacePanels.map(({ id, title, icon, context, locations }) => ({
         id,
         title,
         icon,
         context,
+        locations,
       })),
-    ).toEqual([{ id: "review", title: "Review", icon: "Scan", context: "agent" }]);
+    ).toEqual([
+      {
+        id: "review",
+        title: "Review",
+        icon: "Scan",
+        context: "agent",
+        locations: ["workspace"],
+      },
+    ]);
     expect(
       plugin.commandCenterItems.map(({ id, title, icon, context }) => ({
         id,
@@ -92,6 +101,47 @@ describe("evaluatePluginClientBundle", () => {
         context,
       })),
     ).toEqual([{ id: "open-review", title: "Open review", icon: "Scan", context: "agent" }]);
+  });
+
+  it("normalizes and validates workspace panel locations", () => {
+    const plugin = evaluatePluginClientBundle(
+      "review",
+      bundle(`
+        function ReviewPanel() { return null; }
+        plugin.addWorkspacePanel({
+          id: "review",
+          title: "Review",
+          icon: "Scan",
+          context: "agent",
+          locations: ["workspace", "explorer"],
+          Component: ReviewPanel,
+        });
+      `),
+    );
+    expect(plugin.workspacePanels[0]?.locations).toEqual(["workspace", "explorer"]);
+
+    for (const [locations, message] of [
+      ["[]", "must support at least one location"],
+      ['["sidebar"]', "has invalid location: sidebar"],
+      ['["explorer", "explorer"]', "has duplicate locations"],
+    ] as const) {
+      expect(() =>
+        evaluatePluginClientBundle(
+          "review",
+          bundle(`
+            function ReviewPanel() { return null; }
+            plugin.addWorkspacePanel({
+              id: "review",
+              title: "Review",
+              icon: "Scan",
+              context: "agent",
+              locations: ${locations},
+              Component: ReviewPanel,
+            });
+          `),
+        ),
+      ).toThrow(message);
+    }
   });
 
   it("rejects duplicate workspace panel and Command Center ids", () => {

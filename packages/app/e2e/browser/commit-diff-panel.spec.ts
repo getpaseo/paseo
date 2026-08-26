@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Locator } from "@playwright/test";
 import { test, expect } from "../support/fixtures";
-import { openChangesPanel } from "../support/helpers/workspace-tabs";
+import { openChangesTreePanel } from "../support/helpers/workspace-tabs";
 
 const COMMIT_SUBJECT = "Show commit timestamps";
 
@@ -15,7 +15,7 @@ test("commit history explains when the workspace has no commits ahead of its bas
   execFileSync("git", ["checkout", "-b", "feature"], { cwd: workspace.repoPath, stdio: "ignore" });
   await workspace.navigateTo();
 
-  await openChangesPanel(page);
+  await openChangesTreePanel(page);
   const commitsSection = page.getByRole("button", { name: /Commits/i });
   await expect(commitsSection).toBeVisible({ timeout: 30_000 });
   await commitsSection.click();
@@ -35,7 +35,7 @@ test("commit history shows dates and shares diff layout preferences", async ({
   await page.setViewportSize({ width: 1400, height: 900 });
   await workspace.navigateTo();
 
-  await openChangesPanel(page);
+  await openChangesTreePanel(page);
   const commitsSection = page.getByRole("button", { name: /Commits/i });
   await expect(commitsSection).toBeVisible({ timeout: 30_000 });
   await commitsSection.click();
@@ -60,8 +60,8 @@ test("commit history shows dates and shares diff layout preferences", async ({
     throw new Error("Commit-diff toolbar geometry could not be measured");
   }
   expect(commitToolbarBox.height).toBe(36);
-  expect(layoutToggleBox.width).toBe(24);
-  expect(layoutToggleBox.height).toBe(24);
+  expect(layoutToggleBox.width).toBe(20);
+  expect(layoutToggleBox.height).toBe(20);
   expect(layoutToggleGlyphBox.width).toBe(14);
   expect(layoutToggleGlyphBox.height).toBe(14);
   await expect(layoutToggle).toHaveAccessibleName("Switch to side-by-side diff");
