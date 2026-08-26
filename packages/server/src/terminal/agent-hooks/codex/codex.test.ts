@@ -1,9 +1,13 @@
+import { Buffer } from "node:buffer";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { isPlatform } from "../../../test-utils/platform.js";
 import {
   agentHooksAreInstalled,
+  buildAgentHookWindowsCommand,
   installAgentHooks,
   uninstallAgentHooks,
 } from "../agent-hook-installer.js";
@@ -69,13 +73,94 @@ describe("Codex terminal agent hooks", () => {
       expect(commandHooks(config, event.event)).toEqual([
         {
           command: `if [ -n "$PASEO_TERMINAL_ID" ]; then "\${PASEO_HOOK_CLI:-paseo}" hooks codex ${event.event}; fi`,
-          commandWindows: `if defined PASEO_TERMINAL_ID (if defined PASEO_HOOK_CLI ("%PASEO_HOOK_CLI%" hooks codex ${event.event}) else (paseo hooks codex ${event.event})) else (exit /b 0)`,
+          commandWindows: buildAgentHookWindowsCommand(codexAgentHookProvider, event),
         },
       ]);
     }
     expect(secondInstall.changed).toBe(false);
     expect(agentHooksAreInstalled(codexAgentHookProvider, { configDir })).toBe(true);
   });
+
+  it("builds a quote-free Windows hook command", () => {
+    const event = codexAgentHookProvider.events[0];
+    const command = buildAgentHookWindowsCommand(codexAgentHookProvider, event);
+    const prefix = "powershell.exe -NoProfile -NonInteractive -EncodedCommand ";
+
+    expect(command.startsWith(prefix)).toBe(true);
+    expect(command).not.toContain('"');
+
+    const encodedScript = command.slice(prefix.length);
+    expect(Buffer.from(encodedScript, "base64").toString("utf16le")).toBe(
+      [
+        "if ([string]::IsNullOrEmpty($env:PASEO_TERMINAL_ID)) { exit 0 }",
+        "$hookCli = $env:PASEO_HOOK_CLI",
+        "if ([string]::IsNullOrEmpty($hookCli)) { $hookCli = 'paseo' }",
+        "& $hookCli 'hooks' 'codex' 'UserPromptSubmit'",
+        "$hookSucceeded = $?",
+        "$hookExitCode = $LASTEXITCODE",
+        "if ($hookSucceeded) { if ($null -ne $hookExitCode) { exit $hookExitCode }; exit 0 }",
+        "if ($null -ne $hookExitCode) { exit $hookExitCode }",
+        "exit 1",
+      ].join("\n"),
+    );
+  });
+
+  it.skipIf(!isPlatform("win32")).each(codexAgentHookProvider.events)(
+    "$event Windows hook command exits 0 without a Paseo terminal through Codex's cmd wrapper",
+    (event) => {
+      const command = buildAgentHookWindowsCommand(codexAgentHookProvider, event);
+      const env = { ...process.env };
+      delete env.PASEO_TERMINAL_ID;
+      delete env.PASEO_HOOK_CLI;
+
+      const result = spawnSync(
+        process.env.ComSpec ?? process.env.COMSPEC ?? "cmd.exe",
+        ["/d", "/s", "/c", `"${command}"`],
+        {
+          env,
+          stdio: "ignore",
+          windowsHide: true,
+          windowsVerbatimArguments: true,
+        },
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+    },
+  );
+
+  it.skipIf(!isPlatform("win32"))(
+    "runs a PASEO_HOOK_CLI cmd shim through Codex's cmd wrapper",
+    () => {
+      const hookDir = createTempDir("paseo-codex-hook-cli-");
+      const hookCli = join(hookDir, "paseo hook.cmd");
+      const outputPath = join(hookDir, "hook-output.txt");
+      writeFileSync(hookCli, `@echo off\r\necho %* > "${outputPath}"\r\nexit /b 0\r\n`);
+
+      const command = buildAgentHookWindowsCommand(
+        codexAgentHookProvider,
+        codexAgentHookProvider.events[0],
+      );
+      const result = spawnSync(
+        process.env.ComSpec ?? process.env.COMSPEC ?? "cmd.exe",
+        ["/d", "/s", "/c", `"${command}"`],
+        {
+          env: {
+            ...process.env,
+            PASEO_TERMINAL_ID: "paseo-codex-terminal",
+            PASEO_HOOK_CLI: hookCli,
+          },
+          stdio: "ignore",
+          windowsHide: true,
+          windowsVerbatimArguments: true,
+        },
+      );
+
+      expect(result.error).toBeUndefined();
+      expect(result.status).toBe(0);
+      expect(readFileSync(outputPath, "utf8").trim()).toBe("hooks codex UserPromptSubmit");
+    },
+  );
 
   it("preserves unrelated user hooks", () => {
     const configDir = createTempDir("paseo-codex-config-preserve-");

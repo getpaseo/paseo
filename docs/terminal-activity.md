@@ -106,11 +106,10 @@ The installed hook command keeps the config portable and resolves the CLI at run
 [ -n "$PASEO_TERMINAL_ID" ] && "${PASEO_HOOK_CLI:-paseo}" hooks claude <event>
 ```
 
-Codex also receives the Windows equivalent:
-
-```bat
-if defined PASEO_TERMINAL_ID (if defined PASEO_HOOK_CLI ("%PASEO_HOOK_CLI%" hooks codex <event>) else (paseo hooks codex <event>))
-```
+Codex's Windows command is a quote-free `powershell.exe -EncodedCommand` payload. Codex wraps
+`commandWindows` in quotes before it invokes `cmd.exe`, so nested CMD parentheses, embedded
+quotes, and `%VAR%` expansion are unsafe. The encoded command keeps the same terminal-id guard,
+CLI override, and fallback behavior as the POSIX command.
 
 The daemon resolves the current CLI through `PASEO_CLI` when its launcher supplies one, or through the npm package shim for standalone installs. Terminal setup exposes that resolved executable to hooks as `PASEO_HOOK_CLI`; desktop and other daemon launchers do not know about the hook-specific variable. The generated command falls back to bare `paseo` if the hook env is missing and no-ops outside Paseo terminals because the `PASEO_TERMINAL_ID` gate remains first. Paseo also prepends the resolved CLI directory to each terminal `PATH` as a secondary fallback. All other behavior lives in `paseo hooks`: read the env, map the event, POST activity, and no-op/fail-open when anything is missing or unavailable.
 
