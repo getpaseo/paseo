@@ -6,6 +6,7 @@ import {
   type StyleProp,
   type TextStyle,
   type ViewStyle,
+  type LayoutChangeEvent,
 } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown, ChevronUp } from "lucide-react-native";
@@ -22,7 +23,7 @@ interface CollapsibleTextProps {
   testID?: string;
 }
 
-const DEFAULT_MAX_LINES = 8;
+const DEFAULT_MAX_LINES = 10;
 const DEFAULT_MAX_CHARS = 400;
 
 export function CollapsibleText({
@@ -36,51 +37,54 @@ export function CollapsibleText({
   testID,
 }: CollapsibleTextProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  const [hasOverflow, setHasOverflow] = useState(false);
 
   const lines = useMemo(() => text.split("\n"), [text]);
-  const isTooLong = text.length > maxCollapsedChars || lines.length > maxCollapsedLines;
+  const isLikelyLong = text.length > maxCollapsedChars || lines.length > maxCollapsedLines;
 
   const toggleExpanded = useCallback(() => {
     setIsExpanded((prev) => !prev);
   }, []);
 
-  const displayText = useMemo(() => {
-    if (!isTooLong || isExpanded) return text;
-    if (lines.length > maxCollapsedLines) {
-      return `${lines.slice(0, maxCollapsedLines).join("\n")}...`;
-    }
-    return `${text.slice(0, maxCollapsedChars)}...`;
-  }, [isExpanded, isTooLong, lines, maxCollapsedChars, maxCollapsedLines, text]);
+  const onTextLayout = useCallback(
+    (e: LayoutChangeEvent | { nativeEvent: { lines?: unknown[] } }) => {
+      // In React Native / Web onTextLayout provides lines array
+      const linesArray = "lines" in e.nativeEvent ? (e.nativeEvent.lines as unknown[]) : undefined;
+      if (linesArray && linesArray.length > maxCollapsedLines) {
+        setHasOverflow(true);
+      }
+    },
+    [maxCollapsedLines],
+  );
 
-  if (!isTooLong) {
-    return (
-      <View style={containerStyle} testID={testID}>
-        <Text selectable style={style}>
-          {text}
-        </Text>
-      </View>
-    );
-  }
+  const showToggleButton = isLikelyLong || hasOverflow;
 
   return (
     <View style={containerStyle} testID={testID}>
-      <Text selectable style={style}>
-        {displayText}
-      </Text>
-      <Pressable
-        onPress={toggleExpanded}
-        style={styles.toggleButton}
-        accessibilityRole="button"
-        accessibilityLabel={isExpanded ? collapseLabel : expandLabel}
-        testID={testID ? `${testID}-toggle` : "collapsible-text-toggle"}
+      <Text
+        selectable
+        style={style}
+        numberOfLines={isExpanded ? undefined : maxCollapsedLines}
+        onTextLayout={onTextLayout}
       >
-        <Text style={styles.toggleLabel}>{isExpanded ? collapseLabel : expandLabel}</Text>
-        {isExpanded ? (
-          <ThemedChevronUp size={ICON_SIZE.xs} uniProps={iconForegroundMutedMapping} />
-        ) : (
-          <ThemedChevronDown size={ICON_SIZE.xs} uniProps={iconForegroundMutedMapping} />
-        )}
-      </Pressable>
+        {text}
+      </Text>
+      {showToggleButton ? (
+        <Pressable
+          onPress={toggleExpanded}
+          style={styles.toggleButton}
+          accessibilityRole="button"
+          accessibilityLabel={isExpanded ? collapseLabel : expandLabel}
+          testID={testID ? `${testID}-toggle` : "collapsible-text-toggle"}
+        >
+          <Text style={styles.toggleLabel}>{isExpanded ? collapseLabel : expandLabel}</Text>
+          {isExpanded ? (
+            <ThemedChevronUp size={ICON_SIZE.xs} uniProps={iconForegroundMutedMapping} />
+          ) : (
+            <ThemedChevronDown size={ICON_SIZE.xs} uniProps={iconForegroundMutedMapping} />
+          )}
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -97,16 +101,15 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: 4,
-    marginTop: 6,
+    marginTop: theme.spacing[2],
     alignSelf: "flex-start",
     paddingVertical: 2,
     paddingHorizontal: 4,
-    borderRadius: 4,
-    backgroundColor: theme.colors.surface2,
+    borderRadius: theme.borderRadius.sm,
   },
   toggleLabel: {
-    fontSize: 12,
-    fontWeight: "500",
     color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: theme.fontWeight.medium,
   },
 }));
