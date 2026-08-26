@@ -353,6 +353,26 @@ export function createMarkdownStyles(theme: Theme) {
   };
 }
 
+/** Keeps interactive and code affordances legible while lowering prose hierarchy. */
+export function createMutedMarkdownStyles(theme: Theme) {
+  const baseStyles = createMarkdownStyles(theme);
+  const color = theme.colors.foregroundMuted;
+
+  return {
+    ...baseStyles,
+    body: { ...baseStyles.body, color },
+    heading1: { ...baseStyles.heading1, color },
+    heading2: { ...baseStyles.heading2, color },
+    heading3: { ...baseStyles.heading3, color },
+    heading4: { ...baseStyles.heading4, color },
+    heading5: { ...baseStyles.heading5, color },
+    heading6: { ...baseStyles.heading6, color },
+    th: { ...baseStyles.th, color },
+    td: { ...baseStyles.td, color },
+    blockquote: { ...baseStyles.blockquote, color },
+  };
+}
+
 /**
  * Creates a smaller variant of markdown styles for compact UI elements
  * like thought bubbles, tooltips, or side panels.

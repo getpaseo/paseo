@@ -28,7 +28,11 @@ import { MarkdownParagraphView, MarkdownTextSpan } from "@/components/markdown-t
 import { MarkdownTableCellText } from "@/components/markdown-text-selection";
 import { getMarkdownListMarker, getMarkdownListSpacing } from "@/utils/markdown-list";
 import { markdownNodeContainsType } from "@/utils/markdown-ast";
-import { createCompactMarkdownStyles, createMarkdownStyles } from "@/styles/markdown-styles";
+import {
+  createCompactMarkdownStyles,
+  createMarkdownStyles,
+  createMutedMarkdownStyles,
+} from "@/styles/markdown-styles";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isNative } from "@/constants/platform";
@@ -65,12 +69,30 @@ function compactMarkdownStyleMapping(theme: Theme): Partial<MarkdownWithStableRe
   return { style: createCompactMarkdownStyles(theme) };
 }
 
+function mutedMarkdownStyleMapping(theme: Theme): Partial<MarkdownWithStableRendererProps> {
+  return { style: createMutedMarkdownStyles(theme) };
+}
+
+function resolveMarkdownStyleMapping(input: {
+  compact: boolean;
+  tone: NonNullable<MarkdownRendererProps["tone"]>;
+}) {
+  if (input.compact) {
+    return compactMarkdownStyleMapping;
+  }
+  if (input.tone === "muted") {
+    return mutedMarkdownStyleMapping;
+  }
+  return markdownStyleMapping;
+}
+
 const defaultMarkdownParser = MarkdownIt({ typographer: true, linkify: true });
 const EMPTY_TEXT_STYLE: TextStyle = {};
 const MARKDOWN_LIST_ITEM_CONTENT_FLEX: ViewStyle = { flex: 1, flexShrink: 1, minWidth: 0 };
 export interface MarkdownRendererProps {
   text: string;
   compact?: boolean;
+  tone?: "default" | "muted";
   rules?: RenderRules;
   markdownit?: ReturnType<typeof MarkdownIt>;
   onLinkPress?: (url: string) => boolean;
@@ -82,6 +104,7 @@ export interface MarkdownRendererProps {
 export function MarkdownRenderer({
   text,
   compact = false,
+  tone = "default",
   rules,
   markdownit = defaultMarkdownParser,
   onLinkPress,
@@ -97,6 +120,7 @@ export function MarkdownRenderer({
   const rendererProps = useMemo(
     () => ({
       compact,
+      tone,
       rules: markdownRules,
       markdownit,
       onLinkPress,
@@ -106,6 +130,7 @@ export function MarkdownRenderer({
     [
       allowedImageHandlers,
       compact,
+      tone,
       markdownRules,
       markdownit,
       onLinkPress,
@@ -191,13 +216,17 @@ function MarkdownPart({
 function MarkdownFragment({
   text,
   compact,
+  tone,
   rules,
   markdownit,
   onLinkPress,
   allowedImageHandlers,
   topLevelMaxExceededItem,
 }: MarkdownRendererProps & { rules: RenderRules }) {
-  const uniProps = compact ? compactMarkdownStyleMapping : markdownStyleMapping;
+  const uniProps = resolveMarkdownStyleMapping({
+    compact: compact ?? false,
+    tone: tone ?? "default",
+  });
   return (
     <ThemedMarkdown
       uniProps={uniProps}

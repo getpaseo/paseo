@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { createCompactMarkdownStyles, createMarkdownStyles } from "./markdown-styles";
+import {
+  createCompactMarkdownStyles,
+  createMarkdownStyles,
+  createMutedMarkdownStyles,
+} from "./markdown-styles";
 import { darkTheme } from "./theme";
 
 describe("createMarkdownStyles", () => {
@@ -138,5 +142,19 @@ describe("createMarkdownStyles", () => {
     });
     expect(styles.paragraph.marginBottom).toBe(darkTheme.spacing[3]);
     expect(styles.text).not.toHaveProperty("color");
+  });
+
+  it("mutes prose hierarchy without dimming links or code", () => {
+    const styles = createMutedMarkdownStyles(darkTheme);
+
+    expect(styles.body.color).toBe(darkTheme.colors.foregroundMuted);
+    expect(styles.heading1.color).toBe(darkTheme.colors.foregroundMuted);
+    expect(styles.heading5.color).toBe(darkTheme.colors.foregroundMuted);
+    expect(styles.th.color).toBe(darkTheme.colors.foregroundMuted);
+    expect(styles.td.color).toBe(darkTheme.colors.foregroundMuted);
+    expect(styles.blockquote.color).toBe(darkTheme.colors.foregroundMuted);
+    expect(styles.link.color).toBe(darkTheme.colors.accentBright);
+    expect(styles.code_inline.color).toBe(darkTheme.colors.foreground);
+    expect(styles.code_block.color).toBe(darkTheme.colors.foreground);
   });
 });

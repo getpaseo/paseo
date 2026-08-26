@@ -749,6 +749,7 @@ interface AssistantMessageProps {
   client?: DaemonClient | null;
   spacing?: "default" | "compactTop" | "compactBottom" | "compactBoth";
   phase: MarkdownPhase;
+  tone?: "default" | "muted";
 }
 
 export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
@@ -1354,6 +1355,7 @@ interface MemoizedMarkdownBlockProps {
   rules: RenderRules;
   parser: MarkdownIt;
   onLinkPress: (url: string) => boolean;
+  tone: "default" | "muted";
 }
 
 const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
@@ -1361,6 +1363,7 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   rules,
   parser,
   onLinkPress,
+  tone,
 }: MemoizedMarkdownBlockProps) {
   return (
     <MarkdownRenderer
@@ -1369,6 +1372,7 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
       rules={rules}
       markdownit={parser}
       onLinkPress={onLinkPress}
+      tone={tone}
       allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
       topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
     />
@@ -1461,6 +1465,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   spacing = "default",
   phase,
+  tone = "default",
 }: AssistantMessageProps) {
   const markdownParser = useMemo(createAssistantMarkdownParser, []);
 
@@ -1931,6 +1936,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             rules={markdownRules}
             parser={markdownParser}
             onLinkPress={handleMarkdownLinkPress}
+            tone={tone}
           />
         </AssistantMessageBlockContainer>
       ))}

@@ -106,6 +106,7 @@ describe("projectCompletedResponseFolds", () => {
     });
 
     expect(result.tail.map((item) => item.id)).toEqual(["user", "final"]);
+    expect(result.intermediateAssistantItemIds).toEqual(new Set(["progress"]));
     expect(result.foldsByAnchorItemId.get("user")).toEqual({
       responseId: "final",
       expanded: false,

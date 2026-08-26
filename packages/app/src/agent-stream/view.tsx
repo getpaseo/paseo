@@ -760,11 +760,24 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               client={client}
               spacing={layoutItem.assistantSpacing}
               phase={layoutItem.phase}
+              tone={
+                completedResponseProjection.intermediateAssistantItemIds.has(item.id)
+                  ? "muted"
+                  : "default"
+              }
             />
           </AssistantFileLinkResolverProvider>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [
+        agentId,
+        client,
+        completedResponseProjection.intermediateAssistantItemIds,
+        handleInlinePathPress,
+        resolvedServerId,
+        toast,
+        workspaceRoot,
+      ],
     );
 
     const renderThoughtItem = useCallback(

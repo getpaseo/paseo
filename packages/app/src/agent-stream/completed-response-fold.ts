@@ -21,11 +21,12 @@ export interface CompletedResponseFoldProjection {
   tail: StreamItem[];
   head: StreamItem[];
   foldsByAnchorItemId: ReadonlyMap<string, CompletedResponseFold>;
+  intermediateAssistantItemIds: ReadonlySet<string>;
 }
 
 type CachedActiveTailProjection = Pick<
   CompletedResponseFoldProjection,
-  "tail" | "foldsByAnchorItemId"
+  "tail" | "foldsByAnchorItemId" | "intermediateAssistantItemIds"
 >;
 
 interface ToolCallGroupSummaryLookup {
@@ -42,6 +43,7 @@ const activeTailProjectionCache = new WeakMap<
   WeakMap<object, WeakMap<object, CachedLeadingPolicyProjections>>
 >();
 const EMPTY_COMPLETED_RESPONSE_FOLDS = new Map<string, CompletedResponseFold>();
+const EMPTY_INTERMEDIATE_ASSISTANT_ITEM_IDS = new Set<string>();
 const EMPTY_TOOL_CALL_GROUP_SUMMARIES = new Map<string, { summary: ToolCallActivitySummary }>();
 
 function isToolCallRunning(item: Extract<StreamItem, { kind: "tool_call" }>): boolean {
@@ -137,6 +139,7 @@ function projectResponseRows(input: {
   const responses = partitionVisibleResponses([...input.tail, ...input.head]);
   const removedItemIds = new Set<string>();
   const foldsByAnchorItemId = new Map<string, CompletedResponseFold>();
+  const intermediateAssistantItemIds = new Set<string>();
 
   for (let responseIndex = 0; responseIndex < responses.length; responseIndex += 1) {
     const response = responses[responseIndex];
@@ -176,6 +179,11 @@ function projectResponseRows(input: {
         messageCount: countAssistantMessages(foldableItems),
       },
     });
+    for (const item of foldableItems) {
+      if (item.kind === "assistant_message") {
+        intermediateAssistantItemIds.add(item.id);
+      }
+    }
 
     if (!expanded) {
       for (const item of foldableItems) {
@@ -189,6 +197,7 @@ function projectResponseRows(input: {
       tail: input.tail,
       head: input.head,
       foldsByAnchorItemId,
+      intermediateAssistantItemIds,
     };
   }
 
@@ -196,6 +205,7 @@ function projectResponseRows(input: {
     tail: input.tail.filter((item) => !removedItemIds.has(item.id)),
     head: input.head.filter((item) => !removedItemIds.has(item.id)),
     foldsByAnchorItemId,
+    intermediateAssistantItemIds,
   };
 }
 
@@ -234,6 +244,7 @@ function getActiveTailProjection(
   const activeTailProjection = {
     tail: projected.tail,
     foldsByAnchorItemId: projected.foldsByAnchorItemId,
+    intermediateAssistantItemIds: projected.intermediateAssistantItemIds,
   };
   cacheByToolCallGroups.set(toolCallGroupsKey, {
     ...cachedByLeadingPolicy,
@@ -256,6 +267,7 @@ export function projectCompletedResponseFolds(input: {
       tail: input.tail,
       head: input.head,
       foldsByAnchorItemId: EMPTY_COMPLETED_RESPONSE_FOLDS,
+      intermediateAssistantItemIds: EMPTY_INTERMEDIATE_ASSISTANT_ITEM_IDS,
     };
   }
 
@@ -272,6 +284,7 @@ export function projectCompletedResponseFolds(input: {
       tail: projectedTail.tail,
       head: input.head,
       foldsByAnchorItemId: projectedTail.foldsByAnchorItemId,
+      intermediateAssistantItemIds: projectedTail.intermediateAssistantItemIds,
     };
   }
 
