@@ -292,6 +292,7 @@ export interface ViewedTimelineUiBridge {
   replaceVisibleAgentIds(sourceId: string, agentIds: string[]): void;
   subscribe(listener: () => void): () => void;
   getAgentTimelineStatus(agentId: string): ViewedTimelineStatus;
+  getAgentTimelineError(agentId: string): string | null;
   retryVisibleAgentTimeline(agentId: string): void;
 }
 
@@ -429,7 +430,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
   // Acknowledgement and tail completion are the only drain points.
   const pendingCatchUps = new Map<string, ProjectedTimelineForwardFetchPlan>();
   const visibilityCatchUpPending = new Set<string>();
-  const visibilityCatchUpErrors = new Set<string>();
+  const visibilityCatchUpErrors = new Map<string, string>();
   // User-initiated retries only. Background retries stay silent; a retry the user asked for
   // owes them a pending state until it settles.
   const manualRetries = new Set<string>();
@@ -490,13 +491,16 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
     if (wasPending || hadError || wasRetrying) notifyListeners();
   };
 
-  const setVisibilityCatchUpError = (agentIds: string[]) => {
+  const setVisibilityCatchUpError = (agentIds: string[], error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
     let changed = false;
     for (const agentId of agentIds) {
       if (manualRetries.delete(agentId)) changed = true;
-      if (!visibilityCatchUpPending.delete(agentId)) continue;
-      visibilityCatchUpErrors.add(agentId);
-      changed = true;
+      if (visibilityCatchUpPending.delete(agentId)) changed = true;
+      if (visibilityCatchUpErrors.get(agentId) !== message) {
+        visibilityCatchUpErrors.set(agentId, message);
+        changed = true;
+      }
     }
     if (changed) notifyListeners();
   };
@@ -559,7 +563,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
           cancelRetry,
           retryDelayMs: nextRetryDelayMs,
         });
-        setVisibilityCatchUpError([agentId]);
+        setVisibilityCatchUpError([agentId], error);
         ports.reportError(error);
       }
     }
@@ -646,7 +650,7 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       await ports.setSubscription(requested);
     } catch (error) {
       membershipNeedsRetry = true;
-      setVisibilityCatchUpError(requested);
+      setVisibilityCatchUpError(requested, error);
       cancelMembershipRetry?.();
       const nextRetryDelayMs = getNextRetryDelayMs(membershipRetryDelayMs);
       cancelMembershipRetry = ports.schedule(() => {
@@ -795,6 +799,9 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       if (visibilityCatchUpErrors.has(agentId)) return "error";
       if (!isDesired(agentId) || visibilityCatchUpPending.has(agentId)) return "pending";
       return "ready";
+    },
+    getAgentTimelineError(agentId) {
+      return visibilityCatchUpErrors.get(agentId) ?? null;
     },
     replaceVisibleAgentIds(sourceId, agentIds) {
       const normalized = normalizeAgentIds(agentIds);
