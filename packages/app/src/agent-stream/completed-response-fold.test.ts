@@ -92,6 +92,8 @@ describe("projectCompletedResponseFolds", () => {
 
     expect(result.tail).toBe(tail);
     expect(result.foldsByAnchorItemId.size).toBe(0);
+    expect(result.finalAssistantItemIds.size).toBe(0);
+    expect(result.finalAssistantAnchorItemIds.size).toBe(0);
   });
 
   it("replaces completed response work with one reversible fold anchor", () => {
@@ -144,6 +146,8 @@ describe("projectCompletedResponseFolds", () => {
     });
 
     expect(result.tail.map((item) => item.id)).toEqual(["user", "final-0", "final-1"]);
+    expect(result.finalAssistantItemIds).toEqual(new Set(["final-0", "final-1"]));
+    expect(result.finalAssistantAnchorItemIds).toEqual(new Set(["final-0"]));
     expect(result.foldsByAnchorItemId.get("user")).toEqual({
       responseId: "final-0",
       expanded: false,

@@ -743,6 +743,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderAssistantMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "assistant_message" }>) => {
+        let presentationRole: "default" | "intermediate" | "final" = "default";
+        if (completedResponseProjection.intermediateAssistantItemIds.has(item.id)) {
+          presentationRole = "intermediate";
+        } else if (completedResponseProjection.finalAssistantItemIds.has(item.id)) {
+          presentationRole = "final";
+        }
         return (
           <AssistantFileLinkResolverProvider
             client={client}
@@ -760,11 +766,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               client={client}
               spacing={layoutItem.assistantSpacing}
               phase={layoutItem.phase}
-              tone={
-                completedResponseProjection.intermediateAssistantItemIds.has(item.id)
-                  ? "muted"
-                  : "default"
-              }
+              presentationRole={presentationRole}
+              startsFinalAnswer={completedResponseProjection.finalAssistantAnchorItemIds.has(
+                item.id,
+              )}
             />
           </AssistantFileLinkResolverProvider>
         );
@@ -772,6 +777,8 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [
         agentId,
         client,
+        completedResponseProjection.finalAssistantAnchorItemIds,
+        completedResponseProjection.finalAssistantItemIds,
         completedResponseProjection.intermediateAssistantItemIds,
         handleInlinePathPress,
         resolvedServerId,

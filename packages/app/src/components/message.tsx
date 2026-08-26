@@ -749,7 +749,8 @@ interface AssistantMessageProps {
   client?: DaemonClient | null;
   spacing?: "default" | "compactTop" | "compactBottom" | "compactBoth";
   phase: MarkdownPhase;
-  tone?: "default" | "muted";
+  presentationRole?: "default" | "intermediate" | "final";
+  startsFinalAnswer?: boolean;
 }
 
 export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
@@ -762,6 +763,9 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
   containerCompactBottom: {
     paddingBottom: 0,
+  },
+  containerFinalAnswerStart: {
+    marginTop: theme.spacing[2],
   },
   imageFrame: {
     width: "100%",
@@ -1465,7 +1469,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   spacing = "default",
   phase,
-  tone = "default",
+  presentationRole = "default",
+  startsFinalAnswer = false,
 }: AssistantMessageProps) {
   const markdownParser = useMemo(createAssistantMarkdownParser, []);
 
@@ -1919,12 +1924,15 @@ export const AssistantMessage = memo(function AssistantMessage({
         assistantMessageStylesheet.containerCompactTop,
       (spacing === "compactBottom" || spacing === "compactBoth") &&
         assistantMessageStylesheet.containerCompactBottom,
+      startsFinalAnswer && assistantMessageStylesheet.containerFinalAnswerStart,
     ],
-    [spacing],
+    [spacing, startsFinalAnswer],
   );
+  const tone = presentationRole === "intermediate" ? "muted" : "default";
+  const presentationDataSet = useMemo(() => ({ presentationRole }), [presentationRole]);
 
   return (
-    <View testID="assistant-message" style={assistantContainerStyle}>
+    <View testID="assistant-message" style={assistantContainerStyle} dataSet={presentationDataSet}>
       {keyedBlocks.map(({ key, block }, index) => (
         <AssistantMessageBlockContainer
           key={key}

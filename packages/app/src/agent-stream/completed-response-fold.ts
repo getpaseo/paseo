@@ -22,11 +22,17 @@ export interface CompletedResponseFoldProjection {
   head: StreamItem[];
   foldsByAnchorItemId: ReadonlyMap<string, CompletedResponseFold>;
   intermediateAssistantItemIds: ReadonlySet<string>;
+  finalAssistantItemIds: ReadonlySet<string>;
+  finalAssistantAnchorItemIds: ReadonlySet<string>;
 }
 
 type CachedActiveTailProjection = Pick<
   CompletedResponseFoldProjection,
-  "tail" | "foldsByAnchorItemId" | "intermediateAssistantItemIds"
+  | "tail"
+  | "foldsByAnchorItemId"
+  | "intermediateAssistantItemIds"
+  | "finalAssistantItemIds"
+  | "finalAssistantAnchorItemIds"
 >;
 
 interface ToolCallGroupSummaryLookup {
@@ -44,6 +50,7 @@ const activeTailProjectionCache = new WeakMap<
 >();
 const EMPTY_COMPLETED_RESPONSE_FOLDS = new Map<string, CompletedResponseFold>();
 const EMPTY_INTERMEDIATE_ASSISTANT_ITEM_IDS = new Set<string>();
+const EMPTY_FINAL_ASSISTANT_ITEM_IDS = new Set<string>();
 const EMPTY_TOOL_CALL_GROUP_SUMMARIES = new Map<string, { summary: ToolCallActivitySummary }>();
 
 function isToolCallRunning(item: Extract<StreamItem, { kind: "tool_call" }>): boolean {
@@ -140,6 +147,8 @@ function projectResponseRows(input: {
   const removedItemIds = new Set<string>();
   const foldsByAnchorItemId = new Map<string, CompletedResponseFold>();
   const intermediateAssistantItemIds = new Set<string>();
+  const finalAssistantItemIds = new Set<string>();
+  const finalAssistantAnchorItemIds = new Set<string>();
 
   for (let responseIndex = 0; responseIndex < responses.length; responseIndex += 1) {
     const response = responses[responseIndex];
@@ -184,6 +193,10 @@ function projectResponseRows(input: {
         intermediateAssistantItemIds.add(item.id);
       }
     }
+    for (const itemId of terminalAssistantGroup.itemIds) {
+      finalAssistantItemIds.add(itemId);
+    }
+    finalAssistantAnchorItemIds.add(terminalAssistantGroup.anchorItemId);
 
     if (!expanded) {
       for (const item of foldableItems) {
@@ -198,6 +211,8 @@ function projectResponseRows(input: {
       head: input.head,
       foldsByAnchorItemId,
       intermediateAssistantItemIds,
+      finalAssistantItemIds,
+      finalAssistantAnchorItemIds,
     };
   }
 
@@ -206,6 +221,8 @@ function projectResponseRows(input: {
     head: input.head.filter((item) => !removedItemIds.has(item.id)),
     foldsByAnchorItemId,
     intermediateAssistantItemIds,
+    finalAssistantItemIds,
+    finalAssistantAnchorItemIds,
   };
 }
 
@@ -245,6 +262,8 @@ function getActiveTailProjection(
     tail: projected.tail,
     foldsByAnchorItemId: projected.foldsByAnchorItemId,
     intermediateAssistantItemIds: projected.intermediateAssistantItemIds,
+    finalAssistantItemIds: projected.finalAssistantItemIds,
+    finalAssistantAnchorItemIds: projected.finalAssistantAnchorItemIds,
   };
   cacheByToolCallGroups.set(toolCallGroupsKey, {
     ...cachedByLeadingPolicy,
@@ -268,6 +287,8 @@ export function projectCompletedResponseFolds(input: {
       head: input.head,
       foldsByAnchorItemId: EMPTY_COMPLETED_RESPONSE_FOLDS,
       intermediateAssistantItemIds: EMPTY_INTERMEDIATE_ASSISTANT_ITEM_IDS,
+      finalAssistantItemIds: EMPTY_FINAL_ASSISTANT_ITEM_IDS,
+      finalAssistantAnchorItemIds: EMPTY_FINAL_ASSISTANT_ITEM_IDS,
     };
   }
 
@@ -285,6 +306,8 @@ export function projectCompletedResponseFolds(input: {
       head: input.head,
       foldsByAnchorItemId: projectedTail.foldsByAnchorItemId,
       intermediateAssistantItemIds: projectedTail.intermediateAssistantItemIds,
+      finalAssistantItemIds: projectedTail.finalAssistantItemIds,
+      finalAssistantAnchorItemIds: projectedTail.finalAssistantAnchorItemIds,
     };
   }
 
