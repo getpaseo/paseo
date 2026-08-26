@@ -1932,8 +1932,13 @@ export class OpenCodeV2AgentSession implements AgentSession {
       }
     }
     // Provider-internal events (subagent upserts/timelines) surface regardless
-    // of an active foreground turn, mirroring v1.
+    // of an active foreground turn, mirroring v1. They are routed through
+    // recordProviderInternalEvent first so the subagent record stays
+    // consistent: the session.synthetic completion path (appendOpenCodeV2Synthetic)
+    // also lands here, and must update runningChildSessionIds / per-child state
+    // exactly like the discovery and live-event paths.
     if (event.type === "provider_subagent") {
+      this.recordProviderInternalEvent(event);
       this.notifySubscribers(event, null);
       return;
     }
@@ -1985,6 +1990,8 @@ export class OpenCodeV2AgentSession implements AgentSession {
    * endpoint) and hydrate each, BFS over grandchildren so nested subagents are
    * surfaced too. Detection dedups via knownChildSessionIds, so re-running
    * (polling, reconnect, unknown-session events) only hydrates new children.
+   * After the pass, children that no longer appear anywhere in the
+   * reconciliation emit a provider_subagent remove.
    */
   private async hydrateChildSessions(): Promise<void> {
     const queue = await this.discoverChildSessions(this.sessionId);
@@ -1998,6 +2005,33 @@ export class OpenCodeV2AgentSession implements AgentSession {
       await this.hydrateDiscoveredChild(child);
       const grandchildren = await this.discoverChildSessions(child.id);
       queue.push(...grandchildren);
+    }
+    await this.reconcileRemovedChildSessions(visited);
+  }
+
+  /**
+   * Emit provider_subagent remove events for children that no longer appear in
+   * the session.list({ parentID }) reconciliation. v2 has no session.deleted
+   * event to drive removes (unlike v1), so disappearance from the
+   * reconciliation is the only signal a child session is gone. Children that
+   * are still actively running are kept: a transient empty list during a spawn
+   * race would otherwise emit a false remove.
+   */
+  private async reconcileRemovedChildSessions(visibleChildIds: ReadonlySet<string>): Promise<void> {
+    for (const childId of Array.from(this.knownChildSessionIds)) {
+      if (childId === this.sessionId || visibleChildIds.has(childId)) {
+        continue;
+      }
+      if (this.runningChildSessionIds.has(childId)) {
+        continue;
+      }
+      const event: AgentStreamEvent = {
+        type: "provider_subagent",
+        provider: "opencode-v2",
+        event: { type: "remove", id: childId },
+      };
+      this.recordProviderInternalEvent(event);
+      this.notifySubscribers(event, null);
     }
   }
 
@@ -2032,11 +2066,17 @@ export class OpenCodeV2AgentSession implements AgentSession {
   /**
    * Hydrate a newly discovered child's message timeline into provider_subagent
    * timeline events so the subagent row shows its history on first appearance.
+   * In-progress assistant messages are skipped: their live deltas are routed by
+   * handleChildEvent, so hydrating the partial snapshot would duplicate rows
+   * (mirrors v1, which skips assistant messages without a completed timestamp).
    */
   private async hydrateChildSessionTimeline(child: OpenCodeV2ChildSessionInfo): Promise<void> {
     const response = await this.client.message.list({ sessionID: child.id });
     const events: AgentStreamEvent[] = [];
     for (const message of response.data) {
+      if (message.type === "assistant" && message.time.completed === undefined) {
+        continue;
+      }
       for (const timelineEvent of buildOpenCodeV2ReplayTimelineEvents(message)) {
         events.push({
           type: "provider_subagent",
@@ -2147,6 +2187,7 @@ export class OpenCodeV2AgentSession implements AgentSession {
         this.runningChildSessionIds.delete(event.event.id);
       }
     } else if (event.event.type === "remove") {
+      this.knownChildSessionIds.delete(event.event.id);
       this.childTranslationStates.delete(event.event.id);
       this.childSessionCwds.delete(event.event.id);
       this.childStatuses.delete(event.event.id);

@@ -177,6 +177,25 @@ function upsertFor(
   return matches[matches.length - 1];
 }
 
+function childAssistantMessageTexts(events: AgentStreamEvent[], childId: string): string[] {
+  return childTimelineEvents(events, childId)
+    .map((entry) => entry.item)
+    .filter(
+      (item): item is Extract<AgentTimelineItem, { type: "assistant_message" }> =>
+        item.type === "assistant_message",
+    )
+    .map((item) => item.text);
+}
+
+function hasChildRemove(events: AgentStreamEvent[], childId: string): boolean {
+  return events.some(
+    (event): event is Extract<AgentStreamEvent, { type: "provider_subagent" }> =>
+      event.type === "provider_subagent" &&
+      event.event.type === "remove" &&
+      event.event.id === childId,
+  );
+}
+
 describe("OpenCodeV2AgentSession subagents", () => {
   test("discovers child sessions via session.list({ parentID }) and surfaces an upsert", async () => {
     const { session, openCode } = await createSession((client) => {
@@ -505,6 +524,121 @@ describe("OpenCodeV2AgentSession subagents", () => {
     expect(upsertFor(events, "child-9")).toMatchObject({
       id: "child-9",
       status: "failed",
+    });
+
+    await session.close();
+  });
+
+  test("emits a provider_subagent remove when a child disappears from session.list reconciliation", async () => {
+    let childVisible = true;
+    const { session, openCode } = await createSession((client) => {
+      client.sessionListImplementation = async (input) => {
+        if (input.parentID === "session-1") {
+          return childVisible
+            ? {
+                data: [childSessionInfo("child-1", "session-1", { outcome: "succeeded" })],
+                cursor: {},
+              }
+            : { data: [], cursor: {} };
+        }
+        return { data: [], cursor: {} };
+      };
+    });
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await waitFor(() => expect(upsertFor(events, "child-1")).toBeDefined());
+
+    // The child no longer appears in session.list; the next reconciliation
+    // (triggered here by an unrelated session's event on the shared stream)
+    // emits a provider_subagent remove.
+    childVisible = false;
+    openCode.emitEvent(textDeltaEvent("other-session", "assistant-other", 0, "x"));
+
+    await waitFor(() => expect(hasChildRemove(events, "child-1")).toBe(true));
+
+    await session.close();
+  });
+
+  test("session.synthetic completion records the internal event so the child is not left running", async () => {
+    const { session, openCode } = await createSession((client) => {
+      client.sessionListImplementation = async (input) => {
+        if (input.parentID === "session-1") {
+          return { data: [childSessionInfo("child-1", "session-1")], cursor: {} };
+        }
+        return { data: [], cursor: {} };
+      };
+    });
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await waitFor(() => expect(upsertFor(events, "child-1")).toBeDefined());
+
+    await session.startTurn("Run a task");
+
+    // Synthetic completion for the running child. The upsert must be routed
+    // through recordProviderInternalEvent so the child leaves
+    // runningChildSessionIds and is not settled again on interrupt.
+    openCode.emitEvent(
+      subagentSyntheticEvent(
+        "child-1",
+        "completed",
+        '<subagent sessionID="child-1">\nDone\n</subagent>',
+      ),
+    );
+    await waitFor(() => expect(upsertFor(events, "child-1")?.status).toBe("completed"));
+
+    await session.interrupt();
+    expect(openCode.calls.sessionInterrupt).toContainEqual({
+      sessionID: "session-1",
+      continue: true,
+    });
+    expect(openCode.calls.sessionInterrupt).not.toContainEqual({ sessionID: "child-1" });
+
+    await session.close();
+  });
+
+  test("does not duplicate an in-progress child message between hydration and live deltas", async () => {
+    const { session, openCode } = await createSession((client) => {
+      client.sessionListImplementation = async (input) => {
+        if (input.parentID === "session-1") {
+          return { data: [childSessionInfo("child-1", "session-1")], cursor: {} };
+        }
+        return { data: [], cursor: {} };
+      };
+      client.messageListImplementation = async (input) => {
+        if (input.sessionID === "child-1") {
+          return {
+            data: [
+              {
+                id: "msg_child_in_progress",
+                type: "assistant",
+                agent: "general",
+                model: { id: "gpt-5", providerID: "openai" },
+                time: { created: 1 },
+                content: [{ type: "text", text: "Partial child text" }],
+              },
+            ],
+            cursor: {},
+          };
+        }
+        return { data: [], cursor: {} };
+      };
+    });
+
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await waitFor(() => expect(upsertFor(events, "child-1")).toBeDefined());
+
+    // Live delta for the same assistant message the hydration snapshot showed
+    // as in-progress. Hydration must skip the partial row so only the live
+    // delta surfaces.
+    openCode.emitEvent(textDeltaEvent("child-1", "assistant-child-1", 0, "Full child text"));
+
+    await waitFor(() => {
+      const assistantTexts = childAssistantMessageTexts(events, "child-1");
+      expect(assistantTexts).toContain("Full child text");
+      expect(assistantTexts).not.toContain("Partial child text");
     });
 
     await session.close();
