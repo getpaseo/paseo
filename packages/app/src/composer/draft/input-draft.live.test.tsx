@@ -224,20 +224,21 @@ describe("useAgentInputDraft live contract", () => {
       thinkingOptionId: "high",
     });
 
-    const hydratedReplacementKey = getLatest().textReplacementKey;
+    const hydratedTextReplacement = getLatest().textReplacement;
 
     await act(async () => {
       getLatest().editText("hello world");
       getLatest().setAttachments([{ kind: "image", metadata: image }]);
     });
 
-    expect(getLatest().textReplacementKey).toBe(hydratedReplacementKey);
+    expect(getLatest().textReplacement).toBe(hydratedTextReplacement);
 
     await act(async () => {
       getLatest().replaceText("replacement text");
     });
 
-    expect(getLatest().textReplacementKey).not.toBe(hydratedReplacementKey);
+    expect(getLatest().textReplacement).not.toBe(hydratedTextReplacement);
+    expect(getLatest().textReplacement.text).toBe("replacement text");
 
     await act(async () => {
       getLatest().editText("hello world");
