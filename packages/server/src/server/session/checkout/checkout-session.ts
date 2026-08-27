@@ -1313,9 +1313,10 @@ export class CheckoutSession {
 
     try {
       const resolvedCwd = expandTilde(cwd);
-      // COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 —
-      // the legacy github_search RPC is GitHub by definition; the modern
-      // forge.search RPC resolves the cwd's forge.
+      // COMPAT(githubSearchRpc): the legacy github_search RPC is GitHub by
+      // definition; forge.search.* shipped in v0.2.0-beta.1 and resolves the
+      // cwd's forge. Remove after 2027-01-17 once the supported client floor
+      // is >= v0.2.0.
       const resolvedForge =
         msg.type === "github_search_request"
           ? { forge: "github", service: this.github }

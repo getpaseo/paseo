@@ -916,7 +916,7 @@ function isTruthyEnvValue(value: string | undefined): boolean {
   );
 }
 
-function detectIneligibleAutoModeTransport(env: NodeJS.ProcessEnv): "Bedrock" | "Vertex" | null {
+function claudeAutoModeUnavailableOn(env: NodeJS.ProcessEnv): "Bedrock" | "Vertex" | null {
   if (isTruthyEnvValue(env.CLAUDE_CODE_USE_BEDROCK)) {
     return "Bedrock";
   }
@@ -926,17 +926,27 @@ function detectIneligibleAutoModeTransport(env: NodeJS.ProcessEnv): "Bedrock" | 
   return null;
 }
 
-function assertClaudeAutoModeEligible(mode: PermissionMode, env: NodeJS.ProcessEnv): void {
+function assertClaudeModeCanRun(mode: PermissionMode, env: NodeJS.ProcessEnv): void {
   if (mode !== "auto") {
     return;
   }
-  const transport = detectIneligibleAutoModeTransport(env);
+  const transport = claudeAutoModeUnavailableOn(env);
   if (transport === null) {
     return;
   }
   throw new Error(
     `Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses ${transport}. Select another permission mode or unset the ${transport === "Bedrock" ? "CLAUDE_CODE_USE_BEDROCK" : "CLAUDE_CODE_USE_VERTEX"} environment variable.`,
   );
+}
+
+function claudeModeCatalog(env: NodeJS.ProcessEnv): {
+  modes: AgentMode[];
+  defaultModeId: PermissionMode;
+} {
+  if (claudeAutoModeUnavailableOn(env)) {
+    return { modes: DEFAULT_MODES.filter((mode) => mode.id !== "auto"), defaultModeId: "default" };
+  }
+  return { modes: DEFAULT_MODES, defaultModeId: "auto" };
 }
 
 function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<AgentSessionConfig> {
@@ -975,6 +985,7 @@ function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<Age
 }
 
 export function toClaudeSdkMcpConfig(config: McpServerConfig): ClaudeSdkMcpServerConfig {
+  const eagerTools = config.alwaysLoad === true ? { alwaysLoad: true } : {};
   switch (config.type) {
     case "stdio":
       return {
@@ -982,21 +993,21 @@ export function toClaudeSdkMcpConfig(config: McpServerConfig): ClaudeSdkMcpServe
         command: config.command,
         args: config.args,
         env: config.env,
-        alwaysLoad: config.alwaysLoad,
+        ...eagerTools,
       };
     case "http":
       return {
         type: "http",
         url: config.url,
         headers: config.headers,
-        alwaysLoad: config.alwaysLoad,
+        ...eagerTools,
       };
     case "sse":
       return {
         type: "sse",
         url: config.url,
         headers: config.headers,
-        alwaysLoad: config.alwaysLoad,
+        ...eagerTools,
       };
   }
   throw new Error("Unhandled MCP server config type");
@@ -1563,15 +1574,12 @@ export class ClaudeAgentClient implements AgentClient {
     const models = await runProviderRefreshActivity(context, "settings", () =>
       getClaudeModelsWithSettings(this.logger, this.configDir, claudeCodeVersion),
     );
-    const modes = detectIneligibleAutoModeTransport(
+    const modeCatalog = claudeModeCatalog(
       createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
-    )
-      ? DEFAULT_MODES.filter((mode) => mode.id !== "auto")
-      : DEFAULT_MODES;
+    );
     return {
       models,
-      modes,
-      defaultModeId: modes.some((mode) => mode.id === "auto") ? "auto" : "default",
+      ...modeCatalog,
     };
   }
 
@@ -1581,7 +1589,7 @@ export class ClaudeAgentClient implements AgentClient {
       runtimeSettings: this.runtimeSettings,
       overlays: [launchEnv],
     });
-    return detectIneligibleAutoModeTransport(env) ? "default" : "auto";
+    return claudeModeCatalog(env).defaultModeId;
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
@@ -2232,7 +2240,7 @@ class ClaudeAgentSession implements AgentSession {
       if (this.cancelCurrentTurn === requestCancel) {
         this.cancelCurrentTurn = null;
       }
-      this.rejectAllPendingPermissions(new Error("Permission request aborted"));
+      this.rejectAllPendingPermissions(new Error("Permission request canceled"));
       this.finishForegroundTurn({
         type: "turn_canceled",
         provider: "claude",
@@ -2389,7 +2397,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
-    assertClaudeAutoModeEligible(normalized, this.buildSdkEnv());
+    assertClaudeModeCanRun(normalized, this.buildSdkEnv());
     const previousMode = this.currentMode;
     const activeQuery = await this.ensureQuery();
     await activeQuery.setPermissionMode(normalized);
@@ -3235,7 +3243,7 @@ class ClaudeAgentSession implements AgentSession {
     );
     const settingsOptions = this.buildSettingsOptions(providerOptions, { ultracode });
     const sdkEnv = this.buildSdkEnv();
-    assertClaudeAutoModeEligible(this.currentMode, sdkEnv);
+    assertClaudeModeCanRun(this.currentMode, sdkEnv);
 
     const claudeBinary = await this.resolveBinary();
     this.logger.debug(
@@ -4635,6 +4643,12 @@ class ClaudeAgentSession implements AgentSession {
       const abortHandler = () => {
         this.pendingPermissions.delete(requestId);
         cleanup();
+        this.pushEvent({
+          type: "permission_resolved",
+          provider: "claude",
+          requestId,
+          resolution: { behavior: "deny", message: "Permission request canceled" },
+        });
         reject(new Error("Permission request aborted"));
       };
 
@@ -4775,6 +4789,12 @@ class ClaudeAgentSession implements AgentSession {
       pending.cleanup?.();
       pending.reject(error);
       this.pendingPermissions.delete(id);
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: "claude",
+        requestId: id,
+        resolution: { behavior: "deny", message: error.message },
+      });
     }
   }
 

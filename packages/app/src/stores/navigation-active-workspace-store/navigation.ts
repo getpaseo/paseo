@@ -13,6 +13,7 @@ import {
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { prepareWorkspaceTab, type PrepareWorkspaceTabDeps } from "@/utils/prepare-workspace-tab";
+import type { WorkspaceTabPlacement } from "@/stores/workspace-layout-actions";
 
 export interface RouteSelectionInput {
   pathname: string;
@@ -27,6 +28,7 @@ export interface NavigateToWorkspaceInput {
   workspaceId: string;
   target?: WorkspaceTabTarget;
   pin?: boolean;
+  placement?: WorkspaceTabPlacement;
 }
 
 export interface NavigateToWorkspaceDeps extends PrepareWorkspaceTabDeps {

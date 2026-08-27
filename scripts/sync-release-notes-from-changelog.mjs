@@ -2,13 +2,12 @@ import { execFileSync as nodeExecFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { parseChangelogEntries } from "./changelog-utils.mjs";
 import {
   getReleaseInfoFromSourceTag,
   normalizeReleaseTag,
   parseReleaseVersion,
 } from "./release-version-utils.mjs";
-
-const headingPattern = /^##\s+\[?([^\]\s]+)\]?\s*-\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\s*$/;
 
 function usageAndExit(code = 1) {
   const usage = `
@@ -68,49 +67,14 @@ function parseArgs(argv) {
 }
 
 function parseChangelog(changelogText) {
-  const lines = changelogText.split(/\r?\n/);
-  const headings = [];
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const match = line.match(headingPattern);
-    if (!match) {
-      continue;
+  return parseChangelogEntries(changelogText).map((entry) => {
+    const notesParts = [`## ${entry.version} - ${entry.date}`];
+    if (entry.bodyLines.length > 0) {
+      notesParts.push("", ...entry.bodyLines);
     }
 
-    headings.push({
-      version: match[1],
-      date: match[2],
-      headingLineIndex: index,
-    });
-  }
-
-  if (headings.length === 0) {
-    throw new Error(
-      "No release headings found in CHANGELOG.md. Expected headings like `## 0.1.14 - 2026-02-19`.",
-    );
-  }
-
-  return headings.map((heading, index) => {
-    const nextHeading = headings[index + 1];
-    const bodyStart = heading.headingLineIndex + 1;
-    const bodyEnd = nextHeading ? nextHeading.headingLineIndex : lines.length;
-
-    const bodyLines = lines.slice(bodyStart, bodyEnd);
-    while (bodyLines.length > 0 && bodyLines[0].trim() === "") {
-      bodyLines.shift();
-    }
-    while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1].trim() === "") {
-      bodyLines.pop();
-    }
-
-    const notesParts = [`## ${heading.version} - ${heading.date}`];
-    if (bodyLines.length > 0) {
-      notesParts.push("", ...bodyLines);
-    }
-
-    return Object.assign({}, heading, {
-      tag: `v${heading.version}`,
+    return Object.assign({}, entry, {
+      tag: `v${entry.version}`,
       notes: `${notesParts.join("\n").trim()}\n`,
     });
   });

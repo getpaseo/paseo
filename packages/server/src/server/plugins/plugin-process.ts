@@ -62,7 +62,13 @@ function register(contract: PluginRpcContract, handler: RpcHandler): void {
   handlers.set(method, { contract: { ...contract, name: method }, handler });
 }
 
-const pluginAuthorRuntime = { defineAttachmentSource, defineRpc };
+const pluginAuthorRuntime = {
+  defineAttachmentSource,
+  defineRpc,
+  Icon() {
+    throw new Error("Icon is available only in plugin client code");
+  },
+};
 
 function runtimeRequire(name: string): unknown {
   if (isPluginSdkSpecifier(name)) return pluginAuthorRuntime;
@@ -99,6 +105,7 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
     url: `ipc://plugin/${encodeURIComponent(message.pluginId)}`,
     clientId: `plugin:${message.pluginId}`,
     clientType: "cli",
+    appVersion: message.appVersion,
     reconnect: { enabled: false },
     transportFactory,
   });
