@@ -12,4 +12,5 @@ calls return `undefined`, leaving Paseo's original timeline entry unchanged.
 The transformer is a pure client contribution. It receives the daemon's projected timeline item,
 returns plain plugin item objects, and runs against projected history. Matching live events refresh
 the authoritative projected tail first. The renderer validates `data` before Paseo mounts the
-component.
+component. Its props also include the host-owned source context described in the
+[plugin reference](../../public-docs/plugins/reference.md#timeline-items).

@@ -307,6 +307,15 @@ describe("ReplicaCache", () => {
       data: { passed: 4, failed: 0 },
       timestamp: new Date("2026-07-18T08:02:00.000Z"),
       timelineCursor: { epoch: "epoch-1", seq: 12 },
+      source: {
+        epoch: "epoch-1",
+        seqStart: 10,
+        seqEnd: 12,
+        sourceSeqRanges: [
+          { startSeq: 10, endSeq: 10 },
+          { startSeq: 12, endSeq: 12 },
+        ],
+      },
     };
     writer.commitTimeline(SERVER_ID, "agent-1", {
       agentId: "agent-1",

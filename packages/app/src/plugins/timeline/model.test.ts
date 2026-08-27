@@ -2,6 +2,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import type { InstalledPlugin } from "../types";
 import { transformTimelineItem } from "./model";
+import { createPluginTimelineItemSource } from "./source";
 
 function plugin(input: {
   id: string;
@@ -48,13 +49,13 @@ describe("plugin timeline transforms", () => {
     const transformed = transformTimelineItem(toolCall, [
       plugin({
         id: "reports",
-        transform: () => ({
+        transform: ({ item }: { item: { name: string } }) => ({
           items: [
             {
               type: "plugin" as const,
               kind: "test-report",
               version: 1,
-              data: { passed: 4 },
+              data: { passed: item.name === "shell" ? 4 : 0 },
             },
           ],
         }),
@@ -68,8 +69,59 @@ describe("plugin timeline transforms", () => {
         kind: "test-report",
         version: 1,
         data: { passed: 4 },
+        source: null,
       },
     ]);
+  });
+
+  it("attaches host source metadata instead of accepting it from plugin data", () => {
+    const source = createPluginTimelineItemSource({
+      epoch: "epoch-1",
+      seqStart: 4,
+      seqEnd: 9,
+      sourceSeqRanges: [
+        { startSeq: 4, endSeq: 5 },
+        { startSeq: 9, endSeq: 9 },
+      ],
+    });
+    const transformed = transformTimelineItem(
+      toolCall,
+      [
+        plugin({
+          id: "reports",
+          transform: () => ({
+            items: [
+              {
+                type: "plugin" as const,
+                kind: "test-report",
+                version: 1,
+                data: {
+                  source: {
+                    epoch: "spoofed",
+                    seqStart: 1,
+                    seqEnd: 1,
+                    sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+                  },
+                },
+              },
+            ],
+          }),
+        }),
+      ],
+      source,
+    );
+
+    expect(transformed?.[0]).toMatchObject({
+      data: {
+        source: {
+          epoch: "spoofed",
+          seqStart: 1,
+          seqEnd: 1,
+          sourceSeqRanges: [{ startSeq: 1, endSeq: 1 }],
+        },
+      },
+      source,
+    });
   });
 
   it("keeps the source item when no transformer returns a result", () => {

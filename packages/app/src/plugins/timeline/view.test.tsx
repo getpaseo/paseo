@@ -19,7 +19,12 @@ const bundle = `(function(require) {
   const React = require("react");
   return { default: function(plugin) {
     function Card(props) {
-      return React.createElement("span", null, props.item.data.label);
+      const source = props.source;
+      return React.createElement(
+        "span",
+        null,
+        props.item.data.label + ":" + (source ? source.epoch + "/" + source.seqStart + "-" + source.seqEnd + "/" + source.sourceSeqRanges.length : "none"),
+      );
     }
     plugin.addTimelineRenderer({
       kind: "test-report",
@@ -52,6 +57,15 @@ const timelineItem = {
   version: 1,
   data: { label: "Four tests passed" },
   timestamp: new Date("2026-01-01T00:00:00.000Z"),
+  source: {
+    epoch: "epoch-1",
+    seqStart: 4,
+    seqEnd: 9,
+    sourceSeqRanges: [
+      { startSeq: 4, endSeq: 5 },
+      { startSeq: 9, endSeq: 9 },
+    ],
+  },
 };
 
 const roots: Array<ReturnType<typeof createRoot>> = [];
@@ -77,7 +91,7 @@ describe("PluginTimelineItemView", () => {
       <PluginTimelineItemView serverId="host-1" agentId="agent-1" item={timelineItem} />,
     );
 
-    expect(markup).toContain("Four tests passed");
+    expect(markup).toContain("Four tests passed:epoch-1/4-9/2");
   });
 
   it("contains renderer crashes to one timeline item", async () => {

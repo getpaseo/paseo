@@ -190,6 +190,18 @@ export type PluginTimelineData =
   | PluginTimelineData[]
   | { [key: string]: PluginTimelineData };
 
+export interface PluginTimelineItemSourceSeqRange {
+  readonly startSeq: number;
+  readonly endSeq: number;
+}
+
+export interface PluginTimelineItemSource {
+  readonly epoch: string;
+  readonly seqStart: number;
+  readonly seqEnd: number;
+  readonly sourceSeqRanges: readonly PluginTimelineItemSourceSeqRange[];
+}
+
 export interface PluginTimelineItem {
   type: "plugin";
   kind: string;
@@ -223,6 +235,7 @@ export interface PluginTimelineItemProps<Data = unknown> extends PluginHostProps
     version: number;
     data: Data;
   };
+  source: PluginTimelineItemSource | null;
   timestamp: Date;
 }
 

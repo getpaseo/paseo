@@ -282,8 +282,9 @@ collapsed before the transformer replaces anything.
 `query.itemType` selects one public `AgentTimelineItem.type`. The callback owns any detailed
 recognition and returns plain plugin item objects. `undefined` keeps the source item, `items`
 replaces it, and an empty array removes it. Output `data` must be JSON-compatible. Paseo adds the
-runtime plugin ID, preserves the source timeline cursor, validates renderer data with its Zod
-schema, and mounts the component inside the normal plugin runtime and error boundary.
+runtime plugin ID, preserves the source timeline cursor, provides renderer source metadata, validates
+renderer data with its Zod schema, and mounts the component inside the normal plugin runtime and
+error boundary. The renderer contract is in [the plugin reference](../public-docs/plugins/reference.md#timeline-items).
 
 Transformers run synchronously and must be deterministic. When several transformers match, the
 first one that returns a result owns that source item. Plugin and registration ordering is stable.

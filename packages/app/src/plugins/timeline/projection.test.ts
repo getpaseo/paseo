@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { TimelineItemTransform } from "./model";
 import {
@@ -6,7 +6,7 @@ import {
   processTimelineResponse,
 } from "@/timeline/session-stream-reducers";
 
-const transform: TimelineItemTransform = (item) => {
+const transform: TimelineItemTransform = (item, source) => {
   if (item.type !== "tool_call" || item.status === "running") return;
   return [
     {
@@ -15,6 +15,7 @@ const transform: TimelineItemTransform = (item) => {
       kind: "test-report",
       version: 1,
       data: { name: item.name },
+      source,
     },
   ];
 };
@@ -33,7 +34,7 @@ const event: AgentStreamEventPayload = {
 };
 
 describe("plugin timeline projection", () => {
-  it("applies the same transform to fetched projected history", () => {
+  it("uses null source when projected history lacks authoritative ranges", () => {
     const result = processTimelineResponse({
       payload: {
         agentId: "agent-1",
@@ -74,8 +75,118 @@ describe("plugin timeline projection", () => {
         itemKind: "test-report",
         data: { name: "tests" },
         timelineCursor: { epoch: "epoch-1", seq: 1 },
+        source: null,
       },
     ]);
+  });
+
+  it("preserves every authoritative range on each replacement item", () => {
+    const multipleItems: TimelineItemTransform = (item, source) => {
+      if (item.type !== "tool_call") return;
+      return [
+        {
+          type: "plugin",
+          pluginId: "reports",
+          kind: "test-report",
+          version: 1,
+          data: { position: "first" },
+          source,
+        },
+        {
+          type: "plugin",
+          pluginId: "reports",
+          kind: "test-report",
+          version: 1,
+          data: { position: "second" },
+          source,
+        },
+      ];
+    };
+    const result = processTimelineResponse({
+      payload: {
+        agentId: "agent-1",
+        direction: "tail",
+        projection: "projected",
+        reset: true,
+        epoch: "epoch-1",
+        window: { minSeq: 4, maxSeq: 9, nextSeq: 10 },
+        startCursor: { seq: 4 },
+        endCursor: { seq: 9 },
+        entries: [
+          {
+            seqStart: 4,
+            seqEnd: 9,
+            sourceSeqRanges: [
+              { startSeq: 4, endSeq: 5 },
+              { startSeq: 9, endSeq: 9 },
+            ],
+            provider: "claude",
+            item: event.item,
+            timestamp: "2026-01-01T00:00:00.000Z",
+          },
+        ],
+        error: null,
+        hasNewer: false,
+        hasOlder: false,
+      },
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      isInitializing: true,
+      hasActiveInitDeferred: true,
+      initRequestDirection: "tail",
+      sendingClientMessageIds: [],
+      transformTimelineItem: multipleItems,
+    });
+
+    const pluginItems = result.tail.filter((item) => item.kind === "plugin");
+    expect(pluginItems).toHaveLength(2);
+    expect(pluginItems.map((item) => item.source)).toEqual([
+      {
+        epoch: "epoch-1",
+        seqStart: 4,
+        seqEnd: 9,
+        sourceSeqRanges: [
+          { startSeq: 4, endSeq: 5 },
+          { startSeq: 9, endSeq: 9 },
+        ],
+      },
+      {
+        epoch: "epoch-1",
+        seqStart: 4,
+        seqEnd: 9,
+        sourceSeqRanges: [
+          { startSeq: 4, endSeq: 5 },
+          { startSeq: 9, endSeq: 9 },
+        ],
+      },
+    ]);
+    expect(pluginItems[0]?.source).toBe(pluginItems[1]?.source);
+    expect(Object.isFrozen(pluginItems[0]?.source)).toBe(true);
+    expect(Object.isFrozen(pluginItems[0]?.source?.sourceSeqRanges)).toBe(true);
+    expect(Object.isFrozen(pluginItems[0]?.source?.sourceSeqRanges[0])).toBe(true);
+  });
+
+  it("passes a single-source context to live transform checks", () => {
+    const liveTransform = vi.fn<TimelineItemTransform>(() => undefined);
+
+    processAgentStreamEvent({
+      event,
+      seq: 7,
+      epoch: "epoch-1",
+      currentTail: [],
+      currentHead: [],
+      currentCursor: undefined,
+      timestamp: new Date("2026-01-01T00:00:00.000Z"),
+      transformTimelineItem: liveTransform,
+    });
+
+    expect(liveTransform).toHaveBeenCalledWith(event.item, {
+      epoch: "epoch-1",
+      seqStart: 7,
+      seqEnd: 7,
+      sourceSeqRanges: [{ startSeq: 7, endSeq: 7 }],
+    });
   });
 
   it("requests authoritative projection when a live delta matches", () => {

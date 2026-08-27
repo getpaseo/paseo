@@ -13,6 +13,7 @@ import { PluginRuntimeBoundary } from "../runtime-boundary";
 import { createPluginSurfaceRuntime } from "../surface-runtime";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
+import { createPluginTimelineItemSource } from "./source";
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 
@@ -69,6 +70,10 @@ function PluginTimelineItemBody({
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
   const layout = useMemo(() => ({ compact, platform: resolvePlatform() }), [compact]);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
+  const source = useMemo(
+    () => (item.source ? createPluginTimelineItemSource(item.source) : null),
+    [item.source],
+  );
 
   if (!plugin || !renderer || !parsed || !runtime) {
     return <TimelineItemUnavailable />;
@@ -87,6 +92,7 @@ function PluginTimelineItemBody({
       version: item.version,
       data: parsed.data,
     },
+    source,
   };
   return (
     <SurfaceErrorBoundary installation={plugin} Surface={Component}>

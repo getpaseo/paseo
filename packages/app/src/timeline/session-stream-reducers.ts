@@ -1,8 +1,9 @@
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import type { PluginTimelineItemSource } from "@getpaseo/plugin";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
-import type { TimelineItemTransform } from "@/plugins/timeline";
+import { createPluginTimelineItemSource, type TimelineItemTransform } from "@/plugins/timeline";
 import {
   applyStreamEvent,
   flushHeadToTail,
@@ -177,6 +178,7 @@ interface TimelineUnit {
   seq: number;
   seqEnd: number;
   sourceSeqRanges: TimelineSeqRange[];
+  source: PluginTimelineItemSource | null;
   event: AgentStreamEventPayload;
   timestamp: Date;
 }
@@ -390,6 +392,7 @@ function mergeTimelineWindow(args: {
     event: AgentStreamEventPayload;
     timestamp: Date;
     timelineCursor: { epoch: string; seq: number };
+    timelineSource: PluginTimelineItemSource | null;
   }>;
   transformTimelineItem?: TimelineItemTransform;
 }): TimelinePathResult {
@@ -509,9 +512,12 @@ function applyTimelineReplacePath(args: {
   currentHead: StreamItem[];
   sendingClientMessageIds: readonly string[];
   preserveContinuity: boolean;
-  toHydratedEvents: (
-    units: TimelineUnit[],
-  ) => Array<{ event: AgentStreamEventPayload; timestamp: Date }>;
+  toHydratedEvents: (units: TimelineUnit[]) => Array<{
+    event: AgentStreamEventPayload;
+    timestamp: Date;
+    timelineCursor: { epoch: string; seq: number };
+    timelineSource: PluginTimelineItemSource | null;
+  }>;
   transformTimelineItem?: TimelineItemTransform;
 }): TimelinePathResult {
   const {
@@ -957,6 +963,7 @@ function applyCanonicalForwardUnit(params: {
       timestamp,
       source: "canonical",
       timelineCursor,
+      timelineSource: params.unit.source,
       transformTimelineItem: params.transformTimelineItem,
     });
     return {
@@ -970,6 +977,7 @@ function applyCanonicalForwardUnit(params: {
       tail: reduceStreamUpdate(params.tail, event, timestamp, {
         source: "canonical",
         timelineCursor,
+        timelineSource: params.unit.source,
         transformTimelineItem: params.transformTimelineItem,
       }),
       head: params.head,
@@ -1001,6 +1009,7 @@ function applyCanonicalForwardUnit(params: {
       head: reduceStreamUpdate([], event, timestamp, {
         source: "canonical",
         timelineCursor,
+        timelineSource: params.unit.source,
         transformTimelineItem: params.transformTimelineItem,
       }),
       acknowledgedClientMessageIds: [],
@@ -1014,6 +1023,7 @@ function applyCanonicalForwardUnit(params: {
     timestamp,
     source: "canonical",
     timelineCursor,
+    timelineSource: params.unit.source,
     transformTimelineItem: params.transformTimelineItem,
   });
   return {
@@ -1155,10 +1165,11 @@ function applyAcceptedTimelinePage(input: {
     });
   }
   const olderTail = hydrateStreamState(
-    acceptedUnits.map(({ event, timestamp, seqEnd }) => ({
+    acceptedUnits.map(({ event, timestamp, seqEnd, source }) => ({
       event,
       timestamp,
       timelineCursor: { epoch: payload.epoch, seq: seqEnd },
+      timelineSource: source,
     })),
     {
       source: "canonical",
@@ -1296,6 +1307,15 @@ export function processTimelineResponse(
       entry.sourceSeqRanges && entry.sourceSeqRanges.length > 0
         ? entry.sourceSeqRanges
         : [{ startSeq: entry.seqStart, endSeq: entry.seqEnd }],
+    source:
+      entry.sourceSeqRanges && entry.sourceSeqRanges.length > 0
+        ? createPluginTimelineItemSource({
+            epoch: payload.epoch,
+            seqStart: entry.seqStart,
+            seqEnd: entry.seqEnd,
+            sourceSeqRanges: entry.sourceSeqRanges,
+          })
+        : null,
     event: {
       type: "timeline",
       provider: entry.provider,
@@ -1311,11 +1331,13 @@ export function processTimelineResponse(
     event: AgentStreamEventPayload;
     timestamp: Date;
     timelineCursor: { epoch: string; seq: number };
+    timelineSource: PluginTimelineItemSource | null;
   }> =>
-    units.map(({ event, timestamp, seqEnd }) => ({
+    units.map(({ event, timestamp, seqEnd, source }) => ({
       event,
       timestamp,
       timelineCursor: { epoch: payload.epoch, seq: seqEnd },
+      timelineSource: source,
     }));
 
   // ------------------------------------------------------------------
@@ -1476,6 +1498,20 @@ export interface ProcessAgentStreamEventOutput {
   sideEffects: AgentStreamReducerSideEffect[];
 }
 
+function createLiveTimelineSource(
+  event: AgentStreamEventPayload,
+  seq: number | undefined,
+  epoch: string | undefined,
+): PluginTimelineItemSource | null {
+  if (event.type !== "timeline" || seq === undefined || epoch === undefined) return null;
+  return createPluginTimelineItemSource({
+    epoch,
+    seqStart: seq,
+    seqEnd: seq,
+    sourceSeqRanges: [{ startSeq: seq, endSeq: seq }],
+  });
+}
+
 export interface AgentStreamReducerEvent {
   event: AgentStreamEventPayload;
   seq: number | undefined;
@@ -1622,9 +1658,10 @@ export function processAgentStreamEvent(
     event.type === "timeline" && seq !== undefined && epoch !== undefined
       ? { epoch, seq }
       : undefined;
+  const timelineSource = createLiveTimelineSource(event, seq, epoch);
   const pluginProjection =
     sequencing.shouldApplyStreamEvent && event.type === "timeline"
-      ? transformTimelineItem?.(event.item)
+      ? transformTimelineItem?.(event.item, timelineSource)
       : undefined;
 
   // ------------------------------------------------------------------
@@ -1647,6 +1684,7 @@ export function processAgentStreamEvent(
         timestamp,
         source: "live",
         timelineCursor,
+        timelineSource,
         unmatchedUserMessageInsert: "head",
       });
     } else {
@@ -1657,6 +1695,7 @@ export function processAgentStreamEvent(
         timestamp,
         source: "live",
         timelineCursor,
+        timelineSource,
       });
       streamResult = {
         tail: currentTail,
@@ -1673,6 +1712,7 @@ export function processAgentStreamEvent(
       timestamp,
       source: "live",
       timelineCursor,
+      timelineSource,
     });
   }
   const { tail, head, changedTail, changedHead } = streamResult;

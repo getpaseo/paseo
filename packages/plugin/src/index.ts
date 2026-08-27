@@ -42,6 +42,8 @@ export type {
   PluginTimelineData,
   PluginTimelineItem,
   PluginTimelineItemProps,
+  PluginTimelineItemSource,
+  PluginTimelineItemSourceSeqRange,
   PluginTimelineRendererContribution,
   PluginTimelineTransformerContribution,
   PluginTimelineTransformResult,

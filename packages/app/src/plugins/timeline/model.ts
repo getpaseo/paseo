@@ -1,6 +1,7 @@
 import type {
   PluginTimelineData,
   PluginTimelineItem,
+  PluginTimelineItemSource,
   PluginTimelineTransformResult,
 } from "@getpaseo/plugin";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
@@ -8,10 +9,12 @@ import type { InstalledPlugin } from "../types";
 
 export interface InstalledPluginTimelineItem extends PluginTimelineItem {
   pluginId: string;
+  source: PluginTimelineItemSource | null;
 }
 
 export type TimelineItemTransform = (
   item: AgentTimelineItem,
+  source: PluginTimelineItemSource | null,
 ) => InstalledPluginTimelineItem[] | undefined;
 
 function isTimelineData(value: unknown, ancestors: Set<object>): value is PluginTimelineData {
@@ -63,6 +66,7 @@ function parseTransformResult(value: unknown): PluginTimelineTransformResult {
 export function transformTimelineItem(
   item: AgentTimelineItem,
   plugins: readonly InstalledPlugin[],
+  source: PluginTimelineItemSource | null = null,
 ): InstalledPluginTimelineItem[] | undefined {
   for (const plugin of plugins) {
     for (const transformer of plugin.timelineTransformers) {
@@ -80,6 +84,7 @@ export function transformTimelineItem(
           version: transformedItem.version,
           data: JSON.parse(JSON.stringify(transformedItem.data)) as PluginTimelineData,
           pluginId: plugin.id,
+          source,
         }));
       } catch (error) {
         console.warn(

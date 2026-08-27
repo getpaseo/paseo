@@ -282,8 +282,13 @@ import { z } from "zod";
 
 const schema = z.object({ label: z.string() });
 
-function Card({ item, theme }: PluginTimelineItemProps<z.output<typeof schema>>) {
-  return <Text style={{ color: theme.colors.foreground }}>{item.data.label}</Text>;
+function Card({ item, source, theme }: PluginTimelineItemProps<z.output<typeof schema>>) {
+  const latestSequence = source?.seqEnd ?? "unavailable";
+  return (
+    <Text style={{ color: theme.colors.foreground }}>
+      {item.data.label} ({latestSequence})
+    </Text>
+  );
 }
 
 export default function contribute(plugin: PluginContext) {
@@ -318,9 +323,14 @@ export default function contribute(plugin: PluginContext) {
 provider- or tool-specific recognition. Returning `undefined` keeps the original entry. Returning
 `items` replaces it; an empty array removes it. Item `data` must be JSON-compatible.
 
-Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, and `layout`. Paseo validates
-`item.data` with the registered schema before rendering. Keep transformers synchronous and
+Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, `layout`, and `source`. Paseo
+validates `item.data` with the registered schema before rendering. Keep transformers synchronous and
 deterministic because Paseo reruns them while reconciling projected history.
+
+`source` is an immutable host-owned value or `null`. When present, it contains the source item's
+`epoch`, `seqStart`, `seqEnd`, and every `sourceSeqRanges` entry. Compare sequence values only within
+the same epoch. The host supplies it after transformation; plugin-returned `data` cannot set it.
+`null` means the host lacks the complete authoritative source ranges, including restored legacy data.
 
 Check `navigation` before showing an action that depends on it. Older Paseo clients leave the
 capability undefined. Let Paseo own route construction so the action works without reloading on

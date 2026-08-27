@@ -6,7 +6,7 @@ import {
   WorkspaceGitHubRuntimePayloadSchema,
 } from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
-import type { PluginTimelineData } from "@getpaseo/plugin";
+import type { PluginTimelineData, PluginTimelineItemSource } from "@getpaseo/plugin";
 import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
@@ -21,6 +21,7 @@ import {
   type StreamItem,
 } from "@/types/stream";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import { createPluginTimelineItemSource } from "@/plugins/timeline/source";
 import { clearLegacyReplicaCache } from "./legacy-cleanup";
 import {
   REPLICA_SINGLETON_ROW_ID,
@@ -39,6 +40,16 @@ const TimelinePositionSchema = z.strictObject({
   epoch: z.string(),
   seq: z.number().int().nonnegative(),
 });
+const PluginTimelineItemSourceSeqRangeSchema = z.strictObject({
+  startSeq: z.number().int().nonnegative(),
+  endSeq: z.number().int().nonnegative(),
+});
+const PluginTimelineItemSourceSchema = z.strictObject({
+  epoch: z.string(),
+  seqStart: z.number().int().nonnegative(),
+  seqEnd: z.number().int().nonnegative(),
+  sourceSeqRanges: z.array(PluginTimelineItemSourceSeqRangeSchema),
+});
 const PluginTimelineDataSchema: z.ZodType<PluginTimelineData> = z.lazy(() =>
   z.union([
     z.null(),
@@ -49,6 +60,27 @@ const PluginTimelineDataSchema: z.ZodType<PluginTimelineData> = z.lazy(() =>
     z.record(z.string(), PluginTimelineDataSchema),
   ]),
 );
+
+function serializePluginTimelineItemSource(
+  source: PluginTimelineItemSource | null,
+): z.output<typeof PluginTimelineItemSourceSchema> | null {
+  if (!source) return null;
+  return {
+    epoch: source.epoch,
+    seqStart: source.seqStart,
+    seqEnd: source.seqEnd,
+    sourceSeqRanges: source.sourceSeqRanges.map((range) => ({
+      startSeq: range.startSeq,
+      endSeq: range.endSeq,
+    })),
+  };
+}
+
+function deserializePluginTimelineItemSource(
+  source: z.output<typeof PluginTimelineItemSourceSchema> | null | undefined,
+): PluginTimelineItemSource | null {
+  return source ? createPluginTimelineItemSource(source) : null;
+}
 
 const TimelineItemBaseShape = {
   id: z.string(),
@@ -129,6 +161,8 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     itemKind: z.string(),
     version: z.number().int().positive(),
     data: PluginTimelineDataSchema,
+    // COMPAT(pluginTimelineItemSource): added in v0.6.2, remove after 2027-08-27 once cache floor >= v0.6.2.
+    source: PluginTimelineItemSourceSchema.nullable().optional(),
   }),
 ]);
 
@@ -453,6 +487,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         itemKind: item.itemKind,
         version: item.version,
         data: item.data,
+        source: serializePluginTimelineItemSource(item.source),
       };
   }
 }
@@ -537,6 +572,7 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         itemKind: item.itemKind,
         version: item.version,
         data: item.data,
+        source: deserializePluginTimelineItemSource(item.source),
       };
   }
 }

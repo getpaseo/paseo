@@ -7,11 +7,12 @@ import {
 } from "./model";
 
 export type { InstalledPluginTimelineItem, TimelineItemTransform } from "./model";
+export { createPluginTimelineItemSource } from "./source";
 export { PluginTimelineItemView } from "./view";
 
 export function createInstalledTimelineTransform(serverId: string): TimelineItemTransform {
-  return (item: AgentTimelineItem): InstalledPluginTimelineItem[] | undefined => {
+  return (item: AgentTimelineItem, source): InstalledPluginTimelineItem[] | undefined => {
     const plugins = pluginRegistry.getSnapshot().filter((plugin) => plugin.serverId === serverId);
-    return transformTimelineItem(item, plugins);
+    return transformTimelineItem(item, plugins, source);
   };
 }
