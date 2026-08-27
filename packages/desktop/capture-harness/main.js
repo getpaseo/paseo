@@ -1422,9 +1422,9 @@ async function attachAutomationDebugger(guest) {
   return (command, params = {}) => guest.debugger.sendCommand(command, params);
 }
 
-const SUSTAINED_STREAM_MS = 2000;
-const STOP_SETTLE_MS = 250;
-const MIN_SUSTAINED_FRAMES = 5;
+const SUSTAINED_STREAM_MS = 2000,
+  STOP_SETTLE_MS = 250,
+  MIN_SUSTAINED_FRAMES = 5;
 
 async function runScreencastGroup() {
   const outputDir = path.join(OUT_DIR, "screencast");
@@ -1447,35 +1447,28 @@ async function runScreencastGroup() {
     }));
     await waitForGuestLoad(guest);
     const guestMetrics = await readGuestMetrics(guest);
-    if (
-      guestMetrics.innerWidth !== VIEWPORT_WIDTH ||
-      guestMetrics.innerHeight !== VIEWPORT_HEIGHT
-    ) {
+    if (guestMetrics.innerWidth !== VIEWPORT_WIDTH || guestMetrics.innerHeight !== VIEWPORT_HEIGHT)
       fail(
         `screencast guest viewport inner=${guestMetrics.innerWidth}x${guestMetrics.innerHeight} expected=${VIEWPORT_WIDTH}x${VIEWPORT_HEIGHT}`,
       );
-    }
 
     send = await attachAutomationDebugger(guest);
-    const frames = [];
-    const frameWaiters = [];
-    const ackPromises = [];
-    const ackErrors = [];
+    const frames = [],
+      frameWaiters = [],
+      ackPromises = [],
+      ackErrors = [];
     listener = (_event, method, params = {}) => {
       if (method !== "Page.screencastFrame") return;
       frames.push(params);
       ackPromises.push(
-        send("Page.screencastFrameAck", { sessionId: params.sessionId }).catch((error) => {
-          ackErrors.push(error instanceof Error ? error.message : String(error));
-        }),
+        send("Page.screencastFrameAck", { sessionId: params.sessionId }).catch((error) =>
+          ackErrors.push(error instanceof Error ? error.message : String(error)),
+        ),
       );
       for (let index = frameWaiters.length - 1; index >= 0; index -= 1) {
         const waiter = frameWaiters[index];
         const frame = frames.slice(waiter.index).find(waiter.predicate);
-        if (frame) {
-          frameWaiters.splice(index, 1);
-          waiter.resolve(frame);
-        }
+        if (frame) frameWaiters.splice(index, 1)[0].resolve(frame);
       }
     };
     guest.debugger.on("message", listener);
@@ -1506,23 +1499,19 @@ async function runScreencastGroup() {
       if (!image.isEmpty()) await saveImage(image, outputPath);
       const logicalSize = `${frame.metadata?.deviceWidth || 0}x${frame.metadata?.deviceHeight || 0}`;
       let failure = "";
-      if (image.isEmpty()) {
-        failure = "empty JPEG";
-      } else if (
+      if (image.isEmpty()) failure = "empty JPEG";
+      else if (
         frame.metadata?.deviceWidth !== guestMetrics.innerWidth ||
         frame.metadata?.deviceHeight !== guestMetrics.innerHeight
-      ) {
+      )
         failure = `logical size ${logicalSize} did not match guest viewport ${guestMetrics.innerWidth}x${guestMetrics.innerHeight}`;
-      } else if (analysis.brightRatio < 0.65) {
+      else if (analysis.brightRatio < 0.65)
         failure = `bright ratio ${analysis.brightRatio.toFixed(4)} was below 0.6500`;
-      } else if (!analysis.textNonUniform) {
-        failure = "text=false";
-      }
-      if (failure) {
+      else if (!analysis.textNonUniform) failure = "text=false";
+      if (failure)
         fail(
           `screencast ${phase} size=${analysisSize(analysis)} logical=${logicalSize} bright=${analysis.brightRatio.toFixed(4)} text=${analysis.textNonUniform} error=${failure} file=${image.isEmpty() ? "none" : outputPath}`,
         );
-      }
       pass(
         `screencast ${phase} size=${analysisSize(analysis)} logical=${logicalSize} bright=${analysis.brightRatio.toFixed(4)} text=${analysis.textNonUniform} file=${outputPath}`,
       );
@@ -1567,9 +1556,6 @@ async function runScreencastGroup() {
     );
     results.push(await recordFrame(mutatedFrame, "mutated"));
 
-    // One frame proves the surface is copyable; a mirror needs a stream. A
-    // regression that delivered exactly one frame and then went silent survived
-    // every assertion above, so drive continuous damage and count what arrives.
     const sustainedStartIndex = frames.length;
     const sustainedStartedAt = Date.now();
     await guest.executeJavaScript(
@@ -1587,34 +1573,24 @@ async function runScreencastGroup() {
     );
     const sustainedElapsedMs = Date.now() - sustainedStartedAt;
     const sustainedFrames = frames.slice(sustainedStartIndex);
+    if (sustainedFrames.length < MIN_SUSTAINED_FRAMES)
+      fail(
+        `screencast sustained frames=${sustainedFrames.length} over ${sustainedElapsedMs}ms was below ${MIN_SUSTAINED_FRAMES}`,
+      );
     const sustainedBytes = sustainedFrames.map(
       (frame) => Buffer.from(frame.data, "base64").byteLength,
     );
     const sustainedFps = (sustainedFrames.length / sustainedElapsedMs) * 1000;
-    const meanFrameBytes =
-      sustainedBytes.length > 0
-        ? Math.round(
-            sustainedBytes.reduce((total, bytes) => total + bytes, 0) / sustainedBytes.length,
-          )
-        : 0;
-    if (sustainedFrames.length < MIN_SUSTAINED_FRAMES) {
-      fail(
-        `screencast sustained frames=${sustainedFrames.length} over ${sustainedElapsedMs}ms was below ${MIN_SUSTAINED_FRAMES}`,
-      );
-    }
+    const meanFrameBytes = Math.round(
+      sustainedBytes.reduce((sum, bytes) => sum + bytes, 0) / sustainedBytes.length,
+    );
     pass(
       `screencast sustained frames=${sustainedFrames.length} elapsed=${sustainedElapsedMs}ms fps=${sustainedFps.toFixed(1)} meanFrameBytes=${meanFrameBytes}`,
     );
-    const lastSustainedFrame = sustainedFrames[sustainedFrames.length - 1];
-    if (lastSustainedFrame) {
-      results.push(await recordFrame(lastSustainedFrame, "sustained"));
-    }
+    results.push(await recordFrame(sustainedFrames.at(-1), "sustained"));
 
     await send("Page.stopScreencast");
     streaming = false;
-    // A frame already encoding when the stop lands still arrives. Let those
-    // settle before taking the baseline, so this asserts the stream stopped
-    // rather than that Chromium cancels work in flight.
     await delay(STOP_SETTLE_MS);
     const stoppedFrameCount = frames.length;
     await guest.executeJavaScript(
@@ -1622,49 +1598,38 @@ async function runScreencastGroup() {
       true,
     );
     await delay(500);
-    if (frames.length !== stoppedFrameCount) {
+    if (frames.length !== stoppedFrameCount)
       fail(`screencast received ${frames.length - stoppedFrameCount} frame(s) after stop`);
-    }
     guest.debugger.removeListener?.("message", listener);
     listener = null;
     await Promise.all(ackPromises);
-    if (ackErrors.length > 0) {
-      fail(`screencast frame ack failed: ${ackErrors.join("; ")}`);
-    }
+    if (ackErrors.length > 0) fail(`screencast frame ack failed: ${ackErrors.join("; ")}`);
     pass(`screencast stopped frameCount=${stoppedFrameCount} framesAfterStop=0`);
 
+    const sustained = {
+      frames: sustainedFrames.length,
+      elapsedMs: sustainedElapsedMs,
+      fps: Number(sustainedFps.toFixed(2)),
+      meanFrameBytes,
+    };
+    const evidence = {
+      generatedAt: new Date().toISOString(),
+      options,
+      guestMetrics,
+      frameCount: stoppedFrameCount,
+      framesAfterStop: 0,
+      sustained,
+      results,
+    };
     await fsp.writeFile(
       path.join(outputDir, "results.json"),
-      `${JSON.stringify(
-        {
-          generatedAt: new Date().toISOString(),
-          options,
-          guestMetrics,
-          frameCount: stoppedFrameCount,
-          framesAfterStop: 0,
-          sustained: {
-            frames: sustainedFrames.length,
-            elapsedMs: sustainedElapsedMs,
-            fps: Number(sustainedFps.toFixed(2)),
-            meanFrameBytes,
-          },
-          results,
-        },
-        null,
-        2,
-      )}\n`,
+      `${JSON.stringify(evidence, null, 2)}\n`,
     );
     return results;
   } finally {
-    if (streaming && send) {
-      await send("Page.stopScreencast").catch(() => {});
-    }
-    if (guest && listener) {
-      guest.debugger.removeListener?.("message", listener);
-    }
-    if (guest?.debugger.isAttached()) {
-      guest.debugger.detach();
-    }
+    if (streaming && send) await send("Page.stopScreencast").catch(() => {});
+    if (guest && listener) guest.debugger.removeListener?.("message", listener);
+    if (guest?.debugger.isAttached()) guest.debugger.detach();
     await closeHarnessWindow(win);
   }
 }

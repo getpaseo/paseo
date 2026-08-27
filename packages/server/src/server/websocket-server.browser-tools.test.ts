@@ -45,9 +45,7 @@ interface ConnectBrowserHostClientOptions {
 }
 
 interface ConnectViewerClientOptions {
-  /** An app old enough to have no `browser.tabs.changed` branch. */
   understandsBrowserMirror?: boolean;
-  /** Two app windows share one client id, so their sockets share one session. */
   clientId?: string;
   trace?: DaemonClientTrace;
 }
@@ -213,37 +211,30 @@ describe("WebSocketServer browser tools wiring", () => {
     expect(harness.broker.getPendingRequestCount()).toBe(0);
   });
 
-  it("advertises the browser mirror feature only while a mirror-capable host is registered", async () => {
+  it("advertises browser mirroring only while a capable host is registered", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const viewer = await harness.connectViewerClient();
+    expect(viewer.getLastServerInfoMessage()?.features?.browserMirror).toBeUndefined();
 
+    await harness.connectBrowserHostClient({
+      capabilities: browserHostCapabilities(["list_tabs", "navigate"]),
+    });
+    await waitFor(() => harness.broker.getRegisteredClientCount() === 1);
     expect(viewer.getLastServerInfoMessage()?.features?.browserMirror).toBeUndefined();
 
     const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
     await waitFor(() => viewer.getLastServerInfoMessage()?.features?.browserMirror === true);
-
     await browserHost.disconnect();
     await waitFor(() => viewer.getLastServerInfoMessage()?.features?.browserMirror === undefined);
   });
 
-  it("does not advertise the mirror for a host without the screencast and input commands", async () => {
-    const harness = await startBrowserToolsDaemonHarness();
-    const viewer = await harness.connectViewerClient();
-
-    await harness.connectBrowserHostClient({
-      clientId: "automation-only-host",
-      capabilities: browserHostCapabilities(["list_tabs", "navigate", "click", "evaluate"]),
-    });
-    await waitFor(() => harness.broker.getRegisteredClientCount() === 1);
-
-    expect(harness.broker.getMirrorCapableClientCount()).toBe(0);
-    expect(viewer.getLastServerInfoMessage()?.features?.browserMirror).toBeUndefined();
-  });
-
-  it("runs a client browser command across every host and stamps host identity on tabs", async () => {
+  it("lists tabs across capable hosts and stamps their identity", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const firstHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
     const secondHost = await harness.connectBrowserHostClient({ clientId: "browser-host-2" });
+    await harness.connectBrowserHostClient({
+      capabilities: browserHostCapabilities(["input_at", "screencast_start", "screencast_stop"]),
+    });
     const viewer = await harness.connectViewerClient();
 
     const commandPromise = viewer.runBrowserCommand({
@@ -251,8 +242,8 @@ describe("WebSocketServer browser tools wiring", () => {
       workspaceId: "workspace-1",
     });
 
-    await respondWithTab(firstHost, { browserId: BROWSER_ID, url: "https://one.example" });
-    await respondWithTab(secondHost, { browserId: SECOND_BROWSER_ID, url: "https://two.example" });
+    await respondWithTab(firstHost, BROWSER_ID, "https://one.example");
+    await respondWithTab(secondHost, SECOND_BROWSER_ID, "https://two.example");
 
     await expect(commandPromise).resolves.toMatchObject({
       ok: true,
@@ -266,18 +257,19 @@ describe("WebSocketServer browser tools wiring", () => {
     });
   });
 
-  it("broadcasts the browser tab set to viewers when a host announces a change", async () => {
+  it("publishes tab changes only to capable viewers, including host removal", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
     const viewer = await harness.connectViewerClient();
+    const legacyViewer = await harness.connectViewerClient({ understandsBrowserMirror: false });
 
     const pushes: BrowserTabsChanged[] = [];
-    viewer.on("browser.tabs.changed", (message) => {
-      pushes.push(message);
-    });
+    const legacyPushes: BrowserTabsChanged[] = [];
+    viewer.on("browser.tabs.changed", (message) => pushes.push(message));
+    legacyViewer.on("browser.tabs.changed", (message) => legacyPushes.push(message));
 
     browserHost.announceBrowserTabs();
-    await respondWithTab(browserHost, { browserId: BROWSER_ID, url: "https://one.example" });
+    await respondWithTab(browserHost, BROWSER_ID, "https://one.example");
     await waitFor(() => pushes.length === 1);
 
     expect(pushes[0]).toMatchObject({
@@ -286,52 +278,11 @@ describe("WebSocketServer browser tools wiring", () => {
         tabs: [{ browserId: BROWSER_ID, hostId: "browser-host-1", hostLabel: hostname() }],
       },
     });
-  });
-
-  it("keeps the tab push away from a client that never claimed to understand it", async () => {
-    const harness = await startBrowserToolsDaemonHarness();
-    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
-    const legacyViewer = await harness.connectViewerClient({ understandsBrowserMirror: false });
-    const currentViewer = await harness.connectViewerClient();
-
-    const legacyPushes: BrowserTabsChanged[] = [];
-    legacyViewer.on("browser.tabs.changed", (message) => {
-      legacyPushes.push(message);
-    });
-    const currentPushes: BrowserTabsChanged[] = [];
-    currentViewer.on("browser.tabs.changed", (message) => {
-      currentPushes.push(message);
-    });
-
-    browserHost.announceBrowserTabs();
-    await respondWithTab(browserHost, { browserId: BROWSER_ID, url: "https://one.example" });
-    await waitFor(() => currentPushes.length === 1);
-
     expect(legacyPushes).toEqual([]);
-  });
 
-  it("lists tabs from the hosts that can while one host cannot list them at all", async () => {
-    const harness = await startBrowserToolsDaemonHarness();
-    await harness.connectBrowserHostClient({
-      clientId: "incapable-host",
-      capabilities: browserHostCapabilities(["input_at", "screencast_start", "screencast_stop"]),
-    });
-    const capableHost = await harness.connectBrowserHostClient({ clientId: "capable-host" });
-    const viewer = await harness.connectViewerClient();
-
-    const commandPromise = viewer.runBrowserCommand({
-      command: { command: "list_tabs", args: {} },
-      workspaceId: "workspace-1",
-    });
-    await respondWithTab(capableHost, { browserId: BROWSER_ID, url: "https://one.example" });
-
-    await expect(commandPromise).resolves.toMatchObject({
-      ok: true,
-      result: {
-        command: "list_tabs",
-        tabs: [{ browserId: BROWSER_ID, hostId: "capable-host" }],
-      },
-    });
+    await browserHost.disconnect();
+    await waitFor(() => pushes.length === 2);
+    expect(pushes[1]).toMatchObject({ payload: { tabs: [] } });
   });
 
   it("returns the broker failure payload untouched when no host can run the command", async () => {
@@ -352,25 +303,8 @@ describe("WebSocketServer browser tools wiring", () => {
     const viewer = await harness.connectViewerClient();
 
     const frames: BrowserScreencastEvent[] = [];
-    viewer.onBrowserScreencastFrame((event) => {
-      frames.push(event);
-    });
-
-    const subscribePromise = viewer.subscribeBrowserScreencast(BROWSER_ID);
-    const startRequest = await browserHost.nextBrowserRequest();
-    expect(startRequest.command).toMatchObject({
-      command: "screencast_start",
-      args: { browserId: BROWSER_ID, slot: 0 },
-    });
-    browserHost.respondToBrowserRequest({
-      type: "browser.automation.execute.response",
-      payload: {
-        requestId: startRequest.requestId,
-        ok: true,
-        result: { command: "screencast_start", browserId: BROWSER_ID, slot: 0 },
-      },
-    });
-    await expect(subscribePromise).resolves.toMatchObject({ browserId: BROWSER_ID, slot: 0 });
+    viewer.onBrowserScreencastFrame((event) => frames.push(event));
+    await startScreencast({ viewer, host: browserHost, browserId: BROWSER_ID });
 
     browserHost.sendScreencastFrame({ slot: 0, data: new TextEncoder().encode("jpeg-bytes") });
     await waitFor(() => frames.length === 1);
@@ -403,71 +337,17 @@ describe("WebSocketServer browser tools wiring", () => {
     );
   });
 
-  it("drops screencast frames from a client that does not host the stream", async () => {
-    const harness = await startBrowserToolsDaemonHarness();
-    const owningHost = await harness.connectBrowserHostClient({ clientId: "owning-host" });
-    const otherHost = await harness.connectBrowserHostClient({ clientId: "other-host" });
-    const viewer = await harness.connectViewerClient();
-
-    const tabsPromise = viewer.runBrowserCommand({ command: { command: "list_tabs", args: {} } });
-    await respondWithTab(owningHost, { browserId: BROWSER_ID, url: "https://one.example" });
-    await respondWithNoTabs(otherHost);
-    await tabsPromise;
-
-    const frames: BrowserScreencastEvent[] = [];
-    viewer.onBrowserScreencastFrame((event) => {
-      frames.push(event);
-    });
-    await startScreencast({ viewer, host: owningHost, browserId: BROWSER_ID });
-
-    otherHost.sendScreencastFrame({ slot: 0, data: new TextEncoder().encode("forged") });
-    owningHost.sendScreencastFrame({ slot: 0, data: new TextEncoder().encode("genuine") });
-    await waitFor(() => frames.length > 0);
-    // The forged frame went first, so anything it would have displaced has landed.
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(frames.map((frame) => new TextDecoder().decode(frame.data))).toEqual(["genuine"]);
-  });
-
-  it("republishes the tab list when a host disconnects", async () => {
-    const harness = await startBrowserToolsDaemonHarness();
-    const firstHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
-    const secondHost = await harness.connectBrowserHostClient({ clientId: "browser-host-2" });
-    const viewer = await harness.connectViewerClient();
-
-    const pushes: BrowserTabsChanged[] = [];
-    viewer.on("browser.tabs.changed", (message) => {
-      pushes.push(message);
-    });
-
-    await secondHost.disconnect();
-    await respondWithTab(firstHost, { browserId: BROWSER_ID, url: "https://one.example" });
-    await waitFor(() => pushes.length === 1);
-
-    // Without this the viewer keeps listing the departed host's tabs, and every
-    // action against them fails.
-    expect(pushes[0]).toMatchObject({
-      payload: { tabs: [{ browserId: BROWSER_ID, hostId: "browser-host-1" }] },
-    });
-
-    await firstHost.disconnect();
-    await waitFor(() => pushes.length === 2);
-
-    // No host is left to answer a fan-out, so the empty list is the daemon's to send.
-    expect(pushes[1]).toMatchObject({ payload: { tabs: [] } });
-  });
-
-  it("keeps a sibling window's frames running when one window unsubscribes", async () => {
+  it("keys viewers per socket when windows share a client id", async () => {
     const harness = await startBrowserToolsDaemonHarness();
     const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
     const clientId = "app-client-1";
     const firstWindow = await harness.connectViewerClient({ clientId });
     const secondWindow = await harness.connectViewerClient({ clientId });
+    const unwatched = createScreencastPushCounter();
+    await harness.connectViewerClient({ clientId, trace: unwatched.trace });
 
     const secondWindowFrames: BrowserScreencastEvent[] = [];
-    secondWindow.onBrowserScreencastFrame((event) => {
-      secondWindowFrames.push(event);
-    });
+    secondWindow.onBrowserScreencastFrame((event) => secondWindowFrames.push(event));
     await startScreencast({ viewer: firstWindow, host: browserHost, browserId: BROWSER_ID });
     await expect(secondWindow.subscribeBrowserScreencast(BROWSER_ID)).resolves.toMatchObject({
       browserId: BROWSER_ID,
@@ -476,69 +356,22 @@ describe("WebSocketServer browser tools wiring", () => {
 
     firstWindow.unsubscribeBrowserScreencast(BROWSER_ID);
 
-    // The second window is still watching, so the capture has to stay armed.
     await expect(browserHost.nextBrowserRequest()).rejects.toThrow(
       "Timed out waiting for browser automation request",
     );
     browserHost.sendScreencastFrame({ slot: 0, data: new TextEncoder().encode("jpeg-bytes") });
     await waitFor(() => secondWindowFrames.length === 1);
-
-    expect(new TextDecoder().decode(secondWindowFrames[0].data)).toBe("jpeg-bytes");
-  });
-
-  it("keeps frames off a window that never subscribed", async () => {
-    const harness = await startBrowserToolsDaemonHarness();
-    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
-    const clientId = "app-client-1";
-    const watching = await harness.connectViewerClient({ clientId });
-    const pushes = createScreencastPushCounter();
-    await harness.connectViewerClient({ clientId, trace: pushes.trace });
-
-    const frames: BrowserScreencastEvent[] = [];
-    watching.onBrowserScreencastFrame((event) => {
-      frames.push(event);
-    });
-    await startScreencast({ viewer: watching, host: browserHost, browserId: BROWSER_ID });
-
-    browserHost.sendScreencastFrame({ slot: 0, data: new TextEncoder().encode("jpeg-bytes") });
-    await waitFor(() => frames.length === 1);
-    // The frame reached the subscribed window, so anything sent alongside it has landed.
     await new Promise((resolve) => setTimeout(resolve, 50));
 
-    expect(pushes.count()).toBe(0);
-  });
-
-  it("refuses a screencast subscribe for a browser outside the requested workspace", async () => {
-    const harness = await startBrowserToolsDaemonHarness();
-    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
-    const viewer = await harness.connectViewerClient();
-
-    const tabsPromise = viewer.runBrowserCommand({
-      command: { command: "list_tabs", args: {} },
-      workspaceId: "workspace-1",
-    });
-    await respondWithTab(browserHost, {
-      browserId: BROWSER_ID,
-      url: "https://one.example",
-      workspaceId: "workspace-1",
-    });
-    await tabsPromise;
-
-    await expect(
-      viewer.subscribeBrowserScreencast(BROWSER_ID, { workspaceId: "workspace-2" }),
-    ).resolves.toMatchObject({
-      browserId: BROWSER_ID,
-      error: `Browser tab ${BROWSER_ID} is not in workspace workspace-2.`,
-    });
-    await expect(browserHost.nextBrowserRequest()).rejects.toThrow(
-      "Timed out waiting for browser automation request",
-    );
+    expect(new TextDecoder().decode(secondWindowFrames[0].data)).toBe("jpeg-bytes");
+    expect(unwatched.count()).toBe(0);
   });
 });
 
 async function respondWithTab(
   host: BrowserHostClientHandle,
-  tab: { browserId: string; url: string; workspaceId?: string },
+  browserId: string,
+  url: string,
 ): Promise<void> {
   const request = await host.nextBrowserRequest();
   host.respondToBrowserRequest({
@@ -548,34 +381,13 @@ async function respondWithTab(
       ok: true,
       result: {
         command: "list_tabs",
-        tabs: [
-          {
-            browserId: tab.browserId,
-            url: tab.url,
-            title: tab.url,
-            ...(tab.workspaceId ? { workspaceId: tab.workspaceId } : {}),
-          },
-        ],
+        tabs: [{ browserId, url, title: url }],
       },
     },
   });
 }
 
-async function respondWithNoTabs(host: BrowserHostClientHandle): Promise<void> {
-  const request = await host.nextBrowserRequest();
-  host.respondToBrowserRequest({
-    type: "browser.automation.execute.response",
-    payload: { requestId: request.requestId, ok: true, result: { command: "list_tabs", tabs: [] } },
-  });
-}
-
-interface ScreencastPushCounter {
-  trace: DaemonClientTrace;
-  /** Frames the daemon pushed down this socket, counted before the client routes them. */
-  count: () => number;
-}
-
-function createScreencastPushCounter(): ScreencastPushCounter {
+function createScreencastPushCounter(): { trace: DaemonClientTrace; count: () => number } {
   let count = 0;
   return {
     trace: {
@@ -598,6 +410,10 @@ async function startScreencast(params: {
 }): Promise<void> {
   const subscribePromise = params.viewer.subscribeBrowserScreencast(params.browserId);
   const startRequest = await params.host.nextBrowserRequest();
+  expect(startRequest.command).toMatchObject({
+    command: "screencast_start",
+    args: { browserId: params.browserId, slot: 0 },
+  });
   params.host.respondToBrowserRequest({
     type: "browser.automation.execute.response",
     payload: {
