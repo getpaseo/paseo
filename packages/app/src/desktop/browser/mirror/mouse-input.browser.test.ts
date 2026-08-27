@@ -16,20 +16,23 @@ function attachSurface(): Surface {
   const element = document.createElement("div");
   element.style.cssText = "position:fixed;left:0;top:0;width:400px;height:300px";
   document.body.appendChild(element);
-  const surface = {
+  const surface: Surface = {
     element,
     inputs: [],
     focusCount: 0,
+    detach: () => {},
     state: {
       fit: { scale: 1, offsetX: 0, offsetY: 0 },
       guest: { deviceWidth: 400, deviceHeight: 300 },
       isInteractive: true,
-      onInput: (input) => surface.inputs.push(input),
+      onInput: (input) => {
+        surface.inputs.push(input);
+      },
       onFocusKeyboard: () => {
         surface.focusCount += 1;
       },
     },
-  } as Surface;
+  };
   surface.detach = attachMouseInput(element, { current: surface.state });
   surfaces.push(surface);
   return surface;
