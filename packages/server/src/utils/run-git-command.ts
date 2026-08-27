@@ -27,9 +27,14 @@ const DEFAULT_STDERR_LIMIT = 2048;
 let gitProcessScheduler = new GitProcessScheduler(resolveGitProcessPolicy({ env: process.env }));
 let gitRuntimeMetrics = createGitCommandRuntimeMetricsWindow(gitProcessScheduler.policy);
 const gitCommandPriority = new AsyncLocalStorage<GitProcessPriority>();
+const gitCommandProvenance = new AsyncLocalStorage<string>();
 
 export function runWithGitCommandPriority<T>(priority: GitProcessPriority, operation: () => T): T {
   return gitCommandPriority.run(priority, operation);
+}
+
+export function runWithGitCommandProvenance<T>(provenance: string, operation: () => T): T {
+  return gitCommandProvenance.run(provenance, operation);
 }
 
 function createGitCommandRuntimeMetricsWindow(policy: GitProcessPolicy) {
@@ -258,7 +263,10 @@ export function runGitCommand(
     active: gitProcessScheduler.activeCount,
     pending: gitProcessScheduler.pendingCount,
   });
-  const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args));
+  const runtimeMetric = gitRuntimeMetrics.submit(
+    getGitOperation(args),
+    gitCommandProvenance.getStore(),
+  );
   const startCommand = () => {
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {

@@ -46,7 +46,7 @@ import {
   getRealpathAwareRelativePath,
   isRealpathInsideRoot,
 } from "../utils/path.js";
-import { runGitCommand } from "../utils/run-git-command.js";
+import { runGitCommand, runWithGitCommandProvenance } from "../utils/run-git-command.js";
 import { branchNameFromRef } from "../utils/worktree-metadata.js";
 import { listPaseoWorktrees, type PaseoWorktreeInfo } from "../utils/worktree.js";
 import { READ_ONLY_GIT_ENV } from "./checkout-git-utils.js";
@@ -2776,12 +2776,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
         });
       }
       try {
-        const admittedSnapshot = await this.workspaceRefreshLimit(() => {
-          if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
-            return null;
-          }
-          return this.refreshSnapshot(target, request);
-        });
+        const admittedSnapshot = await runWithGitCommandProvenance(
+          `workspace-refresh:${request.reason}`,
+          () =>
+            this.workspaceRefreshLimit(() => {
+              if (target.closed || this.workspaceTargets.get(target.cwd) !== target) {
+                return null;
+              }
+              return this.refreshSnapshot(target, request);
+            }),
+        );
         if (!admittedSnapshot) {
           break;
         }
@@ -3112,14 +3116,16 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     let result: WorkspaceGitFetchResult | null = null;
     const eventsBeforeFetchSnapshot: FileChange[] = [];
     try {
-      result = await this.deps.runGitFetch(target.cwd, {
-        onRefSnapshot: (phase) => {
-          const events = target.bufferedFetchMetadataEvents.splice(0);
-          if (phase === "before") {
-            eventsBeforeFetchSnapshot.push(...events);
-          }
-        },
-      });
+      result = await runWithGitCommandProvenance("background-fetch", () =>
+        this.deps.runGitFetch(target.cwd, {
+          onRefSnapshot: (phase) => {
+            const events = target.bufferedFetchMetadataEvents.splice(0);
+            if (phase === "before") {
+              eventsBeforeFetchSnapshot.push(...events);
+            }
+          },
+        }),
+      );
     } catch (error) {
       this.logger.warn(
         { err: error, repoGitRoot: target.repoGitRoot, cwd: target.cwd },
