@@ -30,8 +30,11 @@ class PluginRegistry {
     serverId: string,
     catalog: CatalogPlugin[],
     options: { replacePluginId?: string } = {},
-  ): void {
+  ): boolean {
     const previous = this.byHost.get(serverId) ?? [];
+    const previousTimelineBundles = previous
+      .filter((plugin) => plugin.timelineTransformers.length > 0)
+      .map((plugin) => `${plugin.id}\0${plugin.clientBundle}`);
     const preserved = catalog.flatMap((entry) => {
       const existing = previous.find(
         (plugin) =>
@@ -82,6 +85,13 @@ class PluginRegistry {
     }
     this.byHost.set(serverId, installed);
     this.publish();
+    const installedTimelineBundles = installed
+      .filter((plugin) => plugin.timelineTransformers.length > 0)
+      .map((plugin) => `${plugin.id}\0${plugin.clientBundle}`);
+    return (
+      previousTimelineBundles.length !== installedTimelineBundles.length ||
+      previousTimelineBundles.some((bundle, index) => bundle !== installedTimelineBundles[index])
+    );
   }
 
   removeHost(serverId: string): void {

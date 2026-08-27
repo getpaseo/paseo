@@ -82,6 +82,8 @@ const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<str
     "addCommandCenterItem",
     "addAttachmentSource",
     "addTheme",
+    "addTimelineTransformer",
+    "addTimelineRenderer",
   ]),
 };
 
@@ -306,6 +308,9 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
     format: "cjs",
     platform: target === "server" ? "node" : "neutral",
     target: target === "server" ? "node20" : "es2020",
+    // Metro lowers async syntax before Hermes sees app code. Plugin client bundles bypass Metro,
+    // so apply the same compatibility transform before the app evaluates them from source.
+    supported: target === "client" ? { "async-await": false } : undefined,
     external:
       target === "client"
         ? [

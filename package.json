@@ -11,7 +11,7 @@
     "voice-assistant"
   ],
   "homepage": "https://paseo.sh",
-  "license": "AGPL-3.0-or-later",
+  "license": "Apache-2.0",
   "author": {
     "name": "Mohamed Boudra",
     "email": "hello@moboudra.com"

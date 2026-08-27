@@ -67,6 +67,23 @@ export function extractGrokTokenFromAuth(auth: unknown): string | null {
   return null;
 }
 
+function grokMonthlyCreditBalance(
+  response: z.infer<typeof GrokUsageResponseSchema>,
+): ProviderUsageBalance | null {
+  const limit = response.config?.monthlyLimit?.val ?? null;
+  const used = response.config?.used?.val ?? response.usage?.creditUsage ?? null;
+  if (limit === null && used === null) return null;
+  return {
+    id: "monthly_credits",
+    label: "Monthly credits",
+    used,
+    remaining: limit !== null && used !== null ? Math.max(0, limit - used) : null,
+    limit,
+    unit: "credits",
+    tone: toneFromUsedPct(usedPctOf(used, limit)),
+  };
+}
+
 export class GrokQuotaProvider implements ProviderUsageFetcher {
   readonly providerId = "grok";
   readonly displayName = "Grok";
@@ -105,25 +122,7 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
     }
 
     const resp = GrokUsageResponseSchema.parse(await res.json());
-    const monthlyLimit = resp.config?.monthlyLimit?.val ?? null;
-    // Live CLI billing uses config.used.val; older mocks used usage.creditUsage.
-    const creditUsage = resp.config?.used?.val ?? resp.usage?.creditUsage ?? null;
-    const balances: ProviderUsageBalance[] = [];
-    if (monthlyLimit !== null || creditUsage !== null) {
-      const remaining =
-        monthlyLimit !== null && creditUsage !== null
-          ? Math.max(0, monthlyLimit - creditUsage)
-          : null;
-      balances.push({
-        id: "monthly_credits",
-        label: "Monthly credits",
-        used: creditUsage,
-        remaining,
-        limit: monthlyLimit,
-        unit: "credits",
-        tone: toneFromUsedPct(usedPctOf(creditUsage, monthlyLimit)),
-      });
-    }
+    const balance = grokMonthlyCreditBalance(resp);
 
     return {
       providerId: this.providerId,
@@ -131,7 +130,7 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
       status: "available",
       planLabel: null,
       windows: [],
-      balances,
+      balances: balance ? [balance] : [],
       details: [],
       error: null,
     };

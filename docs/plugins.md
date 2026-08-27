@@ -1,9 +1,9 @@
-# Local plugins
+# Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
 app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
 subprocess and evaluates the client contribution in the app runtime. Plugin code is trusted code;
-this first slice does not sandbox it.
+Paseo does not sandbox it.
 
 ## Install a directory source
 
@@ -74,8 +74,33 @@ backend code can access the daemon machine, while client contributions run insid
 
 Source changes are explicit. Run `paseo plugin reload <id>` to stop and fully tear down the old
 plugin before compiling and starting from disk. A failed reload stays failed; Paseo does not restore
-the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Remove deletes only its
-configuration, never its source directory. The global `pluginsEnabled` switch remains available.
+the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Removing a directory source
+never deletes it. The global `pluginsEnabled` switch remains available.
+
+## Install a Git source
+
+GitHub repositories use an `owner/repository` shorthand. Other hosts use a Git URL. An existing
+directory always wins over shorthand resolution.
+
+```bash
+paseo plugin add owner/repository
+paseo plugin add https://git.example.com/owner/repository.git
+paseo plugin add owner/monorepo --path plugins/review
+paseo plugin add owner/repository --ref main
+paseo plugin status
+paseo plugin update review
+paseo plugin update --all
+```
+
+Omitting `--ref` tracks the remote's default branch. A branch passed with `--ref` also tracks;
+tags and commits stay pinned. `status` fetches tracked refs and reports the installed and available
+commits. `update` checks out a new version, validates its manifest, compiles both bundles, and starts
+it before changing the configured path. A compilation or startup failure restores the running
+version. Removing a Git source deletes Paseo's managed checkout.
+
+Git installation does not run a package manager or install script. A distributable source plugin
+uses Paseo's host-provided modules or commits any other bundled source it needs. Native React Native
+dependencies work only when the Paseo app already ships the native module.
 
 Server contributions can write to stdout and stderr with normal Node logging. Paseo adds `[paseo]`
 entries for loading, ready, stopping, and stopped transitions. Compilation and load failures are
@@ -96,14 +121,16 @@ code lives behind filename boundaries:
 | `*.server.ts`  | Node APIs, filesystem and process access, credentials, and handlers. |
 | `*.shared.ts`  | Zod RPC contracts and plain values used by both runtimes.            |
 
-Shared files import contracts from `@getpaseo/plugin/server`. Client files import hooks from
-`@getpaseo/plugin`. Plugin UI runs on desktop and mobile across multiple themes: color every
-`Text` from `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from
-`layout.compact`. See `public-docs/plugins/reference.md`.
+Shared files import contracts from `@getpaseo/plugin/server`. Client files import hooks and the
+host-provided `Icon` component from `@getpaseo/plugin`. `Icon` resolves a Lucide name using the
+client's installed icon set; an unknown name renders nothing so it cannot break the plugin surface.
+Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
+`theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
+See `public-docs/plugins/reference.md`.
 
 | Module                    | Use it for                                               |
 | ------------------------- | -------------------------------------------------------- |
-| `@getpaseo/plugin`        | hooks and UI types                                       |
+| `@getpaseo/plugin`        | host UI components, hooks, and UI types                  |
 | `@getpaseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, and handler types |
 
 The compiler removes client registrations and imports from the server entry point, and server
@@ -139,8 +166,8 @@ RPC contracts validate inputs and outputs in both the app and plugin subprocess.
 typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
 Paseo gives each plugin installation its own query client.
 
-`usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: workspaces, agents,
-providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
+`usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
+workspaces, agents, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
 selected host's existing connection; switching the screen's host changes both `usePaseo()` and
 `useRpc()` to that host. An offline selected host fails there and never falls through to another
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
@@ -174,6 +201,23 @@ Command Center callbacks use the selected host's existing `PaseoApi` for normal 
 They use typed plugin RPC only for plugin-specific backend work. Navigation is limited to the
 plugin's registered global surfaces and workspace panels; plugins do not receive Expo Router or
 workspace-layout store access.
+
+## Contribute timeline items
+
+Timeline transformers and renderers are client contributions. The daemon's canonical rows and
+built-in projection stay unchanged. The app transforms fetched projected history before building
+its render model. A matching live event requests a fresh projected tail, so lifecycle deltas are
+collapsed before the transformer replaces anything.
+
+`query.itemType` selects one public `AgentTimelineItem.type`. The callback owns any detailed
+recognition and returns plain plugin item objects. `undefined` keeps the source item, `items`
+replaces it, and an empty array removes it. Output `data` must be JSON-compatible. Paseo adds the
+runtime plugin ID, preserves the source timeline cursor, validates renderer data with its Zod
+schema, and mounts the component inside the normal plugin runtime and error boundary.
+
+Transformers run synchronously and must be deterministic. When several transformers match, the
+first one that returns a result owns that source item. Plugin and registration ordering is stable.
+See `plugin-examples/timeline-items` for the complete contract.
 
 ## Contribute composer attachments
 
@@ -222,4 +266,5 @@ against the installed catalog on every change; an id nothing contributes falls b
 preference instead of painting the reserved slot's placeholder colors.
 
 See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
-attachment-source example, and `plugin-examples/catppuccin` for a theme.
+attachment-source example, `plugin-examples/timeline-items` for timeline projection, and
+`plugin-examples/catppuccin` for a theme.

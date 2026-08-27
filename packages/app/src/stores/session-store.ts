@@ -298,20 +298,6 @@ export interface AgentTimelineCursorState {
   }>;
 }
 
-export interface SessionReplicaTimeline {
-  agentId: string;
-  items: StreamItem[];
-  range: AgentTimelineCursorState | null;
-  hasOlder: boolean;
-}
-
-export interface SessionReplica {
-  agents: Map<string, Agent>;
-  workspaces: Map<string, WorkspaceDescriptor>;
-  projects: Map<string, ProjectDescriptor>;
-  timeline: SessionReplicaTimeline | null;
-}
-
 export type AgentTimelineState =
   | { status: "cold" }
   | { status: "painted"; items: StreamItem[] }
@@ -454,7 +440,6 @@ interface SessionStoreActions {
     client: DaemonClient | null,
     clientGeneration?: number,
   ) => void;
-  restoreSessionReplica: (serverId: string, replica: SessionReplica) => void;
   clearSession: (serverId: string) => void;
   getSession: (serverId: string) => SessionState | undefined;
   updateSessionClient: (serverId: string, client: DaemonClient, clientGeneration?: number) => void;
@@ -628,6 +613,7 @@ interface SessionStoreActions {
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
+  setHasWorkspaceDirectorySnapshot: (serverId: string, available: boolean) => void;
 
   // Agent directory (derived from agents)
   getAgentDirectory: (serverId: string) => AgentDirectoryEntry[] | undefined;
@@ -766,58 +752,6 @@ export const useSessionStore = create<SessionStore>()(
               ...prev.sessions,
               [serverId]: createInitialSessionState(serverId, client, clientGeneration),
             },
-          };
-        });
-      },
-
-      restoreSessionReplica: (serverId, replica) => {
-        set((prev) => {
-          if (prev.sessions[serverId]) {
-            return prev;
-          }
-          const session = createInitialSessionState(serverId, null);
-          const timeline = replica.timeline;
-          const agentStreamTail = new Map<string, StreamItem[]>();
-          const agentTasks = new Map<string, TodoEntry[]>();
-          if (timeline) {
-            agentStreamTail.set(timeline.agentId, timeline.items);
-            const tasks = latestTasksFromStream(timeline.items);
-            if (tasks.length > 0) agentTasks.set(timeline.agentId, tasks);
-          }
-          const agentTimelineCursor = new Map<string, AgentTimelineCursorState>();
-          const agentTimelineHasOlder = new Map<string, boolean>();
-          const agentTimelineHasNewer = new Map<string, boolean>();
-          const agentAuthoritativeHistoryApplied = new Map<string, boolean>();
-          if (timeline?.range) {
-            agentTimelineCursor.set(timeline.agentId, timeline.range);
-            agentTimelineHasOlder.set(timeline.agentId, timeline.hasOlder);
-            agentTimelineHasNewer.set(timeline.agentId, false);
-            agentAuthoritativeHistoryApplied.set(timeline.agentId, true);
-          }
-          const agentLastActivity = new Map(prev.agentLastActivity);
-          for (const agent of replica.agents.values()) {
-            agentLastActivity.set(agent.id, agent.lastActivityAt);
-          }
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: {
-                ...session,
-                agents: replica.agents,
-                workspaceAgentActivity: buildWorkspaceAgentActivityIndex(replica.agents),
-                workspaces: replica.workspaces,
-                projects: replica.projects,
-                hasWorkspaceDirectorySnapshot: true,
-                agentStreamTail,
-                agentTasks,
-                agentTimelineCursor,
-                agentTimelineHasOlder,
-                agentTimelineHasNewer,
-                agentAuthoritativeHistoryApplied,
-              },
-            },
-            agentLastActivity,
           };
         });
       },
@@ -1954,6 +1888,20 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, hasHydratedWorkspaces: hydrated },
+            },
+          };
+        });
+      },
+
+      setHasWorkspaceDirectorySnapshot: (serverId, available) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session || session.hasWorkspaceDirectorySnapshot === available) return prev;
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, hasWorkspaceDirectorySnapshot: available },
             },
           };
         });

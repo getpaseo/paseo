@@ -89,9 +89,9 @@ interface HostGroup {
   workspaces: WorkspaceDescriptor[];
   customIconRevision?: string | null;
   iconRevision?: string;
-  // Repo root for a project parent that has no workspaces yet. Without it the
-  // host's repoRoot resolves to "" and the project reads as non-editable.
-  fallbackRepoRoot: string;
+  // The project record exists before its first workspace. Keep its editable
+  // root at the project boundary instead of deriving it from child rows.
+  projectRoot: string;
 }
 
 interface ProjectGroup {
@@ -126,8 +126,11 @@ function buildHostProjectEntries(hosts: ProjectHost[]): HostProjectListItem[] {
   });
 }
 
-function resolveHostRepoRoot(group: HostGroup): string {
-  return group.workspaces[0]?.projectRootPath ?? group.fallbackRepoRoot;
+function resolveHostRepoRoot(input: {
+  projectRoot: string;
+  workspaces: readonly WorkspaceDescriptor[];
+}): string {
+  return input.workspaces[0]?.projectRootPath || input.projectRoot;
 }
 
 function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
@@ -227,7 +230,7 @@ function addHostProjects(
         workspaces: [],
         customIconRevision: placement.customIconRevision,
         iconRevision: placement.iconRevision,
-        fallbackRepoRoot: repoRootByProjectId.get(projectId) ?? "",
+        projectRoot: repoRootByProjectId.get(projectId) ?? "",
       });
     }
   }

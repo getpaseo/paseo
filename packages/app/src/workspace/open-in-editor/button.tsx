@@ -23,7 +23,7 @@ import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
-import { planWorkspaceOpenTargets } from "@/workspace/open-target-planner";
+import { planWorkspaceOpenTargets } from "@/workspace/open-in-editor/planner";
 import type { Theme } from "@/styles/theme";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { getForgePresentation } from "@/git/forge";
@@ -59,11 +59,11 @@ function renderForgeOpenTargetIcon(icon: string): ReactElement {
 interface OpenTargetMenuItemProps {
   target: OpenTarget;
   isPreferred: boolean;
-  onOpen: (target: OpenTarget) => void;
+  onSelect: (target: OpenTarget) => void;
 }
 
-function OpenTargetMenuItem({ target, isPreferred, onOpen }: OpenTargetMenuItemProps) {
-  const handleSelect = useCallback(() => onOpen(target), [onOpen, target]);
+function OpenTargetMenuItem({ target, isPreferred, onSelect }: OpenTargetMenuItemProps) {
+  const handleSelect = useCallback(() => onSelect(target), [onSelect, target]);
   const trailing = useMemo(
     () => (isPreferred ? <ThemedCheckIcon size={16} uniProps={mutedColorMapping} /> : undefined),
     [isPreferred],
@@ -178,10 +178,16 @@ export function WorkspaceOpenInEditorButton({
 
   const handleOpenTarget = useCallback(
     (target: OpenTarget) => {
-      void updatePreferredEditor(target.id).catch(() => undefined);
       openMutation.mutate(target);
     },
-    [openMutation, updatePreferredEditor],
+    [openMutation],
+  );
+
+  const handleSelectTarget = useCallback(
+    (target: OpenTarget) => {
+      void updatePreferredEditor(target.id).catch(() => undefined);
+    },
+    [updatePreferredEditor],
   );
 
   const primaryPressableStyle = useCallback(
@@ -267,7 +273,7 @@ export function WorkspaceOpenInEditorButton({
                   key={target.id}
                   target={target}
                   isPreferred={target.id === effectivePreferredEditorId}
-                  onOpen={handleOpenTarget}
+                  onSelect={handleSelectTarget}
                 />
               ))}
             </DropdownMenuContent>
