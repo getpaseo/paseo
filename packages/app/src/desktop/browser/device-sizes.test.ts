@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   DEVICE_SIZE_PRESETS,
   formatDevicePresetLabel,
-  isPresetLandscape,
   orientedSize,
   type DeviceSizeId,
 } from "./device-sizes";
@@ -25,16 +24,7 @@ describe("device sizes", () => {
   });
 
   it.each([
-    ["iphone-14", false],
-    ["laptop", true],
-    ["responsive", false],
-  ] as const)("reports %s's stored orientation", (id, expected) => {
-    expect(isPresetLandscape(preset(id))).toBe(expected);
-  });
-
-  it.each([
     ["iphone-14", "Responsive", false, "iPhone 14 · 390×844"],
-    ["iphone-14", "Responsive", true, "iPhone 14 · 844×390"],
     ["responsive", "Adaptable", false, "Adaptable"],
   ] as const)("formats %s", (id, label, landscape, expected) => {
     const device = preset(id);

@@ -1702,10 +1702,13 @@ describe("executeAutomationCommand", () => {
     await startScreencast(firstBrowser, { slot: 8 });
     firstBrowser.tab.destroy();
 
+    // The replacement reuses the same contents id, so a registry entry that
+    // outlived the destroy would make this start stop the dead guest's capture
+    // through the dead guest's own sender. Assert there, not on the replacement.
     const replacementBrowser = new BrowserAutomationHarness();
     await startScreencast(replacementBrowser, { slot: 9 });
 
-    expect(replacementBrowser.tab.debugCommands.map((entry) => entry.command)).toEqual([
+    expect(firstBrowser.tab.debugCommands.map((entry) => entry.command)).toEqual([
       "Page.startScreencast",
     ]);
 

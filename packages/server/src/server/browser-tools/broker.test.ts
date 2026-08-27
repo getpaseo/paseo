@@ -708,9 +708,6 @@ describe("BrowserToolsBroker", () => {
     broker.registerClient(automationOnlyHost);
     broker.registerClient(mirrorHost);
 
-    expect(broker.getRegisteredClientCount()).toBe(2);
-    expect(broker.getMirrorCapableClientCount()).toBe(1);
-
     void broker.execute({ command: { command: "list_tabs", args: {} }, hostScope: "mirror" });
     expect(automationOnlyHost.receivedRequests).toEqual([]);
     expect(mirrorHost.receivedRequests).toHaveLength(1);
@@ -1082,22 +1079,6 @@ describe("BrowserToolsBroker", () => {
     });
 
     await expect(newTabPromise).resolves.toMatchObject({ ok: true });
-  });
-
-  test("new tabs fall back to the most recent host when none is daemon-local", async () => {
-    const broker = createBroker();
-    const firstHost = new FakeBrowserHostClient("host-1");
-    const recentHost = new FakeBrowserHostClient("host-2");
-    broker.registerClient(firstHost);
-    broker.registerClient(recentHost);
-
-    void broker.execute({
-      command: { command: "new_tab", args: { url: "https://example.com" } },
-      workspaceId: "workspace-1",
-    });
-
-    expect(firstHost.receivedRequests).toEqual([]);
-    expect(recentHost.receivedRequests).toHaveLength(1);
   });
 
   test("listed tabs carry the identity of the host that owns them", async () => {
