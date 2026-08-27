@@ -230,9 +230,6 @@ function pushACPStderrRow(rows: DiagnosticEntry[], stderrChunks: string[]): void
 export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
   supportsSessionPersistence: true,
-  // ACP agents can list prior sessions via `session/list`. The runtime probe in
-  // listImportableSessions returns nothing for agents that don't advertise the
-  // capability, so enabling this here only makes the daemon query them.
   supportsSessionListing: true,
   supportsDynamicModes: true,
   supportsMcpServers: true,
@@ -243,12 +240,19 @@ export const DEFAULT_ACP_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindBoth: false,
 };
 
+function acpSessionListRequest(cursor: string | null | undefined, cwd: string | undefined) {
+  return {
+    ...(cursor ? { cursor } : {}),
+    ...(cwd ? { cwd } : {}),
+  };
+}
+
 const BASE_ACP_CLIENT_CAPABILITIES: ACPClientCapabilities = {
   fs: {
     readTextFile: false,
     writeTextFile: false,
   },
-  terminal: false,
+  terminal: true,
 };
 
 export type ACPClientCapabilityMeta = Record<string, unknown>;
@@ -1056,13 +1060,7 @@ export class ACPAgentClient implements AgentClient {
       let cursor: string | null | undefined;
       for (;;) {
         const page: ListSessionsResponse = await this.runACPRequest(() =>
-          probe.connection.listSessions({
-            ...(cursor ? { cursor } : {}),
-            // Filter by working directory at the source. Without this the agent
-            // returns globally-recent sessions, which the `limit` below can
-            // truncate before the current directory's sessions are reached.
-            ...(options?.cwd ? { cwd: options.cwd } : {}),
-          }),
+          probe.connection.listSessions(acpSessionListRequest(cursor, options?.cwd)),
         );
         for (const session of page.sessions) {
           sessions.push({

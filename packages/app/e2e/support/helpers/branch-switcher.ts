@@ -1,27 +1,27 @@
 import { expect, type Page } from "@playwright/test";
 import { escapeRegex } from "./regex";
-import { openChangesPanel as openWorkspaceChangesPanel } from "./workspace-tabs";
+import { openChangesTreePanel } from "./workspace-tabs";
 
 // The branch switcher lives in the Changes tab, not in the workspace header. It renders as a button whose
 // accessible name carries the current branch ("Current branch: <name>. Press to
 // switch branch."). Matching on the accessible name keeps these helpers tied to
 // what a screen reader user hears, and it proves the panel resolved a real
-// checkout directory from the opaque workspace id. Scoping to the changes header
-// keeps the matcher unambiguous even when the header is shared with diff actions.
+// checkout directory from the opaque workspace id. Scoping to the repository
+// header keeps the matcher aligned with the row that owns repository identity.
 function branchSwitcherTrigger(page: Page, branchName: string) {
   return page
-    .getByTestId("changes-header")
+    .getByTestId("changes-repository-header")
     .getByRole("button", { name: new RegExp(`Current branch: ${escapeRegex(branchName)}\\b`) })
     .filter({ visible: true })
     .first();
 }
 
-// Opens the fixed pane and lands on the Changes tab, where the switcher and diff live.
+// Opens the fixed Explorer Changes view, where the switcher lives.
 export async function openChangesPanel(page: Page): Promise<void> {
-  await openWorkspaceChangesPanel(page);
-  await expect(page.getByTestId("changes-header").filter({ visible: true }).first()).toBeVisible({
-    timeout: 30_000,
-  });
+  await openChangesTreePanel(page);
+  await expect(
+    page.getByTestId("changes-repository-header").filter({ visible: true }).first(),
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 export async function expectWorkspaceBranch(page: Page, branchName: string): Promise<void> {

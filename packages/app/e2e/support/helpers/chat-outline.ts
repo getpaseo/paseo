@@ -140,6 +140,15 @@ export async function expectActiveChatOutlinePrompt(page: Page, position: number
   );
 }
 
+export async function expectActiveChatOutlinePromptMovedFrom(
+  page: Page,
+  position: number,
+): Promise<void> {
+  const activePrompt = chatOutlineRail(page).getByRole("tab", { selected: true });
+  await expect(activePrompt).toHaveCount(1);
+  await expect(activePrompt).not.toHaveAccessibleName(new RegExp(`^${position} of `));
+}
+
 export async function expectLiveTurnPromptAboveFoldAndActive(
   page: Page,
   prompt: string,

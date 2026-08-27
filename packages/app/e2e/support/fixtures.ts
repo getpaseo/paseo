@@ -32,16 +32,8 @@ const metroTest = base.extend({
   },
 });
 
-const test = metroTest.extend<
-  {
-    paseoE2ESetup: void;
-    projectOwnership: void;
-    outdatedDaemon: OutdatedDaemon;
-    desktopManagedOutdatedDaemon: OutdatedDaemon;
-    relayConfigOutdatedDaemon: OutdatedDaemon;
-    projectPickerFixture: TrackedProjectPickerFixture;
-    withWorkspace: WithWorkspace;
-  },
+const daemonTest = metroTest.extend<
+  { projectOwnership: void },
   { e2eForkProviders: string[]; e2eWorker: void; e2eWorkerClient: SeedDaemonClient }
 >({
   e2eForkProviders: [[], { scope: "worker", option: true }],
@@ -94,6 +86,16 @@ const test = metroTest.extend<
     },
     { auto: true },
   ],
+});
+
+const test = daemonTest.extend<{
+  paseoE2ESetup: void;
+  outdatedDaemon: OutdatedDaemon;
+  desktopManagedOutdatedDaemon: OutdatedDaemon;
+  relayConfigOutdatedDaemon: OutdatedDaemon;
+  projectPickerFixture: TrackedProjectPickerFixture;
+  withWorkspace: WithWorkspace;
+}>({
   paseoE2ESetup: [
     async ({ page }, provide, testInfo) => {
       const daemonPort = getE2EDaemonPort();
@@ -227,4 +229,4 @@ const test = metroTest.extend<
   },
 });
 
-export { test, metroTest, expect, type Page };
+export { daemonTest, test, metroTest, expect, type Page };

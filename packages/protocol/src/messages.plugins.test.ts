@@ -48,6 +48,47 @@ describe("plugin protocol compatibility", () => {
     ).toBe("plugin.directory.install.response");
   });
 
+  it("uses capability-gated source management RPCs", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "plugin.source.install.request",
+        requestId: "request-install",
+        source: "owner/repository",
+        ref: "main",
+        pluginPath: "plugins/review",
+      }).type,
+    ).toBe("plugin.source.install.request");
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "plugin.source.status.response",
+        payload: {
+          requestId: "request-status",
+          plugins: [
+            {
+              id: "review",
+              source: "git",
+              path: "/plugins/review",
+              currentCommit: "a".repeat(40),
+              latestCommit: "b".repeat(40),
+              commitsBehind: 2,
+              updateAvailable: true,
+            },
+          ],
+        },
+      }).type,
+    ).toBe("plugin.source.status.response");
+
+    const older = StatusMessageSchema.parse({
+      type: "status",
+      payload: {
+        status: "server_info",
+        serverId: "older-host",
+        features: { pluginManagement: true },
+      },
+    });
+    expect(older.payload.features?.pluginGitManagement).toBeUndefined();
+  });
+
   it("uses a namespaced snapshot RPC for structured plugin logs", () => {
     expect(
       SessionInboundMessageSchema.parse({

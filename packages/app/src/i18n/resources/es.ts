@@ -8,7 +8,7 @@ export const es: TranslationResources = {
     actions: {
       back: "Atrás",
       cancel: "Cancelar",
-      close: "Cerca",
+      close: "Cerrar",
       copy: "Copiar",
       dismiss: "Despedir",
       retry: "Rever",
@@ -64,6 +64,9 @@ export const es: TranslationResources = {
       workspaces: "Espacios de trabajo",
       agents: "Agentes",
       newAgent: "Nuevo agente",
+      open: "Abrir {{name}}",
+      openInSidePane: "Abrir {{name}} en el panel lateral",
+      openInFocusedPane: "Abrir {{name}} en el panel enfocado",
       addProject: "Agregar proyecto",
       home: "Hogar",
       groupByProject: "Agrupar por proyecto",
@@ -417,6 +420,8 @@ export const es: TranslationResources = {
     },
     fileActions: {
       openFile: "Abrir archivo",
+      openIn: "Abrir en {{target}}",
+      openToSide: "Abrir al lado",
       copyPath: "Copiar ruta",
       copyRelativePath: "Copiar ruta relativa",
       revealIn: "Mostrar en {{target}}",
@@ -580,13 +585,14 @@ export const es: TranslationResources = {
         rename: "Rebautizar",
         closeAbove: "Cerrar pestañas arriba",
         closeBelow: "Cerrar pestañas a continuación",
-        closeLeft: "Cerca de la izquierda",
-        closeRight: "Cerca de la derecha",
+        closeLeft: "Cerrar pestañas a la izquierda",
+        closeRight: "Cerrar pestañas a la derecha",
         closeOthers: "Cerrar otras pestañas",
+        moveToMain: "Mover al panel principal",
         reloadAgent: "Recargar agente",
         reloadAgentTooltip:
           "Vuelva a cargar el agente para actualizar habilidades, MCP o estado de inicio de sesión.",
-        close: "Cerca",
+        close: "Cerrar",
         renameTerminal: "Cambiar nombre de terminal",
         renameAgent: "Cambiar nombre del agente",
       },
@@ -607,9 +613,9 @@ export const es: TranslationResources = {
         files: "Archivos",
         pullRequest: "Solicitud de extracción",
         terminalProfilesMenu: "Terminal profiles",
-        editTerminalProfiles: "Edit profiles…",
+        editTerminalProfiles: "Edit profiles",
       },
-      sidePanel: {
+      explorerSidebar: {
         open: "Abrir panel lateral",
         close: "Cerrar panel lateral",
         toggle: "Alternar panel lateral",
@@ -637,7 +643,7 @@ export const es: TranslationResources = {
         closePaneTitle: "¿Cerrar panel?",
         bulkUnsaved:
           "{{count}} pestaña(s) tienen cambios sin guardar. Al cerrar se descartarán esos borradores.",
-        close: "Cerca",
+        close: "Cerrar",
         cancel: "Cancelar",
         archive: "Archivo",
         closeTerminalTitle: "¿Cerrar terminal?",
@@ -881,6 +887,7 @@ export const es: TranslationResources = {
       },
       diff: {
         openChangesTab: "Abrir la pestaña Cambios",
+        openDiffTab: "Abrir la pestaña Diferencia",
         closeChangesTab: "Cerrar la pestaña Cambios",
         binaryFile: "archivo binario",
         tooLarge: "La diferencia es demasiado grande para mostrarse",
@@ -891,6 +898,7 @@ export const es: TranslationResources = {
         switchToUnified: "Cambiar a diferencia unificada",
         switchToSplit: "Cambiar a diferencia lado a lado",
         options: "Opciones de diferencia",
+        inlineDiff: "Diferencia integrada",
         hideWhitespace: "Ocultar espacios en blanco",
         showWhitespace: "Mostrar espacios en blanco",
         scrollLongLines: "Desplazarse por largas filas",
@@ -964,6 +972,16 @@ export const es: TranslationResources = {
         accessibility: {
           pullRequest: "Solicitud de extracción n.°{{number}}",
           pullRequest_mr: "Solicitud de fusión !{{number}}",
+          checkStatus: {
+            passed: "Superado",
+            failed: "Fallido",
+            warning: "Advertencia",
+            actionRequired: "Acción requerida",
+            manual: "Manual",
+            pending: "Pendiente",
+            skipped: "Omitido",
+            cancelled: "Cancelado",
+          },
         },
         states: {
           draft: "Borrador",
@@ -1157,6 +1175,14 @@ export const es: TranslationResources = {
         serviceUnhealthy: "Servicio {{name}} con fallos",
         creating: "Creando...",
       },
+      checks: {
+        passed: "Superados: {{count}}",
+        failed: "Fallidos: {{count}}",
+        warning: "Advertencias: {{count}}",
+        actionRequired: "Acción requerida: {{count}}",
+        manual: "Manuales: {{count}}",
+        pending: "Pendientes: {{count}}",
+      },
       actions: {
         menu: "AccionesWorkspace",
         newWorkspace: "Nuevo espacio de trabajo",
@@ -1242,6 +1268,12 @@ export const es: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "Minimizar ventana",
+      maximize: "Maximizar ventana",
+      restore: "Restaurar ventana",
+      close: "Cerrar ventana",
+    },
     quitting: {
       title: "Saliendo dePaseo...",
       detail: "Deteniendo el demonio local.",
@@ -1673,6 +1705,8 @@ export const es: TranslationResources = {
       updateRequired: "Actualice el host para habilitar el relé desde Paseo Desktop.",
       unavailable: "Oferta de maridaje no disponible.",
       hint: "Escanee este códigoQRconPaseoen su teléfono o copie el enlace a continuación.",
+      securityWarning:
+        "Trata este enlace de emparejamiento como una contraseña. Cualquiera que lo tenga puede acceder a este daemon.",
       qrUnavailable: "CódigoQRno disponible.",
       qrAccessibility: "Código QR de emparejamiento",
       retry: "Rever",
@@ -1746,6 +1780,7 @@ export const es: TranslationResources = {
       loading: "Cargando archivo...",
       noPreview: "No hay vista previa disponible",
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
+      tooLargeToDisplay: "Este archivo es demasiado grande para mostrarlo",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",
       editor: {
@@ -1774,6 +1809,7 @@ export const es: TranslationResources = {
       label: "Archivos",
       subtitle: "Archivos del espacio de trabajo",
       tooltip: "Explorar archivos del espacio de trabajo",
+      chooseFile: "Elige un archivo",
     },
     pullRequest: {
       label: "Solicitud de extracción",
@@ -1783,6 +1819,7 @@ export const es: TranslationResources = {
     },
     diff: {
       changesLabel: "Cambios",
+      diffLabel: "Diferencia",
       changesSubtitle: "Diferencias del árbol de trabajo",
       commitSubtitle: "Diferencias del commit",
       uncommittedSubtitle: "Cambios sin confirmar",
@@ -1877,6 +1914,7 @@ export const es: TranslationResources = {
     sections: {
       general: "General",
       appearance: "Apariencia",
+      layout: en.settings.sections.layout,
       editor: "Editor",
       shortcuts: "Atajos",
       integrations: "Integraciones",
@@ -1885,6 +1923,7 @@ export const es: TranslationResources = {
       diagnostics: "Diagnóstico",
       about: "Acerca de",
     },
+    layout: en.settings.layout,
     editor: {
       title: "Editor",
       vimKeybindings: "Atajos de Vim",
@@ -1976,11 +2015,6 @@ export const es: TranslationResources = {
         label: "Historial de terminal",
         description: "Líneas mantenidas en el búfer de terminal incorporado",
         accessibilityLabel: "Líneas del historial de terminal",
-      },
-      sidePanelRouting: {
-        label: "Abrir pestañas de apoyo en el panel lateral",
-        description:
-          "Los enlaces a archivos, las solicitudes de incorporación y el progreso de configuración se abren junto a tu trabajo en lugar del panel enfocado",
       },
       autoExpandReasoning: {
         label: "Siempre expandir razonamiento",
@@ -2178,7 +2212,6 @@ export const es: TranslationResources = {
         toggleBothSidebars: "Alternar ambas barras laterales",
         toggleSettings: "Alternar configuración",
         toggleFocusMode: "Alternar modo de enfoque",
-        toggleExplorerPaneMaximization: "Alternar maximización del panel lateral",
         cycleTheme: "Tema del ciclo",
         focusMessageInput: "Entrada de mensaje de enfoque",
         cycleAgentMode: "Alternar modo del agente",
@@ -2396,10 +2429,9 @@ export const es: TranslationResources = {
         featuresLabel: "Características",
         featureCount: "{{count}} características",
         featureCountOne: "{{count}} característica",
-        notesLabel: "Notas para los agentes",
+        notesLabel: "Cuándo usarlo",
         notesPlaceholder: "Úselo para trabajo de UI: componentes, diseño y tokens de diseño.",
-        notesHint:
-          'Devuelto por la herramienta MCP "list_profiles". Escríbalo como una instrucción para otro agente.',
+        notesHint: "Ayuda a los agentes a elegir este perfil al iniciar otro agente.",
         save: "Guardar",
         saving: "Guardando...",
         remove: "Eliminar",

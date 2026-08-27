@@ -28,6 +28,8 @@ function installation(
     commandCenterItems: [],
     attachmentSources: [],
     themes: [],
+    timelineTransformers: [],
+    timelineRenderers: [],
   };
 }
 

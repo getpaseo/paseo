@@ -18,8 +18,6 @@ import {
   windowFromUsedPct,
 } from "../usage.js";
 
-const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-
 const CodexAuthSchema = z.object({
   tokens: z
     .object({
@@ -58,20 +56,9 @@ const CodexUsageResponseSchema = z.object({
     .nullish(),
 });
 
-const CodexTokenRefreshSchema = z.object({
-  access_token: z.string().optional(),
-  refresh_token: z.string().optional(),
-});
-
 type CodexAuth = z.infer<typeof CodexAuthSchema>;
 type CodexWindow = z.infer<typeof CodexWindowSchema>;
 type CodexUsageResponse = z.infer<typeof CodexUsageResponseSchema>;
-type CodexTokenRefresh = z.infer<typeof CodexTokenRefreshSchema>;
-
-interface CodexAuthRecord {
-  auth: CodexAuth;
-  path: string;
-}
 
 interface CodexQuotaProviderOptions {
   logger: Logger;
@@ -102,30 +89,18 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
-    const authRecord = await this.readCodexAuth();
-    const auth = authRecord?.auth;
+    const auth = await this.readCodexAuth();
     const accessToken = auth?.tokens?.access_token;
-    if (!authRecord || !auth || !accessToken) {
+    if (!auth || !accessToken) {
       return unavailableUsage(this);
     }
 
-    const { refresh_token, account_id } = auth.tokens ?? {};
-    let resp = await this.callCodexApi(accessToken, account_id);
+    const { account_id } = auth.tokens ?? {};
+    const resp = await this.callCodexApi(accessToken, account_id);
 
     if (resp === "NEEDS_AUTH") {
-      if (!refresh_token) {
-        return unavailableUsage(this);
-      }
-      const refreshed = await this.refreshCodexToken(refresh_token);
-      if (!refreshed?.access_token) {
-        return unavailableUsage(this);
-      }
-
-      await this.saveCodexAuth(authRecord.path, auth, refreshed);
-      resp = await this.callCodexApi(refreshed.access_token, account_id);
-      if (resp === "NEEDS_AUTH") {
-        return unavailableUsage(this);
-      }
+      // Read-only on credentials; the Codex CLI owns refresh. See docs/providers.md.
+      return unavailableUsage(this);
     }
 
     return this.toUsage(resp);
@@ -194,7 +169,7 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
     };
   }
 
-  private async readCodexAuth(): Promise<CodexAuthRecord | null> {
+  private async readCodexAuth(): Promise<CodexAuth | null> {
     const candidates = [
       ...(process.env["CODEX_HOME"] ? [join(process.env["CODEX_HOME"], "auth.json")] : []),
       join(homedir(), ".config", "codex", "auth.json"),
@@ -204,7 +179,7 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
       if (!existsSync(path)) continue;
       try {
         const auth = CodexAuthSchema.parse(JSON.parse(await fs.readFile(path, "utf8")));
-        if (auth.tokens?.access_token) return { auth, path };
+        if (auth.tokens?.access_token) return auth;
       } catch {
         continue;
       }
@@ -235,40 +210,5 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
     const text = await res.text();
     if (text.trim().startsWith("<")) return "NEEDS_AUTH";
     return CodexUsageResponseSchema.parse(JSON.parse(text));
-  }
-
-  private async refreshCodexToken(refreshToken: string): Promise<CodexTokenRefresh | null> {
-    const params = new URLSearchParams({
-      grant_type: "refresh_token",
-      client_id: CODEX_CLIENT_ID,
-      refresh_token: refreshToken,
-    });
-    const res = await fetchProviderApi(this.fetchApi, "https://auth.openai.com/oauth/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: params.toString(),
-    });
-    if (!res.ok) return null;
-    return CodexTokenRefreshSchema.parse(await res.json());
-  }
-
-  private async saveCodexAuth(
-    authPath: string,
-    original: CodexAuth,
-    refreshed: CodexTokenRefresh,
-  ): Promise<void> {
-    try {
-      const updated: CodexAuth = {
-        ...original,
-        tokens: {
-          ...original.tokens,
-          access_token: refreshed.access_token ?? original.tokens?.access_token,
-          refresh_token: refreshed.refresh_token ?? original.tokens?.refresh_token,
-        },
-      };
-      await fs.writeFile(authPath, JSON.stringify(updated, null, 2), { mode: 0o600 });
-    } catch {
-      // Non-fatal; the next call can refresh again.
-    }
   }
 }

@@ -20,7 +20,6 @@ import {
 import { isWeb } from "@/constants/platform";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
 import type { Theme } from "@/styles/theme";
-import { useWorkspaceFocusRestoration } from "@/workspace/focus";
 import { useReviewDraftComments, useReviewDraftStore, type ReviewDraftComment } from "./store";
 import { buildReviewableDiffTargetKey, type ReviewableDiffTarget } from "@/utils/diff-layout";
 import {
@@ -441,7 +440,6 @@ export function InlineReviewEditor({
 }) {
   const { t } = useTranslation();
   const inputRef = useRef<EditingTextInputHandle | null>(null);
-  const focus = useWorkspaceFocusRestoration();
   const [body, setBody] = useState(initialBody);
   const [isFocused, setIsFocused] = useState(false);
   const trimmedBody = body.trim();
@@ -452,13 +450,11 @@ export function InlineReviewEditor({
   }, []);
 
   const handleFocus = useCallback(() => {
-    focus.unfocus();
     setIsFocused(true);
-  }, [focus]);
+  }, []);
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-    focus.restore();
-  }, [focus]);
+  }, []);
   const handleSave = useCallback(() => onSave(trimmedBody), [onSave, trimmedBody]);
 
   useEffect(() => {

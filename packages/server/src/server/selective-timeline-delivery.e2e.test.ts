@@ -3,6 +3,7 @@ import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import { DaemonClient } from "./test-utils/daemon-client.js";
 import { createTestPaseoDaemon, type TestPaseoDaemon } from "./test-utils/paseo-daemon.js";
+import { MockLoadTestAgentClient } from "./agent/providers/mock-load-test-agent.js";
 
 interface MessageWaiter {
   predicate(message: SessionOutboundMessage): boolean;
@@ -124,11 +125,20 @@ afterEach(async () => {
   await daemon.close();
 }, 30_000);
 
-async function connect(input: { clientId: string; selective: boolean }): Promise<ConnectedClient> {
+async function connect(input: {
+  clientId: string;
+  selective: boolean;
+  timelineReplacementInvalidation?: boolean;
+}): Promise<ConnectedClient> {
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
     clientId: input.clientId,
-    capabilities: { [CLIENT_CAPS.selectiveAgentTimeline]: input.selective },
+    capabilities: {
+      [CLIENT_CAPS.selectiveAgentTimeline]: input.selective,
+      ...(input.timelineReplacementInvalidation
+        ? { [CLIENT_CAPS.timelineReplacementInvalidation]: true }
+        : {}),
+    },
     reconnect: { enabled: false },
   });
   await client.connect();
@@ -136,6 +146,81 @@ async function connect(input: { clientId: string; selective: boolean }): Promise
   clients.push(connected);
   return connected;
 }
+
+test("rewind routes replacement completion by source capability and subscription", async () => {
+  await daemon.close();
+  daemon = await createTestPaseoDaemon({
+    isDev: true,
+    agentClients: { mock: new MockLoadTestAgentClient() },
+  });
+  const initiating = await connect({
+    clientId: "rewind-initiating",
+    selective: true,
+    timelineReplacementInvalidation: true,
+  });
+  const passive = await connect({
+    clientId: "rewind-passive",
+    selective: true,
+    timelineReplacementInvalidation: true,
+  });
+  const unrelated = await connect({
+    clientId: "rewind-unrelated",
+    selective: true,
+    timelineReplacementInvalidation: true,
+  });
+  const legacy = await connect({ clientId: "rewind-legacy", selective: false });
+  const agent = await initiating.client.createAgent({
+    provider: "mock",
+    cwd: "/tmp",
+    title: "Rewind routing",
+    model: "ten-second-stream",
+  });
+
+  await Promise.all([
+    initiating.client.setAgentTimelineSubscription([agent.id]),
+    passive.client.setAgentTimelineSubscription([agent.id]),
+    unrelated.client.setAgentTimelineSubscription([]),
+  ]);
+  await initiating.client.sendMessage(agent.id, "Rewind this synthetic prompt");
+  await initiating.client.cancelAgent(agent.id);
+  const timeline = await initiating.client.fetchAgentTimeline(agent.id, {
+    direction: "tail",
+    limit: 0,
+    projection: "canonical",
+  });
+  const target = timeline.entries.find(
+    (entry) =>
+      entry.item.type === "user_message" && entry.item.text === "Rewind this synthetic prompt",
+  );
+  if (!target || target.item.type !== "user_message" || !target.item.messageId) {
+    throw new Error("Expected rewindable canonical user message");
+  }
+
+  for (const connected of [initiating, passive, unrelated, legacy]) connected.clear();
+  await initiating.client.rewindAgent(agent.id, target.item.messageId, "conversation");
+  await Promise.all([
+    initiating.barrier("rewind-initiator"),
+    passive.barrier("rewind-passive"),
+    unrelated.barrier("rewind-unrelated"),
+    legacy.barrier("rewind-legacy"),
+  ]);
+
+  expect(
+    initiating.messages.filter((message) => message.type === "agent.rewind.response"),
+  ).toHaveLength(1);
+  expect(
+    initiating.messages.filter((message) => message.type === "agent.timeline.replacement"),
+  ).toHaveLength(0);
+  expect(
+    passive.messages.filter((message) => message.type === "agent.timeline.replacement"),
+  ).toHaveLength(1);
+  expect(passive.hasTimeline(agent.id)).toBe(false);
+  expect(legacy.messages.filter(isAgentStream(agent.id)).length).toBeGreaterThan(0);
+  expect(
+    unrelated.messages.filter((message) => message.type === "agent.timeline.replacement"),
+  ).toHaveLength(0);
+  expect(unrelated.hasTimeline(agent.id)).toBe(false);
+}, 30_000);
 
 test("subscription acknowledgements stay on the requesting socket of a retained session", async () => {
   const legacy = await connect({ clientId: "shared-client", selective: false });

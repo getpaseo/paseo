@@ -24,6 +24,9 @@ export const CLIENT_CAPS = {
   // provider catalogs with shared thinking sets and may revalidate by content hash.
   // Remove the legacy snapshot encoding after 2027-02-04.
   compactProviderSnapshots: "compact_provider_snapshots",
+  // COMPAT(timelineReplacementInvalidation): added in v0.5.0, remove legacy
+  // reconstructed timeline replay after 2027-02-21 once the client floor supports invalidation.
+  timelineReplacementInvalidation: "timeline_replacement_invalidation",
   browserHost: "browser_host",
 } as const;
 

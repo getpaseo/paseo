@@ -24,6 +24,12 @@ interface TestClaudeSession {
   close(): Promise<void>;
 }
 
+function isPermissionResolvedEvent(
+  event: AgentStreamEvent,
+): event is Extract<AgentStreamEvent, { type: "permission_resolved" }> {
+  return event.type === "permission_resolved";
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -628,6 +634,80 @@ describe("ClaudeAgentSession features", () => {
     });
     return { queryFactory, queryMock, launches };
   }
+
+  test("publishes a resolution when the SDK aborts a permission callback", async () => {
+    const { queryFactory } = createQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("run the tool");
+      const canUseTool = queryFactory.mock.calls[0]?.[0].options.canUseTool;
+      if (!canUseTool) throw new Error("Expected canUseTool callback");
+      const abort = new AbortController();
+      const permission = canUseTool(
+        "Bash",
+        { command: "printf test" },
+        { signal: abort.signal, toolUseID: "tool-aborted" },
+      );
+      abort.abort();
+
+      await expect(permission).rejects.toThrow("Permission request aborted");
+      expect(events.find(isPermissionResolvedEvent)).toMatchObject({
+        type: "permission_resolved",
+        provider: "claude",
+        requestId: expect.any(String),
+        resolution: { behavior: "deny", message: "Permission request canceled" },
+      });
+      expect(session.getPendingPermissions()).toEqual([]);
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
+
+  test("does not duplicate a resolution when interruption later aborts the SDK callback", async () => {
+    const { queryFactory } = createQueryMock();
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+
+    try {
+      await session.startTurn("run the tool");
+      const canUseTool = queryFactory.mock.calls[0]?.[0].options.canUseTool;
+      if (!canUseTool) throw new Error("Expected canUseTool callback");
+      const abort = new AbortController();
+      const permission = canUseTool(
+        "Bash",
+        { command: "printf test" },
+        { signal: abort.signal, toolUseID: "tool-interrupted" },
+      );
+
+      await session.interrupt();
+      abort.abort();
+
+      await expect(permission).rejects.toThrow("Permission request canceled");
+      expect(events.filter(isPermissionResolvedEvent)).toEqual([
+        expect.objectContaining({
+          provider: "claude",
+          resolution: { behavior: "deny", message: "Permission request canceled" },
+        }),
+      ]);
+      expect(session.getPendingPermissions()).toEqual([]);
+    } finally {
+      unsubscribe();
+      await session.close();
+    }
+  });
 
   test("passes exact configured Fable 5 IDs through to Claude Code", async () => {
     const { queryFactory, queryMock } = createQueryMock();

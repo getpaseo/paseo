@@ -76,6 +76,7 @@ import { withTimeout } from "../../../utils/promise-timeout.js";
 import { execCommand } from "../../../utils/spawn.js";
 import { mapOpencodeToolCall } from "./opencode/tool-call-mapper.js";
 import {
+  OPENCODE_EVENT_STREAM_READY_TIMEOUT_MS,
   OpenCodeServerManager,
   OPENCODE_SERVER_STARTUP_TIMEOUT_MS,
   type OpenCodeServerAcquisition,
@@ -83,6 +84,7 @@ import {
 } from "./opencode/server-manager.js";
 import {
   OpenCodeEventConsumer,
+  type OpenCodeEventStreamDiagnostics,
   type OpenCodeEventSource,
   type OpenCodeEventSourceInput,
 } from "./opencode/event-consumer.js";
@@ -111,6 +113,17 @@ import {
   OpenCodeProviderOptionsSchema,
   type OpenCodeProviderOptions,
 } from "./opencode/options.js";
+
+function formatOpenCodeEventStreamDiagnostics(diagnostics: OpenCodeEventStreamDiagnostics): string {
+  return [
+    "opencode-stream",
+    `attempt=${diagnostics.attempt}`,
+    `phase=${diagnostics.phase}`,
+    `elapsedMs=${diagnostics.elapsedMs}`,
+    ...(diagnostics.lastOutcome ? [`lastOutcome=${diagnostics.lastOutcome}`] : []),
+    ...(diagnostics.lastError ? [`lastError=${JSON.stringify(diagnostics.lastError)}`] : []),
+  ].join(" ");
+}
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: true,
@@ -1041,9 +1054,7 @@ async function collectOpenCodeImportableSessionsFromSdk(
     throw new Error(`Failed to list OpenCode sessions: ${JSON.stringify(response.error)}`);
   }
 
-  const matchesCwd = options?.cwd ? createPathEquivalenceMatcher(options.cwd) : null;
-  return (response.data ?? [])
-    .filter((session) => !matchesCwd || matchesCwd(session.directory))
+  return selectOpenCodeSessionsForWorkspace(response.data ?? [], options?.cwd)
     .sort((left, right) => getOpenCodeSessionTimestamp(right) - getOpenCodeSessionTimestamp(left))
     .slice(0, limit)
     .map((session) => ({
@@ -1054,6 +1065,25 @@ async function collectOpenCodeImportableSessionsFromSdk(
       lastPromptPreview: null,
       lastActivityAt: new Date(getOpenCodeSessionTimestamp(session)),
     }));
+}
+
+function selectOpenCodeSessionsForWorkspace(
+  sessions: OpenCodePersistedSession[],
+  cwd: string | undefined,
+): OpenCodePersistedSession[] {
+  if (!cwd) return sessions;
+  const belongsToWorkspace = createPathEquivalenceMatcher(cwd);
+  return sessions.filter((session) => belongsToWorkspace(session.directory));
+}
+
+function openCodeCatalogDirectory(
+  options: FetchCatalogOptions,
+  resolveHomeDir: () => string,
+): { directory: string; needsDirectory: boolean } {
+  if (options.scope === "workspace") {
+    return { directory: options.cwd, needsDirectory: false };
+  }
+  return { directory: resolveHomeDir(), needsDirectory: true };
 }
 
 function normalizeOpenCodeSessionTitle(title: string | null | undefined): string | null {
@@ -1370,10 +1400,11 @@ export class OpenCodeAgentClient implements AgentClient {
       OpenCodeServerManager.getInstance(this.logger, runtimeSettings, {
         managedProcesses: deps.managedProcesses,
         resolveHomeDir: deps.resolveHomeDir,
-        createEventSource: ({ serverUrl, processExit }) =>
+        createEventSource: ({ serverUrl, processExit, logger: eventLogger }) =>
           new OpenCodeEventConsumer({
             serverUrl,
             processExit,
+            logger: eventLogger,
             createClient: (baseUrl) => this.createOpenCodeClient({ baseUrl, directory: "" }),
           }),
       });
@@ -1396,10 +1427,15 @@ export class OpenCodeAgentClient implements AgentClient {
     });
 
     try {
+      // Creating the first session for a directory is part of OpenCode coming up, so it
+      // shares the server startup budget instead of a shorter one that fails agent
+      // creation on contended cold starts.
       const response = await withTimeout(
         client.session.create({ directory: openCodeConfig.cwd }),
-        10_000,
-        "OpenCode session.create timed out after 10s",
+        OPENCODE_SERVER_STARTUP_TIMEOUT_MS,
+        `OpenCode session.create timed out after ${Math.round(
+          OPENCODE_SERVER_STARTUP_TIMEOUT_MS / 1000,
+        )}s`,
       );
 
       if (response.error) {
@@ -1500,13 +1536,10 @@ export class OpenCodeAgentClient implements AgentClient {
       if (!acquisition) throw new Error("OpenCode server acquisition did not complete");
       context?.signal.throwIfAborted();
       const { url } = acquisition.server;
-      const isGlobalCatalog = options.scope === "global";
+      const catalogDirectory = openCodeCatalogDirectory(options, this.resolveHomeDir);
+      const { directory } = catalogDirectory;
 
-      // OpenCode treats the catalog directory as a workspace. The global catalog
-      // is not a project, so use the neutral OpenCode home instead of user home.
-      const directory = isGlobalCatalog ? this.resolveHomeDir() : options.cwd;
-
-      if (isGlobalCatalog) {
+      if (catalogDirectory.needsDirectory) {
         await fs.mkdir(directory, { recursive: true });
         this.logger.debug(
           { directory },
@@ -3649,21 +3682,7 @@ class OpenCodeAgentSession implements AgentSession {
     const effectiveVariant = thinkingOptionId ?? undefined;
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
-    try {
-      // The stream cannot deliver its first record before OpenCode finished booting, so
-      // this wait gets the same budget as server startup instead of a shorter one that
-      // fails turns on slow (plugin-heavy or cold) starts.
-      await withTimeout(
-        this.events.ready(),
-        OPENCODE_SERVER_STARTUP_TIMEOUT_MS,
-        "OpenCode event stream first record",
-      );
-    } catch (error) {
-      if (this.abortController === turnAbortController) {
-        this.abortController = null;
-      }
-      throw error;
-    }
+    await this.awaitEventStreamReady(turnAbortController);
 
     const turnId = this.createTurnId();
     this.materializedParts.clear();
@@ -3841,6 +3860,27 @@ class OpenCodeAgentSession implements AgentSession {
     }
 
     return { turnId };
+  }
+
+  private async awaitEventStreamReady(turnAbortController: AbortController): Promise<void> {
+    try {
+      await withTimeout(
+        this.events.ready(),
+        OPENCODE_EVENT_STREAM_READY_TIMEOUT_MS,
+        "OpenCode server.connected event",
+      );
+    } catch (error) {
+      if (this.abortController === turnAbortController) this.abortController = null;
+      if (!(error instanceof Error) || error.message !== "OpenCode server.connected event") {
+        throw error;
+      }
+      const diagnostics = this.events.diagnostics?.();
+      if (!diagnostics) throw error;
+      throw new Error(
+        `${error.message}; your message was not sent. ${formatOpenCodeEventStreamDiagnostics(diagnostics)}`,
+        { cause: error },
+      );
+    }
   }
 
   private rethrowRunnerWaitError(error: unknown): never {
@@ -4136,11 +4176,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async consumeEventSourceInput(input: OpenCodeEventSourceInput): Promise<void> {
-    if ("type" in input && input.type === "reconnected") {
-      await this.reconcileAfterGap(++this.gapRepairRevision);
-      return;
-    }
-    if ("type" in input && input.type === "server-exited") {
+    if (!("payload" in input)) {
       if (this.turnState.status === "stopping") return this.finishStoppingTurn(this.turnState.stop);
       const turnId = this.activeForegroundTurnId;
       if (turnId) {
@@ -4149,6 +4185,10 @@ class OpenCodeAgentSession implements AgentSession {
           turnId,
         );
       }
+      return;
+    }
+    if (input.payload.type === "server.connected") {
+      await this.reconcileAfterGap(++this.gapRepairRevision);
       return;
     }
     await this.consumeOpenCodeStreamEvent({ rawEvent: input, eventCount: 0 });

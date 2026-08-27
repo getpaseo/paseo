@@ -120,6 +120,52 @@ describe("Hub HTTP client", () => {
     assert.equal(requests[0]?.url, "/api/v1/configuration-resources");
   });
 
+  it("reads strict provider-native setup resources", async () => {
+    const requests: Array<{ url: string | undefined; body: string }> = [];
+    const origin = await startServer(
+      () => ({
+        status: 200,
+        body: {
+          github: [
+            {
+              slug: "getpaseo",
+              accountLogin: "getpaseo",
+              accountType: "Organization",
+              repositories: ["getpaseo/paseo"],
+            },
+          ],
+          discord: [{ guildId: "guild-123", guildName: "Paseo" }],
+          slack: [{ teamId: "team-123", teamName: "Paseo" }],
+        },
+      }),
+      requests,
+    );
+
+    const resources = await new HubHttpClient().listSetupResources(origin, "secret");
+
+    assert.equal(resources.slack[0]?.teamId, "team-123");
+    assert.equal(resources.discord[0]?.guildId, "guild-123");
+    assert.deepEqual(requests[0], { url: "/api/v1/setup-resources", body: "" });
+  });
+
+  it.each([
+    { github: [], discord: [], slack: [{ teamId: "team-123", teamName: "Paseo", slug: "wrong" }] },
+    { github: [], discord: [], slack: [{ teamId: 123, teamName: "Paseo" }] },
+  ])("rejects malformed or unknown setup resource fields", async (body) => {
+    const requests: Array<{ url: string | undefined; body: string }> = [];
+    const origin = await startServer(
+      () => ({
+        status: 200,
+        body,
+      }),
+      requests,
+    );
+
+    await assert.rejects(new HubHttpClient().listSetupResources(origin, "secret"), {
+      code: "HUB_INVALID_RESPONSE",
+    });
+  });
+
   it("renders file-aware Hub validation issues without exposing credentials or response bodies", async () => {
     const requests: Array<{ url: string | undefined; body: string }> = [];
     const origin = await startServer(

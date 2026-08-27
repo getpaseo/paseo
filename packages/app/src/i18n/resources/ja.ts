@@ -64,6 +64,9 @@ export const ja: TranslationResources = {
       workspaces: "ワークスペース",
       agents: "エージェント",
       newAgent: "新しいエージェント",
+      open: "{{name}}を開く",
+      openInSidePane: "{{name}}をサイドパネルで開く",
+      openInFocusedPane: "{{name}}をフォーカス中のペインで開く",
       addProject: "プロジェクトを追加",
       home: "ホーム",
       groupByProject: "プロジェクトでグループ化",
@@ -417,6 +420,8 @@ export const ja: TranslationResources = {
     },
     fileActions: {
       openFile: "ファイルを開く",
+      openIn: "{{target}}で開く",
+      openToSide: "横に開く",
       copyPath: "パスをコピー",
       copyRelativePath: "相対パスをコピー",
       revealIn: "{{target}}で表示",
@@ -583,6 +588,7 @@ export const ja: TranslationResources = {
         closeLeft: "左のタブを閉じる",
         closeRight: "右のタブを閉じる",
         closeOthers: "他のタブを閉じる",
+        moveToMain: "メインパネルへ移動",
         reloadAgent: "エージェントを再読み込み",
         reloadAgentTooltip:
           "スキル、MCP、ログイン状態を更新するためにエージェントを再読み込みします。",
@@ -607,9 +613,9 @@ export const ja: TranslationResources = {
         files: "ファイル",
         pullRequest: "プルリクエスト",
         terminalProfilesMenu: "ターミナルプロファイル",
-        editTerminalProfiles: "プロファイルを編集…",
+        editTerminalProfiles: "プロファイルを編集",
       },
-      sidePanel: {
+      explorerSidebar: {
         open: "サイドパネルを開く",
         close: "サイドパネルを閉じる",
         toggle: "サイドパネルを切り替え",
@@ -861,6 +867,7 @@ export const ja: TranslationResources = {
       },
       diff: {
         openChangesTab: "変更タブを開く",
+        openDiffTab: "差分タブを開く",
         closeChangesTab: "変更タブを閉じる",
         binaryFile: "バイナリファイル",
         tooLarge: "差分が大きすぎて表示できません",
@@ -871,6 +878,7 @@ export const ja: TranslationResources = {
         switchToUnified: "ユニファイド差分に切り替え",
         switchToSplit: "左右比較差分に切り替え",
         options: "差分オプション",
+        inlineDiff: "インライン差分",
         hideWhitespace: "空白を非表示",
         showWhitespace: "空白を表示",
         scrollLongLines: "長い行をスクロール",
@@ -944,6 +952,16 @@ export const ja: TranslationResources = {
         accessibility: {
           pullRequest: "プルリクエスト#{{number}}",
           pullRequest_mr: "マージリクエスト !{{number}}",
+          checkStatus: {
+            passed: "成功",
+            failed: "失敗",
+            warning: "警告",
+            actionRequired: "操作が必要",
+            manual: "手動",
+            pending: "保留中",
+            skipped: "スキップ済み",
+            cancelled: "キャンセル済み",
+          },
         },
         states: {
           draft: "ドラフト",
@@ -1135,6 +1153,14 @@ export const ja: TranslationResources = {
         serviceUnhealthy: "サービス {{name}} 異常",
         creating: "作成中...",
       },
+      checks: {
+        passed: "成功: {{count}}",
+        failed: "失敗: {{count}}",
+        warning: "警告: {{count}}",
+        actionRequired: "操作が必要: {{count}}",
+        manual: "手動: {{count}}",
+        pending: "保留中: {{count}}",
+      },
       actions: {
         menu: "ワークスペースアクション",
         newWorkspace: "新しいワークスペース",
@@ -1220,6 +1246,12 @@ export const ja: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "ウィンドウを最小化",
+      maximize: "ウィンドウを最大化",
+      restore: "ウィンドウを元に戻す",
+      close: "ウィンドウを閉じる",
+    },
     quitting: {
       title: "Paseoを終了中...",
       detail: "ローカルデーモンを停止中。",
@@ -1644,6 +1676,8 @@ export const ja: TranslationResources = {
       updateRequired: "Paseo Desktop からリレーを有効にするにはホストを更新してください。",
       unavailable: "ペアリングオファーが利用できません。",
       hint: "スマートフォンのPaseoでこのQRコードをスキャンするか、以下のリンクをコピーしてください。",
+      securityWarning:
+        "このペアリングリンクはパスワードと同様に扱ってください。リンクを知っている人は誰でもこのデーモンにアクセスできます。",
       qrUnavailable: "QRコードが利用できません。",
       qrAccessibility: "ペアリング QR コード",
       retry: "再試行",
@@ -1717,6 +1751,7 @@ export const ja: TranslationResources = {
       loading: "ファイルを読み込み中...",
       noPreview: "プレビューが利用できません",
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
+      tooLargeToDisplay: "このファイルは大きすぎて表示できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
       editor: {
@@ -1745,6 +1780,7 @@ export const ja: TranslationResources = {
       label: "ファイル",
       subtitle: "ワークスペースのファイル",
       tooltip: "ワークスペースのファイルを参照",
+      chooseFile: "ファイルを選択",
     },
     pullRequest: {
       label: "プルリクエスト",
@@ -1755,6 +1791,7 @@ export const ja: TranslationResources = {
     },
     diff: {
       changesLabel: "変更",
+      diffLabel: "差分",
       changesSubtitle: "作業ツリーの差分",
       commitSubtitle: "コミット差分",
       uncommittedSubtitle: "未コミットの変更",
@@ -1849,6 +1886,7 @@ export const ja: TranslationResources = {
     sections: {
       general: "一般",
       appearance: "外観",
+      layout: en.settings.sections.layout,
       editor: "エディター",
       shortcuts: "ショートカット",
       integrations: "連携",
@@ -1857,6 +1895,7 @@ export const ja: TranslationResources = {
       diagnostics: "診断",
       about: "アプリ情報",
     },
+    layout: en.settings.layout,
     editor: {
       title: "エディター",
       vimKeybindings: "Vim キーバインド",
@@ -1944,11 +1983,6 @@ export const ja: TranslationResources = {
         label: "ターミナルスクロールバック",
         description: "組み込みターミナルバッファに保持する行数",
         accessibilityLabel: "ターミナルスクロールバック行数",
-      },
-      sidePanelRouting: {
-        label: "補助タブをサイドパネルで開く",
-        description:
-          "ファイルリンク、プルリクエスト、セットアップの進行状況が、フォーカス中のペインではなく作業の横に開きます",
       },
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",
@@ -2145,7 +2179,6 @@ export const ja: TranslationResources = {
         toggleBothSidebars: "両方のサイドバーを切り替え",
         toggleSettings: "設定を切り替え",
         toggleFocusMode: "フォーカスモードを切り替え",
-        toggleExplorerPaneMaximization: "サイドパネルの最大化を切り替え",
         cycleTheme: "テーマを順に切り替え",
         focusMessageInput: "メッセージ入力にフォーカス",
         cycleAgentMode: "エージェントモードを順に切り替え",
@@ -2365,10 +2398,9 @@ export const ja: TranslationResources = {
         featuresLabel: "機能",
         featureCount: "{{count}}個の機能",
         featureCountOne: "{{count}}個の機能",
-        notesLabel: "エージェントへのメモ",
+        notesLabel: "使用する場面",
         notesPlaceholder: "UI作業に使用 — コンポーネント、レイアウト、デザイントークンなど。",
-        notesHint:
-          "list_profiles MCPツールによって返されます。他のエージェントへの指示として記述してください。",
+        notesHint: "別のエージェントを起動するとき、このプロファイルを選ぶために使用されます。",
         save: "保存",
         saving: "保存中...",
         remove: "削除",

@@ -64,6 +64,9 @@ export const ko: TranslationResources = {
       workspaces: "워크스페이스",
       agents: "에이전트",
       newAgent: "새 에이전트",
+      open: "{{name}} 열기",
+      openInSidePane: "사이드 패널에서 {{name}} 열기",
+      openInFocusedPane: "포커스된 창에서 {{name}} 열기",
       addProject: "프로젝트 추가",
       home: "홈",
       groupByProject: "프로젝트별 그룹화",
@@ -414,6 +417,8 @@ export const ko: TranslationResources = {
     },
     fileActions: {
       openFile: "파일 열기",
+      openIn: "{{target}}에서 열기",
+      openToSide: "옆에 열기",
       copyPath: "경로 복사",
       copyRelativePath: "상대 경로 복사",
       revealIn: "{{target}}에서 보기",
@@ -580,6 +585,7 @@ export const ko: TranslationResources = {
         closeLeft: "왼쪽 탭 닫기",
         closeRight: "오른쪽 탭 닫기",
         closeOthers: "다른 탭 닫기",
+        moveToMain: "기본 패널로 이동",
         reloadAgent: "에이전트 다시 로드",
         reloadAgentTooltip:
           "스킬, MCP 또는 로그인 상태를 업데이트하려면 에이전트를 다시 로드하세요.",
@@ -604,9 +610,9 @@ export const ko: TranslationResources = {
         files: "파일",
         pullRequest: "풀 리퀘스트",
         terminalProfilesMenu: "터미널 프로필",
-        editTerminalProfiles: "프로필 편집…",
+        editTerminalProfiles: "프로필 편집",
       },
-      sidePanel: {
+      explorerSidebar: {
         open: "사이드 패널 열기",
         close: "사이드 패널 닫기",
         toggle: "사이드 패널 토글",
@@ -857,6 +863,7 @@ export const ko: TranslationResources = {
       },
       diff: {
         openChangesTab: "변경사항 탭 열기",
+        openDiffTab: "Diff 탭 열기",
         closeChangesTab: "변경사항 탭 닫기",
         binaryFile: "바이너리 파일",
         tooLarge: "표시하기에 diff가 너무 큽니다",
@@ -867,6 +874,7 @@ export const ko: TranslationResources = {
         switchToUnified: "통합 diff로 전환",
         switchToSplit: "나란히 보기 diff로 전환",
         options: "Diff 옵션",
+        inlineDiff: "인라인 Diff",
         hideWhitespace: "공백 숨기기",
         showWhitespace: "공백 표시",
         scrollLongLines: "긴 줄 스크롤",
@@ -940,6 +948,16 @@ export const ko: TranslationResources = {
         accessibility: {
           pullRequest: "풀 리퀘스트 #{{number}}",
           pullRequest_mr: "병합 요청 !{{number}}",
+          checkStatus: {
+            passed: "통과",
+            failed: "실패",
+            warning: "경고",
+            actionRequired: "조치 필요",
+            manual: "수동",
+            pending: "대기 중",
+            skipped: "건너뜀",
+            cancelled: "취소됨",
+          },
         },
         states: {
           draft: "초안",
@@ -1130,6 +1148,14 @@ export const ko: TranslationResources = {
         serviceUnhealthy: "서비스 {{name}} 비정상",
         creating: "생성하는 중...",
       },
+      checks: {
+        passed: "통과: {{count}}개",
+        failed: "실패: {{count}}개",
+        warning: "경고: {{count}}개",
+        actionRequired: "조치 필요: {{count}}개",
+        manual: "수동: {{count}}개",
+        pending: "대기 중: {{count}}개",
+      },
       actions: {
         menu: "워크스페이스 작업",
         newWorkspace: "새 워크스페이스",
@@ -1215,6 +1241,12 @@ export const ko: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "창 최소화",
+      maximize: "창 최대화",
+      restore: "창 복원",
+      close: "창 닫기",
+    },
     quitting: {
       title: "Paseo 종료 중...",
       detail: "로컬 데몬을 중지하는 중입니다.",
@@ -1637,6 +1669,8 @@ export const ko: TranslationResources = {
       updateRequired: "Paseo 데스크톱에서 릴레이를 활성화하려면 호스트를 업데이트하세요.",
       unavailable: "페어링 정보를 사용할 수 없습니다.",
       hint: "휴대폰의 Paseo로 이 QR 코드를 스캔하거나 아래 링크를 복사하세요.",
+      securityWarning:
+        "이 페어링 링크는 비밀번호처럼 취급하세요. 링크를 가진 사람은 누구나 이 데몬에 접근할 수 있습니다.",
       qrUnavailable: "QR 코드를 사용할 수 없습니다.",
       qrAccessibility: "페어링 QR 코드",
       retry: "다시 시도",
@@ -1710,6 +1744,7 @@ export const ko: TranslationResources = {
       loading: "파일 불러오는 중...",
       noPreview: "사용 가능한 미리보기가 없습니다",
       binaryPreviewUnavailable: "바이너리 미리보기를 사용할 수 없습니다",
+      tooLargeToDisplay: "이 파일은 너무 커서 표시할 수 없습니다",
       failedToLoad: "파일을 불러오지 못했습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",
       editor: {
@@ -1738,6 +1773,7 @@ export const ko: TranslationResources = {
       label: "파일",
       subtitle: "워크스페이스 파일",
       tooltip: "워크스페이스 파일 탐색",
+      chooseFile: "파일 선택",
     },
     pullRequest: {
       label: "풀 리퀘스트",
@@ -1747,6 +1783,7 @@ export const ko: TranslationResources = {
     },
     diff: {
       changesLabel: "변경 사항",
+      diffLabel: "Diff",
       changesSubtitle: "작업 트리 diff",
       commitSubtitle: "커밋 diff",
       uncommittedSubtitle: "커밋되지 않은 변경 사항",
@@ -1841,6 +1878,7 @@ export const ko: TranslationResources = {
     sections: {
       general: "일반",
       appearance: "모양",
+      layout: en.settings.sections.layout,
       editor: "편집기",
       shortcuts: "단축키",
       integrations: "통합",
@@ -1849,6 +1887,7 @@ export const ko: TranslationResources = {
       diagnostics: "진단",
       about: "정보",
     },
+    layout: en.settings.layout,
     editor: {
       title: "편집기",
       vimKeybindings: "Vim 키 바인딩",
@@ -1938,11 +1977,6 @@ export const ko: TranslationResources = {
         label: "터미널 스크롤백",
         description: "내장 터미널 버퍼에 보관되는 줄 수",
         accessibilityLabel: "터미널 스크롤백 줄 수",
-      },
-      sidePanelRouting: {
-        label: "보조 탭을 사이드 패널에서 열기",
-        description:
-          "파일 링크, 풀 리퀘스트, 설정 진행 상황이 포커스된 창이 아니라 작업 옆에서 열립니다",
       },
       autoExpandReasoning: {
         label: "추론 항상 펼치기",
@@ -2137,7 +2171,6 @@ export const ko: TranslationResources = {
         toggleBothSidebars: "양쪽 사이드바 토글",
         toggleSettings: "설정 토글",
         toggleFocusMode: "집중 모드 토글",
-        toggleExplorerPaneMaximization: "사이드 패널 최대화 전환",
         cycleTheme: "테마 순환",
         focusMessageInput: "메시지 입력란에 포커스",
         cycleAgentMode: "에이전트 모드 전환",
@@ -2354,10 +2387,9 @@ export const ko: TranslationResources = {
         featuresLabel: "기능",
         featureCount: "기능 {{count}}개",
         featureCountOne: "기능 {{count}}개",
-        notesLabel: "에이전트를 위한 메모",
+        notesLabel: "사용 시점",
         notesPlaceholder: "UI 작업에 사용 — 컴포넌트, 레이아웃, 디자인 토큰.",
-        notesHint:
-          "list_profiles MCP 도구가 반환합니다. 다른 에이전트에게 전달할 지침으로 작성하세요.",
+        notesHint: "에이전트가 다른 에이전트를 시작할 때 이 프로필을 선택하는 데 사용됩니다.",
         save: "저장",
         saving: "저장하는 중...",
         remove: "제거",

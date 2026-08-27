@@ -9,7 +9,7 @@ order: 51
 
 Superset is a macOS desktop app for running CLI coding agents in parallel git worktrees. Source-available under the Elastic License 2.0.
 
-Paseo is an app for orchestrating coding agents, with native clients on desktop, mobile, web, and the CLI. Open source (AGPL-3.0).
+Paseo is an app for orchestrating coding agents, with native clients on desktop, mobile, web, and the CLI. Open source (Apache-2.0).
 
 ![Paseo desktop and mobile app](/hero-mockup.png)
 
@@ -19,7 +19,7 @@ Pick Superset if you prefer a terminal-first interface where agents live inside 
 
 Pick Paseo if you want:
 
-- An OSI-approved open source license (AGPL-3.0)
+- An OSI-approved open source license (Apache-2.0)
 - Linux or Windows
 - A native mobile app
 - No login wall
@@ -28,7 +28,7 @@ Pick Paseo if you want:
 
 ## License
 
-Paseo is open source under AGPL-3.0. Audit it, fork it, redistribute it.
+Paseo is open source under Apache-2.0. Audit it, fork it, redistribute it.
 
 Superset is source-available under the Elastic License 2.0. The source is on GitHub, but the license restricts hosting it as a service and limits redistribution.
 
@@ -98,7 +98,7 @@ Superset is free for one seat with local workspaces only. Team features and sync
 
 |                              | Paseo                                                 | Superset                               |
 | ---------------------------- | ----------------------------------------------------- | -------------------------------------- |
-| License                      | Open source (AGPL-3.0)                                | Source-available (Elastic License 2.0) |
+| License                      | Open source (Apache-2.0)                              | Source-available (Elastic License 2.0) |
 | Platforms                    | macOS, Linux, Windows                                 | macOS only                             |
 | Native mobile                | iOS, Android                                          | —                                      |
 | Login required               | No                                                    | Yes (Superset account)                 |

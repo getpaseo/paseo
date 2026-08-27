@@ -6,7 +6,7 @@ import { Pressable, type PressableStateCallbackType, ScrollView, Text, View } fr
 import invariant from "tiny-invariant";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { usePaneContext } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import type { Theme } from "@/styles/theme";
@@ -390,12 +390,10 @@ function SetupCommandRow({
   );
 }
 
-export const setupPanelRegistration: PanelRegistration<"setup"> = {
-  kind: "setup",
-  resourceKey: (target) => target.workspaceId,
+export const setupPanelRegistration = definePanel("setup", {
   component: SetupPanel,
   useDescriptor: useSetupPanelDescriptor,
-};
+});
 
 function SetupCommandChevron({ showDetail }: { showDetail: boolean }) {
   const chevronStyle = useMemo(
