@@ -4,6 +4,8 @@ import {
   deriveWorktreeProjectHash,
   deletePaseoWorktree,
   isPaseoOwnedWorktreeCwd,
+  listPaseoWorktrees,
+  listRepoWorktrees,
   mapWorkspaceCwdToWorktree,
   slugify,
   type CreateWorktreeOptions,
@@ -102,6 +104,40 @@ describe("paseo worktree manager", () => {
       allowed: true,
       worktreePath: created.worktreePath,
     });
+  });
+
+  it("lists hand-cut worktrees that the paseo-owned listing filters out", async () => {
+    const paseoOwned = await createLegacyWorktreeForTest({
+      branchName: "paseo-branch",
+      cwd: repoDir,
+      baseBranch: "main",
+      worktreeSlug: "paseo-cut",
+      paseoHome,
+    });
+    const handCutPath = join(tempDir, "hand-cut");
+    execFileSync("git", ["worktree", "add", "-b", "hand-branch", handCutPath], { cwd: repoDir });
+
+    // Paths are compared through the realpath-aware matcher rather than by string:
+    // git reports the long form of a Windows path while the created worktree carries
+    // the 8.3 short form, and macOS adds the /private symlink on top of that.
+    const isPaseoCut = createRealpathAwarePathMatcher(paseoOwned.worktreePath);
+    const isHandCut = createRealpathAwarePathMatcher(handCutPath);
+    const isRepoRoot = createRealpathAwarePathMatcher(repoDir);
+
+    const paseoOnly = await listPaseoWorktrees({ cwd: repoDir, paseoHome });
+    expect(paseoOnly).toHaveLength(1);
+    expect(isPaseoCut(paseoOnly[0]?.path ?? "")).toBe(true);
+
+    const all = await listRepoWorktrees({ cwd: repoDir });
+    expect(all).toHaveLength(3);
+    expect(all.some((entry) => isHandCut(entry.path))).toBe(true);
+    expect(all.some((entry) => isPaseoCut(entry.path))).toBe(true);
+
+    const mainWorktrees = all.filter((entry) => entry.isMainWorktree);
+    expect(mainWorktrees).toHaveLength(1);
+    expect(isRepoRoot(mainWorktrees[0]?.path ?? "")).toBe(true);
+
+    expect(all.find((entry) => isHandCut(entry.path))?.branchName).toBe("hand-branch");
   });
 
   it("rejects paths that are not under the paseo worktrees root", async () => {

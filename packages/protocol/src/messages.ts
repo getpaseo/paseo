@@ -2354,6 +2354,11 @@ export const PaseoWorktreeListRequestSchema = z.object({
   type: z.literal("paseo_worktree_list_request"),
   cwd: z.string().optional(),
   repoRoot: z.string().optional(),
+  // COMPAT(worktreeListRepoScope): added in v0.6.2, drop the gate when floor >= v0.6.2.
+  // "paseo" (the default, and what every caller before this field got) lists only
+  // worktrees under the project's ~/.paseo/worktrees root. "repo" lists every
+  // worktree git knows about, including ones a person cut by hand.
+  scope: z.enum(["paseo", "repo"]).optional(),
   requestId: z.string(),
 });
 
@@ -3402,6 +3407,8 @@ export const ServerInfoStatusPayloadSchema = z
         projectAdd: z.boolean().optional(),
         // COMPAT(worktreeRestore): added in v0.1.97, drop the gate when floor >= v0.1.97
         worktreeRestore: z.boolean().optional(),
+        // COMPAT(worktreeListRepoScope): added in v0.6.2, drop the gate when floor >= v0.6.2.
+        worktreeListRepoScope: z.boolean().optional(),
         // COMPAT(workspaceRecovery): added in v0.1.105, remove after 2027-01-11 once daemon floor >= v0.1.105.
         workspaceRecovery: z.boolean().optional(),
         // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
@@ -5500,6 +5507,10 @@ const PaseoWorktreeSchema = z.object({
   createdAt: z.string(),
   branchName: z.string().nullable().optional(),
   head: z.string().nullable().optional(),
+  // COMPAT(worktreeListRepoScope): added in v0.6.2, drop the gate when floor >= v0.6.2.
+  // Only ever true under scope "repo": the repository's main working tree, which
+  // the New Workspace screen already offers as Local.
+  isMainWorktree: z.boolean().optional(),
 });
 
 export const PaseoWorktreeListResponseSchema = z.object({

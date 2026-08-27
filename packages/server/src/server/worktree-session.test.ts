@@ -424,6 +424,67 @@ describe("handlePaseoWorktreeListRequest", () => {
       },
     });
   });
+
+  test("scope repo lists every worktree of the repository, main one flagged", async () => {
+    const emitted: SessionOutboundMessage[] = [];
+    const workspaceGitService = {
+      listWorktrees: vi.fn().mockResolvedValue([]),
+      listRepoWorktrees: vi.fn().mockResolvedValue([
+        {
+          path: "/tmp/repo",
+          createdAt: "2026-04-10T00:00:00.000Z",
+          branchName: "main",
+          head: "aaa111",
+          isMainWorktree: true,
+        },
+        {
+          path: "/home/me/hand-cut",
+          createdAt: "2026-04-12T00:00:00.000Z",
+          branchName: "fix",
+          head: "bbb222",
+        },
+      ]),
+    };
+
+    await handlePaseoWorktreeListRequest(
+      {
+        emit: (message) => emitted.push(message),
+        paseoHome: "/tmp/paseo-home",
+        workspaceGitService: workspaceGitService as unknown as WorkspaceGitService,
+      },
+      {
+        type: "paseo_worktree_list_request",
+        cwd: "/tmp/repo",
+        scope: "repo",
+        requestId: "request-repo-worktrees",
+      },
+    );
+
+    expect(workspaceGitService.listWorktrees).not.toHaveBeenCalled();
+    expect(workspaceGitService.listRepoWorktrees).toHaveBeenCalledWith("/tmp/repo");
+    expect(emitted).toContainEqual({
+      type: "paseo_worktree_list_response",
+      payload: {
+        worktrees: [
+          {
+            worktreePath: "/tmp/repo",
+            createdAt: "2026-04-10T00:00:00.000Z",
+            branchName: "main",
+            head: "aaa111",
+            isMainWorktree: true,
+          },
+          {
+            worktreePath: "/home/me/hand-cut",
+            createdAt: "2026-04-12T00:00:00.000Z",
+            branchName: "fix",
+            head: "bbb222",
+          },
+        ],
+        error: null,
+        requestId: "request-repo-worktrees",
+      },
+    });
+  });
 });
 
 describe("resolveGitCreateBaseBranch", () => {

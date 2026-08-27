@@ -13,6 +13,7 @@ describe("Typography scale", () => {
     expect(FONT_SIZE).toEqual({
       code: 12,
       content: 15,
+      xs: 11,
       sm: 12,
       base: 14,
       lg: 16,

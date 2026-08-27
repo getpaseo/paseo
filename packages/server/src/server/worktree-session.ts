@@ -395,6 +395,11 @@ export async function resolveGitCreateBaseBranch(
   return workspaceGitService.resolveDefaultBranch(cwd);
 }
 
+type PaseoWorktreeListEntry = Extract<
+  SessionOutboundMessage,
+  { type: "paseo_worktree_list_response" }
+>["payload"]["worktrees"][number];
+
 export async function handlePaseoWorktreeListRequest(
   dependencies: {
     emit: EmitSessionMessage;
@@ -420,17 +425,23 @@ export async function handlePaseoWorktreeListRequest(
   try {
     const worktrees = await listPaseoWorktreesCommand(
       { workspaceGitService: dependencies.workspaceGitService },
-      { cwd },
+      { cwd, scope: msg.scope },
     );
     dependencies.emit({
       type: "paseo_worktree_list_response",
       payload: {
-        worktrees: worktrees.map((entry) => ({
-          worktreePath: entry.path,
-          createdAt: entry.createdAt,
-          branchName: entry.branchName ?? null,
-          head: entry.head ?? null,
-        })),
+        worktrees: worktrees.map((entry) => {
+          const worktree: PaseoWorktreeListEntry = {
+            worktreePath: entry.path,
+            createdAt: entry.createdAt,
+            branchName: entry.branchName ?? null,
+            head: entry.head ?? null,
+          };
+          if (entry.isMainWorktree) {
+            worktree.isMainWorktree = true;
+          }
+          return worktree;
+        }),
         error: null,
         requestId,
       },

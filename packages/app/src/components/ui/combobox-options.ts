@@ -11,6 +11,11 @@ export interface ComboboxOptionModel {
   label: string;
   description?: string;
   kind?: ComboboxOptionKind;
+  /**
+   * Group label drawn above the first option carrying it. Options sharing a
+   * section must be adjacent — the header is emitted on change, not on lookup.
+   */
+  section?: string;
 }
 
 const DESCRIPTION_FALLBACK_TIER = 99;

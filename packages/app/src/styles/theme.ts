@@ -561,6 +561,10 @@ export const SPACING = {
 export const FONT_SIZE = {
   code: 12,
   content: 15,
+  // One step below `sm`, for text that is deliberately subordinate to what it sits with —
+  // a row it hangs under, or the group heading it labels. Not for body text: `sm` is the
+  // floor for anything a user reads on its own.
+  xs: 11,
   sm: 12,
   base: 14,
   lg: 16,

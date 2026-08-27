@@ -15,22 +15,28 @@ import { toWorktreeWireError, type WorktreeWireError } from "../worktree-errors.
 import type { WorkspaceGitService, WorkspaceGitWorktreeInfo } from "../workspace-git-service.js";
 
 export interface ListPaseoWorktreesCommandDependencies {
-  workspaceGitService: Pick<WorkspaceGitService, "listWorktrees">;
+  workspaceGitService: Pick<WorkspaceGitService, "listWorktrees" | "listRepoWorktrees">;
 }
 
 export interface ListPaseoWorktreesCommandInput {
   cwd: string;
   reason?: string;
+  /** "paseo" (default) keeps the ~/.paseo/worktrees filter; "repo" drops it. */
+  scope?: "paseo" | "repo";
 }
 
 export async function listPaseoWorktreesCommand(
   dependencies: ListPaseoWorktreesCommandDependencies,
   input: ListPaseoWorktreesCommandInput,
 ): Promise<WorkspaceGitWorktreeInfo[]> {
+  const list =
+    input.scope === "repo"
+      ? dependencies.workspaceGitService.listRepoWorktrees.bind(dependencies.workspaceGitService)
+      : dependencies.workspaceGitService.listWorktrees.bind(dependencies.workspaceGitService);
   if (input.reason) {
-    return dependencies.workspaceGitService.listWorktrees(input.cwd, { reason: input.reason });
+    return list(input.cwd, { reason: input.reason });
   }
-  return dependencies.workspaceGitService.listWorktrees(input.cwd);
+  return list(input.cwd);
 }
 
 type CreatePaseoWorktreeWorkflow<Result extends CreatePaseoWorktreeResult> = (

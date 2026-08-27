@@ -1201,6 +1201,7 @@ export const ko: TranslationResources = {
     isolation: {
       local: "로컬",
       worktree: "새 워크트리",
+      existingSection: "기존 워크트리",
       label: "격리",
     },
     fields: {

@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -380,14 +381,18 @@ function OptionsList({
   return (
     <>
       {options.map((opt, index) => (
-        <OptionRow
-          key={opt.id}
-          option={opt}
-          selected={opt.id === value}
-          active={index === activeIndex}
-          onSelect={onSelect}
-          renderOption={renderOption}
-        />
+        <Fragment key={opt.id}>
+          {opt.section && opt.section !== options[index - 1]?.section ? (
+            <Text style={styles.sectionLabel}>{opt.section}</Text>
+          ) : null}
+          <OptionRow
+            option={opt}
+            selected={opt.id === value}
+            active={index === activeIndex}
+            onSelect={onSelect}
+            renderOption={renderOption}
+          />
+        </Fragment>
       ))}
     </>
   );
@@ -1670,6 +1675,16 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[3],
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
+  },
+  // Headers sit between rows rather than sticking, because filtering can leave a
+  // section with no rows at all and a stuck header would outlive its group.
+  sectionLabel: {
+    paddingHorizontal: theme.spacing[3],
+    paddingTop: theme.spacing[3],
+    paddingBottom: theme.spacing[1],
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.xs,
+    fontWeight: "600",
   },
   comboboxItem: {
     flexDirection: "row",
