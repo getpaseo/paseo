@@ -211,12 +211,13 @@ describe("ACPAgentSession.steerActiveTurn", () => {
     expect(extMethod).toHaveBeenCalledWith("_session/steering", {
       sessionId: "session-1",
       prompt: [{ type: "text", text: "steer this" }],
+      _meta: { steering: { idleBehavior: "promptRequired" } },
     });
   });
 
   test.each([
     ["injected", "accepted"],
-    ["startedNewTurn", "accepted"],
+    ["startedNewTurn", "unavailable"],
     ["promptRequired", "unavailable"],
     ["failed", "unavailable"],
   ] as const)("maps agent outcome %s to status %s", async (outcome, status) => {
@@ -227,6 +228,43 @@ describe("ACPAgentSession.steerActiveTurn", () => {
     const result = await session.steerActiveTurn("steer this", { expectedTurnId: "turn-1" });
 
     expect(result).toEqual({ status });
+  });
+
+  test("denies pending permissions after the steer is accepted", async () => {
+    const session = createSession();
+    primeForSteer(session);
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Run command",
+        kind: "execute",
+        status: "pending",
+      },
+      options: [
+        { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+    } satisfies RequestPermissionRequest);
+    await Promise.resolve();
+
+    await session.steerActiveTurn("steer this", {
+      expectedTurnId: "turn-1",
+      clearPendingPermissions: true,
+    });
+
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "reject-once" },
+    });
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "permission_resolved",
+        resolution: expect.objectContaining({ behavior: "deny" }),
+      }),
+    );
   });
 });
 

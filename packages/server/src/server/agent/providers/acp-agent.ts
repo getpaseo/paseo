@@ -1677,11 +1677,27 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.connection!.extMethod("_session/steering", {
         sessionId: this.sessionId,
         prompt: toACPContentBlocks(prompt),
+        _meta: { steering: { idleBehavior: "promptRequired" } },
       }),
     );
-    return response.outcome === "injected" || response.outcome === "startedNewTurn"
-      ? { status: "accepted" }
-      : { status: "unavailable" };
+    if (response.outcome !== "injected") {
+      return { status: "unavailable" };
+    }
+    if (options.clearPendingPermissions) {
+      await this.clearPendingPermissionsForSteer();
+    }
+    return { status: "accepted" };
+  }
+
+  private async clearPendingPermissionsForSteer(): Promise<void> {
+    const requestIds = Array.from(this.pendingPermissions.keys());
+    for (const requestId of requestIds) {
+      if (!this.pendingPermissions.has(requestId)) continue;
+      await this.respondToPermission(requestId, {
+        behavior: "deny",
+        message: "The user answered with a message instead of approving. Their message follows.",
+      });
+    }
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
