@@ -12,6 +12,12 @@ import {
 
 describe("browser automation protocol integration", () => {
   const browserId = "11111111-1111-4111-8111-111111111111";
+  const viewerRequest = (command: unknown) =>
+    SessionInboundMessageSchema.parse({
+      type: "browser.tab.execute.request",
+      requestId: "req-1",
+      command,
+    });
 
   test("browser host capability parses supported commands in hello", () => {
     expect(
@@ -157,67 +163,37 @@ describe("browser automation protocol integration", () => {
   });
 
   test("a viewer may drive a mirrored tab", () => {
-    const parsed = SessionInboundMessageSchema.parse({
-      type: "browser.tab.execute.request",
-      requestId: "req-1",
-      command: {
+    expect(
+      viewerRequest({
         command: "input_at",
         args: { browserId, event: { kind: "click", x: 10, y: 20 } },
-      },
-    });
-
-    expect(parsed.type).toBe("browser.tab.execute.request");
+      }),
+    ).toMatchObject({ type: "browser.tab.execute.request" });
   });
 
-  test("a viewer cannot reach the daemon-owned screencast commands", () => {
-    for (const command of [
-      { command: "screencast_start", args: { browserId, slot: 0 } },
-      { command: "screencast_stop", args: { browserId } },
-    ]) {
-      expect(() =>
-        SessionInboundMessageSchema.parse({
-          type: "browser.tab.execute.request",
-          requestId: "req-1",
-          command,
-        }),
-      ).toThrow();
-    }
-  });
-
-  test("a viewer cannot reach the agent-only automation commands", () => {
-    for (const command of [
-      { command: "evaluate", args: { browserId, function: "() => document.title" } },
-      { command: "upload", args: { browserId, ref: "@e1", filePaths: ["/tmp/a.png"] } },
-      { command: "snapshot", args: { browserId } },
-    ]) {
-      expect(() =>
-        SessionInboundMessageSchema.parse({
-          type: "browser.tab.execute.request",
-          requestId: "req-1",
-          command,
-        }),
-      ).toThrow();
-    }
+  test.each([
+    { command: "screencast_start", args: { browserId, slot: 0 } },
+    { command: "screencast_stop", args: { browserId } },
+    { command: "evaluate", args: { browserId, function: "() => document.title" } },
+    { command: "upload", args: { browserId, ref: "@e1", filePaths: ["/tmp/a.png"] } },
+    { command: "snapshot", args: { browserId } },
+  ])("a viewer cannot execute $command", (command) => {
+    expect(() => viewerRequest(command)).toThrow();
   });
 
   test("input_at separates a complete click from a single pointer phase", () => {
     expect(() =>
-      SessionInboundMessageSchema.parse({
-        type: "browser.tab.execute.request",
-        requestId: "req-1",
-        command: {
-          command: "input_at",
-          args: { browserId, event: { kind: "pointer", x: 10, y: 20 } },
-        },
+      viewerRequest({
+        command: "input_at",
+        args: { browserId, event: { kind: "pointer", x: 10, y: 20 } },
       }),
     ).toThrow();
 
-    const parsed = SessionInboundMessageSchema.parse({
-      type: "browser.tab.execute.request",
-      requestId: "req-1",
-      command: {
-        command: "input_at",
-        args: { browserId, event: { kind: "pointer", phase: "down", x: 10, y: 20 } },
+    const parsed = viewerRequest({
+      command: "input_at",
+      args: {
+        browserId,
+        event: { kind: "pointer", phase: "down", x: 10, y: 20 },
       },
     });
 

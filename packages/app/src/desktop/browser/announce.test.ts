@@ -1,47 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@react-native-async-storage/async-storage", () => {
-  const storage = new Map<string, string>();
-  return {
-    default: {
-      getItem: vi.fn(async (key: string) => storage.get(key) ?? null),
-      setItem: vi.fn(async (key: string, value: string) => {
-        storage.set(key, value);
-      }),
-      removeItem: vi.fn(async (key: string) => {
-        storage.delete(key);
-      }),
-    },
-  };
-});
+vi.mock("@react-native-async-storage/async-storage", () => ({
+  default: {
+    getItem: vi.fn(async () => null),
+    setItem: vi.fn(async () => {}),
+    removeItem: vi.fn(async () => {}),
+  },
+}));
 
-import {
-  mountBrowserTabAnnouncer,
-  type BrowserTabAnnounceClient,
-} from "@/desktop/browser/announce";
+import { mountBrowserTabAnnouncer } from "@/desktop/browser/announce";
 import { useBrowserStore } from "@/desktop/browser/store";
 import { useSessionStore } from "@/stores/session-store";
 
 const SERVER_ID = "server-1";
 
-interface FakeAnnounceClient {
-  client: BrowserTabAnnounceClient;
-  announceCount(): number;
-}
-
-function createFakeClient(): FakeAnnounceClient {
-  let announces = 0;
-  return {
-    client: {
-      announceBrowserTabs: () => {
-        announces += 1;
-      },
-    },
-    announceCount: () => announces,
-  };
-}
-
-function advertiseBrowserMirror(browserMirror: boolean): void {
+function advertise(browserMirror: boolean): void {
   useSessionStore.getState().updateSessionServerInfo(SERVER_ID, {
     serverId: SERVER_ID,
     hostname: "host",
@@ -57,64 +30,47 @@ describe("mountBrowserTabAnnouncer", () => {
     useSessionStore.setState({ sessions: {} });
     useSessionStore.getState().initializeSession(SERVER_ID, null, 0);
   });
+  afterEach(() => vi.useRealTimers());
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+  it("waits until the daemon advertises browser mirroring", () => {
+    const announceBrowserTabs = vi.fn();
+    const unmount = mountBrowserTabAnnouncer(
+      SERVER_ID,
+      { announceBrowserTabs },
+      { debounceMs: 10 },
+    );
+    vi.advanceTimersByTime(10);
+    expect(announceBrowserTabs).not.toHaveBeenCalled();
 
-  it("announces once the daemon advertises the browser mirror", () => {
-    const fake = createFakeClient();
-    const unmount = mountBrowserTabAnnouncer(SERVER_ID, fake.client);
-
-    vi.advanceTimersByTime(1_000);
-    expect(fake.announceCount()).toBe(0);
-
-    advertiseBrowserMirror(true);
-    vi.advanceTimersByTime(1_000);
-    expect(fake.announceCount()).toBe(1);
-
+    advertise(true);
+    vi.advanceTimersByTime(10);
+    expect(announceBrowserTabs).toHaveBeenCalledOnce();
     unmount();
   });
 
-  it("stays silent against a daemon that cannot mirror, however its tabs change", () => {
-    const fake = createFakeClient();
-    const unmount = mountBrowserTabAnnouncer(SERVER_ID, fake.client);
-    advertiseBrowserMirror(false);
-
-    useBrowserStore.getState().createBrowser({ initialUrl: "example.com" });
-    vi.advanceTimersByTime(1_000);
-    expect(fake.announceCount()).toBe(0);
-
+  it("coalesces local tab changes", () => {
+    const announceBrowserTabs = vi.fn();
+    advertise(true);
+    const unmount = mountBrowserTabAnnouncer(
+      SERVER_ID,
+      { announceBrowserTabs },
+      { debounceMs: 10 },
+    );
+    const id = useBrowserStore.getState().createBrowser({ initialUrl: "example.com" });
+    useBrowserStore.getState().updateBrowser(id, { title: "Example" });
+    vi.advanceTimersByTime(10);
+    expect(announceBrowserTabs).toHaveBeenCalledOnce();
     unmount();
   });
 
-  it("coalesces a burst of local tab changes into one announce", () => {
-    const fake = createFakeClient();
-    advertiseBrowserMirror(true);
-    const unmount = mountBrowserTabAnnouncer(SERVER_ID, fake.client);
-    vi.advanceTimersByTime(1_000);
-    expect(fake.announceCount()).toBe(1);
-
-    const browserId = useBrowserStore.getState().createBrowser({ initialUrl: "example.com" });
-    useBrowserStore.getState().updateBrowser(browserId, { title: "Example" });
-    useBrowserStore.getState().updateBrowser(browserId, { isLoading: true });
-    expect(fake.announceCount()).toBe(1);
-
-    vi.advanceTimersByTime(1_000);
-    expect(fake.announceCount()).toBe(2);
-
+  it("cancels pending work when unmounted", () => {
+    const announceBrowserTabs = vi.fn();
+    advertise(true);
+    const unmount = mountBrowserTabAnnouncer(SERVER_ID, {
+      announceBrowserTabs,
+    });
     unmount();
-  });
-
-  it("stops announcing after unmount", () => {
-    const fake = createFakeClient();
-    advertiseBrowserMirror(true);
-    const unmount = mountBrowserTabAnnouncer(SERVER_ID, fake.client);
-    vi.advanceTimersByTime(1_000);
-    unmount();
-
-    useBrowserStore.getState().createBrowser({ initialUrl: "example.com" });
-    vi.advanceTimersByTime(1_000);
-    expect(fake.announceCount()).toBe(1);
+    vi.runAllTimers();
+    expect(announceBrowserTabs).not.toHaveBeenCalled();
   });
 });

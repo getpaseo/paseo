@@ -141,27 +141,38 @@ function contentTabs(tabs: WorkspaceTab[]): WorkspaceTab[] {
   );
 }
 
-/** A hydrated snapshot where every listed terminal and browser is live on its host. */
-function mirroredEntitySnapshot(input: {
-  standaloneTerminalIds: string[];
-  liveBrowserIds: string[];
-}): WorkspaceTabSnapshot {
+function mirroredEntitySnapshot(
+  standaloneTerminalIds: string[] = [],
+  knownBrowserIds: string[] = [],
+  liveBrowserIds: string[] = knownBrowserIds,
+): WorkspaceTabSnapshot {
   return {
     agentsHydrated: true,
     terminalsHydrated: true,
     activeAgentIds: [],
     autoOpenAgentIds: [],
     knownAgentIds: [],
-    knownTerminalIds: input.standaloneTerminalIds,
-    standaloneTerminalIds: input.standaloneTerminalIds,
+    knownTerminalIds: standaloneTerminalIds,
+    standaloneTerminalIds,
     browsers: {
       hydrated: true,
-      knownIds: input.liveBrowserIds,
-      liveIds: input.liveBrowserIds,
+      knownIds: knownBrowserIds,
+      liveIds: liveBrowserIds,
     },
     hasActivePendingDraftCreate: false,
   };
 }
+
+const contentTabIds = (workspaceKey: string) =>
+  contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).map(
+    (tab) => tab.tabId,
+  );
+const browserTabIds = (workspaceKey: string) =>
+  workspaceLayoutStore
+    .getState()
+    .getWorkspaceTabs(workspaceKey)
+    .filter((tab) => tab.target.kind === "browser")
+    .map((tab) => tab.tabId);
 
 function expectGroup(node: SplitNode): Extract<SplitNode, { kind: "group" }> {
   expect(node.kind).toBe("group");
@@ -3376,178 +3387,44 @@ describe("workspace-layout-store actions", () => {
     expect(contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey))).toEqual([]);
   });
 
-  it("reconcileTabs adopts browser tabs hosted on another client", () => {
+  it("adopts live browsers, keeps locally hosted ones, and prunes unknown ones", () => {
     const workspaceKey = createWorkspaceKey();
-
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
-      agentsHydrated: true,
-      terminalsHydrated: true,
-      activeAgentIds: [],
-      autoOpenAgentIds: [],
-      knownAgentIds: [],
-      standaloneTerminalIds: [],
-      browsers: {
-        hydrated: true,
-        knownIds: ["browser-1"],
-        liveIds: ["browser-1"],
-      },
-      hasActivePendingDraftCreate: false,
-    });
-
-    expect(
-      contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).map(
-        (tab) => tab.tabId,
-      ),
-    ).toEqual(["browser_browser-1"]);
+    const reconcile = workspaceLayoutStore.getState().reconcileTabs;
+    reconcile(workspaceKey, mirroredEntitySnapshot([], ["browser-1"]));
+    expect(browserTabIds(workspaceKey)).toEqual(["browser_browser-1"]);
+    reconcile(workspaceKey, mirroredEntitySnapshot([], ["browser-1"], []));
+    expect(browserTabIds(workspaceKey)).toEqual(["browser_browser-1"]);
+    reconcile(workspaceKey, mirroredEntitySnapshot());
+    expect(browserTabIds(workspaceKey)).toEqual([]);
   });
 
-  it("reconcileTabs prunes browser tabs the daemon no longer reports", () => {
+  it.each([
+    ["browser_browser-1", mirroredEntitySnapshot([], ["browser-1"])],
+    ["terminal_terminal-1", mirroredEntitySnapshot(["terminal-1"])],
+  ])("does not re-adopt locally closed mirrored tab %s", (tabId, snapshot) => {
     const workspaceKey = createWorkspaceKey();
-
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
-      agentsHydrated: true,
-      terminalsHydrated: true,
-      activeAgentIds: [],
-      autoOpenAgentIds: [],
-      knownAgentIds: [],
-      standaloneTerminalIds: [],
-      browsers: { hydrated: true, knownIds: ["browser-1"], liveIds: ["browser-1"] },
-      hasActivePendingDraftCreate: false,
-    });
-
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
-      agentsHydrated: true,
-      terminalsHydrated: true,
-      activeAgentIds: [],
-      autoOpenAgentIds: [],
-      knownAgentIds: [],
-      standaloneTerminalIds: [],
-      browsers: { hydrated: true, knownIds: [], liveIds: [] },
-      hasActivePendingDraftCreate: false,
-    });
-
-    expect(
-      contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).filter(
-        (tab) => tab.target.kind === "browser",
-      ),
-    ).toEqual([]);
+    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, snapshot);
+    workspaceLayoutStore.getState().closeTab(workspaceKey, tabId);
+    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, snapshot);
+    expect(contentTabIds(workspaceKey)).toEqual([]);
   });
 
-  it("reconcileTabs keeps a locally hosted browser tab the daemon has not listed yet", () => {
+  it("re-adopts a closed browser after host confirmation or suppression expiry", () => {
     const workspaceKey = createWorkspaceKey();
+    const live = mirroredEntitySnapshot([], ["browser-1"]);
+    const store = workspaceLayoutStore.getState();
+    store.reconcileTabs(workspaceKey, live);
+    store.closeTab(workspaceKey, "browser_browser-1");
+    store.reconcileTabs(workspaceKey, mirroredEntitySnapshot());
+    store.reconcileTabs(workspaceKey, live);
+    expect(browserTabIds(workspaceKey)).toEqual(["browser_browser-1"]);
 
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
-      agentsHydrated: true,
-      terminalsHydrated: true,
-      activeAgentIds: [],
-      autoOpenAgentIds: [],
-      knownAgentIds: [],
-      standaloneTerminalIds: [],
-      browsers: { hydrated: true, knownIds: ["browser-1"], liveIds: ["browser-1"] },
-      hasActivePendingDraftCreate: false,
-    });
-
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, {
-      agentsHydrated: true,
-      terminalsHydrated: true,
-      activeAgentIds: [],
-      autoOpenAgentIds: [],
-      knownAgentIds: [],
-      standaloneTerminalIds: [],
-      browsers: { hydrated: true, knownIds: ["browser-1"], liveIds: [] },
-      hasActivePendingDraftCreate: false,
-    });
-
-    expect(
-      contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).map(
-        (tab) => tab.tabId,
-      ),
-    ).toEqual(["browser_browser-1"]);
-  });
-
-  it("reconcileTabs does not re-adopt a browser tab closed here while the host still lists it", () => {
-    const workspaceKey = createWorkspaceKey();
-    const liveBrowser = mirroredEntitySnapshot({
-      standaloneTerminalIds: [],
-      liveBrowserIds: ["browser-1"],
-    });
-
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, liveBrowser);
-    workspaceLayoutStore.getState().closeTab(workspaceKey, "browser_browser-1");
-    // The close still has to reach the host and be announced back, so the snapshot
-    // keeps listing the browser for another round-trip.
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, liveBrowser);
-
-    expect(
-      contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).map(
-        (tab) => tab.tabId,
-      ),
-    ).toEqual([]);
-  });
-
-  it("reconcileTabs adopts a browser id again once the snapshot has dropped the closed one", () => {
-    const workspaceKey = createWorkspaceKey();
-    const liveBrowser = mirroredEntitySnapshot({
-      standaloneTerminalIds: [],
-      liveBrowserIds: ["browser-1"],
-    });
-
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, liveBrowser);
-    workspaceLayoutStore.getState().closeTab(workspaceKey, "browser_browser-1");
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, liveBrowser);
-    workspaceLayoutStore
-      .getState()
-      .reconcileTabs(
-        workspaceKey,
-        mirroredEntitySnapshot({ standaloneTerminalIds: [], liveBrowserIds: [] }),
-      );
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, liveBrowser);
-
-    expect(
-      workspaceLayoutStore
-        .getState()
-        .getWorkspaceTabs(workspaceKey)
-        .filter((tab) => tab.target.kind === "browser")
-        .map((tab) => tab.tabId),
-    ).toEqual(["browser_browser-1"]);
-  });
-
-  it("reconcileTabs re-adopts a closed browser once suppression expires without host confirmation", () => {
-    const workspaceKey = createWorkspaceKey();
-    const liveBrowser = mirroredEntitySnapshot({
-      standaloneTerminalIds: [],
-      liveBrowserIds: ["browser-1"],
-    });
-
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, liveBrowser);
-    workspaceLayoutStore.getState().closeTab(workspaceKey, "browser_browser-1");
-    const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + CLOSED_ENTITY_SUPPRESSION_MS);
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, liveBrowser);
+    store.closeTab(workspaceKey, "browser_browser-1");
+    const expiresAt = Date.now() + CLOSED_ENTITY_SUPPRESSION_MS;
+    const now = vi.spyOn(Date, "now").mockReturnValue(expiresAt);
+    store.reconcileTabs(workspaceKey, live);
     now.mockRestore();
-
-    expect(
-      contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).map(
-        (tab) => tab.tabId,
-      ),
-    ).toEqual(["browser_browser-1"]);
-  });
-
-  it("reconcileTabs does not re-adopt a terminal tab closed here while the daemon still lists it", () => {
-    const workspaceKey = createWorkspaceKey();
-    const liveTerminal = mirroredEntitySnapshot({
-      standaloneTerminalIds: ["terminal-1"],
-      liveBrowserIds: [],
-    });
-
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, liveTerminal);
-    workspaceLayoutStore.getState().closeTab(workspaceKey, "terminal_terminal-1");
-    workspaceLayoutStore.getState().reconcileTabs(workspaceKey, liveTerminal);
-
-    expect(
-      contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).map(
-        (tab) => tab.tabId,
-      ),
-    ).toEqual([]);
+    expect(browserTabIds(workspaceKey)).toEqual(["browser_browser-1"]);
   });
 
   it("reconcileTabs lands on an existing agent instead of the initial New tab", () => {
@@ -3879,14 +3756,6 @@ describe("workspace-layout-store actions", () => {
       target: { kind: "agent", agentId: "kept" },
       intent: "reveal",
     });
-    console.log(
-      "AFTER1",
-      JSON.stringify(
-        collectAllTabs(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].root).map(
-          (t) => t.tabId,
-        ),
-      ),
-    );
     useWorkspaceLayoutIds("split", "group-1");
     const splitPaneId = store.splitPane(workspaceKey, {
       tabId: keptTabId as string,
@@ -3944,10 +3813,7 @@ describe("workspace-layout-store actions", () => {
 
   it("closePane suppresses the mirrored tabs it drops so reconcile cannot adopt them back", () => {
     const workspaceKey = createWorkspaceKey();
-    const snapshot = mirroredEntitySnapshot({
-      standaloneTerminalIds: ["terminal-1"],
-      liveBrowserIds: ["browser-1"],
-    });
+    const snapshot = mirroredEntitySnapshot(["terminal-1"], ["browser-1"]);
     const store = workspaceLayoutStore.getState();
     store.reconcileTabs(workspaceKey, snapshot);
     useWorkspaceLayoutIds("split", "group-1");
@@ -3960,15 +3826,9 @@ describe("workspace-layout-store actions", () => {
     const browserPaneId = findPaneContainingTab(layout.root, "browser_browser-1")?.id;
 
     store.closePane(workspaceKey, browserPaneId as string);
-    // The close still has to reach the host and be announced back, so the
-    // snapshot keeps listing the browser for another round-trip.
     store.reconcileTabs(workspaceKey, snapshot);
 
-    expect(
-      contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).map(
-        (tab) => tab.tabId,
-      ),
-    ).toEqual(["terminal_terminal-1"]);
+    expect(contentTabIds(workspaceKey)).toEqual(["terminal_terminal-1"]);
   });
 
   it("closePane refuses to close the last visible pane", () => {

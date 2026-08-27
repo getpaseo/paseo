@@ -1,53 +1,43 @@
 import { BrowserScreencastOpcode } from "@getpaseo/protocol/binary-frames/index";
 import { describe, expect, test } from "vitest";
-
 import {
   BrowserScreencastRouter,
   type BrowserScreencastEvent,
 } from "./browser-screencast-router.js";
 
 const METADATA = { deviceWidth: 1280, deviceHeight: 800 };
-
-function frame(slot: number, payload: Uint8Array) {
-  return { opcode: BrowserScreencastOpcode.Frame, slot, metadata: METADATA, payload };
-}
+const PAYLOAD = new TextEncoder().encode("jpeg");
+const frame = (slot: number) => ({
+  opcode: BrowserScreencastOpcode.Frame,
+  slot,
+  metadata: METADATA,
+  payload: PAYLOAD,
+});
+const setup = () => {
+  const router = new BrowserScreencastRouter();
+  const events: BrowserScreencastEvent[] = [];
+  router.onEvent((event) => events.push(event));
+  return { router, events };
+};
 
 describe("browser-screencast-router", () => {
-  test("routes a frame to the browser holding its slot", () => {
-    const router = new BrowserScreencastRouter();
-    const events: BrowserScreencastEvent[] = [];
-    const payload = new TextEncoder().encode("jpeg");
-
+  test("routes only frames whose slot is assigned", () => {
+    const { router, events } = setup();
     router.setSlot("browser-1", 7);
-    router.onEvent((event) => events.push(event));
-    router.handleFrame(frame(7, payload));
-
-    expect(events).toEqual([{ browserId: "browser-1", metadata: METADATA, data: payload }]);
+    router.handleFrame(frame(3));
+    router.handleFrame(frame(7));
+    expect(events).toEqual([{ browserId: "browser-1", metadata: METADATA, data: PAYLOAD }]);
   });
 
-  test("drops a frame for a slot no browser holds", () => {
-    const router = new BrowserScreencastRouter();
-    const events: BrowserScreencastEvent[] = [];
-    router.onEvent((event) => events.push(event));
-
-    router.handleFrame(frame(3, new TextEncoder().encode("jpeg")));
-
-    expect(events).toEqual([]);
-  });
-
-  test("reassigning a slot stops routing to the browser that had it", () => {
-    const router = new BrowserScreencastRouter();
-    const events: BrowserScreencastEvent[] = [];
+  test("a reassigned slot routes only to its new browser", () => {
+    const { router, events } = setup();
     router.setSlot("browser-1", 4);
     router.setSlot("browser-2", 4);
-    router.onEvent((event) => events.push(event));
-
-    router.handleFrame(frame(4, new TextEncoder().encode("jpeg")));
-
+    router.handleFrame(frame(4));
     expect(events.map((event) => event.browserId)).toEqual(["browser-2"]);
   });
 
-  test("one listener throwing does not stop the frame reaching the rest", () => {
+  test("one listener throwing does not block the rest", () => {
     const router = new BrowserScreencastRouter();
     const reached: string[] = [];
     router.setSlot("browser-1", 0);
@@ -55,9 +45,7 @@ describe("browser-screencast-router", () => {
       throw new Error("pane blew up");
     });
     router.onEvent(() => reached.push("second"));
-
-    router.handleFrame(frame(0, new TextEncoder().encode("jpeg")));
-
+    router.handleFrame(frame(0));
     expect(reached).toEqual(["second"]);
   });
 });
