@@ -2279,6 +2279,7 @@ export function NewWorkspaceScreen({
           {formStack}
           {isTerminalLaunch ? (
             <Composer
+              key="terminal"
               externalKeyboardShift
               inputMode="terminal"
               readOnly={!terminalTakesPrompt}
@@ -2306,6 +2307,7 @@ export function NewWorkspaceScreen({
             />
           ) : (
             <Composer
+              key="chat"
               externalKeyboardShift
               agentId={draftKey}
               serverId={selectedServerId}
