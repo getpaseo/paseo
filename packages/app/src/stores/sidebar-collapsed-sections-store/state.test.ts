@@ -7,6 +7,8 @@ import {
   togglePinnedCollapsed,
   toggleProjectCollapsed,
   toggleWorkspaceGroupCollapsed,
+  isAgentListExpanded,
+  toggleAgentListExpanded,
 } from "@/stores/sidebar-collapsed-sections-store/state";
 
 function emptyState(): CollapsedProjectsState {
@@ -14,6 +16,7 @@ function emptyState(): CollapsedProjectsState {
     collapsedProjectKeys: new Set(),
     collapsedWorkspaceGroupKeys: new Set(),
     collapsedPinned: false,
+    agentListOverrides: new Map(),
   };
 }
 
@@ -35,12 +38,14 @@ describe("sidebar collapsed projects transitions", () => {
       collapsedProjectKeys: new Set(["project-a", "project-b"]),
       collapsedWorkspaceGroupKeys: new Set(["running"]),
       collapsedPinned: true,
+      agentListOverrides: new Map(),
     };
 
     expect(serializeCollapsedProjects(state)).toEqual({
       collapsedProjectKeys: ["project-a", "project-b"],
       collapsedWorkspaceGroupKeys: ["running"],
       collapsedPinned: true,
+      agentListOverrides: {},
     });
   });
 
@@ -70,5 +75,39 @@ describe("sidebar collapsed projects transitions", () => {
     expect(mergePersistedCollapsedProjects({ collapsedProjectKeys: [] }, currentState)).toBe(
       currentState,
     );
+  });
+});
+
+describe("sidebar agent list expansion", () => {
+  it("reads the display preference until a workspace is toggled", () => {
+    const state = emptyState();
+    expect(isAgentListExpanded(state, "host-a:ws-1", false)).toBe(false);
+    expect(isAgentListExpanded(state, "host-a:ws-1", true)).toBe(true);
+  });
+
+  it("stores an override only while it differs from the default", () => {
+    const expanded = toggleAgentListExpanded(emptyState(), "host-a:ws-1", false);
+    expect(isAgentListExpanded(expanded, "host-a:ws-1", false)).toBe(true);
+    expect(expanded.agentListOverrides.get("host-a:ws-1")).toBe(true);
+
+    // Back to the default: the override is dropped rather than pinned, so a later change to the
+    // display preference still reaches this workspace.
+    const collapsed = toggleAgentListExpanded(expanded, "host-a:ws-1", false);
+    expect(collapsed.agentListOverrides.has("host-a:ws-1")).toBe(false);
+    expect(isAgentListExpanded(collapsed, "host-a:ws-1", true)).toBe(true);
+  });
+
+  it("keeps overrides per workspace", () => {
+    const state = toggleAgentListExpanded(emptyState(), "host-a:ws-1", false);
+    expect(isAgentListExpanded(state, "host-a:ws-2", false)).toBe(false);
+  });
+
+  it("round-trips overrides through persistence", () => {
+    const state = toggleAgentListExpanded(emptyState(), "host-a:ws-1", false);
+    const restored = mergePersistedCollapsedProjects(
+      serializeCollapsedProjects(state),
+      emptyState(),
+    );
+    expect(isAgentListExpanded(restored, "host-a:ws-1", false)).toBe(true);
   });
 });

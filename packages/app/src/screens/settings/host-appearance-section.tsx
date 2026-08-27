@@ -215,6 +215,9 @@ function BadgeDisplayMenuItem({
  * the sidebar surface. The real component, never a restyled copy — a preview that can drift
  * from the thing it previews is worse than no preview.
  */
+/** The preview has no workspace behind it, so its count never draws and nothing can be toggled. */
+const noop = () => {};
+
 function BadgePreview({
   host,
   badgeDisplay,
@@ -247,6 +250,9 @@ function BadgePreview({
         hostBadge={hostBadge}
         prHint={null}
         serviceSummary={null}
+        agentCount={0}
+        agentsExpanded={null}
+        onToggleAgents={noop}
       />
     </View>
   );
