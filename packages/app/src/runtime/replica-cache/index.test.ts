@@ -329,6 +329,42 @@ describe("ReplicaCache", () => {
     expect((await reader.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([pluginItem]);
   });
 
+  it("restores legacy plugin timeline items without source metadata", async () => {
+    const storage = new MemoryStorage();
+    storage.rows.set(`${SERVER_ID}:timeline:agent-1`, {
+      serverId: SERVER_ID,
+      kind: "timeline",
+      id: "agent-1",
+      payload: JSON.stringify({
+        agentId: "agent-1",
+        items: [
+          {
+            id: "reports/test-report/1",
+            kind: "plugin",
+            pluginId: "reports",
+            itemKind: "test-report",
+            version: 1,
+            data: { passed: 4, failed: 0 },
+            timestamp: "2026-07-18T08:02:00.000Z",
+            timelineCursor: { epoch: "epoch-1", seq: 12 },
+          },
+        ],
+        range: { epoch: "epoch-1", startSeq: 12, endSeq: 12 },
+        hasOlder: true,
+      }),
+    });
+
+    const reader = createCache(storage);
+    const restored = await reader.readTimeline(SERVER_ID, "agent-1");
+
+    expect(restored?.items[0]).toMatchObject({
+      kind: "plugin",
+      pluginId: "reports",
+      itemKind: "test-report",
+      source: null,
+    });
+  });
+
   it("reads one requested agent and the focused timeline without scanning directory rows", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

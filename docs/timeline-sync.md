@@ -147,9 +147,9 @@ version.
 A projected page is canonical state, not a sequence of live deltas. One projected item can overlap
 rows already received live—for example, a tool call retained at its original display position while
 its completion advances `seqEnd`, followed by a merged assistant message. The app uses
-`sourceSeqRanges` to replace overlapping assistant and reasoning projections before applying the
-remaining page through the existing stream reducer. It must not append full projected text to a
-live prefix.
+`sourceSeqRanges` to replace overlapping assistant, reasoning, and plugin projections before
+applying the remaining page through the existing stream reducer. It must not append full projected
+text to a live prefix.
 
 Every path that sends a message to an agent — composer send, dictation accept-and-send, queued
 send-now, and the automatic queue drain in `HostRuntime` — goes through

@@ -1,5 +1,6 @@
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { PluginTimelineItemSource } from "@getpaseo/plugin";
+import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
@@ -418,6 +419,7 @@ function mergeTimelineWindow(args: {
     units: timelineUnits,
     epoch: payload.epoch,
     currentEndSeq: currentCursor.endSeq,
+    transformTimelineItem: args.transformTimelineItem,
   });
   const retainedTail = projected.tail.filter((item) => {
     const cursor = item.timelineCursor;
@@ -700,6 +702,12 @@ function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: Strea
   currentTail = reconciledCurrent;
   if (olderTail.length === 0) return currentTail;
 
+  const mergedPlugins = mergeOverlappingPluginItems(olderTail, currentTail);
+  if (mergedPlugins) {
+    olderTail = mergedPlugins.olderTail;
+    currentTail = mergedPlugins.currentTail;
+  }
+
   const olderLast = olderTail.at(-1);
   const currentFirst = currentTail[0];
 
@@ -782,6 +790,10 @@ function replaceLiveAssistantWithProjectedText(params: {
   return next;
 }
 
+function includesSequence(ranges: readonly TimelineSeqRange[], sequence: number): boolean {
+  return ranges.some((range) => range.startSeq <= sequence && range.endSeq >= sequence);
+}
+
 function reconcileOverlappingProjectedAssistant(params: {
   tail: StreamItem[];
   head: StreamItem[];
@@ -793,9 +805,7 @@ function reconcileOverlappingProjectedAssistant(params: {
   if (
     unit.event.type !== "timeline" ||
     unit.event.item.type !== "assistant_message" ||
-    !unit.sourceSeqRanges.some(
-      (range) => range.startSeq <= params.currentEndSeq && range.endSeq > params.currentEndSeq,
-    )
+    !includesSequence(unit.sourceSeqRanges, params.currentEndSeq)
   ) {
     return { tail: params.tail, head: params.head, reconciled: false };
   }
@@ -869,6 +879,143 @@ function reconcileOverlappingProjectedAssistant(params: {
   };
 }
 
+function sourceRangesOverlap(
+  left: readonly TimelineSeqRange[],
+  right: PluginTimelineItemSource["sourceSeqRanges"],
+): boolean {
+  return left.some((leftRange) =>
+    right.some(
+      (rightRange) =>
+        leftRange.startSeq <= rightRange.endSeq && rightRange.startSeq <= leftRange.endSeq,
+    ),
+  );
+}
+
+function pluginSourcesOverlap(
+  left: PluginTimelineItemSource | null,
+  right: PluginTimelineItemSource | null,
+): boolean {
+  return (
+    left !== null &&
+    right !== null &&
+    left.epoch === right.epoch &&
+    sourceRangesOverlap(left.sourceSeqRanges, right.sourceSeqRanges)
+  );
+}
+
+function replaceIndexedItems(
+  items: StreamItem[],
+  indexes: number[],
+  replacements: StreamItem[],
+): StreamItem[] {
+  const firstIndex = indexes[0];
+  if (firstIndex === undefined) return items;
+  const indexSet = new Set(indexes);
+  const next: StreamItem[] = [];
+  for (const [index, item] of items.entries()) {
+    if (index === firstIndex) {
+      for (const [replacementIndex, replacement] of replacements.entries()) {
+        const existing = items[indexes[replacementIndex] ?? -1];
+        next.push(existing ? { ...replacement, id: existing.id } : replacement);
+      }
+    }
+    if (!indexSet.has(index)) next.push(item);
+  }
+  return next;
+}
+
+function mergeOverlappingPluginItems(
+  olderTail: StreamItem[],
+  currentTail: StreamItem[],
+): { olderTail: StreamItem[]; currentTail: StreamItem[] } | null {
+  const matchedCurrentIndexes = new Set<number>();
+  const matches = new Map<number, number>();
+  for (const [olderIndex, older] of olderTail.entries()) {
+    if (older.kind !== "plugin") continue;
+    const currentIndex = currentTail.findIndex(
+      (current, index) =>
+        !matchedCurrentIndexes.has(index) &&
+        current.kind === "plugin" &&
+        pluginSourcesOverlap(older.source, current.source),
+    );
+    if (currentIndex < 0) continue;
+    matchedCurrentIndexes.add(currentIndex);
+    matches.set(olderIndex, currentIndex);
+  }
+  if (matches.size === 0) return null;
+
+  const mergedOlder: StreamItem[] = [];
+  for (const [index, item] of olderTail.entries()) {
+    const currentIndex = matches.get(index);
+    const current = currentIndex === undefined ? undefined : currentTail[currentIndex];
+    mergedOlder.push(
+      current?.kind === "plugin" && item.kind === "plugin" ? { ...item, id: current.id } : item,
+    );
+  }
+  return {
+    olderTail: mergedOlder,
+    currentTail: currentTail.filter((_, index) => !matchedCurrentIndexes.has(index)),
+  };
+}
+
+function reconcileOverlappingProjectedPlugin(params: {
+  tail: StreamItem[];
+  head: StreamItem[];
+  unit: TimelineUnit;
+  epoch: string;
+  currentEndSeq: number;
+  transformTimelineItem?: TimelineItemTransform;
+}): { tail: StreamItem[]; head: StreamItem[]; reconciled: boolean } {
+  const { unit } = params;
+  if (
+    unit.event.type !== "timeline" ||
+    !unit.source ||
+    !includesSequence(unit.sourceSeqRanges, params.currentEndSeq) ||
+    !params.transformTimelineItem
+  ) {
+    return { tail: params.tail, head: params.head, reconciled: false };
+  }
+
+  const matches = (item: StreamItem) =>
+    item.kind === "plugin" && pluginSourcesOverlap(item.source, unit.source);
+  const matchingIndexes = (items: StreamItem[]) =>
+    items.flatMap((item, index) => (matches(item) ? [index] : []));
+  const headIndexes = matchingIndexes(params.head);
+  const tailIndexes = headIndexes.length === 0 ? matchingIndexes(params.tail) : [];
+  if (headIndexes.length === 0 && tailIndexes.length === 0) {
+    return { tail: params.tail, head: params.head, reconciled: false };
+  }
+
+  const transformed = params.transformTimelineItem(
+    unit.event.item as AgentTimelineItem,
+    unit.source,
+  );
+  if (transformed === undefined) {
+    return { tail: params.tail, head: params.head, reconciled: false };
+  }
+
+  const existingItems = [...params.tail, ...params.head];
+  const projected = reduceStreamUpdate(existingItems, unit.event, unit.timestamp, {
+    source: "canonical",
+    timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
+    timelineSource: unit.source,
+    transformedTimelineItems: transformed,
+  }).slice(existingItems.length);
+
+  if (headIndexes.length > 0) {
+    return {
+      tail: replaceIndexedItems(params.tail, matchingIndexes(params.tail), []),
+      head: replaceIndexedItems(params.head, headIndexes, projected),
+      reconciled: true,
+    };
+  }
+  return {
+    tail: replaceIndexedItems(params.tail, tailIndexes, projected),
+    head: replaceIndexedItems(params.head, matchingIndexes(params.head), []),
+    reconciled: true,
+  };
+}
+
 function reconcileOverlappingProjectedReasoning(params: {
   tail: StreamItem[];
   head: StreamItem[];
@@ -879,9 +1026,7 @@ function reconcileOverlappingProjectedReasoning(params: {
   if (
     unit.event.type !== "timeline" ||
     unit.event.item.type !== "reasoning" ||
-    !unit.sourceSeqRanges.some(
-      (range) => range.startSeq <= params.currentEndSeq && range.endSeq > params.currentEndSeq,
-    )
+    !includesSequence(unit.sourceSeqRanges, params.currentEndSeq)
   ) {
     return { tail: params.tail, head: params.head, reconciled: false };
   }
@@ -917,6 +1062,7 @@ function reconcileOverlappingProjectedStreamItems(params: {
   units: TimelineUnit[];
   epoch: string;
   currentEndSeq: number | undefined;
+  transformTimelineItem?: TimelineItemTransform;
 }): { tail: StreamItem[]; head: StreamItem[]; reconciledUnits: Set<TimelineUnit> } {
   let tail = params.tail;
   let head = params.head;
@@ -924,13 +1070,23 @@ function reconcileOverlappingProjectedStreamItems(params: {
   if (params.currentEndSeq === undefined) return { tail, head, reconciledUnits };
 
   for (const unit of params.units) {
-    let reconciled = reconcileOverlappingProjectedAssistant({
+    let reconciled = reconcileOverlappingProjectedPlugin({
       tail,
       head,
       unit,
       epoch: params.epoch,
       currentEndSeq: params.currentEndSeq,
+      transformTimelineItem: params.transformTimelineItem,
     });
+    if (!reconciled.reconciled) {
+      reconciled = reconcileOverlappingProjectedAssistant({
+        tail,
+        head,
+        unit,
+        epoch: params.epoch,
+        currentEndSeq: params.currentEndSeq,
+      });
+    }
     if (!reconciled.reconciled) {
       reconciled = reconcileOverlappingProjectedReasoning({
         tail,
@@ -1047,6 +1203,7 @@ function applyAcceptedForwardTimelineUnits(params: {
     units: params.units,
     epoch: params.epoch,
     currentEndSeq: params.currentEndSeq,
+    transformTimelineItem: params.transformTimelineItem,
   });
   let tail = reconciled.tail;
   let head = reconciled.head;
