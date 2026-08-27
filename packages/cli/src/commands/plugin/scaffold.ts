@@ -29,6 +29,28 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
     items: PluginAttachmentItem[];
   }
 
+  export interface PluginNotification {
+    title: string;
+    body?: string;
+    workspaceId?: string;
+    agentId?: string;
+    surface?: string;
+  }
+
+  export interface PluginNotificationEvent extends PluginNotification {
+    id: string;
+  }
+
+  export interface PluginNotificationPollResult {
+    notifications: PluginNotificationEvent[];
+  }
+
+  export interface PluginNotificationSourceContribution {
+    id: string;
+    rpc: PluginRpcContract;
+    intervalMs?: number;
+  }
+
   export interface PluginAttachmentSourceContribution {
     id: string;
     title: string;
@@ -54,6 +76,9 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
 
   export const PluginAttachmentItemSchema: import("zod").ZodType<PluginAttachmentItem>;
   export const PluginAttachmentSearchPayloadSchema: import("zod").ZodType<PluginAttachmentSearchPayload>;
+  export const PluginNotificationSchema: import("zod").ZodType<PluginNotification>;
+  export const PluginNotificationEventSchema: import("zod").ZodType<PluginNotificationEvent>;
+  export const PluginNotificationPollResultSchema: import("zod").ZodType<PluginNotificationPollResult>;
 }
 
 declare module "@getpaseo/plugin" {
@@ -63,18 +88,27 @@ declare module "@getpaseo/plugin" {
   import type {
     PluginAttachmentSourceContribution,
     PluginHandlerContext,
+    PluginNotification,
+    PluginNotificationSourceContribution,
     PluginRpcContract,
   } from "@getpaseo/plugin/server";
 
   export {
     PluginAttachmentItemSchema,
     PluginAttachmentSearchPayloadSchema,
+    PluginNotificationEventSchema,
+    PluginNotificationPollResultSchema,
+    PluginNotificationSchema,
     defineAttachmentSource,
     defineRpc,
     type PluginAttachmentItem,
     type PluginAttachmentSearchPayload,
     type PluginAttachmentSourceContribution,
     type PluginHandlerContext,
+    type PluginNotification,
+    type PluginNotificationEvent,
+    type PluginNotificationPollResult,
+    type PluginNotificationSourceContribution,
     type PluginRpcContract,
   } from "@getpaseo/plugin/server";
 
@@ -224,6 +258,7 @@ declare module "@getpaseo/plugin" {
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
     addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
+    addNotificationSource(contribution: PluginNotificationSourceContribution): void;
     addTheme(contribution: PluginThemeContribution): void;
   }
 

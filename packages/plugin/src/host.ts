@@ -4,12 +4,18 @@ import type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
   PluginContext,
+  PluginNotificationSourceContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginSurfaceProps,
   PluginThemeContribution,
   PluginWorkspacePanelContribution,
 } from "./contracts.js";
+import {
+  PluginNotificationPollResultSchema,
+  readPluginNotificationSource,
+  resolvePluginNotificationInterval,
+} from "./notifications.js";
 import { PluginRpcProvider } from "./rpc-context.js";
 import { PaseoApiProvider } from "./paseo-context.js";
 import { callPluginRpc } from "./rpc.js";
@@ -21,6 +27,7 @@ interface PluginCollector {
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
+  addNotificationSource(contribution: PluginNotificationSourceContribution): void;
   addTheme(contribution: PluginThemeContribution): void;
 }
 
@@ -30,6 +37,7 @@ export interface PluginRegistrationCollector {
   workspacePanels: PluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
+  notificationSources: PluginNotificationSourceContribution[];
   themes: PluginThemeContribution[];
 }
 
@@ -42,6 +50,7 @@ export function createPluginContext(
   | "addWorkspacePanel"
   | "addCommandCenterItem"
   | "addAttachmentSource"
+  | "addNotificationSource"
   | "addTheme"
 > {
   return {
@@ -60,6 +69,9 @@ export function createPluginContext(
     addAttachmentSource(contribution) {
       collector.addAttachmentSource(contribution);
     },
+    addNotificationSource(contribution) {
+      collector.addNotificationSource(contribution);
+    },
     addTheme(contribution) {
       collector.addTheme(contribution);
     },
@@ -75,4 +87,11 @@ export async function searchPluginAttachments(
   return PluginAttachmentSearchPayloadSchema.parseAsync(output);
 }
 
-export { callPluginRpc, PaseoApiProvider, PluginRpcProvider };
+export {
+  callPluginRpc,
+  PaseoApiProvider,
+  PluginNotificationPollResultSchema,
+  PluginRpcProvider,
+  readPluginNotificationSource,
+  resolvePluginNotificationInterval,
+};

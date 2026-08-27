@@ -2,6 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
+  PluginNotificationSourceContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginThemeContribution,
@@ -21,6 +22,7 @@ export interface EvaluatedPlugin {
   workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
+  notificationSources: PluginNotificationSourceContribution[];
   themes: PluginThemeContribution[];
 }
 
@@ -33,6 +35,7 @@ export interface InstalledPlugin extends EvaluatedPlugin {
 export type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
+  PluginNotificationSourceContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginThemeContribution,

@@ -22,6 +22,7 @@ export type {
   PluginHostProps,
   PluginOpenPanelOptions,
   PluginPanelLocation,
+  PluginNotificationSourceContribution,
   PluginTheme,
   PluginSidebarContribution,
   PluginSurfaceContribution,
@@ -33,6 +34,14 @@ export type {
   PluginWorkspacePanelProps,
   PluginWorkspaceSnapshot,
 } from "./contracts.js";
+export {
+  PluginNotificationEventSchema,
+  PluginNotificationPollResultSchema,
+  PluginNotificationSchema,
+  type PluginNotification,
+  type PluginNotificationEvent,
+  type PluginNotificationPollResult,
+} from "./notifications.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
 export { useRpc } from "./rpc-context.js";

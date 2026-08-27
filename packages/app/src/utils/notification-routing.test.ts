@@ -14,6 +14,8 @@ describe("resolveNotificationTarget", () => {
       agentId: "agent-456",
       workspaceId: null,
       terminalId: null,
+      pluginId: null,
+      pluginSurfaceId: null,
     });
   });
 
@@ -23,12 +25,16 @@ describe("resolveNotificationTarget", () => {
       agentId: null,
       workspaceId: null,
       terminalId: null,
+      pluginId: null,
+      pluginSurfaceId: null,
     });
     expect(resolveNotificationTarget(undefined)).toEqual({
       serverId: null,
       agentId: null,
       workspaceId: null,
       terminalId: null,
+      pluginId: null,
+      pluginSurfaceId: null,
     });
   });
 
@@ -44,6 +50,8 @@ describe("resolveNotificationTarget", () => {
       agentId: "agent-1",
       workspaceId: null,
       terminalId: null,
+      pluginId: null,
+      pluginSurfaceId: null,
     });
   });
 });
@@ -90,6 +98,28 @@ describe("buildNotificationRoute", () => {
   it("falls back to root when no server id is present", () => {
     expect(buildNotificationRoute({ agentId: "agent-legacy" })).toBe("/");
     expect(buildNotificationRoute(undefined)).toBe("/");
+  });
+
+  it("opens a plugin surface", () => {
+    expect(
+      buildNotificationRoute({
+        serverId: "srv-1",
+        pluginId: "review",
+        pluginSurfaceId: "inbox",
+      }),
+    ).toBe("/h/srv-1/plugin/review/surface/inbox");
+  });
+
+  it("prefers a workspace agent target over a plugin surface", () => {
+    expect(
+      buildNotificationRoute({
+        serverId: "srv-1",
+        workspaceId: "workspace-1",
+        agentId: "agent-1",
+        pluginId: "review",
+        pluginSurfaceId: "inbox",
+      }),
+    ).toBe("/h/srv-1/workspace/workspace-1?open=agent%3Aagent-1");
   });
 
   it("encodes path segments", () => {

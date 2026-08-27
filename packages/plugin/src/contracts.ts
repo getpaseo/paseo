@@ -136,6 +136,14 @@ export interface PluginAttachmentSourceContribution {
   search: PluginRpcContract;
 }
 
+export interface PluginNotificationSourceContribution {
+  id: string;
+  /** RPC returning notification events. Called with an empty input object. */
+  rpc: PluginRpcContract;
+  /** Poll interval. Defaults to 60s; the host floors it at 15s. */
+  intervalMs?: number;
+}
+
 export interface PluginCommandCapabilities {
   paseo: PaseoApi;
   rpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
@@ -200,6 +208,7 @@ export interface PluginContext {
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
+  addNotificationSource(contribution: PluginNotificationSourceContribution): void;
   addTheme(contribution: PluginThemeContribution): void;
 }
 

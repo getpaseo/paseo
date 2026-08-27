@@ -24,6 +24,7 @@ function installed(): InstalledPlugin {
     ],
     commandCenterItems: [],
     attachmentSources: [],
+    notificationSources: [],
     themes: [],
   };
 }

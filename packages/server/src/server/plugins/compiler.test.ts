@@ -95,6 +95,7 @@ const ping = defineRpc({
 
 export default function contribute(plugin: PluginContext) {
   plugin.handle(ping, async () => ({ ok: true }));
+  plugin.addNotificationSource({ id: "status", rpc: ping });
   return () => undefined;
 }
 `,
@@ -105,6 +106,8 @@ export default function contribute(plugin: PluginContext) {
       expect(serverBundle).toContain(`${sdk}/server`);
       expect(clientBundle).not.toContain("Invalid plugin RPC method");
       expect(serverBundle).not.toContain("Invalid plugin RPC method");
+      expect(clientBundle).toContain("addNotificationSource");
+      expect(serverBundle).not.toContain("addNotificationSource");
     },
   );
 });

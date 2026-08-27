@@ -54,6 +54,27 @@ describe("evaluatePluginClientBundle", () => {
     ]);
   });
 
+  it("collects a notification source with a bounded poll interval", () => {
+    const plugin = evaluatePluginClientBundle(
+      "review",
+      bundle(`
+        plugin.addNotificationSource({
+          id: "review-requests",
+          rpc: { name: "reviews.notifications", input: {}, output: {} },
+          intervalMs: 1000,
+        });
+      `),
+    );
+
+    expect(plugin.notificationSources).toEqual([
+      {
+        id: "review-requests",
+        rpc: { name: "reviews.notifications", input: {}, output: {} },
+        intervalMs: 15_000,
+      },
+    ]);
+  });
+
   it("collects contextual workspace panels and Command Center items", () => {
     const plugin = evaluatePluginClientBundle(
       "review",
@@ -187,6 +208,22 @@ describe("evaluatePluginClientBundle", () => {
         `),
       ),
     ).toThrow("Duplicate attachment source: issues");
+  });
+
+  it("rejects duplicate notification source ids", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+          const source = {
+            id: "review-requests",
+            rpc: { name: "reviews.notifications", input: {}, output: {} },
+          };
+          plugin.addNotificationSource(source);
+          plugin.addNotificationSource(source);
+        `),
+      ),
+    ).toThrow("Duplicate notification source: review-requests");
   });
 
   it("collects a contributed theme", () => {

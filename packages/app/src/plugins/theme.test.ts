@@ -55,6 +55,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     workspacePanels: [],
     commandCenterItems: [],
     attachmentSources: [],
+    notificationSources: [],
     themes,
   };
 }

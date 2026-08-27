@@ -5,21 +5,25 @@ import * as ReactNative from "react-native";
 // eslint-disable-next-line no-restricted-imports -- plugin bundles receive TanStack's real runtime, not Paseo's query wrappers.
 import * as ReactQuery from "@tanstack/react-query";
 import * as Zod from "zod";
-import {
-  defineAttachmentSource,
-  defineRpc,
-  type PluginAttachmentSourceContribution,
-  type PluginCommandCenterItemContribution,
-  type PluginSidebarContribution,
-  type PluginSurfaceProps,
-  type PluginThemeContribution,
-  type PluginWorkspacePanelContribution,
-  usePaseo,
-  useAgent,
-  useWorkspace,
-  useRpc,
+import type {
+  PluginAttachmentSourceContribution,
+  PluginCommandCenterItemContribution,
+  PluginNotificationSourceContribution,
+  PluginSidebarContribution,
+  PluginSurfaceProps,
+  PluginThemeContribution,
+  PluginWorkspacePanelContribution,
 } from "@getpaseo/plugin";
-import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo/plugin/host";
+// Namespaces, not named imports: the runtime shim below hands these straight to
+// plugin code, so it cannot drift behind the SDK's exports the way a
+// hand-written list does.
+import * as PluginSdk from "@getpaseo/plugin";
+import * as PluginServerSdk from "@getpaseo/plugin/server";
+import {
+  createPluginContext,
+  resolvePluginNotificationInterval,
+  type PluginRegistrationCollector,
+} from "@getpaseo/plugin/host";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
 import { resolvePluginIcon } from "./icons";
@@ -61,6 +65,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     workspacePanels: [],
     commandCenterItems: [],
     attachmentSources: [],
+    notificationSources: [],
     themes: [],
   };
   const surfaceIds = new Set<string>();
@@ -68,6 +73,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
   const attachmentSourceIds = new Set<string>();
+  const notificationSourceIds = new Set<string>();
   const themeIds = new Set<string>();
   const pluginContext = createPluginContext({
     addSurface(surfaceId: string, Component: ComponentType<PluginSurfaceProps>) {
@@ -176,6 +182,21 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         search: { ...contribution.search, name: method },
       });
     },
+    addNotificationSource(contribution: PluginNotificationSourceContribution) {
+      const normalizedId = requireId(contribution.id, "notification source id");
+      if (notificationSourceIds.has(normalizedId)) {
+        throw new Error(`Duplicate notification source: ${normalizedId}`);
+      }
+      const method = contribution.rpc?.name?.trim();
+      if (!method) throw new Error(`Notification source ${normalizedId} has no RPC`);
+      const intervalMs = resolvePluginNotificationInterval(contribution.intervalMs);
+      notificationSourceIds.add(normalizedId);
+      collector.notificationSources.push({
+        id: normalizedId,
+        rpc: { ...contribution.rpc, name: method },
+        intervalMs,
+      });
+    },
     addTheme(contribution: PluginThemeContribution) {
       const normalizedId = requireId(contribution.id, "theme id");
       if (themeIds.has(normalizedId)) throw new Error(`Duplicate theme: ${normalizedId}`);
@@ -188,19 +209,8 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
-    if (name === "@getpaseo/plugin") {
-      return {
-        defineAttachmentSource,
-        defineRpc,
-        usePaseo,
-        useAgent,
-        useWorkspace,
-        useRpc,
-      };
-    }
-    if (name === "@getpaseo/plugin/server") {
-      return { defineAttachmentSource, defineRpc };
-    }
+    if (name === "@getpaseo/plugin") return PluginSdk;
+    if (name === "@getpaseo/plugin/server") return PluginServerSdk;
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;
     throw new Error(`Module "${name}" is not available in plugin client code`);
@@ -244,6 +254,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
     attachmentSources: collector.attachmentSources,
+    notificationSources: collector.notificationSources,
     themes: collector.themes,
   };
 }

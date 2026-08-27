@@ -50,7 +50,7 @@ describe("plugin scaffold", () => {
     await Promise.all([
       writeFile(
         path.join(directory, "inspect.shared.ts"),
-        `import { defineRpc } from "@getpaseo/plugin/server";
+        `import { defineRpc, PluginNotificationPollResultSchema } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 export const inspect = defineRpc({
@@ -58,19 +58,29 @@ export const inspect = defineRpc({
   input: z.object({}),
   output: z.object({ configured: z.boolean() }),
 });
+
+export const notifications = defineRpc({
+  name: "notifications",
+  input: z.object({}),
+  output: PluginNotificationPollResultSchema,
+});
 `,
       ),
       writeFile(
         path.join(directory, "inspect.server.ts"),
         `import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import type { output as ZodOutput } from "zod";
-import { inspect } from "./inspect.shared";
+import { inspect, notifications } from "./inspect.shared";
 
 export async function inspectConfig(
   _input: ZodOutput<typeof inspect.input>,
   { paseo }: PluginHandlerContext,
 ) {
   return { configured: Boolean((await paseo.config.get()).config) };
+}
+
+export function listNotifications() {
+  return { notifications: [] };
 }
 `,
       ),
@@ -113,12 +123,14 @@ export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
         path.join(directory, "index.ts"),
         `import type { PluginContext } from "@getpaseo/plugin";
 import { AgentPanel, Surface } from "./main.client";
-import { inspectConfig } from "./inspect.server";
-import { inspect } from "./inspect.shared";
+import { inspectConfig, listNotifications } from "./inspect.server";
+import { inspect, notifications } from "./inspect.shared";
 
 export default function contribute(plugin: PluginContext) {
   plugin.handle(inspect, inspectConfig);
+  plugin.handle(notifications, listNotifications);
   plugin.addSurface("main", Surface);
+  plugin.addNotificationSource({ id: "reviews", rpc: notifications });
   plugin.addWorkspacePanel({
     id: "review",
     title: "Review",
