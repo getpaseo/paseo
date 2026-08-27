@@ -4022,11 +4022,6 @@ function WorkspaceScreenContent({
       ) : null}
 
       {shouldRenderDesktopPaneFallback ? (
-        // The splits path renders tab rows inside WorkspacePanelContent, which is what
-        // provides NewTabLauncherProvider. This fallback row sits outside it, and its
-        // new-tab menu content mounts eagerly, so without its own provider every
-        // non-compact native layout (tablets, foldables in landscape) crashed on mount
-        // with "NewTabLauncherProvider is required" (#3750).
         <NewTabLauncherProvider value={newTabLauncher}>
           <WorkspaceDesktopTabsRow
             paneId={focusedPaneIdOrUndefined}

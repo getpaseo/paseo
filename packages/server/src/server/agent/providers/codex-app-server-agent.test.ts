@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { type Dirent, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -19,6 +19,7 @@ import {
   buildCodexAppServerEnv,
   CodexAppServerAgentClient,
   CodexAppServerAgentSession,
+  codexMicrosoftStoreBinaryCandidates,
   codexAppServerTurnInputFromPrompt,
   listCodexSkills,
   mapCodexPatchNotificationToToolCall,
@@ -44,6 +45,40 @@ describe("mapCodexPlanUpdateToTodo", () => {
         { id: "2", text: "Verify", status: "pending", completed: false },
       ],
     });
+  });
+});
+
+describe("Codex executable discovery", () => {
+  test("only considers sorted Codex Store packages", () => {
+    const entries = [
+      { name: "Other.App_1", isDirectory: () => true },
+      { name: "OpenAI.Codex_z", isDirectory: () => true },
+      { name: "OpenAI.Codex_a", isDirectory: () => true },
+      { name: "OpenAI.Codex_file", isDirectory: () => false },
+    ] as unknown as Dirent[];
+
+    expect(codexMicrosoftStoreBinaryCandidates("C:\\Packages", entries)).toEqual([
+      path.join(
+        "C:\\Packages",
+        "OpenAI.Codex_a",
+        "LocalCache",
+        "Local",
+        "OpenAI",
+        "Codex",
+        "bin",
+        "codex.exe",
+      ),
+      path.join(
+        "C:\\Packages",
+        "OpenAI.Codex_z",
+        "LocalCache",
+        "Local",
+        "OpenAI",
+        "Codex",
+        "bin",
+        "codex.exe",
+      ),
+    ]);
   });
 });
 
@@ -1487,6 +1522,31 @@ describe("Codex app-server provider", () => {
 
     expect(threadRequests).toEqual([
       { method: "thread/unarchive", params: { threadId: "native-thread-id" } },
+    ]);
+    appServer.assertNoErrors();
+  });
+
+  test("archives the persisted native thread without opening an interactive session", async () => {
+    const threadRequests: Array<{ method: string; params: unknown }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/archive": (params) => {
+        threadRequests.push({ method: "thread/archive", params });
+        return { thread: { id: "native-thread-id" } };
+      },
+    });
+    const provider = new CodexAppServerAgentClient(createTestLogger());
+    castInternals<{ spawnAppServer: () => Promise<ChildProcessWithoutNullStreams> }>(
+      provider,
+    ).spawnAppServer = async () => appServer.child;
+
+    await provider.archiveNativeSession({
+      provider: "codex",
+      sessionId: "persisted-thread-id",
+      nativeHandle: "native-thread-id",
+    });
+
+    expect(threadRequests).toEqual([
+      { method: "thread/archive", params: { threadId: "native-thread-id" } },
     ]);
     appServer.assertNoErrors();
   });
