@@ -1,12 +1,16 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 import { DaemonConfigStore } from "../daemon-config-store.js";
 import { PluginService } from "./index.js";
+import { ManagedPluginSources } from "./managed-source.js";
+import { runGitCommand } from "../../utils/run-git-command.js";
 
 const roots: string[] = [];
+type TestPluginRuntime = NonNullable<ConstructorParameters<typeof PluginService>[3]["runtime"]>;
 
 async function createPlugin(id: string, source: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-service-"));
@@ -36,10 +40,10 @@ function createStore(
 function createService(
   home: string,
   plugins: Record<string, { source: "directory"; path: string; enabled?: boolean }> = {},
-  runtime?: ConstructorParameters<typeof PluginService>[3],
+  dependencies: ConstructorParameters<typeof PluginService>[3] = {},
 ): PluginService {
   return bindTestSessionHost(
-    new PluginService(pino({ level: "silent" }), createStore(home, plugins), "0.4.0", runtime),
+    new PluginService(pino({ level: "silent" }), createStore(home, plugins), "0.4.0", dependencies),
   );
 }
 
@@ -94,7 +98,7 @@ function createPausedRuntime() {
     markStarted = resolve;
   });
   const running = new Set<string>();
-  const runtime: NonNullable<ConstructorParameters<typeof PluginService>[2]> = {
+  const runtime: TestPluginRuntime = {
     catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
     invoke: async () => undefined,
     getLogs: () => [],
@@ -126,7 +130,7 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
   });
   const starts: string[] = [];
   const running = new Set<string>();
-  const runtime: NonNullable<ConstructorParameters<typeof PluginService>[2]> = {
+  const runtime: TestPluginRuntime = {
     catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
     invoke: async () => undefined,
     getLogs: () => [],
@@ -163,7 +167,7 @@ describe("PluginService", () => {
       },
     ];
     const cleared: string[] = [];
-    const runtime: NonNullable<ConstructorParameters<typeof PluginService>[2]> = {
+    const runtime: TestPluginRuntime = {
       catalog: () => [],
       invoke: async () => undefined,
       getLogs: () => entries,
@@ -180,7 +184,7 @@ describe("PluginService", () => {
     const service = createService(
       home,
       { example: { source: "directory", path: "/plugins/example", enabled: false } },
-      runtime,
+      { runtime },
     );
 
     expect(service.getLogs("example")).toEqual(entries);
@@ -255,6 +259,157 @@ describe("PluginService", () => {
     await service.stopAllPlugins();
   }, 20_000);
 
+  it("prefers an existing directory and installs its selected plugin subdirectory", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const repository = await mkdtemp(path.join(tmpdir(), "owner-repository-"));
+    roots.push(repository);
+    const pluginDirectory = path.join(repository, "plugins", "review");
+    await mkdir(pluginDirectory, { recursive: true });
+    await writeFile(
+      path.join(pluginDirectory, "paseo-plugin.json"),
+      JSON.stringify({ id: "local-monorepo" }),
+    );
+    await writeFile(
+      path.join(pluginDirectory, "index.ts"),
+      "export default function contribute(plugin: unknown) { void plugin; return () => undefined; }",
+    );
+    const service = createService(home);
+    await service.start();
+
+    await expect(
+      service.installSource({ source: repository, pluginPath: "plugins/review" }),
+    ).resolves.toMatchObject({ id: "local-monorepo", path: pluginDirectory, status: "running" });
+    await service.stopAllPlugins();
+  }, 20_000);
+
+  it("keeps the running commit when a Git update fails validation", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const repository = await mkdtemp(path.join(tmpdir(), "paseo-plugin-repository-"));
+    roots.push(repository);
+    await runGitCommand(["init", "-b", "main"], { cwd: repository });
+    await runGitCommand(["config", "user.name", "Paseo Tests"], { cwd: repository });
+    await runGitCommand(["config", "user.email", "paseo@example.test"], { cwd: repository });
+    await writeFile(
+      path.join(repository, "paseo-plugin.json"),
+      JSON.stringify({ id: "git-update" }),
+    );
+    await writeFile(
+      path.join(repository, "index.ts"),
+      "export default function contribute(plugin: unknown) { void plugin; return () => undefined; }",
+    );
+    await runGitCommand(["add", "-A"], { cwd: repository });
+    await runGitCommand(["commit", "-m", "initial"], { cwd: repository });
+
+    const store = createStore(home);
+    const service = bindTestSessionHost(
+      new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+        managedSources: new ManagedPluginSources(home),
+      }),
+    );
+    await service.start();
+    const installed = await service.installSource({ source: pathToFileURL(repository).href });
+    const installedPath = installed.path;
+    const installedCommit = installed.commit;
+
+    await writeFile(
+      path.join(repository, "index.ts"),
+      'export default function contribute(plugin: unknown) { void plugin; throw new Error("broken update"); }',
+    );
+    await runGitCommand(["add", "-A"], { cwd: repository });
+    await runGitCommand(["commit", "-m", "broken update"], { cwd: repository });
+
+    await expect(service.updateSources("git-update")).rejects.toThrow();
+    expect(service.catalog()).toEqual([
+      expect.objectContaining({ id: "git-update", clientBundle: expect.any(String) }),
+    ]);
+    expect(service.listPlugins()).toEqual([
+      expect.objectContaining({
+        id: "git-update",
+        path: installedPath,
+        commit: installedCommit,
+        status: "running",
+      }),
+    ]);
+    await service.stopAllPlugins();
+  }, 30_000);
+
+  it("activates an update when the enabled plugin previously failed to start", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const repository = await mkdtemp(path.join(tmpdir(), "paseo-plugin-repository-"));
+    roots.push(repository);
+    await runGitCommand(["init", "-b", "main"], { cwd: repository });
+    await runGitCommand(["config", "user.name", "Paseo Tests"], { cwd: repository });
+    await runGitCommand(["config", "user.email", "paseo@example.test"], { cwd: repository });
+    await writeFile(
+      path.join(repository, "paseo-plugin.json"),
+      JSON.stringify({ id: "failed-update" }),
+    );
+    await writeFile(path.join(repository, "index.ts"), "export default () => () => {};\n");
+    await runGitCommand(["add", "-A"], { cwd: repository });
+    await runGitCommand(["commit", "-m", "initial"], { cwd: repository });
+
+    const managedSources = new ManagedPluginSources(home);
+    let initial = await managedSources.prepareInstall({
+      source: pathToFileURL(repository).href,
+    });
+    initial = await managedSources.place("failed-update", initial);
+    managedSources.commit("failed-update", initial.record);
+
+    const running = new Set<string>();
+    const starts: string[] = [];
+    let failNextStart = true;
+    const runtime: TestPluginRuntime = {
+      catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
+      invoke: async () => undefined,
+      getLogs: () => [],
+      clearLogs: () => undefined,
+      validatePlugin: async () => undefined,
+      startPlugin: async (pluginId, sourcePath, canPublish) => {
+        starts.push(sourcePath);
+        if (failNextStart) {
+          failNextStart = false;
+          throw new Error("initial start failed");
+        }
+        if (canPublish()) running.add(pluginId);
+      },
+      stopPluginById: async (pluginId) => running.delete(pluginId),
+      stopAll: async () => running.clear(),
+      subscribe: () => () => undefined,
+      bindPaseoSessionHost: () => undefined,
+    };
+    const store = createStore(home, {
+      "failed-update": { source: "directory", path: initial.directory, enabled: true },
+    });
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+      runtime,
+      managedSources,
+    });
+    await service.start();
+    expect(service.listPlugins()).toEqual([
+      expect.objectContaining({ id: "failed-update", status: "failed" }),
+    ]);
+
+    await writeFile(
+      path.join(repository, "index.ts"),
+      "export default () => () => { new Date(); };\n",
+    );
+    await runGitCommand(["add", "-A"], { cwd: repository });
+    await runGitCommand(["commit", "-m", "fixed"], { cwd: repository });
+
+    await expect(service.updateSources("failed-update")).resolves.toEqual([
+      expect.objectContaining({ id: "failed-update", updated: true }),
+    ]);
+    expect(starts).toHaveLength(2);
+    expect(starts[1]).not.toBe(initial.directory);
+    expect(service.listPlugins()).toEqual([
+      expect.objectContaining({ id: "failed-update", path: starts[1], status: "running" }),
+    ]);
+    await service.stopAllPlugins();
+  }, 30_000);
+
   it("disables and removes a plugin without touching its source directory", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);
@@ -327,7 +482,9 @@ export default function contribute(plugin: unknown) {
     });
     store.patch({ pluginsEnabled: false });
     const paused = createPausedRuntime();
-    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", paused.runtime);
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+      runtime: paused.runtime,
+    });
     await service.start();
 
     store.patch({ pluginsEnabled: true });
@@ -349,7 +506,9 @@ export default function contribute(plugin: unknown) {
       slow: { source: "directory", path: "/plugins/slow", enabled: false },
     });
     const paused = createPausedRuntime();
-    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", paused.runtime);
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+      runtime: paused.runtime,
+    });
     await service.start();
 
     const enabling = expect(service.enablePlugin("slow")).rejects.toThrow(
@@ -372,7 +531,9 @@ export default function contribute(plugin: unknown) {
       slow: { source: "directory", path: "/plugins/slow", enabled: false },
     });
     const paused = createPluginSelectivePausedRuntime("occupier");
-    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", paused.runtime);
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+      runtime: paused.runtime,
+    });
     await service.start();
 
     const occupying = service.enablePlugin("occupier");

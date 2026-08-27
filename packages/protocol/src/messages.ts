@@ -1438,6 +1438,27 @@ export const PluginDirectoryInspectRequestSchema = z.object({
   path: z.string().min(1),
 });
 
+export const PluginSourceInstallRequestSchema = z.object({
+  type: z.literal("plugin.source.install.request"),
+  requestId: z.string(),
+  source: z.string().min(1),
+  id: PluginIdSchema.optional(),
+  ref: z.string().min(1).optional(),
+  pluginPath: z.string().min(1).optional(),
+});
+
+export const PluginSourceStatusRequestSchema = z.object({
+  type: z.literal("plugin.source.status.request"),
+  requestId: z.string(),
+  pluginId: PluginIdSchema.optional(),
+});
+
+export const PluginSourceUpdateRequestSchema = z.object({
+  type: z.literal("plugin.source.update.request"),
+  requestId: z.string(),
+  pluginId: PluginIdSchema.optional(),
+});
+
 function pluginIdRequest<const Type extends string>(type: Type) {
   return z.object({ type: z.literal(type), requestId: z.string(), pluginId: PluginIdSchema });
 }
@@ -2996,6 +3017,9 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginLogsGetRequestSchema,
   PluginDirectoryInstallRequestSchema,
   PluginDirectoryInspectRequestSchema,
+  PluginSourceInstallRequestSchema,
+  PluginSourceStatusRequestSchema,
+  PluginSourceUpdateRequestSchema,
   PluginReloadRequestSchema,
   PluginEnableRequestSchema,
   PluginDisableRequestSchema,
@@ -3348,6 +3372,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginManagement: z.boolean().optional(),
         // COMPAT(pluginLogs): added in v0.4.0, remove gate after 2027-08-16.
         pluginLogs: z.boolean().optional(),
+        // COMPAT(pluginGitManagement): added in v0.7.0, remove gate after 2027-08-26.
+        pluginGitManagement: z.boolean().optional(),
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
         // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
         // so a theme plugin cannot start there at all.
@@ -6114,6 +6140,10 @@ export const PluginListItemSchema = z.object({
   path: z.string(),
   enabled: z.boolean(),
   status: PluginStatusSchema,
+  source: z.enum(["directory", "git"]).optional(),
+  remote: z.string().optional(),
+  ref: z.string().optional(),
+  commit: z.string().optional(),
   error: z.string().optional(),
 });
 export type PluginListItem = z.infer<typeof PluginListItemSchema>;
@@ -6148,6 +6178,43 @@ export const PluginDirectoryInstallResponseSchema = z.object({
 export const PluginDirectoryInspectResponseSchema = z.object({
   type: z.literal("plugin.directory.inspect.response"),
   payload: z.object({ requestId: z.string(), id: PluginIdSchema }),
+});
+
+export const PluginSourceInstallResponseSchema = z.object({
+  type: z.literal("plugin.source.install.response"),
+  payload: z.object({ requestId: z.string(), plugin: PluginListItemSchema }),
+});
+
+export const PluginSourceStatusItemSchema = z.object({
+  id: PluginIdSchema,
+  source: z.enum(["directory", "git"]),
+  path: z.string(),
+  remote: z.string().optional(),
+  ref: z.string().optional(),
+  currentCommit: z.string().optional(),
+  latestCommit: z.string().optional(),
+  commitsBehind: z.number().int().nonnegative().optional(),
+  updateAvailable: z.boolean().optional(),
+});
+export type PluginSourceStatusItem = z.infer<typeof PluginSourceStatusItemSchema>;
+
+export const PluginSourceStatusResponseSchema = z.object({
+  type: z.literal("plugin.source.status.response"),
+  payload: z.object({ requestId: z.string(), plugins: z.array(PluginSourceStatusItemSchema) }),
+});
+
+export const PluginSourceUpdateItemSchema = z.object({
+  id: PluginIdSchema,
+  previousCommit: z.string(),
+  currentCommit: z.string(),
+  commits: z.number().int().nonnegative(),
+  updated: z.boolean(),
+});
+export type PluginSourceUpdateItem = z.infer<typeof PluginSourceUpdateItemSchema>;
+
+export const PluginSourceUpdateResponseSchema = z.object({
+  type: z.literal("plugin.source.update.response"),
+  payload: z.object({ requestId: z.string(), plugins: z.array(PluginSourceUpdateItemSchema) }),
 });
 
 function pluginActionResponse<const Type extends string>(type: Type) {
@@ -6214,6 +6281,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginLogsGetResponseSchema,
   PluginDirectoryInstallResponseSchema,
   PluginDirectoryInspectResponseSchema,
+  PluginSourceInstallResponseSchema,
+  PluginSourceStatusResponseSchema,
+  PluginSourceUpdateResponseSchema,
   PluginReloadResponseSchema,
   PluginEnableResponseSchema,
   PluginDisableResponseSchema,

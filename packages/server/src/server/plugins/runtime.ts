@@ -244,6 +244,13 @@ export class PluginRuntime {
     this.appendLog(pluginId, "stdout", "[paseo] Plugin ready");
   }
 
+  async validatePlugin(configuredPath: string): Promise<void> {
+    const directory = path.resolve(configuredPath);
+    await readPluginManifest(directory);
+    const entryPath = await resolveEntryPath(directory);
+    await compilePlugin(entryPath);
+  }
+
   async stopPluginById(pluginId: string): Promise<boolean> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) return false;

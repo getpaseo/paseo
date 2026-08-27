@@ -1,12 +1,16 @@
 import path from "node:path";
+import { stat } from "node:fs/promises";
 import type pino from "pino";
 import {
   PluginIdSchema,
   type PluginLogEntry,
   type PluginListItem,
   type PluginSource,
+  type PluginSourceStatusItem,
+  type PluginSourceUpdateItem,
 } from "@getpaseo/protocol/messages";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
+import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
 import { readPluginManifest } from "./manifest.js";
 import { PluginRuntime } from "./runtime.js";
 
@@ -15,6 +19,7 @@ interface PluginRuntimePort {
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
+  validatePlugin?(path: string): Promise<void>;
   startPlugin(pluginId: string, path: string, canPublish: () => boolean): Promise<void>;
   stopPluginById(pluginId: string): Promise<boolean>;
   stopAll(): Promise<void>;
@@ -22,8 +27,23 @@ interface PluginRuntimePort {
   bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void;
 }
 
+interface PluginServiceDependencies {
+  runtime?: PluginRuntimePort;
+  managedSources?: ManagedPluginSources;
+}
+
+function resolvePluginStatus(input: {
+  enabled: boolean;
+  globallyEnabled: boolean;
+  running: boolean;
+}): PluginListItem["status"] {
+  if (!input.enabled || !input.globallyEnabled) return "disabled";
+  return input.running ? "running" : "failed";
+}
+
 export class PluginService {
   private readonly runtime: PluginRuntimePort;
+  private readonly managedSources: ManagedPluginSources | null;
   private readonly logger: pino.Logger;
   private readonly errors = new Map<string, string>();
   private readonly listeners = new Set<(pluginId: string) => void>();
@@ -35,10 +55,11 @@ export class PluginService {
     logger: pino.Logger,
     private readonly configStore: DaemonConfigStore,
     daemonVersion: string,
-    runtime: PluginRuntimePort = new PluginRuntime(logger, daemonVersion),
+    dependencies: PluginServiceDependencies = {},
   ) {
     this.logger = logger.child({ module: "plugin-service" });
-    this.runtime = runtime;
+    this.runtime = dependencies.runtime ?? new PluginRuntime(logger, daemonVersion);
+    this.managedSources = dependencies.managedSources ?? null;
     this.runtime.subscribe((pluginId, error) => {
       if (error) this.errors.set(pluginId, error);
       this.notify(pluginId);
@@ -77,17 +98,26 @@ export class PluginService {
     return Object.entries(config.plugins ?? {})
       .map(([id, source]) => {
         const enabled = source.enabled !== false;
-        if (!enabled || config.pluginsEnabled !== true) {
-          return { id, path: source.path, enabled, status: "disabled" as const };
-        }
-        const error = this.errors.get(id);
         const item: PluginListItem = {
           id,
           path: source.path,
           enabled,
-          status: running.has(id) ? ("running" as const) : ("failed" as const),
+          status: resolvePluginStatus({
+            enabled,
+            globallyEnabled: config.pluginsEnabled === true,
+            running: running.has(id),
+          }),
         };
-        if (error) item.error = error;
+        const managed = this.managedSources?.get(id);
+        if (managed) {
+          item.source = "git";
+          const remote = this.managedSources?.displayRemote(id);
+          if (remote) item.remote = remote;
+          item.ref = managed.requestedRef ?? managed.trackingBranch ?? managed.commit;
+          item.commit = managed.commit;
+        }
+        const error = this.errors.get(id);
+        if (error && item.status === "failed") item.error = error;
         return item;
       })
       .sort((left, right) => left.id.localeCompare(right.id));
@@ -129,6 +159,79 @@ export class PluginService {
 
   async inspectDirectory(configuredPath: string): Promise<{ id: string }> {
     return readPluginManifest(path.resolve(configuredPath));
+  }
+
+  async installSource(input: {
+    source: string;
+    id?: string;
+    ref?: string;
+    pluginPath?: string;
+  }): Promise<PluginListItem> {
+    const directory = path.resolve(input.source);
+    const info = await stat(directory).catch(() => null);
+    if (info?.isDirectory()) {
+      if (input.ref) throw new Error("Plugin --ref is only valid for Git sources");
+      const pluginDirectory = resolveLocalPluginPath(directory, input.pluginPath);
+      return this.installDirectory({ path: pluginDirectory, id: input.id });
+    }
+    const managedSources = this.requireManagedSources();
+    return this.enqueue(async () => {
+      let candidate = await managedSources.prepareInstall(input);
+      const pluginId = PluginIdSchema.parse(input.id ?? candidate.defaultId);
+      if (this.configStore.get().plugins?.[pluginId]) {
+        await managedSources.discard(candidate);
+        throw new Error(
+          `Plugin ID "${pluginId}" is already configured; choose another ID with --id`,
+        );
+      }
+      candidate = await managedSources.place(pluginId, candidate);
+      try {
+        await this.validateCandidate(candidate);
+      } catch (error) {
+        await managedSources.discard(candidate);
+        throw error;
+      }
+      const sources = {
+        ...this.configStore.get().plugins,
+        [pluginId]: { source: "directory" as const, path: candidate.directory, enabled: true },
+      };
+      managedSources.commit(pluginId, candidate.record);
+      this.configStore.patch({ plugins: sources });
+      if (this.canPublish(pluginId)) await this.startConfigured(pluginId);
+      this.notify(pluginId);
+      const installed = this.requireItem(pluginId);
+      if (installed.status === "failed") {
+        throw new Error(installed.error ?? `Plugin failed to start: ${pluginId}`);
+      }
+      return installed;
+    });
+  }
+
+  async statusSources(pluginId?: string): Promise<PluginSourceStatusItem[]> {
+    return this.enqueue(async () => {
+      const sources = this.configStore.get().plugins ?? {};
+      const selected = pluginId
+        ? [[pluginId, this.requireSource(pluginId)] as const]
+        : Object.entries(sources);
+      const managedSources = this.requireManagedSources();
+      const statuses: PluginSourceStatusItem[] = [];
+      for (const [id, source] of selected) {
+        statuses.push(await managedSources.status(id, source.path));
+      }
+      return statuses.sort((left, right) => left.id.localeCompare(right.id));
+    });
+  }
+
+  async updateSources(pluginId?: string): Promise<PluginSourceUpdateItem[]> {
+    return this.enqueue(async () => {
+      const sources = this.configStore.get().plugins ?? {};
+      const ids = pluginId
+        ? [pluginId]
+        : Object.keys(sources).filter((id) => this.managedSources?.get(id));
+      const updates: PluginSourceUpdateItem[] = [];
+      for (const id of ids.sort()) updates.push(await this.updateSource(id));
+      return updates;
+    });
   }
 
   async reloadPlugin(pluginId: string): Promise<PluginListItem> {
@@ -182,6 +285,7 @@ export class PluginService {
       this.runtime.clearLogs(pluginId);
       this.errors.delete(pluginId);
       this.notify(pluginId);
+      await this.managedSources?.remove(pluginId);
     });
   }
 
@@ -263,6 +367,88 @@ export class PluginService {
     this.errors.set(pluginId, error instanceof Error ? error.message : String(error));
   }
 
+  private async updateSource(pluginId: string): Promise<PluginSourceUpdateItem> {
+    const managedSources = this.requireManagedSources();
+    const source = this.requireSource(pluginId);
+    const previous = managedSources.get(pluginId);
+    if (!previous) throw new Error(`Plugin is not managed by Git: ${pluginId}`);
+    const prepared = await managedSources.prepareUpdate(pluginId, source.path);
+    if (!prepared.candidate) {
+      return {
+        id: pluginId,
+        previousCommit: previous.commit,
+        currentCommit: previous.commit,
+        commits: 0,
+        updated: false,
+      };
+    }
+    const candidate = await managedSources.place(pluginId, prepared.candidate);
+    try {
+      await this.validateCandidate(candidate);
+    } catch (error) {
+      await managedSources.discard(candidate);
+      throw error;
+    }
+
+    const current = this.configStore.get().plugins?.[pluginId];
+    if (!current) {
+      await managedSources.discard(candidate);
+      throw new Error(`Plugin is no longer configured: ${pluginId}`);
+    }
+    const isRunning = this.runtime.catalog().some((plugin) => plugin.id === pluginId);
+    const isEnabled = current.enabled !== false;
+    const isGloballyEnabled = this.configStore.get().pluginsEnabled === true;
+    const shouldActivate = isEnabled && isGloballyEnabled;
+    if (shouldActivate) {
+      if (isRunning) await this.runtime.stopPluginById(pluginId);
+      try {
+        await this.startExplicit(pluginId, candidate.directory);
+      } catch (error) {
+        this.errors.delete(pluginId);
+        const latest = this.configStore.get().plugins?.[pluginId];
+        const isStillConfigured = latest !== undefined;
+        const isStillEnabled = isStillConfigured && latest.enabled !== false;
+        const isStillGloballyEnabled = this.configStore.get().pluginsEnabled === true;
+        const canRestore = isRunning && isStillEnabled && isStillGloballyEnabled;
+        if (canRestore) await this.startExplicit(pluginId, source.path);
+        await managedSources.discard(candidate);
+        this.notify(pluginId);
+        throw error;
+      }
+    }
+
+    const activatedSource = this.configStore.get().plugins?.[pluginId];
+    if (!activatedSource) {
+      await this.runtime.stopPluginById(pluginId);
+      await managedSources.discard(candidate);
+      throw new Error(`Plugin is no longer configured: ${pluginId}`);
+    }
+    this.patchSource(pluginId, { ...activatedSource, path: candidate.directory });
+    managedSources.commit(pluginId, candidate.record);
+    await managedSources.removeVersion(previous);
+    this.errors.delete(pluginId);
+    this.notify(pluginId);
+    return {
+      id: pluginId,
+      previousCommit: previous.commit,
+      currentCommit: candidate.record.commit,
+      commits: prepared.commits,
+      updated: true,
+    };
+  }
+
+  private validateCandidate(candidate: ManagedPluginCandidate): Promise<void> {
+    if (!this.runtime.validatePlugin) {
+      throw new Error("Plugin runtime cannot validate managed Git sources");
+    }
+    return this.runtime.validatePlugin(candidate.directory);
+  }
+
+  private requireManagedSources(): ManagedPluginSources {
+    if (!this.managedSources) throw new Error("Git plugin management is unavailable");
+    return this.managedSources;
+  }
+
   private requireSource(pluginId: string): PluginSource {
     PluginIdSchema.parse(pluginId);
     const source = this.configStore.get().plugins?.[pluginId];
@@ -291,4 +477,15 @@ export class PluginService {
   private notify(pluginId: string): void {
     for (const listener of this.listeners) listener(pluginId);
   }
+}
+
+function resolveLocalPluginPath(directory: string, pluginPath: string | undefined): string {
+  if (!pluginPath) return directory;
+  if (path.isAbsolute(pluginPath)) throw new Error("Plugin --path must be relative to the source");
+  const pluginDirectory = path.resolve(directory, pluginPath);
+  const relative = path.relative(directory, pluginDirectory);
+  const escapesSource =
+    relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
+  if (escapesSource) throw new Error("Plugin --path must stay inside the source directory");
+  return pluginDirectory;
 }

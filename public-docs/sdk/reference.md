@@ -109,6 +109,12 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 `agent.timeline.subscribe(handler)` listens for stream events belonging to the agent and returns a local unsubscribe function.
 
+## `client.projects`
+
+| Method           | Result                   | Behavior                                                                      |
+| ---------------- | ------------------------ | ----------------------------------------------------------------------------- |
+| `list(options?)` | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces. |
+
 ## `client.workspaces`
 
 | Method                   | Result                        | Behavior                                                                          |
