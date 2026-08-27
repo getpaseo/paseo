@@ -138,3 +138,30 @@ describe("plugin contribution targets", () => {
     expect(serverBundle).not.toContain("timeline-card");
   });
 });
+
+describe("plugin client runtime syntax", () => {
+  it("lowers async callbacks before Hermes evaluates the client bundle", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.tsx");
+    await writeFile(
+      entryPath,
+      `import type { PluginContext } from "@getpaseo/plugin";
+
+export default function contribute(plugin: PluginContext) {
+  plugin.addSurface("probe", () => {
+    const refresh = async () => "ready";
+    return refresh;
+  });
+  plugin.handle({ name: "probe" } as never, async () => "ready");
+  return () => undefined;
+}
+`,
+    );
+
+    const { clientBundle, serverBundle } = await compilePlugin(entryPath);
+    expect(clientBundle).not.toContain("async () =>");
+    expect(clientBundle).toContain("__async");
+    expect(serverBundle).toContain("async () =>");
+  });
+});
