@@ -35,7 +35,10 @@ export default defineConfig({
     {
       name: "browser",
       testIgnore: ["**/*.real.spec.ts"],
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        ...(process.env.E2E_BROWSER_CHANNEL ? { channel: process.env.E2E_BROWSER_CHANNEL } : {}),
+      },
     },
     {
       name: "real-provider",

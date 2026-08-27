@@ -278,3 +278,59 @@ test("keeps overview tool calls inline on desktop", async ({ page }) => {
     await agent.cleanup();
   }
 });
+
+test("animates follow-up calls inside an existing overview row", async ({ page }) => {
+  test.setTimeout(120_000);
+  const agent = await createOverviewAgent(page, "Overview follow-up motion");
+
+  try {
+    const gate = await holdStreamAfterFirstCompletedToolCall(page, agent.agentId);
+    await openOverviewAgent(page, agent);
+    await agent.client.sendAgentMessage(agent.agentId, "Exercise grouped tool-call motion.");
+    await gate.waitForFirstCompleted();
+
+    const group = page.getByTestId("tool-call-group").first();
+    await expect(group).toBeVisible();
+    await page.waitForTimeout(220);
+    await group.evaluate((groupNode) => {
+      const streamItem = groupNode.closest<HTMLElement>('[data-testid="stream-item"]');
+      if (!streamItem) {
+        throw new Error("Expected tool group stream item");
+      }
+      const samples: Array<{ label: string; opacity: number; transform: string }> = [];
+      const startedAt = performance.now();
+      const sample = () => {
+        const style = getComputedStyle(streamItem);
+        samples.push({
+          label: groupNode.textContent ?? "",
+          opacity: Number.parseFloat(style.opacity),
+          transform: style.transform,
+        });
+        if (performance.now() - startedAt < 600) {
+          requestAnimationFrame(sample);
+          return;
+        }
+        Reflect.set(globalThis, "__toolGroupMotionSamples", samples);
+      };
+      requestAnimationFrame(sample);
+    });
+
+    gate.release(1);
+    await page.waitForTimeout(700);
+    const samples = await page.evaluate(
+      () =>
+        Reflect.get(globalThis, "__toolGroupMotionSamples") as Array<{
+          label: string;
+          opacity: number;
+          transform: string;
+        }>,
+    );
+
+    expect(new Set(samples.map((sample) => sample.label)).size).toBeGreaterThan(1);
+    const movingSamples = samples.filter((sample) => sample.opacity > 0 && sample.opacity < 0.999);
+    expect(movingSamples.length).toBeGreaterThan(2);
+    expect(new Set(movingSamples.map((sample) => sample.transform)).size).toBeGreaterThan(2);
+  } finally {
+    await agent.cleanup();
+  }
+});

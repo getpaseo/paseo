@@ -63,6 +63,86 @@ test.describe("Agent stream UI", () => {
     }
   });
 
+  test("keeps streamed row motion glued to the bottom anchor", async ({ page }) => {
+    test.setTimeout(120_000);
+    const agent = await startRunningMockAgent(page, {
+      prefix: "stream-scroll-motion-",
+      model: "one-minute-stream",
+      prompt: "Stream enough output to measure smooth bottom following.",
+    });
+    try {
+      await awaitAssistantMessage(page);
+      await waitForScrollableChat(page, { minScrollableDistance: 160, timeout: 30_000 });
+      const samples = await page.getByTestId("agent-chat-scroll").evaluate((root) => {
+        const scroll = root as HTMLElement;
+        return new Promise<
+          Array<{ contentTransform: string; distanceFromBottom: number; height: number }>
+        >((resolve) => {
+          const values: Array<{
+            distanceFromBottom: number;
+            height: number;
+            contentTransform: string;
+          }> = [];
+          const startedAt = performance.now();
+          const sample = () => {
+            const content = scroll.querySelector<HTMLElement>(
+              '[data-testid="agent-chat-timeline"]',
+            );
+            values.push({
+              contentTransform: content ? getComputedStyle(content).transform : "none",
+              distanceFromBottom: Math.max(
+                0,
+                scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop,
+              ),
+              height: scroll.scrollHeight,
+            });
+            if (performance.now() - startedAt >= 2_500) {
+              resolve(values);
+              return;
+            }
+            requestAnimationFrame(sample);
+          };
+          requestAnimationFrame(sample);
+        });
+      });
+
+      let growthFrames = 0;
+      let growthFramesWithoutRise = 0;
+      for (let index = 1; index < samples.length; index += 1) {
+        const previous = samples[index - 1]!;
+        const current = samples[index]!;
+        const heightDelta = current.height - previous.height;
+        if (heightDelta > 1) {
+          growthFrames += 1;
+          const transform = current.contentTransform;
+          const isIdentity = transform === "none" || transform === "matrix(1, 0, 0, 1, 0, 0)";
+          if (isIdentity) {
+            growthFramesWithoutRise += 1;
+          }
+        }
+      }
+
+      expect(growthFrames, "the sampled stream must grow the scrollable content").toBeGreaterThan(
+        2,
+      );
+      expect(
+        growthFramesWithoutRise,
+        "new stream height must rise in the same frame it appears",
+      ).toBe(0);
+      expect(Math.max(...samples.map((sample) => sample.distanceFromBottom))).toBeLessThanOrEqual(
+        32,
+      );
+      const contentTransforms = new Set(samples.map((sample) => sample.contentTransform));
+      expect(
+        contentTransforms.size,
+        `expected timeline rise motion, received ${JSON.stringify([...contentTransforms])}`,
+      ).toBeGreaterThan(3);
+      await expectScrollFollowsNewContent(page);
+    } finally {
+      await agent.cleanup();
+    }
+  });
+
   test("keeps the active Markdown root mounted across streamed text updates", async ({
     page,
   }, testInfo) => {

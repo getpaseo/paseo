@@ -109,6 +109,130 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView, useInstalledTimelineTransform } from "@/plugins/timeline";
 import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
+import { CHAT_ENTRY_DURATION_MS, ChatEntryMotion } from "./chat-entry-motion";
+
+function userMessageEntryKeys(item: Extract<StreamItem, { kind: "user_message" }>): string[] {
+  const keys = [item.id];
+  if (item.clientMessageId !== undefined) {
+    keys.push(item.clientMessageId);
+  }
+  if (item.messageId !== undefined) {
+    keys.push(item.messageId);
+  }
+  return keys;
+}
+
+function collectUserMessageEntryKeys(
+  items: readonly StreamItem[],
+  pendingClientMessageIds: ReadonlySet<string>,
+): Set<string> {
+  const keys = new Set<string>();
+  for (const item of items) {
+    if (item.kind !== "user_message") {
+      continue;
+    }
+    const isPendingSubmission =
+      item.clientMessageId !== undefined && pendingClientMessageIds.has(item.clientMessageId);
+    if (isPendingSubmission) {
+      continue;
+    }
+    for (const key of userMessageEntryKeys(item)) {
+      keys.add(key);
+    }
+  }
+  return keys;
+}
+
+function shouldAnimateStreamItemEntry(
+  layoutItem: StreamLayoutItem,
+  pendingClientMessageIds: ReadonlySet<string>,
+  hydratedUserMessageKeys: ReadonlySet<string> | null,
+): boolean {
+  // Assistant text owns motion per markdown block. Animating the row as well
+  // double-fades the first paragraph and still leaves later blocks popping in.
+  if (layoutItem.item.kind === "assistant_message") {
+    return false;
+  }
+  // Submitted user rows must keep entry motion after a fast ack. Pending-only
+  // animation dies when the provider echoes the message before 160ms.
+  if (layoutItem.item.kind === "user_message") {
+    const item = layoutItem.item;
+    const isPendingSubmission =
+      item.clientMessageId !== undefined && pendingClientMessageIds.has(item.clientMessageId);
+    if (isPendingSubmission) {
+      return true;
+    }
+    if (hydratedUserMessageKeys === null) {
+      return false;
+    }
+    const isHydratedUserMessage = userMessageEntryKeys(item).some((key) =>
+      hydratedUserMessageKeys.has(key),
+    );
+    return !isHydratedUserMessage;
+  }
+  return layoutItem.phase === "streaming";
+}
+
+function useHydratedUserMessageKeys(input: {
+  agentId: string;
+  isAuthoritativeHistoryReady: boolean;
+  tail: readonly StreamItem[];
+  head: readonly StreamItem[];
+  pendingClientMessageIds: ReadonlySet<string>;
+}): ReadonlySet<string> | null {
+  const hydratedKeysRef = useRef<Set<string> | null>(null);
+  const hydratedAgentIdRef = useRef(input.agentId);
+  const pendingTimeoutsRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  if (hydratedAgentIdRef.current !== input.agentId) {
+    hydratedAgentIdRef.current = input.agentId;
+    hydratedKeysRef.current = null;
+    for (const timeoutId of pendingTimeoutsRef.current.values()) {
+      clearTimeout(timeoutId);
+    }
+    pendingTimeoutsRef.current.clear();
+  }
+  if (input.isAuthoritativeHistoryReady && hydratedKeysRef.current === null) {
+    hydratedKeysRef.current = collectUserMessageEntryKeys(
+      [...input.tail, ...input.head],
+      input.pendingClientMessageIds,
+    );
+  }
+
+  useEffect(() => {
+    const pendingTimeouts = pendingTimeoutsRef.current;
+    return () => {
+      for (const timeoutId of pendingTimeouts.values()) {
+        clearTimeout(timeoutId);
+      }
+      pendingTimeouts.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    const known = hydratedKeysRef.current;
+    if (known === null) {
+      return;
+    }
+    const pendingTimeouts = pendingTimeoutsRef.current;
+    for (const item of [...input.tail, ...input.head]) {
+      if (item.kind !== "user_message") {
+        continue;
+      }
+      for (const key of userMessageEntryKeys(item)) {
+        if (known.has(key) || pendingTimeouts.has(key)) {
+          continue;
+        }
+        const timeoutId = setTimeout(() => {
+          known.add(key);
+          pendingTimeouts.delete(key);
+        }, CHAT_ENTRY_DURATION_MS);
+        pendingTimeouts.set(key, timeoutId);
+      }
+    }
+  }, [input.head, input.tail]);
+
+  return hydratedKeysRef.current;
+}
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -148,7 +272,9 @@ function renderPendingPermissionsNode(input: {
   return (
     <View style={stylesheet.permissionsContainer}>
       {input.pendingPermissions.map((permission) => (
-        <PermissionRequestCard key={permission.key} permission={permission} client={input.client} />
+        <ChatEntryMotion key={permission.key} testID="permission-entry-motion">
+          <PermissionRequestCard permission={permission} client={input.client} />
+        </ChatEntryMotion>
       ))}
     </View>
   );
@@ -157,6 +283,8 @@ function renderPendingPermissionsNode(input: {
 function renderStreamItemWithTurnFooter(input: {
   content: ReactNode;
   layoutItem: StreamLayoutItem;
+  animateEntry: boolean;
+  entryRevision?: string;
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
@@ -177,7 +305,12 @@ function renderStreamItemWithTurnFooter(input: {
     />
   ) : null;
   const content = (
-    <StreamItemWrapper itemId={input.layoutItem.item.id} gapBelow={input.layoutItem.gapBelow}>
+    <StreamItemWrapper
+      itemId={input.layoutItem.item.id}
+      gapBelow={input.layoutItem.gapBelow}
+      animateEntry={input.animateEntry}
+      entryRevision={input.entryRevision}
+    >
       {input.content}
     </StreamItemWrapper>
   );
@@ -598,6 +731,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       effectiveTurnPresentation.startedAt,
       historyWindowStart,
     ]);
+    const hydratedUserMessageKeys = useHydratedUserMessageKeys({
+      agentId,
+      isAuthoritativeHistoryReady,
+      tail: projectedToolCalls.tail,
+      head: projectedToolCalls.head,
+      pendingClientMessageIds,
+    });
     const streamLayout = useMemo(
       () =>
         layoutStream({
@@ -926,6 +1066,15 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         return renderStreamItemWithTurnFooter({
           content,
           layoutItem,
+          animateEntry: shouldAnimateStreamItemEntry(
+            layoutItem,
+            pendingClientMessageIds,
+            hydratedUserMessageKeys,
+          ),
+          entryRevision:
+            layoutItem.item.kind === "tool_call"
+              ? projectedToolCalls.groupsByHostId.get(layoutItem.item.id)?.run.latest.id
+              : undefined,
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
           onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
@@ -933,6 +1082,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       },
       [
         handleForkAssistantTurn,
+        hydratedUserMessageKeys,
+        pendingClientMessageIds,
+        projectedToolCalls.groupsByHostId,
         readOnly,
         renderStreamItemContent,
         streamRenderStrategy,
@@ -1762,13 +1914,32 @@ const permissionStyles = StyleSheet.create((theme) => ({
 interface StreamItemWrapperProps {
   itemId: string;
   gapBelow: number;
+  animateEntry: boolean;
+  entryRevision?: string;
   children: ReactNode;
 }
 
-function StreamItemWrapper({ gapBelow, children }: StreamItemWrapperProps) {
+function StreamItemWrapper({
+  itemId,
+  gapBelow,
+  animateEntry,
+  entryRevision,
+  children,
+}: StreamItemWrapperProps) {
   const wrapperStyle = useMemo(
     () => [stylesheet.streamItemWrapper, { marginBottom: gapBelow }],
     [gapBelow],
   );
-  return <View style={wrapperStyle}>{children}</View>;
+  const dataSet = useMemo(() => ({ streamItemId: itemId }), [itemId]);
+  return (
+    <ChatEntryMotion
+      animateOnMount={animateEntry}
+      revision={entryRevision}
+      style={wrapperStyle}
+      testID="stream-item"
+      dataSet={dataSet}
+    >
+      {children}
+    </ChatEntryMotion>
+  );
 }
