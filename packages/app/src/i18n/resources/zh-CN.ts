@@ -336,6 +336,12 @@ export const zhCN: TranslationResources = {
       answerPlaceholder: "输入你的回答...",
       otherPlaceholder: "其他...",
     },
+    backgroundWork: {
+      title: "后台任务",
+      running: "{{count}} 个运行中",
+      scheduled: "{{count}} 个已计划",
+      once: "仅一次",
+    },
     todo: {
       title: "任务",
       empty: "还没有任务。",

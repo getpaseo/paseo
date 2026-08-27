@@ -1289,9 +1289,22 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     rows: subagentRows,
   });
   const hasActiveComposer = !agentState.archivedAt && !isArchivingCurrentAgent;
+  // COMPAT(claudeBackgroundWork): added in v0.5.0, remove gate after 2027-08-22 once daemon floor >= v0.5.0.
+  // Gated once: on an older daemon the field is simply absent, and an empty strip would read as
+  // "nothing pending" rather than "this host cannot tell you".
+  const supportsBackgroundWork = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.claudeBackgroundWork === true,
+  );
+  const liveBackgroundWork = useSessionStore(
+    (state) =>
+      state.sessions[serverId]?.agents.get(agentId)?.backgroundWork ??
+      state.sessions[serverId]?.agentDetails.get(agentId)?.backgroundWork,
+  );
+  const backgroundWork = supportsBackgroundWork ? liveBackgroundWork : undefined;
   const hasVisibleAgentTracks = hasAgentTracks({
     subagentRows,
     tasks,
+    backgroundWork,
     archiveFinishedStatus: archiveFinishedSubagents.status,
   });
   const rawAgentInputDraft = useAgentInputDraft({
@@ -1382,6 +1395,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
           cwd={cwd}
           subagentRows={subagentRows}
           tasks={tasks}
+          backgroundWork={backgroundWork}
           archiveFinishedStatus={archiveFinishedSubagents.status}
           onArchiveFinished={archiveFinishedSubagents.archiveFinished}
         />

@@ -337,6 +337,12 @@ export const ko: TranslationResources = {
       answerPlaceholder: "답변을 입력하세요...",
       otherPlaceholder: "기타...",
     },
+    backgroundWork: {
+      title: "백그라운드 작업",
+      running: "{{count}}개 실행 중",
+      scheduled: "{{count}}개 예약됨",
+      once: "한 번",
+    },
     todo: {
       title: "작업",
       empty: "아직 작업이 없습니다.",

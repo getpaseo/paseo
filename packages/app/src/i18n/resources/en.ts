@@ -334,6 +334,12 @@ export const en = {
       answerPlaceholder: "Type your answer...",
       otherPlaceholder: "Other...",
     },
+    backgroundWork: {
+      title: "Background work",
+      running: "{{count}} running",
+      scheduled: "{{count}} scheduled",
+      once: "once",
+    },
     todo: {
       title: "Tasks",
       empty: "No tasks yet.",

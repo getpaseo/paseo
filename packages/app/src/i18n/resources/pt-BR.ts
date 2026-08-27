@@ -339,6 +339,12 @@ export const ptBR: TranslationResources = {
       answerPlaceholder: "Digite sua resposta...",
       otherPlaceholder: "Outro...",
     },
+    backgroundWork: {
+      title: "Trabalho em segundo plano",
+      running: "{{count}} em execução",
+      scheduled: "{{count}} agendadas",
+      once: "uma vez",
+    },
     todo: {
       title: "Tarefas",
       empty: "Nenhuma tarefa ainda.",

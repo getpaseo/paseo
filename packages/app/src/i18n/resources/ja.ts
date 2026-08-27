@@ -339,6 +339,12 @@ export const ja: TranslationResources = {
       answerPlaceholder: "回答を入力...",
       otherPlaceholder: "その他...",
     },
+    backgroundWork: {
+      title: "バックグラウンド処理",
+      running: "{{count}}件 実行中",
+      scheduled: "{{count}}件 予約済み",
+      once: "1回のみ",
+    },
     todo: {
       title: "タスク",
       empty: "タスクがまだありません。",

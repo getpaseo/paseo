@@ -338,6 +338,12 @@ export const ru: TranslationResources = {
       answerPlaceholder: "Введите ответ...",
       otherPlaceholder: "Другой ответ...",
     },
+    backgroundWork: {
+      title: "Фоновые задачи",
+      running: "{{count}} выполняется",
+      scheduled: "{{count}} запланировано",
+      once: "однократно",
+    },
     todo: {
       title: "Задачи",
       empty: "Задач пока нет.",

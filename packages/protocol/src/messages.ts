@@ -813,6 +813,28 @@ const AgentActiveTurnPayloadSchema = z.object({
   startedAt: z.string().nullable(),
 });
 
+export const AgentBackgroundTaskSchema = z.object({
+  id: z.string(),
+  type: z.string(),
+  status: z.string(),
+  description: z.string(),
+  command: z.string().optional(),
+  agentType: z.string().optional(),
+  name: z.string().optional(),
+});
+
+export const AgentSessionCronSchema = z.object({
+  id: z.string(),
+  schedule: z.string(),
+  recurring: z.boolean(),
+  prompt: z.string(),
+});
+
+export const AgentBackgroundWorkSchema = z.object({
+  tasks: z.array(AgentBackgroundTaskSchema),
+  crons: z.array(AgentSessionCronSchema),
+});
+
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
@@ -834,6 +856,7 @@ export const AgentSnapshotPayloadSchema = z.object({
   persistence: AgentPersistenceHandleSchema.nullable(),
   runtimeInfo: AgentRuntimeInfoSchema.optional(),
   lastUsage: AgentUsageSchema.optional(),
+  backgroundWork: AgentBackgroundWorkSchema.optional(),
   lastError: z.string().optional(),
   title: z.string().nullable(),
   labels: z.record(z.string(), z.string()).default({}),
@@ -3410,6 +3433,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerUsageList: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
+        // COMPAT(claudeBackgroundWork): added in v0.5.0, remove gate after 2027-08-22 once daemon floor >= v0.5.0.
+        claudeBackgroundWork: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
         agentThinkingUpdate: z.boolean().optional(),
         // COMPAT(daemonDiagnostics): added in v0.1.100, remove gate after 2026-12-25 once daemon floor >= v0.1.100.

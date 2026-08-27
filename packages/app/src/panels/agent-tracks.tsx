@@ -2,6 +2,7 @@ import { memo, useCallback, type ReactElement } from "react";
 import { WorkspaceDiffStatPill } from "@/composer/diff-stat-pill";
 import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import { AgentTaskList } from "@/composer/task-list";
+import { BackgroundWorkTrack } from "@/composer/background-work";
 import { ComposerTrackBar } from "@/composer/tracks";
 import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
@@ -14,6 +15,7 @@ import {
   type SubagentRow,
 } from "@/subagents";
 import { SubagentsTrack } from "@/subagents/track";
+import type { AgentBackgroundWork } from "@getpaseo/protocol/agent-types";
 import type { TodoEntry } from "@/types/stream";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
@@ -33,6 +35,7 @@ export const AgentTracks = memo(function AgentTracks({
   cwd,
   subagentRows,
   tasks,
+  backgroundWork,
   archiveFinishedStatus,
   onArchiveFinished,
 }: {
@@ -41,6 +44,7 @@ export const AgentTracks = memo(function AgentTracks({
   cwd: string;
   subagentRows: SubagentRow[];
   tasks: TodoEntry[] | undefined;
+  backgroundWork: AgentBackgroundWork | undefined;
   archiveFinishedStatus: ArchiveFinishedStatus;
   onArchiveFinished: () => void;
 }): ReactElement | null {
@@ -107,13 +111,17 @@ export const AgentTracks = memo(function AgentTracks({
     });
   }, [cwd, isCompact, openInSidePane, serverId, workspaceKey]);
 
-  if (!hasWorkspaceDiffStat && !hasAgentTracks({ subagentRows, tasks, archiveFinishedStatus })) {
+  if (
+    !hasWorkspaceDiffStat &&
+    !hasAgentTracks({ subagentRows, tasks, backgroundWork, archiveFinishedStatus })
+  ) {
     return null;
   }
 
   return (
     <ComposerTrackBar>
       <AgentTaskList tasks={tasks} />
+      <BackgroundWorkTrack backgroundWork={backgroundWork} />
       <SubagentsTrack
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}
@@ -135,11 +143,19 @@ export const AgentTracks = memo(function AgentTracks({
 export function hasAgentTracks({
   subagentRows,
   tasks,
+  backgroundWork,
   archiveFinishedStatus,
 }: {
   subagentRows: readonly SubagentRow[];
   tasks: readonly TodoEntry[] | undefined;
+  backgroundWork: AgentBackgroundWork | undefined;
   archiveFinishedStatus: ArchiveFinishedStatus;
 }): boolean {
-  return subagentRows.length > 0 || Boolean(tasks?.length) || archiveFinishedStatus.kind !== "idle";
+  return (
+    subagentRows.length > 0 ||
+    Boolean(tasks?.length) ||
+    Boolean(backgroundWork?.tasks.length) ||
+    Boolean(backgroundWork?.crons.length) ||
+    archiveFinishedStatus.kind !== "idle"
+  );
 }
