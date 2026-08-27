@@ -28,8 +28,19 @@ import {
 import { getShortcutOs } from "@/utils/shortcut-platform";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
-import { isNative } from "@/constants/platform";
-import { keyboardShortcutsAvailable } from "@/keyboard/availability";
+import { isNative, isWeb } from "@/constants/platform";
+import {
+  keyboardShortcutRoutingAvailable,
+  keyboardShortcutsAvailable,
+} from "@/keyboard/availability";
+import {
+  buildNativeKeyCommands,
+  keyboardShortcutInputFromCombo,
+} from "@/keyboard/native-shortcuts";
+import {
+  addHardwareKeyboardShortcutListener,
+  setHardwareKeyboardShortcuts,
+} from "@/native/ios-hardware-keyboard-shortcuts";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
 import { buildOpenProjectRoute } from "@/utils/host-routes";
@@ -65,6 +76,7 @@ export function useKeyboardShortcuts({
   const { overrides } = useKeyboardShortcutOverrides();
   const bindings = useMemo(() => buildEffectiveBindings(overrides), [overrides]);
   const shortcutsAvailable = keyboardShortcutsAvailable({ isNative, isCompact: isMobile });
+  const routingAvailable = keyboardShortcutRoutingAvailable({ isNative, isCompact: isMobile });
   const isDesktopApp = getIsElectronRuntime();
   const isMac = getShortcutOs() === "mac";
   const chordStateRef = useRef<ChordState>({
@@ -108,8 +120,14 @@ export function useKeyboardShortcuts({
   }, [isDesktopApp, publishBrowserShortcutPolicy]);
 
   useEffect(() => {
+    if (!isNative) return;
+    setHardwareKeyboardShortcuts(enabled ? buildNativeKeyCommands(bindings) : []);
+    return () => setHardwareKeyboardShortcuts([]);
+  }, [bindings, enabled]);
+
+  useEffect(() => {
     if (!enabled) return;
-    if (!shortcutsAvailable) return;
+    if (!routingAvailable) return;
 
     // Only the modifier that actually performs the workspace-index jump on this
     // runtime should reveal the sidebar number badges (Alt on web, Cmd on
@@ -376,10 +394,24 @@ export function useKeyboardShortcuts({
       resetModifiers();
     };
 
-    window.addEventListener("keydown", handleKeyDown, true);
-    window.addEventListener("keyup", handleKeyUp, true);
-    window.addEventListener("blur", handleBlurOrHide);
-    document.addEventListener("visibilitychange", handleBlurOrHide);
+    if (isWeb) {
+      window.addEventListener("keydown", handleKeyDown, true);
+      window.addEventListener("keyup", handleKeyUp, true);
+      window.addEventListener("blur", handleBlurOrHide);
+      document.addEventListener("visibilitychange", handleBlurOrHide);
+    }
+
+    // iOS delivers the press as a `UIKeyCommand` rather than a key event, so the
+    // combo comes back as the string it was registered under. Focus scope is
+    // "other": UIKit already picked this command over whatever holds focus, and
+    // native has no DOM target to narrow it further.
+    const nativeShortcutSubscription = addHardwareKeyboardShortcutListener(({ combo }) => {
+      const input = keyboardShortcutInputFromCombo(combo);
+      if (!input) {
+        return;
+      }
+      resolveAndPerformShortcut({ event: input, focusScope: "other", domEvent: null });
+    });
 
     const browserShortcutSubscription = isElectronRuntime()
       ? getDesktopHost()?.events?.on?.("browser-shortcut-input", (payload) => {
@@ -404,10 +436,13 @@ export function useKeyboardShortcuts({
           timeoutId: null,
         };
       }
-      window.removeEventListener("keydown", handleKeyDown, true);
-      window.removeEventListener("keyup", handleKeyUp, true);
-      window.removeEventListener("blur", handleBlurOrHide);
-      document.removeEventListener("visibilitychange", handleBlurOrHide);
+      if (isWeb) {
+        window.removeEventListener("keydown", handleKeyDown, true);
+        window.removeEventListener("keyup", handleKeyUp, true);
+        window.removeEventListener("blur", handleBlurOrHide);
+        document.removeEventListener("visibilitychange", handleBlurOrHide);
+      }
+      nativeShortcutSubscription.remove();
       if (typeof browserShortcutSubscription === "function") {
         browserShortcutSubscription();
       } else {
@@ -430,7 +465,7 @@ export function useKeyboardShortcuts({
     publishBrowserShortcutPolicy,
     resetModifiers,
     router,
-    shortcutsAvailable,
+    routingAvailable,
     toggleAgentList,
     toggleBothSidebars,
   ]);
