@@ -7,7 +7,6 @@ import type {
   AgentFeature,
   AgentModelDefinition,
   AgentMode,
-  AgentSession,
   AgentSessionConfig,
   ProviderCatalog,
 } from "./agent-sdk-types.js";
@@ -533,7 +532,6 @@ import {
   AGENT_PROVIDER_DEFINITIONS,
   buildProviderRegistry,
   createAllClients,
-  wrapSessionProvider,
 } from "./provider-registry.js";
 import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
 
@@ -1831,59 +1829,5 @@ describe("fetchCatalog", () => {
     expect(injectedClient.fetchCatalog).toHaveBeenCalledTimes(1);
     expect(catalog.models.map((model) => model.id)).toEqual(["catalog-model"]);
     expect(catalog.modes.map((mode) => mode.id)).toEqual(["ask"]);
-  });
-});
-
-describe("wrapSessionProvider", () => {
-  function makeFakeSession(overrides?: Partial<AgentSession>): AgentSession {
-    return {
-      provider: "acp",
-      id: "inner-session-id",
-      capabilities: {},
-      run: vi.fn(),
-      startTurn: vi.fn(),
-      subscribe: vi.fn(() => () => {}),
-      streamHistory: (async function* () {})(),
-      getRuntimeInfo: vi.fn(),
-      getAvailableModes: vi.fn(),
-      getCurrentMode: vi.fn(),
-      setMode: vi.fn(),
-      getPendingPermissions: vi.fn(() => []),
-      respondToPermission: vi.fn(),
-      describePersistence: vi.fn(() => null),
-      interrupt: vi.fn(),
-      close: vi.fn(),
-      ...overrides,
-    } satisfies Partial<AgentSession> as AgentSession;
-  }
-
-  // Any provider built on GenericACPAgentClient (cursor, kimi, kiro,
-  // traecli, or a user-configured `extends: "acp"` entry) reports its own
-  // `provider` as the base id ("acp"), which never matches the requested
-  // label, so createResolvedProviderClient always routes it through this
-  // wrapper. A forward missing here silently drops that capability for
-  // every such provider, with no type error, since AgentSession declares
-  // it optional.
-  test("forwards steerActiveTurn to the inner session when present", async () => {
-    const steerActiveTurn = vi.fn(async () => ({ status: "accepted" as const }));
-    const inner = makeFakeSession({ steerActiveTurn });
-
-    const wrapped = wrapSessionProvider("cursor", inner);
-
-    expect(wrapped.steerActiveTurn).toBeDefined();
-    const result = await wrapped.steerActiveTurn?.({ role: "user", content: [] } as never, {
-      expectedTurnId: "turn-1",
-    });
-    expect(result).toEqual({ status: "accepted" });
-    expect(steerActiveTurn).toHaveBeenCalledWith(
-      { role: "user", content: [] },
-      { expectedTurnId: "turn-1" },
-    );
-  });
-
-  test("leaves steerActiveTurn undefined when the inner session doesn't implement it", () => {
-    const inner = makeFakeSession();
-    const wrapped = wrapSessionProvider("cursor", inner);
-    expect(wrapped.steerActiveTurn).toBeUndefined();
   });
 });
