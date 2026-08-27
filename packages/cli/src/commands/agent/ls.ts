@@ -104,6 +104,18 @@ function toListItem(agent: AgentSnapshotPayload): AgentListItem {
 
 export type AgentLsResult = ListResult<AgentListItem>;
 
+function daemonConnectionFailure(host: string, cause: unknown): CommandError {
+  const reason = cause instanceof Error ? cause.message : String(cause);
+  return {
+    code: "DAEMON_NOT_RUNNING",
+    message: `Cannot reach the daemon at ${host}: ${reason}`,
+    details: [
+      "Start a local daemon with: paseo daemon start",
+      "To use another daemon, pass --host <host:port> or set PASEO_HOST.",
+    ].join("\n"),
+  };
+}
+
 export interface AgentLsOptions extends CommandOptions {
   /** -a: Include archived agents */
   all?: boolean;
@@ -176,14 +188,7 @@ export async function runLsCommand(
   try {
     client = await connectToDaemon({ host: options.host });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    const error: CommandError = {
-      code: "DAEMON_NOT_RUNNING",
-      message: `Cannot connect to daemon at ${host}: ${message}`,
-      details:
-        "Start the daemon with: paseo daemon start\nFor a remote daemon, pass --host <host:port> or set PASEO_HOST.",
-    };
-    throw error;
+    throw daemonConnectionFailure(host, err);
   }
 
   try {

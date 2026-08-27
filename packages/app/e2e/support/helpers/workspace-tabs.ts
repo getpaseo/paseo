@@ -42,8 +42,8 @@ export async function expectFailedSetupTabSeededInMainPane(
   await expect(page.getByTestId(tabId).filter({ visible: true }).first()).toBeVisible({
     timeout: 30_000,
   });
-  const panel = await ensureSidePanel(page);
-  await expect(panel.getByTestId(tabId)).toHaveCount(0);
+  const explorer = await ensureExplorerSidebar(page);
+  await expect(explorer.getByTestId(tabId)).toHaveCount(0);
 }
 
 export async function closeSetupTab(page: Page, workspaceId: string): Promise<void> {
@@ -57,8 +57,8 @@ function visibleTestId(page: Page, testId: string) {
   return page.getByTestId(testId).filter({ visible: true });
 }
 
-function sidePanel(page: Page) {
-  return visibleTestId(page, "workspace-side-panel").first();
+function explorerSidebar(page: Page) {
+  return visibleTestId(page, "workspace-explorer-sidebar").first();
 }
 
 async function selectWorkspaceTab(tab: Locator): Promise<void> {
@@ -70,53 +70,54 @@ async function selectWorkspaceTab(tab: Locator): Promise<void> {
   await expect(tab).toHaveAttribute("aria-selected", "true");
 }
 
-/** Reveal the Side panel. It opens empty; the caller decides what goes in it. */
-export async function ensureSidePanel(page: Page): Promise<Locator> {
+/** Reveal the Explorer sidebar without changing its selected view. */
+export async function ensureExplorerSidebar(page: Page): Promise<Locator> {
   const toggle = page.getByTestId("workspace-explorer-toggle").first();
   await expect(toggle).toBeVisible({ timeout: 30_000 });
-  const panel = sidePanel(page);
-  if ((await panel.count()) === 0) {
+  const explorer = explorerSidebar(page);
+  if ((await explorer.count()) === 0) {
     await toggle.click();
   }
-  await expect(panel).toBeVisible({ timeout: 30_000 });
-  return panel;
+  await expect(explorer).toBeVisible({ timeout: 30_000 });
+  return explorer;
 }
 
-/**
- * Reveals the Side panel and brings one of its views up in it. Goes through the
- * pane's own `+` menu, which is there whether the pane is empty or already loaded.
- */
-async function openSidePanelView(
+/** Reveals the Explorer sidebar and selects one of its fixed navigation views. */
+async function openExplorerView(
   page: Page,
-  view: { tabTestId: string; launchItemId: string; contentTestId: string; timeout?: number },
+  view: { tabTestId: string; contentTestId: string; timeout?: number },
 ): Promise<void> {
-  const panel = await ensureSidePanel(page);
-  const tab = panel.getByTestId(view.tabTestId);
-  if ((await tab.count()) === 0) {
-    await panel.getByTestId("workspace-new-tab-button").click();
-    await page
-      .getByTestId(`workspace-new-tab-menu-${view.launchItemId}`)
-      .filter({ visible: true })
-      .click();
-  }
-  await selectWorkspaceTab(tab);
+  const explorer = await ensureExplorerSidebar(page);
+  const tab = explorer.getByTestId(view.tabTestId);
+  await tab.click();
   await expect(visibleTestId(page, view.contentTestId).first()).toBeVisible({
     timeout: view.timeout ?? 30_000,
   });
 }
 
+export async function openChangesTreePanel(page: Page): Promise<void> {
+  await openExplorerView(page, {
+    tabTestId: "explorer-sidebar-tab-changes_tree",
+    contentTestId: "changes-tree-panel",
+  });
+}
+
 export async function openChangesPanel(page: Page): Promise<void> {
-  await openSidePanelView(page, {
-    tabTestId: "workspace-tab-working_diff",
-    launchItemId: "changes",
-    contentTestId: "working-diff-panel",
+  await openChangesTreePanel(page);
+  const changedFile = page
+    .locator('[data-testid^="diff-tree-file-"][data-testid$="-toggle"]')
+    .filter({ visible: true })
+    .first();
+  await expect(changedFile).toBeVisible({ timeout: 30_000 });
+  await changedFile.click();
+  await expect(visibleTestId(page, "working-diff-panel").first()).toBeVisible({
+    timeout: 30_000,
   });
 }
 
 export async function openFilesPanel(page: Page): Promise<void> {
-  await openSidePanelView(page, {
-    tabTestId: "workspace-tab-files",
-    launchItemId: "files",
+  await openExplorerView(page, {
+    tabTestId: "explorer-sidebar-tab-files",
     contentTestId: "file-explorer-tree-scroll",
   });
 }
@@ -128,12 +129,10 @@ export async function openPullRequestPanel(page: Page): Promise<void> {
     await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
     return;
   }
-  await openSidePanelView(page, {
-    tabTestId: "workspace-tab-pull_request",
-    launchItemId: "pull-request",
-    contentTestId: "pr-pane",
-    timeout: 15_000,
-  });
+  const trigger = visibleTestId(page, "workspace-new-tab-button").first();
+  await trigger.click();
+  await visibleTestId(page, "workspace-new-tab-menu-pull-request").first().click();
+  await expect(visibleTestId(page, "pr-pane").first()).toBeVisible({ timeout: 15_000 });
 }
 
 export async function waitForWorkspaceTabsVisible(page: Page): Promise<void> {

@@ -15,7 +15,9 @@ export interface ResolveWorktreeCreationIntentInput {
     projectPath?: string;
   };
   /**
-   * COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28.
+   * COMPAT(githubPrNumber): legacy GitHub checkout input retained when
+   * checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once the
+   * supported client floor is >= v0.2.0.
    */
   githubPrNumber?: number;
 }

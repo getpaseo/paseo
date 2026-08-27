@@ -31,7 +31,14 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
 
   enqueueClient(client: TestOpenCodeClient): void {
     client.observeEvents((event) => {
-      for (const listener of this.eventListeners) listener(event as OpenCodeEventSourceInput);
+      const input =
+        typeof event === "object" &&
+        event !== null &&
+        "type" in event &&
+        event.type === "server-exited"
+          ? (event as OpenCodeEventSourceInput)
+          : ({ directory: "/workspace/repo", payload: event } as OpenCodeEventSourceInput);
+      for (const listener of this.eventListeners) listener(input);
     });
     this.clients.push(client);
   }

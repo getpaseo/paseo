@@ -79,6 +79,7 @@ export async function inspectConfig(
         `import React from "react";
 import { Text } from "react-native";
 import {
+  Icon,
   type PluginAgentPanelProps,
   useAgent,
   usePaseo,
@@ -91,7 +92,7 @@ export function Surface() {
     source: { kind: "directory", path: "/repo" },
   });
   void createWorkspace;
-  return <Text>Paseo API</Text>;
+  return <><Icon name="Settings" size={18} color="#123456" /><Text>Paseo API</Text></>;
 }
 
 export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {

@@ -38,6 +38,7 @@ import {
   Smartphone,
   Sparkles,
   Blocks,
+  PanelsTopLeft,
 } from "lucide-react-native";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
@@ -49,6 +50,7 @@ import { ScreenTitle } from "@/components/headers/screen-title";
 import { HeaderIconBadge } from "@/components/headers/header-icon-badge";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { AppearanceSection } from "@/screens/settings/appearance/appearance-section";
+import { LayoutSection } from "@/screens/settings/layout/layout-section";
 import {
   useAppSettings,
   useSettings,
@@ -77,7 +79,6 @@ import { KeyboardShortcutsSection } from "@/screens/settings/keyboard-shortcuts-
 import { EditorSection } from "@/screens/settings/editor-section";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
-import { supportsDesktopPaneSplits } from "@/constants/layout";
 import { CommunityLinks } from "@/components/community-links";
 import { SegmentedControl } from "@/components/ui/segmented-control";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
@@ -145,6 +146,12 @@ interface SidebarSectionItem {
 const SIDEBAR_SECTION_ITEMS: SidebarSectionItem[] = [
   { id: "general", labelKey: "settings.sections.general", icon: Settings },
   { id: "appearance", labelKey: "settings.sections.appearance", icon: Palette },
+  {
+    id: "layout",
+    labelKey: "settings.sections.layout",
+    icon: PanelsTopLeft,
+    desktopOnly: true,
+  },
   { id: "editor", labelKey: "settings.sections.editor", icon: Code2, webOnly: true },
   { id: "shortcuts", labelKey: "settings.sections.shortcuts", icon: Keyboard, desktopOnly: true },
   {
@@ -274,7 +281,6 @@ interface GeneralSectionProps {
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
-  handleSidePanelRoutingChange: (enabled: boolean) => void;
 }
 
 interface ServiceUrlBehaviorMenuItemProps {
@@ -349,7 +355,6 @@ function GeneralSection({
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
   handleTerminalScrollbackLinesChange,
-  handleSidePanelRoutingChange,
 }: GeneralSectionProps) {
   const { t, i18n } = useTranslation();
   const activeLocale = getActiveLocale(i18n.language);
@@ -497,23 +502,6 @@ function GeneralSection({
             accessibilityLabel={t("settings.general.terminalScrollback.accessibilityLabel")}
           />
         </View>
-        {supportsDesktopPaneSplits() ? (
-          <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-            <View style={settingsStyles.rowContent}>
-              <Text style={settingsStyles.rowTitle}>
-                {t("settings.general.sidePanelRouting.label")}
-              </Text>
-              <Text style={settingsStyles.rowHint}>
-                {t("settings.general.sidePanelRouting.description")}
-              </Text>
-            </View>
-            <Switch
-              value={settings.openSupportingTabsInSidePanel}
-              onValueChange={handleSidePanelRoutingChange}
-              accessibilityLabel={t("settings.general.sidePanelRouting.label")}
-            />
-          </View>
-        ) : null}
       </View>
     </SettingsSection>
   );
@@ -1266,13 +1254,6 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [updateSettings],
   );
 
-  const handleSidePanelRoutingChange = useCallback(
-    (openSupportingTabsInSidePanel: boolean) => {
-      void updateSettings({ openSupportingTabsInSidePanel });
-    },
-    [updateSettings],
-  );
-
   const handleUseLegacyTerminalRendererChange = useCallback(
     (useLegacyTerminalRenderer: boolean) => {
       void updateSettings({ useLegacyTerminalRenderer });
@@ -1456,72 +1437,76 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     return null;
   })();
 
-  const content = (() => {
-    if (view.kind === "host") {
-      return renderHostSettingsContent(view, handleHostRemoved);
-    }
-    if (view.kind === "project") {
-      return (
-        <ProjectSettingsScreen
-          serverId={view.serverId}
-          projectId={view.projectId}
-          onBackToProjects={handleBackFromDetail}
-          showBackToProjects={!isCompactLayout}
-        />
-      );
-    }
-    if (view.kind === "section") {
-      switch (view.section) {
-        case "general":
-          return (
-            <>
-              <GeneralSection
-                settings={settings}
-                isDesktopApp={isDesktopApp}
-                handleSendBehaviorChange={handleSendBehaviorChange}
-                handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
-                handleLanguageChange={handleLanguageChange}
-                handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
-                handleSidePanelRoutingChange={handleSidePanelRoutingChange}
-              />
-              {isDesktopApp ? <BrowserDataSection /> : null}
-            </>
-          );
-        case "appearance":
-          return <AppearanceSection />;
-        case "editor":
-          return isWeb ? <EditorSection /> : null;
-        case "shortcuts":
-          return isDesktopApp ? <KeyboardShortcutsSection /> : null;
-        case "integrations":
-          return isDesktopApp ? <IntegrationsSection /> : null;
-        case "notifications":
-          return isDesktopApp ? <DesktopNotificationsSection /> : null;
-        case "permissions":
-          return isDesktopApp ? <DesktopPermissionsSection /> : null;
-        case "diagnostics":
-          return (
-            <DiagnosticsSection
-              useLegacyTerminalRenderer={settings.useLegacyTerminalRenderer}
-              onUseLegacyTerminalRendererChange={handleUseLegacyTerminalRendererChange}
-              voiceAudioEngine={voiceAudioEngine}
-              isPlaybackTestRunning={isPlaybackTestRunning}
-              playbackTestResult={playbackTestResult}
-              handlePlaybackTest={handlePlaybackTest}
-            />
-          );
-        case "about":
-          return (
-            <AboutSection
-              appVersion={appVersion}
-              appVersionText={appVersionText}
-              isDesktopApp={isDesktopApp}
-            />
-          );
+  let content: ReactNode;
+  if (view.kind === "section" && view.section === "layout") {
+    content = isDesktopApp ? <LayoutSection /> : null;
+  } else {
+    content = (() => {
+      if (view.kind === "host") {
+        return renderHostSettingsContent(view, handleHostRemoved);
       }
-    }
-    return null;
-  })();
+      if (view.kind === "project") {
+        return (
+          <ProjectSettingsScreen
+            serverId={view.serverId}
+            projectId={view.projectId}
+            onBackToProjects={handleBackFromDetail}
+            showBackToProjects={!isCompactLayout}
+          />
+        );
+      }
+      if (view.kind === "section") {
+        switch (view.section) {
+          case "general":
+            return (
+              <>
+                <GeneralSection
+                  settings={settings}
+                  isDesktopApp={isDesktopApp}
+                  handleSendBehaviorChange={handleSendBehaviorChange}
+                  handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
+                  handleLanguageChange={handleLanguageChange}
+                  handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
+                />
+                {isDesktopApp ? <BrowserDataSection /> : null}
+              </>
+            );
+          case "appearance":
+            return <AppearanceSection />;
+          case "editor":
+            return isWeb ? <EditorSection /> : null;
+          case "shortcuts":
+            return isDesktopApp ? <KeyboardShortcutsSection /> : null;
+          case "integrations":
+            return isDesktopApp ? <IntegrationsSection /> : null;
+          case "notifications":
+            return isDesktopApp ? <DesktopNotificationsSection /> : null;
+          case "permissions":
+            return isDesktopApp ? <DesktopPermissionsSection /> : null;
+          case "diagnostics":
+            return (
+              <DiagnosticsSection
+                useLegacyTerminalRenderer={settings.useLegacyTerminalRenderer}
+                onUseLegacyTerminalRendererChange={handleUseLegacyTerminalRendererChange}
+                voiceAudioEngine={voiceAudioEngine}
+                isPlaybackTestRunning={isPlaybackTestRunning}
+                playbackTestResult={playbackTestResult}
+                handlePlaybackTest={handlePlaybackTest}
+              />
+            );
+          case "about":
+            return (
+              <AboutSection
+                appVersion={appVersion}
+                appVersionText={appVersionText}
+                isDesktopApp={isDesktopApp}
+              />
+            );
+        }
+      }
+      return null;
+    })();
+  }
 
   if (settingsLoading) {
     return (

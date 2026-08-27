@@ -1,24 +1,18 @@
 import React, { type ReactNode } from "react";
 import { Pressable, Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
-import {
-  ChevronDown,
-  ChevronRight,
-  CircleCheck,
-  CircleDot,
-  CircleSlash,
-  CircleX,
-} from "lucide-react-native";
+import type { CountedCheckPresentation } from "@/git/check-presentation";
 import { CONTROL_HEIGHTS } from "@/components/ui/control-geometry";
+import {
+  CheckPresentationIcon,
+  getCheckPresentationTone,
+  type CheckPresentationTone,
+} from "@/git/check-presentation.view";
+import { ChevronDown, ChevronRight } from "lucide-react-native";
 import type { Theme } from "@/styles/theme";
-import type { CheckStatus } from "./check-status";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedChevronRight = withUnistyles(ChevronRight);
-const ThemedCircleCheck = withUnistyles(CircleCheck);
-const ThemedCircleDot = withUnistyles(CircleDot);
-const ThemedCircleSlash = withUnistyles(CircleSlash);
-const ThemedCircleX = withUnistyles(CircleX);
 
 export const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
@@ -27,22 +21,30 @@ export const successColorMapping = (theme: Theme) => ({ color: theme.colors.stat
 export const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 export const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
 
-export const SUMMARY_SUCCESS_ICON = <ThemedCircleCheck size={12} uniProps={successColorMapping} />;
-export const SUMMARY_DANGER_ICON = <ThemedCircleX size={12} uniProps={dangerColorMapping} />;
-export const SUMMARY_WARNING_ICON = <ThemedCircleDot size={12} uniProps={warningColorMapping} />;
-
 interface SectionProps {
   title: string;
   open: boolean;
   onToggle: () => void;
   summary: ReactNode;
   children: ReactNode;
+  accessibilityLabel?: string;
 }
 
-export function Section({ title, open, onToggle, summary, children }: SectionProps) {
+export function Section({
+  title,
+  open,
+  onToggle,
+  summary,
+  children,
+  accessibilityLabel,
+}: SectionProps) {
   return (
     <View>
-      <Pressable style={sectionKitStyles.sectionHeader} onPress={onToggle}>
+      <Pressable
+        accessibilityLabel={accessibilityLabel}
+        style={sectionKitStyles.sectionHeader}
+        onPress={onToggle}
+      >
         {open ? (
           <ThemedChevronDown size={14} uniProps={foregroundMutedColorMapping} />
         ) : (
@@ -56,7 +58,7 @@ export function Section({ title, open, onToggle, summary, children }: SectionPro
   );
 }
 
-export type SummaryPillVariant = "success" | "danger" | "warning" | "muted";
+export type SummaryPillVariant = CheckPresentationTone;
 
 export function SummaryPill({
   count,
@@ -85,11 +87,22 @@ function summaryPillTextStyle(variant: SummaryPillVariant) {
   return sectionKitStyles.summaryPillMutedText;
 }
 
-export function CheckStatusIcon({ status }: { status: CheckStatus }) {
-  if (status === "success") return <ThemedCircleCheck size={14} uniProps={successColorMapping} />;
-  if (status === "failure") return <ThemedCircleX size={14} uniProps={dangerColorMapping} />;
-  if (status === "pending") return <ThemedCircleDot size={14} uniProps={warningColorMapping} />;
-  return <ThemedCircleSlash size={14} uniProps={foregroundMutedColorMapping} />;
+export function CheckPresentationSummaryPill({
+  count,
+  presentation,
+  testID,
+}: {
+  count: number;
+  presentation: CountedCheckPresentation;
+  testID?: string;
+}) {
+  if (count === 0) return null;
+  return (
+    <View style={sectionKitStyles.summaryPill} testID={testID}>
+      <CheckPresentationIcon presentation={presentation} size={12} />
+      <Text style={summaryPillTextStyle(getCheckPresentationTone(presentation))}>{count}</Text>
+    </View>
+  );
 }
 
 export const sectionKitStyles = StyleSheet.create((theme) => ({
