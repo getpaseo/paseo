@@ -150,6 +150,15 @@ export async function pinWorkspaceFromSidebar(page: Page, workspaceId: string): 
   await pinItem.click();
 }
 
+export async function copyBranchNameFromSidebar(page: Page, workspaceId: string): Promise<void> {
+  const serverId = await openWorkspaceSidebarKebab(page, workspaceId);
+  const copyItem = page.getByTestId(
+    `sidebar-workspace-menu-copy-branch-name-${serverId}:${workspaceId}`,
+  );
+  await expect(copyItem).toBeVisible({ timeout: 10_000 });
+  await copyItem.click();
+}
+
 export async function archiveWorkspaceFromSidebar(page: Page, workspaceId: string): Promise<void> {
   // A clean workspace archives with no prompt. Managed worktree backing may raise
   // a browser confirm for unsynced work, so accept it when present.
