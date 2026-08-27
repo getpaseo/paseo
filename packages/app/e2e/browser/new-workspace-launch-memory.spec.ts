@@ -64,6 +64,7 @@ test.describe("New workspace: launch target memory", () => {
     await test.step("launching a terminal profile preselects it the next time New workspace opens", async () => {
       await openNewWorkspace();
       await selectLaunchOption(page, PROMPT_PROFILE.id);
+      await expectTerminalLaunchSelected(page, PROMPT_PROFILE.name);
       await fillTerminalPrompt(page, "remember me");
       await submitTerminalLaunch(page);
       await expectWorkspaceOpensWithTerminalTab(page);
@@ -88,6 +89,7 @@ test.describe("New workspace: launch target memory", () => {
 
     await test.step("re-selecting the terminal profile, then removing it daemon-side, falls back to Chat rather than a dead entry", async () => {
       await selectLaunchOption(page, PROMPT_PROFILE.id);
+      await expectTerminalLaunchSelected(page, PROMPT_PROFILE.name);
       await fillTerminalPrompt(page, "second run");
       await submitTerminalLaunch(page);
       await expectWorkspaceOpensWithTerminalTab(page);

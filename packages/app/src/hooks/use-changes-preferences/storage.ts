@@ -13,6 +13,7 @@ const changesPreferencesSchema = z.strictObject({
   viewMode: z.enum(["flat", "tree"]).optional(),
   wrapLines: z.boolean().optional(),
   hideWhitespace: z.boolean().optional(),
+  inlineDiff: z.boolean().optional(),
   commitsCollapsed: z.boolean().optional(),
 });
 
@@ -21,6 +22,7 @@ export interface ChangesPreferences {
   desktopTreeVisible: boolean;
   wrapLines: boolean;
   hideWhitespace: boolean;
+  inlineDiff: boolean;
   commitsCollapsed: boolean;
 }
 
@@ -29,6 +31,7 @@ export const DEFAULT_CHANGES_PREFERENCES: ChangesPreferences = {
   desktopTreeVisible: false,
   wrapLines: false,
   hideWhitespace: false,
+  inlineDiff: false,
   commitsCollapsed: true,
 };
 

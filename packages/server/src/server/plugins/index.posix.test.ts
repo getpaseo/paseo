@@ -36,10 +36,10 @@ function createStore(
 function createService(
   home: string,
   plugins: Record<string, { source: "directory"; path: string; enabled?: boolean }> = {},
-  runtime?: ConstructorParameters<typeof PluginService>[2],
+  runtime?: ConstructorParameters<typeof PluginService>[3],
 ): PluginService {
   return bindTestSessionHost(
-    new PluginService(pino({ level: "silent" }), createStore(home, plugins), runtime),
+    new PluginService(pino({ level: "silent" }), createStore(home, plugins), "0.4.0", runtime),
   );
 }
 
@@ -225,7 +225,9 @@ describe("PluginService", () => {
       `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
     );
     const store = createStore(home);
-    const service = bindTestSessionHost(new PluginService(pino({ level: "silent" }), store));
+    const service = bindTestSessionHost(
+      new PluginService(pino({ level: "silent" }), store, "0.4.0"),
+    );
     await service.start();
 
     await expect(
@@ -266,7 +268,9 @@ export default function contribute(plugin: unknown) {
 }`,
     );
     const store = createStore(home);
-    const service = bindTestSessionHost(new PluginService(pino({ level: "silent" }), store));
+    const service = bindTestSessionHost(
+      new PluginService(pino({ level: "silent" }), store, "0.4.0"),
+    );
     await service.start();
     await service.installDirectory({ path: directory });
 
@@ -293,7 +297,9 @@ export default function contribute(plugin: unknown) {
       `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
     );
     const store = createStore(home);
-    const service = bindTestSessionHost(new PluginService(pino({ level: "silent" }), store));
+    const service = bindTestSessionHost(
+      new PluginService(pino({ level: "silent" }), store, "0.4.0"),
+    );
     await service.start();
     await service.installDirectory({ path: first });
     await service.installDirectory({ path: second });
@@ -321,7 +327,7 @@ export default function contribute(plugin: unknown) {
     });
     store.patch({ pluginsEnabled: false });
     const paused = createPausedRuntime();
-    const service = new PluginService(pino({ level: "silent" }), store, paused.runtime);
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", paused.runtime);
     await service.start();
 
     store.patch({ pluginsEnabled: true });
@@ -343,7 +349,7 @@ export default function contribute(plugin: unknown) {
       slow: { source: "directory", path: "/plugins/slow", enabled: false },
     });
     const paused = createPausedRuntime();
-    const service = new PluginService(pino({ level: "silent" }), store, paused.runtime);
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", paused.runtime);
     await service.start();
 
     const enabling = expect(service.enablePlugin("slow")).rejects.toThrow(
@@ -366,7 +372,7 @@ export default function contribute(plugin: unknown) {
       slow: { source: "directory", path: "/plugins/slow", enabled: false },
     });
     const paused = createPluginSelectivePausedRuntime("occupier");
-    const service = new PluginService(pino({ level: "silent" }), store, paused.runtime);
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", paused.runtime);
     await service.start();
 
     const occupying = service.enablePlugin("occupier");

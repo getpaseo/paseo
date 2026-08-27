@@ -42,7 +42,7 @@ const SandboxFilesystemSchema = z
   })
   .strict();
 
-// Claude Agent SDK Options, maintained against @anthropic-ai/claude-agent-sdk 0.3.220.
+// Claude Agent SDK Options, maintained against @anthropic-ai/claude-agent-sdk 0.3.246.
 export const ClaudeProviderOptionsSchema = z
   .object({
     allowedTools: z.array(z.string()).optional(),

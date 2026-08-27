@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.6.1 - 2026-08-25
+
+### Improved
+
+- Command Center now matches partial multi-word queries in any order and ranks visible results by relevance ([#2971](https://github.com/getpaseo/paseo/pull/2971) by [@cleiter](https://github.com/cleiter))
+
+### Fixed
+
+- Fixed upgrades placing persisted Side panel tabs inside Explorer instead of an ordinary side pane ([#3861](https://github.com/getpaseo/paseo/pull/3861))
+- Fixed Escape leaving Settings open on desktop and web ([#2828](https://github.com/getpaseo/paseo/pull/2828) by [@mcowger](https://github.com/mcowger))
+- Fixed branch switches hiding the current pull request or arming auto-archive from an already-merged pull request ([#3799](https://github.com/getpaseo/paseo/pull/3799))
+
+## 0.6.0 - 2026-08-25
+
+### Changed
+
+- Restored the dedicated Explorer sidebar with Files and Changes by default, replacing the empty user-directed Side panel introduced in 0.5.0 ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+- Changed content opened to the side to use an ordinary closable workspace pane instead of the Explorer sidebar ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+- Restored the resizable combined Explorer dock on tablets ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+
+### Added
+
+- Added per-action settings for opening files, changes, subagents, and pull requests in the main panel or on the side ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+- Added New tab and drag support for compatible files, diffs, agents, terminals, pull requests, and plugin panels in Explorer ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+- Added standalone Diff tabs while keeping an optional persisted inline-diff mode in Changes ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+- Added custom Windows and Linux window controls ([#3826](https://github.com/getpaseo/paseo/pull/3826))
+
+### Fixed
+
+- Fixed OpenCode turns failing when the first event-stream connection stalls during startup ([#3814](https://github.com/getpaseo/paseo/pull/3814))
+- Fixed OpenCode prompts starting before the provider reports a ready connection ([#3821](https://github.com/getpaseo/paseo/pull/3821))
+
 ## 0.5.2 - 2026-08-24
 
 ### Fixed

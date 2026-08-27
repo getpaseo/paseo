@@ -138,9 +138,6 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     autoUpdater.on("update-downloaded", (info) => {
       input.onUpdateDownloaded(info as RuntimeUpdateInfo);
     });
-    autoUpdater.on("update-not-available", () => {
-      input.onUpdateNotAvailable();
-    });
     autoUpdater.on("error", (error) => {
       if (isUpdateChannelNotPublished(error)) return;
       input.onError(error);

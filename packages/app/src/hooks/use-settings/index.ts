@@ -36,6 +36,8 @@ import {
   sanitizeFontFamily,
   saveAppSettings as saveAppSettingsPure,
   type AppSettings,
+  type OpenInSidePanePreferences,
+  type PullRequestOpenLocation,
   type DesktopSettingsBridge,
   type KeyValueStorage,
   type ReleaseChannel,
@@ -71,6 +73,8 @@ export {
 export type {
   AppSettings,
   AppLanguage,
+  OpenInSidePanePreferences,
+  PullRequestOpenLocation,
   DesktopSettingsBridge,
   KeyValueStorage,
   ReleaseChannel,
