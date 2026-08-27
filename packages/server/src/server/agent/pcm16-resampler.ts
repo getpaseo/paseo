@@ -1,3 +1,21 @@
+// A chunk's output sample count tracks inputSampleCount * (outputRate / inputRate).
+// Client-supplied input rates can claim absurd ratios (e.g. rate=1), so predicted
+// output beyond this multiple of the input is rejected before any allocation.
+const MAX_UPSAMPLE_FACTOR = 4;
+const MAX_UPSAMPLE_SLACK_SAMPLES = 1024;
+
+export class Pcm16ResamplerOutputLimitError extends Error {
+  constructor(
+    public readonly predictedSamples: number,
+    public readonly maxSamples: number,
+  ) {
+    super(
+      `Resampled chunk of ~${predictedSamples} samples exceeds the ${maxSamples}-sample output limit`,
+    );
+    this.name = "Pcm16ResamplerOutputLimitError";
+  }
+}
+
 export class Pcm16MonoResampler {
   private readonly inputRate: number;
   private readonly outputRate: number;
@@ -35,6 +53,14 @@ export class Pcm16MonoResampler {
       return Buffer.alloc(0);
     }
 
+    const maxPos = srcLen - 1;
+    const remaining = maxPos - this.pos;
+    const predictedSamples = remaining > 0 ? Math.ceil(remaining / this.step) : 0;
+    const maxSamples = srcChunk.length * MAX_UPSAMPLE_FACTOR + MAX_UPSAMPLE_SLACK_SAMPLES;
+    if (predictedSamples > maxSamples) {
+      throw new Pcm16ResamplerOutputLimitError(predictedSamples, maxSamples);
+    }
+
     const src = new Float32Array(srcLen);
     let offset = 0;
     if (hasCarry) {
@@ -46,8 +72,6 @@ export class Pcm16MonoResampler {
     }
 
     const out: number[] = [];
-    const maxPos = src.length - 1;
-
     while (this.pos < maxPos) {
       const i = Math.floor(this.pos);
       const frac = this.pos - i;
