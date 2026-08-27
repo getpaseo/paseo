@@ -44,6 +44,10 @@ import { setupDarwinCompositorWatchdog } from "./window/compositor-watchdog/inde
 import { resolveDesktopWindowChromeMode, windowChromeModeArgument } from "./window/chrome.js";
 import { registerDialogHandlers } from "./features/dialogs.js";
 import {
+  captureElementScreenshot,
+  normalizeBrowserCaptureRect,
+} from "./features/browser-webviews/capture-element.js";
+import {
   registerNotificationHandlers,
   ensureNotificationCenterRegistration,
 } from "./features/notifications.js";
@@ -370,39 +374,6 @@ ipcMain.handle("paseo:agent-navigation:ready", (event) => {
   return agentNavigationInbox.windowReady(event.sender.id);
 });
 
-function normalizeBrowserCaptureRect(
-  rect: unknown,
-): { x: number; y: number; width: number; height: number } | null {
-  if (!rect || typeof rect !== "object") {
-    return null;
-  }
-  const candidate = rect as Record<string, unknown>;
-  const x = candidate.x;
-  const y = candidate.y;
-  const width = candidate.width;
-  const height = candidate.height;
-  if (
-    typeof x !== "number" ||
-    typeof y !== "number" ||
-    typeof width !== "number" ||
-    typeof height !== "number" ||
-    !Number.isFinite(x) ||
-    !Number.isFinite(y) ||
-    !Number.isFinite(width) ||
-    !Number.isFinite(height) ||
-    width <= 0 ||
-    height <= 0
-  ) {
-    return null;
-  }
-  return {
-    x: Math.max(0, Math.round(x)),
-    y: Math.max(0, Math.round(y)),
-    width: Math.round(width),
-    height: Math.round(height),
-  };
-}
-
 ipcMain.handle("paseo:browser:register-attached", (event, rawInput: unknown) => {
   const input = readAttachedBrowserInput(rawInput);
   if (!input) {
@@ -545,7 +516,7 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
 
 ipcMain.handle(
   "paseo:browser:capture-element",
-  async (event, browserId: unknown, rect: unknown) => {
+  async (event, browserId: unknown, rect: unknown, selector: unknown) => {
     if (typeof browserId !== "string" || browserId.trim().length === 0) {
       return null;
     }
@@ -557,14 +528,16 @@ ipcMain.handle(
     if (!captureRect) {
       return null;
     }
+    const elementSelector = typeof selector === "string" && selector.trim() ? selector : null;
     try {
-      // capturePage expects an integer rect in CSS pixels relative to the
-      // guest viewport, which matches getBoundingClientRect() on the page.
-      const image = await contents.capturePage(captureRect);
-      if (image.isEmpty()) {
-        return null;
-      }
-      return image.toDataURL();
+      // capturePage(rect) crops in a different coordinate space than
+      // getBoundingClientRect() whenever the display scale factor or page zoom
+      // is not 1; captureElementScreenshot calibrates against the guest
+      // viewport instead of trusting the rect directly.
+      return await captureElementScreenshot(contents, {
+        rect: captureRect,
+        selector: elementSelector,
+      });
     } catch (error) {
       log.warn("[browser-capture] capture-element.failed", {
         browserId,
