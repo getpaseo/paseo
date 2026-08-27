@@ -34,9 +34,13 @@ export function mountBrowserScreencastForwarder(
   void (async () => {
     const off = await subscribe("browser-screencast-frame", (payload) => {
       const frame = HostScreencastFramePayloadSchema.safeParse(payload);
-      if (frame.success) {
-        client.sendBrowserScreencastFrame(frame.data);
+      if (!frame.success) {
+        // A dropped frame is invisible downstream: the viewer just shows a mirror
+        // that never updates, with no error anywhere. Say so instead.
+        console.warn("[BrowserScreencast] dropped malformed host frame", frame.error.issues);
+        return;
       }
+      client.sendBrowserScreencastFrame(frame.data);
     });
     if (disposed) {
       off();
