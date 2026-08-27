@@ -2619,85 +2619,90 @@ const x = 1;
     expect(lookupTarget?.headSha).toMatch(/^[0-9a-f]{40}$/);
   });
 
-  it("does not retarget a PR worktree lookup from current branch tracking", async () => {
+  it.each([
+    { state: "open", isMerged: false },
+    { state: "closed", isMerged: false },
+    { state: "merged", isMerged: true },
+  ])(
+    "shows a $state PR for the branch currently checked out after workspace creation",
+    async ({ state, isMerged }) => {
+      execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/repo.git"], {
+        cwd: repoDir,
+      });
+      execFileSync("git", ["branch", "contributor/old-change"], { cwd: repoDir });
+      execFileSync("git", ["branch", "new-change"], { cwd: repoDir });
+      execFileSync("git", ["config", "branch.new-change.remote", "origin"], { cwd: repoDir });
+      execFileSync("git", ["config", "branch.new-change.merge", "refs/heads/new-change"], {
+        cwd: repoDir,
+      });
+      const workspaceDir = join(paseoHome, "worktrees", "repo", "pr-worktree");
+      mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
+      execFileSync("git", ["worktree", "add", workspaceDir, "contributor/old-change"], {
+        cwd: repoDir,
+      });
+      writePaseoWorktreeMetadata(workspaceDir, {
+        baseRefName: "main",
+        changeRequestLookupTarget: {
+          headRef: "old-change",
+          headRepositoryOwner: "contributor",
+          changeRequestNumber: 41,
+          localBranchName: "contributor/old-change",
+        },
+      });
+
+      execFileSync("git", ["checkout", "new-change"], { cwd: workspaceDir });
+      const requestedTargets: RequestedPullRequestTarget[] = [];
+      const facts = await getCheckoutSnapshotFacts(workspaceDir, { paseoHome });
+      const result = await getPullRequestStatus(
+        workspaceDir,
+        createGitHubServiceRecordingPullRequestTargets({
+          requestedTargets,
+          statusOverrides: { state, isMerged },
+        }),
+        { force: true, reason: "current-checkout-pr" },
+        { paseoHome, facts },
+      );
+
+      expect(requestedTargets).toEqual([expect.objectContaining({ headRef: "new-change" })]);
+      expect(result.status).toMatchObject({
+        headRefName: "new-change",
+        state,
+        isMerged,
+      });
+    },
+  );
+
+  it("shows the PR after an agent renames the branch directly with git", async () => {
     execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/repo.git"], {
       cwd: repoDir,
     });
-    execFileSync("git", ["branch", "contributor/old-change"], { cwd: repoDir });
-    execFileSync("git", ["branch", "new-change"], { cwd: repoDir });
-    execFileSync("git", ["config", "branch.new-change.remote", "origin"], { cwd: repoDir });
-    execFileSync("git", ["config", "branch.new-change.merge", "refs/heads/new-change"], {
-      cwd: repoDir,
-    });
-    const workspaceDir = join(paseoHome, "worktrees", "repo", "pr-worktree");
+    execFileSync("git", ["branch", "placeholder"], { cwd: repoDir });
+    const workspaceDir = join(paseoHome, "worktrees", "repo", "renamed-by-agent");
     mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
-    execFileSync("git", ["worktree", "add", workspaceDir, "contributor/old-change"], {
-      cwd: repoDir,
-    });
-    const staleLookupTarget = {
-      headRef: "old-change",
-      headRepositoryOwner: "contributor",
-      changeRequestNumber: 41,
-    };
+    execFileSync("git", ["worktree", "add", workspaceDir, "placeholder"], { cwd: repoDir });
     writePaseoWorktreeMetadata(workspaceDir, {
       baseRefName: "main",
       changeRequestLookupTarget: {
-        ...staleLookupTarget,
-        localBranchName: "contributor/old-change",
+        headRef: "placeholder",
+        localBranchName: "placeholder",
       },
     });
 
-    expect(await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome)).toMatchObject({
-      headRef: "old-change",
-      headRepositoryOwner: "contributor",
-    });
-
-    execFileSync("git", ["checkout", "new-change"], { cwd: workspaceDir });
-    startGitCommandMetrics();
-    const switchedTarget = await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome);
-    const commands = stopGitCommandMetrics().commands.map((command) => command.args[0]);
-
-    expect(switchedTarget).toBeNull();
-    expect(commands).not.toContain("fetch");
-
-    writePaseoWorktreeMetadata(workspaceDir, {
-      baseRefName: "main",
-      changeRequestLookupTarget: {
-        ...staleLookupTarget,
-        localBranchName: "new-change",
-      },
-    });
-    expect(await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome)).toMatchObject({
-      headRef: "old-change",
-      headRepositoryOwner: "contributor",
-    });
-
-    execFileSync(
-      "git",
-      ["remote", "add", "enterprise-fork", "git@github.acme.internal:contributor/repo.git"],
-      {
-        cwd: repoDir,
-      },
+    execFileSync("git", ["branch", "-m", "agent-chosen-name"], { cwd: workspaceDir });
+    const requestedTargets: RequestedPullRequestTarget[] = [];
+    const facts = await getCheckoutSnapshotFacts(workspaceDir, { paseoHome });
+    const result = await getPullRequestStatus(
+      workspaceDir,
+      createGitHubServiceRecordingPullRequestTargets({ requestedTargets }),
+      { force: true, reason: "agent-renamed-branch-pr" },
+      { paseoHome, facts },
     );
-    execFileSync("git", ["config", "branch.new-change.remote", "enterprise-fork"], {
-      cwd: repoDir,
-    });
-    execFileSync("git", ["config", "branch.new-change.merge", "refs/heads/old-change"], {
-      cwd: repoDir,
-    });
-    expect(await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome)).toMatchObject({
-      headRef: "old-change",
-      headRepositoryOwner: "contributor",
-    });
 
-    execFileSync("git", ["branch", "local-upstream"], { cwd: repoDir });
-    execFileSync("git", ["config", "branch.new-change.remote", "."], { cwd: repoDir });
-    execFileSync("git", ["config", "branch.new-change.merge", "refs/heads/local-upstream"], {
-      cwd: repoDir,
-    });
-    expect(await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome)).toMatchObject({
-      headRef: "old-change",
-      headRepositoryOwner: "contributor",
+    expect(requestedTargets).toEqual([expect.objectContaining({ headRef: "agent-chosen-name" })]);
+    expect(result.status).toMatchObject({
+      headRefName: "agent-chosen-name",
+      state: "open",
+      isMerged: false,
     });
   });
 
@@ -2731,7 +2736,7 @@ const x = 1;
     });
   });
 
-  it("fails closed when a managed worktree has no metadata", async () => {
+  it("uses the checked-out branch when a managed worktree has no metadata", async () => {
     execFileSync("git", ["branch", "feature/unpinned"], { cwd: repoDir });
     const workspaceDir = join(paseoHome, "worktrees", "repo", "unpinned-worktree");
     mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
@@ -2739,10 +2744,12 @@ const x = 1;
       cwd: repoDir,
     });
 
-    expect(await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome)).toBeNull();
+    expect(await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome)).toMatchObject({
+      headRef: "feature/unpinned",
+    });
   });
 
-  it("does not apply ambiguous legacy PR metadata to a suffixed branch", async () => {
+  it("uses the checked-out branch instead of ambiguous legacy PR metadata", async () => {
     execFileSync("git", ["branch", "contributor/old-change-1"], { cwd: repoDir });
     const workspaceDir = join(paseoHome, "worktrees", "repo", "legacy-pr-worktree");
     mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
@@ -2760,7 +2767,7 @@ const x = 1;
 
     const lookupTarget = await readPullRequestLookupTargetFromFacts(workspaceDir, paseoHome);
 
-    expect(lookupTarget).toBeNull();
+    expect(lookupTarget).toMatchObject({ headRef: "contributor/old-change-1" });
   });
 
   it("does not apply a legacy fork hint to an ownerless branch with the same head", async () => {
@@ -2803,7 +2810,14 @@ const x = 1;
       { paseoHome, facts: ownerlessFacts },
     );
 
-    expect(requestedTargets).toHaveLength(1);
+    expect(requestedTargets).toEqual([
+      expect.objectContaining({
+        headRef: "old-change",
+        headRepositoryOwner: "contributor",
+      }),
+      expect.objectContaining({ headRef: "old-change" }),
+    ]);
+    expect(requestedTargets[1]).not.toHaveProperty("headRepositoryOwner");
   });
 
   it("recognizes a normalized GitHub owner branch from legacy Enterprise metadata", async () => {
@@ -2874,7 +2888,7 @@ const x = 1;
     });
   });
 
-  it("keeps a ref-only change request bound across rename but not branch switch", async () => {
+  it("keeps a ref-only change request across rename and follows a later branch switch", async () => {
     execFileSync("git", ["branch", "feature/gitlab-mr"], { cwd: repoDir });
     const workspaceDir = join(paseoHome, "worktrees", "repo", "gitlab-mr-worktree");
     mkdirSync(join(paseoHome, "worktrees", "repo"), { recursive: true });
@@ -2918,7 +2932,10 @@ const x = 1;
       { paseoHome, facts: switchedFacts },
     );
 
-    expect(requestedTargets).toHaveLength(1);
+    expect(requestedTargets).toEqual([
+      expect.objectContaining({ headRef: "feature/gitlab-mr" }),
+      expect.objectContaining({ headRef: "other-branch" }),
+    ]);
   });
 
   it("moves a managed branch identity pin when its branch is renamed", async () => {

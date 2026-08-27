@@ -42,7 +42,7 @@ export async function seedMockAgentWorkspace(
       workspaceId: workspace.workspaceId,
       title: options.title,
       modeId: options.modeId ?? "load-test",
-      model: options.model ?? "ten-second-stream",
+      model: options.model ?? "e2e-fast-stream",
       initialPrompt: options.initialPrompt,
       featureValues: options.featureValues,
     });

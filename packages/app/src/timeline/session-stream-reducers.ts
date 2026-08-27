@@ -13,6 +13,8 @@ import {
   upsertUserMessageAcrossStream,
 } from "@/types/stream";
 
+// Ceiling for a pending commit. A frame callback normally gets there first; this
+// is the fallback for when nothing is painting.
 const AGENT_STREAM_REDUCER_FLUSH_DELAY_MS = 16 * 3;
 
 // ---------------------------------------------------------------------------
@@ -1831,20 +1833,62 @@ export interface CreateSessionAgentStreamReducerQueueInput {
     state: (prev: Map<string, TimelineCursor>) => Map<string, TimelineCursor>,
   ) => void;
   recoverTimelineGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
+  onCommitted?: (agentId: string) => void;
 }
 
+interface ScheduledReducerFlush {
+  frameId: number | null;
+  timerId: ReturnType<typeof setTimeout>;
+}
+
+const scheduledReducerFlushes = new Map<number, ScheduledReducerFlush>();
+let nextScheduledReducerFlushId = 1;
+
+function clearScheduledReducerFlush(handle: ScheduledReducerFlush): void {
+  if (handle.frameId !== null) {
+    cancelAnimationFrame(handle.frameId);
+  }
+  clearTimeout(handle.timerId);
+}
+
+// Commit deltas on a frame boundary so text lands in step with paint instead of on
+// an arbitrary timer that drifts on and off the display beat. A frame callback
+// never fires in a hidden tab, so a timer races it and wins when nothing is
+// painting — the store has to keep advancing either way.
 function scheduleAgentStreamReducerFlush(callback: () => void): number {
-  return setTimeout(callback, AGENT_STREAM_REDUCER_FLUSH_DELAY_MS) as unknown as number;
+  const id = nextScheduledReducerFlushId;
+  nextScheduledReducerFlushId += 1;
+
+  const run = () => {
+    const handle = scheduledReducerFlushes.get(id);
+    if (!handle) {
+      return;
+    }
+    scheduledReducerFlushes.delete(id);
+    clearScheduledReducerFlush(handle);
+    callback();
+  };
+
+  const timerId = setTimeout(run, AGENT_STREAM_REDUCER_FLUSH_DELAY_MS);
+  const frameId = typeof requestAnimationFrame === "function" ? requestAnimationFrame(run) : null;
+  scheduledReducerFlushes.set(id, { frameId, timerId });
+  return id;
 }
 
 function cancelAgentStreamReducerFlush(id: number) {
-  clearTimeout(id);
+  const handle = scheduledReducerFlushes.get(id);
+  if (!handle) {
+    return;
+  }
+  scheduledReducerFlushes.delete(id);
+  clearScheduledReducerFlush(handle);
 }
 
 export function createSessionAgentStreamReducerQueue(
   input: CreateSessionAgentStreamReducerQueueInput,
 ): AgentStreamReducerQueue {
-  const { serverId, setAgentStreamState, setAgentTimelineCursor, recoverTimelineGap } = input;
+  const { serverId, setAgentStreamState, setAgentTimelineCursor, recoverTimelineGap, onCommitted } =
+    input;
 
   return createAgentStreamReducerQueue({
     getSnapshot: (agentId) => {
@@ -1903,6 +1947,7 @@ export function createSessionAgentStreamReducerQueue(
           return next;
         });
       }
+      onCommitted?.(agentId);
     },
     handleSideEffects: (agentId, sideEffects) => {
       for (const effect of sideEffects) {

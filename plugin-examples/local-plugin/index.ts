@@ -10,6 +10,7 @@ export default function contribute(plugin: PluginContext) {
     title: "Plugin counter",
     icon: "Blocks",
     context: "workspace",
+    locations: ["workspace", "explorer"],
     Component: ExamplePanel,
   });
   plugin.addCommandCenterItem({

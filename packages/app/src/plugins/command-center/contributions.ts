@@ -1,16 +1,22 @@
 import { callPluginRpc } from "@getpaseo/plugin/host";
-import type { PluginCommandCapabilities } from "@getpaseo/plugin";
+import type { PluginCommandCapabilities, PluginPanelLocation } from "@getpaseo/plugin";
 import type { PluginClientStateSource } from "@getpaseo/plugin/host";
 import type { CommandCenterContribution } from "@/command-center/contributions";
 import { getCommandCenterIcon } from "@/command-center/icon";
 import { resolvePluginIcon } from "../icons";
+import { resolvePluginPanelOpenLocation } from "../workspace-panels/locations";
 import type { PluginSurfaceRuntime } from "../surface-runtime";
 import type { InstalledPlugin } from "../types";
 
 export interface PluginCommandCenterNavigation {
   openSurface(pluginId: string, surfaceId: string): void;
-  openWorkspacePanel(pluginId: string, panelId: string): void;
-  openAgentPanel(pluginId: string, panelId: string, agentId: string): void;
+  openWorkspacePanel(pluginId: string, panelId: string, location: PluginPanelLocation): void;
+  openAgentPanel(
+    pluginId: string,
+    panelId: string,
+    agentId: string,
+    location: PluginPanelLocation,
+  ): void;
 }
 
 export interface PluginCommandCenterSource {
@@ -65,12 +71,13 @@ export function buildPluginCommandCenterContributions(
               context: "workspace",
               ...common,
               workspace,
-              openPanel(panelId) {
+              openPanel(panelId, options) {
                 const panel = plugin.workspacePanels.find(
                   (candidate) => candidate.id === panelId && candidate.context === "workspace",
                 );
                 if (!panel) throw new Error(`Workspace panel is unavailable: ${panelId}`);
-                source.navigation.openWorkspacePanel(plugin.id, panelId);
+                const location = resolvePluginPanelOpenLocation(panel, options?.location);
+                source.navigation.openWorkspacePanel(plugin.id, panelId, location);
               },
             });
             return;
@@ -82,14 +89,15 @@ export function buildPluginCommandCenterContributions(
             ...common,
             workspace,
             agent,
-            openPanel(panelId) {
+            openPanel(panelId, options) {
               const panel = plugin.workspacePanels.find((candidate) => candidate.id === panelId);
               if (!panel) throw new Error(`Workspace panel is unavailable: ${panelId}`);
+              const location = resolvePluginPanelOpenLocation(panel, options?.location);
               if (panel.context === "workspace") {
-                source.navigation.openWorkspacePanel(plugin.id, panelId);
+                source.navigation.openWorkspacePanel(plugin.id, panelId, location);
                 return;
               }
-              source.navigation.openAgentPanel(plugin.id, panelId, agent.id);
+              source.navigation.openAgentPanel(plugin.id, panelId, agent.id, location);
             },
           });
         } catch (error) {

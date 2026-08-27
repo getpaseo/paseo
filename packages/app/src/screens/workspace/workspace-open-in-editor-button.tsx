@@ -27,7 +27,8 @@ import { planWorkspaceOpenTargets } from "@/workspace/open-target-planner";
 import type { Theme } from "@/styles/theme";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { getForgePresentation } from "@/git/forge";
-import { buttonControlHeight } from "@/components/ui/control-geometry";
+import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
+import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 
 interface WorkspaceOpenInEditorButtonProps {
   serverId: string;
@@ -185,11 +186,11 @@ export function WorkspaceOpenInEditorButton({
 
   const primaryPressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.splitButtonPrimary,
+      hideLabels ? styles.splitButtonPrimaryIconOnly : styles.splitButtonPrimary,
       (Boolean(hovered) || pressed) && styles.splitButtonPrimaryHovered,
       openMutation.isPending && styles.splitButtonPrimaryDisabled,
     ],
-    [openMutation.isPending],
+    [hideLabels, openMutation.isPending],
   );
 
   const caretTriggerStyle = useCallback(
@@ -253,7 +254,7 @@ export function WorkspaceOpenInEditorButton({
               accessibilityRole="button"
               accessibilityLabel={t("workspace.git.openInEditor.chooseEditor")}
             >
-              <ThemedChevronDown size={16} uniProps={mutedColorMapping} />
+              <ThemedChevronDown size={16} uniProps={extraMutedIconColorMapping} />
             </DropdownMenuTrigger>
             <DropdownMenuContent
               align="end"
@@ -285,23 +286,31 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 0,
   },
   splitButton: {
-    height: buttonControlHeight.xs,
+    height: {
+      xs: buttonControlHeight.xs,
+      md: HEADER_CONTROL_HEIGHT,
+    },
     flexDirection: "row",
     alignItems: "stretch",
-    borderRadius: theme.borderRadius.lg,
+    borderRadius: theme.borderRadius.md,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,
     overflow: "hidden",
   },
   splitButtonPrimary: {
-    paddingLeft: theme.spacing[3],
-    paddingRight: theme.spacing[3],
+    paddingHorizontal: {
+      xs: theme.spacing[3],
+      md: theme.spacing[2],
+    },
     justifyContent: "center",
     position: "relative",
   },
   splitButtonPrimaryIconOnly: {
-    paddingLeft: theme.spacing[2],
-    paddingRight: theme.spacing[2],
+    width: {
+      xs: buttonControlHeight.xs,
+      md: HEADER_CONTROL_HEIGHT,
+    },
+    paddingHorizontal: 0,
     justifyContent: "center",
     position: "relative",
   },
@@ -328,7 +337,10 @@ const styles = StyleSheet.create((theme) => ({
     transform: [{ scale: 0.8 }],
   },
   splitButtonCaret: {
-    width: 28,
+    width: {
+      xs: buttonControlHeight.xs,
+      md: HEADER_CONTROL_HEIGHT,
+    },
     alignItems: "center",
     justifyContent: "center",
     borderLeftWidth: theme.borderWidth[1],

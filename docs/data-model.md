@@ -521,6 +521,26 @@ Right-sidebar client state splits on whether it is determined by the directory o
 - **Directory-backed** (shared by same-`cwd` workspaces): keyed by `(serverId, cwd)`. Git status/diff, GitHub PR status, PR timeline, file preview content. These are TanStack Query caches, not persisted stores.
 - **Workspace-owned** (independent per workspace): keyed by `workspaceId`, with `cwd` used only as a fallback when no `workspaceId` is present. Review draft comments (`@paseo:review-draft-store`), diff-mode overrides (in-memory), workspace composer attachments, and file-explorer nav/expand state. The `workspaceId` part of these keys is **opaque** — never parse it back into a path.
 
+### Replica row store
+
+The durable client replica uses IndexedDB on browser/Electron and expo-sqlite on native. Rows use the
+compound key `(serverId, kind, id)`; kinds are `agent`, `workspace`, `project`, `timeline`, and
+`checkpoint`. Directory entities have individual rows. Timeline and checkpoint use the singleton id
+and have at most one row per host.
+
+The store is a typed persistence boundary. It returns values to directory and timeline owners and
+accepts their explicit commits; it never reads or writes UI state. Reads are scoped to the requested
+host, kinds, and ids. Opening a cached workspace uses exact workspace and project keys rather than a
+directory scan. One invalid row is deleted and returned as a miss without affecting other rows.
+An invalid directory row and its affected checkpoint cursor are repaired in one transaction, so a
+later launch cannot accept a checkpoint for a partial baseline. Directory changes and their
+checkpoint are also applied in one transaction.
+
+The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. Budget
+bookkeeping may scan opaque row sizes during a deferred write, never during host registry startup or
+before a requested cache row can paint. The row store is not encrypted. A cached timeline can contain
+source code, prompts, and tool output; encrypted-at-rest storage is a separate security decision.
+
 ### Draft Store
 
 **AsyncStorage key:** `paseo-drafts` (version 2)

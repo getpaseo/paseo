@@ -191,7 +191,6 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "workspace-pane-move-tab-up",
     "workspace-pane-move-tab-down",
     "workspace-pane-close",
-    "workspace-explorer-maximize",
   ],
   layout: ["toggle-left-sidebar", "toggle-right-sidebar", "toggle-both-sidebars", "toggle-focus"],
   "agent-input": [
@@ -232,7 +231,6 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-pane-move-tab-up": "settings.shortcuts.help.moveTabUp",
   "workspace-pane-move-tab-down": "settings.shortcuts.help.moveTabDown",
   "workspace-pane-close": "settings.shortcuts.help.closePane",
-  "workspace-explorer-maximize": "settings.shortcuts.help.toggleExplorerPaneMaximization",
   "workspace-terminal-new": "settings.shortcuts.help.newTerminal",
   "search-files": "settings.shortcuts.help.searchFiles",
   "toggle-command-center": "settings.shortcuts.help.toggleCommandCenter",
@@ -837,29 +835,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Close pane",
     },
   },
-  {
-    id: "workspace-explorer-maximize-cmd-shift-m-mac",
-    action: "workspace.explorer.maximize.toggle",
-    combo: "Cmd+Shift+M",
-    when: { mac: true, commandCenter: false },
-    help: {
-      id: "workspace-explorer-maximize",
-      section: "tabs-panes",
-      label: "Toggle Explorer pane maximization",
-    },
-  },
-  {
-    id: "workspace-explorer-maximize-ctrl-shift-m-non-mac",
-    action: "workspace.explorer.maximize.toggle",
-    combo: "Ctrl+Shift+M",
-    when: { mac: false, commandCenter: false, terminal: false },
-    help: {
-      id: "workspace-explorer-maximize",
-      section: "tabs-panes",
-      label: "Toggle Explorer pane maximization",
-    },
-  },
-
   // --- New terminal ---
   {
     id: "workspace-terminal-new-cmd-shift-t-mac",
@@ -955,7 +930,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     help: {
       id: "toggle-right-sidebar",
       section: "layout",
-      label: "Toggle side panel",
+      label: "Toggle Explorer sidebar",
     },
   },
   {
@@ -966,7 +941,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     help: {
       id: "toggle-right-sidebar",
       section: "layout",
-      label: "Toggle side panel",
+      label: "Toggle Explorer sidebar",
     },
   },
   {
