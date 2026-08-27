@@ -478,6 +478,54 @@ Every callback receives:
 
 An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown surface and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. Use `rpc` for plugin-specific filesystem, credential, vendor, or daemon-local work.
 
+## Composer pills
+
+Register an action beside the built-in agent controls:
+
+```tsx
+import { Icon, type PluginComposerPillProps, useAgent, useWorkspace } from "@getpaseo/plugin";
+import { Text } from "react-native";
+
+function ReviewPill({ theme, workspaceId, agentId }: PluginComposerPillProps) {
+  const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
+  const agent = useAgent(agentId, ({ title }) => ({ title }));
+  return (
+    <>
+      <Icon name="Scan" size={14} color={theme.colors.foregroundMuted} />
+      <Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>
+        {agent?.title ?? workspace?.name ?? "Review"}
+      </Text>
+    </>
+  );
+}
+
+plugin.addComposerPill({
+  id: "review",
+  title: "Open review",
+  Component: ReviewPill,
+  async onPress({ agent, rpc, openPanel }) {
+    await rpc(refreshReview, { agentId: agent.id });
+    openPanel("review");
+  },
+});
+```
+
+`addComposerPill` fields:
+
+| Field       | Required | Meaning                                                    |
+| ----------- | -------- | ---------------------------------------------------------- |
+| `id`        | Yes      | Plugin-local pill ID.                                      |
+| `title`     | Yes      | Accessible button label.                                   |
+| `Component` | Yes      | React Native component rendering the pill's icon and text. |
+| `onPress`   | Yes      | Client-side callback receiving the current agent context.  |
+
+Paseo owns the pressable, pending state, error reporting, and toolbar placement. The component
+receives `theme`, `host`, `layout`, `workspaceId`, and `agentId`; read current values with
+`useWorkspace` and `useAgent`. The callback receives the same capabilities as an agent Command
+Center item: snapshots, `paseo`, typed `rpc`, `openSurface`, and `openPanel`. A pill appears only
+when its installation is on the composer's host and both records are available. `openPanel` opens
+or focuses the registered workspace or agent panel as a normal workspace tab.
+
 ## Use the Paseo SDK
 
 Use `usePaseo()` for ordinary Paseo operations from a surface. It borrows the selected host's existing connection; do not create another client.

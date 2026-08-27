@@ -20,6 +20,8 @@ export type {
   PluginCleanup,
   PluginCommandCapabilities,
   PluginCommandCenterItemContribution,
+  PluginComposerPillContribution,
+  PluginComposerPillProps,
   PluginContribution,
   PluginContext,
   PluginGlobalCommandContext,

@@ -31,7 +31,15 @@ function isSettledWorkspaceUrl(url: URL): boolean {
 function pluginSource(): string {
   return `import React, { useRef } from "react";
 import { Text, View } from "react-native";
-import { useAgent, useWorkspace } from "@getpaseo/plugin";
+import { Icon, useAgent, useWorkspace } from "@getpaseo/plugin";
+import { defineRpc } from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+const recordComposerOpen = defineRpc({
+  name: "composer.open",
+  input: z.object({ workspaceId: z.string() }),
+  output: z.object({ opened: z.boolean() }),
+});
 
 function WorkspacePanel({ workspaceId, host, layout }) {
   const workspace = useWorkspace(workspaceId, (value) => ({ id: value.id }));
@@ -54,7 +62,17 @@ function SidebarCollisionSurface() {
   return <View><Text>Sidebar collision surface</Text></View>;
 }
 
+function ComposerPill({ theme, workspaceId, agentId }) {
+  const workspace = useWorkspace(workspaceId, (value) => ({ title: value.title }));
+  const agent = useAgent(agentId, (value) => ({ title: value.title }));
+  return <><Icon name="Scan" size={14} color={theme.colors.foregroundMuted} /><Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>Review {workspace?.title}:{agent?.title}</Text></>;
+}
+
 export default function contribute(plugin) {
+  plugin.handle(recordComposerOpen, async ({ workspaceId }, { paseo }) => {
+    await paseo.workspaces.ref(workspaceId).setTitle("Opened from composer pill");
+    return { opened: true };
+  });
   plugin.addSurface("collision", DirectCollisionSurface);
   plugin.addSurface("sidebar-destination", SidebarCollisionSurface);
   plugin.addSidebarItem({ id: "collision", title: "Collision sidebar", icon: "Blocks", surface: "sidebar-destination" });
@@ -64,6 +82,7 @@ export default function contribute(plugin) {
   plugin.addCommandCenterItem({ id: "surface", title: "Open direct collision surface", icon: "Blocks", context: "workspace", onSelect({ openSurface }) { openSurface("collision"); } });
   plugin.addCommandCenterItem({ id: "workspace", title: "Open plugin workspace", icon: "PanelsTopLeft", context: "workspace", onSelect({ openPanel }) { openPanel("workspace"); } });
   plugin.addCommandCenterItem({ id: "agent", title: "Open plugin agent", icon: "PanelTop", context: "agent", onSelect({ openPanel }) { openPanel("agent"); } });
+  plugin.addComposerPill({ id: "review", title: "Open composer review", Component: ComposerPill, async onPress({ workspace, rpc, openPanel }) { await rpc(recordComposerOpen, { workspaceId: workspace.id }); openPanel("agent"); } });
   return () => {};
 }`;
 }
@@ -207,7 +226,22 @@ test.describe("plugin workspace panels and Command Center", () => {
         });
         await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
+        const composerPill = page.getByRole("button", { name: "Open composer review" });
+        await expect(composerPill).toContainText(
+          "Review Unrelated title update:Plugin panel context agent",
+        );
+        await capture(page, testInfo, "plugin-composer-pill-wide");
+        await composerPill.click();
+        await expect(page.getByTestId("workspace-header-title")).toHaveText(
+          "Opened from composer pill",
+        );
+        await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();
+
+        await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
+        await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
         await page.setViewportSize(COMPACT_VIEWPORT);
+        await expect(page.getByRole("button", { name: "Open composer review" })).toBeVisible();
+        await capture(page, testInfo, "plugin-composer-pill-compact");
         await openCompactSidebar(page);
         await runCommand(page, "Open plugin agent");
         await closeMobileAgentSidebar(page);

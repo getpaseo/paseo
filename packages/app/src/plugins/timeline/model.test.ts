@@ -17,6 +17,7 @@ function plugin(input: {
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
+    composerPills: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [

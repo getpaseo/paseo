@@ -26,6 +26,7 @@ function installation(
     })),
     workspacePanels: [],
     commandCenterItems: [],
+    composerPills: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],

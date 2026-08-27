@@ -155,6 +155,18 @@ declare module "@getpaseo/plugin" {
     agentId: string;
   }
 
+  export interface PluginComposerPillProps extends PluginHostProps {
+    workspaceId: string;
+    agentId: string;
+  }
+
+  export interface PluginComposerPillContribution {
+    id: string;
+    title: string;
+    Component: ComponentType<PluginComposerPillProps>;
+    onPress(context: PluginAgentCommandContext): void | Promise<void>;
+  }
+
   export type PluginPanelLocation = "workspace" | "explorer";
   export interface PluginOpenPanelOptions { location?: PluginPanelLocation; }
 
@@ -258,6 +270,7 @@ declare module "@getpaseo/plugin" {
     addSidebarItem(contribution: PluginSidebarContribution): void;
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
+    addComposerPill(contribution: PluginComposerPillContribution): void;
     addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
     addTheme(contribution: PluginThemeContribution): void;
     addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(contribution: PluginTimelineTransformerContribution<ItemType>): void;

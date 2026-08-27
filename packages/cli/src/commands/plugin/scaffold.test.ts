@@ -81,6 +81,7 @@ import { Text } from "react-native";
 import {
   Icon,
   type PluginAgentPanelProps,
+  type PluginComposerPillProps,
   useAgent,
   usePaseo,
   useWorkspace,
@@ -108,12 +109,16 @@ export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
   });
   return <Text>{workspaceName}: {agentTitle}</Text>;
 }
+
+export function ComposerPill({ workspaceId, agentId }: PluginComposerPillProps) {
+  return <Text>{workspaceId}: {agentId}</Text>;
+}
 `,
       ),
       writeFile(
         path.join(directory, "index.ts"),
         `import type { PluginContext } from "@getpaseo/plugin";
-import { AgentPanel, Surface } from "./main.client";
+import { AgentPanel, ComposerPill, Surface } from "./main.client";
 import { inspectConfig } from "./inspect.server";
 import { inspect } from "./inspect.shared";
 
@@ -135,6 +140,14 @@ export default function contribute(plugin: PluginContext) {
     async onSelect({ paseo, rpc, workspace, openPanel }) {
       await paseo.workspaces.ref(workspace.id).setTitle("Review");
       await rpc(inspect, {});
+      openPanel("review");
+    },
+  });
+  plugin.addComposerPill({
+    id: "open-review",
+    title: "Open review",
+    Component: ComposerPill,
+    onPress({ openPanel }) {
       openPanel("review");
     },
   });

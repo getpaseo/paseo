@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
+composer pills, app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
 subprocess and evaluates the client contribution in the app runtime. Plugin code is trusted code;
 Paseo does not sandbox it.
 
@@ -201,6 +201,43 @@ Command Center callbacks use the selected host's existing `PaseoApi` for normal 
 They use typed plugin RPC only for plugin-specific backend work. Navigation is limited to the
 plugin's registered global surfaces and workspace panels; plugins do not receive Expo Router or
 workspace-layout store access.
+
+## Contribute composer pills
+
+Register an agent-context action in the composer toolbar. Paseo owns the pressable, pending state,
+error reporting, and placement. The component renders the pill's icon and text and receives the
+current `workspaceId` and `agentId`; use the required-selector hooks to read only the fields it
+shows.
+
+```tsx
+function ReviewPill({ theme, workspaceId, agentId }: PluginComposerPillProps) {
+  const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
+  const agent = useAgent(agentId, ({ title }) => ({ title }));
+  return (
+    <>
+      <Icon name="Scan" size={14} color={theme.colors.foregroundMuted} />
+      <Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>
+        {agent?.title ?? workspace?.name ?? "Review"}
+      </Text>
+    </>
+  );
+}
+
+plugin.addComposerPill({
+  id: "review",
+  title: "Open review",
+  Component: ReviewPill,
+  async onPress({ agent, rpc, openPanel }) {
+    await rpc(refreshReview, { agentId: agent.id });
+    openPanel("review");
+  },
+});
+```
+
+`onPress` receives the same agent context as an agent Command Center item: workspace and agent
+snapshots, `paseo`, typed `rpc`, `openSurface`, and `openPanel`. `openPanel` opens or focuses a
+registered workspace or agent panel as a normal workspace tab. Pills appear only for a composer
+whose workspace and agent are available on the plugin's host.
 
 ## Contribute timeline items
 

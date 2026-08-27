@@ -23,6 +23,7 @@ function installed(): InstalledPlugin {
       },
     ],
     commandCenterItems: [],
+    composerPills: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],

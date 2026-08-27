@@ -1,8 +1,29 @@
 import { useMutation } from "@tanstack/react-query";
-import { type PluginWorkspacePanelProps, useRpc, useWorkspace } from "@getpaseo/plugin";
+import {
+  Icon,
+  type PluginComposerPillProps,
+  type PluginWorkspacePanelProps,
+  useAgent,
+  useRpc,
+  useWorkspace,
+} from "@getpaseo/plugin";
 import React, { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { incrementRpc } from "./increment.shared";
+
+export function OpenCounterPill({ theme, workspaceId, agentId }: PluginComposerPillProps) {
+  const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
+  const agent = useAgent(agentId, ({ title }) => ({ title }));
+  const textStyle = useMemo(() => ({ color: theme.colors.foregroundMuted }), [theme]);
+  return (
+    <>
+      <Icon name="Blocks" size={14} color={theme.colors.foregroundMuted} />
+      <Text style={textStyle} numberOfLines={1}>
+        {agent?.title ?? workspace?.name ?? "Counter"}
+      </Text>
+    </>
+  );
+}
 
 export function ExamplePanel({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
   const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));

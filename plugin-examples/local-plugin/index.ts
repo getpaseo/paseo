@@ -1,5 +1,5 @@
 import type { PluginContext } from "@getpaseo/plugin";
-import { ExamplePanel } from "./main.client";
+import { ExamplePanel, OpenCounterPill } from "./main.client";
 import { increment } from "./increment.server";
 import { incrementRpc } from "./increment.shared";
 
@@ -19,6 +19,14 @@ export default function contribute(plugin: PluginContext) {
     icon: "Blocks",
     context: "workspace",
     onSelect({ openPanel }) {
+      openPanel("counter");
+    },
+  });
+  plugin.addComposerPill({
+    id: "open-counter",
+    title: "Open plugin counter",
+    Component: OpenCounterPill,
+    onPress({ openPanel }) {
       openPanel("counter");
     },
   });

@@ -21,6 +21,7 @@ function installed(serverId: string, contributionId = "main"): InstalledPlugin {
     ],
     workspacePanels: [],
     commandCenterItems: [],
+    composerPills: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],

@@ -3,6 +3,7 @@ export { PluginClientStateProvider, type PluginClientStateSource } from "./clien
 import type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
+  PluginComposerPillContribution,
   PluginContext,
   PluginSidebarContribution,
   PluginSurfaceContribution,
@@ -22,6 +23,7 @@ interface PluginCollector {
   addSidebarItem(contribution: PluginSidebarContribution): void;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
+  addComposerPill(contribution: PluginComposerPillContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
   addTheme(contribution: PluginThemeContribution): void;
   addTimelineTransformer(contribution: PluginTimelineTransformerContribution): void;
@@ -33,6 +35,7 @@ export interface PluginRegistrationCollector {
   sidebarItems: PluginSidebarContribution[];
   workspacePanels: PluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
+  composerPills: PluginComposerPillContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
@@ -47,6 +50,7 @@ export function createPluginContext(
   | "addSidebarItem"
   | "addWorkspacePanel"
   | "addCommandCenterItem"
+  | "addComposerPill"
   | "addAttachmentSource"
   | "addTheme"
   | "addTimelineTransformer"
@@ -64,6 +68,9 @@ export function createPluginContext(
     },
     addCommandCenterItem(contribution) {
       collector.addCommandCenterItem(contribution);
+    },
+    addComposerPill(contribution) {
+      collector.addComposerPill(contribution);
     },
     addAttachmentSource(contribution) {
       collector.addAttachmentSource(contribution);

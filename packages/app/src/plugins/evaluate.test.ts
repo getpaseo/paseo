@@ -212,6 +212,36 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("Duplicate Command Center item: review");
   });
 
+  it("collects and validates composer pills", () => {
+    const plugin = evaluatePluginClientBundle(
+      "review",
+      bundle(`
+        function ReviewPill() { return null; }
+        plugin.addComposerPill({
+          id: "review",
+          title: "Open review",
+          Component: ReviewPill,
+          onPress() {},
+        });
+      `),
+    );
+    expect(plugin.composerPills.map(({ id, title }) => ({ id, title }))).toEqual([
+      { id: "review", title: "Open review" },
+    ]);
+
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+          function ReviewPill() { return null; }
+          const pill = { id: "review", title: "Review", Component: ReviewPill, onPress() {} };
+          plugin.addComposerPill(pill);
+          plugin.addComposerPill(pill);
+        `),
+      ),
+    ).toThrow("Duplicate composer pill: review");
+  });
+
   it("rejects duplicate attachment source ids", () => {
     expect(() =>
       evaluatePluginClientBundle(
