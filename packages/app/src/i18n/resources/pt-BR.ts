@@ -65,7 +65,7 @@ export const ptBR: TranslationResources = {
       agents: "Agentes",
       newAgent: "Novo agente",
       open: "Abrir {{name}}",
-      openInSidePanel: "Abrir {{name}} no painel lateral",
+      openInSidePane: "Abrir {{name}} no painel lateral",
       openInFocusedPane: "Abrir {{name}} no painel em foco",
       addProject: "Adicionar projeto",
       home: "Início",
@@ -420,6 +420,8 @@ export const ptBR: TranslationResources = {
     },
     fileActions: {
       openFile: "Abrir arquivo",
+      openIn: "Abrir no {{target}}",
+      openToSide: "Abrir ao lado",
       copyPath: "Copiar caminho",
       copyRelativePath: "Copiar caminho relativo",
       revealIn: "Mostrar no {{target}}",
@@ -586,6 +588,7 @@ export const ptBR: TranslationResources = {
         closeLeft: "Fechar à esquerda",
         closeRight: "Fechar à direita",
         closeOthers: "Fechar outras abas",
+        moveToMain: "Mover para o painel principal",
         reloadAgent: "Recarregar agente",
         reloadAgentTooltip: "Recarregue o agente para atualizar skills, MCPs ou status de login.",
         close: "Fechar",
@@ -609,9 +612,9 @@ export const ptBR: TranslationResources = {
         files: "Arquivos",
         pullRequest: "Pull request",
         terminalProfilesMenu: "Perfis de terminal",
-        editTerminalProfiles: "Editar perfis…",
+        editTerminalProfiles: "Editar perfis",
       },
-      sidePanel: {
+      explorerSidebar: {
         open: "Abrir painel lateral",
         close: "Fechar painel lateral",
         toggle: "Alternar painel lateral",
@@ -875,6 +878,7 @@ export const ptBR: TranslationResources = {
       },
       diff: {
         openChangesTab: "Abrir a aba Alterações",
+        openDiffTab: "Abrir a aba Diff",
         closeChangesTab: "Fechar a aba Alterações",
         binaryFile: "Arquivo binário",
         tooLarge: "Diff grande demais para exibir",
@@ -885,6 +889,7 @@ export const ptBR: TranslationResources = {
         switchToUnified: "Alternar para diff unificado",
         switchToSplit: "Alternar para diff lado a lado",
         options: "Opções do diff",
+        inlineDiff: "Diff embutido",
         hideWhitespace: "Ocultar espaços em branco",
         showWhitespace: "Mostrar espaços em branco",
         scrollLongLines: "Rolar linhas longas",
@@ -958,6 +963,16 @@ export const ptBR: TranslationResources = {
         accessibility: {
           pullRequest: "Pull request #{{number}}",
           pullRequest_mr: "Merge request !{{number}}",
+          checkStatus: {
+            passed: "Aprovado",
+            failed: "Falhou",
+            warning: "Aviso",
+            actionRequired: "Ação necessária",
+            manual: "Manual",
+            pending: "Pendente",
+            skipped: "Ignorado",
+            cancelled: "Cancelado",
+          },
         },
         states: {
           draft: "Rascunho",
@@ -1151,6 +1166,14 @@ export const ptBR: TranslationResources = {
         serviceUnhealthy: "Serviço {{name}} com falha",
         creating: "Criando...",
       },
+      checks: {
+        passed: "Aprovados: {{count}}",
+        failed: "Falhas: {{count}}",
+        warning: "Avisos: {{count}}",
+        actionRequired: "Ação necessária: {{count}}",
+        manual: "Manuais: {{count}}",
+        pending: "Pendentes: {{count}}",
+      },
       actions: {
         menu: "Ações do workspace",
         newWorkspace: "Novo workspace",
@@ -1236,6 +1259,12 @@ export const ptBR: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "Minimizar janela",
+      maximize: "Maximizar janela",
+      restore: "Restaurar janela",
+      close: "Fechar janela",
+    },
     quitting: {
       title: "Saindo do Paseo...",
       detail: "Parando o daemon local.",
@@ -1662,6 +1691,8 @@ export const ptBR: TranslationResources = {
       updateRequired: "Atualize o host para ativar o relay pelo Paseo Desktop.",
       unavailable: "Oferta de pareamento indisponível.",
       hint: "Escaneie este QR code com o Paseo no seu celular ou copie o link abaixo.",
+      securityWarning:
+        "Trate este link de pareamento como uma senha. Qualquer pessoa com o link pode acessar este daemon.",
       qrUnavailable: "QR code indisponível.",
       qrAccessibility: "Código QR de pareamento",
       retry: "Tentar novamente",
@@ -1774,6 +1805,7 @@ export const ptBR: TranslationResources = {
     },
     diff: {
       changesLabel: "Alterações",
+      diffLabel: "Diff",
       changesSubtitle: "Diff da árvore de trabalho",
       commitSubtitle: "Diff do commit",
       uncommittedSubtitle: "Alterações não commitadas",
@@ -1868,6 +1900,7 @@ export const ptBR: TranslationResources = {
     sections: {
       general: "Geral",
       appearance: "Aparência",
+      layout: en.settings.sections.layout,
       editor: "Editor",
       shortcuts: "Atalhos",
       integrations: "Integrações",
@@ -1876,6 +1909,7 @@ export const ptBR: TranslationResources = {
       diagnostics: "Diagnósticos",
       about: "Sobre",
     },
+    layout: en.settings.layout,
     editor: {
       title: "Editor",
       vimKeybindings: "Atalhos do Vim",
@@ -1965,11 +1999,6 @@ export const ptBR: TranslationResources = {
         label: "Scrollback do terminal",
         description: "Linhas mantidas no buffer do terminal integrado",
         accessibilityLabel: "Linhas do scrollback do terminal",
-      },
-      sidePanelRouting: {
-        label: "Abrir abas de apoio no painel lateral",
-        description:
-          "Links de arquivo, pull requests e progresso da configuração abrem ao lado do seu trabalho em vez do painel em foco",
       },
       autoExpandReasoning: {
         label: "Sempre expandir raciocínio",
@@ -2166,7 +2195,6 @@ export const ptBR: TranslationResources = {
         toggleBothSidebars: "Alternar ambas as barras laterais",
         toggleSettings: "Alternar Configurações",
         toggleFocusMode: "Alternar modo de foco",
-        toggleExplorerPaneMaximization: "Alternar maximização do painel lateral",
         cycleTheme: "Alternar tema",
         focusMessageInput: "Focar entrada de mensagem",
         cycleAgentMode: "Alternar modo do agente",

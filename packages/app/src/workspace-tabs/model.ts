@@ -33,11 +33,13 @@ export type PluginWorkspaceTabTarget =
     };
 
 export type WorkspaceTabTarget =
+  | { kind: "new_tab" }
   | { kind: "draft"; draftId: string; setup?: WorkspaceDraftTabSetup }
   | { kind: "agent"; agentId: string }
   | { kind: "provider_subagent"; parentAgentId: string; subagentId: string }
   | { kind: "terminal"; terminalId: string }
   | { kind: "browser"; browserId: string }
+  | { kind: "changes_tree" }
   | { kind: "files" }
   | { kind: "pull_request" }
   | WorkspaceFileTabTarget
