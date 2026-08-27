@@ -86,7 +86,11 @@ export class GitProcessScheduler {
       const queue =
         options?.priority === "high" ? this.highPriorityQueue : this.normalPriorityQueue;
       queue.push(admit);
-      this.scheduleDrain();
+      if (this.admitted === 0 && !this.drainScheduled) {
+        this.drainOne();
+      } else {
+        this.scheduleDrain();
+      }
     });
   }
 

@@ -79,11 +79,29 @@ describe("GitProcessScheduler", () => {
       return { result: completed, exited: completed };
     };
 
+    const livenessTurn = new Promise<void>((resolve) => setImmediate(resolve));
     const tasks = Array.from({ length: 8 }, () => scheduler.run(start));
-    await new Promise<void>((resolve) => setImmediate(resolve));
+    await livenessTurn;
 
     expect(started).toHaveLength(1);
     await Promise.all(tasks);
+  });
+
+  test("starts an isolated process without an extra event-loop turn", async () => {
+    const scheduler = new GitProcessScheduler({
+      maxProcessesPerSecond: 100,
+      maxProcessConcurrency: 8,
+    });
+    let started = false;
+
+    const result = scheduler.run(() => {
+      started = true;
+      const completed = Promise.resolve();
+      return { result: completed, exited: completed };
+    });
+
+    expect(started).toBe(true);
+    await result;
   });
 
   test("limits process starts in each strict one-second interval", async () => {
