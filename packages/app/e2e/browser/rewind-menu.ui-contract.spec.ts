@@ -26,15 +26,35 @@ async function expectUserMessageVisible(page: Page, text: string): Promise<void>
   await expect(userMessage(page, text)).toBeVisible();
 }
 
-async function rewriteCachedMessageAsLegacyRow(page: Page, prompt: string): Promise<void> {
+async function rewriteCachedMessageAsLegacyRow(
+  page: Page,
+  input: { prompt: string; agentId: string; workspaceId: string },
+): Promise<void> {
   await expect
     .poll(async () => {
       const cache = await readReplicaCache(page);
       if (!cache) return false;
       for (const host of cache.hosts ?? []) {
-        for (const item of host.timeline?.items ?? []) {
-          if (item.kind === "user_message" && item.text === prompt && item.messageId) {
-            return true;
+        const hasAgent = host.agents.some(
+          (agent) =>
+            agent.snapshot &&
+            typeof agent.snapshot === "object" &&
+            Reflect.get(agent.snapshot, "id") === input.agentId,
+        );
+        const hasWorkspace = host.workspaces.some(
+          (workspace) => workspace.id === input.workspaceId,
+        );
+        if (!hasAgent || !hasWorkspace) continue;
+        for (const timeline of host.timelines) {
+          for (const item of timeline.items ?? []) {
+            if (
+              timeline.agentId === input.agentId &&
+              item.kind === "user_message" &&
+              item.text === input.prompt &&
+              item.messageId
+            ) {
+              return true;
+            }
           }
         }
       }
@@ -45,8 +65,8 @@ async function rewriteCachedMessageAsLegacyRow(page: Page, prompt: string): Prom
   const cache = await readReplicaCache(page);
   if (!cache) throw new Error("Replica cache was not persisted");
   const cachedMessage = cache.hosts
-    ?.flatMap((host) => host.timeline?.items ?? [])
-    .find((item) => item.kind === "user_message" && item.text === prompt);
+    ?.flatMap((host) => host.timelines.flatMap((timeline) => timeline.items ?? []))
+    .find((item) => item.kind === "user_message" && item.text === input.prompt);
   if (!cachedMessage) throw new Error("Cached user message was not found");
   delete cachedMessage.messageId;
   await writeReplicaCache(page, cache);
@@ -61,7 +81,7 @@ async function waitForCurrentSubmissionExcludedFromCache(
       const cache = await readReplicaCache(page);
       if (!cache) return false;
       return !cache.hosts
-        ?.flatMap((host) => host.timeline?.items ?? [])
+        ?.flatMap((host) => host.timelines.flatMap((timeline) => timeline.items ?? []))
         .some(
           (item) =>
             item.kind === "user_message" &&
@@ -79,7 +99,7 @@ async function waitForCachedMessageWithoutProviderId(page: Page, prompt: string)
       const cache = await readReplicaCache(page);
       if (!cache) return false;
       return cache.hosts
-        ?.flatMap((host) => host.timeline?.items ?? [])
+        ?.flatMap((host) => host.timelines.flatMap((timeline) => timeline.items ?? []))
         .some(
           (item) =>
             item.kind === "user_message" && item.text === prompt && item.messageId === undefined,
@@ -131,14 +151,18 @@ test.describe("Rewind sheet", () => {
       await openAgentRoute(page, session);
       await expectUserMessageVisible(page, prompt);
       await gate.drop();
-      await rewriteCachedMessageAsLegacyRow(page, prompt);
+      await rewriteCachedMessageAsLegacyRow(page, {
+        prompt,
+        agentId: session.agentId,
+        workspaceId: session.workspaceId,
+      });
       await page.reload();
+      await waitForCachedMessageWithoutProviderId(page, prompt);
 
       const restoredMessage = userMessage(page, prompt);
       await expect(restoredMessage).toBeVisible();
       await restoredMessage.hover();
       await expect(restoredMessage.getByTestId("rewind-menu-trigger")).toHaveCount(0);
-      await waitForCachedMessageWithoutProviderId(page, prompt);
     } finally {
       gate.restore();
       await session.cleanup();

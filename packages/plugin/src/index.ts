@@ -1,3 +1,6 @@
+import type { ComponentType } from "react";
+import type { PluginIconProps } from "./contracts.js";
+
 export {
   PluginAttachmentItemSchema,
   PluginAttachmentSearchPayloadSchema,
@@ -7,6 +10,8 @@ export {
   type PluginAttachmentSearchPayload,
   type PluginRpcContract,
 } from "./server.js";
+
+export declare const Icon: ComponentType<PluginIconProps>;
 export type {
   PluginAttachmentSourceContribution,
   PluginAgentCommandContext,
@@ -21,6 +26,7 @@ export type {
   PluginHandlerContext,
   PluginHostProps,
   PluginOpenPanelOptions,
+  PluginIconProps,
   PluginPanelLocation,
   PluginTheme,
   PluginSidebarContribution,
@@ -28,6 +34,12 @@ export type {
   PluginSurfaceProps,
   PluginThemeColors,
   PluginThemeContribution,
+  PluginTimelineData,
+  PluginTimelineItem,
+  PluginTimelineItemProps,
+  PluginTimelineRendererContribution,
+  PluginTimelineTransformerContribution,
+  PluginTimelineTransformResult,
   PluginWorkspaceCommandContext,
   PluginWorkspacePanelContribution,
   PluginWorkspacePanelProps,

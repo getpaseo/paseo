@@ -34,7 +34,15 @@ interface TimelineFetch {
 class TimelineWorld {
   readonly errors: string[] = [];
   readonly cursors = new Map<string, { epoch: string; endSeq: number }>();
+  readonly cacheRequests: string[] = [];
+  cacheGate: Deferred<void> | null = null;
   readonly sync = createViewedTimelineSync({
+    replaceDemandedAgentIds: () => undefined,
+    prepare: async (agentId) => {
+      this.cacheRequests.push(agentId);
+      this.cacheRequestWaiters.shift()?.(agentId);
+      await this.cacheGate?.promise;
+    },
     initialDeliveryMode: "selective",
     setSubscription: async (agentIds) => {
       const result = deferred<void>();
@@ -100,11 +108,22 @@ class TimelineWorld {
     resolve(fetch: TimelineFetch): void;
   }> = [];
   private readonly errorWaiters: Array<(message: string) => void> = [];
+  private readonly cacheRequestWaiters: Array<(agentId: string) => void> = [];
   private readonly scheduled: Array<{ task: () => void; delayMs: number }> = [];
   private readonly retryWaiters: Array<{
     delayMs: number;
     resolve(retry: () => void): void;
   }> = [];
+
+  get pendingFetchCount(): number {
+    return this.fetches.length;
+  }
+
+  nextCacheRequest(): Promise<string> {
+    const request = this.cacheRequests.at(-1);
+    if (request) return Promise.resolve(request);
+    return new Promise((resolve) => this.cacheRequestWaiters.push(resolve));
+  }
 
   private fetchTimeline(
     agentId: string,
@@ -194,6 +213,31 @@ test("uses a tail fetch when an agent becomes visible", async () => {
 
   const fetch = await world.nextFetch("agent-a");
   expect(fetch.request).toEqual({ direction: "tail", limit: 40, projection: "projected" });
+  fetch.respond({ hasNewer: false });
+});
+
+test("loads the cache before choosing the authoritative network request", async () => {
+  const world = new TimelineWorld();
+  world.cacheGate = deferred<void>();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const cacheRequest = await world.nextCacheRequest();
+
+  expect(cacheRequest).toBe("agent-a");
+  expect(world.pendingFetchCount).toBe(0);
+
+  world.cursors.set("agent-a", { epoch: "cached-epoch", endSeq: 17 });
+  world.cacheGate.resolve();
+  const fetch = await world.nextFetch("agent-a");
+
+  expect(fetch.request).toEqual({
+    direction: "after",
+    cursor: { epoch: "cached-epoch", seq: 17 },
+    limit: 40,
+    projection: "projected",
+  });
   fetch.respond({ hasNewer: false });
 });
 
@@ -462,6 +506,27 @@ test("manual retries can immediately re-attempt a failed catch-up", async () => 
   const retry = await world.nextFetch("agent-a");
   retry.respond({ hasNewer: false });
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+});
+
+test("plugin catalog changes reproject visible timelines from the latest tail", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const initial = await world.nextFetch("agent-a");
+  initial.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.reprojectVisibleTimelines();
+  const reprojection = await world.nextFetch("agent-a");
+
+  expect(reprojection.request).toEqual({
+    direction: "tail",
+    limit: 40,
+    projection: "projected",
+  });
+  reprojection.respond({ hasNewer: false });
 });
 
 test("redeclaring unchanged visibility does not bypass catch-up backoff", async () => {

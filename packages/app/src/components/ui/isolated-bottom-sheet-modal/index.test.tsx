@@ -58,6 +58,7 @@ vi.mock("@gorhom/bottom-sheet", async () => {
 });
 
 import { IsolatedBottomSheetModal, type ContextBridge } from ".";
+import { useIsInsideBottomSheet } from "@/components/ui/text-input/bottom-sheet-scope";
 
 /** Renders whatever the portal is currently holding, from its own place in the tree. */
 function PortalHostProbe() {
@@ -69,6 +70,10 @@ const LabelContext = createContext("unbridged");
 
 function Label() {
   return <div data-label={useContext(LabelContext)} />;
+}
+
+function BottomSheetScopeProbe() {
+  return <div data-inside-bottom-sheet={useIsInsideBottomSheet().toString()} />;
 }
 
 describe("IsolatedBottomSheetModal presentation", () => {
@@ -173,5 +178,25 @@ describe("IsolatedBottomSheetModal context bridging", () => {
       <LabelContext.Provider value="from callsite">{children}</LabelContext.Provider>
     );
     expect(renderSheet(bridge)).toBe("from callsite");
+  });
+
+  it("marks content rendered through the modal as inside a bottom sheet", () => {
+    act(() => {
+      root.render(
+        <>
+          <BottomSheetScopeProbe />
+          <IsolatedBottomSheetModal contextBridge={null}>
+            <BottomSheetScopeProbe />
+          </IsolatedBottomSheetModal>
+          <PortalHostProbe />
+        </>,
+      );
+    });
+
+    expect(
+      Array.from(container.querySelectorAll("[data-inside-bottom-sheet]")).map((node) =>
+        node.getAttribute("data-inside-bottom-sheet"),
+      ),
+    ).toEqual(["false", "true"]);
   });
 });

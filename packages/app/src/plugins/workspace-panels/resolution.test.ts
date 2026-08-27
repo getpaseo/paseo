@@ -25,6 +25,8 @@ function installed(): InstalledPlugin {
     commandCenterItems: [],
     attachmentSources: [],
     themes: [],
+    timelineTransformers: [],
+    timelineRenderers: [],
   };
 }
 

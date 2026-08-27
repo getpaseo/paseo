@@ -414,6 +414,7 @@ export const en = {
     },
     fileActions: {
       openFile: "Open file",
+      openIn: "Open in {{target}}",
       openToSide: "Open to the side",
       copyPath: "Copy path",
       copyRelativePath: "Copy relative path",
@@ -1892,15 +1893,16 @@ export const en = {
         destinations: {
           main: "Main panel",
           side: "On the side",
+          explorer: "Explorer sidebar",
         },
         sources: {
           explorerFiles: {
             label: "Selecting a file in Explorer",
             description: "Open files selected in the Explorer sidebar beside your work",
           },
-          explorerChanges: {
-            label: "Selecting a change in Explorer",
-            description: "Open diffs selected in the Explorer sidebar beside your work",
+          diffs: {
+            label: "Opening a diff",
+            description: "Open diffs from Explorer and agent conversations beside your work",
           },
           chatFiles: {
             label: "Opening a file from an agent chat",
@@ -1917,10 +1919,6 @@ export const en = {
           pullRequests: {
             label: "Opening a pull request from Changes",
             description: "Open pull request details beside Changes",
-          },
-          changesLinks: {
-            label: "Opening Changes from an agent",
-            description: "Open diff stats and review attachments beside the conversation",
           },
         },
       },

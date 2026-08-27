@@ -40,6 +40,7 @@
   },
   "devDependencies": {
     "@getpaseo/client": "0.6.1",
+    "@getpaseo/protocol": "0.6.1",
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
     "react": "19.1.0",
@@ -49,6 +50,7 @@
   },
   "peerDependencies": {
     "@getpaseo/client": "0.6.1",
+    "@getpaseo/protocol": "0.6.1",
     "react": "19.1.0",
     "zod": "^4.4.3"
   }

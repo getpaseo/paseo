@@ -30,6 +30,7 @@ export type SendBehavior = ActiveTurnBehavior | "queue";
 export type ReleaseChannel = "stable" | "beta";
 export type ServiceUrlBehavior = "ask" | "in-app" | "external";
 export type WorkspaceTitleSource = "title" | "branch";
+export type PullRequestOpenLocation = "main" | "side" | "explorer";
 /** What a sidebar workspace row shows in the space to the right of its title. */
 export type SidebarWorkspaceTrailing = "diff" | "timestamp" | "none";
 export type ToolCallDetailLevel = "overview" | "detailed";
@@ -87,26 +88,23 @@ export interface AppSettings {
   vimKeybindings: boolean;
   /** Desktop-only preferences for implicit opens into the ordinary side pane. */
   openInSidePane: OpenInSidePanePreferences;
+  pullRequestOpenLocation: PullRequestOpenLocation;
 }
 
 export interface OpenInSidePanePreferences {
   explorerFiles: boolean;
-  explorerChanges: boolean;
+  diffs: boolean;
   chatFiles: boolean;
   diffFiles: boolean;
   subagents: boolean;
-  pullRequests: boolean;
-  changesLinks: boolean;
 }
 
 export const DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES: OpenInSidePanePreferences = {
   explorerFiles: false,
-  explorerChanges: false,
+  diffs: false,
   chatFiles: false,
   diffFiles: false,
   subagents: false,
-  pullRequests: false,
-  changesLinks: false,
 };
 
 export interface Settings extends AppSettings {
@@ -137,6 +135,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   chatOutlineEnabled: true,
   vimKeybindings: false,
   openInSidePane: DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
+  pullRequestOpenLocation: "explorer",
 };
 
 export const DEFAULT_APP_SETTINGS: Settings = {
@@ -232,14 +231,26 @@ const StoredAppSettingsSchema = z
     openInSidePane: z
       .object({
         explorerFiles: z.boolean().catch(false),
-        explorerChanges: z.boolean().catch(false),
+        diffs: z.boolean().optional(),
+        // COMPAT(diffDestinationPreference): legacy split preferences, remove after 2027-02-26.
+        explorerChanges: z.boolean().optional(),
+        changesLinks: z.boolean().optional(),
         chatFiles: z.boolean().catch(false),
         diffFiles: z.boolean().catch(false),
         subagents: z.boolean().catch(false),
-        pullRequests: z.boolean().catch(false),
-        changesLinks: z.boolean().catch(false),
+        // COMPAT(pullRequestOpenLocation): legacy side-pane toggle, remove after 2027-02-26.
+        pullRequests: z.boolean().optional(),
       })
-      .catch(DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES),
+      .transform(({ explorerChanges, changesLinks, pullRequests, ...preferences }) => ({
+        ...preferences,
+        diffs: preferences.diffs ?? explorerChanges ?? changesLinks ?? false,
+        legacyPullRequestsInSidePane: pullRequests,
+      }))
+      .catch({
+        ...DEFAULT_OPEN_IN_SIDE_PANE_PREFERENCES,
+        legacyPullRequestsInSidePane: undefined,
+      }),
+    pullRequestOpenLocation: z.enum(["main", "side", "explorer"]).optional(),
     // COMPAT(explorerSidebarRouting): replaced by source-specific side-pane preferences in v0.6.
     openSupportingTabsInSidePanel: z.boolean().optional().catch(undefined),
     // COMPAT(rendererDesktopSettings): these fields used to share this renderer-owned key.
@@ -247,6 +258,7 @@ const StoredAppSettingsSchema = z
     releaseChannel: z.enum(["stable", "beta"]).optional().catch(undefined),
   })
   .transform((stored) => {
+    const { legacyPullRequestsInSidePane, ...openInSidePane } = stored.openInSidePane;
     const needsWrite =
       (stored.uiBaseFontSize === undefined && stored.uiFontSize !== undefined) ||
       stored.contentFontSize === undefined;
@@ -264,6 +276,9 @@ const StoredAppSettingsSchema = z
       stored.toolCallDetailLevel ?? (stored.compactToolCalls ? "overview" : "detailed");
     return {
       ...stored,
+      openInSidePane,
+      pullRequestOpenLocation:
+        stored.pullRequestOpenLocation ?? (legacyPullRequestsInSidePane ? "side" : "explorer"),
       uiBaseFontSize,
       contentFontSize: stored.contentFontSize ?? uiBaseFontSize,
       sidebarChecksDisplay,

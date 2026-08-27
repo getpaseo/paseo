@@ -417,6 +417,7 @@ export const ko: TranslationResources = {
     },
     fileActions: {
       openFile: "파일 열기",
+      openIn: "{{target}}에서 열기",
       openToSide: "옆에 열기",
       copyPath: "경로 복사",
       copyRelativePath: "상대 경로 복사",

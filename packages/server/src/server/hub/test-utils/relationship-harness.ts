@@ -62,6 +62,20 @@ const execFileAsync = promisify(execFile);
 const HUB_ORIGIN = "https://hub.test";
 const SOCKET_URL = "wss://hub.test/daemon";
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, "../../../../../..");
+const REMOVAL_RETRY_CODES = new Set(["EBUSY", "ENOTEMPTY", "EPERM"]);
+
+async function removeDirectoryAfterWritesSettle(directory: string): Promise<void> {
+  for (let retry = 0; retry < 10; retry += 1) {
+    try {
+      await rm(directory, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (!code || !REMOVAL_RETRY_CODES.has(code) || retry === 9) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 100 * (retry + 1)));
+    }
+  }
+}
 
 interface PersistedRelationship {
   version: number;
@@ -1444,24 +1458,7 @@ export class HubRelationshipHarness {
   }
 
   private async removeRoot(): Promise<void> {
-    // Daemon may still flush into .paseo/projects during teardown; recursive rm
-    // can race and hit ENOTEMPTY/EBUSY/EPERM. Observed on Linux CI as well as macOS/Windows.
-    const retryableCodes = new Set(["ENOTEMPTY", "EBUSY", "EPERM"]);
-    const attempts = 10;
-    for (let attempt = 1; attempt <= attempts; attempt++) {
-      try {
-        await rm(this.root, { recursive: true, force: true });
-        return;
-      } catch (error) {
-        if (
-          !retryableCodes.has((error as NodeJS.ErrnoException).code ?? "") ||
-          attempt === attempts
-        ) {
-          throw error;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100 * attempt));
-      }
-    }
+    await removeDirectoryAfterWritesSettle(this.root);
   }
 
   private latestSocket(): SocketAttempt {
