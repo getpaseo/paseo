@@ -25,6 +25,7 @@ import {
   deriveModelDefinitionsFromACP,
   deriveModesFromACP,
   mapACPUsage,
+  mapACPUsageUpdate,
   resolveACPModeSelection,
   resolveACPModelSelection,
   summarizeACPRequestError,
@@ -698,6 +699,34 @@ describe("mapACPUsage", () => {
       inputTokens: 11,
       outputTokens: 7,
       cachedInputTokens: 5,
+    });
+  });
+});
+
+describe("mapACPUsageUpdate", () => {
+  test("maps context window size and used tokens", () => {
+    expect(
+      mapACPUsageUpdate({
+        size: 200_000,
+        used: 87_000,
+      }),
+    ).toEqual({
+      contextWindowMaxTokens: 200_000,
+      contextWindowUsedTokens: 87_000,
+    });
+  });
+
+  test("maps USD cost onto totalCostUsd", () => {
+    expect(
+      mapACPUsageUpdate({
+        size: 128_000,
+        used: 1_000,
+        cost: { amount: 0.42, currency: "usd" },
+      }),
+    ).toEqual({
+      contextWindowMaxTokens: 128_000,
+      contextWindowUsedTokens: 1_000,
+      totalCostUsd: 0.42,
     });
   });
 });
@@ -2448,6 +2477,37 @@ describe("ACPAgentSession", () => {
     });
     expect(summary.message).not.toContain("[object Object]");
     expect(summary.diagnostic).toContain("Droid process exited unexpectedly");
+  });
+
+  test("emits usage_updated from ACP usage_update session notifications", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    session.subscribe((event) => {
+      events.push(event);
+    });
+
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "usage_update",
+        size: 200_000,
+        used: 174_000,
+        cost: { amount: 1.25, currency: "USD" },
+      },
+    });
+
+    expect(events.filter((event) => event.type === "usage_updated")).toEqual([
+      {
+        type: "usage_updated",
+        provider: "claude-acp",
+        usage: {
+          contextWindowMaxTokens: 200_000,
+          contextWindowUsedTokens: 174_000,
+          totalCostUsd: 1.25,
+        },
+      },
+    ]);
   });
 
   test("accepts ACP extension notifications without failing the JSON-RPC connection", async () => {
