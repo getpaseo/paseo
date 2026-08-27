@@ -790,12 +790,14 @@ async function resolveScopedPath({
   const requestedPath = resolvePathFromBase(workspacePath, relativePath);
   assertWithinWorkspace(workspacePath, requestedPath);
   const canonicalRoot = await fs.realpath(workspacePath);
-  const canonicalPath = await fs.realpath(requestedPath).catch((error: unknown) => {
-    if (isMissingEntryError(error)) return requestedPath;
+  try {
+    const canonicalPath = await fs.realpath(requestedPath);
+    assertWithinWorkspace(canonicalRoot, canonicalPath);
+    return { requestedPath, resolvedPath: canonicalPath };
+  } catch (error) {
+    if (isMissingEntryError(error)) return { requestedPath, resolvedPath: requestedPath };
     throw error;
-  });
-  assertWithinWorkspace(canonicalRoot, canonicalPath);
-  return { requestedPath, resolvedPath: canonicalPath };
+  }
 }
 
 function assertWithinWorkspace(root: string, candidate: string): void {
