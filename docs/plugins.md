@@ -200,6 +200,23 @@ They use typed plugin RPC only for plugin-specific backend work. Navigation is l
 plugin's registered global surfaces and workspace panels; plugins do not receive Expo Router or
 workspace-layout store access.
 
+## Contribute timeline items
+
+Timeline transformers and renderers are client contributions. The daemon's canonical rows and
+built-in projection stay unchanged. The app transforms fetched projected history before building
+its render model. A matching live event requests a fresh projected tail, so lifecycle deltas are
+collapsed before the transformer replaces anything.
+
+`query.itemType` selects one public `AgentTimelineItem.type`. The callback owns any detailed
+recognition and returns plain plugin item objects. `undefined` keeps the source item, `items`
+replaces it, and an empty array removes it. Output `data` must be JSON-compatible. Paseo adds the
+runtime plugin ID, preserves the source timeline cursor, validates renderer data with its Zod
+schema, and mounts the component inside the normal plugin runtime and error boundary.
+
+Transformers run synchronously and must be deterministic. When several transformers match, the
+first one that returns a result owns that source item. Plugin and registration ordering is stable.
+See `plugin-examples/timeline-items` for the complete contract.
+
 ## Contribute composer attachments
 
 Register a declarative attachment source backed by a plugin RPC. Paseo owns the attachment menu,
@@ -247,4 +264,5 @@ against the installed catalog on every change; an id nothing contributes falls b
 preference instead of painting the reserved slot's placeholder colors.
 
 See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
-attachment-source example, and `plugin-examples/catppuccin` for a theme.
+attachment-source example, `plugin-examples/timeline-items` for timeline projection, and
+`plugin-examples/catppuccin` for a theme.

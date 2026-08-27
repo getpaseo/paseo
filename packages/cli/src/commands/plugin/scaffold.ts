@@ -59,6 +59,7 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
 declare module "@getpaseo/plugin" {
   import type { ComponentType } from "react";
   import type { PaseoApi } from "@getpaseo/client";
+  import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
   import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
   import type {
     PluginAttachmentSourceContribution,
@@ -185,6 +186,29 @@ declare module "@getpaseo/plugin" {
     Component: ComponentType<PluginSurfaceProps>;
   }
 
+  export type PluginTimelineData = null | boolean | number | string | PluginTimelineData[] | { [key: string]: PluginTimelineData };
+  export interface PluginTimelineItem { type: "plugin"; kind: string; version: number; data: PluginTimelineData; }
+  export interface PluginTimelineTransformResult { items: PluginTimelineItem[]; }
+  export type PluginTimelineTransformerContribution<ItemType extends AgentTimelineItem["type"] = AgentTimelineItem["type"]> =
+    ItemType extends AgentTimelineItem["type"]
+      ? {
+          id: string;
+          query: { itemType: ItemType };
+          transform(input: { item: Extract<AgentTimelineItem, { type: ItemType }> }): PluginTimelineTransformResult | undefined;
+        }
+      : never;
+  export interface PluginTimelineItemProps<Data = unknown> extends PluginHostProps {
+    agentId: string;
+    item: { type: "plugin"; kind: string; version: number; data: Data };
+    timestamp: Date;
+  }
+  export interface PluginTimelineRendererContribution<Schema extends ZodType = ZodType> {
+    kind: string;
+    version: number;
+    schema: Schema;
+    Component: ComponentType<PluginTimelineItemProps<ZodOutput<Schema>>>;
+  }
+
   export interface PluginCommandCapabilities {
     paseo: PaseoApi;
     rpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
@@ -230,6 +254,8 @@ declare module "@getpaseo/plugin" {
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
     addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
     addTheme(contribution: PluginThemeContribution): void;
+    addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(contribution: PluginTimelineTransformerContribution<ItemType>): void;
+    addTimelineRenderer<Schema extends ZodType>(contribution: PluginTimelineRendererContribution<Schema>): void;
   }
 
   export type PluginCleanup = () => void | Promise<void>;
@@ -326,6 +352,7 @@ export async function scaffoldPluginDirectory(
     scripts: { typecheck: "tsc --noEmit" },
     devDependencies: {
       "@getpaseo/client": "^0.4.0",
+      "@getpaseo/protocol": "^0.6.1",
       "@tanstack/react-query": "^5.90.11",
       "@types/react": "~19.2.0",
       react: "19.1.0",

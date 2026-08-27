@@ -217,6 +217,31 @@ describe("ReplicaCache", () => {
     expect(restoredTimeline).toEqual(timeline());
   });
 
+  it("round-trips plugin timeline items", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const pluginItem: StreamItem = {
+      kind: "plugin",
+      id: "reports/test-report/1",
+      pluginId: "reports",
+      itemKind: "test-report",
+      version: 1,
+      data: { passed: 4, failed: 0 },
+      timestamp: new Date("2026-07-18T08:02:00.000Z"),
+      timelineCursor: { epoch: "epoch-1", seq: 12 },
+    };
+    writer.commitTimeline(SERVER_ID, "agent-1", {
+      agentId: "agent-1",
+      items: [pluginItem],
+      range: { epoch: "epoch-1", startSeq: 12, endSeq: 12 },
+      hasOlder: true,
+    });
+    await writer.flush();
+
+    const reader = createCache(storage);
+    expect((await reader.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([pluginItem]);
+  });
+
   it("reads one requested agent and the focused timeline without scanning directory rows", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

@@ -56,6 +56,8 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     commandCenterItems: [],
     attachmentSources: [],
     themes,
+    timelineTransformers: [],
+    timelineRenderers: [],
   };
 }
 

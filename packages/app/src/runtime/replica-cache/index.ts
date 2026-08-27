@@ -6,6 +6,7 @@ import {
   WorkspaceGitHubRuntimePayloadSchema,
 } from "@getpaseo/protocol/messages";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
+import type { PluginTimelineData } from "@getpaseo/plugin";
 import {
   normalizeProjectDescriptor,
   normalizeWorkspaceDescriptor,
@@ -38,6 +39,16 @@ const TimelinePositionSchema = z.strictObject({
   epoch: z.string(),
   seq: z.number().int().nonnegative(),
 });
+const PluginTimelineDataSchema: z.ZodType<PluginTimelineData> = z.lazy(() =>
+  z.union([
+    z.null(),
+    z.boolean(),
+    z.number(),
+    z.string(),
+    z.array(PluginTimelineDataSchema),
+    z.record(z.string(), PluginTimelineDataSchema),
+  ]),
+);
 
 const TimelineItemBaseShape = {
   id: z.string(),
@@ -110,6 +121,14 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     kind: z.literal("tool_call"),
     provider: AgentProviderSchema,
     item: AgentTimelineItemPayloadSchema.refine((item) => item.type === "tool_call"),
+  }),
+  z.strictObject({
+    ...TimelineItemBaseShape,
+    kind: z.literal("plugin"),
+    pluginId: z.string(),
+    itemKind: z.string(),
+    version: z.number().int().positive(),
+    data: PluginTimelineDataSchema,
   }),
 ]);
 
@@ -426,6 +445,15 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         provider: item.payload.data.provider,
         item: serializeAgentToolCall(item.payload.data),
       };
+    case "plugin":
+      return {
+        ...base,
+        kind: item.kind,
+        pluginId: item.pluginId,
+        itemKind: item.itemKind,
+        version: item.version,
+        data: item.data,
+      };
   }
 }
 
@@ -501,6 +529,15 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         },
       };
     }
+    case "plugin":
+      return {
+        ...base,
+        kind: item.kind,
+        pluginId: item.pluginId,
+        itemKind: item.itemKind,
+        version: item.version,
+        data: item.data,
+      };
   }
 }
 

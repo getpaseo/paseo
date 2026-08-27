@@ -108,3 +108,33 @@ export default function contribute(plugin: PluginContext) {
     },
   );
 });
+
+describe("plugin contribution targets", () => {
+  it("keeps timeline contributions out of the server bundle", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `export default function contribute(plugin) {
+  plugin.addTimelineTransformer({
+    id: "timeline-card",
+    query: { itemType: "tool_call" },
+    transform() { return { items: [] }; },
+  });
+  plugin.addTimelineRenderer({
+    kind: "timeline-card",
+    version: 1,
+    schema: { safeParse(value) { return { success: true, data: value }; } },
+    Component() { return null; },
+  });
+  return () => undefined;
+}
+`,
+    );
+
+    const { clientBundle, serverBundle } = await compilePlugin(entryPath);
+    expect(clientBundle).toContain("timeline-card");
+    expect(serverBundle).not.toContain("timeline-card");
+  });
+});

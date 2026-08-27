@@ -166,6 +166,59 @@ export default function contribute(plugin: PluginContext) {
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
 
+## Timeline items
+
+A plugin can replace a projected timeline entry with its own data and React Native renderer. Both
+registrations are client contributions. A matching live event refreshes the projected tail before
+replacement, so provider lifecycle deltas are never exposed as plugin items.
+
+```tsx
+import type { PluginContext, PluginTimelineItemProps } from "@getpaseo/plugin";
+import { Text } from "react-native";
+import { z } from "zod";
+
+const schema = z.object({ label: z.string() });
+
+function Card({ item, theme }: PluginTimelineItemProps<z.output<typeof schema>>) {
+  return <Text style={{ color: theme.colors.foreground }}>{item.data.label}</Text>;
+}
+
+export default function contribute(plugin: PluginContext) {
+  plugin.addTimelineTransformer({
+    id: "command-card",
+    query: { itemType: "tool_call" },
+    transform({ item }) {
+      if (item.status === "running") return;
+      return {
+        items: [
+          {
+            type: "plugin",
+            kind: "command-card",
+            version: 1,
+            data: { label: item.name },
+          },
+        ],
+      };
+    },
+  });
+  plugin.addTimelineRenderer({
+    kind: "command-card",
+    version: 1,
+    schema,
+    Component: Card,
+  });
+  return () => {};
+}
+```
+
+`query.itemType` is the stable, coarse selector. Inspect the selected item inside `transform` for
+provider- or tool-specific recognition. Returning `undefined` keeps the original entry. Returning
+`items` replaces it; an empty array removes it. Item `data` must be JSON-compatible.
+
+Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, and `layout`. Paseo validates
+`item.data` with the registered schema before rendering. Keep transformers synchronous and
+deterministic because Paseo reruns them while reconciling projected history.
+
 ## Theme and layout
 
 Plugin UI runs on desktop, browser, iOS, and Android, across every Paseo theme. `theme` is a typed `PluginTheme` mapped from the active host theme. Color and spacing must come from those props. Hardcoded colors and unstyled `Text` break when the host theme changes.

@@ -508,6 +508,27 @@ test("manual retries can immediately re-attempt a failed catch-up", async () => 
   await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
 });
 
+test("plugin catalog changes reproject visible timelines from the latest tail", async () => {
+  const world = new TimelineWorld();
+  world.sync.setConnected(true);
+  world.sync.replaceVisibleAgentIds("workspace", ["agent-a"]);
+  const membership = await world.nextMembership();
+  membership.succeed();
+  const initial = await world.nextFetch("agent-a");
+  initial.respond({ hasNewer: false });
+  await vi.waitFor(() => expect(world.sync.getAgentTimelineStatus("agent-a")).toBe("ready"));
+
+  world.sync.reprojectVisibleTimelines();
+  const reprojection = await world.nextFetch("agent-a");
+
+  expect(reprojection.request).toEqual({
+    direction: "tail",
+    limit: 40,
+    projection: "projected",
+  });
+  reprojection.respond({ hasNewer: false });
+});
+
 test("redeclaring unchanged visibility does not bypass catch-up backoff", async () => {
   const world = new TimelineWorld();
   world.sync.setConnected(true);

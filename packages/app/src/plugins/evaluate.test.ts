@@ -10,6 +10,49 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("collects timeline transformers and renderers", () => {
+    const plugin = evaluatePluginClientBundle(
+      "reports",
+      bundle(`
+        function Card() { return null; }
+        const schema = { safeParse(value) { return { success: true, data: value }; } };
+        plugin.addTimelineTransformer({
+          id: "test-report",
+          query: { itemType: "tool_call" },
+          transform() { return { items: [] }; },
+        });
+        plugin.addTimelineRenderer({
+          kind: "test-report",
+          version: 1,
+          schema,
+          Component: Card,
+        });
+      `),
+    );
+
+    expect(plugin.timelineTransformers.map(({ id, query }) => ({ id, query }))).toEqual([
+      { id: "test-report", query: { itemType: "tool_call" } },
+    ]);
+    expect(plugin.timelineRenderers.map(({ kind, version }) => ({ kind, version }))).toEqual([
+      { kind: "test-report", version: 1 },
+    ]);
+  });
+
+  it("rejects unknown timeline item types", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "reports",
+        bundle(`
+          plugin.addTimelineTransformer({
+            id: "bad-query",
+            query: { itemType: "settled" },
+            transform() { return { items: [] }; },
+          });
+        `),
+      ),
+    ).toThrow("Timeline transformer bad-query has invalid item type: settled");
+  });
+
   it("collects a surface and its sidebar placement", () => {
     const plugin = evaluatePluginClientBundle(
       "example",

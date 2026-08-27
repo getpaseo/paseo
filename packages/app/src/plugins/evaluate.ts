@@ -13,6 +13,8 @@ import {
   type PluginSidebarContribution,
   type PluginSurfaceProps,
   type PluginThemeContribution,
+  type PluginTimelineRendererContribution,
+  type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
   usePaseo,
   useAgent,
@@ -27,6 +29,15 @@ import { parsePluginThemeContribution } from "./themes";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 const PANEL_LOCATIONS = ["workspace", "explorer"] as const;
+const TIMELINE_ITEM_TYPES = new Set([
+  "user_message",
+  "assistant_message",
+  "reasoning",
+  "tool_call",
+  "todo",
+  "error",
+  "compaction",
+]);
 
 function normalizePanelLocations(
   panelId: string,
@@ -62,6 +73,8 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     commandCenterItems: [],
     attachmentSources: [],
     themes: [],
+    timelineTransformers: [],
+    timelineRenderers: [],
   };
   const surfaceIds = new Set<string>();
   const sidebarItemIds = new Set<string>();
@@ -69,6 +82,8 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
   const commandCenterItemIds = new Set<string>();
   const attachmentSourceIds = new Set<string>();
   const themeIds = new Set<string>();
+  const timelineTransformerIds = new Set<string>();
+  const timelineRendererIds = new Set<string>();
   const pluginContext = createPluginContext({
     addSurface(surfaceId: string, Component: ComponentType<PluginSurfaceProps>) {
       const normalizedId = requireId(surfaceId, "surface id");
@@ -183,6 +198,46 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
       themeIds.add(normalizedId);
       collector.themes.push(theme);
     },
+    addTimelineTransformer(contribution: PluginTimelineTransformerContribution) {
+      const normalizedId = requireId(contribution.id, "timeline transformer id");
+      if (timelineTransformerIds.has(normalizedId)) {
+        throw new Error(`Duplicate timeline transformer: ${normalizedId}`);
+      }
+      if (!contribution.query || typeof contribution.query.itemType !== "string") {
+        throw new Error(`Timeline transformer ${normalizedId} has no item type`);
+      }
+      if (!TIMELINE_ITEM_TYPES.has(contribution.query.itemType)) {
+        throw new Error(
+          `Timeline transformer ${normalizedId} has invalid item type: ${contribution.query.itemType}`,
+        );
+      }
+      if (typeof contribution.transform !== "function") {
+        throw new Error(`Timeline transformer ${normalizedId} has no transform`);
+      }
+      if (contribution.id !== normalizedId) {
+        throw new Error(`Invalid timeline transformer id: ${contribution.id}`);
+      }
+      timelineTransformerIds.add(normalizedId);
+      collector.timelineTransformers.push(contribution);
+    },
+    addTimelineRenderer(contribution: PluginTimelineRendererContribution) {
+      const kind = requireId(contribution.kind, "timeline renderer kind");
+      if (!Number.isInteger(contribution.version) || contribution.version < 1) {
+        throw new Error(`Timeline renderer ${kind} has invalid version`);
+      }
+      const rendererId = `${kind}/${contribution.version}`;
+      if (timelineRendererIds.has(rendererId)) {
+        throw new Error(`Duplicate timeline renderer: ${rendererId}`);
+      }
+      if (!contribution.schema || typeof contribution.schema.safeParse !== "function") {
+        throw new Error(`Timeline renderer ${rendererId} has no schema`);
+      }
+      if (typeof contribution.Component !== "function") {
+        throw new Error(`Timeline renderer ${rendererId} is not a component`);
+      }
+      timelineRendererIds.add(rendererId);
+      collector.timelineRenderers.push({ ...contribution, kind });
+    },
   });
   const runtimeRequire = (name: string): unknown => {
     if (name === "react") return React;
@@ -245,5 +300,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     commandCenterItems: collector.commandCenterItems,
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,
+    timelineTransformers: collector.timelineTransformers,
+    timelineRenderers: collector.timelineRenderers,
   };
 }
