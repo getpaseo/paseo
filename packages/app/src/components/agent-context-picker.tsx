@@ -336,7 +336,8 @@ export function AgentContextPicker({
             {t("agentContext.selectionCount", { count: selection.length })}
           </Text>
           <Button
-            size="sm"
+            variant="default"
+            size="xs"
             onPress={handleAdd}
             disabled={isConfirmDisabled}
             testID="agent-context-confirm"
@@ -526,8 +527,11 @@ const styles = StyleSheet.create((theme: Theme) => ({
   },
   footer: {
     alignItems: "center",
+    flex: 1,
     flexDirection: "row",
+    gap: theme.spacing[4],
     justifyContent: "space-between",
+    minWidth: 0,
   },
   footerText: {
     color: theme.colors.foregroundMuted,
