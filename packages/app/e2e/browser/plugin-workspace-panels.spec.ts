@@ -29,9 +29,9 @@ function isSettledWorkspaceUrl(url: URL): boolean {
   return url.pathname.includes("/workspace/") && !url.searchParams.has("open");
 }
 
-function pluginSource(): string {
+function pluginSource(input: { workspaceId: string; agentId: string }): string {
   return `import React, { useRef } from "react";
-import { Text, View } from "react-native";
+1: import { Pressable, Text, View } from "react-native";
 import { Icon, useAgent, useWorkspace } from "@getpaseo/plugin";
 import { defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
@@ -41,6 +41,9 @@ const recordComposerOpen = defineRpc({
   input: z.object({ workspaceId: z.string() }),
   output: z.object({ opened: z.boolean() }),
 });
+2:   type PluginClientContext,
+  type PluginComposerPillProps,
+  type PluginSurfaceProps,
 
 function WorkspacePanel({ workspaceId, host, layout }) {
   const workspace = useWorkspace(workspaceId, (value) => ({ id: value.id }));
@@ -55,8 +58,14 @@ function AgentPanel({ workspaceId, agentId, host, layout }) {
   return <View><Text>Agent bridge {agent?.id}</Text><Text>Workspace {workspace?.id}</Text><Text>Host {host.id}</Text><Text>Layout {layout.compact ? "compact" : "wide"}</Text></View>;
 }
 
-function DirectCollisionSurface() {
-  return <View><Text>Direct collision surface</Text></View>;
+function DirectCollisionSurface({ navigation }) {
+  return <View>
+    <Text>Direct collision surface</Text>
+    {navigation ? <>
+      <Pressable accessibilityRole="button" onPress={() => navigation.openWorkspace({ workspaceId: ${JSON.stringify(input.workspaceId)} })}><Text>Open workspace from plugin</Text></Pressable>
+      <Pressable accessibilityRole="button" onPress={() => navigation.openAgent({ agentId: ${JSON.stringify(input.agentId)} })}><Text>Open agent from plugin</Text></Pressable>
+    </> : null}
+  </View>;
 }
 
 function SidebarCollisionSurface() {
@@ -172,13 +181,17 @@ test.describe("plugin workspace panels and Command Center", () => {
     const primaryClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
     const previousConfig = await primaryClient.getDaemonConfig();
     const primary = await seedWorkspace({ repoPrefix: "plugin-panel-primary-" });
+    let navigationAgentId = "";
     const secondaryDaemon = await startIsolatedHostDaemon("plugin-panel-secondary");
     const secondary = await seedWorkspace({
       repoPrefix: "plugin-panel-secondary-",
       port: secondaryDaemon.port,
     });
     await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: PLUGIN_ID }));
-    await writeFile(path.join(directory, "index.tsx"), pluginSource());
+    await writeFile(
+      path.join(directory, "index.tsx"),
+      pluginSource({ workspaceId: primary.workspaceId, agentId: "missing-agent" }),
+    );
 
     try {
       await primaryClient.patchDaemonConfig({ pluginsEnabled: true });
@@ -239,6 +252,38 @@ test.describe("plugin workspace panels and Command Center", () => {
         await page.getByTestId("plugin-surface-close").click();
       });
 
+      await test.step("surface navigation opens host-owned workspace and agent routes", async () => {
+        await runCommand(page, "Open direct collision surface");
+        await page.getByRole("button", { name: "Open workspace from plugin", exact: true }).click();
+        await page.waitForURL(isSettledWorkspaceUrl);
+        await expect(page.getByTestId("workspace-header-title")).toBeVisible();
+
+        const agent = await primary.client.createAgent({
+          provider: "mock",
+          cwd: primary.repoPath,
+          workspaceId: primary.workspaceId,
+          title: "Plugin navigation agent",
+          model: "ten-second-stream",
+          modeId: "load-test",
+        });
+        navigationAgentId = agent.id;
+        await writeFile(
+          path.join(directory, "index.tsx"),
+          pluginSource({ workspaceId: primary.workspaceId, agentId: navigationAgentId }),
+        );
+        await primaryClient.reloadPlugin(PLUGIN_ID);
+
+        await runCommand(page, "Open direct collision surface");
+        await page.getByRole("button", { name: "Open agent from plugin", exact: true }).click();
+        await page.waitForURL(isSettledWorkspaceUrl);
+        await expect(
+          page
+            .getByTestId(`workspace-tab-agent_${navigationAgentId}`)
+            .filter({ visible: true })
+            .first(),
+        ).toBeVisible();
+      });
+
       await test.step("switching hosts removes commands from an uninstalled host", async () => {
         await switchWorkspaceViaSidebar({
           page,
@@ -256,15 +301,7 @@ test.describe("plugin workspace panels and Command Center", () => {
       });
 
       await test.step("agent context opens the compact panel with synchronous snapshots", async () => {
-        const agent = await primary.client.createAgent({
-          provider: "mock",
-          cwd: primary.repoPath,
-          workspaceId: primary.workspaceId,
-          title: "Plugin panel context agent",
-          model: "ten-second-stream",
-          modeId: "load-test",
-        });
-        await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
+        await page.goto(buildAgentRoute(primary.workspaceId, navigationAgentId));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
         await submitMessage(page, "emit 1 agent stream updates");
         await expect(page.getByRole("button", { name: "1/1 tasks" })).toBeVisible({
@@ -293,7 +330,7 @@ test.describe("plugin workspace panels and Command Center", () => {
         await runCommand(page, "Open plugin agent");
         await closeMobileAgentSidebar(page);
         await expectMobileAgentSidebarHidden(page);
-        await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();
+        await expect(page.getByText(`Agent bridge ${navigationAgentId}`)).toBeVisible();
         await expect(
           page.getByText(`Workspace ${primary.workspaceId}`, { exact: true }),
         ).toBeVisible();

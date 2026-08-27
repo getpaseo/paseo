@@ -161,12 +161,12 @@ export default function contribute(plugin: PluginContext) {
 
 `PluginSurfaceProps` contains:
 
-| Field        | Meaning                                                                               |
-| ------------ | ------------------------------------------------------------------------------------- |
-| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                          |
-| `host`       | Selected host `id` and display `label`.                                               |
-| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                |
-| `navigation` | Optional client navigation. `openAgent(agentId)` opens an agent on the selected host. |
+| Field        | Meaning                                                                                                                      |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                 |
+| `host`       | Selected host `id` and display `label`.                                                                                      |
+| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                       |
+| `navigation` | Optional client navigation. `openAgent({ agentId })` and `openWorkspace({ workspaceId })` open targets on the selected host. |
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
 

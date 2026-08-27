@@ -140,7 +140,10 @@ declare module "@getpaseo/plugin" {
     host: { id: string; label: string };
     layout: { compact: boolean; platform: "ios" | "android" | "web" };
     /** Client-owned navigation. Undefined on older hosts; hide dependent affordances when absent. */
-    readonly navigation?: { readonly openAgent: (agentId: string) => void };
+    readonly navigation?: {
+      readonly openAgent: (input: { readonly agentId: string }) => void;
+      readonly openWorkspace: (input: { readonly workspaceId: string }) => void;
+    };
   }
 
   export interface PluginSurfaceProps extends PluginHostProps {}

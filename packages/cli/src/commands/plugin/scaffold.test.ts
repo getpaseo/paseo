@@ -81,20 +81,33 @@ import { Text } from "react-native";
 import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
 import {
   type PluginAgentPanelProps,
-  type PluginClientContext,
+1: import { Pressable, Text, View } from "react-native";
+import { Icon, useAgent, useWorkspace } from "@getpaseo/plugin";
+import { defineRpc } from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+const recordComposerOpen = defineRpc({
+  name: "composer.open",
+  input: z.object({ workspaceId: z.string() }),
+  output: z.object({ opened: z.boolean() }),
+});
+2:   type PluginClientContext,
   type PluginComposerPillProps,
+  type PluginSurfaceProps,
   useAgent,
   usePaseo,
   useWorkspace,
 } from "@getpaseo/plugin";
 import { inspect } from "./inspect.shared";
 
-export function Surface() {
+export function Surface({ navigation }: PluginSurfaceProps) {
   const paseo = usePaseo();
   const toast = useToast();
   const createWorkspace = () => paseo.workspaces.create({
     source: { kind: "directory", path: "/repo" },
   });
+  navigation?.openAgent({ agentId: "agent-1" });
+  navigation?.openWorkspace({ workspaceId: "workspace-1" });
   void createWorkspace;
   return <><Icon name="Settings" size={18} color="#123456" /><Text onPress={() => toast.show("Ready")}>Paseo API</Text><Modal title="Example" icon={<Icon name="Settings" />} open={false} onOpenChange={() => {}}><Modal.Content><Text>Modal</Text></Modal.Content></Modal></>;
 }
