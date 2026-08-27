@@ -1,5 +1,9 @@
 import { callPluginRpc } from "@getpaseo/plugin/host";
-import type { PluginCommandCapabilities, PluginPanelLocation } from "@getpaseo/plugin";
+import type {
+  PluginCommandCapabilities,
+  PluginOpenWorkspaceOptions,
+  PluginPanelLocation,
+} from "@getpaseo/plugin";
 import type { PluginClientStateSource } from "@getpaseo/plugin/host";
 import type { CommandCenterContribution } from "@/command-center/contributions";
 import { getCommandCenterIcon } from "@/command-center/icon";
@@ -10,6 +14,8 @@ import type { InstalledPlugin } from "../types";
 
 export interface PluginCommandCenterNavigation {
   openSurface(pluginId: string, surfaceId: string): void;
+  openWorkspace(workspaceId: string, options?: PluginOpenWorkspaceOptions): void;
+  openExternal(url: string): Promise<void>;
   openWorkspacePanel(pluginId: string, panelId: string, location: PluginPanelLocation): void;
   openAgentPanel(
     pluginId: string,
@@ -42,6 +48,12 @@ function capabilities(
         throw new Error(`Plugin surface is unavailable: ${surfaceId}`);
       }
       navigation.openSurface(plugin.id, surfaceId);
+    },
+    openWorkspace(workspaceId, options) {
+      navigation.openWorkspace(workspaceId, options);
+    },
+    openExternal(url) {
+      return navigation.openExternal(url);
     },
   };
 }

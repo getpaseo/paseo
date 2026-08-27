@@ -80,17 +80,36 @@ export async function inspectConfig(
 import { Text } from "react-native";
 import {
   type PluginAgentPanelProps,
+  useOpenWorkspace,
   useAgent,
   usePaseo,
+  usePaseoHost,
+  useProjects,
   useWorkspace,
 } from "@getpaseo/plugin";
 
 export function Surface() {
   const paseo = usePaseo();
+  const project = useProjects()[0];
+  const placement = project?.placements[0] ?? null;
+  const projectHost = usePaseoHost(placement?.serverId ?? null);
+  const openWorkspace = useOpenWorkspace();
   const createWorkspace = () => paseo.workspaces.create({
     source: { kind: "directory", path: "/repo" },
   });
+  const createProjectWorkspace = async () => {
+    if (!placement || !projectHost) return;
+    const workspace = await projectHost.workspaces.create({
+      source: {
+        kind: "directory",
+        path: placement.projectRootPath,
+        projectId: placement.projectId,
+      },
+    });
+    openWorkspace(workspace.id, { serverId: placement.serverId });
+  };
   void createWorkspace;
+  void createProjectWorkspace;
   return <Text>Paseo API</Text>;
 }
 

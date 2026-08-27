@@ -54,6 +54,14 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
 
   export const PluginAttachmentItemSchema: import("zod").ZodType<PluginAttachmentItem>;
   export const PluginAttachmentSearchPayloadSchema: import("zod").ZodType<PluginAttachmentSearchPayload>;
+
+  export interface PluginSidebarBadge { count: number; }
+  export const PluginSidebarBadgeSchema: import("zod").ZodType<PluginSidebarBadge>;
+
+  export interface PluginSidebarBadgeContribution {
+    rpc: PluginRpcContract;
+    intervalMs?: number;
+  }
 }
 
 declare module "@getpaseo/plugin" {
@@ -69,6 +77,7 @@ declare module "@getpaseo/plugin" {
   export {
     PluginAttachmentItemSchema,
     PluginAttachmentSearchPayloadSchema,
+    PluginSidebarBadgeSchema,
     defineAttachmentSource,
     defineRpc,
     type PluginAttachmentItem,
@@ -76,6 +85,8 @@ declare module "@getpaseo/plugin" {
     type PluginAttachmentSourceContribution,
     type PluginHandlerContext,
     type PluginRpcContract,
+    type PluginSidebarBadge,
+    type PluginSidebarBadgeContribution,
   } from "@getpaseo/plugin/server";
 
   export interface PluginTheme {
@@ -95,7 +106,25 @@ declare module "@getpaseo/plugin" {
     layout: { compact: boolean; platform: "ios" | "android" | "web" };
   }
 
-  export interface PluginSurfaceProps extends PluginHostProps {}
+  export interface PluginSurfaceProps extends PluginHostProps {
+    setSidebarBadgeCount?(itemId: string, count: number): void;
+  }
+
+  export interface PluginProjectPlacementSnapshot {
+    readonly serverId: string;
+    readonly serverName: string;
+    readonly projectId: string;
+    readonly projectName: string;
+    readonly projectRootPath: string;
+    readonly projectKind: "git" | "non_git" | "directory";
+    readonly isOnline: boolean;
+  }
+
+  export interface PluginProjectSnapshot {
+    readonly projectKey: string;
+    readonly projectName: string;
+    readonly placements: readonly PluginProjectPlacementSnapshot[];
+  }
 
   export interface PluginWorkspaceSnapshot {
     readonly id: string;
@@ -146,6 +175,17 @@ declare module "@getpaseo/plugin" {
   export type PluginPanelLocation = "workspace" | "explorer";
   export interface PluginOpenPanelOptions { location?: PluginPanelLocation; }
 
+  export interface PluginOpenWorkspaceOptions {
+    agentId?: string;
+    pin?: boolean;
+    serverId?: string;
+  }
+
+  export interface PluginNavigation {
+    openWorkspace(workspaceId: string, options?: PluginOpenWorkspaceOptions): void;
+    openExternal(url: string): Promise<void>;
+  }
+
   export type PluginWorkspacePanelContribution =
     | { id: string; title: string; icon: string; locations?: readonly PluginPanelLocation[]; context: "workspace"; Component: ComponentType<PluginWorkspacePanelProps> }
     | { id: string; title: string; icon: string; locations?: readonly PluginPanelLocation[]; context: "agent"; Component: ComponentType<PluginAgentPanelProps> };
@@ -155,6 +195,7 @@ declare module "@getpaseo/plugin" {
     title: string;
     icon: string;
     surface: string;
+    badge?: PluginSidebarBadgeContribution;
   }
 
   export interface PluginThemeColors {
@@ -187,6 +228,8 @@ declare module "@getpaseo/plugin" {
       input: ZodInput<InputSchema>,
     ): Promise<ZodOutput<OutputSchema>>;
     openSurface(id: string): void;
+    openWorkspace(workspaceId: string, options?: PluginOpenWorkspaceOptions): void;
+    openExternal(url: string): Promise<void>;
   }
 
   export interface PluginGlobalCommandContext extends PluginCommandCapabilities {
@@ -236,6 +279,10 @@ declare module "@getpaseo/plugin" {
 
   export function usePaseo(): PaseoApi;
 
+  export function useProjects(): readonly PluginProjectSnapshot[];
+
+  export function usePaseoHost(serverId: string | null): PaseoApi | null;
+
   export function useWorkspace<Selection>(
     workspaceId: string,
     selector: (workspace: PluginWorkspaceSnapshot) => Selection,
@@ -245,6 +292,13 @@ declare module "@getpaseo/plugin" {
     agentId: string,
     selector: (agent: PluginAgentSnapshot) => Selection,
   ): Selection | null;
+
+  export function useOpenWorkspace(): (
+    workspaceId: string,
+    options?: PluginOpenWorkspaceOptions,
+  ) => void;
+
+  export function useOpenExternal(): (url: string) => Promise<void>;
 }
 `;
 

@@ -29,6 +29,8 @@ interface SidebarHeaderRowProps {
    */
   variant?: SidebarHeaderRowVariant;
   shortcutKeys?: ShortcutKey[][] | null;
+  /** Count pill on the trailing edge. Zero and below render nothing. */
+  badgeCount?: number;
 }
 
 export function SidebarHeaderRow({
@@ -41,6 +43,7 @@ export function SidebarHeaderRow({
   accessibilityLabel,
   variant = "header",
   shortcutKeys = null,
+  badgeCount = 0,
 }: SidebarHeaderRowProps) {
   const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
 
@@ -68,13 +71,14 @@ export function SidebarHeaderRow({
             uniProps={isHighlighted ? foregroundColorMapping : foregroundMutedColorMapping}
           />
           <SidebarHeaderRowLabel label={label} isHighlighted={isHighlighted} />
+          {badgeCount > 0 ? <SidebarHeaderRowBadge count={badgeCount} /> : null}
           {shortcutKeys && Boolean(state.hovered) ? (
             <Shortcut chord={shortcutKeys} style={styles.shortcut} />
           ) : null}
         </>
       );
     },
-    [ThemedIcon, isActive, label, shortcutKeys],
+    [ThemedIcon, badgeCount, isActive, label, shortcutKeys],
   );
 
   return (
@@ -106,6 +110,18 @@ function SidebarHeaderRowLabel({
     [isHighlighted],
   );
   return <Text style={labelStyle}>{label}</Text>;
+}
+
+const BADGE_OVERFLOW_THRESHOLD = 99;
+
+function SidebarHeaderRowBadge({ count }: { count: number }) {
+  return (
+    <View style={styles.badge}>
+      <Text style={styles.badgeText}>
+        {count > BADGE_OVERFLOW_THRESHOLD ? `${BADGE_OVERFLOW_THRESHOLD}+` : count}
+      </Text>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -155,6 +171,21 @@ const styles = StyleSheet.create((theme) => ({
   },
   labelHighlighted: {
     color: theme.colors.foreground,
+  },
+  badge: {
+    marginLeft: "auto",
+    minWidth: 18,
+    paddingHorizontal: theme.spacing[1.5],
+    paddingVertical: 1,
+    borderRadius: theme.borderRadius.full,
+    backgroundColor: theme.colors.surfaceSidebarHover,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeText: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.medium,
+    color: theme.colors.foregroundMuted,
   },
   shortcut: {
     marginLeft: "auto",

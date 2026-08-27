@@ -14,6 +14,7 @@ import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 import { resolvePluginIcon } from "./icons";
+import { setPluginSidebarBadgeCount } from "./sidebar-badge";
 import { toPluginTheme } from "./theme";
 import { useInstalledPlugin, usePluginInstallations } from "./registry";
 import { buildPluginSurfaceRoute } from "./routes";
@@ -66,9 +67,18 @@ function SurfaceRenderer({
   host: PluginSurfaceProps["host"];
   theme: PluginTheme;
 }) {
+  const updateSidebarBadge = useCallback(
+    (itemId: string, count: number) => setPluginSidebarBadgeCount(plugin, itemId, count),
+    [plugin],
+  );
   return (
     <PluginRuntimeBoundary plugin={plugin} runtime={runtime}>
-      <Surface theme={theme} host={host} layout={layout} />
+      <Surface
+        theme={theme}
+        host={host}
+        layout={layout}
+        setSidebarBadgeCount={updateSidebarBadge}
+      />
     </PluginRuntimeBoundary>
   );
 }
@@ -159,7 +169,10 @@ export function PluginSurfaceScreen() {
   const installations = usePluginInstallations(pluginId);
   const hosts = useHosts();
   const client = useHostRuntimeClient(serverId);
-  const runtime = useMemo(() => createPluginSurfaceRuntime(client, pluginId), [client, pluginId]);
+  const runtime = useMemo(
+    () => createPluginSurfaceRuntime(client, pluginId, serverId),
+    [client, pluginId, serverId],
+  );
   const compact = useIsCompactFormFactor();
   const { sidebarItem, surface } = useMemo(
     () => resolvePluginSurfaceContribution(plugin, identity),

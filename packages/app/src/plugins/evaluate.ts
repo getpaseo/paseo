@@ -5,20 +5,19 @@ import * as ReactNative from "react-native";
 // eslint-disable-next-line no-restricted-imports -- plugin bundles receive TanStack's real runtime, not Paseo's query wrappers.
 import * as ReactQuery from "@tanstack/react-query";
 import * as Zod from "zod";
-import {
-  defineAttachmentSource,
-  defineRpc,
-  type PluginAttachmentSourceContribution,
-  type PluginCommandCenterItemContribution,
-  type PluginSidebarContribution,
-  type PluginSurfaceProps,
-  type PluginThemeContribution,
-  type PluginWorkspacePanelContribution,
-  usePaseo,
-  useAgent,
-  useWorkspace,
-  useRpc,
+import type {
+  PluginAttachmentSourceContribution,
+  PluginCommandCenterItemContribution,
+  PluginSidebarContribution,
+  PluginSurfaceProps,
+  PluginThemeContribution,
+  PluginWorkspacePanelContribution,
 } from "@getpaseo/plugin";
+// Namespaces, not named imports: the runtime shim below hands these straight to
+// plugin code, so it cannot drift behind the SDK's exports the way a
+// hand-written list does.
+import * as PluginSdk from "@getpaseo/plugin";
+import * as PluginServerSdk from "@getpaseo/plugin/server";
 import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo/plugin/host";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
@@ -86,11 +85,16 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
       if (!contribution.icon.trim()) throw new Error(`Sidebar item ${normalizedId} has no icon`);
       resolvePluginIcon(contribution.icon.trim());
       sidebarItemIds.add(normalizedId);
+      const badge = contribution.badge;
+      if (badge && typeof badge.rpc?.name !== "string") {
+        throw new Error(`Sidebar item ${normalizedId} has an invalid badge RPC`);
+      }
       collector.sidebarItems.push({
         id: normalizedId,
         title: contribution.title.trim(),
         icon: contribution.icon.trim(),
         surface: requireId(contribution.surface, "sidebar surface id"),
+        ...(badge ? { badge } : {}),
       });
     },
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution) {
@@ -188,19 +192,8 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
-    if (name === "@getpaseo/plugin") {
-      return {
-        defineAttachmentSource,
-        defineRpc,
-        usePaseo,
-        useAgent,
-        useWorkspace,
-        useRpc,
-      };
-    }
-    if (name === "@getpaseo/plugin/server") {
-      return { defineAttachmentSource, defineRpc };
-    }
+    if (name === "@getpaseo/plugin") return PluginSdk;
+    if (name === "@getpaseo/plugin/server") return PluginServerSdk;
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;
     throw new Error(`Module "${name}" is not available in plugin client code`);

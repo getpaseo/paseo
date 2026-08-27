@@ -103,6 +103,144 @@ export default function contribute(plugin: PluginContext) {
   }
 }, 60_000);
 
+test("plugin subprocess receives the whole server SDK, not a hand-picked subset", async () => {
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-sdk-plugin-"));
+  roots.push(pluginDirectory);
+  await writeFile(
+    path.join(pluginDirectory, "paseo-plugin.json"),
+    JSON.stringify({ id: "sdk-surface" }),
+  );
+  // Imports every value export the server SDK offers. When the subprocess hands
+  // back a hand-written subset instead of the module, these are undefined and
+  // the plugin fails at load or first call.
+  await writeFile(
+    path.join(pluginDirectory, "index.tsx"),
+    `import {
+  PluginAttachmentItemSchema,
+  PluginAttachmentSearchPayloadSchema,
+  PluginSidebarBadgeSchema,
+  defineAttachmentSource,
+  defineRpc,
+  type PluginContext,
+} from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+const badge = defineRpc({
+  name: "badge",
+  input: z.object({}),
+  output: PluginSidebarBadgeSchema,
+});
+
+const search = defineRpc({
+  name: "search",
+  input: z.object({ query: z.string() }),
+  output: PluginAttachmentSearchPayloadSchema,
+});
+
+export default function contribute(plugin: PluginContext) {
+  plugin.handle(badge, () => ({ count: 3 }));
+  plugin.handle(search, () => ({ items: [] }));
+  void defineAttachmentSource;
+  void PluginAttachmentItemSchema;
+  return () => undefined;
+}`,
+  );
+
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.4.0",
+  });
+
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await expect(client.installDirectoryPlugin(pluginDirectory)).resolves.toMatchObject({
+      id: "sdk-surface",
+      status: "running",
+    });
+
+    await expect(client.invokePluginRpc("sdk-surface", "badge", {})).resolves.toEqual({ count: 3 });
+    await expect(
+      client.invokePluginRpc("sdk-surface", "search", { query: "anything" }),
+    ).resolves.toEqual({ items: [] });
+
+    await client.removePlugin("sdk-surface");
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+  }
+}, 60_000);
+
+test("reload is not stalled or crashed by a handler that answers after shutdown", async () => {
+  const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-late-reply-"));
+  roots.push(pluginDirectory);
+  await writeFile(
+    path.join(pluginDirectory, "paseo-plugin.json"),
+    JSON.stringify({ id: "late-reply" }),
+  );
+  // Answers long after the host stops the plugin. Before send() checked the
+  // channel, the late reply threw ERR_IPC_CHANNEL_CLOSED and took the
+  // subprocess down with an unhandled 'error' event.
+  await writeFile(
+    path.join(pluginDirectory, "index.tsx"),
+    `import { defineRpc, type PluginContext } from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+const slow = defineRpc({
+  name: "slow",
+  input: z.object({}),
+  output: z.object({ done: z.boolean() }),
+});
+
+export default function contribute(plugin: PluginContext) {
+  plugin.handle(slow, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    return { done: true };
+  });
+  return () => undefined;
+}`,
+  );
+
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.4.0",
+  });
+
+  try {
+    await client.connect();
+    await client.patchDaemonConfig({ pluginsEnabled: true });
+    await expect(client.installDirectoryPlugin(pluginDirectory)).resolves.toMatchObject({
+      id: "late-reply",
+      status: "running",
+    });
+
+    // Leave a handler running, then reload out from under it.
+    const pending = client.invokePluginRpc("late-reply", "slow", {}).catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    const reloadStarted = Date.now();
+    await expect(client.reloadPlugin("late-reply")).resolves.toMatchObject({
+      id: "late-reply",
+      status: "running",
+    });
+    expect(Date.now() - reloadStarted).toBeLessThan(15_000);
+
+    await pending;
+    // Reload retains the log tail, so the discarded subprocess's output is
+    // still readable here.
+    const logs = await client.getPluginLogs("late-reply");
+    expect(logs.map((entry) => entry.message).join("\n")).not.toContain("ERR_IPC_CHANNEL_CLOSED");
+
+    await expect(client.invokePluginRpc("late-reply", "slow", {})).resolves.toEqual({ done: true });
+    await client.removePlugin("late-reply");
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+  }
+}, 60_000);
+
 test("daemon config reload enables and disables configured plugins without restarting", async () => {
   const pluginDirectory = await mkdtemp(path.join(tmpdir(), "paseo-reload-plugin-"));
   const paseoHomeRoot = await mkdtemp(path.join(tmpdir(), "paseo-reload-home-"));

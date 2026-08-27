@@ -8,6 +8,7 @@ import {
   getPreferredPluginContributionHost,
   rememberPluginContributionHost,
 } from "./contribution-host";
+import { usePluginSidebarBadgeCount } from "./sidebar-badge";
 import {
   groupPluginSidebarContributions,
   type PluginSidebarGroup,
@@ -54,6 +55,7 @@ function PluginSidebarItemRow({
   onBeforeNavigate?: () => void;
 }) {
   const target = selectTarget(group, currentHostId);
+  const badgeCount = usePluginSidebarBadgeCount(target);
   const route = buildPluginSurfaceRoute(target.plugin.serverId, group.pluginId, {
     kind: "sidebar",
     id: group.contributionId,
@@ -79,6 +81,7 @@ function PluginSidebarItemRow({
       isActive={isActive}
       testID={`plugin-sidebar-${group.pluginId}-${group.contributionId}`}
       variant="compact"
+      badgeCount={badgeCount}
     />
   );
 }

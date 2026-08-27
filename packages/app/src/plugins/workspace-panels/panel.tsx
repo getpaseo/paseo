@@ -54,8 +54,8 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   });
   const client = useHostRuntimeClient(serverId);
   const runtime = useMemo(
-    () => createPluginSurfaceRuntime(client, target.pluginId),
-    [client, target.pluginId],
+    () => createPluginSurfaceRuntime(client, target.pluginId, serverId),
+    [client, serverId, target.pluginId],
   );
   const compact = useIsCompactFormFactor();
   const hosts = useHosts();

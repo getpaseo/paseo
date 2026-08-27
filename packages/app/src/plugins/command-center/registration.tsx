@@ -13,6 +13,7 @@ import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import type { PluginPanelLocation } from "@getpaseo/plugin";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
 import { createPluginClientStateSource } from "../client-state/source";
+import { createPluginNavigation } from "../navigation";
 import { buildPluginSurfaceRoute, hostIdFromPathname } from "../routes";
 import { useInstalledPlugins } from "../registry";
 import { createPluginSurfaceRuntime } from "../surface-runtime";
@@ -57,7 +58,7 @@ export function PluginCommandCenterActions() {
     return buildPluginCommandCenterContributions({
       plugins,
       runtime(pluginId) {
-        const runtime = createPluginSurfaceRuntime(client, pluginId);
+        const runtime = createPluginSurfaceRuntime(client, pluginId, serverId);
         if (!runtime) throw new Error("Plugin host is offline");
         return runtime;
       },
@@ -65,6 +66,12 @@ export function PluginCommandCenterActions() {
       workspaceId: workspaceExists ? workspaceId : null,
       agentId: agentExists ? focusedAgentId : null,
       navigation: {
+        openWorkspace(targetWorkspaceId, options) {
+          createPluginNavigation(serverId).openWorkspace(targetWorkspaceId, options);
+        },
+        openExternal(url) {
+          return createPluginNavigation(serverId).openExternal(url);
+        },
         openSurface(pluginId, surfaceId) {
           router.push(
             buildPluginSurfaceRoute(serverId, pluginId, { kind: "surface", id: surfaceId }),

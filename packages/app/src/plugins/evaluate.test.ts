@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import * as PluginSdk from "@getpaseo/plugin";
+import * as PluginServerSdk from "@getpaseo/plugin/server";
 import { evaluatePluginClientBundle } from "./evaluate";
 
 function bundle(body: string): string {
@@ -8,6 +10,52 @@ function bundle(body: string): string {
     return module.exports;
   })`;
 }
+
+/** Bundle that captures what the runtime shim hands back for a specifier. */
+function requiringBundle(specifier: string): string {
+  return `(function(require) {
+    const module = { exports: {} };
+    const sdk = require(${JSON.stringify(specifier)});
+    module.exports.default = function(plugin) {
+      plugin.addSurface("main", function() { return null; });
+      globalThis.__pluginSdkUnderTest = sdk;
+      return function() {};
+    };
+    return module.exports;
+  })`;
+}
+
+describe("plugin client runtime modules", () => {
+  // The shim is what plugin code actually imports. When it is a hand-written
+  // list it drifts behind the SDK and every new export fails at call time with
+  // "is not a function" — these assert the whole surface reaches plugin code.
+  it("hands plugin code every @getpaseo/plugin export", () => {
+    evaluatePluginClientBundle("example", requiringBundle("@getpaseo/plugin"));
+    const sdk = (globalThis as { __pluginSdkUnderTest?: Record<string, unknown> })
+      .__pluginSdkUnderTest;
+
+    expect(Object.keys(sdk ?? {}).sort()).toEqual(Object.keys(PluginSdk).sort());
+    for (const hook of ["usePaseo", "useRpc", "useWorkspace", "useAgent", "useOpenWorkspace"]) {
+      expect(typeof sdk?.[hook]).toBe("function");
+    }
+  });
+
+  it("hands plugin code every @getpaseo/plugin/server export", () => {
+    evaluatePluginClientBundle("example", requiringBundle("@getpaseo/plugin/server"));
+    const sdk = (globalThis as { __pluginSdkUnderTest?: Record<string, unknown> })
+      .__pluginSdkUnderTest;
+
+    expect(Object.keys(sdk ?? {}).sort()).toEqual(Object.keys(PluginServerSdk).sort());
+    expect(sdk?.PluginSidebarBadgeSchema).toBeDefined();
+    expect(typeof sdk?.defineRpc).toBe("function");
+  });
+
+  it("refuses a module plugin code has no business importing", () => {
+    expect(() => evaluatePluginClientBundle("example", requiringBundle("node:fs"))).toThrow(
+      /not available in plugin client code/,
+    );
+  });
+});
 
 describe("evaluatePluginClientBundle", () => {
   it("collects a surface and its sidebar placement", () => {
@@ -265,6 +313,47 @@ describe("evaluatePluginClientBundle", () => {
         `),
       ),
     ).toThrow("Duplicate theme: mocha");
+  });
+
+  it("carries a sidebar badge contract through to the installed contribution", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      bundle(`
+        function Surface() { return null; }
+        plugin.addSurface("main", Surface);
+        plugin.addSidebarItem({
+          id: "main",
+          title: "Example",
+          icon: "Blocks",
+          surface: "main",
+          badge: { rpc: { name: "example.badge", input: {}, output: {} }, intervalMs: 30000 },
+        });
+      `),
+    );
+
+    expect(plugin.sidebarItems[0]?.badge).toEqual({
+      rpc: { name: "example.badge", input: {}, output: {} },
+      intervalMs: 30000,
+    });
+  });
+
+  it("rejects a sidebar badge without a usable RPC contract", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        bundle(`
+          function Surface() { return null; }
+          plugin.addSurface("main", Surface);
+          plugin.addSidebarItem({
+            id: "main",
+            title: "Example",
+            icon: "Blocks",
+            surface: "main",
+            badge: { rpc: {} },
+          });
+        `),
+      ),
+    ).toThrow("invalid badge RPC");
   });
 
   it("rejects a sidebar placement whose surface does not exist", () => {

@@ -1,4 +1,5 @@
 import { PluginAttachmentSearchPayloadSchema } from "./attachments.js";
+import { PluginSidebarBadgeSchema, resolvePluginSidebarBadgeInterval } from "./badges.js";
 export { PluginClientStateProvider, type PluginClientStateSource } from "./client-state.js";
 import type {
   PluginAttachmentSourceContribution,
@@ -10,8 +11,10 @@ import type {
   PluginThemeContribution,
   PluginWorkspacePanelContribution,
 } from "./contracts.js";
+import { PluginNavigationProvider } from "./navigation-context.js";
 import { PluginRpcProvider } from "./rpc-context.js";
 import { PaseoApiProvider } from "./paseo-context.js";
+import { PluginProjectProvider } from "./project-context.js";
 import { callPluginRpc } from "./rpc.js";
 import type { ComponentType } from "react";
 
@@ -66,6 +69,15 @@ export function createPluginContext(
   };
 }
 
+export async function readPluginSidebarBadge(
+  contribution: PluginSidebarContribution,
+  invoke: (method: string, input: unknown) => Promise<unknown>,
+) {
+  if (!contribution.badge) return null;
+  const output = await callPluginRpc(contribution.badge.rpc, invoke, {});
+  return PluginSidebarBadgeSchema.parseAsync(output);
+}
+
 export async function searchPluginAttachments(
   source: PluginAttachmentSourceContribution,
   invoke: (method: string, input: unknown) => Promise<unknown>,
@@ -75,4 +87,11 @@ export async function searchPluginAttachments(
   return PluginAttachmentSearchPayloadSchema.parseAsync(output);
 }
 
-export { callPluginRpc, PaseoApiProvider, PluginRpcProvider };
+export {
+  callPluginRpc,
+  resolvePluginSidebarBadgeInterval,
+  PaseoApiProvider,
+  PluginProjectProvider,
+  PluginNavigationProvider,
+  PluginRpcProvider,
+};
