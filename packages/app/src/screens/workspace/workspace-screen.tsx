@@ -56,6 +56,7 @@ import {
   openPreferredWorkspaceTarget,
   openWorkspaceTargetBeside,
 } from "@/workspace-tabs/open-beside";
+import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import { traceInstant } from "@/performance/native-trace";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
@@ -1105,7 +1106,7 @@ function renderWorkspaceContent(input: RenderWorkspaceContentInput): React.React
       </View>
     );
   }
-  if (!hasHydratedAgents || !hasLoadedTerminals) {
+  if (!activeTabDescriptor && (!hasHydratedAgents || !hasLoadedTerminals)) {
     return (
       <View style={styles.emptyState}>
         <ThemedLoadingSpinner uniProps={mutedColorMapping} />
@@ -1544,6 +1545,12 @@ function WorkspaceScreenContent({
     [workspaceId],
   );
   const workspaceDescriptor = useWorkspace(normalizedServerId, normalizedWorkspaceId);
+  useEffect(() => {
+    if (!normalizedServerId || !normalizedWorkspaceId || workspaceDescriptor) return;
+    void getHostRuntimeStore()
+      .prepareWorkspaceRoute(normalizedServerId, normalizedWorkspaceId)
+      .catch(() => undefined);
+  }, [normalizedServerId, normalizedWorkspaceId, workspaceDescriptor]);
   const workspaceScripts = getWorkspaceScripts(workspaceDescriptor);
   const { handleRetryHost, handleManageHost, handleDismissMissingWorkspace } =
     useWorkspaceRouteActions(normalizedServerId);
@@ -1828,6 +1835,7 @@ function WorkspaceScreenContent({
     [openTab],
   );
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
+  const pullRequestOpenLocation = useSettings((settings) => settings.pullRequestOpenLocation);
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
   const selectWorkspaceTabInPane = useWorkspaceLayoutStore((state) => state.selectTabInPane);
   const closeWorkspaceTab = useWorkspaceLayoutStore((state) => state.closeTab);
@@ -1905,6 +1913,13 @@ function WorkspaceScreenContent({
     routeFocused: isRouteFocused,
     focusedPaneOnly: syncFocusedPaneOnly,
   });
+  useEffect(() => {
+    for (const agentId of visibleAgentIds) {
+      void getHostRuntimeStore()
+        .prepareAgentTimeline(normalizedServerId, agentId)
+        .catch(() => undefined);
+    }
+  }, [normalizedServerId, visibleAgentIds]);
   useLayoutEffect(() => {
     if (!persistenceKey || !viewedTimelineSync) {
       return;
@@ -2984,6 +2999,15 @@ function WorkspaceScreenContent({
           });
           return true;
         }
+        if (action.target === "pull-request") {
+          openWorkspacePullRequest({
+            isCompact: isMobile,
+            workspaceKey: persistenceKey,
+            checkout: activeExplorerCheckout,
+            destination: pullRequestOpenLocation,
+          });
+          return true;
+        }
         openWorkspaceTabFocused(persistenceKey, target, FOCUSED_PANE_PLACEMENT);
         return true;
       }
@@ -3008,6 +3032,7 @@ function WorkspaceScreenContent({
       isMobile,
       openWorkspaceTabFocused,
       persistenceKey,
+      pullRequestOpenLocation,
     ],
   );
 

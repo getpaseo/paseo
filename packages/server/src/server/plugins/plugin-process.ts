@@ -99,6 +99,7 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
     url: `ipc://plugin/${encodeURIComponent(message.pluginId)}`,
     clientId: `plugin:${message.pluginId}`,
     clientType: "cli",
+    appVersion: message.appVersion,
     reconnect: { enabled: false },
     transportFactory,
   });

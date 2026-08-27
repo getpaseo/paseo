@@ -4,21 +4,23 @@ import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { DropdownTrigger } from "@/components/ui/dropdown-trigger";
-import { useAppSettings, type OpenInSidePanePreferences } from "@/hooks/use-settings";
+import {
+  useAppSettings,
+  type OpenInSidePanePreferences,
+  type PullRequestOpenLocation,
+} from "@/hooks/use-settings";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 
 const SOURCES = [
   "explorerFiles",
-  "explorerChanges",
+  "diffs",
   "chatFiles",
   "diffFiles",
   "subagents",
-  "pullRequests",
-  "changesLinks",
 ] as const satisfies readonly (keyof OpenInSidePanePreferences)[];
 
-type OpenDestination = "main" | "side";
+type LayoutPreferenceSource = keyof OpenInSidePanePreferences | "pullRequests";
 
 function destinationTriggerStyle({
   pressed,
@@ -29,20 +31,21 @@ function destinationTriggerStyle({
 
 function LayoutPreferenceRow({
   source,
-  value,
+  destination,
   first,
+  allowExplorer,
   onDestinationChange,
 }: {
-  source: keyof OpenInSidePanePreferences;
-  value: boolean;
+  source: LayoutPreferenceSource;
+  destination: PullRequestOpenLocation;
   first: boolean;
+  allowExplorer?: boolean;
   onDestinationChange: (
-    source: keyof OpenInSidePanePreferences,
-    destination: OpenDestination,
+    source: LayoutPreferenceSource,
+    destination: PullRequestOpenLocation,
   ) => void;
 }) {
   const { t } = useTranslation();
-  const destination: OpenDestination = value ? "side" : "main";
   const destinationLabel = t(`settings.layout.openInSidePane.destinations.${destination}`);
   const selectMain = useCallback(
     () => onDestinationChange(source, "main"),
@@ -50,6 +53,10 @@ function LayoutPreferenceRow({
   );
   const selectSide = useCallback(
     () => onDestinationChange(source, "side"),
+    [onDestinationChange, source],
+  );
+  const selectExplorer = useCallback(
+    () => onDestinationChange(source, "explorer"),
     [onDestinationChange, source],
   );
   const label = t(`settings.layout.openInSidePane.sources.${source}.label`);
@@ -73,6 +80,11 @@ function LayoutPreferenceRow({
           <DropdownMenuItem selected={destination === "side"} onSelect={selectSide}>
             {t("settings.layout.openInSidePane.destinations.side")}
           </DropdownMenuItem>
+          {allowExplorer ? (
+            <DropdownMenuItem selected={destination === "explorer"} onSelect={selectExplorer}>
+              {t("settings.layout.openInSidePane.destinations.explorer")}
+            </DropdownMenuItem>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
     </View>
@@ -83,7 +95,11 @@ export function LayoutSection() {
   const { t } = useTranslation();
   const { settings, updateSettings } = useAppSettings();
   const handleDestinationChange = useCallback(
-    (source: keyof OpenInSidePanePreferences, destination: OpenDestination) => {
+    (source: LayoutPreferenceSource, destination: PullRequestOpenLocation) => {
+      if (source === "pullRequests") {
+        void updateSettings({ pullRequestOpenLocation: destination });
+        return;
+      }
       void updateSettings({
         openInSidePane: { ...settings.openInSidePane, [source]: destination === "side" },
       });
@@ -97,12 +113,19 @@ export function LayoutSection() {
           <Fragment key={source}>
             <LayoutPreferenceRow
               source={source}
-              value={settings.openInSidePane[source]}
+              destination={settings.openInSidePane[source] ? "side" : "main"}
               first={index === 0}
               onDestinationChange={handleDestinationChange}
             />
           </Fragment>
         ))}
+        <LayoutPreferenceRow
+          source="pullRequests"
+          destination={settings.pullRequestOpenLocation}
+          first={false}
+          allowExplorer
+          onDestinationChange={handleDestinationChange}
+        />
       </View>
     </SettingsSection>
   );

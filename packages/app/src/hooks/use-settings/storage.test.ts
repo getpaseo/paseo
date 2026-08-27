@@ -197,6 +197,37 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(false);
   });
 
+  it("collapses legacy diff destinations into the former Explorer choice", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          openInSidePane: { explorerChanges: true, changesLinks: false },
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.openInSidePane.diffs).toBe(true);
+    expect(result.openInSidePane).not.toHaveProperty("explorerChanges");
+    expect(result.openInSidePane).not.toHaveProperty("changesLinks");
+  });
+
+  it("defaults PRs to Explorer and preserves the legacy side choice", async () => {
+    const defaults = await loadAppSettingsFromStorage(makeDeps());
+    const legacySide = await loadAppSettingsFromStorage(
+      makeDeps({
+        storage: createInMemoryKeyValueStorage({
+          [APP_SETTINGS_KEY]: JSON.stringify({ openInSidePane: { pullRequests: true } }),
+        }),
+      }),
+    );
+
+    expect(defaults.pullRequestOpenLocation).toBe("explorer");
+    expect(legacySide.pullRequestOpenLocation).toBe("side");
+    expect(legacySide.openInSidePane).not.toHaveProperty("pullRequests");
+  });
+
   it("uses the native terminal renderer by default", async () => {
     const deps = makeDeps();
 

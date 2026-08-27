@@ -34,7 +34,8 @@ export class PluginService {
   constructor(
     logger: pino.Logger,
     private readonly configStore: DaemonConfigStore,
-    runtime: PluginRuntimePort = new PluginRuntime(logger),
+    daemonVersion: string,
+    runtime: PluginRuntimePort = new PluginRuntime(logger, daemonVersion),
   ) {
     this.logger = logger.child({ module: "plugin-service" });
     this.runtime = runtime;

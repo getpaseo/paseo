@@ -609,7 +609,7 @@ export async function createPaseoDaemon(
   });
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
-  const pluginRuntime = new PluginService(logger, daemonConfigStore);
+  const pluginRuntime = new PluginService(logger, daemonConfigStore, daemonVersion);
 
   const serverId = getOrCreateServerId(config.paseoHome, { logger });
   const daemonKeyPair = await loadOrCreateDaemonKeyPair(config.paseoHome, logger);
