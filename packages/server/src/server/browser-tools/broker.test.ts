@@ -6,11 +6,7 @@ import type {
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import {
-  BrowserToolsBroker,
-  HEADLESS_BROWSER_HOST_KIND,
-  type BrowserHostClient,
-} from "./broker.js";
+import { BrowserToolsBroker, type BrowserHostClient } from "./broker.js";
 
 const BROWSER_ID = "11111111-1111-4111-8111-111111111111";
 const SECOND_BROWSER_ID = "22222222-2222-4222-8222-222222222222";
@@ -723,27 +719,6 @@ describe("BrowserToolsBroker", () => {
     void broker.execute({ command: { command: "new_tab", args: {} }, hostScope: "mirror" });
     expect(automationOnlyHost.receivedRequests).toEqual([]);
     expect(mirrorHost.receivedRequests).toHaveLength(2);
-  });
-
-  test("a desktop app takes the new tab from the daemon's headless fallback", async () => {
-    for (const headlessFirst of [true, false]) {
-      const broker = createBroker();
-      const headless = new FakeBrowserHostClient("host-headless", {
-        hostKind: HEADLESS_BROWSER_HOST_KIND,
-        isDaemonLocal: true,
-      });
-      const desktop = new FakeBrowserHostClient("host-desktop", { isDaemonLocal: true });
-      // Both are on the daemon's machine, so registration order decided this
-      // before; the head has the operator's profile and has to win either way.
-      for (const host of headlessFirst ? [headless, desktop] : [desktop, headless]) {
-        broker.registerClient(host);
-      }
-
-      void broker.execute({ command: { command: "new_tab", args: {} } });
-
-      expect(headless.receivedRequests).toEqual([]);
-      expect(desktop.receivedRequests).toHaveLength(1);
-    }
   });
 
   test("agent scope still reaches a host registered for automation alone", async () => {

@@ -251,7 +251,6 @@ export const PersistedConfigSchema = z
         browserTools: z
           .object({
             enabled: z.boolean().optional(),
-            cdpEndpoint: z.string().optional(),
           })
           .passthrough()
           .optional(),

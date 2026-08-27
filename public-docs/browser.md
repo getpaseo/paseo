@@ -42,31 +42,6 @@ The tools are part of the [Paseo MCP toolset](/docs/mcp), so **Enable Paseo tool
 
 > Browser tools let agents access and control Paseo browser tabs, including logged-in browser state. Only enable this for agents you trust.
 
-## Where the browser runs
-
-Browser tabs live in a **host** the daemon routes commands to. There are two, and both can be connected at once — `browser_list_tabs` aggregates them.
-
-**The Paseo desktop app** hosts tabs in its own window, in the browser profile you use yourself. This is the full toolset: snapshots, refs, dialogs, console and network logs.
-
-**A CDP endpoint you already run** gives a headless daemon a browser of its own, so mirroring works on a server with no desktop app connected. Point the daemon at it:
-
-```json
-{
-  "daemon": {
-    "browserTools": {
-      "enabled": true,
-      "cdpEndpoint": "http://127.0.0.1:9222"
-    }
-  }
-}
-```
-
-Without `cdpEndpoint` the daemon runs no browser, exactly as before. Paseo attaches to the endpoint but never launches or bundles a browser, so run your own: headless Chrome with `--remote-debugging-port=9222`, Lightpanda, Browserless, or a hosted browser. An `http(s)` endpoint is resolved through `/json/version`; give a `ws(s)` URL to connect straight to it. The daemon retries until the browser is up, so start order doesn't matter.
-
-A browser on the daemon reaches your dev server at `localhost` directly, with no tunnel back to a client.
-
-This host serves the viewer and mirror commands — `list_tabs`, `new_tab`, `navigate`, `back`, `forward`, `reload`, `close_tab`, `resize`, `screenshot`, `input_at`, `screencast_start`, `screencast_stop`. The ref-based tools (`browser_snapshot`, `browser_click`, `browser_fill`, and friends) need the snapshot engine the desktop app injects into its guests, so agents get those only from a connected desktop app.
-
 ## How an agent sees a page
 
 The primary tool is `browser_snapshot`, which returns the page as an accessibility tree — headings, text, form state, and hierarchy — instead of raw HTML:
