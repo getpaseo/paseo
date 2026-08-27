@@ -94,6 +94,20 @@ export function BrowserMirrorPane({
     [deviceHeight, deviceWidth, fit],
   );
 
+  // The local pane frames a fixed device size and lets a responsive one fill the
+  // pane; a mirrored tab reads as the same browser only if it does both too.
+  const isDeviceFramed = deviceSize.id !== "responsive";
+  const stageStyle = useMemo(
+    () => [styles.stage, isDeviceFramed && styles.stageDeviceFrame],
+    [isDeviceFramed],
+  );
+  // expo-image ignores background and shadow on its own style, so the device
+  // frame lives on a wrapper sized identically to the image.
+  const frameWrapStyle = useMemo(
+    () => [styles.frame, isDeviceFramed && styles.frameShadow, frameStyle],
+    [frameStyle, isDeviceFramed],
+  );
+
   const disconnectedLabel = t("common.errors.daemonClientUnavailable");
   const failureMessage = useCallback(
     (outcome: MirrorCommandOutcome) =>
@@ -222,37 +236,41 @@ export function BrowserMirrorPane({
           </Text>
         </View>
       ) : null}
-      <BrowserMirrorInputSurface
-        fit={fit}
-        guest={guest}
-        isInteractive={isInteractive}
-        onInput={sendInput}
-        onFocusKeyboard={focusKeyboard}
-        onLayout={handleLayout}
-      >
-        {hasFrame && frameStyle ? (
-          <Image
-            source={frameSource}
-            style={frameStyle}
-            contentFit="contain"
-            cachePolicy="none"
-            transition={0}
-            accessibilityIgnoresInvertColors
+      <View style={stageStyle}>
+        <BrowserMirrorInputSurface
+          fit={fit}
+          guest={guest}
+          isInteractive={isInteractive}
+          onInput={sendInput}
+          onFocusKeyboard={focusKeyboard}
+          onLayout={handleLayout}
+        >
+          {hasFrame && frameStyle ? (
+            <View style={frameWrapStyle}>
+              <Image
+                source={frameSource}
+                style={frameStyle}
+                contentFit="contain"
+                cachePolicy="none"
+                transition={0}
+                accessibilityIgnoresInvertColors
+              />
+            </View>
+          ) : (
+            <Text style={styles.message}>{t("workspace.browser.mirror.connecting")}</Text>
+          )}
+          <EditingTextInput
+            ref={keyboardRef}
+            initialValue=""
+            onKeyPress={handleKeyPress}
+            style={styles.keyboardCapture}
+            accessibilityLabel={t("workspace.browser.mirror.keyboard")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            spellCheck={false}
           />
-        ) : (
-          <Text style={styles.message}>{t("workspace.browser.mirror.connecting")}</Text>
-        )}
-        <EditingTextInput
-          ref={keyboardRef}
-          initialValue=""
-          onKeyPress={handleKeyPress}
-          style={styles.keyboardCapture}
-          accessibilityLabel={t("workspace.browser.mirror.keyboard")}
-          autoCapitalize="none"
-          autoCorrect={false}
-          spellCheck={false}
-        />
-      </BrowserMirrorInputSurface>
+        </BrowserMirrorInputSurface>
+      </View>
     </View>
   );
 }
@@ -260,6 +278,28 @@ export function BrowserMirrorPane({
 const styles = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
+  },
+  stage: {
+    flex: 1,
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  // Mirrors `webviewWrapDeviceFrame` in the local pane.
+  stageDeviceFrame: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.surface1,
+    padding: theme.spacing[3],
+  },
+  frame: {
+    backgroundColor: theme.colors.surface0,
+  },
+  // Mirrors the local pane's `boxShadow: 0 2px 16px rgba(0,0,0,0.25)`.
+  frameShadow: {
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 2 },
   },
   keyboardCapture: {
     position: "absolute",
