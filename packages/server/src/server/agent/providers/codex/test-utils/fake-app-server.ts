@@ -47,11 +47,20 @@ type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
 export interface FakeCodexAppServer {
   readonly child: CodexAppServerChildProcess;
   readonly recordedRollbacks: JsonObject[];
+  requests(): readonly JsonObject[];
   assertNoErrors(): void;
   waitForTurnStart(): Promise<JsonObject>;
+  waitForRequest(method: string): Promise<JsonObject>;
+  disconnect(): void;
   nextResponse(): Promise<string>;
   startsTurn(params: { threadId: string; turnId?: string }): void;
-  completeTurn(params?: { threadId?: string }): void;
+  startsCompaction(params: { threadId: string; itemId: string }): void;
+  updatesPlan(params: { threadId: string; steps: string[] }): void;
+  completeTurn(params?: {
+    threadId?: string;
+    status?: "completed" | "failed" | "interrupted";
+    error?: { message: string } | null;
+  }): void;
   startsSubAgent(params: {
     callId: string;
     threadId: string;
@@ -83,6 +92,19 @@ export interface FakeCodexAppServer {
     reason: string;
   }): void;
   waitForCommandApprovalDecision(itemId: string): Promise<unknown>;
+  requestFileChangeApproval(params: {
+    itemId: string;
+    threadId: string;
+    turnId: string;
+    reason: string;
+  }): void;
+  requestUserInput(params: {
+    itemId: string;
+    threadId: string;
+    turnId: string;
+    questions: Array<Record<string, unknown>>;
+  }): void;
+  waitForApprovalDecision(itemId: string): Promise<unknown>;
   requestMcpElicitation(params: {
     threadId: string;
     turnId: string | null;
@@ -199,6 +221,11 @@ export function createFakeCodexAppServer(
 
     Promise.resolve(handler(message.params))
       .then((result) => {
+        const rpcError = toJsonObject(result).__jsonRpcError;
+        if (rpcError) {
+          child.stdout.write(`${JSON.stringify({ id: message.id, error: rpcError })}\n`);
+          return undefined;
+        }
         child.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`);
         return undefined;
       })
@@ -291,6 +318,9 @@ export function createFakeCodexAppServer(
   return {
     child,
     recordedRollbacks,
+    requests() {
+      return messages;
+    },
     assertNoErrors() {
       if (errors.length > 0) {
         throw errors[0];
@@ -302,6 +332,16 @@ export function createFakeCodexAppServer(
         "turn start request",
       );
       return toJsonObject(message.params);
+    },
+    async waitForRequest(method) {
+      const message = await waitForMessage(
+        (candidate) => candidate.method === method,
+        `${method} request`,
+      );
+      return toJsonObject(message.params);
+    },
+    disconnect() {
+      child.emit("exit", null, "SIGTERM");
     },
     nextResponse() {
       return new Promise<string>((resolve) => {
@@ -319,11 +359,34 @@ export function createFakeCodexAppServer(
         })}\n`,
       );
     },
+    startsCompaction(params) {
+      writeNotification("item/started", {
+        threadId: params.threadId,
+        item: { type: "contextCompaction", id: params.itemId },
+      });
+    },
+    updatesPlan(params) {
+      child.stdout.write(
+        `${JSON.stringify({
+          method: "turn/plan/updated",
+          params: {
+            threadId: params.threadId,
+            plan: params.steps.map((step) => ({ step, status: "pending" })),
+          },
+        })}\n`,
+      );
+    },
     completeTurn(params = {}) {
       child.stdout.write(
         `${JSON.stringify({
           method: "turn/completed",
-          params: { threadId: params.threadId ?? "thread-1", turn: { status: "completed" } },
+          params: {
+            threadId: params.threadId ?? "thread-1",
+            turn: {
+              status: params.status ?? "completed",
+              error: params.error ?? null,
+            },
+          },
         })}\n`,
       );
     },
@@ -466,6 +529,35 @@ export function createFakeCodexAppServer(
       );
     },
     async waitForCommandApprovalDecision(itemId) {
+      return await this.waitForApprovalDecision(itemId);
+    },
+    requestFileChangeApproval(params) {
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
+      approvalRequestIds.set(params.itemId, requestId);
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "item/fileChange/requestApproval",
+          params,
+        })}\n`,
+      );
+    },
+    requestUserInput(params) {
+      const requestId = nextServerRequestId;
+      nextServerRequestId += 1;
+      approvalRequestIds.set(params.itemId, requestId);
+      child.stdout.write(
+        `${JSON.stringify({
+          jsonrpc: "2.0",
+          id: requestId,
+          method: "item/tool/requestUserInput",
+          params,
+        })}\n`,
+      );
+    },
+    async waitForApprovalDecision(itemId) {
       const requestId = approvalRequestIds.get(itemId);
       if (requestId === undefined) {
         throw new Error(`No pending fake Codex app-server approval for ${itemId}`);

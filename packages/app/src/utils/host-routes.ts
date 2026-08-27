@@ -492,9 +492,11 @@ export function resolveKnownHostRoute(input: {
 export const SETTINGS_SECTION_SLUGS = [
   "general",
   "appearance",
+  "layout",
   "editor",
   "shortcuts",
   "integrations",
+  "notifications",
   "permissions",
   "diagnostics",
   "about",
@@ -507,12 +509,16 @@ export function isSettingsSectionSlug(value: string): value is SettingsSectionSl
 }
 
 export const HOST_SECTION_SLUGS = [
+  "projects",
   "connections",
+  "pair-device",
   "agents",
+  "metadata",
   "workspaces",
   "providers",
   "usage",
   "terminals",
+  "plugins",
   "host",
 ] as const;
 
@@ -562,14 +568,22 @@ export function buildSettingsHostSectionRoute(serverId: string, section: HostSec
   return `/settings/hosts/${encodeSegment(normalized)}/${section}` as const;
 }
 
-export function buildProjectsSettingsRoute() {
-  return "/settings/projects" as const;
+export function buildProjectsSettingsRoute(serverId: string) {
+  const normalized = trimNonEmpty(serverId);
+  if (!normalized) {
+    throw new Error("buildProjectsSettingsRoute requires a non-empty serverId");
+  }
+  return `/settings/hosts/${encodeSegment(normalized)}/projects` as const;
 }
 
-export function buildProjectSettingsRoute(projectKey: string) {
-  const normalized = trimNonEmpty(projectKey);
-  if (!normalized) {
-    throw new Error("buildProjectSettingsRoute requires a non-empty projectKey");
+export function buildProjectSettingsRoute(serverId: string, projectId: string) {
+  if (!serverId.trim() || !projectId.trim()) {
+    throw new Error("buildProjectSettingsRoute requires a serverId and projectId");
   }
-  return `/settings/projects/${encodeSegment(normalized)}` as const;
+  return `/settings/hosts/${encodeSegment(serverId)}/projects/${encodeSegment(projectId)}` as const;
+}
+
+export function normalizeProjectSettingsRouteId(value: string | string[] | undefined): string {
+  const id = Array.isArray(value) ? value[0] : value;
+  return typeof id === "string" ? id : "";
 }

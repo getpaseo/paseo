@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        I'm a solo maintainer and don't always keep up with GitHub Issues daily. If something is urgent or blocking you, [Discord](https://discord.gg/jz8T2uahpH) is the fastest place to reach me.
+        Issues are only for bugs. Product discussions go in [GitHub Discussions](https://github.com/getpaseo/paseo/discussions) or `#product` in [Discord](https://discord.gg/jz8T2uahpH) — feature requests opened as issues get closed automatically.
 
         Before opening, please:
 

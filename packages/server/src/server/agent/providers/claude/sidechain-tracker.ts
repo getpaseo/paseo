@@ -58,9 +58,22 @@ function isClaudeContentChunk(value: unknown): value is ClaudeContentChunk {
 export class ClaudeSidechainTracker {
   private readonly activeSidechains = new Map<string, SubAgentActivityState>();
   private readonly getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
+  private readonly isDescriptorOwnedElsewhere: () => boolean;
+  private readonly needsSyntheticParentToolCard: (toolUseId: string) => boolean;
 
-  constructor(input: { getToolInput: (toolUseId: string) => AgentMetadata | null | undefined }) {
+  constructor(input: {
+    getToolInput: (toolUseId: string) => AgentMetadata | null | undefined;
+    /**
+     * When the provider learns subagent identity and status declaratively, this tracker stops
+     * emitting descriptor upserts and maps frames to timeline items only. Two owners writing the
+     * same descriptor from different evidence is how the live and replay paths drifted apart.
+     */
+    isDescriptorOwnedElsewhere?: () => boolean;
+    needsSyntheticParentToolCard?: (toolUseId: string) => boolean;
+  }) {
     this.getToolInput = input.getToolInput;
+    this.isDescriptorOwnedElsewhere = input.isDescriptorOwnedElsewhere ?? (() => false);
+    this.needsSyntheticParentToolCard = input.needsSyntheticParentToolCard ?? (() => true);
   }
 
   handleMessage(message: SDKMessage, parentToolUseId: string): AgentStreamEvent[] {
@@ -124,19 +137,38 @@ export class ClaudeSidechainTracker {
       actions: [],
     };
 
+    const descriptorEvents: AgentStreamEvent[] = this.isDescriptorOwnedElsewhere()
+      ? []
+      : [
+          {
+            type: "provider_subagent",
+            provider: "claude",
+            event: {
+              type: "upsert",
+              id: parentToolUseId,
+              title: state.name ?? state.subAgentType ?? "Claude subagent",
+              description: state.description ?? null,
+              status: "running",
+              toolCallId: parentToolUseId,
+            },
+          },
+        ];
+
+    const parentCard: AgentStreamEvent[] = this.needsSyntheticParentToolCard(parentToolUseId)
+      ? [
+          {
+            type: "timeline",
+            item: {
+              ...toolCall,
+              detail,
+            },
+            provider: "claude",
+          },
+        ]
+      : [];
+
     return [
-      {
-        type: "provider_subagent",
-        provider: "claude",
-        event: {
-          type: "upsert",
-          id: parentToolUseId,
-          title: state.name ?? state.subAgentType ?? "Claude subagent",
-          description: state.description ?? null,
-          status: "running",
-          toolCallId: parentToolUseId,
-        },
-      },
+      ...descriptorEvents,
       ...childTimelineItems.map(
         (item): AgentStreamEvent => ({
           type: "provider_subagent",
@@ -144,19 +176,16 @@ export class ClaudeSidechainTracker {
           event: { type: "timeline", id: parentToolUseId, item },
         }),
       ),
-      {
-        type: "timeline",
-        item: {
-          ...toolCall,
-          detail,
-        },
-        provider: "claude",
-      },
+      ...parentCard,
     ];
   }
 
   finishAll(status: "completed" | "failed" | "canceled"): AgentStreamEvent[] {
     const events: AgentStreamEvent[] = [];
+    if (this.isDescriptorOwnedElsewhere()) {
+      this.activeSidechains.clear();
+      return events;
+    }
     for (const [id, state] of this.activeSidechains) {
       events.push({
         type: "provider_subagent",
@@ -179,6 +208,7 @@ export class ClaudeSidechainTracker {
     const state = this.activeSidechains.get(id);
     if (!state) return [];
     this.activeSidechains.delete(id);
+    if (this.isDescriptorOwnedElsewhere()) return [];
     return [
       {
         type: "provider_subagent",

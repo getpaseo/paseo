@@ -33,6 +33,11 @@ class ExpoTwoWayAudioModule : Module() {
             }
         }
 
+         Function("releaseAudioSession") {
+             audioEngine?.releaseAudioSession()
+             null
+         }
+
          Function("isRecording") {
              audioEngine?.isRecording ?: false
          }

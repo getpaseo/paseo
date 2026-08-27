@@ -125,11 +125,11 @@ describe("findProjectIcon", () => {
   });
 
   it("prioritizes favicon over logo", async () => {
-    writeFileSync(join(tempDir, "favicon.ico"), "favicon");
+    writeFileSync(join(tempDir, "favicon.png"), "favicon");
     writeFileSync(join(tempDir, "logo.png"), "logo");
 
     const result = await findProjectIcon(tempDir);
-    expect(result).toBe(join(tempDir, "favicon.ico"));
+    expect(result).toBe(join(tempDir, "favicon.png"));
   });
 
   it("prioritizes priority dirs over root", async () => {
@@ -180,6 +180,14 @@ describe("findProjectIcon", () => {
     expect(result).toBe(join(tempDir, "apple-touch-icon.png"));
   });
 
+  it("prefers an Apple touch PNG over ICO", async () => {
+    writeFileSync(join(tempDir, "favicon.ico"), "ico");
+    writeFileSync(join(tempDir, "apple-touch-icon.png"), "apple icon");
+
+    const result = await findProjectIcon(tempDir);
+    expect(result).toBe(join(tempDir, "apple-touch-icon.png"));
+  });
+
   it("finds icon-*.png patterns", async () => {
     writeFileSync(join(tempDir, "icon-192.png"), "192 icon");
 
@@ -187,18 +195,38 @@ describe("findProjectIcon", () => {
     expect(result).toBe(join(tempDir, "icon-192.png"));
   });
 
+  it.each([
+    "favicon-32x32.png",
+    "apple-touch-icon-180x180.png",
+    "android-chrome-192x192.png",
+    "safari-pinned-tab.svg",
+    "mstile-150x150.png",
+  ])("finds common sized icon %s", async (fileName) => {
+    writeFileSync(join(tempDir, fileName), "icon");
+
+    const result = await findProjectIcon(tempDir);
+    expect(result).toBe(join(tempDir, fileName));
+  });
+
   it("handles non-existent directory gracefully", async () => {
     const result = await findProjectIcon(join(tempDir, "nonexistent"));
     expect(result).toBeNull();
   });
 
-  it("returns the first match when multiple icons exist in same location", async () => {
+  it("prefers SVG over PNG over ICO for the same name", async () => {
     writeFileSync(join(tempDir, "favicon.ico"), "ico");
     writeFileSync(join(tempDir, "favicon.png"), "png");
     writeFileSync(join(tempDir, "favicon.svg"), "svg");
 
+    // SVG and PNG render on every client; native <Image> cannot decode ICO.
     const result = await findProjectIcon(tempDir);
-    // Should return the first one based on pattern order (favicon.ico comes first)
+    expect(result).toBe(join(tempDir, "favicon.svg"));
+  });
+
+  it("falls back to ICO when no SVG or PNG exists", async () => {
+    writeFileSync(join(tempDir, "favicon.ico"), "ico");
+
+    const result = await findProjectIcon(tempDir);
     expect(result).toBe(join(tempDir, "favicon.ico"));
   });
 
@@ -399,6 +427,51 @@ describe("getProjectIcon", () => {
     const result = await getProjectIcon(tempDir);
     expect(result).not.toBeNull();
     expect(result?.mimeType).toBe("image/x-icon");
+  });
+
+  it("reports PNG for a .ico file that actually contains PNG data", async () => {
+    // Renamed PNGs are a common real-world favicon.ico; the extension lies.
+    writeFileSync(join(tempDir, "favicon.ico"), squarePng);
+
+    const result = await getProjectIcon(tempDir);
+    expect(result?.mimeType).toBe("image/png");
+    expect(result?.data).toBe(squarePng.toString("base64"));
+  });
+
+  it("extracts the PNG frame from an ICO container", async () => {
+    const header = Buffer.alloc(6);
+    header.writeUInt16LE(0, 0); // reserved
+    header.writeUInt16LE(1, 2); // type: icon
+    header.writeUInt16LE(1, 4); // one frame
+    const entry = Buffer.alloc(16);
+    entry[0] = 1; // width
+    entry[1] = 1; // height
+    entry.writeUInt32LE(squarePng.length, 8); // data size
+    entry.writeUInt32LE(22, 12); // data offset (6 header + 16 entry)
+    writeFileSync(join(tempDir, "favicon.ico"), Buffer.concat([header, entry, squarePng]));
+
+    const result = await getProjectIcon(tempDir);
+    expect(result?.mimeType).toBe("image/png");
+    expect(result?.data).toBe(squarePng.toString("base64"));
+  });
+
+  it("keeps ICO containers without a PNG frame as x-icon", async () => {
+    const header = Buffer.alloc(6);
+    header.writeUInt16LE(0, 0);
+    header.writeUInt16LE(1, 2);
+    header.writeUInt16LE(1, 4);
+    const bmpFrame = Buffer.alloc(32, 0x42);
+    const entry = Buffer.alloc(16);
+    entry[0] = 1;
+    entry[1] = 1;
+    entry.writeUInt32LE(bmpFrame.length, 8);
+    entry.writeUInt32LE(22, 12);
+    const ico = Buffer.concat([header, entry, bmpFrame]);
+    writeFileSync(join(tempDir, "favicon.ico"), ico);
+
+    const result = await getProjectIcon(tempDir);
+    expect(result?.mimeType).toBe("image/x-icon");
+    expect(result?.data).toBe(ico.toString("base64"));
   });
 
   it("returns icon data for SVG files (assumed square)", async () => {

@@ -8,9 +8,9 @@ describe("formatShortcut", () => {
     expect(formatShortcut(["mod", "E"], "mac")).toBe("⌘E");
   });
 
-  it("spells out Shift in shortcut labels", () => {
-    expect(formatShortcut(["shift", "Tab"], "mac")).toBe("Shift+Tab");
-    expect(formatShortcut(["mod", "shift", "P"], "mac")).toBe("Shift+⌘+P");
+  it("uses the Shift symbol on macOS and spells it out elsewhere", () => {
+    expect(formatShortcut(["shift", "Tab"], "mac")).toBe("⇧Tab");
+    expect(formatShortcut(["mod", "shift", "P"], "mac")).toBe("⇧⌘P");
     expect(formatShortcut(["shift", "Tab"], "non-mac")).toBe("Shift+Tab");
   });
 

@@ -2,6 +2,7 @@ import type { StyleProp, ViewStyle } from "react-native";
 
 export interface DesktopFrameStyleInput {
   desktopMinWidth: number | undefined;
+  desktopLockWidth: boolean;
   referenceWidth: number | null;
   desktopFixedHeight: number | undefined;
   desktopPositionStyle: StyleProp<ViewStyle>;
@@ -12,6 +13,7 @@ export interface DesktopFrameStyleInput {
 export function buildDesktopFrameStyle(input: DesktopFrameStyleInput): StyleProp<ViewStyle> {
   const {
     desktopMinWidth,
+    desktopLockWidth,
     referenceWidth,
     desktopFixedHeight,
     desktopPositionStyle,
@@ -28,11 +30,13 @@ export function buildDesktopFrameStyle(input: DesktopFrameStyleInput): StyleProp
       ? { maxHeight: Math.min(availableHeight, desktopFixedHeight ?? 400) }
       : null;
   const floor = Math.max(desktopMinWidth ?? 0, referenceWidth ?? 200);
+  const widthStyle = desktopLockWidth
+    ? { width: floor, minWidth: floor, maxWidth: floor }
+    : { minWidth: floor, maxWidth: Math.max(400, floor) };
   return [
     {
       position: "absolute" as const,
-      minWidth: floor,
-      maxWidth: Math.max(400, floor),
+      ...widthStyle,
     },
     fixedHeightStyle,
     desktopPositionStyle,

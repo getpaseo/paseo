@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { createProjectViewKey } from "@/projects/workspace-structure";
 
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   composeWorkspaceStructure,
+  createWorkspaceStructureProjectsSelector,
   selectHasWorkspaces,
   selectHydratedWorkspaceServerIds,
+  selectWorkspaceDirectoryServerIds,
   selectProjectOrder,
   selectRecommendedProjectPaths,
   selectWorkspace,
@@ -19,11 +22,15 @@ import {
 } from "./selectors";
 import {
   useSessionStore,
-  type EmptyProjectDescriptor,
+  type ProjectDescriptor,
   type WorkspaceDescriptor,
 } from "../session-store";
 
 const SERVER_ID = "test-server";
+
+function equivalenceViewKey(projectKey: string): string {
+  return createProjectViewKey({ kind: "equivalence", projectKey });
+}
 
 function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
@@ -45,11 +52,34 @@ function createWorkspace(
   };
 }
 
+function projectDescriptorFromTestWorkspace(workspace: WorkspaceDescriptor): ProjectDescriptor {
+  return {
+    projectId: workspace.projectId,
+    projectKey: workspace.projectId,
+    projectDisplayName: workspace.projectDisplayName,
+    projectCustomName: workspace.projectCustomName ?? null,
+    projectCustomIconRevision: workspace.projectCustomIconRevision ?? null,
+    projectRootPath: workspace.projectRootPath,
+    projectKind: workspace.projectKind,
+  };
+}
+
 function initializeWorkspaces(workspaces: WorkspaceDescriptor[]): void {
   useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
   useSessionStore
     .getState()
     .setWorkspaces(SERVER_ID, new Map(workspaces.map((workspace) => [workspace.id, workspace])));
+  useSessionStore
+    .getState()
+    .setProjects(
+      SERVER_ID,
+      new Map(
+        workspaces.map((workspace) => [
+          workspace.projectId,
+          projectDescriptorFromTestWorkspace(workspace),
+        ]),
+      ).values(),
+    );
 }
 
 interface Subscribable<S> {
@@ -92,10 +122,10 @@ function emptySidebarOrder(): SidebarOrderSnapshot {
   };
 }
 
-function selectWorkspaceStructureProjectKeys(
+function selectWorkspaceStructureProjectViewKeys(
   state: Parameters<typeof selectWorkspaceStructureProjects>[0],
 ): string[] {
-  return selectWorkspaceStructureProjects(state, [SERVER_ID]).map((project) => project.projectKey);
+  return selectWorkspaceStructureProjects(state, [SERVER_ID]).map((project) => project.viewKey);
 }
 
 afterEach(() => {
@@ -103,20 +133,29 @@ afterEach(() => {
 });
 
 describe("workspace replica authority", () => {
-  it("keeps a cached workspace addressable without publishing it as an authoritative directory", () => {
+  it("publishes a restored directory while keeping remote hydration false", () => {
     const cachedWorkspace = createWorkspace({ id: "cached-workspace" });
-    initializeWorkspaces([cachedWorkspace]);
+    const store = useSessionStore.getState();
+    store.initializeSession(SERVER_ID, null);
+    store.setWorkspaces(SERVER_ID, new Map([[cachedWorkspace.id, cachedWorkspace]]));
+    store.setProjects(SERVER_ID, [projectDescriptorFromTestWorkspace(cachedWorkspace)]);
+    store.setHasWorkspaceDirectorySnapshot(SERVER_ID, true);
+    const cachedSession = useSessionStore.getState().sessions[SERVER_ID];
+    if (!cachedSession) throw new Error("expected initialized session");
 
-    const cachedServerIds = selectHydratedWorkspaceServerIds(useSessionStore.getState(), [
+    const cachedServerIds = selectWorkspaceDirectoryServerIds(useSessionStore.getState(), [
       SERVER_ID,
     ]);
 
     expect(selectWorkspace(useSessionStore.getState(), SERVER_ID, cachedWorkspace.id)).toBe(
       cachedWorkspace,
     );
-    expect(selectWorkspaceStructureProjects(useSessionStore.getState(), cachedServerIds)).toEqual(
-      [],
-    );
+    expect(cachedSession.hasHydratedWorkspaces).toBe(false);
+    expect(
+      selectWorkspaceStructureProjects(useSessionStore.getState(), cachedServerIds).map(
+        (project) => project.workspaceKeys,
+      ),
+    ).toEqual([[`${SERVER_ID}:${cachedWorkspace.id}`]]);
 
     const authoritativeWorkspace = createWorkspace({
       id: "authoritative-workspace",
@@ -125,11 +164,26 @@ describe("workspace replica authority", () => {
     useSessionStore
       .getState()
       .setWorkspaces(SERVER_ID, new Map([[authoritativeWorkspace.id, authoritativeWorkspace]]));
+    useSessionStore
+      .getState()
+      .setProjects(
+        SERVER_ID,
+        new Map([
+          [
+            authoritativeWorkspace.projectId,
+            projectDescriptorFromTestWorkspace(authoritativeWorkspace),
+          ],
+        ]).values(),
+      );
     useSessionStore.getState().setHasHydratedWorkspaces(SERVER_ID, true);
     const hydratedServerIds = selectHydratedWorkspaceServerIds(useSessionStore.getState(), [
       SERVER_ID,
     ]);
 
+    expect(hydratedServerIds).toEqual([SERVER_ID]);
+    expect(
+      Array.from(useSessionStore.getState().sessions[SERVER_ID]?.projects.keys() ?? []),
+    ).toEqual([authoritativeWorkspace.projectId]);
     expect(
       selectWorkspaceStructureProjects(useSessionStore.getState(), hydratedServerIds).map(
         (project) => project.workspaceKeys,
@@ -149,10 +203,16 @@ describe("workspace replica authority", () => {
       sessions: {
         [loadingServerId]: {
           hasHydratedWorkspaces: false,
+          projects: new Map([
+            [loadingWorkspace.projectId, projectDescriptorFromTestWorkspace(loadingWorkspace)],
+          ]),
           workspaces: new Map([[loadingWorkspace.id, loadingWorkspace]]),
         },
         [hydratedServerId]: {
           hasHydratedWorkspaces: true,
+          projects: new Map([
+            [hydratedWorkspace.projectId, projectDescriptorFromTestWorkspace(hydratedWorkspace)],
+          ]),
           workspaces: new Map([[hydratedWorkspace.id, hydratedWorkspace]]),
         },
       },
@@ -276,6 +336,27 @@ describe("selectWorkspaceFields", () => {
 });
 
 describe("workspace structure composition", () => {
+  it("reuses structure when unrelated session state changes", () => {
+    const workspace = createWorkspace({ id: "workspace-a" });
+    const workspaces = new Map([[workspace.id, workspace]]);
+    const projects = new Map([
+      [workspace.projectId, projectDescriptorFromTestWorkspace(workspace)],
+    ]);
+    const selectProjects = createWorkspaceStructureProjectsSelector([SERVER_ID]);
+    const before = selectProjects({ sessions: { [SERVER_ID]: { workspaces, projects } } });
+    const after = selectProjects({
+      sessions: {
+        [SERVER_ID]: {
+          workspaces,
+          projects,
+          hasHydratedWorkspaces: true,
+        },
+      },
+    });
+
+    expect(after).toBe(before);
+  });
+
   function snapshotStructure(
     serverId: string,
     sidebar: SidebarOrderSnapshot,
@@ -295,28 +376,35 @@ describe("workspace structure composition", () => {
       projectRootPath: "/repo/a",
       workspaceDirectory: "/repo/a",
     });
-    const emptyProject: EmptyProjectDescriptor = {
+    const emptyProject: ProjectDescriptor = {
       projectId: "project-a",
+      projectKey: "project-a",
       projectDisplayName: "Project A",
       projectCustomName: null,
+      projectCustomIconRevision: null,
       projectRootPath: "/repo/a",
       projectKind: "git",
     };
     initializeWorkspaces([workspace]);
 
-    const emittedProjectKeys = [selectWorkspaceStructureProjectKeys(useSessionStore.getState())];
+    const emittedProjectKeys = [
+      selectWorkspaceStructureProjectViewKeys(useSessionStore.getState()),
+    ];
     const stop = useSessionStore.subscribe((state) => {
-      emittedProjectKeys.push(selectWorkspaceStructureProjectKeys(state));
+      emittedProjectKeys.push(selectWorkspaceStructureProjectViewKeys(state));
     });
 
     try {
       useSessionStore.getState().removeWorkspace(SERVER_ID, workspace.id);
-      useSessionStore.getState().addEmptyProject(SERVER_ID, emptyProject);
+      useSessionStore.getState().upsertProject(SERVER_ID, emptyProject);
     } finally {
       stop();
     }
 
-    expect(emittedProjectKeys).toEqual([["project-a"], ["project-a"]]);
+    expect(emittedProjectKeys).toEqual([
+      [equivalenceViewKey("project-a")],
+      [equivalenceViewKey("project-a")],
+    ]);
   });
 
   it("changes for membership updates but not status-only updates", () => {
@@ -348,15 +436,15 @@ describe("workspace structure composition", () => {
   it("renders a project parent with zero active workspaces", () => {
     useSessionStore.getState().initializeSession(SERVER_ID, null as unknown as DaemonClient);
     useSessionStore.getState().setWorkspaces(SERVER_ID, new Map());
-    useSessionStore.getState().setEmptyProjects(SERVER_ID, [
-      {
-        projectId: "empty-project",
-        projectDisplayName: "Empty Project",
-        projectCustomName: null,
-        projectRootPath: "/repo/empty",
-        projectKind: "git",
-      },
-    ]);
+    const emptyProject: ProjectDescriptor = {
+      projectId: "empty-project",
+      projectKey: "empty-project",
+      projectDisplayName: "Empty Project",
+      projectCustomName: null,
+      projectRootPath: "/repo/empty",
+      projectKind: "git",
+    };
+    useSessionStore.getState().setProjects(SERVER_ID, [emptyProject]);
 
     const projects = selectWorkspaceStructureProjects(useSessionStore.getState(), [SERVER_ID]);
     expect(projects).toEqual([
@@ -368,7 +456,7 @@ describe("workspace structure composition", () => {
     ]);
   });
 
-  it("changes when a structure-relevant project identity field changes", () => {
+  it("changes when a project descriptor display field changes", () => {
     const workspace = createWorkspace({
       id: "workspace-a",
       projectDisplayName: "Project 1",
@@ -382,9 +470,10 @@ describe("workspace structure composition", () => {
     );
     const before = tracked.current;
 
-    useSessionStore
-      .getState()
-      .mergeWorkspaces(SERVER_ID, [{ ...workspace, projectDisplayName: "Project Renamed" }]);
+    useSessionStore.getState().upsertProject(SERVER_ID, {
+      ...projectDescriptorFromTestWorkspace(workspace),
+      projectDisplayName: "Project Renamed",
+    });
     expect(tracked.current).not.toBe(before);
 
     tracked.stop();
@@ -406,10 +495,13 @@ describe("workspace structure composition", () => {
     const before = snapshotStructure(SERVER_ID, emptySidebarOrder());
     const after = snapshotStructure(SERVER_ID, {
       ...emptySidebarOrder(),
-      projectOrder: ["project-b", "project-a"],
+      projectOrder: [equivalenceViewKey("project-b"), equivalenceViewKey("project-a")],
     });
 
-    expect(after.projects.map((project) => project.projectKey)).toEqual(["project-b", "project-a"]);
+    expect(after.projects.map((project) => project.viewKey)).toEqual([
+      equivalenceViewKey("project-b"),
+      equivalenceViewKey("project-a"),
+    ]);
     expect(after).not.toEqual(before);
   });
 });

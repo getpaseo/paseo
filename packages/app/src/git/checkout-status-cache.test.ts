@@ -14,6 +14,7 @@ import {
 import { resetReviewDraftStore, useReviewDraftStore } from "@/review/store";
 import {
   applyCheckoutStatusUpdateFromEvent,
+  ensureCheckoutStatus,
   type CheckoutPrStatusPayload,
   type CheckoutStatusPayload,
   fetchCheckoutStatus,
@@ -119,6 +120,40 @@ describe("fetchCheckoutStatus", () => {
     await fetchCheckoutStatus({ client, serverId, cwd });
 
     expect(useReviewDraftStore.getState().diffModeOverrides["review:scope"]).toBeUndefined();
+  });
+});
+
+describe("ensureCheckoutStatus", () => {
+  it("awaits the canonical checkout-status query and reuses its cached result", async () => {
+    const queryClient = createQueryClient();
+    const fetched = checkoutStatus({ currentBranch: "feature/current" });
+    const client = { getCheckoutStatus: vi.fn(async () => fetched) };
+
+    const first = await ensureCheckoutStatus({ queryClient, client, serverId, cwd });
+    const second = await ensureCheckoutStatus({ queryClient, client, serverId, cwd });
+
+    expect(first).toEqual(fetched);
+    expect(second).toEqual(fetched);
+    expect(client.getCheckoutStatus).toHaveBeenCalledExactlyOnceWith(cwd);
+  });
+
+  it("awaits a refetch when the canonical cached status was invalidated", async () => {
+    const queryClient = createQueryClient();
+    queryClient.setQueryData(
+      checkoutStatusQueryKey(serverId, cwd),
+      checkoutStatus({ currentBranch: "feature/stale" }),
+    );
+    await queryClient.invalidateQueries({
+      queryKey: checkoutStatusQueryKey(serverId, cwd),
+      refetchType: "none",
+    });
+    const fetched = checkoutStatus({ currentBranch: "feature/current" });
+    const client = { getCheckoutStatus: vi.fn(async () => fetched) };
+
+    const result = await ensureCheckoutStatus({ queryClient, client, serverId, cwd });
+
+    expect(result.currentBranch).toBe("feature/current");
+    expect(client.getCheckoutStatus).toHaveBeenCalledExactlyOnceWith(cwd);
   });
 });
 

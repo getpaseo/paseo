@@ -13,10 +13,12 @@ import {
   iosMarkdownTextIsSelectable,
   useMarkdownTextSurface,
 } from "@/components/markdown-text-selection";
+import type { MarkdownCopyInlineTag } from "@/assistant-selection-copy/markup";
 
 interface MarkdownTextSpanProps {
   style?: StyleProp<TextStyle>;
   monoSurface?: boolean;
+  copyTag?: MarkdownCopyInlineTag;
   children: ReactNode;
   // Links route through this span too (see assistant-file-links/link.tsx). A
   // plain <Text> nested in the paragraph UITextView is dropped, so the link

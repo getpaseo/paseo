@@ -42,6 +42,7 @@ import type {
 import {
   commitChanges,
   createPullRequest,
+  discardChanges,
   forgeAuthStateFromError,
   isForgeAuthError,
   mergeFromBase,
@@ -51,7 +52,7 @@ import {
   listCheckoutCommits,
   getCommitFileDiff,
 } from "../../../utils/checkout-git.js";
-import { execCommand } from "../../../utils/spawn.js";
+import { runGitCommand } from "../../../utils/run-git-command.js";
 import { expandTilde } from "../../../utils/path.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
@@ -152,6 +153,7 @@ export class CheckoutSession {
   private readonly worktreesRoot: string | undefined;
   private readonly logger: pino.Logger;
   private readonly diffSubscriptions = new Map<string, () => void>();
+  private readonly statusUpdateFingerprints = new Map<string, string>();
 
   constructor(options: CheckoutSessionOptions) {
     this.host = options.host;
@@ -479,20 +481,24 @@ export class CheckoutSession {
   emitStatusUpdate(cwd: string, snapshot: WorkspaceGitRuntimeSnapshot): void {
     try {
       const requestId = `subscription:${cwd}`;
+      const payload = {
+        ...buildCheckoutStatusPayloadFromSnapshot({
+          cwd,
+          requestId,
+          snapshot,
+        }),
+        prStatus: buildCheckoutPrStatusPayloadFromSnapshot({
+          cwd,
+          requestId,
+          snapshot,
+        }),
+      };
+      const fingerprint = JSON.stringify(payload);
+      if (this.statusUpdateFingerprints.get(cwd) === fingerprint) return;
+      this.statusUpdateFingerprints.set(cwd, fingerprint);
       this.host.emit({
         type: "checkout_status_update",
-        payload: {
-          ...buildCheckoutStatusPayloadFromSnapshot({
-            cwd,
-            requestId,
-            snapshot,
-          }),
-          prStatus: buildCheckoutPrStatusPayloadFromSnapshot({
-            cwd,
-            requestId,
-            snapshot,
-          }),
-        },
+        payload,
       });
     } catch (error) {
       this.logger.warn({ err: error, cwd }, "Failed to emit workspace checkout status update");
@@ -576,7 +582,6 @@ export class CheckoutSession {
       // Branch is a git fact derived per-descriptor from each workspace's own
       // live git snapshot (id → cwd); the reconciliation pass re-persists the
       // `branch` field per workspace from its own cwd. No cwd → ids fan-out here.
-      // TODO(K10): PR-binding on branch rename is deferred — see plan K10.
 
       // Push a workspace_update immediately so the sidebar/header reflect
       // the new branch name without waiting for the background git watcher.
@@ -606,6 +611,26 @@ export class CheckoutSession {
     }
   }
 
+  async handleCheckoutDiscardChangesRequest(
+    msg: Extract<SessionInboundMessage, { type: "checkout.discard_changes.request" }>,
+  ): Promise<void> {
+    const { cwd, paths, requestId } = msg;
+    try {
+      await discardChanges(cwd, paths);
+      await this.gitMutation.notifyGitMutation(cwd, "discard-changes");
+      this.scheduleDiffRefresh(cwd);
+      this.host.emit({
+        type: "checkout.discard_changes.response",
+        payload: { cwd, success: true, error: null, requestId },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.discard_changes.response",
+        payload: { cwd, success: false, error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
   async handleStashSaveRequest(
     msg: Extract<SessionInboundMessage, { type: "stash_save_request" }>,
   ): Promise<void> {
@@ -615,8 +640,9 @@ export class CheckoutSession {
       const message = branchLabel
         ? `${CheckoutSession.PASEO_STASH_PREFIX} ${branchLabel}`
         : `${CheckoutSession.PASEO_STASH_PREFIX} unnamed`;
-      await execCommand("git", ["stash", "push", "--include-untracked", "-m", message], {
+      await runGitCommand(["stash", "push", "--include-untracked", "-m", message], {
         cwd,
+        timeout: 120_000,
       });
       await this.gitMutation.notifyGitMutation(cwd, "stash-push");
       this.scheduleDiffRefresh(cwd);
@@ -637,8 +663,9 @@ export class CheckoutSession {
   ): Promise<void> {
     const { cwd, stashIndex, requestId } = msg;
     try {
-      await execCommand("git", ["stash", "pop", `stash@{${stashIndex}}`], {
+      await runGitCommand(["stash", "pop", `stash@{${stashIndex}}`], {
         cwd,
+        timeout: 120_000,
       });
       await this.gitMutation.notifyGitMutation(cwd, "stash-pop");
       this.scheduleDiffRefresh(cwd);
@@ -1286,9 +1313,10 @@ export class CheckoutSession {
 
     try {
       const resolvedCwd = expandTilde(cwd);
-      // COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 —
-      // the legacy github_search RPC is GitHub by definition; the modern
-      // forge.search RPC resolves the cwd's forge.
+      // COMPAT(githubSearchRpc): the legacy github_search RPC is GitHub by
+      // definition; forge.search.* shipped in v0.2.0-beta.1 and resolves the
+      // cwd's forge. Remove after 2027-01-17 once the supported client floor
+      // is >= v0.2.0.
       const resolvedForge =
         msg.type === "github_search_request"
           ? { forge: "github", service: this.github }
@@ -1389,6 +1417,7 @@ export class CheckoutSession {
       unsubscribe();
     }
     this.diffSubscriptions.clear();
+    this.statusUpdateFingerprints.clear();
   }
 }
 

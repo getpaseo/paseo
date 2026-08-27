@@ -1,0 +1,25 @@
+name: Release iOS Beta
+
+on:
+  push:
+    tags:
+      - "v*-beta.*"
+
+jobs:
+  build_ios:
+    name: Build iOS beta
+    type: build
+    params:
+      platform: ios
+      profile: production
+
+  distribute_ios_beta:
+    name: Distribute iOS beta
+    needs: [build_ios]
+    type: testflight
+    params:
+      build_id: ${{ needs.build_ios.outputs.build_id }}
+      profile: production
+      external_groups:
+        - Paseo Beta
+      submit_beta_review: true

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type pino from "pino";
+import { createClientChannel, type Transport } from "@getpaseo/relay/e2ee";
+import { exportPublicKey, generateKeyPair } from "@getpaseo/relay";
 import { startRelayTransport } from "./relay-transport";
 
 function createMockLogger() {
@@ -32,7 +34,10 @@ class FakeRelayWebSocket {
   sent: Array<string | Uint8Array | ArrayBuffer> = [];
   terminateCalls = 0;
   pingCalls = 0;
+  deferSendCompletion = false;
+  onSend: ((data: string | Uint8Array | ArrayBuffer) => void) | null = null;
   private readonly listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+  private readonly pendingSendCallbacks: Array<(error?: Error) => void> = [];
 
   constructor(readonly url: string) {}
 
@@ -61,11 +66,22 @@ class FakeRelayWebSocket {
     this.emit("close", 1006, "");
   }
 
-  send(data: string | Uint8Array | ArrayBuffer) {
+  send(data: string | Uint8Array | ArrayBuffer, callback?: (error?: Error) => void) {
     if (this.readyState !== FakeRelayWebSocket.OPEN) {
       throw new Error(`WebSocket not open (readyState=${this.readyState})`);
     }
     this.sent.push(data);
+    this.onSend?.(data);
+    if (!callback) return;
+    if (this.deferSendCompletion) {
+      this.pendingSendCallbacks.push(callback);
+      return;
+    }
+    callback();
+  }
+
+  completeNextSend() {
+    this.pendingSendCallbacks.shift()?.();
   }
 
   ping() {
@@ -80,8 +96,8 @@ class FakeRelayWebSocket {
     this.emit("open");
   }
 
-  message(data: unknown) {
-    this.emit("message", data);
+  message(data: unknown, isBinary = data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+    this.emit("message", data, isBinary);
   }
 
   pong() {
@@ -237,6 +253,80 @@ describe("relay-transport control lifecycle", () => {
         relayConnectionId: "clt_test",
       },
     ]);
+  });
+
+  test("encrypted sends wait for the physical data socket callback", async () => {
+    const logger = createMockLogger();
+    const daemonKeyPair = generateKeyPair();
+    let resolveAttached: ((socket: unknown) => void) | undefined;
+    const attached = new Promise<unknown>((resolve) => {
+      resolveAttached = resolve;
+    });
+    const controller = startRelayTransport({
+      logger: logger as unknown as pino.Logger,
+      attachSocket: async (socket) => resolveAttached?.(socket),
+      relayEndpoint: "relay.paseo.sh:443",
+      relayUseTls: true,
+      serverId: "srv_test",
+      daemonKeyPair,
+      createWebSocket: relay.createWebSocket,
+    });
+    controllers.push(controller);
+
+    const control = relay.sockets[0];
+    control.open();
+    control.message(JSON.stringify({ type: "sync", connectionIds: [] }), false);
+    control.message(JSON.stringify({ type: "connected", connectionId: "clt_test" }), false);
+
+    const dataSocket = relay.sockets[1];
+    dataSocket.deferSendCompletion = true;
+    dataSocket.open();
+    let clientTransport: Transport;
+    clientTransport = {
+      send: (data) => dataSocket.message(data, data instanceof ArrayBuffer),
+      close: () => undefined,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+    };
+    dataSocket.onSend = (data) => {
+      clientTransport.onmessage?.({
+        data: data instanceof Uint8Array ? data.slice().buffer : data,
+        isBinary: data instanceof ArrayBuffer || data instanceof Uint8Array,
+      });
+    };
+    let resolveClientOpen: (() => void) | undefined;
+    const clientOpen = new Promise<void>((resolve) => {
+      resolveClientOpen = resolve;
+    });
+    await createClientChannel(clientTransport, exportPublicKey(daemonKeyPair.publicKey), {
+      onopen: () => resolveClientOpen?.(),
+    });
+
+    let attachedCompleted = false;
+    void attached.then(() => {
+      attachedCompleted = true;
+      return undefined;
+    });
+    await clientOpen;
+    await Promise.resolve();
+    expect(attachedCompleted).toBe(false);
+    dataSocket.completeNextSend();
+    const encryptedSocket = (await attached) as {
+      send: (data: Uint8Array) => void | Promise<void>;
+    };
+    let completed = false;
+
+    const sending = Promise.resolve(encryptedSocket.send(new Uint8Array([1, 2, 3]))).then(() => {
+      completed = true;
+      return undefined;
+    });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+
+    dataSocket.completeNextSend();
+    await sending;
+    expect(completed).toBe(true);
   });
 
   test("uses relayUseTls for control and data socket URLs", () => {

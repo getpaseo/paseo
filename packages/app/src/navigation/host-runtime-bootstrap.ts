@@ -12,7 +12,7 @@ import {
 } from "@/utils/host-routes";
 
 export interface HostRuntimeBootstrapStore {
-  boot: () => void;
+  boot: () => Promise<void>;
 }
 
 export interface HostRuntimeBootstrapDaemonStartService {
@@ -26,9 +26,14 @@ export interface StartHostRuntimeBootstrapInput {
 }
 
 export function startHostRuntimeBootstrap(input: StartHostRuntimeBootstrapInput): void {
-  input.store.boot();
+  const registryReady = input.store.boot();
   void input.daemonStartService.startIfEnabled({
-    shouldStart: input.shouldStartDaemon,
+    shouldStart: async () => {
+      await registryReady;
+      return typeof input.shouldStartDaemon === "boolean"
+        ? input.shouldStartDaemon
+        : input.shouldStartDaemon();
+    },
   });
 }
 

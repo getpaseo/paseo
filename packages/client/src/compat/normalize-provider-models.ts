@@ -1,5 +1,6 @@
 import type { AgentModelDefinition, ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import { normalizeAgentModelDefinition } from "@getpaseo/protocol/agent-types";
+import { expandProviderSnapshot } from "@getpaseo/protocol/provider-snapshot-codec";
 import type {
   GetProvidersSnapshotResponseMessage,
   ListProviderModelsResponseMessage,
@@ -59,7 +60,9 @@ export function normalizeListProviderModelsPayload(
 export function normalizeProvidersSnapshotPayload<
   T extends GetProvidersSnapshotPayload | ProvidersSnapshotUpdatePayload,
 >(payload: T): T {
-  const entries = normalizeProviderSnapshotEntries(payload.entries);
+  const entries = payload.compactSnapshot
+    ? expandProviderSnapshot(payload.compactSnapshot)
+    : normalizeProviderSnapshotEntries(payload.entries);
   return entries === payload.entries ? payload : { ...payload, entries };
 }
 

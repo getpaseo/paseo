@@ -1,10 +1,30 @@
 import { describe, expect, it } from "vitest";
+import type { StateStorage } from "zustand/middleware";
 import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
-import { migratePersistedState, type MigrateLegacyImages } from "./migration";
+import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
+import {
+  migratePersistedState,
+  type MigrateLegacyImages,
+  PersistedDraftStoreSchema,
+} from "./migration";
 import { isAttachmentMetadata, type DraftRecord } from "./state";
 
 const passThroughMigrateLegacyImages: MigrateLegacyImages = async (images) =>
   images.filter(isAttachmentMetadata);
+
+function createMemoryStorage(): StateStorage & { values: Map<string, string> } {
+  const values = new Map<string, string>();
+  return {
+    values,
+    getItem: async (key) => values.get(key) ?? null,
+    setItem: async (key, value) => {
+      values.set(key, value);
+    },
+    removeItem: async (key) => {
+      values.delete(key);
+    },
+  };
+}
 
 function activeDraft(
   text: string,
@@ -96,6 +116,30 @@ function workspaceReviewAttachment(): Extract<ComposerAttachment, { kind: "revie
 }
 
 describe("draft-store migration", () => {
+  it("keeps a supported legacy draft for migration", async () => {
+    const backing = createMemoryStorage();
+    const legacyState = {
+      drafts: {
+        "draft:unsent": {
+          text: "do not lose this",
+          attachments: [],
+        },
+      },
+      createModalDraft: null,
+    };
+    backing.values.set("paseo-drafts", JSON.stringify({ state: legacyState, version: 4 }));
+    const storage = createValidatedPersistStorage(backing, PersistedDraftStoreSchema);
+
+    const stored = await storage.getItem("paseo-drafts");
+    const migrated = await migratePersistedState(stored?.state, {
+      migrateLegacyImages: passThroughMigrateLegacyImages,
+      nowMs: 1,
+    });
+
+    expect(migrated.drafts["draft:unsent"]?.input.text).toBe("do not lose this");
+    expect(backing.values.has("paseo-drafts")).toBe(true);
+  });
+
   it("promotes the newest legacy New Workspace draft into the singleton surface", async () => {
     const forkDraft = activeDraft("fork context", 1700000000003);
     const agentDraft = activeDraft("agent prompt", 1700000000004);
@@ -242,25 +286,35 @@ describe("draft-store migration", () => {
     });
   });
 
-  it("rejects workspace review attachments from migrated draft attachments", async () => {
-    const migrated = await migratePersistedState(
-      {
-        drafts: {
-          "agent:server:agent": {
-            input: {
-              text: "hello",
-              attachments: [workspaceReviewAttachment()],
-            },
-            lifecycle: "active",
-            updatedAt: 1700000000001,
-            version: 2,
+  it("drops a legacy workspace review attachment without deleting its draft", async () => {
+    const backing = createMemoryStorage();
+    const persistedState = {
+      drafts: {
+        "agent:server:agent": {
+          input: {
+            text: "hello",
+            attachments: [workspaceReviewAttachment()],
           },
+          lifecycle: "active",
+          updatedAt: 1700000000001,
+          version: 2,
         },
-        createModalDraft: null,
       },
-      { migrateLegacyImages: passThroughMigrateLegacyImages, nowMs: 1700000000002 },
-    );
+      createModalDraft: null,
+    };
+    backing.values.set("paseo-drafts", JSON.stringify({ state: persistedState, version: 4 }));
+    const storage = createValidatedPersistStorage(backing, PersistedDraftStoreSchema);
 
-    expect(migrated.drafts["agent:server:agent"]?.input.attachments).toEqual([]);
+    const stored = await storage.getItem("paseo-drafts");
+    const migrated = await migratePersistedState(stored?.state, {
+      migrateLegacyImages: passThroughMigrateLegacyImages,
+      nowMs: 1700000000002,
+    });
+
+    expect(migrated.drafts["agent:server:agent"]?.input).toEqual({
+      text: "hello",
+      attachments: [],
+    });
+    expect(backing.values.has("paseo-drafts")).toBe(true);
   });
 });

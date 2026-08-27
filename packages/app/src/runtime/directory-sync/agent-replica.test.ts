@@ -51,6 +51,46 @@ function entry(agent: AgentSnapshotPayload): FetchAgentsEntry {
 }
 
 describe("AgentDirectoryReplica", () => {
+  it("accepts the requested agent from the authoritative timeline after a cache miss", () => {
+    const serverId = "agent-replica-cache-miss";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const replica = new AgentDirectoryReplica(serverId, () => undefined);
+
+    expect(replica.submitTimelineAgent(replica.captureTimeline("agent"), payload("network"))).toBe(
+      true,
+    );
+    expect(useSessionStore.getState().sessions[serverId]?.agents.get("agent")?.title).toBe(
+      "network",
+    );
+    store.clearSession(serverId);
+  });
+
+  it("preserves an unchanged running agent's turn identity during catch-up", () => {
+    const serverId = "agent-replica-catch-up";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const replica = new AgentDirectoryReplica(serverId, () => undefined);
+    replica.commitSnapshot(
+      [
+        entry({
+          ...payload("running"),
+          status: "running",
+          activeTurn: { turnId: "turn-1", startedAt: "2026-07-17T00:01:00.000Z" },
+        }),
+      ],
+      [],
+    );
+
+    replica.commitChanges([], [], []);
+
+    expect(useSessionStore.getState().sessions[serverId]?.agents.get("agent")?.activeTurn).toEqual({
+      turnId: "turn-1",
+      startedAt: new Date("2026-07-17T00:01:00.000Z"),
+    });
+    store.clearSession(serverId);
+  });
+
   it("keeps membership authoritative across remove, stale timeline, and re-add", () => {
     const serverId = "agent-replica";
     const store = useSessionStore.getState();

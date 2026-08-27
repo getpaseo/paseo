@@ -1,18 +1,32 @@
-import type { HostProjectListItem } from "@/projects/host-projects";
+import {
+  getHostProjectId,
+  resolveEquivalentHostProjectCandidate,
+  resolveExactHostProjectCandidate,
+  type HostProjectListItem,
+} from "@/projects/host-projects";
 
 export type ProjectSelectionSource = "initial" | "manual";
 export type InitialProjectSelectionSource = "route" | "lastActive" | "fallback" | null;
 
-export interface ProjectSelection {
+interface InitialProjectSelection {
   contextKey: string;
-  projectKey: string | null;
   project: HostProjectListItem | null;
-  source: ProjectSelectionSource;
+  source: "initial";
 }
+
+interface ManualProjectSelection {
+  contextKey: string;
+  project: HostProjectListItem;
+  originProject: HostProjectListItem;
+  source: "manual";
+}
+
+export type ProjectSelection = InitialProjectSelection | ManualProjectSelection;
 
 export interface ProjectSelectionContext {
   contextKey: string;
   manualContextKey: string;
+  selectedServerId: string;
   initialProject: HostProjectListItem | null;
   initialProjectSource: InitialProjectSelectionSource;
   projects: HostProjectListItem[];
@@ -23,18 +37,17 @@ export interface ProjectSelectionContext {
 
 export function createProjectSelectionContextKey(input: {
   selectedServerId: string;
-  routeProjectKey: string | null;
+  routeProjectViewKey: string | null;
   allowAllProjects: boolean;
 }): string {
   const projectScope = input.allowAllProjects ? "all-projects" : "worktree-projects";
-  return `${input.selectedServerId}:${projectScope}:${input.routeProjectKey ?? ""}`;
+  return `${input.selectedServerId}:${projectScope}:${input.routeProjectViewKey ?? ""}`;
 }
 
 export function createManualProjectSelectionContextKey(input: {
-  selectedServerId: string;
-  routeProjectKey: string | null;
+  routeProjectViewKey: string | null;
 }): string {
-  return `${input.selectedServerId}:${input.routeProjectKey ?? ""}`;
+  return input.routeProjectViewKey ?? "";
 }
 
 export function createProjectSelection({
@@ -43,7 +56,6 @@ export function createProjectSelection({
 }: ProjectSelectionContext): ProjectSelection {
   return {
     contextKey,
-    projectKey: initialProject?.projectKey ?? null,
     project: initialProject,
     source: "initial",
   };
@@ -57,27 +69,37 @@ export function resolveInitialProjectSelectionSource(input: {
   if (!input.initialProject) {
     return null;
   }
-  if (input.routeProject?.projectKey === input.initialProject.projectKey) {
+  if (
+    input.routeProject?.viewKey === input.initialProject.viewKey ||
+    input.routeProject?.hosts.some((routeHost) =>
+      input.initialProject?.hosts.some(
+        (host) =>
+          host.serverId === routeHost.serverId &&
+          Boolean(host.projectId) &&
+          host.projectId === routeHost.projectId,
+      ),
+    )
+  ) {
     return "route";
   }
-  if (input.lastActiveProject?.projectKey === input.initialProject.projectKey) {
+  if (
+    input.lastActiveProject?.viewKey === input.initialProject.viewKey ||
+    (input.lastActiveProject?.projectKey !== null &&
+      input.lastActiveProject?.projectKey !== undefined &&
+      input.lastActiveProject.projectKey === input.initialProject.projectKey)
+  ) {
     return "lastActive";
   }
   return "fallback";
 }
 
-function resolveProjectSelectionKey(selection: ProjectSelection): string | null {
-  const projectKey = selection.projectKey?.trim() ?? "";
-  return projectKey || null;
-}
-
 function resolveSelectedProjectFromInitialInputs(
-  projectKey: string,
+  project: HostProjectListItem,
   context: ProjectSelectionContext,
 ): HostProjectListItem | null {
   return (
-    (context.routeProject?.projectKey === projectKey ? context.routeProject : null) ??
-    (context.lastActiveProject?.projectKey === projectKey ? context.lastActiveProject : null)
+    (context.routeProject?.viewKey === project.viewKey ? context.routeProject : null) ??
+    (context.lastActiveProject?.viewKey === project.viewKey ? context.lastActiveProject : null)
   );
 }
 
@@ -85,54 +107,94 @@ function refreshSelectionProject(
   selection: ProjectSelection,
   project: HostProjectListItem,
 ): ProjectSelection {
-  if (selection.projectKey === project.projectKey && selection.project === project) {
+  if (selection.project === project) {
     return selection;
   }
   return {
     ...selection,
-    projectKey: project.projectKey,
     project,
   };
 }
 
-function shouldResetInitialFallbackSelection(
+function resolveManualOriginProject(
+  selection: ProjectSelection,
+  context: ProjectSelectionContext,
+): HostProjectListItem | null {
+  if (selection.source !== "manual") {
+    return null;
+  }
+
+  const exactOriginProject = resolveExactHostProjectCandidate({
+    candidate: selection.originProject,
+    projects: context.projects,
+    serverId: context.selectedServerId,
+  });
+  if (exactOriginProject) {
+    return exactOriginProject;
+  }
+
+  const originBelongsToSelectedHost =
+    getHostProjectId(selection.originProject, context.selectedServerId) !== null;
+  return originBelongsToSelectedHost &&
+    context.shouldPreserveMissingProject(selection.originProject)
+    ? selection.originProject
+    : null;
+}
+
+function shouldResetHydratedInitialSelection(
   selection: ProjectSelection,
   context: ProjectSelectionContext,
 ): boolean {
   if (
     selection.source !== "initial" ||
     !context.initialProject ||
-    context.initialProjectSource !== "lastActive"
+    (context.initialProjectSource !== "route" && context.initialProjectSource !== "lastActive")
   ) {
     return false;
   }
 
-  return selection.projectKey !== context.initialProject.projectKey;
+  return selection.project?.viewKey !== context.initialProject.viewKey;
 }
 
 export function resolveProjectSelection(
   selection: ProjectSelection,
   context: ProjectSelectionContext,
 ): HostProjectListItem | null {
-  const projectKey = resolveProjectSelectionKey(selection);
-  if (!projectKey) {
+  if (!selection.project) {
     return null;
   }
 
-  const selectableProject = context.projects.find((project) => project.projectKey === projectKey);
-  if (selectableProject) {
-    return selectableProject;
+  if (selection.source === "manual") {
+    const originProject = resolveManualOriginProject(selection, context);
+    if (originProject) {
+      return originProject;
+    }
   }
 
-  if (
-    selection.project?.projectKey === projectKey &&
-    context.shouldPreserveMissingProject(selection.project)
-  ) {
+  const exactProject = resolveExactHostProjectCandidate({
+    candidate: selection.project,
+    projects: context.projects,
+    serverId: context.selectedServerId,
+  });
+  if (exactProject) {
+    return exactProject;
+  }
+
+  if (context.shouldPreserveMissingProject(selection.project)) {
     return selection.project;
   }
 
+  const equivalentProject = resolveEquivalentHostProjectCandidate({
+    candidate: selection.project,
+    projects: context.projects,
+    serverId: context.selectedServerId,
+  });
+  if (equivalentProject) {
+    return equivalentProject;
+  }
+
   if (selection.source !== "manual") {
-    return resolveSelectedProjectFromInitialInputs(projectKey, context);
+    return resolveSelectedProjectFromInitialInputs(selection.project, context);
   }
 
   return null;
@@ -149,8 +211,36 @@ export function reconcileProjectSelection(
     return initialSelection;
   }
 
-  if (shouldResetInitialFallbackSelection(current, context)) {
+  if (shouldResetHydratedInitialSelection(current, context)) {
     return initialSelection;
+  }
+
+  if (!current.project) {
+    return initialSelection;
+  }
+
+  if (current.source === "manual") {
+    const originProject = resolveManualOriginProject(current, context);
+    if (originProject) {
+      return {
+        ...current,
+        project: originProject,
+        originProject,
+      };
+    }
+  }
+
+  const exactProject = resolveExactHostProjectCandidate({
+    candidate: current.project,
+    projects: context.projects,
+    serverId: context.selectedServerId,
+  });
+  if (exactProject) {
+    return refreshSelectionProject(current, exactProject);
+  }
+
+  if (context.shouldPreserveMissingProject(current.project)) {
+    return current;
   }
 
   const resolvedProject = resolveProjectSelection(current, context);

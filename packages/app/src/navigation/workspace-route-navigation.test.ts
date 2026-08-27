@@ -44,6 +44,7 @@ describe("navigateToHostWorkspaceRoute", () => {
   it("pops to the mounted host route and targets the requested workspace", () => {
     const { navigationRef, dispatch } = createNavigationRef({
       key: "root-stack",
+      index: 1,
       routeNames: ["index", "settings/[section]", "h/[serverId]"],
       routes: [
         {
@@ -78,10 +79,35 @@ describe("navigateToHostWorkspaceRoute", () => {
     });
   });
 
+  it("uses route navigation when the mounted host route is already focused", () => {
+    const { navigationRef, dispatch } = createNavigationRef({
+      key: "root-stack",
+      index: 0,
+      routes: [
+        {
+          key: "host-server-1",
+          name: "h/[serverId]",
+          params: { serverId: "server-1" },
+        },
+      ],
+    });
+    registerWorkspaceRouteNavigationRef(navigationRef);
+    const dismissTo = vi.fn();
+
+    navigateToHostWorkspaceRoute("/h/server-1/workspace/workspace-b", { dismissTo });
+
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(dismissTo).toHaveBeenCalledWith("/h/server-1/workspace/workspace-b");
+  });
+
   it("preserves a workspace open intent in the POP_TO target", () => {
     const { navigationRef, dispatch } = createNavigationRef({
       key: "root-stack",
-      routes: [{ key: "host-server-1", name: "h/[serverId]" }],
+      index: 1,
+      routes: [
+        { key: "host-server-1", name: "h/[serverId]" },
+        { key: "new", name: "new" },
+      ],
     });
     registerWorkspaceRouteNavigationRef(navigationRef);
 

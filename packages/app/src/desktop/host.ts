@@ -1,6 +1,6 @@
 import { Platform } from "react-native";
 import { getElectronHost } from "@/desktop/electron/host";
-import type { BrowserKeyboardPolicy } from "@/keyboard/browser-shortcuts";
+import type { BrowserKeyboardPolicy } from "@/desktop/browser/shortcuts";
 import type { SessionInboundMessage, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 
 type BrowserAutomationExecuteRequest = Extract<
@@ -13,6 +13,7 @@ type BrowserAutomationExecuteResponse = Extract<
 >;
 
 export type DesktopNotificationPermission = "granted" | "denied" | "default";
+export type DesktopWindowChromeMode = "native-mac" | "custom-windows" | "custom-linux";
 
 export interface DesktopDialogAskOptions {
   title?: string;
@@ -92,19 +93,20 @@ export interface DesktopMenuBridge {
   setCapturingShortcut?: (capturing: boolean) => Promise<void>;
 }
 
-export interface DesktopWindowControlsOverlayUpdate {
-  height?: number;
+export interface DesktopWindowChromeUpdate {
   backgroundColor?: string;
-  foregroundColor?: string;
   trafficLightOffsetY?: number;
 }
 
 export interface DesktopWindowBridge {
   label?: string;
+  minimize?: () => Promise<void>;
+  close?: () => Promise<void>;
   toggleMaximize?: () => Promise<void>;
+  isMaximized?: () => Promise<boolean>;
   setFullscreen?: (fullscreen: boolean) => Promise<void>;
   isFullscreen?: () => Promise<boolean>;
-  updateWindowControls?: (update: DesktopWindowControlsOverlayUpdate) => Promise<void>;
+  updateChrome?: (update: DesktopWindowChromeUpdate) => Promise<void>;
   onResized?: <TEvent = unknown>(
     handler: (event: TEvent) => void,
   ) => Promise<() => void> | (() => void);
@@ -151,6 +153,7 @@ export interface DesktopBrowserBridge {
     workspaceId: string;
     browserId: string | null;
   }) => Promise<void>;
+  focus?: (browserId: string) => Promise<boolean>;
   openDevTools?: (browserId: string) => Promise<unknown>;
   clearProfile?: (legacyBrowserIds: string[]) => Promise<void>;
   executeAutomationCommand?: (
@@ -171,6 +174,7 @@ export interface DesktopInvokeBridge {
 
 export interface DesktopHostBridge {
   platform?: string;
+  windowChromeMode?: string;
   invoke?: DesktopInvokeBridge["invoke"];
   getPendingOpenProject?: () => Promise<string | null>;
   agentNavigation?: DesktopAgentNavigationBridge;
@@ -215,4 +219,17 @@ export function isElectronRuntimeMac(): boolean {
   }
   const ua = navigator.userAgent;
   return ua.includes("Mac OS") || ua.includes("Macintosh");
+}
+
+export function getDesktopWindowChromeMode(): DesktopWindowChromeMode | null {
+  const host = getDesktopHost();
+  if (!host) return null;
+  const mode = host.windowChromeMode;
+  if (mode === "native-mac" || mode === "custom-windows" || mode === "custom-linux") {
+    return mode;
+  }
+  // COMPAT(windowChromeMode): added in v0.5.3; remove after 2026-11-25.
+  if (isElectronRuntimeMac()) return "native-mac";
+  if (host.platform?.toLowerCase() === "linux") return "custom-linux";
+  return "custom-windows";
 }

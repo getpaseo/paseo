@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { DaemonStartService, upsertDesktopDaemonConnection } from "./daemon-start-service";
 import type { HostRuntimeStore } from "./host-runtime";
 import type { DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
+import { defaultHostAppearance } from "@/hosts/appearance";
+import type { HostProfile } from "@/types/host-connection";
 
 interface RecordedUpsert {
   listenAddress: string;
@@ -9,12 +11,13 @@ interface RecordedUpsert {
   hostname: string | null;
 }
 
-function createFakeStore(): {
-  store: Pick<HostRuntimeStore, "upsertConnectionFromListen">;
+function createFakeStore(hosts: HostProfile[] = []): {
+  store: Pick<HostRuntimeStore, "getHosts" | "upsertConnectionFromListen">;
   upserts: RecordedUpsert[];
 } {
   const upserts: RecordedUpsert[] = [];
   const store = {
+    getHosts: () => hosts,
     upsertConnectionFromListen: async (input: RecordedUpsert) => {
       upserts.push(input);
       return {} as Awaited<ReturnType<HostRuntimeStore["upsertConnectionFromListen"]>>;
@@ -35,6 +38,26 @@ function makeStatus(overrides: Partial<DesktopDaemonStatus> = {}): DesktopDaemon
     desktopManaged: true,
     error: null,
     ...overrides,
+  };
+}
+
+function makeRelayOnlyHost(serverId: string): HostProfile {
+  return {
+    serverId,
+    label: "Relay host",
+    appearance: defaultHostAppearance(),
+    lifecycle: {},
+    connections: [
+      {
+        id: "relay:relay.example.com",
+        type: "relay",
+        relayEndpoint: "relay.example.com",
+        daemonPublicKeyB64: "public-key",
+      },
+    ],
+    preferredConnectionId: "relay:relay.example.com",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
   };
 }
 
@@ -289,6 +312,15 @@ describe("upsertDesktopDaemonConnection", () => {
     expect(fake.upserts).toEqual([
       { listenAddress: "127.0.0.1:6767", serverId: "srv_desktop", hostname: "desktop" },
     ]);
+  });
+
+  it("does not add localhost when desktop bootstrap finds its server id already registered", async () => {
+    const fake = createFakeStore([makeRelayOnlyHost("srv_desktop")]);
+
+    const result = await upsertDesktopDaemonConnection(fake.store, makeStatus());
+
+    expect(result).toEqual({ ok: true });
+    expect(fake.upserts).toEqual([]);
   });
 
   it("rejects a missing listen address without upserting", async () => {

@@ -51,6 +51,8 @@ describe("TerminalInputModeTracker", () => {
     expect(tracker.getState()).toEqual({
       kittyKeyboardFlags: 0,
       win32InputMode: true,
+      applicationCursorKeys: false,
+      bracketedPaste: false,
     });
     expect(tracker.supportsModifiedEnter()).toBe(true);
     expect(tracker.getPreamble()).toBe("\x1b[?9001h");
@@ -67,8 +69,53 @@ describe("TerminalInputModeTracker", () => {
     expect(tracker.getState()).toEqual({
       kittyKeyboardFlags: 7,
       win32InputMode: true,
+      applicationCursorKeys: false,
+      bracketedPaste: false,
     });
     expect(tracker.getPreamble()).toBe("\x1b[=7;1u\x1b[?9001h");
+  });
+
+  it("tracks application cursor keys mode independently", () => {
+    const tracker = new TerminalInputModeTracker();
+
+    expect(tracker.feed("\x1b[?1h").changed).toBe(true);
+    expect(tracker.getState()).toEqual({
+      kittyKeyboardFlags: 0,
+      win32InputMode: false,
+      applicationCursorKeys: true,
+      bracketedPaste: false,
+    });
+    expect(tracker.getPreamble()).toBe("\x1b[?1h");
+
+    expect(tracker.feed("\x1b[?1l").changed).toBe(true);
+    expect(tracker.getState()).toEqual({
+      kittyKeyboardFlags: 0,
+      win32InputMode: false,
+      applicationCursorKeys: false,
+      bracketedPaste: false,
+    });
+  });
+
+  it("tracks bracketed paste mode independently", () => {
+    const tracker = new TerminalInputModeTracker();
+
+    expect(tracker.feed("\x1b[?2004h").changed).toBe(true);
+    expect(tracker.getState()).toEqual({
+      kittyKeyboardFlags: 0,
+      win32InputMode: false,
+      applicationCursorKeys: false,
+      bracketedPaste: true,
+    });
+    expect(tracker.getPreamble()).toBe("\x1b[?2004h");
+
+    expect(tracker.feed("\x1b[?2004l").changed).toBe(true);
+    expect(tracker.getState()).toEqual({
+      kittyKeyboardFlags: 0,
+      win32InputMode: false,
+      applicationCursorKeys: false,
+      bracketedPaste: false,
+    });
+    expect(tracker.getPreamble()).toBe("");
   });
 
   it("ignores encoded key input sequences", () => {

@@ -35,6 +35,7 @@ export function serializeOmpHostTools(catalog: PaseoToolCatalog): OmpRpcHostTool
     const definition: OmpRpcHostToolDefinition = {
       name: tool.name,
       description: tool.description,
+      loadMode: "essential",
       parameters: serializePaseoToolInputParameters(tool),
     };
     if (tool.title) {

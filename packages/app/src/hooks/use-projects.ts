@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import equal from "fast-deep-equal";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import {
@@ -9,7 +9,7 @@ import {
 } from "@/runtime/host-runtime";
 import {
   useSessionStore,
-  type EmptyProjectDescriptor,
+  type ProjectDescriptor,
   type WorkspaceDescriptor,
 } from "@/stores/session-store";
 import { buildProjects, type ProjectHost, type ProjectSummary } from "@/utils/projects";
@@ -24,7 +24,7 @@ export interface ProjectHostReplica {
   serverId: string;
   serverName: string;
   workspaces: WorkspaceDescriptor[];
-  emptyProjects: EmptyProjectDescriptor[];
+  projects: ProjectDescriptor[];
 }
 
 export interface ProjectHostRuntimeState {
@@ -87,7 +87,7 @@ function selectProjectHostReplicas(
         serverId: host.serverId,
         serverName: host.label,
         workspaces: Array.from(session?.workspaces.values() ?? []),
-        emptyProjects: Array.from(session?.emptyProjects.values() ?? []),
+        projects: Array.from(session?.projects.values() ?? []),
       };
     });
 }
@@ -106,7 +106,7 @@ export function deriveProjectsFromReplica(input: {
       serverName: replica.serverName,
       isOnline: runtimeState?.isOnline ?? false,
       workspaces: replica.workspaces,
-      emptyProjects: replica.emptyProjects,
+      projects: replica.projects,
     };
   });
   const hostErrors = input.replicas.flatMap((replica) => {
@@ -168,6 +168,10 @@ export function useProjects(options: UseProjectsOptions = {}): UseProjectsResult
     () => (enabled ? hosts.map((host) => host.serverId) : []),
     [enabled, hosts],
   );
+  useEffect(() => {
+    const releases = serverIds.map((serverId) => runtime.acquireDirectoryDemand(serverId));
+    return () => releases.forEach((release) => release());
+  }, [runtime, serverIds]);
   const replicaSelector = useMemo(
     () => selectProjectHostReplicas(hosts, enabled),
     [enabled, hosts],
@@ -180,7 +184,7 @@ export function useProjects(options: UseProjectsOptions = {}): UseProjectsResult
   );
   const refetch = useCallback(() => {
     if (!enabled) return;
-    runtime.refreshAllAgentDirectories({ serverIds });
+    for (const serverId of serverIds) void runtime.refreshDirectories(serverId);
   }, [enabled, runtime, serverIds]);
 
   return {

@@ -1,5 +1,6 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import React, { type ReactElement, useCallback, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Text, View } from "react-native";
+import { Alert, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
@@ -421,7 +422,7 @@ export function LocalDaemonSection() {
     >
       {isLoading || isLoadingSettings ? (
         <View style={[settingsStyles.card, styles.loadingCard]}>
-          <ActivityIndicator size="small" color={theme.colors.foregroundMuted} />
+          <LoadingSpinner size="small" color={theme.colors.foregroundMuted} />
         </View>
       ) : (
         <>
@@ -488,11 +489,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   valueText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   valueSubtext: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   warningCard: {
     marginTop: theme.spacing[3],
@@ -505,7 +506,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   warningText: {
     color: theme.colors.palette.amber[500],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   modalBody: {
     gap: theme.spacing[3],
@@ -513,7 +514,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   logOutput: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
     lineHeight: 18,
   },

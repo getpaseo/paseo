@@ -149,6 +149,10 @@ function resolveInitialTitleMode(presetTitle: string | undefined): "auto" | "man
   return presetTitle?.trim() ? "manual" : "auto";
 }
 
+function isTerminalActivityInterruptInput(data: string): boolean {
+  return data === "\x03" || data === "\x1b";
+}
+
 interface BuildTerminalEnvironmentInput {
   shell: string;
   env: Record<string, string>;
@@ -243,13 +247,81 @@ export function resolveDefaultTerminalShell(
 
 export interface ResolvedTerminalCommand {
   command: string;
-  args: string[];
+  // `.cmd`/`.bat` targets resolve to a single pre-escaped `cmd.exe` command
+  // line (string) instead of an argv array. node-pty's own array-quoting
+  // (see `argsToCommandLine` in its `windowsPtyAgent.js`) only produces
+  // MSVCRT/CommandLineToArgvW-safe quoting; cmd.exe re-parses that whole
+  // line itself afterwards and needs a different, cmd.exe-metachar-aware
+  // escape. Building that line ourselves and passing it as a string is the
+  // node-pty-documented way to bypass its array quoting for exactly this
+  // case (see the `spawn` jsdoc in node-pty's typings).
+  args: string[] | string;
 }
 
 export interface ResolveTerminalSpawnCommandOptions {
   platform?: NodeJS.Platform;
   env?: Record<string, string | undefined>;
   resolveExecutable?: (name: string) => Promise<string | null>;
+}
+
+// cmd.exe treats these characters specially even inside a double-quoted
+// argument, unlike a POSIX shell — quoting alone does not neutralize them.
+// Prefixing each with `^`, cmd.exe's own escape character, does. Mirrors the
+// `escape.command` metachar list in the `cross-spawn` npm package (already a
+// dependency of this repo), which solves this exact `.cmd`/`.bat` spawning
+// problem — see http://www.robvanderwoude.com/escapechars.php.
+const CMD_EXE_METACHAR_PATTERN = /([()%!^"`<>&|;, *?])/g;
+
+function escapeCmdExeMetaChars(text: string): string {
+  return text.replace(CMD_EXE_METACHAR_PATTERN, "^$1");
+}
+
+/**
+ * Escape one argument for safe inclusion in a `cmd.exe /c "..."` command
+ * line that is about to invoke a `.cmd`/`.bat` shim.
+ *
+ * node-pty builds an MSVCRT/`CommandLineToArgvW`-style quoted command line
+ * for whatever `command` it is given (double-quote wrap on whitespace,
+ * backslash-escape only backslash runs immediately before a quote). That
+ * quoting is correct for a normal executable, which parses its own argv via
+ * that same convention. It is not correct here: the `command` node-pty
+ * launches for a `.cmd`/`.bat` target is `cmd.exe` itself, and cmd.exe
+ * re-parses the whole line with its *own* tokenizer before ever handing
+ * arguments to the batch script — a tokenizer that treats `&`, `|`, `^`,
+ * `%` (environment-variable expansion), `<`, `>` etc. as live syntax even
+ * inside double quotes. A prompt containing any of those characters would
+ * therefore be interpreted by cmd.exe, not passed through as text — the
+ * same class of hazard tracked upstream as Node's CVE-2024-27980
+ * ("batBadBadging").
+ *
+ * The escaping below is the "qntm" algorithm (https://qntm.org/cmd): double
+ * every backslash run that immediately precedes a quote (or the end of the
+ * argument, since a closing quote is appended next) and escape that quote,
+ * wrap the whole argument in quotes, then caret-escape cmd.exe's
+ * metacharacters — including the quotes just added, because cmd.exe's own
+ * tokenizer runs first and would otherwise treat them as toggling a quoted
+ * region. It is the same algorithm `cross-spawn` uses for its `.cmd`/`.bat`
+ * auto-shell path (`lib/util/escape.js`). Command shims forward `%*`, which
+ * adds a second cmd.exe parse, so metacharacters need a second escape pass to
+ * survive as literal argv in the Node process behind an npm-generated shim.
+ *
+ * cmd.exe has no escape for a literal CR or LF inside a single command
+ * line — its parser treats them as command separators regardless of
+ * quoting, so passing one through verbatim would let a crafted prompt
+ * inject a second, attacker-chosen command after the newline. There is no
+ * fidelity-preserving option for that case, so newlines are normalized to
+ * spaces before quoting: the target process still receives the full text,
+ * just without the original line breaks, instead of cmd.exe splitting the
+ * prompt into multiple commands.
+ */
+function escapeCmdExeArgument(rawArg: string): string {
+  const arg = rawArg.replace(/\r\n|\r|\n/g, " ");
+
+  let escaped = arg.replace(/(\\*)"/g, '$1$1\\"');
+  escaped = escaped.replace(/(\\*)$/, "$1$1");
+  escaped = `"${escaped}"`;
+
+  return escapeCmdExeMetaChars(escapeCmdExeMetaChars(escaped));
 }
 
 /**
@@ -293,7 +365,21 @@ export async function resolveTerminalSpawnCommand(
   if (extension === ".cmd" || extension === ".bat") {
     const env = options.env ?? process.env;
     const comSpec = env.ComSpec || env.COMSPEC || "C:\\Windows\\System32\\cmd.exe";
-    return { command: comSpec, args: ["/c", resolved, ...args] };
+    // Build the `/c` command line ourselves — as a single pre-escaped
+    // string, not an argv array — so node-pty's own array quoting never
+    // runs over these values; see escapeCmdExeArgument for why that
+    // quoting alone is not safe once cmd.exe re-parses the line. `resolved`
+    // gets the same metachar (not quote-wrap) treatment as the args: it
+    // isn't attacker-controlled, but it now sits inside the same joined
+    // command line and needs to survive cmd.exe's tokenizer too (e.g. a
+    // space in the install path).
+    const commandLine = [
+      "/d",
+      "/s",
+      "/c",
+      `"${[escapeCmdExeMetaChars(resolved), ...args.map(escapeCmdExeArgument)].join(" ")}"`,
+    ].join(" ");
+    return { command: comSpec, args: commandLine };
   }
 
   return { command: resolved, args };
@@ -384,7 +470,7 @@ function resolveZshShellIntegrationRuntimeDir(): string {
   } catch {
     // keep fallback
   }
-  return join(tmpdir(), `${username}-paseo-zsh`);
+  return join(tmpdir(), `${username}-paseo-zsh-${process.pid}`);
 }
 
 function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegrationDir()): string {
@@ -1222,6 +1308,9 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
 
     switch (msg.type) {
       case "input": {
+        if (isTerminalActivityInterruptInput(msg.data)) {
+          activityTracker.interrupt();
+        }
         pendingInput += msg.data;
         scheduleInputFlush();
         break;

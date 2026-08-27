@@ -627,7 +627,63 @@ describe("selectProjectedTimelinePage", () => {
     });
   });
 
-  test("before page includes a wide tool whose earlier source range is before the cursor", () => {
+  test("before limit counts projected entries without repeating a merged assistant", () => {
+    const rows: AgentTimelineRow[] = [
+      ...Array.from({ length: 80 }, (_, index) => ({
+        seq: index + 1,
+        timestamp: new Date(1000 + index).toISOString(),
+        item: { type: "assistant_message" as const, text: "x" },
+      })),
+      ...Array.from({ length: 4 }, (_, index) => ({
+        seq: index + 81,
+        timestamp: new Date(2000 + index).toISOString(),
+        item: { type: "user_message" as const, text: `message ${index + 1}` },
+      })),
+    ];
+
+    const newest = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: 85,
+      limit: 2,
+    });
+    const middle = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: newest.startSeq ?? 0,
+      limit: 2,
+    });
+    const oldest = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: middle.startSeq ?? 0,
+      limit: 2,
+    });
+    const exhausted = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: oldest.startSeq ?? 0,
+      limit: 2,
+    });
+
+    const pageSummaries = [];
+    for (const page of [newest, middle, oldest]) {
+      pageSummaries.push({
+        entryTypes: page.entries.map((entry) => entry.item.type),
+        startSeq: page.startSeq,
+        endSeq: page.endSeq,
+        hasOlder: page.hasOlder,
+      });
+    }
+    expect(pageSummaries).toEqual([
+      { entryTypes: ["user_message", "user_message"], startSeq: 83, endSeq: 84, hasOlder: true },
+      { entryTypes: ["user_message", "user_message"], startSeq: 81, endSeq: 82, hasOlder: true },
+      { entryTypes: ["assistant_message"], startSeq: 1, endSeq: 80, hasOlder: false },
+    ]);
+    expect(exhausted.entries).toEqual([]);
+  });
+
+  test("before pages place a full wide tool on the page containing its projected anchor", () => {
     const rows: AgentTimelineRow[] = [
       toolRow(1, "running"),
       ...Array.from({ length: 498 }, (_, index) => ({
@@ -638,16 +694,32 @@ describe("selectProjectedTimelinePage", () => {
       toolRow(500, "completed"),
     ];
 
-    const page = selectProjectedTimelinePage({
+    const newestPage = selectProjectedTimelinePage({
       rows,
       direction: "before",
       cursorSeq: 500,
       limit: 100,
     });
+    const anchoredPage = selectProjectedTimelinePage({
+      rows,
+      direction: "before",
+      cursorSeq: 101,
+      limit: 100,
+    });
 
-    expect(page.entries.some((entry) => entry.item.type === "tool_call")).toBe(true);
-    expect(page.endSeq).toBeLessThan(500);
-    expect(page.hasOlder).toBe(true);
+    expect(newestPage.entries).toHaveLength(100);
+    expect(newestPage.entries.some((entry) => entry.item.type === "tool_call")).toBe(false);
+    expect(newestPage.startSeq).toBe(400);
+    expect(newestPage.endSeq).toBe(499);
+    expect(newestPage.hasOlder).toBe(true);
+
+    expect(anchoredPage.entries).toHaveLength(100);
+    expect(anchoredPage.entries[0]?.item.type).toBe("tool_call");
+    expect(anchoredPage.entries[0]?.seqStart).toBe(1);
+    expect(anchoredPage.entries[0]?.seqEnd).toBe(500);
+    expect(anchoredPage.startSeq).toBe(1);
+    expect(anchoredPage.endSeq).toBe(100);
+    expect(anchoredPage.hasOlder).toBe(false);
   });
 
   test("tail page includes a wide tool when its completion is the newest seq", () => {

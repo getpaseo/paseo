@@ -136,6 +136,37 @@ describe("Pi tool call mapper", () => {
     });
   });
 
+  test("maps task calls to sub-agent detail while running", () => {
+    const toolCall = parseToolArgs("task", {
+      agent: "explore",
+      task: "Trace the Pi provider tool mapper",
+    });
+
+    expect(mapToolDetail(toolCall, null)).toEqual({
+      type: "sub_agent",
+      subAgentType: "explore",
+      description: "Trace the Pi provider tool mapper",
+      log: "",
+    });
+  });
+
+  test("maps completed subagent calls with task input to sub-agent detail", () => {
+    const toolCall = parseToolArgs("subagent", {
+      agent: "reviewer",
+      task: "Review the Pi mapper change",
+    });
+    const result = parseToolResult({
+      content: [{ type: "text", text: "The mapper change preserves provider status." }],
+    });
+
+    expect(mapToolDetail(toolCall, result)).toEqual({
+      type: "sub_agent",
+      subAgentType: "reviewer",
+      description: "Review the Pi mapper change",
+      log: "The mapper change preserves provider status.",
+    });
+  });
+
   test("normalizes Pi MCP proxy calls from requested tool args while running", () => {
     const toolCall = parseToolArgs("mcp", {
       tool: "paseo_list_models",

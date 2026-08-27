@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  applyDictationTranscript,
   computeCanStartDictation,
+  resolveActiveSendBehavior,
   resolveComposerSurfacePresentation,
   runAlternateSendAction,
   runDefaultSendAction,
@@ -163,7 +165,36 @@ describe("dictation keyboard behavior", () => {
   });
 });
 
+describe("dictation transcript behavior", () => {
+  it("publishes an auto-sent transcript to the composer before submitting it", () => {
+    const actions: string[] = [];
+
+    applyDictationTranscript("spoken prompt", {
+      value: "typed context",
+      defaultSendBehavior: "interrupt",
+      isAgentRunning: false,
+      onQueue: undefined,
+      replaceText: (text) => actions.push(`replace:${text}`),
+      onSubmit: (payload) => actions.push(`submit:${payload.text}`),
+      attachments: [],
+      cwd: "/repo",
+      autoSend: true,
+    });
+
+    expect(actions).toEqual([
+      "replace:typed context spoken prompt",
+      "submit:typed context spoken prompt",
+    ]);
+  });
+});
+
 describe("composer send behavior", () => {
+  it("sends immediately when queue mode cannot advance past a permission", () => {
+    expect(resolveActiveSendBehavior("queue", true)).toBe("interrupt");
+    expect(resolveActiveSendBehavior("queue", false)).toBe("queue");
+    expect(resolveActiveSendBehavior("steer", true)).toBe("steer");
+  });
+
   function actions() {
     const calls: string[] = [];
     return {
@@ -187,6 +218,29 @@ describe("composer send behavior", () => {
     const alternateAction = actions();
     runAlternateSendAction({
       defaultSendBehavior: "interrupt",
+      isAgentRunning: true,
+      onQueue: alternateAction.onQueue,
+      handleSendMessage: alternateAction.handleSendMessage,
+      handleQueueMessage: alternateAction.handleQueueMessage,
+    });
+
+    expect(defaultAction.calls).toEqual(["send"]);
+    expect(alternateAction.calls).toEqual(["queue"]);
+  });
+
+  it("uses Enter to steer and Mod+Enter to queue when steer is selected", () => {
+    const defaultAction = actions();
+    runDefaultSendAction({
+      defaultSendBehavior: "steer",
+      isAgentRunning: true,
+      onQueue: defaultAction.onQueue,
+      handleSendMessage: defaultAction.handleSendMessage,
+      handleQueueMessage: defaultAction.handleQueueMessage,
+    });
+
+    const alternateAction = actions();
+    runAlternateSendAction({
+      defaultSendBehavior: "steer",
       isAgentRunning: true,
       onQueue: alternateAction.onQueue,
       handleSendMessage: alternateAction.handleSendMessage,

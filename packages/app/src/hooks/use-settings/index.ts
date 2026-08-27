@@ -16,14 +16,18 @@ import {
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_CONTENT_FONT_SIZE,
   DEFAULT_TERMINAL_SCROLLBACK_LINES,
-  DEFAULT_UI_FONT_SIZE,
+  DEFAULT_THEME_PREFERENCE,
+  DEFAULT_UI_BASE_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
+  MAX_CONTENT_FONT_SIZE,
   MAX_TERMINAL_SCROLLBACK_LINES,
-  MAX_UI_FONT_SIZE,
+  MAX_UI_BASE_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
+  MIN_CONTENT_FONT_SIZE,
   MIN_TERMINAL_SCROLLBACK_LINES,
-  MIN_UI_FONT_SIZE,
+  MIN_UI_BASE_FONT_SIZE,
   loadAppSettingsFromStorage as loadAppSettingsFromStoragePure,
   loadSettingsFromStorage as loadSettingsFromStoragePure,
   normalizeAppSettings,
@@ -32,12 +36,15 @@ import {
   sanitizeFontFamily,
   saveAppSettings as saveAppSettingsPure,
   type AppSettings,
+  type OpenInSidePanePreferences,
+  type PullRequestOpenLocation,
   type DesktopSettingsBridge,
   type KeyValueStorage,
   type ReleaseChannel,
   type SendBehavior,
   type ServiceUrlBehavior,
   type Settings,
+  type SidebarWorkspaceTrailing,
   type SettingsDeps,
   type WorkspaceTitleSource,
 } from "./storage";
@@ -47,14 +54,18 @@ export {
   DEFAULT_APP_SETTINGS,
   DEFAULT_CLIENT_SETTINGS,
   DEFAULT_CODE_FONT_SIZE,
+  DEFAULT_CONTENT_FONT_SIZE,
   DEFAULT_TERMINAL_SCROLLBACK_LINES,
-  DEFAULT_UI_FONT_SIZE,
+  DEFAULT_THEME_PREFERENCE,
+  DEFAULT_UI_BASE_FONT_SIZE,
   MAX_CODE_FONT_SIZE,
+  MAX_CONTENT_FONT_SIZE,
   MAX_TERMINAL_SCROLLBACK_LINES,
-  MAX_UI_FONT_SIZE,
+  MAX_UI_BASE_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
+  MIN_CONTENT_FONT_SIZE,
   MIN_TERMINAL_SCROLLBACK_LINES,
-  MIN_UI_FONT_SIZE,
+  MIN_UI_BASE_FONT_SIZE,
   parseClampedFontSize,
   parseTerminalScrollbackLines,
   sanitizeFontFamily,
@@ -62,6 +73,8 @@ export {
 export type {
   AppSettings,
   AppLanguage,
+  OpenInSidePanePreferences,
+  PullRequestOpenLocation,
   DesktopSettingsBridge,
   KeyValueStorage,
   ReleaseChannel,
@@ -69,8 +82,26 @@ export type {
   ServiceUrlBehavior,
   Settings,
   SettingsDeps,
+  SidebarWorkspaceTrailing,
   WorkspaceTitleSource,
 };
+
+/**
+ * Split a `Settings` patch into the part the app owns. The two halves persist to different
+ * places (AsyncStorage vs the Electron settings bridge), and the app's half is exactly the
+ * key set of `DEFAULT_CLIENT_SETTINGS` — reading the keys off it means a new app setting
+ * flows through here without anyone remembering to widen a hand-written list.
+ */
+function pickDefinedAppSettings(updates: Partial<Settings>): Partial<AppSettings> {
+  const appUpdates: Partial<AppSettings> = {};
+  for (const key of Object.keys(DEFAULT_CLIENT_SETTINGS) as (keyof AppSettings)[]) {
+    const value = updates[key];
+    if (value !== undefined) {
+      Object.assign(appUpdates, { [key]: value });
+    }
+  }
+  return appUpdates;
+}
 
 const productionDeps: SettingsDeps = {
   storage: AsyncStorage,
@@ -151,49 +182,7 @@ export function useSettings<TSelected>(
 
   const updateSettings = useCallback(
     async (updates: Partial<Settings>) => {
-      const appUpdates: Partial<AppSettings> = {};
-      if (updates.theme !== undefined) {
-        appUpdates.theme = updates.theme;
-      }
-      if (updates.language !== undefined) {
-        appUpdates.language = updates.language;
-      }
-      if (updates.sendBehavior !== undefined) {
-        appUpdates.sendBehavior = updates.sendBehavior;
-      }
-      if (updates.serviceUrlBehavior !== undefined) {
-        appUpdates.serviceUrlBehavior = updates.serviceUrlBehavior;
-      }
-      if (updates.terminalScrollbackLines !== undefined) {
-        appUpdates.terminalScrollbackLines = updates.terminalScrollbackLines;
-      }
-      if (updates.uiFontFamily !== undefined) {
-        appUpdates.uiFontFamily = updates.uiFontFamily;
-      }
-      if (updates.monoFontFamily !== undefined) {
-        appUpdates.monoFontFamily = updates.monoFontFamily;
-      }
-      if (updates.uiFontSize !== undefined) {
-        appUpdates.uiFontSize = updates.uiFontSize;
-      }
-      if (updates.codeFontSize !== undefined) {
-        appUpdates.codeFontSize = updates.codeFontSize;
-      }
-      if (updates.syntaxTheme !== undefined) {
-        appUpdates.syntaxTheme = updates.syntaxTheme;
-      }
-      if (updates.workspaceTitleSource !== undefined) {
-        appUpdates.workspaceTitleSource = updates.workspaceTitleSource;
-      }
-      if (updates.autoExpandReasoning !== undefined) {
-        appUpdates.autoExpandReasoning = updates.autoExpandReasoning;
-      }
-      if (updates.toolCallDetailLevel !== undefined) {
-        appUpdates.toolCallDetailLevel = updates.toolCallDetailLevel;
-      }
-      if (updates.vimKeybindings !== undefined) {
-        appUpdates.vimKeybindings = updates.vimKeybindings;
-      }
+      const appUpdates = pickDefinedAppSettings(updates);
       const promises: Promise<void>[] = [];
       if (Object.keys(appUpdates).length > 0) {
         promises.push(appSettings.updateSettings(appUpdates));

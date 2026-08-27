@@ -1,5 +1,40 @@
-import type { AttachmentMetadata } from "@/attachments/types";
+import { collectRetainedAttachmentIds } from "@/attachments/gc-retention";
 import { getAttachmentStore } from "@/attachments/store";
+import type { AttachmentMetadata, SaveAttachmentInput } from "@/attachments/types";
+
+const activePersistence = new Set<Promise<AttachmentMetadata>>();
+const persistedDuringGarbageCollection = new Set<string>();
+let pendingGarbageCollections = 0;
+let garbageCollectionTail: Promise<void> = Promise.resolve();
+let persistenceBarrier: Promise<void> | null = null;
+let releasePersistenceBarrier: (() => void) | null = null;
+
+async function waitForPersistenceBarrier(): Promise<void> {
+  const barrier = persistenceBarrier;
+  if (!barrier) {
+    return;
+  }
+  await barrier;
+  await waitForPersistenceBarrier();
+}
+
+async function persistAttachment(input: SaveAttachmentInput): Promise<AttachmentMetadata> {
+  await waitForPersistenceBarrier();
+  const pending = (async () => {
+    const store = await getAttachmentStore();
+    const attachment = await store.save(input);
+    if (pendingGarbageCollections > 0) {
+      persistedDuringGarbageCollection.add(attachment.id);
+    }
+    return attachment;
+  })();
+  activePersistence.add(pending);
+  try {
+    return await pending;
+  } finally {
+    activePersistence.delete(pending);
+  }
+}
 
 export async function persistAttachmentFromBlob(input: {
   blob: Blob;
@@ -7,8 +42,7 @@ export async function persistAttachmentFromBlob(input: {
   fileName?: string | null;
   id?: string;
 }): Promise<AttachmentMetadata> {
-  const store = await getAttachmentStore();
-  return await store.save({
+  return await persistAttachment({
     id: input.id,
     mimeType: input.mimeType,
     fileName: input.fileName,
@@ -22,8 +56,7 @@ export async function persistAttachmentFromDataUrl(input: {
   fileName?: string | null;
   id?: string;
 }): Promise<AttachmentMetadata> {
-  const store = await getAttachmentStore();
-  return await store.save({
+  return await persistAttachment({
     id: input.id,
     mimeType: input.mimeType,
     fileName: input.fileName,
@@ -37,8 +70,7 @@ export async function persistAttachmentFromBytes(input: {
   fileName?: string | null;
   id?: string;
 }): Promise<AttachmentMetadata> {
-  const store = await getAttachmentStore();
-  return await store.save({
+  return await persistAttachment({
     id: input.id,
     mimeType: input.mimeType,
     fileName: input.fileName,
@@ -52,8 +84,7 @@ export async function persistAttachmentFromFileUri(input: {
   fileName?: string | null;
   id?: string;
 }): Promise<AttachmentMetadata> {
-  const store = await getAttachmentStore();
-  return await store.save({
+  return await persistAttachment({
     id: input.id,
     mimeType: input.mimeType,
     fileName: input.fileName,
@@ -133,6 +164,41 @@ export async function deleteAttachments(
 export async function garbageCollectAttachments(input: {
   referencedIds: ReadonlySet<string>;
 }): Promise<void> {
-  const store = await getAttachmentStore();
-  await store.garbageCollect({ referencedIds: input.referencedIds });
+  pendingGarbageCollections += 1;
+  if (!persistenceBarrier) {
+    persistenceBarrier = new Promise<void>((resolve) => {
+      releasePersistenceBarrier = resolve;
+    });
+  }
+
+  const previousGarbageCollection = garbageCollectionTail;
+  const currentGarbageCollection = (async () => {
+    await previousGarbageCollection;
+    while (activePersistence.size > 0) {
+      await Promise.allSettled(activePersistence);
+    }
+    const referencedIds = new Set(input.referencedIds);
+    for (const id of collectRetainedAttachmentIds()) {
+      referencedIds.add(id);
+    }
+    for (const id of persistedDuringGarbageCollection) {
+      referencedIds.add(id);
+    }
+    const store = await getAttachmentStore();
+    await store.garbageCollect({ referencedIds });
+  })();
+  garbageCollectionTail = currentGarbageCollection.catch(() => undefined);
+
+  try {
+    await currentGarbageCollection;
+  } finally {
+    pendingGarbageCollections -= 1;
+    if (pendingGarbageCollections === 0) {
+      persistedDuringGarbageCollection.clear();
+      const release = releasePersistenceBarrier;
+      releasePersistenceBarrier = null;
+      persistenceBarrier = null;
+      release?.();
+    }
+  }
 }

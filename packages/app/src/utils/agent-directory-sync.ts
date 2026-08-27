@@ -1,3 +1,4 @@
+import equal from "fast-deep-equal";
 import type { FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import { type Agent, useSessionStore } from "@/stores/session-store";
 import { derivePendingPermissionKey, normalizeAgentSnapshot } from "@/utils/agent-snapshots";
@@ -73,7 +74,15 @@ export function upsertAgentReplica(serverId: string, agent: Agent): Agent {
     next.set(agent.id, acceptedAgent);
     return next;
   });
+  applyAgentTurnSnapshot(serverId, acceptedAgent);
   return acceptedAgent;
+}
+
+function applyAgentTurnSnapshot(serverId: string, agent: Agent): void {
+  useSessionStore.getState().applyAgentTurnLiveness(serverId, agent.id, {
+    type: "snapshot",
+    activeTurn: agent.activeTurn,
+  });
 }
 
 export function replaceAgentPendingPermissions(serverId: string, agent: Agent): void {
@@ -114,6 +123,7 @@ export function removeAgentDirectoryReplica(serverId: string, agentId: string): 
   store.setAgentAuthoritativeHistoryApplied(serverId, agentId, false);
   store.setAgentStreamTail(serverId, removeKey);
   store.clearAgentStreamHead(serverId, agentId);
+  store.applyAgentTurnLiveness(serverId, agentId, { type: "destructive_close" });
   useSessionStore.setState((state) => {
     if (!state.agentLastActivity.has(agentId)) return state;
     const agentLastActivity = new Map(state.agentLastActivity);
@@ -172,17 +182,26 @@ export function replaceFetchedAgentDirectory(input: {
 }): { agents: Map<string, Agent> } {
   const { agents: fetchedAgents, pendingPermissions } = buildAgentDirectoryState(input);
   const store = useSessionStore.getState();
-
   for (const agent of fetchedAgents.values()) {
     if (agent.archivedAt) {
       clearArchiveAgentPending({ queryClient, serverId: input.serverId, agentId: agent.id });
     }
   }
 
-  store.setAgents(input.serverId, fetchedAgents);
+  const currentAgents = store.sessions[input.serverId]?.agents ?? new Map<string, Agent>();
+  const agents = new Map<string, Agent>();
+  for (const [agentId, fetchedAgent] of fetchedAgents) {
+    const current = currentAgents.get(agentId);
+    agents.set(agentId, current && equal(current, fetchedAgent) ? current : fetchedAgent);
+  }
+
+  store.setAgents(input.serverId, agents);
+  for (const agent of agents.values()) {
+    applyAgentTurnSnapshot(input.serverId, agent);
+  }
   store.setAgentDetails(input.serverId, (prev) => {
     let next: Map<string, Agent> | null = null;
-    for (const agentId of fetchedAgents.keys()) {
+    for (const agentId of agents.keys()) {
       if (!prev.has(agentId)) {
         continue;
       }
@@ -193,12 +212,12 @@ export function replaceFetchedAgentDirectory(input: {
   });
 
   const lastActivityByAgentId = new Map<string, Date>();
-  for (const agent of fetchedAgents.values()) {
+  for (const agent of agents.values()) {
     lastActivityByAgentId.set(agent.id, agent.lastActivityAt);
   }
   store.setAgentLastActivityBatch(lastActivityByAgentId);
 
   store.setPendingPermissions(input.serverId, new Map(pendingPermissions));
   store.setHasHydratedAgents(input.serverId, true);
-  return { agents: fetchedAgents };
+  return { agents };
 }

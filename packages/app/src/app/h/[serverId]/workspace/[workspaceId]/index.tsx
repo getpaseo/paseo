@@ -13,13 +13,16 @@ import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { WorkspaceScreen } from "@/screens/workspace/workspace-screen";
 import { useWorkspaceLayoutStoreHydrated } from "@/stores/workspace-layout-store";
 import {
-  areWorkspaceSelectionListsEqual,
+  areRetainedWorkspaceSelectionListsEqual,
   areWorkspaceSelectionsEqual,
+  getNextWorkspaceDeckExpirationDelay,
   getWorkspaceSelectionKey,
   orderWorkspaceSelectionsForStableRender,
-  pruneMountedWorkspaceSelections,
+  reconcileRetainedWorkspaceSelections,
+  resolveWorkspaceDeckRetentionLimit,
+  type RetainedWorkspaceSelection,
+  resolveWorkspaceDeckEntries,
   shouldKeepWorkspaceDeckEntryMounted,
-  WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
 } from "@/screens/workspace/workspace-deck-retention";
 import {
   decodeWorkspaceIdFromPathSegment,
@@ -31,7 +34,8 @@ import {
   stripHostWorkspaceRouteEchoSearchFromBrowserUrlAfterCommit,
 } from "@/utils/host-route-browser";
 import { prepareWorkspaceTab } from "@/utils/workspace-navigation";
-import { isWeb } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
+import { RenderProfile } from "@/utils/render-profiler";
 
 function getParamValue(value: string | string[] | undefined): string {
   if (typeof value === "string") {
@@ -198,77 +202,103 @@ function WorkspaceDeck({
   recoveryAgentId: string | null;
 }) {
   const activeSelection = useActiveWorkspaceSelection();
-  const [mountedSelections, setMountedSelections] = useState<ActiveWorkspaceSelection[]>(() =>
-    activeSelection ? [activeSelection] : [],
+  const [retainedSelections, setRetainedSelections] = useState<RetainedWorkspaceSelection[]>(() =>
+    activeSelection ? [{ selection: activeSelection, inactiveSince: null }] : [],
   );
   const unmountWorkspaceSelection = useCallback((selection: ActiveWorkspaceSelection) => {
-    setMountedSelections((current) =>
-      current.filter(
-        (mountedSelection) => !areWorkspaceSelectionsEqual(mountedSelection, selection),
-      ),
+    setRetainedSelections((current) =>
+      current.filter((entry) => !areWorkspaceSelectionsEqual(entry.selection, selection)),
     );
   }, []);
 
-  const nextMountedSelections = useMemo(
+  const reconciliationNow = Date.now();
+  const nextRetainedSelections = useMemo(
     () =>
-      pruneMountedWorkspaceSelections({
-        currentSelections: mountedSelections,
+      reconcileRetainedWorkspaceSelections({
+        currentEntries: retainedSelections,
         activeSelection,
-        maxMountedWorkspaces: WORKSPACE_DECK_MAX_MOUNTED_WORKSPACES,
+        now: reconciliationNow,
+        maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative }),
       }),
-    [activeSelection, mountedSelections],
+    [activeSelection, reconciliationNow, retainedSelections],
   );
   const renderedSelections = useMemo(
-    () => orderWorkspaceSelectionsForStableRender(nextMountedSelections),
-    [nextMountedSelections],
+    () =>
+      orderWorkspaceSelectionsForStableRender(
+        nextRetainedSelections.map((entry) => entry.selection),
+      ),
+    [nextRetainedSelections],
+  );
+  const renderedEntries = useMemo(
+    () => resolveWorkspaceDeckEntries({ selections: renderedSelections, activeSelection }),
+    [activeSelection, renderedSelections],
   );
 
   useLayoutEffect(() => {
-    if (!areWorkspaceSelectionListsEqual(mountedSelections, nextMountedSelections)) {
-      setMountedSelections(nextMountedSelections);
+    if (!areRetainedWorkspaceSelectionListsEqual(retainedSelections, nextRetainedSelections)) {
+      setRetainedSelections(nextRetainedSelections);
     }
-  }, [mountedSelections, nextMountedSelections]);
+  }, [nextRetainedSelections, retainedSelections]);
 
-  if (!activeSelection) {
-    return null;
-  }
+  useEffect(() => {
+    const expirationDelay = getNextWorkspaceDeckExpirationDelay({
+      entries: nextRetainedSelections,
+      activeSelection,
+      now: reconciliationNow,
+    });
+    if (expirationDelay === null) {
+      return;
+    }
+    const timeout = setTimeout(() => {
+      setRetainedSelections((current) =>
+        reconcileRetainedWorkspaceSelections({
+          currentEntries: current,
+          activeSelection,
+          now: Date.now(),
+          maxMountedWorkspaces: resolveWorkspaceDeckRetentionLimit({ isNative }),
+        }),
+      );
+    }, expirationDelay + 1);
+    return () => clearTimeout(timeout);
+  }, [activeSelection, nextRetainedSelections, reconciliationNow]);
 
   return (
-    <View style={styles.deck}>
-      {renderedSelections.map((selection) => {
-        return (
-          <WorkspaceDeckEntry
-            key={getWorkspaceSelectionKey(selection)}
-            selection={selection}
-            activeSelection={activeSelection}
-            recoveryRequested={recoveryRequested}
-            recoveryAgentId={recoveryAgentId}
-            onUnmountInactive={unmountWorkspaceSelection}
-          />
-        );
-      })}
-    </View>
+    <RenderProfile id="WorkspaceDeck">
+      <View style={styles.deck}>
+        {renderedEntries.map(({ selection, active }) => {
+          return (
+            <WorkspaceDeckEntry
+              key={getWorkspaceSelectionKey(selection)}
+              selection={selection}
+              active={active}
+              recoveryRequested={recoveryRequested}
+              recoveryAgentId={recoveryAgentId}
+              onUnmountInactive={unmountWorkspaceSelection}
+            />
+          );
+        })}
+      </View>
+    </RenderProfile>
   );
 }
 
 function WorkspaceDeckEntry({
   selection,
-  activeSelection,
+  active,
   recoveryRequested,
   recoveryAgentId,
   onUnmountInactive,
 }: {
   selection: ActiveWorkspaceSelection;
-  activeSelection: ActiveWorkspaceSelection;
+  active: boolean;
   recoveryRequested: boolean;
   recoveryAgentId: string | null;
   onUnmountInactive: (selection: ActiveWorkspaceSelection) => void;
 }) {
-  const isActive = areWorkspaceSelectionsEqual(selection, activeSelection);
   const hasHydratedWorkspaces = useHasHydratedWorkspaces(selection.serverId);
   const workspaceExists = useWorkspaceExists(selection.serverId, selection.workspaceId);
   const shouldKeepMounted = shouldKeepWorkspaceDeckEntryMounted({
-    isActive,
+    isActive: active,
     hasHydratedWorkspaces,
     workspaceExists,
   });
@@ -285,15 +315,15 @@ function WorkspaceDeckEntry({
 
   return (
     <RetainedPanel
-      active={isActive}
+      active={active}
       testID={`workspace-deck-entry-${selection.serverId}:${selection.workspaceId}`}
     >
       <WorkspaceScreen
         serverId={selection.serverId}
         workspaceId={selection.workspaceId}
-        isRouteFocused={isActive}
-        recoveryRequested={isActive && recoveryRequested}
-        recoveryAgentId={isActive ? recoveryAgentId : null}
+        isRouteFocused={active}
+        recoveryRequested={active && recoveryRequested}
+        recoveryAgentId={active ? recoveryAgentId : null}
       />
     </RetainedPanel>
   );

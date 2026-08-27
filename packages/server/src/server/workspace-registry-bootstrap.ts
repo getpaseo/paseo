@@ -15,6 +15,7 @@ import {
   type ProjectRegistry,
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
+import { pinPaseoWorktreeBranchIdentityIfMissing } from "../utils/worktree-metadata.js";
 
 function minIsoDate(left: string | null, right: string | null): string | null {
   if (!left) {
@@ -45,6 +46,7 @@ function resolveAgentUpdatedAt(record: StoredAgentRecord): string {
 }
 
 export async function bootstrapWorkspaceRegistries(options: {
+  serverId?: string;
   paseoHome: string;
   agentStorage: AgentStorage;
   projectRegistry: ProjectRegistry;
@@ -58,6 +60,28 @@ export async function bootstrapWorkspaceRegistries(options: {
   ]);
 
   await Promise.all([options.projectRegistry.initialize(), options.workspaceRegistry.initialize()]);
+
+  // COMPAT(worktree-branch-identity): added in v0.4.0 on 2026-08-15; remove after
+  // 2027-02-15. Older worktrees did not pin branch-off/check-out branch identity.
+  // Seed it from the registry value clients already display, never from live Git.
+  for (const workspace of await options.workspaceRegistry.list()) {
+    if (
+      workspace.archivedAt ||
+      !workspace.isPaseoOwnedWorktree ||
+      !workspace.worktreeRoot ||
+      !workspace.branch
+    ) {
+      continue;
+    }
+    try {
+      pinPaseoWorktreeBranchIdentityIfMissing(workspace.worktreeRoot, workspace.branch);
+    } catch (error) {
+      options.logger.warn(
+        { err: error, workspaceId: workspace.workspaceId },
+        "Failed to pin legacy worktree branch identity; PR association remains disabled",
+      );
+    }
+  }
 
   if (projectsExists && workspacesExists) {
     await backfillWorkspaceIdForLegacyAgents(options);
@@ -96,6 +120,7 @@ export async function bootstrapWorkspaceRegistries(options: {
       const membership = classifyDirectoryForProjectMembership({
         cwd: normalizedCwd,
         checkout,
+        serverId: options.serverId,
       });
       return { record, membership, directoryKey: membership.workspaceDirectoryKey };
     }),
@@ -156,7 +181,7 @@ export async function bootstrapWorkspaceRegistries(options: {
           options.workspaceRegistry.upsert(
             createPersistedWorkspaceRecord({
               workspaceId,
-              projectId: membership.projectKey,
+              projectId: membership.projectId,
               cwd: workspaceCwd,
               kind: membership.workspaceKind,
               displayName: membership.workspaceDisplayName,
@@ -166,10 +191,11 @@ export async function bootstrapWorkspaceRegistries(options: {
           ),
           options.projectRegistry.upsert(
             createPersistedProjectRecord({
-              projectId: membership.projectKey,
+              projectId: membership.projectId,
               rootPath: membership.projectRootPath,
               kind: membership.projectKind,
               displayName: membership.projectName,
+              projectKey: membership.projectKey,
               createdAt: projectRange.createdAt ?? createdAt,
               updatedAt: projectRange.updatedAt ?? updatedAt,
             }),

@@ -1,3 +1,5 @@
+import { z } from "zod";
+
 export interface ActiveWorkspaceSelection {
   serverId: string;
   workspaceId: string;
@@ -8,19 +10,17 @@ export const LAST_WORKSPACE_SELECTION_STORAGE_KEY = "paseo:last-workspace-route-
 export interface LastWorkspaceSelectionStorage {
   read(): Promise<string | null>;
   write(value: string): Promise<void>;
+  clear(): Promise<void>;
 }
 
+const ActiveWorkspaceSelectionSchema: z.ZodType<ActiveWorkspaceSelection> = z.strictObject({
+  serverId: z.string().trim().min(1),
+  workspaceId: z.string().trim().min(1),
+});
+
 function normalizeWorkspaceSelection(input: unknown): ActiveWorkspaceSelection | null {
-  if (!input || typeof input !== "object" || Array.isArray(input)) {
-    return null;
-  }
-  const record = input as Record<string, unknown>;
-  const serverId = typeof record.serverId === "string" ? record.serverId.trim() : "";
-  const workspaceId = typeof record.workspaceId === "string" ? record.workspaceId.trim() : "";
-  if (!serverId || !workspaceId) {
-    return null;
-  }
-  return { serverId, workspaceId };
+  const result = ActiveWorkspaceSelectionSchema.safeParse(input);
+  return result.success ? result.data : null;
 }
 
 function parseStoredWorkspaceSelection(stored: string | null): ActiveWorkspaceSelection | null {
@@ -75,6 +75,9 @@ export function createLastWorkspaceSelectionStore(storage: LastWorkspaceSelectio
       .then((stored) => {
         if (revision === hydrationRevision) {
           selection = parseStoredWorkspaceSelection(stored);
+          if (stored !== null && selection === null) {
+            void storage.clear().catch(() => {});
+          }
         }
         return undefined;
       })

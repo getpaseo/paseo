@@ -144,6 +144,47 @@ describe("agent feature schemas", () => {
     expect(parsed.features?.[0]?.id).toBe("fast_mode");
   });
 
+  it("accepts optional active turn identity without requiring it from old daemons", () => {
+    const base = {
+      id: "agent-turn-identity",
+      provider: "codex",
+      cwd: "/tmp/project",
+      model: "gpt-5",
+      createdAt: "2026-07-31T12:00:00.000Z",
+      updatedAt: "2026-07-31T12:00:01.000Z",
+      lastUserMessageAt: "2026-07-31T12:00:00.000Z",
+      status: "running",
+      capabilities: {
+        supportsStreaming: true,
+        supportsSessionPersistence: true,
+        supportsDynamicModes: true,
+        supportsMcpServers: true,
+        supportsReasoningStream: true,
+        supportsToolInvocations: true,
+      },
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: [],
+      persistence: null,
+      title: null,
+      labels: {},
+    };
+
+    expect(AgentSnapshotPayloadSchema.parse(base).activeTurn).toBeUndefined();
+    expect(
+      AgentSnapshotPayloadSchema.parse({
+        ...base,
+        activeTurn: {
+          turnId: "turn-1",
+          startedAt: "2026-07-31T12:00:00.000Z",
+        },
+      }).activeTurn,
+    ).toEqual({
+      turnId: "turn-1",
+      startedAt: "2026-07-31T12:00:00.000Z",
+    });
+  });
+
   it("defaults missing rewind capabilities to false", () => {
     const parsed = AgentSnapshotPayloadSchema.parse({
       id: "agent-123",

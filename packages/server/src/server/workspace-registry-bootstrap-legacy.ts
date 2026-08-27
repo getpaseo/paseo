@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import type { ProjectCheckoutLitePayload } from "@getpaseo/protocol/messages";
 
 import { parseGitRevParsePath } from "../utils/git-rev-parse-path.js";
+import { createRealpathAwarePathMatcher, getRealpathAwareRelativePath } from "../utils/path.js";
+import { deriveProjectKey, deriveProjectGroupingDisplayName } from "./project-key.js";
 import {
   deriveProjectKind,
   deriveWorkspaceDisplayName,
@@ -19,6 +21,7 @@ interface DirectoryProjectMembership {
   workspaceDirectoryKey: string;
   workspaceKind: PersistedWorkspaceKind;
   workspaceDisplayName: string;
+  projectId: string;
   projectKey: string;
   projectName: string;
   projectRootPath: string;
@@ -28,14 +31,18 @@ interface DirectoryProjectMembership {
 export function classifyDirectoryForProjectMembership(input: {
   cwd: string;
   checkout: ProjectCheckoutLitePayload;
+  serverId?: string;
 }): DirectoryProjectMembership {
   const cwd = resolve(input.cwd);
   const checkout: ProjectCheckoutLitePayload = { ...input.checkout, cwd };
-  const projectKey = deriveProjectGroupingKey({
-    cwd: checkout.worktreeRoot ?? cwd,
+  const projectKey = deriveProjectKey({
+    rootPath: cwd,
     remoteUrl: checkout.remoteUrl,
+    worktreeRoot: checkout.worktreeRoot,
     mainRepoRoot: checkout.mainRepoRoot,
+    serverId: input.serverId,
   });
+  const projectRootPath = deriveProjectRootPath({ cwd, checkout });
 
   return {
     cwd,
@@ -43,78 +50,40 @@ export function classifyDirectoryForProjectMembership(input: {
     workspaceDirectoryKey: deriveWorkspaceDirectoryKey(cwd, checkout),
     workspaceKind: deriveWorkspaceKind(checkout),
     workspaceDisplayName: deriveWorkspaceDisplayName({ cwd, checkout }),
+    // Legacy registry bootstrap historically used the grouping identity as the
+    // host-local project ID. Preserve that ID shape while keeping the new,
+    // canonical cross-host identity in projectKey.
+    projectId: projectKey.startsWith("remote:") ? projectKey : projectRootPath,
     projectKey,
-    projectName: deriveProjectGroupingName(projectKey),
-    projectRootPath: deriveProjectRootPath({ cwd, checkout }),
+    projectName: deriveProjectGroupingDisplayName({
+      rootPath: cwd,
+      remoteUrl: checkout.remoteUrl,
+      worktreeRoot: checkout.worktreeRoot,
+    }),
+    projectRootPath,
     projectKind: deriveProjectKind(checkout),
   };
 }
 
 function deriveWorkspaceDirectoryKey(cwd: string, checkout: ProjectCheckoutLitePayload): string {
   const worktreeRoot = checkout.worktreeRoot ? parseGitRevParsePath(checkout.worktreeRoot) : null;
-  return worktreeRoot ?? resolve(cwd);
-}
-
-function deriveRemoteProjectKey(remoteUrl: string | null): string | null {
-  if (!remoteUrl) return null;
-
-  const trimmed = remoteUrl.trim();
-  if (!trimmed) return null;
-
-  let host: string | null = null;
-  let remotePath: string | null = null;
-  const scpLike = trimmed.match(/^[^@]+@([^:]+):(.+)$/);
-  if (scpLike) {
-    host = scpLike[1] ?? null;
-    remotePath = scpLike[2] ?? null;
-  } else if (trimmed.includes("://")) {
-    try {
-      const parsed = new URL(trimmed);
-      host = parsed.hostname || null;
-      remotePath = parsed.pathname ? parsed.pathname.replace(/^\/+/, "") : null;
-    } catch {
-      return null;
-    }
-  }
-
-  if (!host || !remotePath) return null;
-
-  let cleanedPath = remotePath.trim().replace(/^\/+/, "").replace(/\/+$/, "");
-  if (cleanedPath.endsWith(".git")) cleanedPath = cleanedPath.slice(0, -4);
-  if (!cleanedPath.includes("/")) return null;
-
-  return `remote:${host.toLowerCase()}/${cleanedPath}`;
-}
-
-function deriveProjectGroupingKey(options: {
-  cwd: string;
-  remoteUrl: string | null;
-  mainRepoRoot: string | null;
-}): string {
-  const remoteKey = deriveRemoteProjectKey(options.remoteUrl);
-  if (remoteKey) return remoteKey;
-
-  const mainRepoRoot = options.mainRepoRoot?.trim();
-  return mainRepoRoot || options.cwd;
-}
-
-function deriveProjectGroupingName(projectKey: string): string {
-  if (projectKey.startsWith("remote:")) {
-    const pathSegments = projectKey.slice("remote:".length).split("/").filter(Boolean).slice(1);
-    if (pathSegments.length >= 2) return pathSegments.slice(-2).join("/");
-    if (pathSegments.length === 1) return pathSegments[0];
-    return projectKey;
-  }
-
-  const segments = projectKey.split(/[\\/]/).filter(Boolean);
-  return segments[segments.length - 1] || projectKey;
+  const selectedRoot = resolve(cwd);
+  return worktreeRoot && createRealpathAwarePathMatcher(worktreeRoot)(selectedRoot)
+    ? worktreeRoot
+    : selectedRoot;
 }
 
 function deriveProjectRootPath(input: {
   cwd: string;
   checkout: ProjectCheckoutLitePayload;
 }): string {
-  return input.checkout.isGit && input.checkout.mainRepoRoot
-    ? input.checkout.mainRepoRoot
-    : input.cwd;
+  if (!input.checkout.isGit || !input.checkout.mainRepoRoot) return input.cwd;
+  const worktreeRoot = input.checkout.worktreeRoot
+    ? parseGitRevParsePath(input.checkout.worktreeRoot)
+    : null;
+  if (!worktreeRoot) return input.checkout.mainRepoRoot;
+  const selectedPath = getRealpathAwareRelativePath(worktreeRoot, input.cwd);
+  return selectedPath
+    ? resolve(input.checkout.mainRepoRoot, selectedPath)
+    : input.checkout.mainRepoRoot;
 }

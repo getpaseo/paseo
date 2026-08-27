@@ -96,6 +96,21 @@ Any gap between A and B (margins between siblings inside the same parent) is par
 
 If A and B genuinely can't share a parent — B portals into a different layer, floats above other content — see [Section: real gaps](#real-gaps-with-floating-panels) below.
 
+### Failure mode 4 — A hover-revealed trigger unmounts its own open menu
+
+A kebab that only exists while its row is hovered opens a menu, and that menu takes the pointer
+off the row: a sheet slides up over it, a popover covers it. The row un-hovers, the trailing
+overlay unmounts, and the trigger goes with it — taking the menu's open state, which lived
+inside the trigger's subtree. The surface itself is already presented in a portal, so nothing
+unmounts it and nothing is left that can close it. On a bottom sheet that means a full-screen
+backdrop swallowing every click until reload.
+
+Lift the menu's open state to whatever decides to render the trigger, and keep the trigger
+rendered while the menu is up. `useOpenKebabMenuVisibility`
+(`packages/app/src/components/sidebar/use-open-kebab-menu-visibility.ts`) is that shape for the
+sidebar rows: it owns `open`, hands the menu its controlled props, and ORs `open` into the
+row's own `showKebab`.
+
 ## Native fallback
 
 Hover doesn't exist on touch devices. Anything you hide behind hover must have a non-hover path on native and compact layouts:
@@ -134,5 +149,6 @@ Before opening a PR that touches hover:
 - [ ] Hovered state does **not** change the trigger's outer geometry (`width`, `height`, `padding`, `borderWidth`, mount/unmount of siblings that shift it). Internal swaps fit inside a fixed `minHeight` / `minWidth`.
 - [ ] Revealed content inside the trigger uses `opacity` + `pointerEvents`, not conditional rendering, if mounting it would reflow the trigger.
 - [ ] Visibility on native and compact layouts works without hover (`isHovered || isNative || isCompact`).
+- [ ] A menu opened from the revealed trigger keeps the trigger rendered while it is open, so losing hover can't strand it.
 - [ ] If the revealed content sits in a separate layer (portal, floating panel), `useHoverSafeZone` is wired up.
 - [ ] You opened the dev server, hovered the trigger, and slowly moved the mouse along **every** revealed element — including any visible gaps — without losing hover state.

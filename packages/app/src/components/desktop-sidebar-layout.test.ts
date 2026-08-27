@@ -3,11 +3,23 @@ import {
   canDesktopAppSidebarShare,
   resolveDesktopAppChromeLayout,
   resolveDesktopAppContentMinimum,
-  resolveDesktopExplorerWidth,
+  resolveDesktopSidebarVisibility,
   resolveDesktopSidebarWidth,
 } from "@/components/desktop-sidebar-layout";
 
 describe("desktop sidebar layout", () => {
+  it("keeps a retained sidebar hidden while app chrome is suppressed", () => {
+    expect(
+      resolveDesktopSidebarVisibility({
+        chromeEnabled: false,
+        isCompactLayout: false,
+        isMounted: true,
+        isOpen: true,
+        canShare: true,
+      }),
+    ).toBe(false);
+  });
+
   it("keeps the sidebar toggle window-owned beside left window controls", () => {
     expect(
       resolveDesktopAppChromeLayout({
@@ -66,18 +78,8 @@ describe("desktop sidebar layout", () => {
     expect(resolveDesktopSidebarWidth({ requestedWidth: 600, viewportWidth: 1440 })).toBe(600);
   });
 
-  it("keeps a temporarily narrow explorer render-only", () => {
-    expect(resolveDesktopExplorerWidth({ requestedWidth: 400, viewportWidth: 751 })).toBe(351);
-    expect(resolveDesktopExplorerWidth({ requestedWidth: 400, viewportWidth: 1440 })).toBe(400);
-  });
-
-  it("yields app navigation when settings or Explorer need the shell width", () => {
-    const settingsMinimum = resolveDesktopAppContentMinimum({
-      isSettingsRoute: true,
-      isWorkspaceExplorerOpen: false,
-      requestedExplorerWidth: 400,
-      viewportWidth: 751,
-    });
+  it("yields app navigation when settings needs the shell width", () => {
+    const settingsMinimum = resolveDesktopAppContentMinimum({ isSettingsRoute: true });
     expect(settingsMinimum).toBe(720);
     expect(
       canDesktopAppSidebarShare({
@@ -86,31 +88,15 @@ describe("desktop sidebar layout", () => {
         viewportWidth: 751,
       }),
     ).toBe(false);
+  });
 
-    const explorerMinimum = resolveDesktopAppContentMinimum({
-      isSettingsRoute: false,
-      isWorkspaceExplorerOpen: true,
-      requestedExplorerWidth: 400,
-      viewportWidth: 751,
-    });
-    expect(explorerMinimum).toBe(751);
+  it("imposes no content minimum outside settings", () => {
+    expect(resolveDesktopAppContentMinimum({ isSettingsRoute: false })).toBe(0);
     expect(
       canDesktopAppSidebarShare({
-        contentMinimumWidth: explorerMinimum,
+        contentMinimumWidth: resolveDesktopAppContentMinimum({ isSettingsRoute: false }),
         requestedSidebarWidth: 320,
         viewportWidth: 751,
-      }),
-    ).toBe(false);
-    expect(
-      canDesktopAppSidebarShare({
-        contentMinimumWidth: resolveDesktopAppContentMinimum({
-          isSettingsRoute: false,
-          isWorkspaceExplorerOpen: true,
-          requestedExplorerWidth: 400,
-          viewportWidth: 1120,
-        }),
-        requestedSidebarWidth: 320,
-        viewportWidth: 1120,
       }),
     ).toBe(true);
   });

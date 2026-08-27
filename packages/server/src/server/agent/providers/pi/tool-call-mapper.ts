@@ -340,6 +340,10 @@ export function resolveToolCallName(toolCall: PiTrackedToolCall, result?: PiTool
 export function mapToolDetail(toolCall: PiTrackedToolCall, result?: PiToolResult): ToolCallDetail {
   const parsedResult = result ?? null;
 
+  if (isTaskToolCall(toolCall)) {
+    return mapTaskToolDetail(toolCall.args, parsedResult);
+  }
+
   switch (toolCall.kind) {
     case "bash": {
       const summary = resolveToolCallOutput(parsedResult);
@@ -386,6 +390,30 @@ export function mapToolDetail(toolCall: PiTrackedToolCall, result?: PiToolResult
         output: parsedResult,
       };
   }
+}
+
+function isTaskToolCall(toolCall: PiTrackedToolCall): boolean {
+  if (toolCall.toolName === "task") {
+    return true;
+  }
+  if (toolCall.toolName !== "subagent" || !isRecord(toolCall.args)) {
+    return false;
+  }
+  return (
+    toolCall.args.action === undefined &&
+    (readNonEmptyString(toolCall.args.agent) !== undefined ||
+      readNonEmptyString(toolCall.args.task) !== undefined)
+  );
+}
+
+function mapTaskToolDetail(args: unknown, result: PiToolResult): ToolCallDetail {
+  const argRecord = isRecord(args) ? args : {};
+  return {
+    type: "sub_agent",
+    subAgentType: readNonEmptyString(argRecord.agent),
+    description: readNonEmptyString(argRecord.task),
+    log: extractTextFromToolResult(result)?.trim() ?? "",
+  };
 }
 
 function mapWriteToolDetail(args: WriteToolInput, result: PiToolResult): ToolCallDetail {

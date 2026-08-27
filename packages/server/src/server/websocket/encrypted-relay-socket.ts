@@ -1,19 +1,17 @@
 import { EventEmitter } from "node:events";
-import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES, outboundFrameByteLength } from "./physical-socket.js";
-
-// NaCl adds a 24-byte nonce and 16-byte authenticator before base64 encoding.
-const ENCRYPTED_FRAME_OVERHEAD_BYTES = 40;
+import { MAX_PHYSICAL_SOCKET_BUFFERED_BYTES } from "./physical-socket.js";
 
 export interface EncryptedRelayChannel {
   setState: (state: "open") => void;
   send: (data: string | ArrayBuffer) => Promise<void>;
+  outboundWireByteLength: (data: string | ArrayBuffer) => number;
   close: (code?: number, reason?: string) => void;
 }
 
 export interface EncryptedRelaySocket {
   readonly readyState: number;
   readonly bufferedAmount: number;
-  send: (data: string | Uint8Array | ArrayBuffer) => void;
+  send: (data: string | Uint8Array | ArrayBuffer) => void | Promise<void>;
   close: (code?: number, reason?: string) => void;
   terminate: () => void;
   on: (event: "message" | "close" | "error", listener: (...args: unknown[]) => void) => void;
@@ -28,7 +26,6 @@ export function createEncryptedRelaySocket(params: {
 }): EncryptedRelaySocket {
   const { channel, emitter, getTransportBufferedAmount, terminateTransport } = params;
   let readyState = 1;
-  let pendingEncryptedBytes = 0;
 
   channel.setState("open");
 
@@ -53,26 +50,25 @@ export function createEncryptedRelaySocket(params: {
       return readyState;
     },
     get bufferedAmount() {
-      return pendingEncryptedBytes + (getTransportBufferedAmount() ?? 0);
+      return getTransportBufferedAmount() ?? 0;
     },
     send: (data) => {
-      if (readyState !== 1) return;
+      if (readyState !== 1) {
+        return Promise.reject(new Error("Encrypted relay socket is not open"));
+      }
       const outbound = normalizeRelaySendPayload(data);
-      const outboundBytes = encryptedRelayFrameByteLength(outbound);
-      const queuedBytes = pendingEncryptedBytes + (getTransportBufferedAmount() ?? 0);
+      const outboundBytes = channel.outboundWireByteLength(outbound);
+      const queuedBytes = getTransportBufferedAmount() ?? 0;
       if (queuedBytes + outboundBytes > MAX_PHYSICAL_SOCKET_BUFFERED_BYTES) {
         terminate();
-        return;
+        return Promise.reject(
+          new Error("Encrypted relay socket exceeded its outbound high-water mark"),
+        );
       }
-      pendingEncryptedBytes += outboundBytes;
-      void channel
-        .send(outbound)
-        .catch((error) => {
-          emitter.emit("error", error);
-        })
-        .finally(() => {
-          pendingEncryptedBytes -= outboundBytes;
-        });
+      return channel.send(outbound).catch((error) => {
+        emitter.emit("error", error);
+        throw error;
+      });
     },
     close,
     terminate,
@@ -92,9 +88,4 @@ function normalizeRelaySendPayload(data: string | Uint8Array | ArrayBuffer): str
   const out = new Uint8Array(view.byteLength);
   out.set(view);
   return out.buffer;
-}
-
-function encryptedRelayFrameByteLength(data: string | ArrayBuffer): number {
-  const encryptedBytes = outboundFrameByteLength(data) + ENCRYPTED_FRAME_OVERHEAD_BYTES;
-  return 4 * Math.ceil(encryptedBytes / 3);
 }

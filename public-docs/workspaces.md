@@ -27,6 +27,8 @@ my-app
 
 Each workspace is a separate place to work. You can keep one for your main checkout, create another for a feature, or open a GitHub PR as another workspace.
 
+Use the [CLI project commands](/docs/cli#projects) to register, list, rename, or delete projects.
+
 ## Workspaces contain sessions
 
 Agents run inside a workspace as sessions. A workspace can have one agent session, several agent sessions, terminals, browsers, and diffs open at the same time.
@@ -50,7 +52,7 @@ You can create a workspace in the app or from the CLI:
 
 ```bash
 paseo workspace create --isolation local --path ~/dev/my-app --title main
-paseo workspace create --isolation worktree --path ~/dev/my-app --base main
+paseo workspace create --isolation worktree --path ~/dev/my-app --base origin/main
 ```
 
 You can also create a workspace without starting an agent right away. The workspace is still there with its working directory ready; you can open terminals, run services, or browse files, then start an agent later.

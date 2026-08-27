@@ -251,6 +251,20 @@ describe("PersistedConfigSchema agent provider runtime settings", () => {
       ],
     });
   });
+
+  test("accepts a custom provider catalog refresh timeout", () => {
+    const parsed = PersistedConfigSchema.parse({
+      agents: { catalogRefreshTimeoutMs: 180_000 },
+    });
+
+    expect(parsed.agents?.catalogRefreshTimeoutMs).toBe(180_000);
+  });
+
+  test("rejects provider catalog refresh timeouts that overflow Node timers", () => {
+    expect(() =>
+      PersistedConfigSchema.parse({ agents: { catalogRefreshTimeoutMs: 2_147_483_648 } }),
+    ).toThrow();
+  });
 });
 
 describe("provider overrides (new format)", () => {
@@ -648,6 +662,16 @@ describe("PersistedConfigSchema voice mode config", () => {
 });
 
 describe("loadPersistedConfig", () => {
+  test("materializes relay disabled for a new Paseo home", () => {
+    const home = createTempHome();
+    try {
+      const config = loadPersistedConfig(home);
+      expect(config.daemon?.relay?.enabled).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   test("accepts the documented config schema marker", () => {
     const home = createTempHome();
     const configPath = path.join(home, "config.json");

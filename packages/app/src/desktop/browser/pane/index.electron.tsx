@@ -1,0 +1,1856 @@
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  createElement,
+} from "react";
+import { createPortal } from "react-dom";
+import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Camera,
+  ChevronDown,
+  Maximize,
+  Monitor,
+  MousePointer2,
+  RotateCw,
+  Smartphone,
+  Tablet,
+  Wrench,
+  X,
+  type LucideIcon,
+} from "lucide-react-native";
+import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles";
+import { useTranslation } from "react-i18next";
+import * as Clipboard from "expo-clipboard";
+import { Button } from "@/components/ui/button";
+import { useRetainedPanelActive } from "@/components/retained-panel";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useToast } from "@/contexts/toast-context";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  buildWorkspaceAttachmentScopeKey,
+  useWorkspaceAttachments,
+  useWorkspaceAttachmentsStore,
+} from "@/attachments/workspace-attachments-store";
+import type { AttachmentMetadata, BrowserElementAttachment } from "@/attachments/types";
+import { persistAttachmentFromDataUrl } from "@/attachments/service";
+import { WORKSPACE_SECONDARY_HEADER_HEIGHT } from "@/constants/layout";
+import { getOverlayRoot } from "@/lib/overlay-root";
+import {
+  getDesktopHost,
+  isElectronRuntime,
+  type DesktopBrowserShortcutEvent,
+} from "@/desktop/host";
+import {
+  type BrowserViewport,
+  createFixedBrowserViewport,
+  normalizeWorkspaceBrowserUrl,
+  RESPONSIVE_BROWSER_VIEWPORT,
+  useBrowserStore,
+} from "@/desktop/browser/store";
+import {
+  applyInactiveBrowserWebviewViewport,
+  prepareBrowserWebview,
+  presentBrowserWebview,
+  rememberBrowserWebviewSize,
+  releaseResidentBrowserWebview,
+  removeResidentBrowserWebview,
+  takeResidentBrowserWebview,
+} from "../resident-webviews";
+import {
+  createElementSelectorController,
+  type BrowserElementSelection,
+  type ElementSelectorOutcome,
+} from "./element-selector.electron";
+
+type ElectronWebview = HTMLElement & {
+  canGoBack?: () => boolean;
+  canGoForward?: () => boolean;
+  goBack?: () => void;
+  goForward?: () => void;
+  reload?: () => void;
+  stop?: () => void;
+  loadURL?: (url: string) => Promise<void>;
+  getURL?: () => string;
+  isLoading?: () => boolean;
+  executeJavaScript?: (code: string) => Promise<unknown>;
+  focus?: () => void;
+  addEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
+  removeEventListener: (type: string, listener: EventListenerOrEventListenerObject) => void;
+};
+
+interface BrowserElementAnnotation {
+  comment: string;
+}
+
+type DeviceSizeId =
+  | "responsive"
+  | "iphone-se"
+  | "iphone-14"
+  | "iphone-14-pro-max"
+  | "pixel-7"
+  | "galaxy-s20"
+  | "ipad-mini"
+  | "ipad-air"
+  | "ipad-pro-11"
+  | "ipad-pro-12"
+  | "surface-pro"
+  | "laptop"
+  | "desktop-1080"
+  | "desktop-1440";
+
+interface DeviceSizePreset {
+  id: DeviceSizeId;
+  /** Display name (not translated — device names are proper nouns). */
+  name: string;
+  /** Fixed CSS width, or null for "fill the available area". */
+  width: number | null;
+  height: number | null;
+  icon: LucideIcon;
+}
+
+// Viewport presets for the in-app browser. "responsive" fills the pane; the
+// others render a fixed-size, centered frame so the user can preview how a page
+// behaves at common device sizes. Content is centered (not left-aligned).
+const DEVICE_SIZE_PRESETS: readonly DeviceSizePreset[] = [
+  { id: "responsive", name: "Responsive", width: null, height: null, icon: Maximize },
+  { id: "iphone-se", name: "iPhone SE", width: 375, height: 667, icon: Smartphone },
+  { id: "iphone-14", name: "iPhone 14", width: 390, height: 844, icon: Smartphone },
+  { id: "iphone-14-pro-max", name: "iPhone 14 Pro Max", width: 430, height: 932, icon: Smartphone },
+  { id: "pixel-7", name: "Pixel 7", width: 412, height: 915, icon: Smartphone },
+  { id: "galaxy-s20", name: "Galaxy S20", width: 360, height: 800, icon: Smartphone },
+  { id: "ipad-mini", name: "iPad Mini", width: 768, height: 1024, icon: Tablet },
+  { id: "ipad-air", name: "iPad Air", width: 820, height: 1180, icon: Tablet },
+  { id: "ipad-pro-11", name: 'iPad Pro 11"', width: 834, height: 1194, icon: Tablet },
+  { id: "ipad-pro-12", name: 'iPad Pro 12.9"', width: 1024, height: 1366, icon: Tablet },
+  { id: "surface-pro", name: "Surface Pro", width: 912, height: 1368, icon: Tablet },
+  { id: "laptop", name: "Laptop", width: 1366, height: 768, icon: Monitor },
+  { id: "desktop-1080", name: "Desktop 1080p", width: 1920, height: 1080, icon: Monitor },
+  { id: "desktop-1440", name: "Desktop 1440p", width: 2560, height: 1440, icon: Monitor },
+];
+
+const RESPONSIVE_DEVICE_LABEL_KEY = "workspace.browser.devices.responsive";
+
+function formatDevicePresetLabel(preset: DeviceSizePreset, responsiveLabel: string): string {
+  const name = preset.id === "responsive" ? responsiveLabel : preset.name;
+  if (preset.width && preset.height) {
+    return `${name} · ${preset.width}×${preset.height}`;
+  }
+  return name;
+}
+
+const ERR_ABORTED = -3;
+const ALLOWED_BROWSER_PROTOCOLS = new Set(["http:", "https:"]);
+
+function truncateText(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength).trim()}...` : value;
+}
+
+function getWebviewLoadErrorMessage(event: Event, failedToLoadLabel: string): string | null {
+  const details = event as Event & {
+    errorCode?: unknown;
+    errorDescription?: unknown;
+    isMainFrame?: unknown;
+    validatedURL?: unknown;
+  };
+  if (details.isMainFrame === false || details.errorCode === ERR_ABORTED) {
+    return null;
+  }
+
+  const description =
+    typeof details.errorDescription === "string" && details.errorDescription.trim()
+      ? details.errorDescription.trim()
+      : failedToLoadLabel;
+  const url =
+    typeof details.validatedURL === "string" && details.validatedURL.trim()
+      ? details.validatedURL.trim()
+      : null;
+
+  return url ? `${description}: ${url}` : description;
+}
+
+function getLoadUrlRejectionMessage(error: unknown, failedToLoadLabel: string): string | null {
+  if (error instanceof Error && error.message.trim()) {
+    if (error.message.includes("ERR_ABORTED") || error.message.includes("ERR_BLOCKED_BY_CLIENT")) {
+      return null;
+    }
+    return error.message.trim();
+  }
+  if (typeof error === "string" && error.trim()) {
+    if (error.includes("ERR_ABORTED") || error.includes("ERR_BLOCKED_BY_CLIENT")) {
+      return null;
+    }
+    return error.trim();
+  }
+  return failedToLoadLabel;
+}
+
+function getUnsafeNavigationMessage(
+  url: string,
+  labels: { invalidUrl: string; unsupportedProtocol: (protocol: string) => string },
+): string | null {
+  try {
+    const parsed = new URL(url);
+    if (ALLOWED_BROWSER_PROTOCOLS.has(parsed.protocol) || parsed.href === "about:blank") {
+      return null;
+    }
+    return labels.unsupportedProtocol(parsed.protocol);
+  } catch {
+    return labels.invalidUrl;
+  }
+}
+
+function formatElementAttachment(
+  selection: BrowserElementSelection,
+  annotation?: BrowserElementAnnotation,
+): string {
+  const textPreview = truncateText(selection.text.trim(), 200);
+  const html = truncateText(selection.outerHTML.trim(), 800);
+  const parts: string[] = [];
+
+  if (selection.reactSource?.fileName) {
+    const loc = [
+      selection.reactSource.fileName,
+      selection.reactSource.lineNumber != null ? `:${selection.reactSource.lineNumber}` : "",
+      selection.reactSource.columnNumber != null ? `:${selection.reactSource.columnNumber}` : "",
+    ].join("");
+    parts.push(`source: ${selection.reactSource.componentName ?? selection.tag} @ ${loc}`);
+  }
+
+  parts.push(`selector: ${selection.selector}`);
+
+  if (textPreview) {
+    parts.push(`text: ${JSON.stringify(textPreview)}`);
+  }
+
+  parts.push(`size: ${selection.boundingRect.width}x${selection.boundingRect.height}`);
+
+  const keyStyles = Object.entries(selection.computedStyles)
+    .filter(([key]) =>
+      ["display", "position", "font-size", "color", "background-color"].includes(key),
+    )
+    .map(([key, value]) => `${key}: ${value}`)
+    .join("; ");
+  if (keyStyles) {
+    parts.push(`styles: ${keyStyles}`);
+  }
+
+  if (selection.parentChain.length > 0) {
+    parts.push(`parents: ${selection.parentChain.slice(0, 3).join(" > ")}`);
+  }
+
+  const comment = annotation?.comment.trim();
+  if (comment) {
+    parts.push(`feedback: ${comment}`);
+  }
+
+  return [
+    `<browser-element url="${selection.url}">`,
+    parts.map((part) => `  ${part}`).join("\n"),
+    `  html: ${html}`,
+    `</browser-element>`,
+  ].join("\n");
+}
+
+function buildBrowserElementAttachment(
+  selection: BrowserElementSelection,
+  annotation?: BrowserElementAnnotation,
+  screenshot?: AttachmentMetadata,
+): BrowserElementAttachment {
+  const comment = annotation?.comment.trim();
+  return {
+    url: selection.url,
+    selector: selection.selector,
+    tag: selection.tag,
+    text: selection.text,
+    outerHTML: truncateText(selection.outerHTML, 2000),
+    computedStyles: selection.computedStyles,
+    boundingRect: selection.boundingRect,
+    reactSource: selection.reactSource,
+    parentChain: selection.parentChain,
+    children: selection.children,
+    ...(comment ? { comment } : {}),
+    ...(screenshot ? { screenshot } : {}),
+    formatted: formatElementAttachment(selection, annotation),
+  };
+}
+
+function buildBrowserAttachmentScopeKey(input: {
+  cwd: string | null;
+  serverId: string;
+  workspaceId: string;
+}): string | null {
+  if (!input.cwd) {
+    return null;
+  }
+  return buildWorkspaceAttachmentScopeKey({
+    serverId: input.serverId,
+    workspaceId: input.workspaceId,
+    cwd: input.cwd,
+  });
+}
+
+function executeWebviewJavaScript(webview: ElectronWebview, code: string): Promise<unknown> {
+  if (!webview.isConnected) {
+    return Promise.resolve(null);
+  }
+  try {
+    return webview.executeJavaScript?.(code) ?? Promise.resolve(null);
+  } catch (error) {
+    return Promise.reject(error);
+  }
+}
+
+function ignoreWebviewJavaScriptError() {}
+
+interface BrowserAnnotationMarker {
+  index: number;
+  selector: string;
+}
+
+// Draws numbered badges over annotated elements inside the guest page. The
+// overlay is a fixed, pointer-events:none layer that re-measures element rects
+// on scroll/resize via rAF. Markers are matched by the CSS selector captured at
+// annotation time; unmatched selectors are simply skipped.
+function buildAnnotationMarkerScript(markers: readonly BrowserAnnotationMarker[]): string {
+  const payload = JSON.stringify(
+    markers.map((marker) => ({ index: marker.index, selector: marker.selector })),
+  );
+  return `
+    (function() {
+      var markers = ${payload};
+      if (window.__paseoAnnotationMarkers) { window.__paseoAnnotationMarkers.update(markers); return true; }
+      var host = document.createElement('div');
+      host.style.cssText = 'position:fixed;top:0;left:0;width:0;height:0;z-index:2147483646;pointer-events:none;';
+      (document.body || document.documentElement).appendChild(host);
+      var badges = [];
+      var current = markers;
+      function clearBadges() {
+        for (var i = 0; i < badges.length; i++) { if (badges[i].parentNode) badges[i].parentNode.removeChild(badges[i]); }
+        badges = [];
+      }
+      function reposition() {
+        clearBadges();
+        for (var i = 0; i < current.length; i++) {
+          var m = current[i];
+          var el = null;
+          try { el = document.querySelector(m.selector); } catch (e) { el = null; }
+          if (!el) continue;
+          var rect = el.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) continue;
+          var badge = document.createElement('div');
+          badge.textContent = String(m.index);
+          badge.style.cssText = 'position:fixed;min-width:18px;height:18px;padding:0 4px;border-radius:9px;background:#2563eb;color:#fff;font:600 11px/18px -apple-system,system-ui,sans-serif;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,0.4);pointer-events:none;box-sizing:border-box;';
+          badge.style.left = Math.max(0, rect.left) + 'px';
+          badge.style.top = Math.max(0, rect.top) + 'px';
+          host.appendChild(badge);
+          badges.push(badge);
+        }
+      }
+      var scheduled = false;
+      function schedule() {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(function() { scheduled = false; reposition(); });
+      }
+      window.addEventListener('scroll', schedule, true);
+      window.addEventListener('resize', schedule, true);
+      window.__paseoAnnotationMarkers = {
+        update: function(next) { current = next; schedule(); },
+        destroy: function() {
+          window.removeEventListener('scroll', schedule, true);
+          window.removeEventListener('resize', schedule, true);
+          clearBadges();
+          if (host.parentNode) host.parentNode.removeChild(host);
+          window.__paseoAnnotationMarkers = null;
+        }
+      };
+      reposition();
+      return true;
+    })()
+  `;
+}
+
+function applyAnnotationMarkers(
+  webview: ElectronWebview,
+  markers: readonly BrowserAnnotationMarker[],
+): void {
+  void executeWebviewJavaScript(webview, buildAnnotationMarkerScript(markers)).catch(
+    ignoreWebviewJavaScriptError,
+  );
+}
+
+function clearAnnotationMarkers(webview: ElectronWebview): void {
+  void executeWebviewJavaScript(
+    webview,
+    "if(window.__paseoAnnotationMarkers) window.__paseoAnnotationMarkers.destroy();",
+  ).catch(ignoreWebviewJavaScriptError);
+}
+
+function getTextInputNativeElement(
+  current: EditingTextInputHandle | null,
+): HTMLInputElement | null {
+  const native = current?.getNativeRef();
+  return native instanceof HTMLInputElement ? native : null;
+}
+
+function isBrowserShortcutKey(event: KeyboardEvent, key: "l" | "r"): boolean {
+  if (event.altKey || event.shiftKey) {
+    return false;
+  }
+  if (!event.metaKey && !event.ctrlKey) {
+    return false;
+  }
+  const eventKey = event.key.toLowerCase();
+  return eventKey === key || event.code === `Key${key.toUpperCase()}`;
+}
+
+function isDesktopBrowserShortcutEvent(payload: unknown): payload is DesktopBrowserShortcutEvent {
+  if (!payload || typeof payload !== "object") {
+    return false;
+  }
+  const event = payload as Partial<DesktopBrowserShortcutEvent>;
+  return event.action === "focus-url";
+}
+
+function ToolbarButton({
+  label,
+  children,
+  active,
+  disabled,
+  onPress,
+  style,
+}: {
+  label: string;
+  children: ReactNode;
+  active?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+  style: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
+}) {
+  const accessibilityState = useMemo(
+    () => ({ disabled: Boolean(disabled), selected: Boolean(active) }),
+    [active, disabled],
+  );
+  return (
+    <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild disabled={disabled}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          accessibilityState={accessibilityState}
+          disabled={disabled}
+          onPress={onPress}
+          style={style}
+        >
+          {children}
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="center" offset={8}>
+        <Text style={styles.toolbarTooltipText}>{label}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+// Lucide icons themed via withUnistyles so their color stays theme-reactive
+// without a banned useUnistyles() call.
+const ThemedMaximize = withUnistyles(Maximize);
+const ThemedSmartphone = withUnistyles(Smartphone);
+const ThemedTablet = withUnistyles(Tablet);
+const ThemedMonitor = withUnistyles(Monitor);
+const ThemedChevronDown = withUnistyles(ChevronDown);
+const deviceMutedIconMapping = (theme: { colors: { foregroundMuted: string } }) => ({
+  color: theme.colors.foregroundMuted,
+});
+
+function resolveThemedDeviceIcon(icon: LucideIcon): typeof ThemedMaximize {
+  if (icon === Smartphone) return ThemedSmartphone;
+  if (icon === Tablet) return ThemedTablet;
+  if (icon === Monitor) return ThemedMonitor;
+  return ThemedMaximize;
+}
+
+function DeviceSizeMenuItem({
+  preset,
+  selected,
+  label,
+  onSelect,
+}: {
+  preset: DeviceSizePreset;
+  selected: boolean;
+  label: string;
+  onSelect: (id: DeviceSizeId) => void;
+}) {
+  const ThemedIcon = resolveThemedDeviceIcon(preset.icon);
+  const handleSelect = useCallback(() => {
+    onSelect(preset.id);
+  }, [onSelect, preset.id]);
+  const leading = useMemo(
+    () => <ThemedIcon size={16} uniProps={deviceMutedIconMapping} />,
+    [ThemedIcon],
+  );
+  return (
+    <DropdownMenuItem
+      onSelect={handleSelect}
+      selected={selected}
+      showSelectedCheck
+      leading={leading}
+    >
+      {label}
+    </DropdownMenuItem>
+  );
+}
+
+function DeviceSizeMenu({
+  selectedId,
+  onSelect,
+  triggerStyle,
+}: {
+  selectedId: DeviceSizeId | null;
+  onSelect: (id: DeviceSizeId) => void;
+  triggerStyle: (state: { hovered?: boolean; pressed?: boolean }) => StyleProp<ViewStyle>;
+}) {
+  const { t } = useTranslation();
+  const selectedPreset =
+    DEVICE_SIZE_PRESETS.find((preset) => preset.id === selectedId) ?? DEVICE_SIZE_PRESETS[0];
+  const SelectedIcon = resolveThemedDeviceIcon(selectedPreset.icon);
+  const label = t("workspace.browser.devices.label");
+  return (
+    <DropdownMenu>
+      <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger accessibilityLabel={label} style={triggerStyle}>
+            <View style={styles.deviceTrigger}>
+              <SelectedIcon size={16} uniProps={deviceMutedIconMapping} />
+              <ThemedChevronDown size={12} uniProps={deviceMutedIconMapping} />
+            </View>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="center" offset={8}>
+          <Text style={styles.toolbarTooltipText}>{label}</Text>
+        </TooltipContent>
+      </Tooltip>
+      <DropdownMenuContent align="end" scrollable maxHeight={360}>
+        {DEVICE_SIZE_PRESETS.map((preset) => (
+          <DeviceSizeMenuItem
+            key={preset.id}
+            preset={preset}
+            selected={preset.id === selectedId}
+            label={formatDevicePresetLabel(preset, t(RESPONSIVE_DEVICE_LABEL_KEY))}
+            onSelect={onSelect}
+          />
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function deviceSizeIdForViewport(viewport: BrowserViewport): DeviceSizeId | null {
+  if (viewport.mode === "responsive") {
+    return "responsive";
+  }
+  return (
+    DEVICE_SIZE_PRESETS.find(
+      (preset) => preset.width === viewport.width && preset.height === viewport.height,
+    )?.id ?? null
+  );
+}
+
+function rememberResolvedBrowserWebviewSize(browserId: string, webview: HTMLElement): void {
+  const bounds = webview.getBoundingClientRect();
+  rememberBrowserWebviewSize({ browserId, width: bounds.width, height: bounds.height });
+}
+
+// eslint-disable-next-line complexity
+export function BrowserPane({
+  browserId,
+  serverId,
+  workspaceId,
+  cwd,
+  isInteractive,
+  onFocusPane,
+}: {
+  browserId: string;
+  serverId: string;
+  workspaceId: string;
+  cwd: string | null;
+  isInteractive?: boolean;
+  onFocusPane?: () => void;
+}) {
+  const { theme } = useUnistyles();
+  const { t } = useTranslation();
+  const browser = useBrowserStore((state) => state.browsersById[browserId] ?? null);
+  const updateBrowser = useBrowserStore((state) => state.updateBrowser);
+  const setBrowserViewport = useBrowserStore((state) => state.setBrowserViewport);
+  const browserViewport = browser?.viewport ?? RESPONSIVE_BROWSER_VIEWPORT;
+  const browserViewportRef = useRef(browserViewport);
+  browserViewportRef.current = browserViewport;
+  const isPresented = useRetainedPanelActive();
+  const isPresentedRef = useRef(isPresented);
+  isPresentedRef.current = isPresented;
+  const webviewRef = useRef<ElectronWebview | null>(null);
+  const webviewHostRef = useRef<HTMLDivElement | null>(null);
+  const webviewClipRef = useRef<HTMLElement | null>(null);
+  const urlInputRef = useRef<EditingTextInputHandle | null>(null);
+  const initialUrlRef = useRef(browser?.url ?? "https://example.com");
+  const browserIdRef = useRef(browserId);
+  browserIdRef.current = browserId;
+  const browserRef = useRef(browser);
+  browserRef.current = browser;
+  const pendingNavigationUrlRef = useRef<string | null>(null);
+  const annotationMarkersRef = useRef<BrowserAnnotationMarker[]>([]);
+  const [selectorMode, setSelectorMode] = useState<"annotate" | "screenshot" | null>(null);
+  const selectorControllerRef = useRef<ReturnType<typeof createElementSelectorController> | null>(
+    null,
+  );
+  if (!selectorControllerRef.current) {
+    selectorControllerRef.current = createElementSelectorController();
+  }
+  const selectorActive = selectorMode !== null;
+  const toast = useToast();
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  const [pendingSelection, setPendingSelection] = useState<BrowserElementSelection | null>(null);
+  // Screenshot is captured at selection time (overlay already torn down, no
+  // scroll drift) and reused when the annotation card is submitted.
+  const pendingScreenshotRef = useRef<AttachmentMetadata | undefined>(undefined);
+  const [draftUrl, setDraftUrl] = useState(browser?.url ?? "https://example.com");
+  const workspaceAttachmentScopeKey = useMemo(
+    () => buildBrowserAttachmentScopeKey({ cwd, serverId, workspaceId }),
+    [cwd, serverId, workspaceId],
+  );
+  const workspaceAttachments = useWorkspaceAttachments(workspaceAttachmentScopeKey ?? "");
+  const setWorkspaceAttachments = useWorkspaceAttachmentsStore(
+    (state) => state.setWorkspaceAttachments,
+  );
+  const titleStyle = useMemo(
+    () => [styles.unavailableTitle, { color: theme.colors.foreground }],
+    [theme.colors.foreground],
+  );
+  const subtitleStyle = useMemo(
+    () => [styles.unavailableSubtitle, { color: theme.colors.foregroundMuted }],
+    [theme.colors.foregroundMuted],
+  );
+  const urlInputStyle = useMemo(
+    () => [
+      styles.urlInput,
+      {
+        color: theme.colors.foreground,
+        outlineStyle: "none",
+      } as object,
+    ],
+    [theme.colors.foreground],
+  );
+  const errorTextStyle = useMemo(
+    () => [styles.metaError, { color: theme.colors.palette.red[500] }],
+    [theme.colors.palette.red],
+  );
+  const browserErrorLabels = useMemo(
+    () => ({
+      failedToLoad: t("workspace.browser.errors.failedToLoad"),
+      invalidUrl: t("workspace.browser.errors.invalidUrl"),
+      unsupportedProtocol: (protocol: string) =>
+        t("workspace.browser.errors.unsupportedProtocol", { protocol }),
+    }),
+    [t],
+  );
+  const browserErrorLabelsRef = useRef(browserErrorLabels);
+  browserErrorLabelsRef.current = browserErrorLabels;
+
+  useEffect(() => {
+    const nextUrl = browser?.url ?? "https://example.com";
+    urlInputRef.current?.replaceText(nextUrl);
+    setDraftUrl((current) => (current === nextUrl ? current : nextUrl));
+  }, [browser?.url]);
+
+  const updateBrowserRef = useRef(updateBrowser);
+  updateBrowserRef.current = updateBrowser;
+
+  const selectUrlBar = useCallback(() => {
+    window.setTimeout(() => {
+      getTextInputNativeElement(urlInputRef.current)?.select();
+    }, 0);
+  }, []);
+
+  const handleUrlBarFocus = useCallback(() => {
+    selectUrlBar();
+  }, [selectUrlBar]);
+
+  const focusUrlBar = useCallback(() => {
+    urlInputRef.current?.focus();
+    selectUrlBar();
+  }, [selectUrlBar]);
+
+  const syncNavigationState = useCallback((input?: { syncUrl?: boolean }) => {
+    const webview = webviewRef.current;
+    if (!webview) {
+      return;
+    }
+
+    try {
+      const currentUrl = webview.getURL?.() ?? webview.getAttribute("src") ?? "";
+      const patch = {
+        canGoBack: webview.canGoBack?.() ?? false,
+        canGoForward: webview.canGoForward?.() ?? false,
+        ...(input?.syncUrl === false
+          ? {}
+          : { url: normalizeWorkspaceBrowserUrl(pendingNavigationUrlRef.current ?? currentUrl) }),
+      };
+      updateBrowserRef.current(browserIdRef.current, patch);
+    } catch {
+      // webview not yet attached
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isElectronRuntime()) {
+      return;
+    }
+
+    const host = webviewHostRef.current;
+    const clip = webviewClipRef.current;
+    if (!host || !clip) {
+      return;
+    }
+
+    host.replaceChildren();
+
+    const initialUnsafeNavigationMessage = getUnsafeNavigationMessage(
+      initialUrlRef.current,
+      browserErrorLabelsRef.current,
+    );
+    const residentWebview = takeResidentBrowserWebview(browserId) as ElectronWebview | null;
+    const webview = residentWebview ?? (document.createElement("webview") as ElectronWebview);
+    webviewRef.current = webview;
+    if (!residentWebview) {
+      prepareBrowserWebview(webview, {
+        browserId,
+        workspaceId,
+        initialUrl: initialUnsafeNavigationMessage ? "about:blank" : initialUrlRef.current,
+      });
+    }
+    releaseResidentBrowserWebview(browserId, webview);
+    if (isPresentedRef.current) {
+      presentBrowserWebview(browserId, webview, host, clip, browserViewportRef.current);
+    } else {
+      applyInactiveBrowserWebviewViewport(browserId, webview, browserViewportRef.current);
+    }
+    const sizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            if (!isPresentedRef.current) {
+              return;
+            }
+            presentBrowserWebview(
+              browserIdRef.current,
+              webview,
+              host,
+              clip,
+              browserViewportRef.current,
+            );
+            rememberResolvedBrowserWebviewSize(browserIdRef.current, webview);
+          });
+
+    const handleStartLoading = () => {
+      selectorControllerRef.current?.stopForWebview(webview);
+      updateBrowser(browserId, { isLoading: true, lastError: null });
+      syncNavigationState({ syncUrl: false });
+    };
+    const handleStopLoading = () => {
+      updateBrowser(browserId, { isLoading: false });
+      syncNavigationState();
+    };
+    const handleNavigate = (event: Event) => {
+      const nextUrl =
+        typeof (event as Event & { url?: unknown }).url === "string"
+          ? ((event as Event & { url?: string }).url ?? "")
+          : (webview.getURL?.() ?? webview.getAttribute("src") ?? "");
+      const normalized = normalizeWorkspaceBrowserUrl(nextUrl);
+      const previousUrl = browserRef.current?.url ?? initialUrlRef.current;
+      pendingNavigationUrlRef.current = null;
+      updateBrowser(browserIdRef.current, {
+        url: normalized,
+        ...(normalized !== previousUrl ? { faviconUrl: null } : {}),
+        lastError: null,
+      });
+      setDraftUrl((current) => {
+        return current === normalized ? current : normalized;
+      });
+      syncNavigationState();
+    };
+    const handleWillNavigate = (event: Event) => {
+      const nextUrl =
+        typeof (event as Event & { url?: unknown }).url === "string"
+          ? ((event as Event & { url?: string }).url ?? "")
+          : "";
+      if (!nextUrl) {
+        return;
+      }
+      const normalized = normalizeWorkspaceBrowserUrl(nextUrl);
+      pendingNavigationUrlRef.current = normalized;
+      updateBrowserRef.current(browserIdRef.current, {
+        url: normalized,
+        ...(normalized !== browserRef.current?.url ? { faviconUrl: null } : {}),
+        lastError: null,
+      });
+      setDraftUrl((current) => (current === normalized ? current : normalized));
+    };
+    const handleTitleUpdated = (event: Event) => {
+      const title =
+        typeof (event as Event & { title?: unknown }).title === "string"
+          ? ((event as Event & { title?: string }).title ?? "")
+          : "";
+      updateBrowserRef.current(browserIdRef.current, { title });
+    };
+    const handleFaviconUpdated = (event: Event) => {
+      const favicons = Array.isArray((event as Event & { favicons?: unknown[] }).favicons)
+        ? ((event as Event & { favicons?: string[] }).favicons ?? [])
+        : [];
+      updateBrowserRef.current(browserIdRef.current, { faviconUrl: favicons[0] ?? null });
+    };
+    const handleLoadFailed = (event: Event) => {
+      const message = getWebviewLoadErrorMessage(event, browserErrorLabelsRef.current.failedToLoad);
+      if (!message) {
+        return;
+      }
+      updateBrowserRef.current(browserIdRef.current, {
+        isLoading: false,
+        lastError: message,
+      });
+    };
+    const handleDomReady = () => {
+      syncNavigationState();
+      // The previous page's overlay is gone after a load; re-apply markers for
+      // the freshly loaded document.
+      const markers = annotationMarkersRef.current;
+      if (markers.length > 0) {
+        applyAnnotationMarkers(webview, markers);
+      }
+    };
+    const handleWebviewFocus = () => {
+      onFocusPane?.();
+      webview.focus?.();
+      const focusBrowser = getDesktopHost()?.browser?.focus;
+      if (typeof focusBrowser === "function") {
+        void focusBrowser(browserIdRef.current).catch((error) => {
+          console.error("[browser-webview] focus failed", error);
+        });
+      }
+    };
+
+    webview.addEventListener("did-start-loading", handleStartLoading);
+    webview.addEventListener("did-stop-loading", handleStopLoading);
+    webview.addEventListener("will-navigate", handleWillNavigate);
+    webview.addEventListener("did-navigate", handleNavigate);
+    webview.addEventListener("did-navigate-in-page", handleNavigate);
+    webview.addEventListener("page-title-updated", handleTitleUpdated);
+    webview.addEventListener("page-favicon-updated", handleFaviconUpdated);
+    webview.addEventListener("did-fail-load", handleLoadFailed);
+    webview.addEventListener("dom-ready", handleDomReady);
+    webview.addEventListener("focus", handleWebviewFocus);
+    webview.addEventListener("mousedown", handleWebviewFocus);
+
+    if (isPresentedRef.current) {
+      rememberResolvedBrowserWebviewSize(browserId, webview);
+    }
+    sizeObserver?.observe(host);
+    sizeObserver?.observe(clip);
+    if (initialUnsafeNavigationMessage) {
+      updateBrowserRef.current(browserIdRef.current, {
+        isLoading: false,
+        lastError: initialUnsafeNavigationMessage,
+      });
+    }
+
+    return () => {
+      sizeObserver?.disconnect();
+      webview.removeEventListener("did-start-loading", handleStartLoading);
+      webview.removeEventListener("did-stop-loading", handleStopLoading);
+      webview.removeEventListener("will-navigate", handleWillNavigate);
+      webview.removeEventListener("did-navigate", handleNavigate);
+      webview.removeEventListener("did-navigate-in-page", handleNavigate);
+      webview.removeEventListener("page-title-updated", handleTitleUpdated);
+      webview.removeEventListener("page-favicon-updated", handleFaviconUpdated);
+      webview.removeEventListener("did-fail-load", handleLoadFailed);
+      webview.removeEventListener("dom-ready", handleDomReady);
+      webview.removeEventListener("focus", handleWebviewFocus);
+      webview.removeEventListener("mousedown", handleWebviewFocus);
+      const browserStillExists = Boolean(
+        useBrowserStore.getState().browsersById[browserIdRef.current],
+      );
+      if (browserStillExists) {
+        releaseResidentBrowserWebview(browserIdRef.current, webview);
+      } else {
+        removeResidentBrowserWebview(browserIdRef.current);
+      }
+      selectorControllerRef.current?.stopForWebview(webview);
+      if (webviewRef.current === webview) {
+        webviewRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [browserId, onFocusPane]);
+
+  useEffect(() => {
+    const webview = webviewRef.current;
+    if (!webview) {
+      return;
+    }
+    if (!isPresented) {
+      releaseResidentBrowserWebview(browserId, webview);
+      return;
+    }
+    const host = webviewHostRef.current;
+    const clip = webviewClipRef.current;
+    if (host && clip) {
+      presentBrowserWebview(browserId, webview, host, clip, browserViewport);
+    }
+    if (browserViewport.mode === "fixed") {
+      rememberBrowserWebviewSize({
+        browserId,
+        width: browserViewport.width,
+        height: browserViewport.height,
+      });
+    } else {
+      rememberResolvedBrowserWebviewSize(browserId, webview);
+    }
+  }, [browserId, browserViewport, isPresented]);
+
+  const navigate = useCallback(
+    (nextUrl: string) => {
+      const normalizedUrl = normalizeWorkspaceBrowserUrl(nextUrl);
+      const webview = webviewRef.current;
+      const unsafeNavigationMessage = getUnsafeNavigationMessage(normalizedUrl, browserErrorLabels);
+      const previousUrl = browserRef.current?.url ?? initialUrlRef.current;
+      pendingNavigationUrlRef.current = unsafeNavigationMessage ? null : normalizedUrl;
+      updateBrowserRef.current(browserIdRef.current, {
+        url: normalizedUrl,
+        isLoading: unsafeNavigationMessage === null,
+        ...(normalizedUrl !== previousUrl ? { faviconUrl: null } : {}),
+        lastError: null,
+      });
+      setDraftUrl((current) => (current === normalizedUrl ? current : normalizedUrl));
+      if (unsafeNavigationMessage) {
+        updateBrowserRef.current(browserIdRef.current, {
+          isLoading: false,
+          lastError: unsafeNavigationMessage,
+        });
+        return;
+      }
+      if (webview?.loadURL) {
+        void webview.loadURL(normalizedUrl).catch((error: unknown) => {
+          const message = getLoadUrlRejectionMessage(error, browserErrorLabels.failedToLoad);
+          if (!message) {
+            return;
+          }
+          updateBrowserRef.current(browserIdRef.current, {
+            isLoading: false,
+            lastError: message,
+          });
+        });
+        return;
+      }
+      if (webview) {
+        webview.setAttribute("src", normalizedUrl);
+      }
+    },
+    [browserErrorLabels],
+  );
+
+  const handleBack = useCallback(() => {
+    webviewRef.current?.goBack?.();
+    syncNavigationState();
+  }, [syncNavigationState]);
+
+  const handleForward = useCallback(() => {
+    webviewRef.current?.goForward?.();
+    syncNavigationState();
+  }, [syncNavigationState]);
+
+  const handleRefresh = useCallback(() => {
+    if (browser?.isLoading) {
+      webviewRef.current?.stop?.();
+      updateBrowser(browserId, { isLoading: false });
+      return;
+    }
+    webviewRef.current?.reload?.();
+  }, [browser?.isLoading, browserId, updateBrowser]);
+
+  useEffect(() => {
+    if (!isElectronRuntime() || !isInteractive) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (isBrowserShortcutKey(event, "l")) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        focusUrlBar();
+        return;
+      }
+      if (isBrowserShortcutKey(event, "r")) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+        handleRefresh();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [focusUrlBar, handleRefresh, isInteractive]);
+
+  useEffect(() => {
+    if (!isElectronRuntime()) {
+      return;
+    }
+    const unsubscribe = getDesktopHost()?.events?.on?.("browser-shortcut", (payload) => {
+      if (!isDesktopBrowserShortcutEvent(payload)) {
+        return;
+      }
+      if (payload.browserId) {
+        if (payload.browserId !== browserIdRef.current) {
+          return;
+        }
+        focusUrlBar();
+        return;
+      }
+      if (!isInteractive) {
+        return;
+      }
+      focusUrlBar();
+    });
+
+    if (typeof unsubscribe === "function") {
+      return unsubscribe;
+    }
+    return () => {
+      void unsubscribe?.then((dispose) => dispose());
+    };
+  }, [focusUrlBar, isInteractive]);
+
+  const handleNavigateDraftUrl = useCallback(() => {
+    navigate(draftUrl);
+  }, [draftUrl, navigate]);
+
+  const addElementAttachment = useCallback(
+    (
+      selection: BrowserElementSelection,
+      annotation: BrowserElementAnnotation,
+      screenshot?: AttachmentMetadata,
+    ) => {
+      if (!workspaceAttachmentScopeKey) {
+        return;
+      }
+      setWorkspaceAttachments({
+        scopeKey: workspaceAttachmentScopeKey,
+        attachments: [
+          ...workspaceAttachments,
+          {
+            kind: "browser_element",
+            attachment: buildBrowserElementAttachment(selection, annotation, screenshot),
+          },
+        ],
+      });
+    },
+    [setWorkspaceAttachments, workspaceAttachmentScopeKey, workspaceAttachments],
+  );
+
+  const captureElementScreenshot = useCallback(
+    async (selection: BrowserElementSelection): Promise<AttachmentMetadata | undefined> => {
+      const captureElement = getDesktopHost()?.browser?.captureElement;
+      if (typeof captureElement !== "function") {
+        return undefined;
+      }
+      const { x, y, width, height } = selection.boundingRect;
+      if (width <= 0 || height <= 0) {
+        return undefined;
+      }
+      try {
+        const dataUrl = await captureElement(browserIdRef.current, { x, y, width, height });
+        if (!dataUrl) {
+          return undefined;
+        }
+        return await persistAttachmentFromDataUrl({
+          dataUrl,
+          mimeType: "image/png",
+          fileName: `element-${selection.tag}.png`,
+        });
+      } catch (error) {
+        console.warn("[browser-pane] captureElement failed", error);
+        return undefined;
+      }
+    },
+    [],
+  );
+
+  const screenshotElementToClipboard = useCallback(
+    async (selection: BrowserElementSelection) => {
+      const text = formatElementAttachment(selection);
+      const copyElement = getDesktopHost()?.browser?.copyElement;
+      const captureElement = getDesktopHost()?.browser?.captureElement;
+      const { x, y, width, height } = selection.boundingRect;
+
+      let imageDataUrl: string | undefined;
+      if (typeof captureElement === "function" && width > 0 && height > 0) {
+        try {
+          const dataUrl = await captureElement(browserIdRef.current, { x, y, width, height });
+          imageDataUrl = dataUrl ?? undefined;
+        } catch (error) {
+          console.warn("[browser-pane] capture element for screenshot failed", error);
+        }
+      }
+
+      const copiedMessage = imageDataUrl
+        ? t("workspace.browser.controls.screenshotCopied")
+        : t("workspace.browser.controls.elementCopied");
+
+      // Copy via the main process; the renderer's navigator.clipboard rejects
+      // with NotAllowedError because focus is inside the guest <webview>.
+      if (typeof copyElement === "function") {
+        try {
+          const ok = await copyElement({ text, imageDataUrl });
+          if (ok) {
+            toastRef.current?.show(copiedMessage, { variant: "success" });
+          } else {
+            toastRef.current?.error(t("workspace.browser.controls.screenshotFailed"));
+          }
+          return;
+        } catch (error) {
+          console.warn("[browser-pane] copyElement bridge failed", error);
+        }
+      }
+
+      // Fallback to expo-clipboard (text only) when the bridge is unavailable.
+      try {
+        await Clipboard.setStringAsync(text);
+        toastRef.current?.show(t("workspace.browser.controls.elementCopied"), {
+          variant: "success",
+        });
+      } catch (error) {
+        console.warn("[browser-pane] clipboard fallback failed", error);
+        toastRef.current?.error(t("workspace.browser.controls.screenshotFailed"));
+      }
+    },
+    [t],
+  );
+
+  const handleSelectorResult = useCallback(
+    (selection: BrowserElementSelection, mode: "annotate" | "screenshot") => {
+      if (mode === "screenshot") {
+        void screenshotElementToClipboard(selection);
+        return;
+      }
+      pendingScreenshotRef.current = undefined;
+      setPendingSelection(selection);
+      void captureElementScreenshot(selection).then((screenshot) => {
+        pendingScreenshotRef.current = screenshot;
+        return undefined;
+      });
+    },
+    [captureElementScreenshot, screenshotElementToClipboard],
+  );
+
+  const submitAnnotation = useCallback(
+    (annotation: BrowserElementAnnotation) => {
+      const selection = pendingSelection;
+      const screenshot = pendingScreenshotRef.current;
+      pendingScreenshotRef.current = undefined;
+      setPendingSelection(null);
+      if (!selection) {
+        return;
+      }
+      addElementAttachment(selection, annotation, screenshot);
+    },
+    [addElementAttachment, pendingSelection],
+  );
+
+  const cancelAnnotation = useCallback(() => {
+    pendingScreenshotRef.current = undefined;
+    setPendingSelection(null);
+  }, []);
+
+  const showSelectorFailure = useCallback(
+    (reason: "loading" | "timeout" | "unavailable") => {
+      const message =
+        reason === "loading"
+          ? t("workspace.browser.controls.selectorLoading")
+          : t("workspace.browser.controls.selectorFailed");
+      toastRef.current?.error(message);
+    },
+    [t],
+  );
+
+  const handleElementSelectorOutcome = useCallback(
+    (outcome: ElementSelectorOutcome) => {
+      setSelectorMode(null);
+      if (outcome.type === "selected") {
+        handleSelectorResult(outcome.selection, outcome.mode);
+      } else if (outcome.type === "failed") {
+        showSelectorFailure(outcome.reason);
+      }
+    },
+    [handleSelectorResult, showSelectorFailure],
+  );
+
+  const startElementSelector = useCallback(
+    (mode: "annotate" | "screenshot") => {
+      if (mode === "annotate" && !workspaceAttachmentScopeKey) {
+        showSelectorFailure("unavailable");
+        return;
+      }
+      const webview = webviewRef.current;
+      const controller = selectorControllerRef.current;
+      if (!webview || !controller) {
+        showSelectorFailure("unavailable");
+        return;
+      }
+
+      const startResult = controller.start({
+        webview,
+        mode,
+        onFinish: handleElementSelectorOutcome,
+      });
+      if (startResult !== "started") {
+        showSelectorFailure(startResult);
+        return;
+      }
+
+      pendingScreenshotRef.current = undefined;
+      setPendingSelection(null);
+      setSelectorMode(mode);
+    },
+    [handleElementSelectorOutcome, showSelectorFailure, workspaceAttachmentScopeKey],
+  );
+
+  const cancelElementSelector = useCallback(() => {
+    selectorControllerRef.current?.cancel();
+    setSelectorMode(null);
+  }, []);
+
+  const currentPageUrl = browser?.url ?? null;
+  const annotationMarkers = useMemo<BrowserAnnotationMarker[]>(() => {
+    if (!currentPageUrl) {
+      return [];
+    }
+    const normalizedCurrent = normalizeWorkspaceBrowserUrl(currentPageUrl);
+    const markers: BrowserAnnotationMarker[] = [];
+    let index = 0;
+    for (const attachment of workspaceAttachments) {
+      if (attachment.kind !== "browser_element") {
+        continue;
+      }
+      index += 1;
+      if (normalizeWorkspaceBrowserUrl(attachment.attachment.url) !== normalizedCurrent) {
+        continue;
+      }
+      markers.push({ index, selector: attachment.attachment.selector });
+    }
+    return markers;
+  }, [currentPageUrl, workspaceAttachments]);
+
+  const markersKey = useMemo(() => JSON.stringify(annotationMarkers), [annotationMarkers]);
+  annotationMarkersRef.current = annotationMarkers;
+
+  useEffect(() => {
+    if (!isElectronRuntime()) {
+      return;
+    }
+    const webview = webviewRef.current;
+    if (!webview) {
+      return;
+    }
+    if (annotationMarkers.length === 0) {
+      clearAnnotationMarkers(webview);
+      return;
+    }
+    applyAnnotationMarkers(webview, annotationMarkers);
+    // markersKey captures the marker contents; re-run when they change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [markersKey, currentPageUrl]);
+
+  const handleToggleElementSelector = useCallback(() => {
+    if (selectorActive) {
+      cancelElementSelector();
+      return;
+    }
+    startElementSelector("annotate");
+  }, [cancelElementSelector, selectorActive, startElementSelector]);
+
+  const handleToggleScreenshot = useCallback(() => {
+    if (selectorActive) {
+      cancelElementSelector();
+      return;
+    }
+    startElementSelector("screenshot");
+  }, [cancelElementSelector, selectorActive, startElementSelector]);
+
+  const handleOpenDevTools = useCallback(() => {
+    const currentBrowserId = browserIdRef.current;
+    const openDevTools = getDesktopHost()?.browser?.openDevTools;
+    if (typeof openDevTools !== "function") {
+      console.warn("[browser-pane] openDevTools bridge missing", { browserId: currentBrowserId });
+      return;
+    }
+    void openDevTools(currentBrowserId)
+      .then((result) => {
+        console.info("[browser-pane] openDevTools result", {
+          browserId: currentBrowserId,
+          result,
+        });
+        return undefined;
+      })
+      .catch((error: unknown) => {
+        console.warn("[browser-pane] openDevTools failed", { browserId: currentBrowserId, error });
+      });
+  }, []);
+
+  const baseIconButtonStyle = useCallback(
+    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
+      styles.iconButton,
+      (hovered || pressed) && styles.iconButtonHovered,
+    ],
+    [],
+  );
+  const backIconButtonStyle = useCallback(
+    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
+      styles.iconButton,
+      (hovered || pressed) && styles.iconButtonHovered,
+      !browser?.canGoBack && styles.iconButtonDisabled,
+    ],
+    [browser?.canGoBack],
+  );
+  const forwardIconButtonStyle = useCallback(
+    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
+      styles.iconButton,
+      (hovered || pressed) && styles.iconButtonHovered,
+      !browser?.canGoForward && styles.iconButtonDisabled,
+    ],
+    [browser?.canGoForward],
+  );
+  const annotateIconButtonStyle = useCallback(
+    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
+      styles.iconButton,
+      selectorMode === "annotate" && styles.selectorActiveButton,
+      (hovered || pressed) && styles.iconButtonHovered,
+    ],
+    [selectorMode],
+  );
+  const screenshotIconButtonStyle = useCallback(
+    ({ hovered, pressed }: { hovered?: boolean; pressed?: boolean }) => [
+      styles.iconButton,
+      selectorMode === "screenshot" && styles.selectorActiveButton,
+      (hovered || pressed) && styles.iconButtonHovered,
+    ],
+    [selectorMode],
+  );
+
+  const selectedDeviceSizeId = useMemo(
+    () => deviceSizeIdForViewport(browserViewport),
+    [browserViewport],
+  );
+  const isResponsiveDevice = browserViewport.mode === "responsive";
+
+  const handleSelectDeviceSize = useCallback(
+    (deviceSizeId: DeviceSizeId) => {
+      const preset =
+        DEVICE_SIZE_PRESETS.find((candidate) => candidate.id === deviceSizeId) ??
+        DEVICE_SIZE_PRESETS[0];
+      setBrowserViewport(
+        browserId,
+        preset.width === null || preset.height === null
+          ? RESPONSIVE_BROWSER_VIEWPORT
+          : createFixedBrowserViewport(preset.width, preset.height),
+      );
+    },
+    [browserId, setBrowserViewport],
+  );
+
+  const webviewHostStyle = useMemo<CSSProperties>(
+    () =>
+      isResponsiveDevice
+        ? {
+            display: "flex",
+            flex: 1,
+            width: "100%",
+            height: "100%",
+            minHeight: 0,
+            background: theme.colors.surface0,
+          }
+        : {
+            // Fixed-size device frame, centered within webviewWrap (see styles).
+            display: "flex",
+            width: browserViewport.width,
+            height: browserViewport.height,
+            minHeight: 0,
+            background: theme.colors.surface0,
+            boxShadow: "0 2px 16px rgba(0,0,0,0.25)",
+          },
+    [browserViewport, isResponsiveDevice, theme.colors.surface0],
+  );
+
+  const webviewWrapStyle = useMemo(
+    () => [styles.webviewWrap, !isResponsiveDevice && styles.webviewWrapDeviceFrame],
+    [isResponsiveDevice],
+  );
+
+  const setWebviewHostNode = useCallback((node: HTMLDivElement | null) => {
+    webviewHostRef.current = node;
+  }, []);
+
+  const setWebviewClipNode = useCallback((node: unknown) => {
+    webviewClipRef.current = node instanceof HTMLElement ? node : null;
+  }, []);
+
+  if (!isElectronRuntime()) {
+    return (
+      <View style={styles.unavailableState}>
+        <Text style={titleStyle}>{t("workspace.browser.unavailable.title")}</Text>
+        <Text style={subtitleStyle}>{t("workspace.browser.unavailable.subtitle")}</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.chromeRow}>
+        <View style={styles.chromeLeft}>
+          <ToolbarButton
+            label={t("workspace.browser.controls.back")}
+            disabled={!browser?.canGoBack}
+            onPress={handleBack}
+            style={backIconButtonStyle}
+          >
+            <ArrowLeft size={16} color={theme.colors.foregroundMuted} />
+          </ToolbarButton>
+          <ToolbarButton
+            label={t("workspace.browser.controls.forward")}
+            disabled={!browser?.canGoForward}
+            onPress={handleForward}
+            style={forwardIconButtonStyle}
+          >
+            <ArrowRight size={16} color={theme.colors.foregroundMuted} />
+          </ToolbarButton>
+          <ToolbarButton
+            label={
+              browser?.isLoading
+                ? t("workspace.browser.controls.stopLoading")
+                : t("workspace.browser.controls.refresh")
+            }
+            onPress={handleRefresh}
+            style={baseIconButtonStyle}
+          >
+            <RotateCw size={16} color={theme.colors.foregroundMuted} />
+          </ToolbarButton>
+        </View>
+        <View style={styles.urlBarWrap}>
+          <TextInput
+            accessibilityLabel={t("workspace.browser.controls.browserUrl")}
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={setDraftUrl}
+            onFocus={handleUrlBarFocus}
+            onSubmitEditing={handleNavigateDraftUrl}
+            placeholder={t("workspace.browser.controls.enterUrl")}
+            placeholderTextColor={theme.colors.foregroundMuted}
+            ref={urlInputRef}
+            style={urlInputStyle}
+            initialValue={draftUrl}
+          />
+        </View>
+        <View style={styles.chromeRight}>
+          <DeviceSizeMenu
+            selectedId={selectedDeviceSizeId}
+            onSelect={handleSelectDeviceSize}
+            triggerStyle={baseIconButtonStyle}
+          />
+          <ToolbarButton
+            label={t("workspace.browser.controls.openDevTools")}
+            onPress={handleOpenDevTools}
+            style={baseIconButtonStyle}
+          >
+            <Wrench size={16} color={theme.colors.foregroundMuted} />
+          </ToolbarButton>
+          <ToolbarButton
+            label={
+              selectorMode === "annotate"
+                ? t("workspace.browser.controls.cancelSelector")
+                : t("workspace.browser.controls.annotateElement")
+            }
+            active={selectorMode === "annotate"}
+            onPress={handleToggleElementSelector}
+            style={annotateIconButtonStyle}
+          >
+            <MousePointer2
+              size={16}
+              color={
+                selectorMode === "annotate" ? theme.colors.accent : theme.colors.foregroundMuted
+              }
+            />
+          </ToolbarButton>
+          <ToolbarButton
+            label={
+              selectorMode === "screenshot"
+                ? t("workspace.browser.controls.cancelSelector")
+                : t("workspace.browser.controls.screenshotElement")
+            }
+            active={selectorMode === "screenshot"}
+            onPress={handleToggleScreenshot}
+            style={screenshotIconButtonStyle}
+          >
+            <Camera
+              size={16}
+              color={
+                selectorMode === "screenshot" ? theme.colors.accent : theme.colors.foregroundMuted
+              }
+            />
+          </ToolbarButton>
+        </View>
+      </View>
+      {browser?.lastError ? (
+        <View style={styles.errorRow}>
+          <Text numberOfLines={1} style={errorTextStyle}>
+            {browser.lastError}
+          </Text>
+        </View>
+      ) : null}
+      <View
+        ref={setWebviewClipNode}
+        style={webviewWrapStyle}
+        testID={`browser-webview-clip-${browserId}`}
+      >
+        {createElement("div", {
+          ref: setWebviewHostNode,
+          style: webviewHostStyle,
+        })}
+        {pendingSelection ? (
+          <BrowserElementAnnotationCard
+            anchor={webviewClipRef.current}
+            selection={pendingSelection}
+            onSubmit={submitAnnotation}
+            onCancel={cancelAnnotation}
+          />
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function BrowserElementAnnotationCard({
+  anchor,
+  selection,
+  onSubmit,
+  onCancel,
+}: {
+  anchor: HTMLElement | null;
+  selection: BrowserElementSelection;
+  onSubmit: (annotation: BrowserElementAnnotation) => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  const bounds = useElementBounds(anchor);
+  const [comment, setComment] = useState("");
+  const commentRef = useRef(comment);
+  commentRef.current = comment;
+
+  const handleSubmit = useCallback(() => {
+    onSubmit({ comment: commentRef.current });
+  }, [onSubmit]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+        return;
+      }
+      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault();
+        event.stopPropagation();
+        handleSubmit();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [handleSubmit, onCancel]);
+
+  const elementText = truncateText(selection.text.trim().replace(/\s+/g, " "), 60);
+  const elementLabel = elementText ? `${selection.tag} · ${elementText}` : selection.tag;
+
+  if (!bounds) {
+    return null;
+  }
+
+  return createPortal(
+    <View style={[styles.annotationOverlay, bounds]} pointerEvents="box-none">
+      <View style={styles.annotationCard}>
+        <View style={styles.annotationHeader}>
+          <Text numberOfLines={1} style={styles.annotationTitle}>
+            {t("workspace.browser.annotate.title")}
+          </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("workspace.browser.annotate.cancel")}
+            onPress={onCancel}
+            style={styles.annotationCloseButton}
+          >
+            <ThemedCloseIcon size={16} uniProps={iconForegroundMutedMapping} />
+          </Pressable>
+        </View>
+        <Text numberOfLines={1} style={styles.annotationElement}>
+          {elementLabel}
+        </Text>
+        <ThemedAnnotationInput
+          accessibilityLabel={t("workspace.browser.annotate.placeholder")}
+          autoFocus
+          multiline
+          onChangeText={setComment}
+          placeholder={t("workspace.browser.annotate.placeholder")}
+          style={styles.annotationInput}
+          uniProps={annotationInputMapping}
+          initialValue={comment}
+        />
+        <View style={styles.annotationActions}>
+          <Button variant="ghost" size="sm" onPress={onCancel}>
+            {t("workspace.browser.annotate.cancel")}
+          </Button>
+          <Button variant="default" size="sm" onPress={handleSubmit}>
+            {t("workspace.browser.annotate.submit")}
+          </Button>
+        </View>
+      </View>
+    </View>,
+    getOverlayRoot(),
+  );
+}
+
+function useElementBounds(element: HTMLElement | null): ViewStyle | null {
+  const [bounds, setBounds] = useState<ViewStyle | null>(null);
+
+  useLayoutEffect(() => {
+    if (!element) {
+      setBounds(null);
+      return;
+    }
+    const update = () => {
+      const rect = element.getBoundingClientRect();
+      setBounds({ left: rect.left, top: rect.top, width: rect.width, height: rect.height });
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    window.addEventListener("resize", update);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [element]);
+
+  return bounds;
+}
+
+const ThemedCloseIcon = withUnistyles(X);
+const ThemedAnnotationInput = withUnistyles(TextInput);
+const iconForegroundMutedMapping = (theme: { colors: { foregroundMuted: string } }) => ({
+  color: theme.colors.foregroundMuted,
+});
+const annotationInputMapping = (theme: { colors: { foregroundMuted: string } }) => ({
+  placeholderTextColor: theme.colors.foregroundMuted,
+});
+
+const styles = StyleSheet.create((theme) => ({
+  container: {
+    flex: 1,
+    minHeight: 0,
+    backgroundColor: theme.colors.surface0,
+  },
+  chromeRow: {
+    height: WORKSPACE_SECONDARY_HEADER_HEIGHT,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+    paddingHorizontal: theme.spacing[2],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+  },
+  chromeLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    flexShrink: 0,
+  },
+  chromeRight: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    flexShrink: 0,
+  },
+  iconButton: {
+    width: 28,
+    height: 28,
+    borderRadius: theme.borderRadius.md,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  selectorActiveButton: {
+    backgroundColor: `${String(theme.colors.accent)}20`,
+  },
+  iconButtonHovered: {
+    backgroundColor: theme.colors.surface2,
+  },
+  iconButtonDisabled: {
+    opacity: 0.45,
+  },
+  urlBarWrap: {
+    flex: 1,
+    minWidth: 0,
+    height: 28,
+    borderRadius: theme.borderRadius.md,
+    paddingHorizontal: theme.spacing[2],
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: theme.colors.surface1,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  urlInput: {
+    flex: 1,
+    minWidth: 0,
+    fontSize: theme.fontSize.base,
+    paddingVertical: 0,
+    paddingHorizontal: 0,
+  },
+  errorRow: {
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+  },
+  metaError: {
+    fontSize: theme.fontSize.sm,
+  },
+  webviewWrap: {
+    flex: 1,
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  // When a fixed device size is active, center the framed webview both axes over
+  // a muted backdrop instead of left-aligning it.
+  webviewWrapDeviceFrame: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: theme.colors.surface1,
+    padding: theme.spacing[3],
+  },
+  deviceTrigger: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  toolbarTooltipText: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.popoverForeground,
+  },
+  annotationOverlay: {
+    position: "absolute",
+    zIndex: 1,
+    padding: theme.spacing[3],
+    alignItems: "center",
+    justifyContent: "flex-end",
+  },
+  annotationCard: {
+    width: "100%",
+    maxWidth: 420,
+    gap: theme.spacing[2],
+    padding: theme.spacing[3],
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface0,
+    shadowColor: "#000",
+    shadowOpacity: 0.18,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  annotationHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: theme.spacing[2],
+  },
+  annotationTitle: {
+    flex: 1,
+    fontSize: theme.fontSize.base,
+    fontWeight: "600",
+    color: theme.colors.foreground,
+  },
+  annotationCloseButton: {
+    width: 24,
+    height: 24,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+  },
+  annotationElement: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+    marginBottom: theme.spacing[2],
+  },
+  annotationInput: {
+    minHeight: 64,
+    fontSize: theme.fontSize.base,
+    color: theme.colors.foreground,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface1,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[2],
+    textAlignVertical: "top",
+  },
+  annotationActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: theme.spacing[2],
+  },
+  unavailableState: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+    gap: 8,
+  },
+  unavailableTitle: {
+    fontSize: theme.fontSize.base,
+    fontWeight: "600",
+  },
+  unavailableSubtitle: {
+    fontSize: theme.fontSize.sm,
+  },
+}));

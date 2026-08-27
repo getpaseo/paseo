@@ -24,12 +24,6 @@ import {
   installCli,
 } from "../integrations/cli-install/index.js";
 import {
-  getSkillsStatus,
-  installSkills,
-  uninstallSkills,
-  updateSkills,
-} from "../integrations/skills/index.js";
-import {
   openLocalTransportSession,
   sendLocalTransportMessage,
   closeLocalTransportSession,
@@ -44,6 +38,10 @@ import type { DesktopSettings } from "../settings/desktop-settings.js";
 import { getDesktopSettingsStore } from "../settings/desktop-settings-electron.js";
 import { isRunningUnderARM64Translation } from "../system/arm64-translation.js";
 import { getDesktopAppLogs } from "../diagnostics/app-logs.js";
+import {
+  deleteLegacySkillSelection,
+  readLegacySkillSelection,
+} from "../integrations/legacy-skill-selection.js";
 import { tailFile } from "../diagnostics/tail-file.js";
 
 const DAEMON_LOG_FILENAME = "daemon.log";
@@ -81,12 +79,6 @@ export interface DesktopDaemonStatus {
 interface DesktopDaemonLogs {
   logPath: string;
   contents: string;
-}
-
-interface DesktopPairingOffer {
-  relayEnabled: boolean;
-  url: string | null;
-  qr: string | null;
 }
 
 function parseReleaseChannel(
@@ -222,18 +214,6 @@ function logDesktopDaemonLifecycle(message: string, details?: Record<string, unk
     pid: process.pid,
     ...details,
   });
-}
-
-function toTrimmedString(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function resolveDesktopAppVersion(): string {
@@ -514,36 +494,6 @@ async function getCliDaemonStatus(): Promise<string> {
   return await runExternalCliTextCommand(["daemon", "status"]);
 }
 
-async function getDaemonPairing(): Promise<DesktopPairingOffer> {
-  const status = await resolveDesktopDaemonStatus();
-  if (status.status !== "running") {
-    return {
-      relayEnabled: false,
-      url: null,
-      qr: null,
-    };
-  }
-
-  try {
-    const payload = await runExternalCliJsonCommand(["daemon", "pair", "--json"]);
-    if (!isRecord(payload)) {
-      throw new Error("Daemon pairing response was not an object.");
-    }
-
-    return {
-      relayEnabled: payload.relayEnabled === true,
-      url: toTrimmedString(payload.url),
-      qr: toTrimmedString(payload.qr),
-    };
-  } catch {
-    return {
-      relayEnabled: false,
-      url: null,
-      qr: null,
-    };
-  }
-}
-
 async function getLocalDaemonVersion(): Promise<{ version: string | null; error: string | null }> {
   const status = await resolveDesktopDaemonStatus();
   if (status.status !== "running") {
@@ -578,7 +528,6 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     restart_desktop_daemon: () => restartDaemon(),
     desktop_daemon_logs: () => getDaemonLogs(),
     desktop_app_logs: () => getDesktopAppLogs(),
-    desktop_daemon_pairing: () => getDaemonPairing(),
     desktop_get_system_idle_time: () => powerMonitor.getSystemIdleTime() * 1000,
     cli_daemon_status: () => getCliDaemonStatus(),
     write_attachment_base64: (args) => writeAttachmentBase64(args ?? {}),
@@ -623,10 +572,8 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     get_local_daemon_version: () => getLocalDaemonVersion(),
     install_cli: () => installCli(),
     get_cli_install_status: () => getCliInstallStatus(),
-    get_skills_status: () => getSkillsStatus(),
-    install_skills: () => installSkills(),
-    update_skills: () => updateSkills(),
-    uninstall_skills: () => uninstallSkills(),
+    read_legacy_skill_selection: () => readLegacySkillSelection(),
+    delete_legacy_skill_selection: () => deleteLegacySkillSelection(),
   };
 }
 

@@ -1,8 +1,16 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { MessagePayload } from "@/composer/types";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 
-export type SendBehavior = "interrupt" | "queue";
+export type SendBehavior = ActiveTurnBehavior | "queue";
+
+export function resolveActiveSendBehavior(
+  sendBehavior: SendBehavior,
+  hasPendingPermission: boolean,
+): SendBehavior {
+  return sendBehavior === "queue" && hasPendingPermission ? "interrupt" : sendBehavior;
+}
 
 interface ComposerSurfaceState {
   opacity: 0 | 1;
@@ -44,6 +52,44 @@ interface SendActionContext {
   onQueue: ((payload: MessagePayload) => void) | undefined;
   handleSendMessage: () => void;
   handleQueueMessage: () => void;
+}
+
+interface DictationTranscriptContext {
+  value: string;
+  defaultSendBehavior: SendBehavior;
+  isAgentRunning: boolean;
+  onQueue: ((payload: MessagePayload) => void) | undefined;
+  onSubmit: (payload: MessagePayload) => void;
+  replaceText: (text: string) => void;
+  attachments: MessagePayload["attachments"];
+  cwd: string;
+  autoSend: boolean;
+}
+
+export function applyDictationTranscript(text: string, ctx: DictationTranscriptContext): void {
+  if (!text) return;
+  const shouldPad = ctx.value.length > 0 && !/\s$/.test(ctx.value);
+  const nextValue = `${ctx.value}${shouldPad ? " " : ""}${text}`;
+
+  if (!ctx.autoSend) {
+    ctx.replaceText(nextValue);
+    return;
+  }
+
+  ctx.replaceText(nextValue);
+
+  if (ctx.defaultSendBehavior === "queue" && ctx.isAgentRunning && ctx.onQueue) {
+    ctx.onQueue({ text: nextValue, attachments: ctx.attachments, cwd: ctx.cwd });
+    ctx.replaceText("");
+    return;
+  }
+
+  ctx.onSubmit({
+    text: nextValue,
+    attachments: ctx.attachments,
+    cwd: ctx.cwd,
+    forceSend: ctx.isAgentRunning || undefined,
+  });
 }
 
 interface MessageInputKeyboardActions {

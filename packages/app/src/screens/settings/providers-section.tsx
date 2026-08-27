@@ -34,6 +34,7 @@ import {
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import { ChevronRight, MoreHorizontal, Trash2 } from "lucide-react-native";
 
 type ProviderDefinition = ReturnType<typeof buildProviderDefinitions>[number];
@@ -188,7 +189,7 @@ function ProviderRow({
     entry.error.trim().length > 0
       ? entry.error.trim()
       : null;
-  const modelCount = entry.models?.length ?? 0;
+  const modelCount = filterSelectableModels(entry.models ?? null)?.length ?? 0;
   const providerStatus = getProviderStatus(entry.status, enabled, modelCount, t);
 
   const handlePress = useCallback(() => {
@@ -482,7 +483,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   row: {
     gap: theme.spacing[3],
@@ -521,15 +522,15 @@ const styles = StyleSheet.create((theme) => ({
   },
   statusLabel: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   separator: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   errorText: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     marginTop: theme.spacing[1],
   },
   trailingControls: {

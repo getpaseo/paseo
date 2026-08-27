@@ -17,6 +17,9 @@ export const PROVIDER_COMMAND_TEMPLATES: Record<
   claude: {
     resume: "claude --resume {sessionId}",
   },
+  hermes: {
+    resume: "hermes --resume {sessionId}",
+  },
   pi: {
     resume: "pi --session {sessionId}",
   },

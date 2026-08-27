@@ -37,9 +37,13 @@ Each default is a match on the model id or name, so the first enabled provider t
 
 The intent of the default order is to prefer small, fast, cheap models for these short tasks before falling back to whatever you have selected.
 
-## Configuring the providers
+## Choose a model
 
-To control which models Paseo uses — for example to keep all metadata generation on one provider, or to prefer a local model — set `agents.metadataGeneration.providers` in `~/.paseo/config.json`. Your entries are tried before the built-in defaults.
+Open **Settings → Host → Metadata** and select **Automatic** or **Manual**. In Manual mode, Paseo tries the model you choose first, then falls back to the remaining configured models and built-in candidates. Choosing a model replaces the first entry in `agents.metadataGeneration.providers` and preserves the rest of the list.
+
+## Configure a custom fallback order
+
+To configure more than one preferred model or control the exact order, set `agents.metadataGeneration.providers` in `~/.paseo/config.json`. Your entries are tried before the built-in defaults.
 
 ```json
 {
@@ -60,7 +64,7 @@ Each entry accepts:
 - `model` (optional) — a specific model id. Omit it to use that provider's default model.
 - `thinkingOptionId` (optional) — a reasoning/thinking level for models that support one. Falls back to the model's default if the value isn't valid for that model.
 
-Restart the daemon after editing the file.
+The Settings screen replaces only the first entry and preserves the rest of a custom list. Restart the daemon after editing the file directly.
 
 ## Per-project instructions
 

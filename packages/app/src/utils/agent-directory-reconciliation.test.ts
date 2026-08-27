@@ -53,6 +53,7 @@ function entry(id: string, status: AgentSnapshotPayload["status"]): FetchAgentsE
 function replica(id: string, status: Agent["status"]): Agent {
   return {
     ...snapshot(id, status),
+    activeTurn: null,
     serverId: "server",
     createdAt: new Date("2026-07-12T10:00:00.000Z"),
     updatedAt: new Date("2026-07-12T10:00:00.000Z"),

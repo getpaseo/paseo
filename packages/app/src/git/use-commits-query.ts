@@ -1,5 +1,6 @@
 import type { CheckoutCommit } from "@getpaseo/protocol/messages";
 import invariant from "tiny-invariant";
+import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useFetchQuery } from "@/data/query";
 import { checkoutCommitsQueryKey } from "@/git/query-keys";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
@@ -72,6 +73,8 @@ export function useCheckoutCommitsQuery({
   cwd,
   enabled = true,
 }: UseCheckoutCommitsQueryOptions): CheckoutCommitsQueryResult {
+  const retainedPanelActive = useRetainedPanelActive();
+  const queryEnabledByCaller = enabled && retainedPanelActive;
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   // COMPAT(commitsList): added in v0.1.110, remove after 2027-01-16.
@@ -84,7 +87,7 @@ export function useCheckoutCommitsQuery({
   );
 
   const canFetch = Boolean(cwd) && Boolean(client) && isConnected;
-  const queryEnabled = enabled && capabilityPresent && canFetch;
+  const queryEnabled = queryEnabledByCaller && capabilityPresent && canFetch;
 
   const query = useFetchQuery<CheckoutCommitsData>({
     queryKey: checkoutCommitsQueryKey(serverId, cwd),
@@ -105,7 +108,7 @@ export function useCheckoutCommitsQuery({
   });
 
   return resolveCheckoutCommitsQueryResult({
-    enabled,
+    enabled: queryEnabledByCaller,
     capabilityPresent,
     canFetch,
     data: query.data,

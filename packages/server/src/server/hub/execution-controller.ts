@@ -1,28 +1,41 @@
 import { isAbsolute } from "node:path";
 import type {
+  HubExecutionAgentCreateError,
   HubExecutionAgentCreateRequest,
+  HubExecutionAgentValidateRequest,
+  HubExecutionAgentValidationIssue,
   HubExecutionControlRequest,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
+import {
+  ProviderOptionsValidationError,
+  ToolPolicyUnsupportedError,
+} from "../agent/provider-options.js";
 
 import type { HubExecutionAgents, OwnedAgentEvent } from "./daemon-executions.js";
 
 interface HubExecutionControllerOptions {
   agents: HubExecutionAgents;
+  validateAgentConfiguration: (
+    input: Omit<HubExecutionAgentValidateRequest, "type" | "requestId">,
+  ) => Promise<HubExecutionAgentValidationIssue[]>;
   send: (message: SessionOutboundMessage) => void;
 }
 
 export class HubExecutionController {
   private readonly agents: HubExecutionAgents;
   private readonly send: (message: SessionOutboundMessage) => void;
+  private readonly validateAgentConfiguration: HubExecutionControllerOptions["validateAgentConfiguration"];
   private readonly unsubscribe: () => void;
   private readonly pendingCreates = new Set<Promise<void>>();
   private readonly pendingControls = new Set<Promise<void>>();
+  private readonly pendingValidations = new Set<Promise<void>>();
   private cleanupPromise: Promise<void> | null = null;
   private closed = false;
 
   constructor(options: HubExecutionControllerOptions) {
     this.agents = options.agents;
+    this.validateAgentConfiguration = options.validateAgentConfiguration;
     this.send = options.send;
     this.unsubscribe = this.agents.subscribe((event) => this.sendOwnedEvent(event));
   }
@@ -35,7 +48,50 @@ export class HubExecutionController {
   private async cleanupOnce(): Promise<void> {
     this.closed = true;
     this.unsubscribe();
-    await Promise.allSettled([...this.pendingCreates, ...this.pendingControls]);
+    await Promise.allSettled([
+      ...this.pendingCreates,
+      ...this.pendingControls,
+      ...this.pendingValidations,
+    ]);
+  }
+
+  async validateAgent(message: HubExecutionAgentValidateRequest): Promise<void> {
+    if (this.closed) return;
+    const validation = this.validateAgentWithResponse(message);
+    this.pendingValidations.add(validation);
+    try {
+      await validation;
+    } finally {
+      this.pendingValidations.delete(validation);
+    }
+  }
+
+  private async validateAgentWithResponse(
+    message: HubExecutionAgentValidateRequest,
+  ): Promise<void> {
+    let issues: HubExecutionAgentValidationIssue[] = [];
+    let error: string | null = null;
+    try {
+      issues = await this.validateAgentConfiguration({
+        provider: message.provider,
+        model: message.model,
+        modeId: message.modeId,
+        thinkingOptionId: message.thinkingOptionId,
+        providerOptions: message.providerOptions,
+      });
+    } catch (validationError) {
+      error = validationError instanceof Error ? validationError.message : String(validationError);
+    }
+    if (this.closed) return;
+    this.send({
+      type: "hub.execution.agent.validate.response",
+      payload: {
+        requestId: message.requestId,
+        valid: error === null && issues.length === 0,
+        issues,
+        error,
+      },
+    });
   }
 
   async controlExecution(message: HubExecutionControlRequest): Promise<void> {
@@ -95,13 +151,15 @@ export class HubExecutionController {
         executionId: message.executionId,
         provider: message.provider,
         cwd: message.cwd,
-        workspaceId: message.workspaceId,
         prompt: message.prompt,
         model: message.model,
         modeId: message.modeId,
         thinkingOptionId: message.thinkingOptionId,
         featureValues: message.featureValues,
+        providerOptions: message.providerOptions,
+        toolPolicy: message.toolPolicy,
         env: message.env,
+        mcpServers: message.mcpServers,
         worktree: message.worktree,
       });
       if (this.closed) return;
@@ -113,6 +171,7 @@ export class HubExecutionController {
           agentId: result.agent.id,
           agent: result.agent,
           success: true,
+          ...(message.toolPolicy ? { toolPolicyApplied: true as const } : {}),
           error: null,
         },
       });
@@ -126,7 +185,7 @@ export class HubExecutionController {
           agentId: null,
           agent: null,
           success: false,
-          error: error instanceof Error ? error.message : String(error),
+          error: toHubCreateError(error),
         },
       });
     }
@@ -154,6 +213,28 @@ export class HubExecutionController {
       },
     });
   }
+}
+
+function toHubCreateError(error: unknown): HubExecutionAgentCreateError {
+  if (error instanceof ProviderOptionsValidationError) {
+    return {
+      code: error.code,
+      provider: error.provider,
+      issues: error.issues,
+      message: error.message,
+    };
+  }
+  if (error instanceof ToolPolicyUnsupportedError) {
+    return {
+      code: error.code,
+      provider: error.provider,
+      message: error.message,
+    };
+  }
+  return {
+    code: "create_failed",
+    message: error instanceof Error ? error.message : String(error),
+  };
 }
 
 function requireNonBlankHubAgentField(

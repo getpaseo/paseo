@@ -15,6 +15,7 @@ import {
   type MutableWorkspacePlacement,
 } from "./workspace-registry-model.js";
 import { workspaceIdsForProjects } from "./workspace-directory.js";
+import { deriveProjectKey } from "./project-key.js";
 
 const DEFAULT_RESCAN_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_DEBOUNCE_MS = 100;
@@ -66,7 +67,7 @@ export type ReconciliationChange =
       kind: "project_updated";
       projectId: string;
       directory: string;
-      fields: Partial<Pick<PersistedProjectRecord, "kind">>;
+      fields: Partial<Pick<PersistedProjectRecord, "kind" | "projectKey">>;
     }
   | {
       kind: "workspace_updated";
@@ -81,6 +82,7 @@ export interface ReconciliationResult {
 }
 
 export interface WorkspaceReconciliationServiceOptions {
+  serverId?: string;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   logger: pino.Logger;
@@ -111,6 +113,7 @@ interface CachedCheckoutRead {
 type DirectoryState = "directory" | "missing" | "unreadable";
 
 export class WorkspaceReconciliationService {
+  private readonly serverId: string | undefined;
   private readonly projectRegistry: ProjectRegistry;
   private readonly workspaceRegistry: WorkspaceRegistry;
   private readonly logger: pino.Logger;
@@ -133,6 +136,7 @@ export class WorkspaceReconciliationService {
   private reconcileQueuedMode: "metadata" | "full" | null = null;
 
   constructor(options: WorkspaceReconciliationServiceOptions) {
+    this.serverId = options.serverId;
     this.projectRegistry = options.projectRegistry;
     this.workspaceRegistry = options.workspaceRegistry;
     this.logger = options.logger.child({ module: "workspace-reconciliation" });
@@ -280,6 +284,11 @@ export class WorkspaceReconciliationService {
     return result;
   }
 
+  /** Runs the boot-time convergence path and publishes every affected workspace. */
+  async reconcileNow(): Promise<void> {
+    await this.reconcileObservedGitMetadata("full");
+  }
+
   private async reconcileGitMetadataForProjects(
     projectsToReconcile: PersistedProjectRecord[],
     workspacesByProject: Map<string, PersistedWorkspaceRecord[]>,
@@ -334,11 +343,21 @@ export class WorkspaceReconciliationService {
         checkout: await readCheckout(workspace.cwd),
       })),
     );
-    const projectUpdates: Partial<Pick<PersistedProjectRecord, "kind">> = {};
+    const projectUpdates: Partial<Pick<PersistedProjectRecord, "kind" | "projectKey">> = {};
     const mappedKind = deriveProjectKind(currentGit);
+    const projectKey = deriveProjectKey({
+      rootPath: project.rootPath,
+      remoteUrl: currentGit.remoteUrl,
+      worktreeRoot: currentGit.worktreeRoot,
+      mainRepoRoot: currentGit.mainRepoRoot,
+      serverId: this.serverId,
+    });
 
     if (project.kind !== mappedKind) {
       projectUpdates.kind = mappedKind;
+    }
+    if (project.projectKey !== projectKey) {
+      projectUpdates.projectKey = projectKey;
     }
 
     if (Object.keys(projectUpdates).length > 0) {
@@ -366,7 +385,12 @@ export class WorkspaceReconciliationService {
         });
         if (!update) return;
 
-        await this.workspaceRegistry.upsert(update.workspace);
+        const updated = await this.workspaceRegistry.update(workspace.workspaceId, (current) => ({
+          ...current,
+          ...update.fields,
+          updatedAt: timestamp,
+        }));
+        if (!updated) return;
         changes.push({
           kind: "workspace_updated",
           workspaceId: workspace.workspaceId,

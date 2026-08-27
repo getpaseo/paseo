@@ -2,7 +2,7 @@
 
 Paseo supports configuring custom agent providers through `config.json` (located at `$PASEO_HOME/config.json`, typically `~/.paseo/config.json`). You can extend built-in providers with different API backends, add ACP-compatible agents, set custom binaries, disable providers, and create multiple profiles for the same underlying provider.
 
-All provider configuration lives under `agents.providers` in config.json:
+Provider definitions live under `agents.providers` in config.json:
 
 ```json
 {
@@ -16,6 +16,20 @@ All provider configuration lives under `agents.providers` in config.json:
 ```
 
 Provider IDs must be lowercase alphanumeric with hyphens (`/^[a-z][a-z0-9-]*$/`).
+
+Each provider catalog refresh waits up to 2 minutes. If a provider loads many plugins or a large
+agent catalog during startup, raise the limit in milliseconds:
+
+```json
+{
+  "agents": {
+    "catalogRefreshTimeoutMs": 180000
+  }
+}
+```
+
+The limit applies independently to every provider refresh and covers availability plus the entire
+catalog probe. `PASEO_PROVIDER_REFRESH_TIMEOUT_MS` sets it when the config field is absent.
 
 ---
 
@@ -244,6 +258,8 @@ requires_openai_auth = false
 ## Multiple profiles for the same provider
 
 You can create multiple entries that extend the same built-in provider. Each gets its own entry in the provider list with independent credentials, models, and environment.
+
+"Profile" here means a provider alias, and it is not an **Agent profile** — that is a named bundle of provider, model, mode, thinking option and features, stored under `daemon.agentProfiles`. See [glossary.md](glossary.md) for all four senses of the word.
 
 Example: two different Anthropic accounts as separate profiles:
 
@@ -485,25 +501,25 @@ Paseo tools such as subagent creation come from the shared internal tool catalog
 }
 ```
 
-ACP agents execute filesystem and terminal operations in their own environment
-by default. To let a compliant agent delegate those operations to Paseo instead,
-enable the corresponding client capabilities:
+ACP agents execute filesystem operations in their own environment by default,
+while terminal operations run through Paseo on the host. To customize which
+operations Paseo handles, configure client capabilities in provider params:
 
 ```json
 {
   "agents": {
     "providers": {
-      "local-agent": {
+      "container-agent": {
         "extends": "acp",
-        "label": "Local Agent",
-        "command": ["local-agent", "acp"],
+        "label": "Container Agent",
+        "command": ["container-agent", "acp"],
         "params": {
           "clientCapabilities": {
             "fs": {
-              "readTextFile": true,
-              "writeTextFile": true
+              "readTextFile": false,
+              "writeTextFile": false
             },
-            "terminal": true
+            "terminal": false
           }
         }
       }
@@ -512,9 +528,11 @@ enable the corresponding client capabilities:
 }
 ```
 
-Only enable capabilities Paseo should execute. When the agent and Paseo run in
-different environments, configure equivalent absolute workspace paths before
-delegating filesystem or terminal operations to Paseo.
+When an agent runs in a container or remote environment that manages its own
+terminal, set `terminal: false` to keep command execution inside the agent
+container. When delegating filesystem operations to Paseo (`fs.readTextFile: true`
+or `fs.writeTextFile: true`), ensure the agent and Paseo share equivalent
+absolute workspace paths.
 
 ### Generic ACP diagnostics
 
@@ -583,6 +601,11 @@ When you launch an agent with an ACP provider:
 3. The agent responds with its capabilities, available modes, and models
 4. Paseo creates a session and sends prompts through the ACP protocol
 5. The agent streams responses, tool calls, and permission requests back over stdout
+
+Every ACP provider exposes an **Auto Accept** toggle. Enable it per session to let Paseo approve
+ACP permission requests without surfacing each prompt. If the provider sends no allow option,
+Paseo leaves the request for you to answer. Unattended agents enable Auto Accept unless you
+explicitly disable it.
 
 Models and modes are discovered dynamically at runtime from the agent process. If you want to override the model list (e.g., to curate which models appear in the UI), use the `models` field:
 
@@ -691,7 +714,7 @@ Each entry in the `models` array:
 
 The built-in `claude` provider appends concrete model IDs from `~/.claude/settings.json` to its first-party Claude model list. Paseo reads the top-level `model` field and these `env` keys: `ANTHROPIC_MODEL`, `ANTHROPIC_SMALL_FAST_MODEL`, `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_HAIKU_MODEL`.
 
-This lets users who already configured Claude Code for Bedrock, OpenRouter, ollama, Z.AI, or another Anthropic-compatible gateway select the exact model ID in Paseo. When `agents.providers.claude.models` is set it **replaces** both the hardcoded first-party Claude list and any settings.json-discovered entries; use `agents.providers.claude.additionalModels` to keep the first-party list and append curated entries on top.
+This lets users who already configured Claude Code for Bedrock, OpenRouter, ollama, Z.AI, or another Anthropic-compatible gateway select the exact model ID in Paseo. Explicit model IDs are passed unchanged to Claude Code, even when the same string is a compatibility alias for a built-in model. When `agents.providers.claude.models` is set it **replaces** both the hardcoded first-party Claude list and any settings.json-discovered entries; use `agents.providers.claude.additionalModels` to keep the first-party list and append curated entries on top.
 
 ### Gotcha: `extends: "claude"` with third-party endpoints
 

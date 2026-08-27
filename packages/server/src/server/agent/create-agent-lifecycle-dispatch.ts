@@ -30,7 +30,7 @@ interface CreateAgentLifecycleDispatchDependencies {
   listActiveWorkspaces: () => Promise<ActiveWorkspaceRef[]>;
   archiveWorkspaceRecord: (workspaceId: string) => Promise<void>;
   emit: (message: SessionOutboundMessage) => void;
-  emitAgentRemove: (agentId: string) => void;
+  emitAgentRemove: (agentId: string) => Promise<void>;
   emitWorkspaceUpdatesForWorkspaceIds: (workspaceIds: Iterable<string>) => Promise<void>;
   markWorkspaceArchiving: (workspaceIds: Iterable<string>, archivingAt: string) => void;
   clearWorkspaceArchiving: (workspaceIds: Iterable<string>) => void;
@@ -222,7 +222,7 @@ export class CreateAgentLifecycleDispatch {
     );
 
     if (options.agentId) {
-      this.dependencies.emitAgentRemove(options.agentId);
+      await this.dependencies.emitAgentRemove(options.agentId);
     }
   }
 }

@@ -9,7 +9,6 @@ import {
 } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 
-import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { isWeb } from "@/constants/platform";
 import { CODE_SURFACE_DATASET } from "@/styles/code-surface";
 import { inlineUnistylesStyle } from "@/styles/unistyles-inline-style";
@@ -56,7 +55,7 @@ export function SurfaceCard({
     [bordered, style, surfaceStyle],
   );
 
-  const surface = (
+  return (
     <View
       style={containerStyle}
       dataSet={codeSurface ? CODE_SURFACE_DATASET : undefined}
@@ -67,7 +66,6 @@ export function SurfaceCard({
       {children}
     </View>
   );
-  return <AppearanceStyleBoundary>{surface}</AppearanceStyleBoundary>;
 }
 
 export function ScrollableCodeSurface({

@@ -33,7 +33,7 @@ interface ProviderSubagentState {
   descriptors: Map<string, ProviderSubagentDescriptorPayload>;
   timelines: Map<string, ProviderSubagentTimelineState>;
   hiddenFromTrack: Set<string>;
-  hideFinishedForParent(serverId: string, parentAgentId: string): void;
+  hideFromTrack(serverId: string, parentAgentId: string, subagentIds: readonly string[]): void;
   replaceList(
     serverId: string,
     parentAgentId: string,
@@ -196,14 +196,12 @@ export const useProviderSubagentStore = create<ProviderSubagentState>((set) => (
   descriptors: new Map(),
   timelines: new Map(),
   hiddenFromTrack: new Set(),
-  hideFinishedForParent(serverId, parentAgentId) {
+  hideFromTrack(serverId, parentAgentId, subagentIds) {
     set((state) => {
-      const prefix = parentPrefix(serverId, parentAgentId);
       const hiddenFromTrack = new Set(state.hiddenFromTrack);
-      for (const [key, subagent] of state.descriptors) {
-        if (key.startsWith(prefix) && subagent.status !== "running") {
-          hiddenFromTrack.add(key);
-        }
+      for (const subagentId of subagentIds) {
+        const key = providerSubagentKey(serverId, parentAgentId, subagentId);
+        if (state.descriptors.get(key)?.status !== "running") hiddenFromTrack.add(key);
       }
       return { hiddenFromTrack };
     });

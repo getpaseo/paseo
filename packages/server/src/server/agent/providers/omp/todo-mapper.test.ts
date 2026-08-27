@@ -15,7 +15,7 @@ const TODO_PHASES = [
 ] as const;
 
 describe("OMP todo mapper", () => {
-  test("maps todo tool results and collapses statuses to completed booleans", () => {
+  test("maps todo tool results without losing progress status", () => {
     expect(
       mapOmpTodoToolResult(
         parseToolResult({
@@ -37,9 +37,9 @@ describe("OMP todo mapper", () => {
     ).toEqual({
       type: "todo",
       items: [
-        { text: "alpha task", completed: false },
-        { text: "beta task", completed: false },
-        { text: "gamma task", completed: false },
+        { text: "alpha task", status: "in_progress", completed: false },
+        { text: "beta task", status: "pending", completed: false },
+        { text: "gamma task", status: "pending", completed: false },
       ],
     });
 
@@ -48,9 +48,9 @@ describe("OMP todo mapper", () => {
     ).toEqual({
       type: "todo",
       items: [
-        { text: "alpha task", completed: true },
-        { text: "beta task", completed: false },
-        { text: "gamma task", completed: false },
+        { text: "alpha task", status: "completed", completed: true },
+        { text: "beta task", status: "in_progress", completed: false },
+        { text: "gamma task", status: "pending", completed: false },
       ],
     });
   });
@@ -67,8 +67,8 @@ describe("OMP todo mapper", () => {
     ).toEqual({
       type: "todo",
       items: [
-        { text: "beta task", completed: false },
-        { text: "gamma task", completed: false },
+        { text: "beta task", status: "in_progress", completed: false },
+        { text: "gamma task", status: "pending", completed: false },
       ],
     });
   });
@@ -89,9 +89,9 @@ describe("OMP todo mapper", () => {
       {
         type: "todo",
         items: [
-          { text: "alpha task", completed: true },
-          { text: "beta task", completed: false },
-          { text: "gamma task", completed: false },
+          { text: "alpha task", status: "completed", completed: true },
+          { text: "beta task", status: "in_progress", completed: false },
+          { text: "gamma task", status: "pending", completed: false },
         ],
       },
     ]);

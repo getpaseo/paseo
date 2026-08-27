@@ -27,8 +27,27 @@ export interface ForgeBranchTreeUrlInput {
   branch: string | null | undefined;
 }
 
+export function buildForgeChecksUrl(forge: string, changeRequestUrl: string): string | null {
+  const suffix = getClientForgeLogicModule(forge)?.urlGrammar?.changeRequestChecksSuffix;
+  if (!suffix) {
+    return null;
+  }
+  try {
+    const url = new URL(changeRequestUrl);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return null;
+    }
+    url.pathname = `${url.pathname.replace(/\/$/, "")}${suffix}`;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 interface ForgeWebLocation {
   host: string;
+  /** Non-default port for a self-hosted http(s) origin, or undefined. */
+  port?: string;
   repo: string;
 }
 
@@ -58,16 +77,26 @@ function resolveForgeWebLocation(
   if (!location || !isValidRepoPath(location.path)) {
     return null;
   }
-  const cloudHosts = getForgeDefinition(forge)?.cloudHosts;
-  const webHost =
-    cloudHosts && cloudHosts.length > 0 && cloudHosts.map(normalizeHost).includes(location.host)
-      ? normalizeHost(cloudHosts[0])
-      : location.host;
-  return { host: webHost, repo: location.path };
+  const cloudHosts = (getForgeDefinition(forge)?.cloudHosts ?? []).map(normalizeHost);
+  const isCloudHost = cloudHosts.includes(location.host);
+  const webHost = isCloudHost ? cloudHosts[0] : location.host;
+  // Carry a non-default port only for a self-hosted http(s) origin (e.g.
+  // `:60443`): the web UI shares that origin. An SSH/scp remote's port is not the
+  // web port, and a canonicalized cloud host always serves on the default port.
+  const port =
+    !isCloudHost && (location.transport === "http" || location.transport === "https")
+      ? location.port
+      : undefined;
+  return { host: webHost, port, repo: location.path };
 }
 
 function encodeBranch(branch: string): string {
   return branch.split("/").map(encodeURIComponent).join("/");
+}
+
+/** Host, plus `:port` when the remote pins a non-default port. */
+function forgeAuthority(location: ForgeWebLocation): string {
+  return location.port ? `${location.host}:${location.port}` : location.host;
 }
 
 function normalizeBlobPath(path: string | null | undefined): string | null {
@@ -102,7 +131,7 @@ export function buildForgeBranchTreeUrl(
   if (!grammar || !location || !branch || branch === "HEAD") {
     return null;
   }
-  return `https://${location.host}/${location.repo}${grammar.treeInfix}${encodeBranch(branch)}`;
+  return `https://${forgeAuthority(location)}/${location.repo}${grammar.treeInfix}${encodeBranch(branch)}`;
 }
 
 export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): string | null {
@@ -114,7 +143,7 @@ export function buildForgeBlobUrl(forge: string, input: ForgeBlobUrlInput): stri
     return null;
   }
   const encodedPath = filePath.split("/").map(encodeURIComponent).join("/");
-  let url = `https://${location.host}/${location.repo}${grammar.blobInfix}${encodeBranch(branch)}/${encodedPath}`;
+  let url = `https://${forgeAuthority(location)}/${location.repo}${grammar.blobInfix}${encodeBranch(branch)}/${encodedPath}`;
   if (input.lineStart && input.lineStart > 0) {
     url += grammar.lineAnchor(input.lineStart, input.lineEnd);
   }

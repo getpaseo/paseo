@@ -7,7 +7,6 @@ import type { RewindMode } from "./use-rewind-capabilities";
 import { useRewindComposerRestore } from "./composer-restore";
 import { useSessionStore } from "@/stores/session-store";
 import { shouldRestoreComposerForRewindMode } from "./rewind-mode";
-import { clearOptimisticUserMessages } from "@/types/stream";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
 
 interface UseRewindAgentMutationInput {
@@ -36,13 +35,6 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
       }
       await input.client.rewindAgent(input.agentId, input.messageId, mode);
       if (mode !== "files") {
-        if (input.serverId) {
-          const session = useSessionStore.getState().sessions[input.serverId];
-          useSessionStore.getState().setAgentStreamState(input.serverId, input.agentId, {
-            tail: clearOptimisticUserMessages(session?.agentStreamTail.get(input.agentId) ?? []),
-            head: clearOptimisticUserMessages(session?.agentStreamHead.get(input.agentId) ?? []),
-          });
-        }
         const cursor = input.serverId
           ? useSessionStore
               .getState()
@@ -60,7 +52,7 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
       if (!shouldRestoreComposerForRewindMode(variables.mode)) {
         return;
       }
-      composerRestore?.restoreTextIfComposerEmpty(variables.rewoundText);
+      composerRestore?.completeRewind(variables.rewoundText);
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : t("rewind.errors.failed"));

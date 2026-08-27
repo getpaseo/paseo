@@ -14,11 +14,9 @@ import { FadeIn, FadeOut } from "react-native-reanimated";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   Check,
-  CircleCheck,
-  CircleDot,
-  CircleX,
   Copy,
   ExternalLink,
+  FileDiff,
   Folder,
   GitBranch,
   Server,
@@ -34,7 +32,6 @@ import { useBottomSheetModalInternal } from "@gorhom/bottom-sheet";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import type { PrHint } from "@/git/use-pr-status-query";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { shortenPath } from "@/utils/shorten-path";
 import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import { PrBadge } from "@/components/sidebar-workspace-list";
 import { useHoverSafeZone } from "@/hooks/use-hover-safe-zone";
@@ -42,6 +39,14 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { FloatingSurface } from "@/components/ui/floating";
 import { isWeb } from "@/constants/platform";
 import { useHosts } from "@/runtime/host-runtime";
+import {
+  COUNTED_CHECK_PRESENTATIONS,
+  countCheckPresentations,
+  type CountedCheckPresentation,
+} from "@/git/check-presentation";
+import { formatCheckPresentationCountsLabel } from "@/git/check-presentation-copy";
+import { CheckPresentationIcon, getCheckPresentationTone } from "@/git/check-presentation.view";
+import { buildForgeChecksUrl } from "@/git/forge-url";
 
 interface Rect {
   x: number;
@@ -95,12 +100,14 @@ interface WorkspaceHoverCardProps {
   workspace: SidebarWorkspaceEntry;
   prHint: PrHint | null;
   isDragging: boolean;
+  disabled?: boolean;
 }
 
 export function WorkspaceHoverCard({
   workspace,
   prHint,
   isDragging,
+  disabled = false,
   children,
 }: PropsWithChildren<WorkspaceHoverCardProps>): ReactNode {
   const isCompact = useIsCompactFormFactor();
@@ -110,7 +117,12 @@ export function WorkspaceHoverCard({
   }
 
   return (
-    <WorkspaceHoverCardDesktop workspace={workspace} prHint={prHint} isDragging={isDragging}>
+    <WorkspaceHoverCardDesktop
+      workspace={workspace}
+      prHint={prHint}
+      isDragging={isDragging}
+      disabled={disabled}
+    >
       {children}
     </WorkspaceHoverCardDesktop>
   );
@@ -120,6 +132,7 @@ function WorkspaceHoverCardDesktop({
   workspace,
   prHint,
   isDragging,
+  disabled = false,
   children,
 }: PropsWithChildren<WorkspaceHoverCardProps>): ReactElement {
   const triggerRef = useRef<View>(null);
@@ -146,10 +159,10 @@ function WorkspaceHoverCardDesktop({
   const handleTriggerEnter = useCallback(() => {
     triggerHoveredRef.current = true;
     clearGraceTimer();
-    if (!isDragging) {
+    if (!isDragging && !disabled) {
       setOpen(true);
     }
-  }, [clearGraceTimer, isDragging]);
+  }, [clearGraceTimer, disabled, isDragging]);
 
   const handleTriggerLeave = useCallback(() => {
     triggerHoveredRef.current = false;
@@ -167,13 +180,13 @@ function WorkspaceHoverCardDesktop({
     onLeaveSafeZone: scheduleClose,
   });
 
-  // Close when drag starts
+  // Close while another row interaction owns attention.
   useEffect(() => {
-    if (isDragging) {
+    if (isDragging || disabled) {
       clearGraceTimer();
       setOpen(false);
     }
-  }, [isDragging, clearGraceTimer]);
+  }, [clearGraceTimer, disabled, isDragging]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -214,7 +227,6 @@ function WorkspaceHoverCardContent({
   contentRef: React.RefObject<View | null>;
 }): ReactElement | null {
   const { t } = useTranslation();
-  const cwdDisplay = shortenPath(workspace.workspaceDirectory);
   const bottomSheetInternal = useBottomSheetModalInternal(true);
   const [triggerRect, setTriggerRect] = useState<Rect | null>(null);
   const [contentSize, setContentSize] = useState<{ width: number; height: number } | null>(null);
@@ -287,6 +299,16 @@ function WorkspaceHoverCardContent({
               {workspace.name}
             </Text>
           </View>
+          {prHint ? <PrBadge hint={prHint} style={styles.cardInfoRow} /> : null}
+          {workspace.diffStat ? (
+            <View style={styles.cardInfoRow}>
+              <ThemedFileDiff size={12} uniProps={foregroundMutedColorMapping} />
+              <DiffStat
+                additions={workspace.diffStat.additions}
+                deletions={workspace.diffStat.deletions}
+              />
+            </View>
+          ) : null}
           <HostRow serverId={workspace.serverId} />
           {workspace.currentBranch ? (
             <CopyableInfoRow
@@ -297,25 +319,14 @@ function WorkspaceHoverCardContent({
               testID="hover-card-workspace-branch"
             />
           ) : null}
-          {cwdDisplay ? (
+          {workspace.workspaceDirectoryLabel ? (
             <CopyableInfoRow
               icon={ThemedFolder}
-              value={cwdDisplay}
-              copyValue={workspace.workspaceDirectory ?? ""}
+              value={workspace.workspaceDirectoryLabel}
+              copyValue={workspace.workspaceDirectory}
               copyLabel={t("workspace.hoverCard.copyPath")}
               testID="hover-card-workspace-cwd"
             />
-          ) : null}
-          {prHint || workspace.diffStat ? (
-            <View style={styles.cardMetaRow}>
-              {workspace.diffStat ? (
-                <DiffStat
-                  additions={workspace.diffStat.additions}
-                  deletions={workspace.diffStat.deletions}
-                />
-              ) : null}
-              {prHint ? <PrBadge hint={prHint} /> : null}
-            </View>
           ) : null}
           {prHint?.checks && prHint.checks.length > 0 ? (
             <>
@@ -336,6 +347,7 @@ function WorkspaceHoverCardContent({
 const ThemedGitBranch = withUnistyles(GitBranch);
 const ThemedFolder = withUnistyles(Folder);
 const ThemedServer = withUnistyles(Server);
+const ThemedFileDiff = withUnistyles(FileDiff);
 
 type CardInfoIcon = React.ComponentType<React.ComponentProps<typeof ThemedGitBranch>>;
 
@@ -348,17 +360,11 @@ function HostRow({ serverId }: { serverId: string }): ReactElement | null {
 }
 
 const ThemedExternalLink = withUnistyles(ExternalLink);
-const ThemedCircleCheck = withUnistyles(CircleCheck);
-const ThemedCircleDot = withUnistyles(CircleDot);
-const ThemedCircleX = withUnistyles(CircleX);
 const ThemedCopy = withUnistyles(Copy);
 const ThemedCheck = withUnistyles(Check);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const successColorMapping = (theme: Theme) => ({ color: theme.colors.statusSuccess });
-const warningColorMapping = (theme: Theme) => ({ color: theme.colors.statusWarning });
-const dangerColorMapping = (theme: Theme) => ({ color: theme.colors.statusDanger });
 
 function InfoRow({
   icon: Icon,
@@ -448,51 +454,28 @@ function CopyableInfoRow({
   );
 }
 
-function getChecksSummaryCounts(checks: NonNullable<PrHint["checks"]>) {
-  return checks.reduce(
-    (counts, check) => {
-      if (check.status === "success") counts.passed += 1;
-      else if (check.status === "failure") counts.failed += 1;
-      else if (check.status !== "skipped" && check.status !== "cancelled") counts.pending += 1;
-      return counts;
-    },
-    { passed: 0, failed: 0, pending: 0 },
+function ChecksSummaryPill({
+  count,
+  presentation,
+}: {
+  count: number;
+  presentation: CountedCheckPresentation;
+}) {
+  if (count === 0) return null;
+  return (
+    <View style={styles.checksSummaryPill}>
+      <CheckPresentationIcon presentation={presentation} size={12} />
+      <Text style={checksSummaryTextStyle(presentation)}>{count}</Text>
+    </View>
   );
 }
 
-function ChecksSummaryPill({
-  count,
-  kind,
-}: {
-  count: number;
-  kind: "passed" | "failed" | "pending";
-}) {
-  if (count === 0) return null;
-
-  if (kind === "passed") {
-    return (
-      <View style={styles.checksSummaryPill}>
-        <ThemedCircleCheck size={12} uniProps={successColorMapping} />
-        <Text style={styles.checksStatusTextPassed}>{count}</Text>
-      </View>
-    );
-  }
-
-  if (kind === "failed") {
-    return (
-      <View style={styles.checksSummaryPill}>
-        <ThemedCircleX size={12} uniProps={dangerColorMapping} />
-        <Text style={styles.checksStatusTextFailed}>{count}</Text>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.checksSummaryPill}>
-      <ThemedCircleDot size={12} uniProps={warningColorMapping} />
-      <Text style={styles.checksStatusTextPending}>{count}</Text>
-    </View>
-  );
+function checksSummaryTextStyle(presentation: CountedCheckPresentation) {
+  const tone = getCheckPresentationTone(presentation);
+  if (tone === "success") return styles.checksStatusTextPassed;
+  if (tone === "danger") return styles.checksStatusTextFailed;
+  if (tone === "warning") return styles.checksStatusTextPending;
+  return styles.checksStatusTextMuted;
 }
 
 function ChecksSummaryContent({
@@ -505,7 +488,7 @@ function ChecksSummaryContent({
   hovered: boolean;
 }) {
   const { t } = useTranslation();
-  const { passed, failed, pending } = getChecksSummaryCounts(checks);
+  const counts = countCheckPresentations(checks);
 
   const labelStyle = hovered
     ? [styles.checksSummaryLabel, styles.checksSummaryLabelHovered]
@@ -522,9 +505,13 @@ function ChecksSummaryContent({
       )}
       <Text style={labelStyle}>{t("workspace.git.pr.sections.checks")}</Text>
       <View style={styles.checksSummaryCounts}>
-        <ChecksSummaryPill count={passed} kind="passed" />
-        <ChecksSummaryPill count={failed} kind="failed" />
-        <ChecksSummaryPill count={pending} kind="pending" />
+        {COUNTED_CHECK_PRESENTATIONS.map((presentation) => (
+          <ChecksSummaryPill
+            key={presentation}
+            count={counts[presentation]}
+            presentation={presentation}
+          />
+        ))}
       </View>
     </>
   );
@@ -539,9 +526,16 @@ function ChecksSummaryPressable({
   forge: PrHint["forge"];
   url: string;
 }) {
+  const { t } = useTranslation();
+  const counts = countCheckPresentations(checks);
+  const accessibilityLabel = formatCheckPresentationCountsLabel(
+    counts,
+    t("workspace.git.pr.sections.checks"),
+    t,
+  );
   const handlePress = useCallback(() => {
-    void openExternalUrl(`${url}/checks`);
-  }, [url]);
+    void openExternalUrl(buildForgeChecksUrl(forge, url) ?? url);
+  }, [forge, url]);
 
   const renderChildren = useCallback(
     ({ hovered }: { pressed: boolean; hovered?: boolean }) => (
@@ -551,7 +545,12 @@ function ChecksSummaryPressable({
   );
 
   return (
-    <Pressable style={checksSummaryPressableStyle} onPress={handlePress}>
+    <Pressable
+      accessibilityLabel={accessibilityLabel}
+      accessibilityRole="link"
+      style={checksSummaryPressableStyle}
+      onPress={handlePress}
+    >
       {renderChildren}
     </Pressable>
   );
@@ -593,17 +592,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   cardTitle: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     flex: 1,
     minWidth: 0,
-  },
-  cardMetaRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: theme.spacing[3],
-    paddingBottom: theme.spacing[2],
   },
   cardInfoRow: {
     flexDirection: "row",
@@ -616,7 +608,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
   },
   cardInfoTextHovered: {
@@ -638,7 +630,7 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 28,
   },
   checksSummaryLabel: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
   },
@@ -658,18 +650,23 @@ const styles = StyleSheet.create((theme) => ({
     gap: 3,
   },
   checksStatusTextFailed: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.statusDanger,
   },
   checksStatusTextPending: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.statusWarning,
   },
   checksStatusTextPassed: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.statusSuccess,
+  },
+  checksStatusTextMuted: {
+    fontSize: theme.fontSize.sm,
+    fontWeight: theme.fontWeight.normal,
+    color: theme.colors.foregroundMuted,
   },
 }));

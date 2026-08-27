@@ -15,7 +15,9 @@ EAS profiles: `development`, `production`, and `production-apk` in `packages/app
 
 ## Version codes
 
-`packages/app/app.config.js` derives Android `versionCode` from the package version with:
+`packages/app/native-release-version.js` is the single definition of native and F-Droid version-code math. Do not re-derive these numbers anywhere else — a drifted copy produces changelog files that match no published APK, and nothing fails loudly.
+
+The base version code comes from the package version:
 
 ```text
 major * 1_000_000 + minor * 1_000 + patch
@@ -67,15 +69,26 @@ npm run android:production     # Release build
 npm run android:clear          # Remove generated Android project
 ```
 
+For a production-ID release APK that local Android profiling tools can attach to:
+
+```bash
+PASEO_PROFILE_BUILD=1 npm run android:production
+```
+
+This keeps the `sh.paseo` package id, release Hermes bundle, and release optimizations. It adds
+`<profileable android:shell="true" />` and enables local Android trace markers for workspace mounts
+and daemon WebSocket traffic. The markers contain message types and sizes, never payload contents,
+and emit only while a system trace records the `sh.paseo` app (`perfetto -a sh.paseo ...`).
+
 Or from `packages/app`:
 
 ```bash
 # Debug
-npx cross-env APP_VARIANT=development expo prebuild --platform android --non-interactive
+npx cross-env APP_VARIANT=development expo prebuild --platform android --clean --non-interactive
 npx cross-env APP_VARIANT=development expo run:android --variant=debug
 
 # Release
-npx cross-env APP_VARIANT=production expo prebuild --platform android --non-interactive
+npx cross-env APP_VARIANT=production expo prebuild --platform android --clean --non-interactive
 npx cross-env APP_VARIANT=production expo run:android --variant=release
 
 # Clear generated Android project
@@ -118,7 +131,7 @@ cd android
 PASEO_FDROID_BUILD=1 ./gradlew assembleRelease --no-daemon --max-workers=1 -Dorg.gradle.parallel=false
 ```
 
-The flag must be present for both prebuild and Gradle because Gradle starts Metro for the release bundle. Keep the source build serial and daemon-free as shown above: compiling every Expo module can exhaust memory when Gradle workers run in parallel. The profile enables source-built Expo modules, excludes the proprietary camera, Firebase notification, and Expo development-client native modules, disables EAS updates and Gradle dependency metadata, and substitutes JavaScript stubs for camera and notifications. The resulting app supports direct and pasted-link pairing but not QR scanning or push notifications.
+The flag must be present for both prebuild and Gradle because Gradle starts Metro for the release bundle. Keep the source build serial and daemon-free as shown above: compiling every Expo module can exhaust memory when Gradle workers run in parallel. The profile enables source-built Expo modules, excludes the proprietary camera, Firebase notification, and Expo development-client native modules, disables Gradle dependency metadata, and substitutes JavaScript stubs for camera and notifications. The resulting app supports direct and pasted-link pairing but not QR scanning or push notifications.
 
 For a single-ABI APK, pass React Native's architecture property to Gradle:
 
@@ -133,6 +146,37 @@ Supported values are `armeabi-v7a`, `arm64-v8a`, `x86`, and `x86_64`. The F-Droi
 Keep the excluded npm packages installed. Normal builds use them, while the F-Droid profile removes only their Android native modules and config plugins. Paseo always applies `expo-gradle-jvmargs` with `-Xmx4096m` and `-XX:MaxMetaspaceSize=1024m` so local Expo prebuilds have enough Gradle heap whether they use precompiled AARs or source-built Expo modules.
 
 The EAS `production-apk` profile uses the large Android resource class. Release builds compile the native ABIs and run Hermes bundling in the same Gradle invocation; the default worker can exhaust its remaining memory and kill Hermes with exit code 137 even when Gradle's own heap is correctly sized.
+
+### F-Droid store metadata
+
+F-Droid reads the store listing from `fastlane/metadata/android/<locale>/` **at the repo root**. This location provides the best compatibility with the F-Droid release process.
+
+```text
+fastlane/metadata/android/
+├── en-US/                      (F-Droid fallback locale, mandatory)
+│   ├── title.txt               (<=50 chars)
+│   ├── short_description.txt   (<=80 chars)
+│   ├── full_description.txt    (<=4000 chars, limited HTML)
+│   ├── images/
+│   │   ├── icon.png            (512x512)
+│   │   ├── featureGraphic.png  (1024x500)
+│   │   └── phoneScreenshots/   (1.png, 2.png, ...)
+│   └── changelogs/             (generated — see below)
+├── ja/
+└── zh-CN/
+```
+
+Locale directories generally match `packages/app/src/i18n/locales.ts`, but note that `en` becomes `en-US`.
+
+F-Droid changelogs are generated from `CHANGELOG.md`. Run `npm run fdroid:changelogs`; `npm run fdroid:changelogs:check` verifies without writing. It is wired into the npm `version` lifecycle, so a release picks it up automatically and `git add -A` stages the result.
+
+One changelog must be generated per-ABI-split, so each version will create **four** identical version-coded entries. F-Droid caps changelogs at 500 characters, so the generator strips some content and adds a link to the full notes.
+
+Stable sync fails loudly if `CHANGELOG.md` has no entry for the version being cut. That is intentional — the release checklist requires the entry to be committed first, so an abort here means the checklist was skipped.
+
+Because the generator runs off the version in `package.json`, it must run **before** the tag is created: fdroidserver only reads metadata from the tag it builds, so the file for version N has to exist in the commit N points at.
+
+Beta releases are an explicit no-op: they do not create or rewrite F-Droid changelog files. Stable releases and promotions generate the four ABI entries from their final changelog.
 
 ### React version lockstep
 

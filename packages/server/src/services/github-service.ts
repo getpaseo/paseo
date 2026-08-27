@@ -147,7 +147,7 @@ const GitHubRepositoryListItemSchema = z.object({
   name: z.string(),
   nameWithOwner: z.string(),
   description: z.string().nullable().optional(),
-  visibility: z.string(),
+  isPrivate: z.boolean(),
   updatedAt: z.string(),
   sshUrl: z.string(),
   url: z.string(),
@@ -158,7 +158,7 @@ const GitHubRepositorySearchItemSchema = z.object({
   name: z.string(),
   fullName: z.string(),
   description: z.string().nullable().optional(),
-  visibility: z.string(),
+  isPrivate: z.boolean(),
   updatedAt: z.string(),
   url: z.string(),
 });
@@ -1048,7 +1048,10 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     },
 
     defaultCheckoutRefs({ changeRequestNumber }) {
-      return [{ remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` }];
+      return [
+        { remoteName: "origin", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+        { remoteName: "upstream", remoteRef: `refs/pull/${changeRequestNumber}/head` },
+      ];
     },
 
     buildPrLocalBranchName({ headRef, checkoutTarget }) {
@@ -1287,7 +1290,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
               "repo",
               "list",
               "--json",
-              "id,name,nameWithOwner,description,visibility,updatedAt,sshUrl,url",
+              "id,name,nameWithOwner,description,isPrivate,updatedAt,sshUrl,url",
               "--limit",
               String(limit),
             ],
@@ -1305,7 +1308,7 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
             "repos",
             query,
             "--json",
-            "id,name,fullName,description,visibility,updatedAt,url",
+            "id,name,fullName,description,isPrivate,updatedAt,url",
             "--sort",
             "updated",
             "--order",
@@ -2315,7 +2318,7 @@ function normalizeRepositorySummary(repository: {
   name: string;
   nameWithOwner: string;
   description?: string | null;
-  visibility: string;
+  isPrivate: boolean;
   updatedAt: string;
   cloneUrl: string;
 }): GitHubRepositorySummary {
@@ -2328,18 +2331,13 @@ function normalizeRepositorySummary(repository: {
     name: repository.name.trim(),
     nameWithOwner,
     description: repository.description ?? null,
-    visibility: normalizeRepositoryVisibility(repository.visibility),
+    // We query isPrivate, not visibility: `gh repo list --json visibility` is unsupported before
+    // gh 2.28 (Debian Bookworm ships 2.23), while isPrivate works on every version. The wire schema
+    // requires the visibility enum, so old clients still get a value they can parse.
+    visibility: repository.isPrivate ? "private" : "public",
     updatedAt: repository.updatedAt,
     cloneUrl: repository.cloneUrl.trim(),
   };
-}
-
-function normalizeRepositoryVisibility(visibility: string): GitHubRepositorySummary["visibility"] {
-  const normalized = visibility.toLowerCase();
-  if (normalized === "public" || normalized === "private" || normalized === "internal") {
-    return normalized;
-  }
-  throw new Error(`Unknown GitHub repository visibility: ${visibility}`);
 }
 
 function toPullRequestCheckoutTarget(
@@ -2353,7 +2351,10 @@ function toPullRequestCheckoutTarget(
     number: pullRequest.number,
     baseRefName: pullRequest.baseRefName,
     headRefName: pullRequest.headRefName,
-    checkoutRefs: [{ remoteName: "origin", remoteRef: `refs/pull/${pullRequest.number}/head` }],
+    checkoutRefs: [
+      { remoteName: "origin", remoteRef: `refs/pull/${pullRequest.number}/head` },
+      { remoteName: "upstream", remoteRef: `refs/pull/${pullRequest.number}/head` },
+    ],
     headOwnerLogin: pullRequest.headRepositoryOwner?.login || null,
     headRepositorySshUrl: pullRequest.headRepository?.sshUrl || null,
     headRepositoryUrl: pullRequest.headRepository?.url || null,
@@ -2867,14 +2868,14 @@ function parseGitHubPullRequestRepo(url: string): { owner: string; name: string 
   }
 }
 
-export function parseStatusCheckRollup(value: unknown): PullRequestCheck[] {
+export function parseStatusCheckRollup(value: unknown, nowMs = Date.now()): PullRequestCheck[] {
   const directContexts = PullRequestStatusCheckRollupArraySchema.safeParse(value);
   if (!directContexts.success) {
     const legacyContexts = LegacyPullRequestStatusCheckRollupSchema.safeParse(value);
     if (!legacyContexts.success) {
       return [];
     }
-    return parseStatusCheckRollup(legacyContexts.data.contexts);
+    return parseStatusCheckRollup(legacyContexts.data.contexts, nowMs);
   }
 
   const dedupedChecks = new Map<string, PullRequestCheck & { recency: number }>();
@@ -2883,7 +2884,7 @@ export function parseStatusCheckRollup(value: unknown): PullRequestCheck[] {
     if (!parsed.success) {
       continue;
     }
-    const check = buildPullRequestCheck(parsed.data);
+    const check = buildPullRequestCheck(parsed.data, nowMs);
     if (!check) {
       continue;
     }
@@ -2898,6 +2899,7 @@ export function parseStatusCheckRollup(value: unknown): PullRequestCheck[] {
 
 function buildPullRequestCheck(
   context: z.infer<typeof PullRequestStatusCheckRollupNodeSchema>,
+  nowMs: number,
 ): (PullRequestCheck & { recency: number }) | null {
   if (context.__typename === "CheckRun") {
     return {
@@ -2911,7 +2913,7 @@ function buildPullRequestCheck(
       ...(typeof context.checkSuite?.workflowRun?.databaseId === "number"
         ? { workflowRunId: context.checkSuite.workflowRun.databaseId }
         : {}),
-      ...formatCheckRunDuration(context),
+      ...formatCheckRunDuration(context, nowMs),
       recency: getCheckRunRecency(context),
     };
   }
@@ -2970,13 +2972,26 @@ function getCheckRunRecency(context: PullRequestCheckRunNode): number {
   return parseOptionalTime(context.completedAt ?? context.startedAt ?? null);
 }
 
-function formatCheckRunDuration(context: PullRequestCheckRunNode): { duration?: string } {
+/**
+ * How long the check ran for. A finished run measures to its completion; a run still
+ * going measures to now, so a client can say how long it has been waiting instead of
+ * showing nothing. Raw timestamps never reach the client, so this is where the choice
+ * between the two has to be made.
+ */
+function formatCheckRunDuration(
+  context: PullRequestCheckRunNode,
+  nowMs: number,
+): { duration?: string } {
   const startedAt = parseOptionalTime(context.startedAt ?? null);
-  const completedAt = parseOptionalTime(context.completedAt ?? null);
-  if (startedAt <= 0 || completedAt <= 0 || completedAt < startedAt) {
+  if (startedAt <= 0) {
     return {};
   }
-  const durationSeconds = Math.floor((completedAt - startedAt) / 1_000);
+  const completedAt = parseOptionalTime(context.completedAt ?? null);
+  const endedAt = completedAt > 0 ? completedAt : nowMs;
+  if (endedAt < startedAt) {
+    return {};
+  }
+  const durationSeconds = Math.floor((endedAt - startedAt) / 1_000);
   return { duration: formatDurationSeconds(durationSeconds) };
 }
 

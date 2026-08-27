@@ -13,6 +13,7 @@ const AGENT_DEFAULTS: Agent = {
   id: "agent",
   provider: "codex",
   status: "idle",
+  activeTurn: null,
   createdAt: AGENT_TIMESTAMP,
   updatedAt: AGENT_TIMESTAMP,
   lastUserMessageAt: null,
@@ -76,6 +77,7 @@ describe("selectSubagentsForParent", () => {
         provider: "codex",
         title: "Provider child",
         description: null,
+        subtitle: "Codex worker · 4.2k tokens",
         status: "completed",
         createdAt: "2026-03-08T10:01:00.000Z",
         updatedAt: "2026-03-08T10:02:00.000Z",
@@ -92,6 +94,10 @@ describe("selectSubagentsForParent", () => {
         (row) => row.id,
       ),
     ).toEqual(["provider-child"]);
+    expect(
+      selectProviderSubagentsForParent(useProviderSubagentStore.getState(), params, true)[0]
+        ?.subtitle,
+    ).toBe("Codex worker · 4.2k tokens");
   });
 
   it("hides locally dismissed provider children while retaining their descriptor", () => {
@@ -110,7 +116,7 @@ describe("selectSubagentsForParent", () => {
         toolCallId: "call-1",
       },
     });
-    store.hideFinishedForParent(SERVER_ID, "parent-a");
+    store.hideFromTrack(SERVER_ID, "parent-a", ["provider-child"]);
 
     expect(
       selectProviderSubagentsForParent(
@@ -259,6 +265,8 @@ describe("selectSubagentsForParent", () => {
         id: "child",
         provider: "claude",
         title: "Review child",
+        description: null,
+        subtitle: null,
         status: "running",
         requiresAttention: true,
         createdAt,
@@ -266,11 +274,13 @@ describe("selectSubagentsForParent", () => {
     ]);
     expect(Object.keys(rows[0] ?? {}).sort()).toEqual([
       "createdAt",
+      "description",
       "id",
       "kind",
       "provider",
       "requiresAttention",
       "status",
+      "subtitle",
       "title",
     ]);
     expect(rows[0]).not.toHaveProperty("onOpen");

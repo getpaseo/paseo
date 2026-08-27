@@ -1,4 +1,5 @@
 import type { StreamItem } from "@/types/stream";
+import { startsNewTurn } from "@/agent-stream/turn-membership";
 
 export interface TurnTiming {
   startedAt: Date;
@@ -9,20 +10,19 @@ export interface TurnTiming {
 export interface StreamTurnTiming {
   byAssistantId: Map<string, TurnTiming>;
   runningStartedAt: Date | null;
-  isActive: boolean;
 }
 
 export function deriveStreamTurnTiming(params: {
-  agentStatus: string;
+  isTurnActive: boolean;
+  activeTurnStartedAt: Date | null;
   tail: StreamItem[];
   head: StreamItem[];
 }): StreamTurnTiming {
   const byAssistantId = new Map<string, TurnTiming>();
   let currentUserAt: Date | null = null;
-  let currentAuthoritativeUserAt: Date | null = null;
-  let currentUserIsOptimistic = false;
   let currentLastItemAt: Date | null = null;
   let currentAssistantIds: string[] = [];
+  let previousItem: StreamItem | null = null;
 
   const flushCompletedTurn = () => {
     if (!currentUserAt || !currentLastItemAt || currentAssistantIds.length === 0) {
@@ -39,22 +39,21 @@ export function deriveStreamTurnTiming(params: {
   };
 
   const visitItem = (item: StreamItem) => {
-    if (item.kind === "user_message") {
+    if (startsNewTurn(item, previousItem)) {
       flushCompletedTurn();
-      currentUserAt = item.timestamp;
-      currentAuthoritativeUserAt = item.optimistic ? null : item.timestamp;
-      currentUserIsOptimistic = item.optimistic === true;
+      currentUserAt = item.kind === "user_message" ? item.timestamp : null;
       currentLastItemAt = null;
       currentAssistantIds = [];
-      return;
     }
     if (!currentUserAt) {
+      previousItem = item;
       return;
     }
     currentLastItemAt = item.timestamp;
     if (item.kind === "assistant_message") {
       currentAssistantIds.push(item.id);
     }
+    previousItem = item;
   };
 
   for (const item of params.tail) {
@@ -64,15 +63,13 @@ export function deriveStreamTurnTiming(params: {
     visitItem(item);
   }
 
-  const isRunning = params.agentStatus === "running";
-  const runningStartedAt = isRunning ? currentAuthoritativeUserAt : null;
-  if (params.agentStatus !== "running") {
+  const runningStartedAt = params.isTurnActive ? params.activeTurnStartedAt : null;
+  if (!params.isTurnActive) {
     flushCompletedTurn();
   }
 
   return {
     byAssistantId,
     runningStartedAt,
-    isActive: isRunning || currentUserIsOptimistic,
   };
 }

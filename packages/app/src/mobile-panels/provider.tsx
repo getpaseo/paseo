@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -57,10 +58,12 @@ interface MobilePanelsRuntime {
   leftCloseGestureRef: RefObject<GestureType | undefined>;
   leftOpenGestureRef: RefObject<GestureType | undefined>;
   motionState: SharedValue<MobilePanelMotionState>;
+  openGesturesBlocked: SharedValue<boolean>;
   position: SharedValue<number>;
   rightCloseGestureRef: RefObject<GestureType | undefined>;
   rightOpenGestureRef: RefObject<GestureType | undefined>;
   updateGesture: (startedRevision: number, nextPosition: number) => boolean;
+  setOpenGestureBlocked: (owner: symbol, blocked: boolean) => void;
   windowWidth: number;
 }
 
@@ -83,11 +86,25 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
   const initialSelection = useRef(usePanelStore.getState().mobilePanel).current;
   const position = useSharedValue(getMobilePanelAnchor(initialSelection.target));
   const motionState = useSharedValue(createMobilePanelMotionState(initialSelection));
+  const openGesturesBlocked = useSharedValue(false);
+  const openGestureBlockersRef = useRef(new Set<symbol>());
   const leftOpenGestureRef = useRef<GestureType | undefined>(undefined);
   const leftCloseGestureRef = useRef<GestureType | undefined>(undefined);
   const rightOpenGestureRef = useRef<GestureType | undefined>(undefined);
   const rightCloseGestureRef = useRef<GestureType | undefined>(undefined);
   const [presentedPanels, setPresentedPanels] = useState(getPanelMask(initialSelection.target));
+
+  const setOpenGestureBlocked = useCallback(
+    (owner: symbol, blocked: boolean) => {
+      if (blocked) {
+        openGestureBlockersRef.current.add(owner);
+      } else {
+        openGestureBlockersRef.current.delete(owner);
+      }
+      openGesturesBlocked.value = openGestureBlockersRef.current.size > 0;
+    },
+    [openGesturesBlocked],
+  );
 
   const presentPanel = useCallback((panel: MobilePanelView) => {
     const mask = getPanelMask(panel);
@@ -227,13 +244,24 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
       leftCloseGestureRef,
       leftOpenGestureRef,
       motionState,
+      openGesturesBlocked,
       position,
       rightCloseGestureRef,
       rightOpenGestureRef,
       updateGesture,
+      setOpenGestureBlocked,
       windowWidth,
     }),
-    [beginGesture, finishGesture, motionState, position, updateGesture, windowWidth],
+    [
+      beginGesture,
+      finishGesture,
+      motionState,
+      openGesturesBlocked,
+      position,
+      setOpenGestureBlocked,
+      updateGesture,
+      windowWidth,
+    ],
   );
 
   return (
@@ -257,4 +285,14 @@ export function useMobilePanelsRuntime(): MobilePanelsRuntime {
 export function useIsMobilePanelPresented(panel: MobilePanelView): boolean {
   const presentedPanels = useContext(MobilePanelPresentationContext);
   return (presentedPanels & getPanelMask(panel)) !== 0;
+}
+
+export function useBlockMobilePanelOpenGestures(blocked: boolean): void {
+  const { setOpenGestureBlocked } = useMobilePanelsRuntime();
+  const owner = useRef(Symbol("mobile-panel-open-gesture-blocker")).current;
+
+  useLayoutEffect(() => {
+    setOpenGestureBlocked(owner, blocked);
+    return () => setOpenGestureBlocked(owner, false);
+  }, [blocked, owner, setOpenGestureBlocked]);
 }

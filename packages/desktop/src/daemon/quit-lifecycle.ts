@@ -14,6 +14,10 @@ interface BeforeQuitApp {
   exit(code: number): void;
 }
 
+interface ExternalQuitSignalSource {
+  on(signal: NodeJS.Signals, listener: () => void): unknown;
+}
+
 interface QuitLifecycle {
   handleBeforeQuit(event: BeforeQuitEvent): void;
   handleBeforeQuitForUpdate(): void;
@@ -29,6 +33,23 @@ export interface StopOnQuitDeps {
   isDesktopManagedDaemonRunning: () => boolean;
   stopDaemon: () => Promise<unknown>;
   showShutdownFeedback: () => void;
+}
+
+export function registerExternalQuitSignals({
+  signals,
+  quit,
+}: {
+  signals: ExternalQuitSignalSource;
+  quit: () => void;
+}): void {
+  let quitRequested = false;
+  for (const signal of ["SIGHUP", "SIGINT", "SIGTERM"] satisfies NodeJS.Signals[]) {
+    signals.on(signal, () => {
+      if (quitRequested) return;
+      quitRequested = true;
+      quit();
+    });
+  }
 }
 
 export function shouldStopDesktopManagedDaemonOnQuit(settings: QuitLifecycleSettings): boolean {

@@ -1,7 +1,9 @@
 import type { Dirent, Stats } from "node:fs";
 import { readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
+import { scorePathMatch, type MatchScore } from "@getpaseo/protocol/search/text-match";
 import { isPathInsideRoot } from "./path.js";
+import { runGitCommand } from "./run-git-command.js";
 
 export type DirectorySuggestionKind = "file" | "directory";
 export type DirectorySuggestionPathFormat = "absolute" | "relative";
@@ -29,6 +31,7 @@ export interface SearchDirectoryEntriesOptions {
   maxDepth?: number;
   maxEntriesScanned?: number;
   confidentResultScanThreshold?: number;
+  respectGitIgnore?: boolean;
 }
 
 interface QueryPlan {
@@ -63,11 +66,23 @@ interface RankedEntry extends DirectorySuggestionEntry {
   depth: number;
 }
 
+interface RankFields {
+  matchTier: number;
+  segmentIndex: number;
+  matchOffset: number;
+  fuzzyScore: number;
+}
+
 interface DirectoryListCacheEntry {
   expiresAt: number;
   modifiedAtMs: number;
   changedAtMs: number;
   entries: RawChildEntry[];
+}
+
+interface GitIgnoredPathsCacheEntry {
+  expiresAt: number;
+  paths: Promise<Set<string>>;
 }
 
 const DEFAULT_LIMIT = 30;
@@ -76,6 +91,8 @@ const DEFAULT_MAX_DEPTH = 12;
 const DEFAULT_MAX_ENTRIES_SCANNED = 20_000;
 const DIRECTORY_LIST_CACHE_TTL_MS = 8_000;
 const DIRECTORY_LIST_CACHE_MAX_ENTRIES = 4_000;
+const GIT_IGNORED_PATHS_CACHE_TTL_MS = 8_000;
+const GIT_IGNORED_PATHS_CACHE_MAX_ENTRIES = 256;
 // Windows does not reliably update directory mtime/ctime when children change,
 // so metadata cannot safely validate a cross-request listing cache there.
 const CAN_VALIDATE_DIRECTORY_CACHE_FROM_METADATA = process.platform !== "win32";
@@ -108,14 +125,23 @@ const IGNORED_DIRECTORY_NAMES = new Set([
   ".git",
 ]);
 const directoryListCache = new Map<string, DirectoryListCacheEntry>();
+const gitIgnoredPathsCache = new Map<string, GitIgnoredPathsCacheEntry>();
 
+// Discovery and retrieval filter differently, on purpose. Discovery — anything that ranks or
+// browses candidates the caller has not named — drops gitignored and hidden entries, so pickers
+// do not offer build output. Retrieval of a path the caller named exactly applies no ignore or
+// hidden filtering; the only question is whether the path stays inside the root. Clicking a file
+// reference an agent wrote must open it whether or not Git tracks it.
 export async function searchDirectoryEntries(
   options: SearchDirectoryEntriesOptions,
 ): Promise<DirectorySuggestionEntry[]> {
   const root = await resolveDirectory(options.root);
   if (!root) return [];
 
-  const input = buildSearchInput(options, root);
+  const gitIgnoredPaths = options.respectGitIgnore
+    ? await loadGitIgnoredPaths(root)
+    : new Set<string>();
+  const input = buildSearchInput(options, root, gitIgnoredPaths);
   if (!input) return [];
 
   const exact =
@@ -125,10 +151,9 @@ export async function searchDirectoryEntries(
   if (exact && input.limit === 1) return [exact];
 
   const browsesRoot = input.plan.isPathQuery && !input.plan.normalizedQuery;
+  const browsesAbsoluteParent = input.plan.browseExactPath === true;
   const ranked =
-    input.plan.isPathQuery && (input.matchMode === "fuzzy" || browsesRoot)
-      ? await searchChildren(input)
-      : await searchTree(input);
+    browsesRoot || browsesAbsoluteParent ? await searchChildren(input) : await searchTree(input);
   const results = sortAndFormat(ranked, input.root, input.pathFormat).slice(0, input.limit);
   return exact
     ? [exact, ...results.filter((entry) => !sameEntry(entry, exact))].slice(0, input.limit)
@@ -138,6 +163,7 @@ export async function searchDirectoryEntries(
 function buildSearchInput(
   options: SearchDirectoryEntriesOptions,
   root: string,
+  gitIgnoredPaths: Set<string>,
 ): SearchInput | null {
   const includeDirectories = options.includeDirectories ?? true;
   const includeFiles = options.includeFiles ?? false;
@@ -165,6 +191,7 @@ function buildSearchInput(
     maxDepth: options.maxDepth ?? DEFAULT_MAX_DEPTH,
     maxEntriesScanned: options.maxEntriesScanned ?? DEFAULT_MAX_ENTRIES_SCANNED,
     confidentResultScanThreshold: options.confidentResultScanThreshold,
+    gitIgnoredPaths,
   };
 }
 
@@ -173,6 +200,8 @@ async function findExactEntry(input: SearchInput): Promise<DirectorySuggestionEn
   const visiblePath = path.resolve(input.root, input.plan.normalizedQuery);
   const resolvedPath = await realpath(visiblePath).catch(() => null);
   if (!resolvedPath || !isPathInsideRoot(input.root, resolvedPath)) return null;
+  // No ignore filtering here: the caller named this exact path, so containment above is the
+  // only question left to answer. Filtering belongs to discovery, not retrieval.
   const info = await stat(resolvedPath).catch(() => null);
   const kind = getEntryKind(info);
   if (
@@ -196,12 +225,14 @@ interface SearchInput {
   maxDepth: number;
   maxEntriesScanned: number;
   confidentResultScanThreshold: number | undefined;
+  gitIgnoredPaths: Set<string>;
 }
 
 async function searchChildren(input: SearchInput): Promise<RankedEntry[]> {
   const visibleParent = path.resolve(input.root, input.plan.parentPart || ".");
   const parent = await realpath(visibleParent).catch(() => null);
   if (!parent || !isPathInsideRoot(input.root, parent)) return [];
+  if (isGitIgnoredPath(parent, input)) return [];
   const entries = await readChildren(parent);
   return entries.flatMap((entry) => {
     if (!isPathInsideRoot(input.root, entry.resolvedPath) || !shouldDiscover(entry, input))
@@ -240,7 +271,9 @@ async function searchTree(input: SearchInput): Promise<RankedEntry[]> {
     if (shouldSuggest(entry, input)) ranked.push(rank(entry, input));
     if (
       scanned >= input.maxEntriesScanned ||
-      (threshold && scanned >= threshold && hasConfidentResult(ranked, input.plan.searchTerm))
+      (threshold &&
+        scanned >= threshold &&
+        hasConfidentResult(ranked, input.plan.normalizedQuery || input.plan.searchTerm))
     )
       break;
   }
@@ -297,12 +330,22 @@ async function* roundRobin<T>(branches: Array<AsyncGenerator<T>>): AsyncGenerato
 }
 
 function shouldDiscover(entry: ChildEntry, input: SearchInput): boolean {
+  if (isGitIgnoredPath(entry.resolvedPath, input)) return false;
   if (entry.kind === "file") {
     return input.includeFiles && !entry.name.startsWith(".");
   }
   if (IGNORED_DIRECTORY_NAMES.has(entry.name)) return false;
   if (!entry.name.startsWith(".")) return true;
   return input.hiddenDirectoryNames.has(entry.name);
+}
+
+function isGitIgnoredPath(absolutePath: string, input: SearchInput): boolean {
+  let candidate = absolutePath;
+  while (candidate !== input.root && isPathInsideRoot(input.root, candidate)) {
+    if (input.gitIgnoredPaths.has(candidate)) return true;
+    candidate = path.dirname(candidate);
+  }
+  return false;
 }
 
 function shouldSuggest(entry: TraversedEntry, input: SearchInput): boolean {
@@ -312,43 +355,121 @@ function shouldSuggest(entry: TraversedEntry, input: SearchInput): boolean {
   if (!input.plan.normalizedQuery) return true;
   if (input.matchMode === "suffix")
     return suffixMatches(entry.visiblePath, input.root, input.plan.normalizedQuery);
-  return !input.plan.searchTerm || rank(entry, input).matchTier !== NO_MATCH_TIER;
+  return rank(entry, input).matchTier !== NO_MATCH_TIER;
 }
 
 function rank(entry: TraversedEntry, input: SearchInput): RankedEntry {
   const relativePath = normalizeRelativePath(input.root, entry.visiblePath);
   const lowerPath = relativePath.toLowerCase();
-  const query = input.plan.searchTerm.toLowerCase();
+  const query = getRankQuery(input);
   const segments = lowerPath === "." ? [] : lowerPath.split("/");
-  const exact = findSegmentMatchIndex(segments, (segment) => segment === query);
-  const prefix = findSegmentMatchIndex(segments, (segment) => segment.startsWith(query));
-  const substring = findSegmentMatchIndex(segments, (segment) => segment.includes(query));
-  const offset = lowerPath.indexOf(query);
-  const fuzzyScore = scoreFuzzySubsequence(query, segments.at(-1) ?? "");
-  let matchTier = NO_MATCH_TIER;
-  let segmentIndex = NO_SEGMENT_INDEX;
-  if (!query) matchTier = 3;
-  else if (exact >= 0) {
-    matchTier = 0;
-    segmentIndex = exact;
-  } else if (prefix >= 0) {
-    matchTier = 1;
-    segmentIndex = prefix;
-  } else if (substring >= 0) {
-    matchTier = 2;
-    segmentIndex = substring;
-  } else if (input.pathFormat === "relative" ? lowerPath.startsWith(query) : offset >= 0)
-    matchTier = 3;
-  else if (fuzzyScore !== null) matchTier = 4;
+  const pathScore = query ? scorePathMatch(query, relativePath) : null;
+  const rankFields = input.plan.isPathQuery
+    ? rankPathMatch(pathScore)
+    : rankTextMatch({ query, lowerPath, pathFormat: input.pathFormat, pathScore, segments });
   return {
     path: entry.visiblePath,
     kind: entry.kind,
-    matchTier,
-    segmentIndex,
-    matchOffset: offset >= 0 ? offset : NO_MATCH_OFFSET,
-    fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
+    ...rankFields,
     depth: relativePath === "." ? 0 : segments.length,
   };
+}
+
+function getRankQuery(input: SearchInput): string {
+  return (
+    input.plan.isPathQuery ? input.plan.normalizedQuery : input.plan.searchTerm
+  ).toLowerCase();
+}
+
+function rankPathMatch(pathScore: MatchScore | null): RankFields {
+  return {
+    matchTier: pathScore ? Math.min(pathScore.tier, 4) : NO_MATCH_TIER,
+    segmentIndex: NO_SEGMENT_INDEX,
+    matchOffset: pathScore?.offset ?? NO_MATCH_OFFSET,
+    fuzzyScore: pathScore?.spread ?? NO_FUZZY_SCORE,
+  };
+}
+
+function rankTextMatch(input: {
+  query: string;
+  lowerPath: string;
+  pathFormat: DirectorySuggestionPathFormat;
+  pathScore: MatchScore | null;
+  segments: string[];
+}): RankFields {
+  const { query, lowerPath, pathFormat, pathScore, segments } = input;
+  const offset = lowerPath.indexOf(query);
+  const fuzzyScore = scoreFuzzySubsequence(query, segments.at(-1) ?? "");
+  if (!query) {
+    return {
+      matchTier: 3,
+      segmentIndex: NO_SEGMENT_INDEX,
+      matchOffset: NO_MATCH_OFFSET,
+      fuzzyScore: NO_FUZZY_SCORE,
+    };
+  }
+  const segmentRank = rankSegmentMatch({ query, segments, offset, fuzzyScore });
+  if (segmentRank) return segmentRank;
+  if (pathFormat === "relative" ? lowerPath.startsWith(query) : offset >= 0) {
+    return {
+      matchTier: 3,
+      segmentIndex: NO_SEGMENT_INDEX,
+      matchOffset: offset,
+      fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
+    };
+  }
+  if (fuzzyScore !== null) {
+    return {
+      matchTier: 4,
+      segmentIndex: NO_SEGMENT_INDEX,
+      matchOffset: offset >= 0 ? offset : NO_MATCH_OFFSET,
+      fuzzyScore,
+    };
+  }
+  return {
+    matchTier: pathScore ? Math.min(pathScore.tier, 4) : NO_MATCH_TIER,
+    segmentIndex: NO_SEGMENT_INDEX,
+    matchOffset: pathScore?.offset ?? NO_MATCH_OFFSET,
+    fuzzyScore: pathScore?.spread ?? NO_FUZZY_SCORE,
+  };
+}
+
+function rankSegmentMatch(input: {
+  query: string;
+  segments: string[];
+  offset: number;
+  fuzzyScore: number | null;
+}): RankFields | null {
+  const { query, segments, offset, fuzzyScore } = input;
+  const matchOffset = offset >= 0 ? offset : NO_MATCH_OFFSET;
+  const exact = findSegmentMatchIndex(segments, (segment) => segment === query);
+  if (exact >= 0) {
+    return {
+      matchTier: 0,
+      segmentIndex: exact,
+      matchOffset,
+      fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
+    };
+  }
+  const prefix = findSegmentMatchIndex(segments, (segment) => segment.startsWith(query));
+  if (prefix >= 0) {
+    return {
+      matchTier: 1,
+      segmentIndex: prefix,
+      matchOffset,
+      fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
+    };
+  }
+  const substring = findSegmentMatchIndex(segments, (segment) => segment.includes(query));
+  if (substring >= 0) {
+    return {
+      matchTier: 2,
+      segmentIndex: substring,
+      matchOffset,
+      fuzzyScore: fuzzyScore ?? NO_FUZZY_SCORE,
+    };
+  }
+  return null;
 }
 
 function sortAndFormat(
@@ -538,6 +659,47 @@ async function readChildren(directory: string): Promise<ChildEntry[]> {
   return (await Promise.all(rawEntries.map((entry) => resolveChild(directory, entry))))
     .filter((entry): entry is ChildEntry => entry !== null)
     .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+async function loadGitIgnoredPaths(root: string): Promise<Set<string>> {
+  const now = Date.now();
+  const cached = gitIgnoredPathsCache.get(root);
+  if (cached && cached.expiresAt > now) return cached.paths;
+
+  const paths = runGitCommand(["ls-files", "-o", "-i", "--directory", "--exclude-standard", "-z"], {
+    cwd: root,
+    envOverlay: { GIT_OPTIONAL_LOCKS: "0" },
+    timeout: 10_000,
+  })
+    .then(
+      (result) =>
+        new Set(
+          result.stdout
+            .split("\0")
+            .filter(Boolean)
+            .map((relativePath) => path.resolve(root, relativePath.replace(/\/$/, ""))),
+        ),
+    )
+    .catch(() => new Set<string>());
+
+  gitIgnoredPathsCache.set(root, {
+    expiresAt: now + GIT_IGNORED_PATHS_CACHE_TTL_MS,
+    paths,
+  });
+  pruneGitIgnoredPathsCache(now);
+  return paths;
+}
+
+function pruneGitIgnoredPathsCache(now: number): void {
+  if (gitIgnoredPathsCache.size <= GIT_IGNORED_PATHS_CACHE_MAX_ENTRIES) return;
+  for (const [key, entry] of gitIgnoredPathsCache) {
+    if (entry.expiresAt <= now) gitIgnoredPathsCache.delete(key);
+  }
+  while (gitIgnoredPathsCache.size > GIT_IGNORED_PATHS_CACHE_MAX_ENTRIES) {
+    const key = gitIgnoredPathsCache.keys().next().value;
+    if (!key) return;
+    gitIgnoredPathsCache.delete(key);
+  }
 }
 
 function toRawChildEntry(dirent: Dirent): RawChildEntry | null {

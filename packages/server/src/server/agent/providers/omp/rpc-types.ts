@@ -103,7 +103,7 @@ export const OmpModelSchema = z
     name: z.string().optional(),
     reasoning: z.boolean().optional(),
     thinking: OmpModelThinkingSchema.optional(),
-    contextWindow: z.number().optional(),
+    contextWindow: z.number().nullable().optional(),
     maxTokens: z.number().nullable().optional(),
     api: z.string().optional(),
     baseUrl: z.string().optional(),
@@ -178,6 +178,7 @@ export const OmpRpcHostToolDefinitionSchema = z
     name: z.string(),
     label: z.string().optional(),
     description: z.string(),
+    loadMode: z.enum(["essential", "discoverable"]).optional(),
     parameters: z.record(z.string(), z.unknown()),
     hidden: z.boolean().optional(),
   })

@@ -1,5 +1,6 @@
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useMemo } from "react";
-import { View, Text, Pressable, ActivityIndicator } from "react-native";
+import { View, Text, Pressable } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { X, ArrowUp, RefreshCcw, Check, Mic, Pencil } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
@@ -98,7 +99,7 @@ export function DictationControls({
         </Pressable>
         {actionsDisabled ? (
           <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color={theme.colors.foreground} />
+            <LoadingSpinner size="small" color={theme.colors.foreground} />
           </View>
         ) : null}
         {!actionsDisabled && isFailed ? (
@@ -221,7 +222,7 @@ export function DictationOverlay({
       <View style={overlayStyles.actionButtonsContainer}>
         {actionsDisabled ? (
           <View style={overlayStyles.loadingContainer}>
-            <ActivityIndicator size="small" color={theme.colors.accentForeground} />
+            <LoadingSpinner size="small" color={theme.colors.accentForeground} />
           </View>
         ) : null}
         {!actionsDisabled && isFailed ? (
@@ -287,7 +288,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   timerText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.semibold,
     fontVariant: ["tabular-nums"],
   },
@@ -325,7 +326,7 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   statusLabel: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.semibold,
   },
 }));
@@ -366,12 +367,12 @@ const overlayStyles = StyleSheet.create((theme) => ({
     gap: theme.spacing[4],
   },
   timerText: {
-    fontSize: theme.fontSize.xl,
+    fontSize: theme.fontSize.lg,
     fontWeight: theme.fontWeight.semibold,
     fontVariant: ["tabular-nums"],
   },
   transcriptText: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
     textAlign: "center",
     paddingHorizontal: theme.spacing[2],

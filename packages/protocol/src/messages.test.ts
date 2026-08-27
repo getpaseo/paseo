@@ -5,6 +5,7 @@ import {
   parseServerInfoStatusPayload,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
+  WorkspaceProjectDescriptorPayloadSchema,
 } from "./messages.js";
 
 function workspaceDescriptor(overrides: Record<string, unknown> = {}) {
@@ -39,6 +40,41 @@ function fetchWorkspacesResponse(workspace: Record<string, unknown>) {
     },
   };
 }
+
+describe("project icon message security", () => {
+  test("rejects URL sources at the daemon boundary", () => {
+    const parsed = SessionInboundMessageSchema.safeParse({
+      type: "project.icon.set.request",
+      projectId: "project-1",
+      source: { type: "url", url: "http://127.0.0.1/private" },
+      requestId: "request-1",
+    });
+
+    expect(parsed.success).toBe(false);
+  });
+});
+
+describe("project icon revision compatibility", () => {
+  const project = {
+    projectId: "project-1",
+    projectDisplayName: "Project",
+    projectRootPath: "/repo/project",
+    projectKind: "git" as const,
+  };
+
+  test("accepts an old project snapshot without an effective icon revision", () => {
+    expect(WorkspaceProjectDescriptorPayloadSchema.parse(project)).toEqual(project);
+  });
+
+  test("accepts an effective icon revision on a new project snapshot", () => {
+    expect(
+      WorkspaceProjectDescriptorPayloadSchema.parse({
+        ...project,
+        projectIconRevision: "automatic:none:v1",
+      }),
+    ).toEqual({ ...project, projectIconRevision: "automatic:none:v1" });
+  });
+});
 
 describe("workspace descriptor message compatibility", () => {
   test("old-shaped fetch_workspaces_response without project still parses", () => {

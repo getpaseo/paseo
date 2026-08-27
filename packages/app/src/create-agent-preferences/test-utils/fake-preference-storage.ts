@@ -4,6 +4,7 @@ import type { CreateAgentPreferenceStorage } from "../storage";
 interface PendingWrite {
   preferences: FormPreferences;
   finish: () => void;
+  fail: (error: Error) => void;
 }
 
 export class FakeCreateAgentPreferenceStorage implements CreateAgentPreferenceStorage {
@@ -20,12 +21,15 @@ export class FakeCreateAgentPreferenceStorage implements CreateAgentPreferenceSt
   }
 
   write(preferences: FormPreferences): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const write = {
         preferences,
         finish: () => {
           this.stored = clone(preferences);
           resolve();
+        },
+        fail: (error: Error) => {
+          reject(error);
         },
       };
       this.pendingWrites.push(write);
@@ -55,11 +59,19 @@ export class FakeCreateAgentPreferenceStorage implements CreateAgentPreferenceSt
     write.finish();
   }
 
+  failOldestWrite(error: Error): void {
+    const write = this.pendingWrites.shift();
+    if (!write) {
+      throw new Error("No pending create-agent preference write");
+    }
+    write.fail(error);
+  }
+
   savedPreferences(): unknown {
     return this.stored;
   }
 }
 
 function clone<T>(value: T): T {
-  return JSON.parse(JSON.stringify(value)) as T;
+  return structuredClone(value);
 }

@@ -15,6 +15,23 @@ describe("runCli", () => {
     ).toEqual(["node", "paseo", "onboard"]);
   });
 
+  it("routes explicit root relay flags to onboard", () => {
+    expect(
+      createCliParseArgv({
+        argv: ["--relay"],
+        cwd: process.cwd(),
+        nodeArgv: ["node", "paseo"],
+      }),
+    ).toEqual(["node", "paseo", "onboard", "--relay"]);
+    expect(
+      createCliParseArgv({
+        argv: ["--no-relay"],
+        cwd: process.cwd(),
+        nodeArgv: ["node", "paseo"],
+      }),
+    ).toEqual(["node", "paseo", "onboard", "--no-relay"]);
+  });
+
   it("preserves known CLI command argv", () => {
     expect(
       createCliParseArgv({
@@ -37,13 +54,13 @@ describe("runCli", () => {
 
   it("classifies existing unknown directories as open-project invocations", () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-cli-run-"));
-    const project = path.join(root, "project");
+    const project = path.join(root, "repository");
     mkdirSync(project);
 
     try {
       expect(
         createCliParseArgv({
-          argv: ["project"],
+          argv: ["repository"],
           cwd: root,
           nodeArgv: ["node", "paseo"],
         }),

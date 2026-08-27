@@ -132,6 +132,7 @@ export function OpenProjectScreen() {
         <CommunityLinks />
       </View>
       <PairDeviceModal
+        serverId={localServerId ?? ""}
         visible={isPairDeviceOpen}
         onClose={handleClosePairDevice}
         testID="open-project-pair-device-modal"
@@ -249,7 +250,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   tileDescription: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: 18,
   },
   communityRow: {

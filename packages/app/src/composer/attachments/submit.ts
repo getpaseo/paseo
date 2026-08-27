@@ -10,6 +10,7 @@ import {
   buildLegacyGitHubAttachmentFromSearchItem,
 } from "@/utils/review-attachments";
 import { workspaceFileAttachmentToAgentAttachment } from "@/attachments/workspace-file";
+import { pluginResourceAttachmentToAgentAttachment } from "@/plugins/attachments";
 
 export type ComposerAttachmentSubmitFormat = "forge" | "legacy-github";
 
@@ -20,7 +21,9 @@ interface SplitComposerAttachmentsOptions {
 export function resolveComposerAttachmentSubmitFormat(input: {
   supportsForgeAttachments?: boolean;
 }): ComposerAttachmentSubmitFormat {
-  // COMPAT(forgeSearch): added in v0.1.106, remove github_search fallback after 2026-12-28.
+  // COMPAT(githubAttachmentKinds): emit legacy GitHub attachments for daemons
+  // predating forge-neutral attachments. Remove after 2027-01-17 once the
+  // supported daemon floor is >= v0.2.0.
   return input.supportsForgeAttachments === false ? "legacy-github" : "forge";
 }
 
@@ -33,7 +36,9 @@ export function splitComposerAttachmentsForSubmit(
 } {
   const images: ImageAttachment[] = [];
   const agentAttachments: AgentAttachment[] = [];
-  // COMPAT(forgeSearch): added in v0.1.106, remove github_search fallback after 2026-12-28.
+  // COMPAT(githubAttachmentKinds): emit legacy GitHub attachments for daemons
+  // predating forge-neutral attachments. Remove after 2027-01-17 once the
+  // supported daemon floor is >= v0.2.0.
   const buildSearchAttachment =
     options.format === "legacy-github"
       ? buildLegacyGitHubAttachmentFromSearchItem
@@ -52,6 +57,11 @@ export function splitComposerAttachmentsForSubmit(
 
     if (attachment.kind === "workspace_file") {
       agentAttachments.push(workspaceFileAttachmentToAgentAttachment(attachment));
+      continue;
+    }
+
+    if (attachment.kind === "plugin_resource") {
+      agentAttachments.push(pluginResourceAttachmentToAgentAttachment(attachment));
       continue;
     }
 

@@ -1,5 +1,8 @@
 import { useState, useCallback, useEffect, useMemo, type ReactElement } from "react";
+import { Info } from "lucide-react-native";
+import { withUnistyles } from "react-native-unistyles";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { z } from "zod";
 import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";
 import { getForgePresentation, type Forge } from "@/git/forge";
@@ -27,10 +30,31 @@ import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-ar
 import { type WorktreeArchiveWarningLabels } from "@/git/worktree-archive-warning";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
+import { readValidatedString } from "@/storage/validated-storage";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
 const forgeMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
+const ThemedInfo = withUnistyles(Info, (theme) => ({ color: theme.colors.foreground }));
+
+export function useGitActionRunner(): (action: GitAction) => void {
+  const toast = useToast();
+
+  return useCallback(
+    (action: GitAction) => {
+      if (action.disabled) return;
+      if (action.unavailableMessage) {
+        toast.show(action.unavailableMessage, {
+          durationMs: 3200,
+          icon: <ThemedInfo size={16} />,
+        });
+        return;
+      }
+      action.handler();
+    },
+    [toast],
+  );
+}
 
 /**
  * The leading icon for every change-request action (create/view/merge) is the
@@ -339,10 +363,10 @@ export function useGitActions({ serverId, cwd, icons }: UseGitActionsInput): Use
     }
     let isActive = true;
     setShipDefault("pr");
-    AsyncStorage.getItem(shipDefaultStorageKey)
+    readValidatedString(AsyncStorage, shipDefaultStorageKey, z.enum(["pr", "merge"]))
       .then((value) => {
         if (!isActive) return;
-        if (value === "pr" || value === "merge") {
+        if (value) {
           setShipDefault(value);
           return;
         }

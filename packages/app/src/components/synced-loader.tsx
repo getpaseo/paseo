@@ -97,8 +97,12 @@ export function SyncedLoader({ size = 10, color }: { size?: number; color: strin
   const reduceMotion = useReducedMotion();
   const step = useSyncedLoaderStep(active, reduceMotion);
 
+  // The 2x3 grid fills `size` exactly on its long axis: the dot is whatever is left after
+  // the two gaps, not a floored integer. Flooring cost the grid up to a third of a dot per
+  // row — at size 10 it drew 8pt of ink in a 10pt box and read as a small mark in a large
+  // slot. Fractional dots are fine here; these are sub-pixel radii on a moving glyph.
   const gap = Math.max(1, Math.round(size * 0.12));
-  const dotSize = Math.max(2, Math.floor((size - gap * 2) / 3));
+  const dotSize = Math.max(2, (size - gap * 2) / 3);
   const gridWidth = dotSize * 2 + gap;
   const gridHeight = dotSize * 3 + gap * 2;
 

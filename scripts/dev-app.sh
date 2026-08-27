@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,6 +12,7 @@ configure_dev_paseo_home
 
 EXPO_PORT="${EXPO_PORT:-8081}"
 DAEMON_ENDPOINT="$(resolve_dev_daemon_endpoint)"
+DEV_BUILD_LABEL="$(git -C "$ROOT_DIR" branch --show-current 2>/dev/null || true)"
 
 echo "══════════════════════════════════════════════════════"
 echo "  Paseo App Dev"
@@ -24,5 +25,6 @@ echo "════════════════════════�
 exec cross-env \
   BROWSER="${BROWSER:-none}" \
   APP_VARIANT=development \
+  EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL="$DEV_BUILD_LABEL" \
   EXPO_PUBLIC_LOCAL_DAEMON="$DAEMON_ENDPOINT" \
   npm run start:expo --workspace=@getpaseo/app -- --port "$EXPO_PORT"

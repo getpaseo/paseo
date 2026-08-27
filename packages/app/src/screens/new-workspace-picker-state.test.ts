@@ -65,7 +65,12 @@ describe("syncPickerPrAttachment", () => {
     const issue = issueAttachment(44);
     const result = syncPickerPrAttachment({
       attachments: [issue],
-      item: { kind: "branch", name: "dev" },
+      item: {
+        kind: "branch",
+        name: "dev",
+        refName: "refs/heads/dev",
+        accessibilityLabel: "dev, local branch",
+      },
     });
     expect(result).toEqual([issue]);
   });
@@ -85,7 +90,12 @@ describe("syncPickerPrAttachment", () => {
     const issue = issueAttachment(44);
     const result = syncPickerPrAttachment({
       attachments: [issue, prAttachment(pr, "new-workspace-picker")],
-      item: { kind: "branch", name: "dev" },
+      item: {
+        kind: "branch",
+        name: "dev",
+        refName: "refs/heads/dev",
+        accessibilityLabel: "dev, local branch",
+      },
     });
     expect(result).toEqual([issue]);
   });
@@ -182,7 +192,12 @@ describe("reducePickerSelection", () => {
     const detected = reducePickerSelection(initialPickerSelectionState, { type: "pr-detected" });
     const branchSelected = reducePickerSelection(detected, {
       type: "picker-selected",
-      item: { kind: "branch", name: "main" },
+      item: {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+      },
     });
 
     expect(
@@ -205,7 +220,12 @@ describe("reducePickerSelection", () => {
   it("lets a newly detected PR replace an earlier explicit branch", () => {
     const branchSelected = reducePickerSelection(initialPickerSelectionState, {
       type: "picker-selected",
-      item: { kind: "branch", name: "main" },
+      item: {
+        kind: "branch",
+        name: "main",
+        refName: "refs/heads/main",
+        accessibilityLabel: "main, local branch",
+      },
     });
     const detected = reducePickerSelection(branchSelected, { type: "pr-detected" });
     const pr = { kind: "github-pr" as const, item: makePrItem(101, "A") };

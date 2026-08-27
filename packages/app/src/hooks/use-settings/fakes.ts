@@ -17,6 +17,9 @@ export function createInMemoryKeyValueStorage(
     async setItem(key, value) {
       entries.set(key, value);
     },
+    async removeItem(key) {
+      entries.delete(key);
+    },
   };
 }
 
@@ -29,6 +32,9 @@ export interface FakeDesktopBridge extends DesktopSettingsBridge {
 
 const DEFAULT_DESKTOP: DesktopSettings = {
   releaseChannel: "stable",
+  notifications: {
+    playSound: true,
+  },
   daemon: {
     manageBuiltInDaemon: true,
     keepRunningAfterQuit: false,

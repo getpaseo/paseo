@@ -124,14 +124,24 @@ PASEO_DESKTOP_SMOKE_ARTIFACT_DIR=/tmp/paseo-desktop-smoke \
 npm run build:desktop -- --publish never --linux --x64 --dir
 ```
 
-### Browser tab bridge regression
+### Undeclared peer dependencies break app.asar
 
-The desktop browser tab bridge E2E launches an isolated real daemon, Metro, and Electron app. It forces workspace LRU eviction to reparent the original tab and replace its guest `WebContents`, then makes one MCP call each for tab listing, snapshot, and click against that original browser id. A final MCP wait proves the real target page received the click.
+electron-builder packs `node_modules` by walking declared production `dependencies`. A package that imports something it only lists as a `peerDependency` resolves fine in this hoisted workspace, passes every test, and then throws `ERR_MODULE_NOT_FOUND` inside `app.asar` — killing the desktop daemon at startup. That shipped twice from `@replit/codemirror-lang-*` grammars, which are interactive editor extensions published as if they were bare parsers.
 
-Run it locally with the same command owned by the Ubuntu leg of the existing `desktop-tests` CI check:
+The packaged smoke catches it but only runs when a PR touches the `desktop` filter in `.github/ci-paths.yml`. Both offenders landed under `packages/highlight/**`, which maps to `sdk`.
+
+`packages/highlight/src/__tests__/dependency-closure.test.ts` replicates the packer's traversal statically and runs with the normal unit tests. It is scoped to `@getpaseo/highlight` on purpose: that tree is small and pure, so the check is exact. Running the same walk over `@getpaseo/server` produces dozens of false positives from optional dependencies loaded behind `try`/`catch`.
+
+Prefer a `@lezer/*` grammar. When a language only ships inside an editor extension, vendor the grammar into `packages/highlight/src/<lang>/` — see `svelte/`, `nix/`, and `csharp/`.
+
+### Desktop browser regression
+
+The desktop browser E2E launches an isolated real daemon, Metro, and Electron app. It forces workspace LRU eviction to reparent the original tab and replace its guest `WebContents`, then makes one MCP call each for tab listing, snapshot, and click against that original browser id. A final MCP wait proves the real target page received the click.
+
+Run it locally with the same command owned by the Ubuntu `desktop-tests` required check:
 
 ```bash
-npm run test:e2e:browser-tab-bridge --workspace=@getpaseo/desktop
+npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
 ```
 
 ## Test organization
@@ -154,7 +164,7 @@ Vitest picks up tests by suffix. The suffix tells the runner which category it b
 | `*.real.e2e.test.ts`  | E2E that hits a real provider (Claude/Codex/Copilot/OpenCode/Pi) — needs creds in `packages/server/.env.test` | `npm run test:integration:real` / `test:e2e:real`                                    |
 | `*.local.e2e.test.ts` | E2E that needs a local-only resource                                                                          | `npm run test:integration:local` / `test:e2e:local`                                  |
 
-App-level Playwright browser E2E lives in `packages/app/e2e/*.spec.ts` and runs via `npm run test:e2e --workspace=@getpaseo/app` (separate from Vitest E2E). App Playwright specs that hit real providers use `*.real.spec.ts` and run through `npm run test:e2e:real --workspace=@getpaseo/app`; the default app E2E project ignores that suffix so CI does not need provider credentials.
+Browser Playwright specs live in `packages/app/e2e/browser/`. Desktop Playwright and real-Electron E2E live in `packages/desktop/e2e/`. Harness code shared by both suites lives in `packages/app/e2e/support/`; neither suite may place specs there. App Playwright specs that hit real providers use `*.real.spec.ts` and run through `npm run test:e2e:real --workspace=@getpaseo/app`; the default browser project ignores that suffix so CI does not need provider credentials.
 
 Live provider smoke tests belong in `*.real.e2e.test.ts`, not `*.test.ts`, even when guarded by environment variables. Default unit suites must use deterministic provider adapters/fakes so missing credits, auth outages, and upstream model drift do not block normal CI.
 
@@ -175,9 +185,22 @@ Test suites in this repo are heavy. Running them in bulk freezes the machine, es
 - Never re-run a suite another agent already reported green.
 - For full-suite confidence, push to CI and check GitHub Actions.
 - Never run the full Playwright E2E suite locally — defer whole-suite verification to CI. Targeted Playwright specs are allowed when you changed or need to prove that specific flow.
-- App Playwright specs share one isolated daemon per run. Helpers that create projects or workspaces must remove the daemon project record during cleanup, not only delete the temp directory. Agent helpers must pass the intended `workspaceId` through to agent creation; never infer ownership from `cwd`.
-- CI can shard app Playwright across multiple jobs; each shard still owns a full isolated daemon/relay/Metro stack from global setup. Helpers that restart the daemon must preserve the global setup environment, including disabled speech/local-model settings, so a restart does not change the tested surface or start background downloads.
-- Global setup starts Metro before Wrangler, assigns Wrangler explicit distinct relay and inspector ports, and accepts Metro as ready only when `/status` returns `packager-status:running`. A generic TCP listener is not sufficient readiness evidence.
+- App Playwright shares one warmed Metro server per run and gives every Playwright worker its own isolated daemon and `PASEO_HOME`. Spec files run concurrently without exposing one file's projects, agents, terminals, history, or provider configuration to another worker; tests within a file remain together so file-level setup is not repeated.
+- Playwright specs that exercise only the daemon import `daemonTest` from the shared fixtures so they do not create a browser context or page.
+- Helpers that create projects or workspaces own those records until cleanup. Their clients remove the daemon project on close, and an automatic fixture fails any test that still leaks a project record. Deleting only the temporary directory is not cleanup. Agent helpers pass the intended `workspaceId` through to agent creation; they never infer ownership from `cwd`.
+- Tests whose subject is daemon-global state, such as an empty history or daemon restart, start a dedicated host explicitly. Filenames and directories describe product behavior, never execution order or isolation mechanics.
+- Global setup accepts Metro as ready only when `/status` returns `packager-status:running`, then fetches the document's scripts so the cold bundle compilation finishes before Playwright's per-test timeout starts. A generic TCP listener is not sufficient readiness evidence. The browser suite uses direct local daemon connections and does not start a relay.
+- The app Playwright harness boots on Windows as well as POSIX. Spawn Node entrypoints through `process.execPath`, not `npx` or `node_modules/.bin` shims: Node refuses to spawn `.cmd` or `.bat` without `shell: true`, and shell mode concatenates argv without escaping and sends kill signals to `cmd.exe` instead of the real child.
+- Teardown kills the process tree, because a Windows signal reaches only the direct child and leaves forked workers holding the listening port.
+- The `asdf`-backed local Elixir relay stays POSIX-only, so the `relay-deployment` Playwright project is unavailable on Windows.
+
+## Pull-request test routing
+
+PR checks are routed by the behavior each suite proves, using `.github/ci-paths.yml`. A package does not inherit every test suite of its runtime consumers: app changes do not run CLI or Electron-wrapper tests, and protocol changes do not run every package that imports the protocol. Cross-package static compatibility belongs to `typecheck`; full integration coverage runs after merge on main and in manual CI runs.
+
+Required matrix legs are declared as statically named jobs. Their shared steps use YAML anchors, while job-level `if` conditions let GitHub report an unaffected leg as genuinely skipped without allocating a runner or losing the exact required-check name.
+
+The smallest meaningful contract wins over package ownership. Tiny structural invariants such as daemon launch supervision run unconditionally in the always-running routing job instead of maintaining a transitive file list; this check reads source entrypoints and builds no product. Routed integration contracts use stable domain directories. Browser changes select the required Playwright shards; desktop changes select the existing required desktop jobs, with renderer, real-Electron, and packaged-app coverage together in the Ubuntu leg. CLI-side Hub changes select one focused test inside the existing required server jobs. Repository scripts and the shared Vitest configuration run every PR contract because they are cross-cutting toolchain inputs.
 
 ## Agent authentication in tests
 

@@ -93,6 +93,59 @@ describe("workspace message schemas", () => {
     expect(activeScoped.scope).toBe("active");
   });
 
+  test("parses optional sequenced directory requests and responses", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "project.list.request",
+        requestId: "projects-sync",
+        sync: { generation: "daemon-generation", afterSeq: 7 },
+      }),
+    ).toMatchObject({ sync: { generation: "daemon-generation", afterSeq: 7 } });
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "fetch_workspaces_request",
+        requestId: "workspaces-sync",
+        sync: { generation: "daemon-generation", afterSeq: 11 },
+      }),
+    ).toMatchObject({ sync: { generation: "daemon-generation", afterSeq: 11 } });
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "fetch_agents_request",
+        requestId: "agents-sync",
+        scope: "active",
+        sync: { generation: "daemon-generation", afterSeq: 13 },
+      }),
+    ).toMatchObject({ sync: { generation: "daemon-generation", afterSeq: 13 } });
+
+    const response = SessionOutboundMessageSchema.parse({
+      type: "project.list.response",
+      payload: {
+        requestId: "projects-sync",
+        projects: [
+          {
+            projectId: "project-1",
+            projectDisplayName: "Project",
+            projectRootPath: "/repo",
+            projectKind: "git",
+            syncSeq: 12,
+          },
+        ],
+        sync: {
+          generation: "daemon-generation",
+          headSeq: 12,
+          mode: "changes",
+          removals: [{ id: "project-removed", seq: 10 }],
+        },
+      },
+    });
+    expect(response).toMatchObject({
+      payload: {
+        projects: [{ projectId: "project-1", syncSeq: 12 }],
+        sync: { headSeq: 12, removals: [{ id: "project-removed", seq: 10 }] },
+      },
+    });
+  });
+
   test("parses agent_update without project placement", () => {
     const result = SessionOutboundMessageSchema.safeParse({
       type: "agent_update",
@@ -499,6 +552,26 @@ describe("workspace message schemas", () => {
       throw new Error("Expected workspace_update upsert payload");
     }
     expect(parsed.payload.workspace.workspaceDirectory).toBe("/repo");
+    expect(parsed.payload.workspace.worktreeSlug).toBeUndefined();
+  });
+
+  test("preserves a Paseo-owned worktree slug", () => {
+    const parsed = WorkspaceDescriptorPayloadSchema.parse({
+      id: "owned-worktree",
+      projectId: "project",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/paseo/worktrees/project/feature/packages/app",
+      worktreeSlug: "feature",
+      projectKind: "git",
+      workspaceKind: "worktree",
+      name: "feature",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    });
+
+    expect(parsed.worktreeSlug).toBe("feature");
   });
 
   test("defaults omitted workspace archiving state and preserves present timestamps", () => {
@@ -795,6 +868,15 @@ describe("workspace message schemas", () => {
   });
 
   test("parses fetch_workspaces_response with optional runtime fields", () => {
+    const checks = [
+      { name: "legacy", status: "success", url: null },
+      {
+        name: "deploy",
+        status: "pending",
+        url: null,
+        traits: ["manual", "action_required", "future-forge-trait"],
+      },
+    ];
     const parsed = SessionOutboundMessageSchema.parse({
       type: "fetch_workspaces_response",
       payload: {
@@ -836,6 +918,7 @@ describe("workspace message schemas", () => {
                 baseRefName: "main",
                 headRefName: "workspace-git-service",
                 isMerged: false,
+                checks,
               },
               error: null,
               refreshedAt: "2026-04-12T00:00:00.000Z",
@@ -857,6 +940,7 @@ describe("workspace message schemas", () => {
       aheadOfOrigin: 2,
     });
     expect(parsed.payload.entries[0]?.githubRuntime?.pullRequest?.title).toBe("Runtime payloads");
+    expect(parsed.payload.entries[0]?.githubRuntime?.pullRequest?.checks).toEqual(checks);
   });
 
   test("older workspace parsers ignore additive runtime fields", () => {

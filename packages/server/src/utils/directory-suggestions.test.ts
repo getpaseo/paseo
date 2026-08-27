@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -11,6 +12,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { isPlatform } from "../test-utils/platform.js";
+import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 import {
   searchDirectoryEntries,
   WORKSPACE_SEARCH_HIDDEN_DIRECTORIES,
@@ -51,6 +53,7 @@ async function searchRelativeDirectoryEntries(options: {
   matchMode?: "fuzzy" | "suffix";
   maxDepth?: number;
   maxEntriesScanned?: number;
+  respectGitIgnore?: boolean;
 }) {
   return searchDirectoryEntries({
     root: options.cwd,
@@ -65,7 +68,13 @@ async function searchRelativeDirectoryEntries(options: {
     limit: options.limit,
     maxDepth: options.maxDepth,
     maxEntriesScanned: options.maxEntriesScanned,
+    respectGitIgnore: options.respectGitIgnore,
   });
+}
+
+function initGitRepo(directory: string, ignorePatterns: string): void {
+  execFileSync("git", ["init", "-q"], { cwd: directory });
+  writeFileSync(path.join(directory, ".gitignore"), ignorePatterns);
 }
 
 describe("searchDirectoryEntries", () => {
@@ -115,6 +124,49 @@ describe("searchDirectoryEntries", () => {
         },
       ],
     });
+  });
+
+  it("prunes directories ignored by Git and caches concurrent lookups", async () => {
+    execFileSync("git", ["init", "-q"], { cwd: searchRoot });
+    writeFileSync(path.join(searchRoot, ".gitignore"), "data/\n");
+    mkdirSync(path.join(searchRoot, "data", "matching-ignored-directory"), {
+      recursive: true,
+    });
+    mkdirSync(path.join(searchRoot, "visible", "matching-visible-directory"), {
+      recursive: true,
+    });
+
+    startGitCommandMetrics();
+    const results = await Promise.all([
+      searchDirectoryEntries({
+        root: searchRoot,
+        query: "matching",
+        pathFormat: "relative",
+        includeFiles: false,
+        includeDirectories: true,
+        respectGitIgnore: true,
+      }),
+      searchDirectoryEntries({
+        root: searchRoot,
+        query: "visible",
+        pathFormat: "relative",
+        includeFiles: false,
+        includeDirectories: true,
+        respectGitIgnore: true,
+      }),
+    ]);
+    const gitMetrics = stopGitCommandMetrics();
+
+    expect(results).toEqual([
+      [{ path: "visible/matching-visible-directory", kind: "directory" }],
+      [
+        { path: "visible", kind: "directory" },
+        { path: "visible/matching-visible-directory", kind: "directory" },
+      ],
+    ]);
+    expect(gitMetrics.commands.filter((command) => command.args.includes("ls-files"))).toHaveLength(
+      1,
+    );
   });
 
   it("configures raw blank queries independently from explicit root aliases", async () => {
@@ -171,7 +223,7 @@ describe("searchDirectoryEntries", () => {
     expect(suffixRootBrowses).toEqual([rootEntries, rootEntries]);
   });
 
-  it("anchors rooted one-segment queries to their root parent", async () => {
+  it("matches rooted queries against the full path at any depth", async () => {
     mkdirSync(path.join(searchRoot, "nested", "pso-global"), { recursive: true });
     mkdirSync(path.join(searchRoot, "pso-root"), { recursive: true });
     const absoluteQuery = path.join(configuredSearchRoot, "pso");
@@ -184,7 +236,11 @@ describe("searchDirectoryEntries", () => {
       pathQueryPolicy: "rooted" as const,
       rootAliases: ["~"],
     };
-    const expected = [{ path: "pso-root", kind: "directory" }];
+    const expected = [
+      { path: "pso-root", kind: "directory" },
+      { path: "nested/pso-global", kind: "directory" },
+      { path: "projects/paseo-desktop", kind: "directory" },
+    ];
 
     await expect(searchDirectoryEntries({ ...common, query: "~/pso" })).resolves.toEqual(expected);
     await expect(searchDirectoryEntries({ ...common, query: "./pso" })).resolves.toEqual(expected);
@@ -212,7 +268,10 @@ describe("searchDirectoryEntries", () => {
         { path: "projects", kind: "directory" },
         { path: "src", kind: "directory" },
       ],
-      projectEntries: [{ path: "projects/paseo-desktop", kind: "directory" }],
+      projectEntries: [
+        { path: "projects", kind: "directory" },
+        { path: "projects/paseo-desktop", kind: "directory" },
+      ],
     });
   });
 
@@ -634,7 +693,7 @@ describe("relative typed-entry configuration", () => {
       path.join(workspaceDir, "src", "components", "chat-input.tsx"),
       "export const ChatInput = null;\n",
     );
-    writeFileSync(path.join(workspaceDir, "docs", "notes.md"), "notes\n");
+    writeFileSync(path.join(workspaceDir, "docs", "search-notes.md"), "notes\n");
   });
 
   afterEach(() => {
@@ -746,6 +805,68 @@ describe("relative typed-entry configuration", () => {
     expect(results).toEqual([{ path: ".dev/paseo-home/daemon.log", kind: "file" }]);
   });
 
+  it("resolves an exact gitignored path while keeping it out of discovery results", async () => {
+    initGitRepo(workspaceDir, "generated/\n");
+    mkdirSync(path.join(workspaceDir, "generated"), { recursive: true });
+    writeFileSync(path.join(workspaceDir, "generated", "search-notes.md"), "generated notes\n");
+
+    const exactResults = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "generated/search-notes.md",
+      limit: 1,
+      includeFiles: true,
+      includeDirectories: false,
+      matchMode: "suffix",
+      respectGitIgnore: true,
+    });
+    const fuzzyResults = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "search-notes",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+      respectGitIgnore: true,
+    });
+
+    expect({ exactResults, fuzzyResults }).toEqual({
+      exactResults: [{ path: "generated/search-notes.md", kind: "file" }],
+      fuzzyResults: [{ path: "docs/search-notes.md", kind: "file" }],
+    });
+  });
+
+  it.skipIf(isWindows)(
+    "refuses an exact path that escapes the root through a symlink",
+    async () => {
+      const outsideDir = path.join(tempRoot, "outside-workspace");
+      mkdirSync(outsideDir, { recursive: true });
+      writeFileSync(path.join(outsideDir, "secret.md"), "outside\n");
+      symlinkSync(outsideDir, path.join(workspaceDir, "escape-link"));
+      symlinkSync(path.join(workspaceDir, "docs"), path.join(workspaceDir, "inside-link"));
+
+      const escaping = await searchRelativeDirectoryEntries({
+        cwd: workspaceDir,
+        query: "escape-link/secret.md",
+        limit: 1,
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "suffix",
+      });
+      const staysInside = await searchRelativeDirectoryEntries({
+        cwd: workspaceDir,
+        query: "inside-link/search-notes.md",
+        limit: 1,
+        includeFiles: true,
+        includeDirectories: false,
+        matchMode: "suffix",
+      });
+
+      expect({ escaping, staysInside }).toEqual({
+        escaping: [],
+        staysInside: [{ path: "inside-link/search-notes.md", kind: "file" }],
+      });
+    },
+  );
+
   it("traverses only allowlisted hidden directories without suggesting the directories", async () => {
     mkdirSync(path.join(workspaceDir, ".claude"), { recursive: true });
     mkdirSync(path.join(workspaceDir, ".dev", "cache"), { recursive: true });
@@ -784,6 +905,51 @@ describe("relative typed-entry configuration", () => {
       includeDirectories: true,
     });
 
-    expect(results).toEqual([{ path: "src/components", kind: "directory" }]);
+    expect(results).toEqual([
+      { path: "src/components", kind: "directory" },
+      { path: "src/components/chat-input.tsx", kind: "file" },
+    ]);
+  });
+
+  it("matches a path fragment anywhere in the full file path", async () => {
+    const targetPath = path.join(
+      workspaceDir,
+      "something",
+      "something-else",
+      "skills",
+      "paseo-advisor",
+      "SKILL.md",
+    );
+    mkdirSync(path.dirname(targetPath), { recursive: true });
+    writeFileSync(targetPath, "skill\n");
+
+    const results = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "skills/",
+      limit: 20,
+      includeFiles: true,
+      includeDirectories: false,
+    });
+
+    expect(results).toEqual([
+      {
+        path: "something/something-else/skills/paseo-advisor/SKILL.md",
+        kind: "file",
+      },
+    ]);
+  });
+
+  it("fuzzy-matches natural language against the full path", async () => {
+    mkdirSync(path.join(workspaceDir, "blankpage", "editor"), { recursive: true });
+
+    const results = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "blank page editor",
+      limit: 20,
+      includeFiles: false,
+      includeDirectories: true,
+    });
+
+    expect(results).toEqual([{ path: "blankpage/editor", kind: "directory" }]);
   });
 });

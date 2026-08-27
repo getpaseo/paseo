@@ -17,7 +17,7 @@ function projectTarget(input: {
     optionId: buildProjectOptionId("host-a", input.projectKey),
     serverId: "host-a",
     serverName: "Host A",
-    projectKey: input.projectKey,
+    projectViewKey: input.projectKey,
     projectName: input.projectName,
     cwd: input.cwd,
     isGit: true,

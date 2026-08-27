@@ -7,7 +7,13 @@ import type {
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
-import { providersSnapshotQueryKey, providersSnapshotQueryRoot } from "@/data/providers-snapshot";
+import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
+import { providerSnapshotCache, type ProviderSnapshotCache } from "@/data/provider-snapshot-cache";
+import {
+  normalizeProvidersSnapshotCwd,
+  providersSnapshotQueryKey,
+  providersSnapshotQueryRoot,
+} from "@/data/providers-snapshot";
 
 type ProvidersSnapshotUpdateMessage = Extract<
   SessionOutboundMessage,
@@ -106,6 +112,12 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     },
   },
   {
+    domain: "daemonPairingOffer",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({ queryKey: daemonPairingOfferQueryKey(serverId) });
+    },
+  },
+  {
     domain: "checkoutDiff",
     invalidate: ({ queryClient, serverId }) => {
       void queryClient.invalidateQueries({
@@ -177,6 +189,7 @@ export function applyProvidersSnapshotUpdate(input: {
   serverId: string;
   queryClient: QueryClient;
   message: ProvidersSnapshotUpdate;
+  cache?: ProviderSnapshotCache;
 }): void {
   if (input.message.type !== "providers_snapshot_update") {
     return;
@@ -187,6 +200,16 @@ export function applyProvidersSnapshotUpdate(input: {
     generatedAt: input.message.payload.generatedAt,
     requestId: "providers_snapshot_update",
   });
+  const { compactSnapshot, snapshotHash } = input.message.payload;
+  if (compactSnapshot && snapshotHash) {
+    void (input.cache ?? providerSnapshotCache).write({
+      serverId: input.serverId,
+      cwd: normalizeProvidersSnapshotCwd(input.message.payload.cwd),
+      hash: snapshotHash,
+      generatedAt: input.message.payload.generatedAt,
+      compactSnapshot,
+    });
+  }
   void input.queryClient.invalidateQueries({
     queryKey: agentCommandsQueryRoot(input.serverId),
     exact: false,
@@ -403,6 +426,9 @@ function applyDaemonConfigStatus(input: {
     daemonConfigQueryKey(input.serverId),
     payload.config,
   );
+  void input.queryClient.invalidateQueries({
+    queryKey: daemonPairingOfferQueryKey(input.serverId),
+  });
 }
 
 function applyCheckoutDiffUpdate(input: {
@@ -420,6 +446,9 @@ function applyCheckoutDiffUpdate(input: {
       cwd: input.message.payload.cwd,
       files: orderCheckoutDiffFiles(input.message.payload.files),
       error: input.message.payload.error,
+      ...(input.message.payload.diffTooLarge !== undefined
+        ? { diffTooLarge: input.message.payload.diffTooLarge }
+        : {}),
       requestId: `subscription:${input.message.payload.subscriptionId}`,
     },
   });
@@ -440,6 +469,9 @@ function applyCheckoutDiffSubscribeResponse(input: {
       cwd: input.message.payload.cwd,
       files: orderCheckoutDiffFiles(input.message.payload.files),
       error: input.message.payload.error,
+      ...(input.message.payload.diffTooLarge !== undefined
+        ? { diffTooLarge: input.message.payload.diffTooLarge }
+        : {}),
       requestId: input.message.payload.requestId,
     },
   });

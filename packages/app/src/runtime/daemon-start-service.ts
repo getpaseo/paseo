@@ -9,7 +9,7 @@ export interface StartDaemonIfEnabledInput {
   shouldStart: DaemonStartCondition;
 }
 
-type DaemonConnectionStore = Pick<HostRuntimeStore, "upsertConnectionFromListen">;
+type DaemonConnectionStore = Pick<HostRuntimeStore, "getHosts" | "upsertConnectionFromListen">;
 
 export interface DaemonStartServiceDeps {
   store: DaemonConnectionStore;
@@ -20,13 +20,17 @@ export async function upsertDesktopDaemonConnection(
   store: DaemonConnectionStore,
   daemon: DesktopDaemonStatus,
 ): Promise<DaemonStartResult> {
-  const listenAddress = daemon.listen?.trim() ?? "";
   const serverId = daemon.serverId.trim();
-  if (!listenAddress) {
-    return { ok: false, error: "Desktop daemon did not return a listen address." };
-  }
   if (!serverId) {
     return { ok: false, error: "Desktop daemon did not return a server id." };
+  }
+  if (store.getHosts().some((host) => host.serverId === serverId)) {
+    return { ok: true };
+  }
+
+  const listenAddress = daemon.listen?.trim() ?? "";
+  if (!listenAddress) {
+    return { ok: false, error: "Desktop daemon did not return a listen address." };
   }
   if (!connectionFromListen(listenAddress)) {
     return {

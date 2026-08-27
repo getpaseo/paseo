@@ -19,13 +19,15 @@ import { StyleSheet, useUnistyles, withUnistyles } from "react-native-unistyles"
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
   getTerminalProfileIcon,
-  resolveTerminalProfiles,
+  DEFAULT_TERMINAL_PROFILES,
 } from "@getpaseo/protocol/terminal-profiles";
+import { AgentProfilesSection } from "@/agent-profiles";
+import { AgentSkillsSection } from "@/agent-skills";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
-import { AdaptiveRenameModal } from "@/components/rename-modal";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
 import {
   ProfileDraft,
@@ -56,6 +58,7 @@ import {
 import { ProvidersSection } from "@/screens/settings/providers-section";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
+import { HostAppearanceSection } from "@/screens/settings/host-appearance-section";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { useSessionStore } from "@/stores/session-store";
 import { settingsStyles } from "@/styles/settings";
@@ -169,45 +172,30 @@ function HostStatusBadges({ serverId }: { serverId: string }) {
   const activeConnection = snapshot?.activeConnection ?? null;
   const statusLabel = formatConnectionStatus(connectionStatus);
   const statusTone = getConnectionStatusTone(connectionStatus);
-  let statusColor: string;
+  let statusVariant: StatusBadgeVariant = "muted";
+  let statusDotColor = theme.colors.foregroundMuted;
   if (statusTone === "success") {
-    statusColor = theme.colors.palette.green[400];
+    statusVariant = "success";
+    statusDotColor = theme.colors.statusDotSuccess;
   } else if (statusTone === "warning") {
-    statusColor = theme.colors.palette.amber[500];
+    statusVariant = "warning";
+    statusDotColor = theme.colors.statusDotWarning;
   } else if (statusTone === "error") {
-    statusColor = theme.colors.destructive;
-  } else {
-    statusColor = theme.colors.foregroundMuted;
-  }
-  let statusPillBg: string;
-  if (statusTone === "success") {
-    statusPillBg = "rgba(74, 222, 128, 0.1)";
-  } else if (statusTone === "warning") {
-    statusPillBg = "rgba(245, 158, 11, 0.1)";
-  } else if (statusTone === "error") {
-    statusPillBg = "rgba(248, 113, 113, 0.1)";
-  } else {
-    statusPillBg = "rgba(161, 161, 170, 0.1)";
+    statusVariant = "error";
+    statusDotColor = theme.colors.statusDotDanger;
   }
   const connectionBadge = formatActiveConnectionBadge(activeConnection, theme, t);
   const versionBadgeText = formatDaemonVersionBadge(daemonVersion);
 
-  const statusPillStyle = useMemo(
-    () => [styles.statusPill, { backgroundColor: statusPillBg }],
-    [statusPillBg],
-  );
   const statusDotStyle = useMemo(
-    () => [styles.statusDot, { backgroundColor: statusColor }],
-    [statusColor],
+    () => [styles.statusDot, { backgroundColor: statusDotColor }],
+    [statusDotColor],
   );
-  const statusTextStyle = useMemo(() => [styles.statusText, { color: statusColor }], [statusColor]);
+  const statusLeading = useMemo(() => <View style={statusDotStyle} />, [statusDotStyle]);
 
   return (
     <View style={styles.identityBadges} testID="host-page-identity">
-      <View style={statusPillStyle}>
-        <View style={statusDotStyle} />
-        <Text style={statusTextStyle}>{statusLabel}</Text>
-      </View>
+      <StatusBadge label={statusLabel} variant={statusVariant} leading={statusLeading} />
       {connectionBadge ? (
         <View style={styles.badgePill}>
           {connectionBadge.icon}
@@ -237,9 +225,7 @@ function HostConnectionError({ serverId }: { serverId: string }) {
 }
 
 export function HostConnectionsPage({ serverId }: { serverId: string }) {
-  const { t } = useTranslation();
   const host = useHostProfile(serverId);
-  const isLocalDaemon = useIsLocalDaemon(serverId);
 
   if (!host) {
     return <HostNotFound />;
@@ -249,12 +235,22 @@ export function HostConnectionsPage({ serverId }: { serverId: string }) {
     <View>
       <HostConnectionError serverId={serverId} />
       <ConnectionsSection host={host} />
-      {isLocalDaemon ? (
-        <SettingsSection title={t("settings.host.pairDevices.title")}>
-          <PairDeviceRow />
-        </SettingsSection>
-      ) : null}
     </View>
+  );
+}
+
+export function HostPairDevicePage({ serverId }: { serverId: string }) {
+  const { t } = useTranslation();
+  const host = useHostProfile(serverId);
+
+  if (!host) {
+    return <HostNotFound />;
+  }
+
+  return (
+    <SettingsSection title={t("settings.host.pairDevices.title")}>
+      <PairDeviceRow serverId={serverId} />
+    </SettingsSection>
   );
 }
 
@@ -280,6 +276,8 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
           <Text style={styles.emptyText}>{t("settings.host.agents.unavailable")}</Text>
         </View>
       )}
+      <AgentSkillsSection serverId={serverId} />
+      <AgentProfilesSection serverId={serverId} />
     </View>
   );
 }
@@ -360,10 +358,11 @@ export function HostSettingsPage({
         <Text style={styles.daemonHeaderLabel} numberOfLines={1}>
           {host.label}
         </Text>
-        <HostRenameButton host={host} />
       </View>
 
       <HostStatusBadges serverId={serverId} />
+
+      <HostAppearanceSection host={host} />
 
       {isLocalDaemon ? <LocalDaemonSection /> : null}
 
@@ -371,51 +370,6 @@ export function HostSettingsPage({
 
       <RemoveHostSection host={host} isLocalDaemon={isLocalDaemon} onRemoved={onHostRemoved} />
     </View>
-  );
-}
-
-export function HostRenameButton({ host }: { host: HostProfile }) {
-  const { t } = useTranslation();
-  const { theme } = useUnistyles();
-  const { renameHost } = useHostMutations();
-  const [isEditing, setIsEditing] = useState(false);
-
-  const handleSubmit = useCallback(
-    async (value: string) => {
-      const nextLabel = value.trim();
-      if (nextLabel === host.label.trim()) return;
-      await renameHost(host.serverId, nextLabel);
-    },
-    [host.label, host.serverId, renameHost],
-  );
-
-  const openEditor = useCallback(() => setIsEditing(true), []);
-  const closeEditor = useCallback(() => setIsEditing(false), []);
-
-  return (
-    <>
-      <Pressable
-        onPress={openEditor}
-        hitSlop={8}
-        style={styles.identityEditButton}
-        accessibilityRole="button"
-        accessibilityLabel={t("settings.host.daemon.rename.editLabel")}
-        testID="host-page-label-edit-button"
-      >
-        <Pencil size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-      </Pressable>
-
-      <AdaptiveRenameModal
-        visible={isEditing}
-        title={t("settings.host.daemon.rename.title")}
-        initialValue={host.label}
-        placeholder={t("settings.host.daemon.rename.placeholder")}
-        submitLabel={t("settings.host.daemon.rename.submit")}
-        onClose={closeEditor}
-        onSubmit={handleSubmit}
-        testID="host-page-rename-modal"
-      />
-    </>
   );
 }
 
@@ -1241,7 +1195,7 @@ function AppendSystemPromptCard({ serverId }: { serverId: string }) {
   );
 }
 
-function PairDeviceRow() {
+function PairDeviceRow({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -1265,6 +1219,7 @@ function PairDeviceRow() {
       </Pressable>
 
       <PairDeviceModal
+        serverId={serverId}
         visible={isModalOpen}
         onClose={handleClose}
         testID="host-page-pair-device-card"
@@ -1582,8 +1537,11 @@ function TerminalProfilesSection({ serverId }: { serverId: string }) {
   } | null>(null);
   const [isAdding, setIsAdding] = useState(false);
 
+  // Settings edits what is persisted, not the adopted view. Any save here
+  // writes the whole list back, so resolving first would bake read-time prompt
+  // adoption into the user's config the first time they reorder a row.
   const profiles = useMemo(
-    () => (config ? resolveTerminalProfiles(config.terminalProfiles) : null),
+    () => (config ? (config.terminalProfiles ?? DEFAULT_TERMINAL_PROFILES) : null),
     [config],
   );
 
@@ -1837,7 +1795,7 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
 }));
@@ -1846,10 +1804,6 @@ const styles = StyleSheet.create((theme) => ({
   updateFailure: {
     marginHorizontal: theme.spacing[4],
     marginBottom: theme.spacing[4],
-  },
-  identityEditButton: {
-    padding: theme.spacing[1],
-    borderRadius: theme.borderRadius.md,
   },
   daemonHeader: {
     flexDirection: "row",
@@ -1870,22 +1824,10 @@ const styles = StyleSheet.create((theme) => ({
     flexWrap: "wrap",
     marginBottom: theme.spacing[6],
   },
-  statusPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 4,
-    borderRadius: theme.borderRadius.full,
-  },
   statusDot: {
     width: 6,
     height: 6,
     borderRadius: theme.borderRadius.full,
-  },
-  statusText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
   },
   badgePill: {
     flexDirection: "row",
@@ -1900,23 +1842,23 @@ const styles = StyleSheet.create((theme) => ({
     maxWidth: 200,
   },
   badgeText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },
   errorText: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     marginBottom: theme.spacing[2],
   },
   connectionLatency: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     marginRight: theme.spacing[2],
   },
   confirmText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   confirmActions: {
     flexDirection: "row",
@@ -1935,7 +1877,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));
 

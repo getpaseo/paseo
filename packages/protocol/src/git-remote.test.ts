@@ -27,3 +27,40 @@ describe("isCompleteGitRemote", () => {
     }
   });
 });
+
+describe("parseGitRemoteLocation port", () => {
+  it("preserves an explicit non-default port from an https remote", () => {
+    expect(parseGitRemoteLocation("https://home-git.example.com:60443/team/repo.git")?.port).toBe(
+      "60443",
+    );
+  });
+
+  it("preserves a port from a plain http remote", () => {
+    expect(parseGitRemoteLocation("http://internal.example.com:3000/team/repo.git")?.port).toBe(
+      "3000",
+    );
+  });
+
+  it("omits the port for a default-port remote", () => {
+    expect(parseGitRemoteLocation("https://github.com/acme/repo.git")?.port).toBeUndefined();
+  });
+
+  it("has no port for an scp-form remote", () => {
+    expect(parseGitRemoteLocation("git@host.example.com:team/repo.git")?.port).toBeUndefined();
+  });
+
+  it("omits an explicitly written default port", () => {
+    expect(parseGitRemoteLocation("ssh://git@github.com:22/acme/repo.git")).toEqual(
+      parseGitRemoteLocation("ssh://git@github.com/acme/repo.git"),
+    );
+  });
+
+  it("reads a scheme remote as a URL rather than scp form", () => {
+    expect(parseGitRemoteLocation("ssh://git@example.com:2222/acme/repo.git")).toEqual({
+      transport: "ssh",
+      host: "example.com",
+      port: "2222",
+      path: "acme/repo",
+    });
+  });
+});

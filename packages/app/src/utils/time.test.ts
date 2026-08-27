@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { formatDuration, formatMessageTimestamp, formatTimeAgo } from "./time";
+import {
+  describeCompactTimeAgo,
+  formatCompactTimeAgo,
+  formatDuration,
+  formatMessageTimestamp,
+  formatTimeAgo,
+} from "./time";
 
 describe("formatTimeAgo", () => {
   const now = new Date("2026-07-16T12:00:00.000Z");
@@ -13,6 +19,47 @@ describe("formatTimeAgo", () => {
     ["2026-01-15T12:00:00.000Z", "Jan 15"],
   ])("formats %s as %s", (date, expected) => {
     expect(formatTimeAgo(new Date(date), now)).toBe(expected);
+  });
+});
+
+describe("describeCompactTimeAgo", () => {
+  const now = new Date("2026-07-16T12:00:00.000Z");
+
+  it.each([
+    ["2026-07-16T11:59:59.000Z", "now", "minute"],
+    ["2026-07-16T11:59:30.000Z", "now", "minute"],
+    ["2026-07-16T11:59:00.000Z", "1m", "minute"],
+    ["2026-07-16T11:55:00.000Z", "5m", "minute"],
+    ["2026-07-16T11:00:00.000Z", "1h", "hour"],
+    ["2026-07-16T10:00:00.000Z", "2h", "hour"],
+    ["2026-07-15T12:00:00.000Z", "1d", "day"],
+    ["2026-07-13T12:00:00.000Z", "3d", "day"],
+    ["2026-07-10T12:00:00.000Z", "6d", "day"],
+    ["2026-07-09T12:00:00.000Z", "Jul 9", "static"],
+    ["2026-01-15T12:00:00.000Z", "Jan 15", "static"],
+  ] as const)("formats %s as %s at %s resolution", (date, label, resolution) => {
+    expect(describeCompactTimeAgo(new Date(date), now)).toEqual({ label, resolution });
+  });
+
+  it("never shows a sub-minute count", () => {
+    // A seconds label is only true for the second it rendered. Everything under a minute is
+    // "now", which stays true and lets the row sit still.
+    for (let seconds = 0; seconds < 60; seconds += 1) {
+      const date = new Date(now.getTime() - seconds * 1000);
+      expect(describeCompactTimeAgo(date, now).label).toBe("now");
+    }
+  });
+
+  it("switches to an absolute date exactly at seven days", () => {
+    const almost = new Date(now.getTime() - (7 * 24 * 60 * 60 * 1000 - 1));
+    const exactly = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    expect(describeCompactTimeAgo(almost, now).resolution).toBe("day");
+    expect(describeCompactTimeAgo(exactly, now).resolution).toBe("static");
+  });
+
+  it("keeps formatCompactTimeAgo as the label alone", () => {
+    const date = new Date("2026-07-16T10:00:00.000Z");
+    expect(formatCompactTimeAgo(date, now)).toBe(describeCompactTimeAgo(date, now).label);
   });
 });
 

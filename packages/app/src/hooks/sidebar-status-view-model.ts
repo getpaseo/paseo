@@ -1,14 +1,9 @@
+import { STATUS_BUCKET_ORDER } from "@/utils/sidebar-agent-state";
 import type { SidebarWorkspaceEntry } from "@/hooks/sidebar-workspaces-view-model";
 
 export type StatusBucket = SidebarWorkspaceEntry["statusBucket"];
 
-export const STATUS_BUCKET_ORDER: readonly StatusBucket[] = [
-  "needs_input",
-  "failed",
-  "attention",
-  "running",
-  "done",
-] as const;
+export { STATUS_BUCKET_ORDER };
 
 export const STATUS_BUCKET_LABELS: Record<StatusBucket, string> = {
   needs_input: "Needs input",
@@ -26,7 +21,7 @@ export interface StatusGroup {
 
 export function buildStatusGroups(
   workspaces: SidebarWorkspaceEntry[],
-  projectNamesByKey: Map<string, string>,
+  projectNamesByViewKey: Map<string, string>,
 ): StatusGroup[] {
   const bucketRows = new Map<StatusBucket, SidebarWorkspaceEntry[]>();
 
@@ -46,7 +41,7 @@ export function buildStatusGroups(
     const rows = bucketRows.get(bucket);
     if (!rows || rows.length === 0) continue;
 
-    rows.sort((a, b) => compareStatusRows(a, b, projectNamesByKey));
+    rows.sort((a, b) => compareStatusRows(a, b, projectNamesByViewKey));
     groups.push({ bucket, label: STATUS_BUCKET_LABELS[bucket], rows });
   }
 
@@ -56,7 +51,7 @@ export function buildStatusGroups(
 function compareStatusRows(
   a: SidebarWorkspaceEntry,
   b: SidebarWorkspaceEntry,
-  projectNamesByKey: Map<string, string>,
+  projectNamesByViewKey: Map<string, string>,
 ): number {
   const aTime = a.statusEnteredAt?.getTime() ?? null;
   const bTime = b.statusEnteredAt?.getTime() ?? null;
@@ -69,8 +64,8 @@ function compareStatusRows(
     return 1;
   }
 
-  const aProject = projectNamesByKey.get(a.projectKey) ?? "";
-  const bProject = projectNamesByKey.get(b.projectKey) ?? "";
+  const aProject = projectNamesByViewKey.get(a.projectViewKey) ?? "";
+  const bProject = projectNamesByViewKey.get(b.projectViewKey) ?? "";
   const projectCmp = aProject.localeCompare(bProject);
   if (projectCmp !== 0) return projectCmp;
 

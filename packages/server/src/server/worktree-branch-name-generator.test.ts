@@ -24,15 +24,13 @@ The branch must be a valid git ref: lowercase letters, numbers, hyphens, and sla
 The branch is generated directly from the prompt — it is NEVER derived from or slugified from the title.
 
 Title style:
-A terse, task-shaped label naming what the task is about (sentence case, max 80 characters).
-Aim for about 4 words. Go longer only when the task genuinely needs it; most titles must stay short.
-Do not start with a generic 'do' verb (Fix, Add, Implement, Diagnose, Update, Change, Create, Set, Make) — every task is implicitly one of these, so the verb is noise. Name the thing instead.
-Keep a verb only when it states the specific operation (Swap, Split, Extract, Rename, Merge, Inline).
-Good titles: "Swap sidebar history icon", "Composer keyboard shift", "Agent auto-titling", "Worktree selection memory", "Split browser pane".
-Bad titles: "Fix composer pushed up by keyboard in workspace", "Diagnose auto-titling still happening for agents", "Change sidebar history icon from clock to history icon".
+An actionable task label: requested operation + concrete target + strongest distinguishing anchor (sentence case, max 80 characters).
+Preserve explicit identifiers such as PR or issue numbers, file paths, packages, components, commands, and quoted names when they distinguish the task.
+Aim for about 4 words, but never drop a part needed to understand or distinguish the task.
+Example: "Refactor PR #2638 Playwright specs".
 
 Branch style:
-A short, descriptive slug — a few lowercase words joined by hyphens.
+A short task-shaped slug preserving the operation, target, and explicit identifier when present.
 
 Return JSON only with fields 'title' and 'branch'.
 
@@ -265,7 +263,7 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     expect(prompt).not.toContain("Aim for about 4 words");
     // Contract and branch style are not part of the title override.
     expect(prompt).toContain("Generate a title and a git branch name");
-    expect(prompt).toContain("Branch style:\nA short, descriptive slug");
+    expect(prompt).toContain("Branch style:\nA short task-shaped slug");
     expect(prompt).toContain("Return JSON only with fields 'title' and 'branch'.");
   });
 
@@ -275,7 +273,7 @@ describe("generateBranchNameFromFirstAgentContext", () => {
     });
 
     expect(prompt).toContain("Branch style:\nUse the prefix mb/.");
-    expect(prompt).not.toContain("A short, descriptive slug");
+    expect(prompt).not.toContain("A short task-shaped slug");
     expect(prompt).toContain("Aim for about 4 words");
   });
 

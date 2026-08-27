@@ -1,185 +1,313 @@
-import { useMemo, type ReactElement, type ReactNode } from "react";
-import { type PressableStateCallbackType } from "react-native";
-import { StyleSheet, withUnistyles } from "react-native-unistyles";
+import { Fragment, useMemo, type ReactElement } from "react";
+import { withUnistyles } from "react-native-unistyles";
 import {
+  ArrowRightToLine,
   Copy,
+  CopyPlus,
   Download,
+  ExternalLink,
+  FilePlus,
   FileText,
+  FolderMinus,
+  FolderOpen,
+  FolderPlus,
   MessageSquarePlus,
-  MoreVertical,
+  Pencil,
+  Trash2,
+  Undo2,
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
-import { ICON_SIZE, SPACING, type Theme } from "@/styles/theme";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from "@/components/ui/context-menu";
 
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const ThemedMoreVertical = withUnistyles(MoreVertical);
-
-/** Width occupied by a file action trigger, including its visual padding. */
-export const FILE_ACTIONS_MENU_WIDTH = ICON_SIZE.sm + 2 * SPACING[1];
+const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
+type FileActionGroup = "create" | "open" | "reference" | "manage" | "destructive";
 
 interface FileAction {
   key: string;
+  group: FileActionGroup;
   label: string;
   icon: LucideIcon;
   onSelect: () => void;
+  destructive?: boolean;
+  separatorBefore?: boolean;
   testID?: string;
 }
 
-interface FileActionsMenuProps {
+function optionalFileAction(
+  available: boolean,
+  onSelect: (() => void) | undefined,
+  action: Omit<FileAction, "onSelect">,
+): FileAction | null {
+  return available && onSelect ? { ...action, onSelect } : null;
+}
+
+interface FileActionsContextMenuContentProps {
   fileKind: "file" | "directory";
   fileExists?: boolean;
   onOpenFile?: () => void;
+  onOpenInEditor?: () => void;
+  editorTargetName?: string;
+  onOpenToSide?: () => void;
   onCopyPath?: () => void;
+  onCopyRelativePath?: () => void;
+  onReveal?: () => void;
+  revealTargetName?: string;
   onDownload?: () => void;
   onAddToChat?: () => void;
-  /** Optional metadata block rendered above the actions (e.g. size/modified). */
-  header?: ReactNode;
-  open?: boolean;
-  onOpenChange?: (open: boolean) => void;
-  hitSlop?: number;
-  accessibilityLabel: string;
+  onNewFile?: () => void;
+  onNewFolder?: () => void;
+  onCollapseFolder?: () => void;
+  onRename?: () => void;
+  onDuplicate?: () => void;
+  onRevert?: () => void;
+  onDelete?: () => void;
   testIDPrefix?: string;
 }
 
-// The menu lives inside pressable rows (diff header, explorer entry); stop the
-// press so opening it doesn't also trigger the row.
-function stopTriggerPropagation(event: { stopPropagation?: () => void }) {
-  event.stopPropagation?.();
-}
-
-function triggerStyle({
-  hovered,
-  pressed,
-  open,
-}: PressableStateCallbackType & { hovered?: boolean; open?: boolean }) {
-  return [styles.trigger, (Boolean(hovered) || pressed || Boolean(open)) && styles.triggerActive];
-}
-
 /**
- * Shared kebab (⋮) menu for per-file actions. Used by the file explorer tree and
- * git diff pane so both surfaces share action availability, ordering, and chrome.
+ * Shared context-menu content for per-file actions. The file explorer tree and git diff pane
+ * own their row triggers while sharing action availability, ordering, and chrome here.
  */
-export function FileActionsMenu({
+export function FileActionsContextMenuContent({
   fileKind,
   fileExists = true,
   onOpenFile,
+  onOpenInEditor,
+  editorTargetName,
+  onOpenToSide,
   onCopyPath,
+  onCopyRelativePath,
+  onReveal,
+  revealTargetName,
   onDownload,
   onAddToChat,
-  header,
-  open,
-  onOpenChange,
-  hitSlop = 12,
-  accessibilityLabel,
+  onNewFile,
+  onNewFolder,
+  onCollapseFolder,
+  onRename,
+  onDuplicate,
+  onRevert,
+  onDelete,
   testIDPrefix,
-}: FileActionsMenuProps): ReactElement | null {
+}: FileActionsContextMenuContentProps): ReactElement | null {
   const { t } = useTranslation();
+  const openInEditorAction = useMemo<FileAction | null>(
+    () =>
+      fileKind === "directory" && onOpenInEditor && editorTargetName
+        ? {
+            key: "open-in-editor",
+            group: "open",
+            label: t("workspace.fileActions.openIn", { target: editorTargetName }),
+            icon: ExternalLink,
+            onSelect: onOpenInEditor,
+          }
+        : null,
+    [editorTargetName, fileKind, onOpenInEditor, t],
+  );
   const actions = useMemo<FileAction[]>(() => {
     const availableFile = fileKind === "file" && fileExists;
-    const next: FileAction[] = [];
-    if (availableFile && onOpenFile) {
-      next.push({
-        key: "open-file",
-        label: t("workspace.fileActions.openFile"),
-        icon: FileText,
-        onSelect: onOpenFile,
-        testID: testIDPrefix ? `${testIDPrefix}-open-file` : undefined,
-      });
-    }
-    if (onCopyPath) {
-      next.push({
-        key: "copy-path",
-        label: t("workspace.fileActions.copyPath"),
-        icon: Copy,
-        onSelect: onCopyPath,
-      });
-    }
-    if (availableFile && onDownload) {
-      next.push({
-        key: "download",
-        label: t("workspace.fileActions.download"),
-        icon: Download,
-        onSelect: onDownload,
-      });
-    }
-    if (availableFile && onAddToChat) {
-      next.push({
-        key: "add-to-chat",
-        label: t("workspace.fileActions.addToChat"),
-        icon: MessageSquarePlus,
-        onSelect: onAddToChat,
-        testID: testIDPrefix ? `${testIDPrefix}-add-to-chat` : undefined,
-      });
-    }
-    return next;
-  }, [fileExists, fileKind, onAddToChat, onCopyPath, onDownload, onOpenFile, t, testIDPrefix]);
+    const specs: Array<FileAction | null> = [
+      onNewFile
+        ? {
+            key: "new-file",
+            group: "create",
+            label: t("workspace.fileActions.newFile"),
+            icon: FilePlus,
+            onSelect: onNewFile,
+          }
+        : null,
+      onNewFolder
+        ? {
+            key: "new-folder",
+            group: "create",
+            label: t("workspace.fileActions.newFolder"),
+            icon: FolderPlus,
+            onSelect: onNewFolder,
+          }
+        : null,
+      onCollapseFolder
+        ? {
+            key: "collapse-folder",
+            group: "open",
+            label: t("workspace.fileActions.collapseFolder"),
+            icon: FolderMinus,
+            onSelect: onCollapseFolder,
+          }
+        : null,
+      availableFile && onOpenFile
+        ? {
+            key: "open-file",
+            group: "open",
+            label: t("workspace.fileActions.openFile"),
+            icon: FileText,
+            onSelect: onOpenFile,
+          }
+        : null,
+      openInEditorAction,
+      optionalFileAction(availableFile, onOpenToSide, {
+        key: "open-to-side",
+        group: "open",
+        label: t("workspace.fileActions.openToSide"),
+        icon: ArrowRightToLine,
+      }),
+      onCopyPath
+        ? {
+            key: "copy-path",
+            group: "reference",
+            label: t("workspace.fileActions.copyPath"),
+            icon: Copy,
+            onSelect: onCopyPath,
+          }
+        : null,
+      onCopyRelativePath
+        ? {
+            key: "copy-relative-path",
+            group: "reference",
+            label: t("workspace.fileActions.copyRelativePath"),
+            icon: Copy,
+            onSelect: onCopyRelativePath,
+          }
+        : null,
+      onReveal && revealTargetName
+        ? {
+            key: "reveal",
+            group: "reference",
+            label: t("workspace.fileActions.revealIn", { target: revealTargetName }),
+            icon: FolderOpen,
+            onSelect: onReveal,
+          }
+        : null,
+      availableFile && onDownload
+        ? {
+            key: "download",
+            group: "reference",
+            label: t("workspace.fileActions.download"),
+            icon: Download,
+            onSelect: onDownload,
+          }
+        : null,
+      availableFile && onAddToChat
+        ? {
+            key: "add-to-chat",
+            group: "reference",
+            label: t("workspace.fileActions.addToChat"),
+            icon: MessageSquarePlus,
+            onSelect: onAddToChat,
+          }
+        : null,
+      onRename
+        ? {
+            key: "rename",
+            group: "manage",
+            label: t("workspace.fileActions.rename"),
+            icon: Pencil,
+            onSelect: onRename,
+          }
+        : null,
+      onDuplicate
+        ? {
+            key: "duplicate",
+            group: "manage",
+            label: t("workspace.fileActions.duplicate"),
+            icon: CopyPlus,
+            onSelect: onDuplicate,
+          }
+        : null,
+      onRevert
+        ? {
+            key: "revert",
+            group: "destructive",
+            label: t("workspace.fileActions.revert"),
+            icon: Undo2,
+            onSelect: onRevert,
+            destructive: true,
+          }
+        : null,
+      onDelete
+        ? {
+            key: "delete",
+            group: "destructive",
+            label: t("workspace.fileActions.delete"),
+            icon: Trash2,
+            onSelect: onDelete,
+            destructive: true,
+          }
+        : null,
+    ];
+    const availableActions = specs.filter((action): action is FileAction => action !== null);
+    return availableActions.map((action, index) =>
+      Object.assign(action, {
+        separatorBefore: index > 0 && action.group !== availableActions[index - 1]?.group,
+        testID: testIDPrefix ? `${testIDPrefix}-${action.key}` : undefined,
+      }),
+    );
+  }, [
+    fileExists,
+    fileKind,
+    onAddToChat,
+    onCollapseFolder,
+    onCopyPath,
+    onCopyRelativePath,
+    onDelete,
+    onDownload,
+    onDuplicate,
+    onNewFile,
+    onNewFolder,
+    onOpenFile,
+    openInEditorAction,
+    onOpenToSide,
+    onRename,
+    onReveal,
+    onRevert,
+    revealTargetName,
+    t,
+    testIDPrefix,
+  ]);
 
   if (actions.length === 0) {
     return null;
   }
   return (
-    <DropdownMenu open={open} onOpenChange={onOpenChange}>
-      <DropdownMenuTrigger
-        hitSlop={hitSlop}
-        onPressIn={stopTriggerPropagation}
-        style={triggerStyle}
-        accessibilityLabel={accessibilityLabel}
-        testID={testIDPrefix ? `${testIDPrefix}-actions` : undefined}
-      >
-        <ThemedMoreVertical size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" width={220}>
-        {header ? (
-          <>
-            {header}
-            <DropdownMenuSeparator />
-          </>
-        ) : null}
-        {actions.map((action) => (
-          <FileActionMenuItem key={action.key} action={action} />
-        ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <ContextMenuContent
+      align="start"
+      width={220}
+      testID={testIDPrefix ? `${testIDPrefix}-context-menu` : undefined}
+    >
+      {actions.map((action) => (
+        <Fragment key={action.key}>
+          {action.separatorBefore ? <ContextMenuSeparator /> : null}
+          <FileActionMenuItem action={action} />
+        </Fragment>
+      ))}
+    </ContextMenuContent>
   );
 }
 
 function FileActionMenuItem({ action }: { action: FileAction }): ReactElement {
-  const Icon = action.icon;
-  const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
-  const leading = useMemo(
-    () => <ThemedIcon size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />,
-    [ThemedIcon],
-  );
+  const leading = useMemo(() => {
+    const ThemedIcon = withUnistyles(action.icon);
+    return (
+      <ThemedIcon
+        size={ICON_SIZE.sm}
+        uniProps={action.destructive ? destructiveColorMapping : foregroundMutedColorMapping}
+      />
+    );
+  }, [action.destructive, action.icon]);
   return (
-    <DropdownMenuItem leading={leading} onSelect={action.onSelect} testID={action.testID}>
+    <ContextMenuItem
+      leading={leading}
+      onSelect={action.onSelect}
+      destructive={action.destructive}
+      testID={action.testID}
+    >
       {action.label}
-    </DropdownMenuItem>
+    </ContextMenuItem>
   );
 }
-
-const styles = StyleSheet.create((theme) => ({
-  trigger: {
-    // The hover box comes from padding, but an equal negative vertical margin
-    // cancels its height contribution so the trigger overlaps the row's natural
-    // line height instead of growing it. The comfortable tap target is `hitSlop`,
-    // never padding.
-    padding: theme.spacing[1],
-    width: FILE_ACTIONS_MENU_WIDTH,
-    marginVertical: -theme.spacing[1],
-    borderRadius: theme.borderRadius.md,
-    alignItems: "center",
-    justifyContent: "center",
-    flexShrink: 0,
-  },
-  triggerActive: {
-    backgroundColor: theme.colors.surface2,
-  },
-}));

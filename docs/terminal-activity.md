@@ -53,6 +53,11 @@ Claude hook mapping:
 - `Stop`, `StopFailure`, `SessionEnd` → `idle`
 - `Notification` with `reason` or `matcher` equal to `idle_prompt` → `needs-input`
 
+Claude does not run `Stop` when the user interrupts a turn. A standalone Ctrl-C or Escape input
+while terminal activity is working clears the activity without finished attention. The same
+fallback applies to every hooked terminal agent; exact input matching excludes escape sequences and
+pasted content, while later provider idle events remain authoritative.
+
 Codex hook mapping:
 
 - `UserPromptSubmit` → `running`

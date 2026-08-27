@@ -202,7 +202,10 @@ it("inherits registered env for the worktree root cwd", async () => {
     ],
   });
 
-  await waitForCondition(() => existsSync(markerPath), 10000);
+  await waitForCondition(
+    () => existsSync(markerPath) && readFileSync(markerPath, "utf8") === "45678",
+    10000,
+  );
   expect(readFileSync(markerPath, "utf8")).toBe("45678");
 });
 
@@ -228,7 +231,10 @@ it("inherits registered env for subdirectories within the worktree", async () =>
     ],
   });
 
-  await waitForCondition(() => existsSync(markerPath), 10000);
+  await waitForCondition(
+    () => existsSync(markerPath) && readFileSync(markerPath, "utf8") === "45679",
+    10000,
+  );
   expect(readFileSync(markerPath, "utf8")).toBe("45679");
 });
 

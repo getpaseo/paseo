@@ -1,18 +1,15 @@
-import { forwardRef, useCallback, type ComponentType } from "react";
+import { forwardRef, useCallback, type ComponentProps } from "react";
 import { Text, View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
 import { ComposerToolbarGlyph } from "@/composer/agent-controls/glyph";
+import type { AgentControlIcon } from "@/agent-controls/icons";
 
-export interface AgentControlIconProps {
-  size?: number;
-  color?: string;
-}
-
-export type AgentControlIcon = ComponentType<AgentControlIconProps>;
-
-interface AgentControlTriggerProps {
+type AgentControlTriggerProps = Omit<
+  ComponentProps<typeof ComboboxTrigger>,
+  "accessibilityLabel" | "block" | "children" | "chevron" | "onPress" | "style"
+> & {
   icon: AgentControlIcon;
   iconColor?: string;
   surface: "toolbar" | "sheet";
@@ -21,11 +18,9 @@ interface AgentControlTriggerProps {
   showToolbarLabel?: boolean;
   showCaret?: boolean;
   open?: boolean;
-  disabled?: boolean;
   onPress: () => void;
   accessibilityLabel: string;
-  testID?: string;
-}
+};
 
 export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
   function AgentControlTrigger(
@@ -42,6 +37,7 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
       onPress,
       accessibilityLabel,
       testID,
+      ...triggerProps
     },
     ref,
   ) {
@@ -63,6 +59,7 @@ export const AgentControlTrigger = forwardRef<View, AgentControlTriggerProps>(
 
     return (
       <ComboboxTrigger
+        {...triggerProps}
         ref={ref}
         collapsable={false}
         disabled={disabled}
@@ -119,7 +116,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
   sheetRow: {
@@ -147,7 +144,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
   sheetValue: {
@@ -155,7 +152,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
   hovered: {

@@ -25,6 +25,7 @@ export type { NavigateToWorkspaceInput } from "./navigation";
 const lastWorkspaceSelectionStorage: LastWorkspaceSelectionStorage = {
   read: () => AsyncStorage.getItem(LAST_WORKSPACE_SELECTION_STORAGE_KEY),
   write: (value) => AsyncStorage.setItem(LAST_WORKSPACE_SELECTION_STORAGE_KEY, value),
+  clear: () => AsyncStorage.removeItem(LAST_WORKSPACE_SELECTION_STORAGE_KEY),
 };
 
 const lastWorkspaceSelectionStore = createLastWorkspaceSelectionStore(
@@ -36,8 +37,7 @@ function navigateDeps(): NavigateToWorkspaceDeps {
     getSessionWorkspaces: (serverId) => useSessionStore.getState().sessions[serverId]?.workspaces,
     getSessionAgents: (serverId) =>
       useSessionStore.getState().sessions[serverId]?.agents.values() ?? [],
-    openTabFocused: (workspaceKey, target) =>
-      useWorkspaceLayoutStore.getState().openTabFocused(workspaceKey, target),
+    openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
     pinAgent: (workspaceKey, agentId) =>
       useWorkspaceLayoutStore.getState().pinAgent(workspaceKey, agentId),
     rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),

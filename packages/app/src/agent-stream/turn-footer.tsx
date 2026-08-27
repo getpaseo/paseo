@@ -2,11 +2,11 @@ import React, { memo, useCallback, useMemo, type ReactNode } from "react";
 import { View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
-import type { Theme } from "@/styles/theme";
+import { SPACING, type Theme } from "@/styles/theme";
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import {
-  collectAssistantTurnContentForStreamRenderStrategy,
+  collectAssistantResponseContentForStreamRenderStrategy,
   type StreamStrategy,
 } from "./strategy";
 import { resolveAssistantTurnForkBoundary, type AssistantTurnForkBoundary } from "./turn-boundary";
@@ -17,22 +17,30 @@ import {
   type AssistantForkTarget,
 } from "@/components/message";
 import type { TurnFooterHost } from "./layout";
+import { AssistantForkMenu } from "@/components/assistant-fork-menu";
 import { SyncedLoader } from "@/components/synced-loader";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 
 const ThemedSyncedLoader = withUnistyles(SyncedLoader);
-const workingIndicatorColorMapping = (theme: Theme) => ({
-  color:
-    theme.colorScheme === "light"
-      ? theme.colors.palette.amber[700]
-      : theme.colors.palette.amber[500],
-});
+const workingIndicatorColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
+export const TURN_FOOTER_BOTTOM_SPACING = SPACING[8];
 
 export type TurnContentStrategy = StreamStrategy;
 export type AssistantTurnForkHandler = (input: {
   target: AssistantForkTarget;
   boundary: AssistantTurnForkBoundary;
 }) => Promise<void> | void;
+/**
+ * Fork handler for the turn that is still streaming. It deliberately takes no
+ * boundary: `selectForkContextRows` projects the entire timeline when neither
+ * boundary field is given, which is what captures the partially streamed text
+ * the user is watching. Pinning a boundary here would silently drop the live
+ * response — the opposite of what a fork button next to the loader promises.
+ *
+ * Kept separate from `AssistantTurnForkHandler` (whose `boundary` stays
+ * required) so the compiler keeps enforcing that completed turns always pin one.
+ */
+export type InFlightTurnForkHandler = (target: AssistantForkTarget) => Promise<void> | void;
 
 export const TurnFooter = memo(function TurnFooter({
   isRunning,
@@ -41,6 +49,7 @@ export const TurnFooter = memo(function TurnFooter({
   strategy,
   supportsTimelineCursor,
   onForkAssistantTurn,
+  onForkInFlightTurn,
 }: {
   isRunning: boolean;
   inFlightTurnStartedAt: Date | null;
@@ -48,11 +57,15 @@ export const TurnFooter = memo(function TurnFooter({
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
+  onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   if (isRunning) {
     return (
       <TurnFooterRow>
-        <RunningTurnFooter inFlightTurnStartedAt={inFlightTurnStartedAt} />
+        <RunningTurnFooter
+          inFlightTurnStartedAt={inFlightTurnStartedAt}
+          onForkInFlightTurn={onForkInFlightTurn}
+        />
       </TurnFooterRow>
     );
   }
@@ -102,8 +115,10 @@ export const CompletedTurnFooterRow = memo(function CompletedTurnFooterRow({
 
 const WorkingIndicator = memo(function WorkingIndicator({
   inFlightTurnStartedAt = null,
+  onForkInFlightTurn,
 }: {
   inFlightTurnStartedAt?: Date | null;
+  onForkInFlightTurn?: InFlightTurnForkHandler;
 }) {
   const active = useRetainedPanelActive();
   return (
@@ -111,6 +126,8 @@ const WorkingIndicator = memo(function WorkingIndicator({
       <View style={stylesheet.workingLoader}>
         <ThemedSyncedLoader size={14} uniProps={workingIndicatorColorMapping} />
       </View>
+      {/* Match the completed-turn footer: actions precede timing metadata. */}
+      {onForkInFlightTurn ? <AssistantForkMenu onFork={onForkInFlightTurn} /> : null}
       {inFlightTurnStartedAt ? (
         <LiveElapsed
           startedAt={inFlightTurnStartedAt}
@@ -123,10 +140,19 @@ const WorkingIndicator = memo(function WorkingIndicator({
   );
 });
 
-function RunningTurnFooter({ inFlightTurnStartedAt }: { inFlightTurnStartedAt: Date | null }) {
+function RunningTurnFooter({
+  inFlightTurnStartedAt,
+  onForkInFlightTurn,
+}: {
+  inFlightTurnStartedAt: Date | null;
+  onForkInFlightTurn?: InFlightTurnForkHandler;
+}) {
   return (
     <View style={stylesheet.turnFooterSlot} testID="turn-working-indicator">
-      <WorkingIndicator inFlightTurnStartedAt={inFlightTurnStartedAt} />
+      <WorkingIndicator
+        inFlightTurnStartedAt={inFlightTurnStartedAt}
+        onForkInFlightTurn={onForkInFlightTurn}
+      />
     </View>
   );
 }
@@ -148,7 +174,7 @@ function CompletedTurnFooter({
 }) {
   const getContent = useCallback(
     () =>
-      collectAssistantTurnContentForStreamRenderStrategy({
+      collectAssistantResponseContentForStreamRenderStrategy({
         strategy,
         items,
         startIndex,
@@ -194,14 +220,14 @@ const stylesheet = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[2],
   },
   turnFooterRow: {
-    marginTop: theme.spacing[4],
+    marginTop: theme.spacing[2] + 5,
   },
   turnFooterSlot: {
     flexDirection: "row",
     alignItems: "center",
     alignSelf: "flex-start",
     minHeight: 24,
-    paddingBottom: theme.spacing[6],
+    paddingBottom: TURN_FOOTER_BOTTOM_SPACING,
   },
   turnFooterContent: {
     height: 24,

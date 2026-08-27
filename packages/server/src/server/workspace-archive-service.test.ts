@@ -142,6 +142,7 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
     } as unknown as Pick<WorkspaceGitService, "getSnapshot">,
     agentManager: {
       listAgents: () => [],
+      getAgent: () => null,
       archiveAgent: vi.fn(async (agentId: string) => {
         archivedAgentIds.push(agentId);
         return { archivedAt: new Date().toISOString() };
@@ -152,8 +153,8 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
       }),
     },
     agentStorage: {
-      list: async (): Promise<StoredAgentRecord[]> => [],
-    } as Pick<AgentStorage, "list">,
+      listByWorkspace: async (): Promise<StoredAgentRecord[]> => [],
+    } as Pick<AgentStorage, "listByWorkspace">,
     findWorkspaceIdForCwd: input.findWorkspaceIdForCwd ?? vi.fn(async () => null),
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !archivedWorkspaceIds.has(workspace.workspaceId)),
@@ -690,6 +691,8 @@ describe("archiveByScope", () => {
     });
     deps.agentManager = {
       listAgents: () => [{ id: liveAgentId, workspaceId: targetWorkspaceId }] as ManagedAgent[],
+      getAgent: (agentId: string) =>
+        agentId === liveAgentId ? ({ id: liveAgentId } as ManagedAgent) : null,
       archiveAgent: vi.fn(async (agentId: string) => {
         deps.archivedAgentIds.push(agentId);
         return { archivedAt: new Date().toISOString() };
@@ -700,12 +703,15 @@ describe("archiveByScope", () => {
       }),
     };
     deps.agentStorage = {
-      list: async () =>
-        [
-          { id: targetStoredAgentId, workspaceId: targetWorkspaceId, archivedAt: null },
-          { id: otherStoredAgentId, workspaceId: otherWorkspaceId, archivedAt: null },
-        ] as StoredAgentRecord[],
-    } as Pick<AgentStorage, "list">;
+      listByWorkspace: async (workspaceId: string) =>
+        workspaceId === targetWorkspaceId
+          ? ([
+              { id: targetStoredAgentId, workspaceId: targetWorkspaceId, archivedAt: null },
+            ] as StoredAgentRecord[])
+          : ([
+              { id: otherStoredAgentId, workspaceId: otherWorkspaceId, archivedAt: null },
+            ] as StoredAgentRecord[]),
+    } as Pick<AgentStorage, "listByWorkspace">;
 
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId: targetWorkspaceId },
@@ -721,6 +727,38 @@ describe("archiveByScope", () => {
     expect(result.archivedAgentIds).not.toContain(otherStoredAgentId);
     expect(deps.archivedSnapshotIds).toEqual([targetStoredAgentId]);
     expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("archives the durable snapshot when an observed live agent closes before teardown", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const workspaceId = "ws-live-teardown-race";
+    const agentId = "agent-live-teardown-race";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [{ workspaceId, cwd: repoDir, kind: "local_checkout" }],
+    });
+    deps.agentManager = {
+      listAgents: () => [{ id: agentId, workspaceId }] as ManagedAgent[],
+      getAgent: () => null,
+      archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
+      archiveSnapshot: vi.fn(async (id: string) => {
+        deps.archivedSnapshotIds.push(id);
+        return {};
+      }),
+    };
+    deps.agentStorage = {
+      list: async () => [{ id: agentId, workspaceId, archivedAt: null }] as StoredAgentRecord[],
+    } as Pick<AgentStorage, "list">;
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-live-teardown-race",
+    });
+
+    expect(result.archivedAgentIds).toContain(agentId);
+    expect(deps.archivedSnapshotIds).toEqual([agentId]);
+    expect(deps.agentManager.archiveAgent).not.toHaveBeenCalled();
   });
 
   test("worktree scope archives three workspaces on the directory and removes it", async () => {

@@ -2,12 +2,25 @@ import { describe, expect, it } from "vitest";
 import { createCli } from "./cli.js";
 
 describe("canonical CLI surface", () => {
-  it("shows workspace and heartbeat commands while hiding worktree compatibility", () => {
+  it("shows project, workspace, and heartbeat commands while hiding worktree compatibility", () => {
     const cli = createCli();
     const help = cli.helpInformation();
+    expect(help).toContain("project");
     expect(help).toContain("workspace");
     expect(help).toContain("heartbeat");
     expect(help).not.toContain("worktree");
+  });
+
+  it("offers identical top-level and daemon config reload commands", () => {
+    const cli = createCli();
+    const reload = cli.commands.find((command) => command.name() === "reload");
+    const daemon = cli.commands.find((command) => command.name() === "daemon");
+    const nestedReload = daemon?.commands.find((command) => command.name() === "reload");
+
+    expect(reload?.helpInformation()).toContain("--host <host>");
+    expect(reload?.helpInformation()).toContain("--json");
+    expect(nestedReload?.helpInformation()).toContain("--host <host>");
+    expect(nestedReload?.helpInformation()).toContain("--json");
   });
 
   it("names explicit workspace creation without exposing older syntax", () => {
@@ -35,11 +48,47 @@ describe("canonical CLI surface", () => {
     expect(run?.helpInformation()).not.toContain("--detach");
   });
 
+  it("offers thinking configuration when running, updating, and scheduling agents", () => {
+    const cli = createCli();
+    const run = cli.commands.find((command) => command.name() === "run");
+    const agent = cli.commands.find((command) => command.name() === "agent");
+    const update = agent?.commands.find((command) => command.name() === "update");
+    const schedule = cli.commands.find((command) => command.name() === "schedule");
+    const scheduleCreate = schedule?.commands.find((command) => command.name() === "create");
+
+    expect(run?.helpInformation()).toContain("--thinking <id>");
+    expect(update?.helpInformation()).toContain("--thinking <id>");
+    expect(scheduleCreate?.helpInformation()).toContain("--thinking <id>");
+  });
+
   it("offers opening an existing agent in the desktop app", () => {
     const agent = createCli().commands.find((command) => command.name() === "agent");
     const open = agent?.commands.find((command) => command.name() === "open");
 
     expect(open?.helpInformation()).toContain("<agent-id>");
     expect(open?.helpInformation()).toContain("--server <server-id>");
+  });
+
+  it("offers the complete local plugin lifecycle", () => {
+    const plugin = createCli().commands.find((command) => command.name() === "plugin");
+
+    expect(plugin?.commands.map((command) => command.name())).toEqual([
+      "init",
+      "ls",
+      "logs",
+      "install",
+      "status",
+      "update",
+      "reload",
+      "enable",
+      "disable",
+      "remove",
+    ]);
+    expect(
+      plugin?.commands.find((command) => command.name() === "init")?.helpInformation(),
+    ).toContain("--id <id>");
+    expect(
+      plugin?.commands.find((command) => command.name() === "install")?.helpInformation(),
+    ).toContain("--id <id>");
   });
 });
