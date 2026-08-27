@@ -1,3 +1,4 @@
+import { setImmediate as scheduleImmediate } from "node:timers";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { GitProcessScheduler, resolveGitProcessPolicy } from "./git-process-scheduler.js";
@@ -102,6 +103,27 @@ describe("GitProcessScheduler", () => {
 
     expect(started).toBe(true);
     await result;
+  });
+
+  test("queued processes keep moving while application timers are faked", async () => {
+    vi.useFakeTimers();
+    const scheduler = new GitProcessScheduler({
+      maxProcessesPerSecond: 100,
+      maxProcessConcurrency: 1,
+    });
+    const releases: Array<() => void> = [];
+    const started: number[] = [];
+
+    const first = scheduler.run(createConcurrencyTask(0, started, releases));
+    const second = scheduler.run(createConcurrencyTask(2, started, releases));
+    expect(started).toEqual([0]);
+
+    releases.shift()?.();
+    await Promise.resolve();
+    await new Promise<void>((resolve) => scheduleImmediate(resolve));
+
+    expect(started).toEqual([0, 2]);
+    await Promise.all([first, second]);
   });
 
   test("limits process starts in each strict one-second interval", async () => {

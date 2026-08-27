@@ -1,3 +1,4 @@
+import { setImmediate as scheduleImmediate } from "node:timers";
 import pThrottle from "p-throttle";
 
 export interface GitProcessPolicy {
@@ -102,7 +103,7 @@ export class GitProcessScheduler {
       return;
     }
     this.drainScheduled = true;
-    setImmediate(() => this.drainOne());
+    scheduleImmediate(() => this.drainOne());
   }
 
   private drainOne(): void {
