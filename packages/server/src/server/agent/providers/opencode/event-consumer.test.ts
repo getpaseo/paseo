@@ -45,7 +45,7 @@ describe("OpenCodeEventConsumer", () => {
     await expect(closePromise).resolves.toBeUndefined();
   });
 
-  test("becomes ready on the first record and reconnects once after EOF", async () => {
+  test("waits for server.connected and reconnects once after EOF", async () => {
     const upstream = await createSseUpstream();
     const timing = new ControlledTiming();
     const processExit = deferred<Error>();
@@ -64,9 +64,12 @@ describe("OpenCodeEventConsumer", () => {
 
     await upstream.connected(1);
     expect(await promiseState(consumer.ready())).toBe("pending");
+    upstream.send(0, arbitraryRecord("/one"));
+    await eventually(() => expect(inputs).toEqual([arbitraryRecord("/one")]));
+    expect(await promiseState(consumer.ready())).toBe("pending");
     upstream.send(0, connectedRecord("/one"));
     await consumer.ready();
-    expect(inputs).toEqual([connectedRecord("/one")]);
+    expect(inputs).toEqual([arbitraryRecord("/one")]);
 
     upstream.end(0);
     await timing.waiting();
@@ -74,12 +77,8 @@ describe("OpenCodeEventConsumer", () => {
     timing.advanceWait();
     await upstream.connected(2);
     upstream.send(1, connectedRecord("/two"));
-    await eventually(() => expect(inputs).toHaveLength(3));
-    expect(inputs).toEqual([
-      connectedRecord("/one"),
-      { type: "reconnected" },
-      connectedRecord("/two"),
-    ]);
+    await eventually(() => expect(inputs).toHaveLength(2));
+    expect(inputs).toEqual([arbitraryRecord("/one"), connectedRecord("/two")]);
     expect(upstream.requests).toHaveLength(2);
     expect(upstream.requests.map((request) => request.url)).toEqual([
       "/global/event",
@@ -115,8 +114,8 @@ describe("OpenCodeEventConsumer", () => {
     timing.advanceWait();
     await upstream.connected(2);
     upstream.send(1, connectedRecord("/two"));
-    await eventually(() => expect(inputs).toHaveLength(3));
-    expect(inputs[1]).toEqual({ type: "reconnected" });
+    await eventually(() => expect(inputs).toHaveLength(1));
+    expect(inputs[0]).toEqual(connectedRecord("/two"));
   });
 
   test("retries a first-record watchdog and exposes the recovery attempt", async () => {
@@ -181,8 +180,8 @@ describe("OpenCodeEventConsumer", () => {
     await consumer.ready();
 
     processExit.resolve(new Error("process exited"));
-    await eventually(() => expect(inputs).toHaveLength(2));
-    expect(inputs[1]).toMatchObject({ type: "server-exited" });
+    await eventually(() => expect(inputs).toHaveLength(1));
+    expect(inputs[0]).toMatchObject({ type: "server-exited" });
     expect(upstream.requests).toHaveLength(1);
   });
 
@@ -245,7 +244,9 @@ describe("OpenCodeEventConsumer", () => {
     await upstream.connected(1);
     upstream.send(0, connectedRecord("/one"));
     await consumer.ready();
-    expect(inputs).toEqual([connectedRecord("/one")]);
+    upstream.send(0, arbitraryRecord("/one"));
+    await eventually(() => expect(inputs).toHaveLength(1));
+    expect(inputs).toEqual([arbitraryRecord("/one")]);
   });
 
   test("reconnects after a socket error with a delivered-record backoff reset", async () => {
@@ -389,7 +390,7 @@ describe("OpenCodeEventConsumer", () => {
 
     await consumer.close();
 
-    expect(inputs).toEqual([connectedRecord("/one")]);
+    expect(inputs).toEqual([]);
   });
 });
 
@@ -435,6 +436,16 @@ function createRecordingLogger(): Pick<Logger, "debug" | "warn"> {
   return {
     debug: vi.fn() as unknown as Logger["debug"],
     warn: vi.fn() as unknown as Logger["warn"],
+  };
+}
+
+function arbitraryRecord(directory: string) {
+  return {
+    directory,
+    payload: {
+      type: "session.status",
+      properties: { sessionID: "unrelated", status: { type: "idle" } },
+    },
   };
 }
 

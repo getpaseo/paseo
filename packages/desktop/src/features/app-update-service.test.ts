@@ -208,6 +208,76 @@ describe("app update service", () => {
     });
   });
 
+  it("keeps a manually admitted update after a rollout-gated automatic recheck", async () => {
+    const { runtime, service } = createService();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const result = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(result).toMatchObject({
+      hasUpdate: true,
+      readyToInstall: true,
+      latestVersion: "1.2.4",
+    });
+  });
+
+  it("keeps preparing a manually admitted update after a rollout-gated automatic recheck", async () => {
+    const { runtime, service } = createService();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+    const result = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(result).toMatchObject({
+      hasUpdate: true,
+      readyToInstall: false,
+      latestVersion: "1.2.4",
+    });
+  });
+
+  it("clears a cached update when the manifest no longer contains it", async () => {
+    const { runtime, service } = createService();
+    runtime.nextCheck({ isUpdateAvailable: true, updateInfo: rolledOutUpdate });
+
+    await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    runtime.finishUpdateDownload(rolledOutUpdate);
+
+    runtime.nextCheck(null);
+    const result = await service.checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "automatic",
+    });
+
+    expect(result.hasUpdate).toBe(false);
+  });
+
   it("waits for an automatic poll before starting a manual rollout-bypassing check", async () => {
     const { runtime, service } = createService();
     const automaticCheck = runtime.deferNextCheck();

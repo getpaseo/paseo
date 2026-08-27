@@ -420,6 +420,7 @@ export const fr: TranslationResources = {
     },
     fileActions: {
       openFile: "Ouvrir le fichier",
+      openIn: "Ouvrir dans {{target}}",
       openToSide: "Ouvrir sur le côté",
       copyPath: "Copier le chemin",
       copyRelativePath: "Copier le chemin relatif",
@@ -970,6 +971,16 @@ export const fr: TranslationResources = {
         accessibility: {
           pullRequest: "Demande de tirage #{{number}}",
           pullRequest_mr: "Demande de fusion !{{number}}",
+          checkStatus: {
+            passed: "Réussi",
+            failed: "Échec",
+            warning: "Avertissement",
+            actionRequired: "Action requise",
+            manual: "Manuel",
+            pending: "En attente",
+            skipped: "Ignoré",
+            cancelled: "Annulé",
+          },
         },
         states: {
           draft: "Brouillon",
@@ -1163,6 +1174,14 @@ export const fr: TranslationResources = {
         serviceRunning: "Service {{name}} en cours",
         serviceUnhealthy: "Service {{name}} en échec",
         creating: "Création...",
+      },
+      checks: {
+        passed: "Réussis : {{count}}",
+        failed: "Échecs : {{count}}",
+        warning: "Avertissements : {{count}}",
+        actionRequired: "Action requise : {{count}}",
+        manual: "Manuels : {{count}}",
+        pending: "En attente : {{count}}",
       },
       actions: {
         menu: "ActionsWorkspace",

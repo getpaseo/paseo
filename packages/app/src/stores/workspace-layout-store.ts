@@ -279,6 +279,7 @@ const WorkspaceLayoutPersistedStateSchema = z.strictObject({
   // The persisted keys keep their pre-rename spelling: the schema is strict, so a
   // rename here would fail every existing blob and wipe the layout it describes.
   explorerPaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
+  explorerSidebarPaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
   sidePaneIdByWorkspace: z.record(z.string(), z.string().nullable()).optional(),
   // COMPAT(pullRequestAutoAdd): PR detection stopped opening a tab in v0.5; accepted
   // and ignored so upgrading does not discard the layout. Remove after 2027-08-20.
@@ -286,6 +287,7 @@ const WorkspaceLayoutPersistedStateSchema = z.strictObject({
 });
 
 const LEGACY_EXPLORER_SIDEBAR_REFERENCE_WIDTH = 1440;
+const WORKSPACE_LAYOUT_PERSIST_VERSION = 2;
 
 function convertLegacyExplorerSidebarRatios(
   ratiosByWorkspace: Record<string, number>,
@@ -296,6 +298,178 @@ function convertLegacyExplorerSidebarRatios(
       ratio * LEGACY_EXPLORER_SIDEBAR_REFERENCE_WIDTH,
     ]),
   );
+}
+
+function replacePaneInNode(node: SplitNode, paneId: string, replacement: SplitPane): SplitNode {
+  if (node.kind === "pane") {
+    return node.pane.id === paneId ? { kind: "pane", pane: replacement } : node;
+  }
+  return {
+    kind: "group",
+    group: {
+      ...node.group,
+      children: node.group.children.map((child) => replacePaneInNode(child, paneId, replacement)),
+    },
+  };
+}
+
+function visiblePane<TPane extends SplitPane>(pane: TPane): Omit<TPane, "hidden"> {
+  const { hidden: _hidden, ...visible } = pane;
+  return visible;
+}
+
+function createExplorerSidebarNode(): SplitNode {
+  const layout = createWorkspaceLayoutWithExplorerSidebar();
+  const pane = findPaneById(layout.root, EXPLORER_SIDEBAR_PANE_ID);
+  if (!pane) {
+    throw new Error("Default Explorer pane is missing");
+  }
+  return { kind: "pane", pane };
+}
+
+function preserveVersionOneSideTabs(input: {
+  layout: WorkspaceLayout;
+  legacyExplorerPane: SplitPane;
+  rememberedSidePane: SplitPane | null;
+  tabs: WorkspaceTab[];
+  ids: WorkspaceLayoutIdSource;
+}): { root: SplitNode; sidePaneId: string | null } {
+  const rootWithoutExplorer = removePaneFromTree(input.layout.root, input.legacyExplorerPane.id);
+  if (input.tabs.length === 0) {
+    return {
+      root: findPaneById(rootWithoutExplorer, input.legacyExplorerPane.id)
+        ? createDefaultLayout().root
+        : rootWithoutExplorer,
+      sidePaneId: input.rememberedSidePane?.id ?? null,
+    };
+  }
+
+  if (input.rememberedSidePane) {
+    const rememberedTabs = collectAllTabs(input.layout.root).filter((tab) =>
+      input.rememberedSidePane?.tabIds.includes(tab.tabId),
+    );
+    const nextSidePane = visiblePane({
+      ...input.rememberedSidePane,
+      tabIds: [...input.rememberedSidePane.tabIds, ...input.tabs.map((tab) => tab.tabId)],
+      tabs: [...rememberedTabs, ...input.tabs],
+      focusedTabId: input.rememberedSidePane.focusedTabId ?? input.tabs[0]?.tabId ?? null,
+    });
+    return {
+      root: replacePaneInNode(rootWithoutExplorer, input.rememberedSidePane.id, nextSidePane),
+      sidePaneId: input.rememberedSidePane.id,
+    };
+  }
+
+  const sidePaneId = input.ids.createNodeId("pane");
+  const sidePane = visiblePane({
+    ...input.legacyExplorerPane,
+    id: sidePaneId,
+    tabIds: input.tabs.map((tab) => tab.tabId),
+    tabs: input.tabs,
+    focusedTabId:
+      input.tabs.find((tab) => tab.tabId === input.legacyExplorerPane.focusedTabId)?.tabId ??
+      input.tabs[0]?.tabId ??
+      null,
+  });
+  return {
+    root: replacePaneInNode(input.layout.root, input.legacyExplorerPane.id, sidePane),
+    sidePaneId,
+  };
+}
+
+function migrateVersionOneWorkspaceLayout(input: {
+  layout: WorkspaceLayout;
+  legacyExplorerPaneId: string | null | undefined;
+  rememberedSidePaneId: string | null | undefined;
+  ids: WorkspaceLayoutIdSource;
+}): { layout: WorkspaceLayout; explorerPaneId: string; sidePaneId: string | null } {
+  const strippedLayout = stripEphemeralTabsFromLayout(input.layout);
+  const legacyExplorerPaneId = resolveExplorerSidebarPaneId(
+    strippedLayout,
+    input.legacyExplorerPaneId,
+  );
+  const legacyExplorerPane = findPaneById(strippedLayout.root, legacyExplorerPaneId);
+  if (!legacyExplorerPane) {
+    const ensured = ensurePersistedExplorerSidebarPane({
+      layout: strippedLayout,
+      registeredPaneId: null,
+      ids: input.ids,
+    });
+    return {
+      layout: ensured?.layout ?? strippedLayout,
+      explorerPaneId: ensured?.paneId ?? EXPLORER_SIDEBAR_PANE_ID,
+      sidePaneId: input.rememberedSidePaneId ?? null,
+    };
+  }
+
+  const preservedTabs = collectAllTabs(strippedLayout.root).filter(
+    (tab) =>
+      legacyExplorerPane.tabIds.includes(tab.tabId) &&
+      tab.target.kind !== "files" &&
+      tab.target.kind !== "changes_tree",
+  );
+  const preservedSide = preserveVersionOneSideTabs({
+    layout: strippedLayout,
+    legacyExplorerPane,
+    rememberedSidePane: findPaneById(strippedLayout.root, input.rememberedSidePaneId ?? null),
+    tabs: preservedTabs,
+    ids: input.ids,
+  });
+  const explorerNode = createExplorerSidebarNode();
+  const focusedPaneId =
+    strippedLayout.focusedPaneId === legacyExplorerPane.id
+      ? (preservedSide.sidePaneId ?? collectAllPanes(preservedSide.root)[0]?.id ?? DEFAULT_PANE_ID)
+      : strippedLayout.focusedPaneId;
+  return {
+    layout: normalizeLayout({
+      root: {
+        kind: "group",
+        group: {
+          id: input.ids.createNodeId("group"),
+          direction: "horizontal",
+          children: [preservedSide.root, explorerNode],
+          sizes: [0.78, 0.22],
+        },
+      },
+      focusedPaneId,
+      parentTabIdByTabId: strippedLayout.parentTabIdByTabId,
+    }),
+    explorerPaneId: EXPLORER_SIDEBAR_PANE_ID,
+    sidePaneId: preservedSide.sidePaneId,
+  };
+}
+
+function migrateWorkspaceLayoutPersistedState(
+  persistedState: unknown,
+  version: number,
+  ids: WorkspaceLayoutIdSource,
+): z.infer<typeof WorkspaceLayoutPersistedStateSchema> {
+  const result = WorkspaceLayoutPersistedStateSchema.safeParse(persistedState);
+  if (!result.success || version >= WORKSPACE_LAYOUT_PERSIST_VERSION) {
+    return result.success ? result.data : { layoutByWorkspace: {} };
+  }
+
+  const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
+  const explorerPaneIdByWorkspace: Record<string, string | null> = {};
+  const sidePaneIdByWorkspace = { ...result.data.sidePaneIdByWorkspace };
+  for (const [workspaceKey, layout] of Object.entries(result.data.layoutByWorkspace)) {
+    const migrated = migrateVersionOneWorkspaceLayout({
+      layout,
+      legacyExplorerPaneId: result.data.explorerPaneIdByWorkspace?.[workspaceKey],
+      rememberedSidePaneId: result.data.sidePaneIdByWorkspace?.[workspaceKey],
+      ids,
+    });
+    layoutByWorkspace[workspaceKey] = migrated.layout;
+    explorerPaneIdByWorkspace[workspaceKey] = migrated.explorerPaneId;
+    sidePaneIdByWorkspace[workspaceKey] = migrated.sidePaneId;
+  }
+
+  return {
+    ...result.data,
+    layoutByWorkspace,
+    explorerPaneIdByWorkspace,
+    sidePaneIdByWorkspace,
+  };
 }
 
 function trimNonEmpty(value: string | null | undefined): string | null {
@@ -424,21 +598,15 @@ export function resolveExplorerSidebarPaneId(
 }
 
 function ensurePersistedExplorerSidebarPane(input: {
-  workspaceKey: string;
   layout: WorkspaceLayout;
   registeredPaneId: string | null | undefined;
   ids: WorkspaceLayoutIdSource;
 }): { layout: WorkspaceLayout; paneId: string } | null {
   const existingPaneId = resolveExplorerSidebarPaneId(input.layout, input.registeredPaneId);
   if (existingPaneId) {
-    const migratedLayout = migrateExplorerSidebarTabs(
-      input.workspaceKey,
-      input.layout,
-      existingPaneId,
-    );
     return {
       layout: keepWorkspaceFocusOutOfExplorerSidebar(
-        migratedLayout,
+        input.layout,
         existingPaneId,
         input.layout.focusedPaneId,
       ),
@@ -471,81 +639,9 @@ function ensurePersistedExplorerSidebarPane(input: {
     split.paneId,
   );
   return {
-    layout: migrateExplorerSidebarTabs(input.workspaceKey, seededLayout, split.paneId),
+    layout: seededLayout,
     paneId: split.paneId,
   };
-}
-
-/** Keeps hydration compatible while enforcing the Explorer's navigation-only contract. */
-function migrateExplorerSidebarTabs(
-  workspaceKey: string,
-  layout: WorkspaceLayout,
-  paneId: string,
-): WorkspaceLayout {
-  const changesMigrated = migrateLegacyExplorerSidebarChanges(layout, paneId);
-  const pane = findPaneById(changesMigrated.root, paneId);
-  if (!pane) return changesMigrated;
-  const targetPane =
-    findPaneById(changesMigrated.root, DEFAULT_PANE_ID) ??
-    collectAllPanes(changesMigrated.root).find((candidate) => candidate.id !== paneId);
-  if (!targetPane) return changesMigrated;
-  const tabsById = new Map(collectAllTabs(changesMigrated.root).map((tab) => [tab.tabId, tab]));
-  let nextLayout = changesMigrated;
-  for (const tabId of pane.tabIds) {
-    const tab = tabsById.get(tabId);
-    if (
-      !tab ||
-      tab.target.kind === "new_tab" ||
-      panelTargetSupportsHostForWorkspaceKey(workspaceKey, tab.target, "explorer")
-    ) {
-      continue;
-    }
-    nextLayout =
-      moveTabToPaneInLayout({ layout: nextLayout, tabId, toPaneId: targetPane.id }) ?? nextLayout;
-  }
-
-  return nextLayout;
-}
-
-function migrateLegacyExplorerSidebarChanges(
-  layout: WorkspaceLayout,
-  paneId: string,
-): WorkspaceLayout {
-  const pane = findPaneById(layout.root, paneId);
-  if (!pane) return layout;
-
-  const tabsById = new Map(collectAllTabs(layout.root).map((tab) => [tab.tabId, tab]));
-  const paneTabs = pane.tabIds.flatMap((tabId) => {
-    const tab = tabsById.get(tabId);
-    return tab ? [tab] : [];
-  });
-  const legacyTabs = paneTabs.filter((tab) => tab.target.kind === "working_diff");
-  if (legacyTabs.length === 0) return layout;
-
-  let nextLayout = layout;
-  let hasChangesTree = paneTabs.some((tab) => tab.target.kind === "changes_tree");
-  for (const legacyTab of legacyTabs) {
-    if (hasChangesTree) {
-      nextLayout =
-        closeTabInLayout({
-          layout: nextLayout,
-          tabId: legacyTab.tabId,
-          preserveEmptyPaneId: paneId,
-        }) ?? nextLayout;
-      continue;
-    }
-    const replacement = replaceTabTargetInLayout({
-      layout: nextLayout,
-      tabId: legacyTab.tabId,
-      target: { kind: "changes_tree" },
-      createTabId: createWorkspaceTabInstanceId,
-    });
-    if (replacement) {
-      nextLayout = replacement.layout;
-      hasChangesTree = true;
-    }
-  }
-  return nextLayout;
 }
 
 function getOpenTabPlacement(
@@ -1722,8 +1818,10 @@ export function createWorkspaceLayoutStore(
       }),
       {
         name: "workspace-layout-state",
-        version: 1,
+        version: WORKSPACE_LAYOUT_PERSIST_VERSION,
         storage: createValidatedPersistStorage(AsyncStorage, WorkspaceLayoutPersistedStateSchema),
+        migrate: (persistedState, version) =>
+          migrateWorkspaceLayoutPersistedState(persistedState, version, ids),
         partialize: (state) => {
           const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
           for (const key in state.layoutByWorkspace) {
@@ -1748,14 +1846,14 @@ export function createWorkspaceLayoutStore(
           }
           const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
           const explorerSidebarPaneIdByWorkspace: Record<string, string | null> = {
-            ...result.data.explorerPaneIdByWorkspace,
+            ...(result.data.explorerSidebarPaneIdByWorkspace ??
+              result.data.explorerPaneIdByWorkspace),
           };
           for (const [workspaceKey, persistedLayout] of Object.entries(
             result.data.layoutByWorkspace,
           )) {
             const strippedLayout = stripEphemeralTabsFromLayout(persistedLayout);
             const explorerSidebar = ensurePersistedExplorerSidebarPane({
-              workspaceKey,
               layout: strippedLayout,
               registeredPaneId: explorerSidebarPaneIdByWorkspace[workspaceKey],
               ids,

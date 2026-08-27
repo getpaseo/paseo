@@ -102,6 +102,22 @@ describe("buildProjects", () => {
     });
   });
 
+  test("keeps a new project's own root when it has not created a workspace", () => {
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "host-a",
+          serverName: "Host A",
+          isOnline: true,
+          projects: [descriptor("prj_a", "local-a", "/a/new-project")],
+          workspaces: [],
+        },
+      ],
+    });
+
+    expect(result.projects[0]?.hosts[0]?.repoRoot).toBe("/a/new-project");
+  });
+
   test("looks up a grouped project by host-local identity", () => {
     const project = buildProjects({
       hosts: [

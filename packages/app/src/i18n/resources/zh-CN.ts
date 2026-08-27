@@ -416,6 +416,7 @@ export const zhCN: TranslationResources = {
     },
     fileActions: {
       openFile: "打开文件",
+      openIn: "在 {{target}} 中打开",
       openToSide: "在侧边打开",
       copyPath: "复制路径",
       copyRelativePath: "复制相对路径",
@@ -932,6 +933,16 @@ export const zhCN: TranslationResources = {
         accessibility: {
           pullRequest: "Pull request #{{number}}",
           pullRequest_mr: "合并请求 !{{number}}",
+          checkStatus: {
+            passed: "成功",
+            failed: "失败",
+            warning: "警告",
+            actionRequired: "需要操作",
+            manual: "手动",
+            pending: "等待中",
+            skipped: "已跳过",
+            cancelled: "已取消",
+          },
         },
         states: {
           draft: "Draft",
@@ -1119,6 +1130,14 @@ export const zhCN: TranslationResources = {
         serviceRunning: "服务 {{name}} 运行中",
         serviceUnhealthy: "服务 {{name}} 异常",
         creating: "正在创建...",
+      },
+      checks: {
+        passed: "成功: {{count}}",
+        failed: "失败: {{count}}",
+        warning: "警告: {{count}}",
+        actionRequired: "需要操作: {{count}}",
+        manual: "手动: {{count}}",
+        pending: "等待中: {{count}}",
       },
       actions: {
         menu: "Workspace 操作",

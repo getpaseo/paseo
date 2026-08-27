@@ -56,12 +56,14 @@ export function useComposerHeight({
       const mirror = mirrorRef.current;
       const source = textareaRef.current;
       if (!mirror || !source || typeof window === "undefined") return;
+      const sourceWidth = source.clientWidth;
+      if (sourceWidth <= 0) return;
 
       const computedStyle = window.getComputedStyle(source);
       for (const property of COPIED_STYLES) {
         mirror.style[property] = computedStyle[property];
       }
-      mirror.style.width = `${source.clientWidth}px`;
+      mirror.style.width = `${sourceWidth}px`;
       mirror.value = text.endsWith("\n") ? `${text} ` : text;
       setBoundedHeight(mirror.scrollHeight);
     },

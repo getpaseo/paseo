@@ -11,7 +11,6 @@ import {
   type WorkspaceDescriptor,
 } from "./session-store";
 import type { StreamItem } from "../types/stream";
-import { patchWorkspaceScripts } from "../contexts/session-workspace-scripts";
 
 function createWorkspace(
   input: Partial<WorkspaceDescriptor> & Pick<WorkspaceDescriptor, "id">,
@@ -748,31 +747,5 @@ describe("removeWorkspace", () => {
     expect(after.sessions).toBe(before.sessions);
     expect(after.session).toBe(before.session);
     expect(after.workspaces).toBe(before.workspaces);
-  });
-});
-
-describe("patchWorkspaceScripts", () => {
-  it("preserves workspace entry identity when scripts are content-equal", () => {
-    const script = {
-      scriptName: "web",
-      type: "service" as const,
-      hostname: "web.paseo.localhost",
-      port: 3000,
-      proxyUrl: "http://web.paseo.localhost:6767",
-      lifecycle: "running" as const,
-      health: "healthy" as const,
-      exitCode: null,
-      terminalId: null,
-    };
-    const workspace = createWorkspace({ id: "/repo/main", scripts: [script] });
-    const current = new Map([[workspace.id, workspace]]);
-
-    const next = patchWorkspaceScripts(current, {
-      workspaceId: workspace.id,
-      scripts: [{ ...script }],
-    });
-
-    expect(next).toBe(current);
-    expect(next.get(workspace.id)).toBe(workspace);
   });
 });
