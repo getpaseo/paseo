@@ -20,6 +20,7 @@ export interface UseFileLinkResult {
   target: InlinePathTarget | null;
   onHoverIn: () => void;
   onPress: () => void;
+  onOpenInPreferredTarget: () => void;
   open: (source: AssistantFileLinkSource, disposition: OpenFileDisposition) => void;
 }
 
@@ -35,6 +36,8 @@ type AssistantFileLinkQueryKey = readonly [
   string | null,
   string,
 ];
+
+type AssistantFileLinkDisposition = OpenFileDisposition | "preferred-target";
 
 const DISABLED_QUERY_KEY = ["assistantFileLink", null, null, ""] as const;
 
@@ -120,6 +123,16 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
     open(stableSource, "preferred");
   });
 
+  const onOpenInPreferredTarget = useStableEvent(() => {
+    openAssistantFileLink({
+      source: stableSource,
+      disposition: "preferred-target",
+      context,
+      queryClient,
+      formatNoFileFoundMessage: (token) => t("common.errors.noFileFound", { token }),
+    });
+  });
+
   const target = useMemo(() => {
     if (resolution.kind === "resolved") {
       return resolution.value.kind === "file" ? resolution.value.target : null;
@@ -127,7 +140,10 @@ export function useFileLink(source: AssistantFileLinkSource): UseFileLinkResult 
     return query.data ?? null;
   }, [query.data, resolution]);
 
-  return useMemo(() => ({ target, onHoverIn, onPress, open }), [target, onHoverIn, onPress, open]);
+  return useMemo(
+    () => ({ target, onHoverIn, onPress, onOpenInPreferredTarget, open }),
+    [target, onHoverIn, onPress, onOpenInPreferredTarget, open],
+  );
 }
 
 export function useAssistantFileLinkActions(): AssistantFileLinkActions {
@@ -155,7 +171,7 @@ export function useAssistantFileLinkActions(): AssistantFileLinkActions {
 
 function openAssistantFileLink(input: {
   source: AssistantFileLinkSource;
-  disposition: OpenFileDisposition;
+  disposition: AssistantFileLinkDisposition;
   context: AssistantFileLinkResolverContextValue;
   queryClient: ReturnType<typeof useQueryClient>;
   formatNoFileFoundMessage: (token: string) => string;
@@ -183,8 +199,9 @@ function openAssistantFileLink(input: {
   });
 
   const run = async () => {
+    let target: InlinePathTarget;
     try {
-      const target = await input.queryClient.fetchQuery({
+      target = await input.queryClient.fetchQuery({
         queryKey: capturedQueryKey,
         queryFn: () =>
           fetchDaemonResolution({
@@ -197,13 +214,6 @@ function openAssistantFileLink(input: {
         retry: 0,
         staleTime: Infinity,
       });
-      await dispatchFileTarget({
-        target,
-        disposition: input.disposition,
-        capturedServerId: capturedConfig.serverId,
-        capturedWorkspaceRoot: capturedConfig.workspaceRoot,
-        context: input.context,
-      });
     } catch (error) {
       await dispatchUnresolvedError({
         error,
@@ -212,7 +222,15 @@ function openAssistantFileLink(input: {
         capturedWorkspaceRoot: capturedConfig.workspaceRoot,
         context: input.context,
       });
+      return;
     }
+    await dispatchFileTarget({
+      target,
+      disposition: input.disposition,
+      capturedServerId: capturedConfig.serverId,
+      capturedWorkspaceRoot: capturedConfig.workspaceRoot,
+      context: input.context,
+    });
   };
 
   void run();
@@ -257,7 +275,7 @@ function assistantFileLinkQueryKey(input: {
 
 async function dispatchResolvedLink(input: {
   resolution: Extract<AssistantFileLinkResolution, { kind: "resolved" }>;
-  disposition: OpenFileDisposition;
+  disposition: AssistantFileLinkDisposition;
   capturedServerId?: string;
   capturedWorkspaceRoot?: string;
   context: AssistantFileLinkResolverContextValue;
@@ -285,7 +303,7 @@ async function dispatchResolvedLink(input: {
 
 async function dispatchFileTarget(input: {
   target: InlinePathTarget;
-  disposition: OpenFileDisposition;
+  disposition: AssistantFileLinkDisposition;
   capturedServerId?: string;
   capturedWorkspaceRoot?: string;
   context: AssistantFileLinkResolverContextValue;
@@ -295,6 +313,19 @@ async function dispatchFileTarget(input: {
     current.serverId !== input.capturedServerId ||
     current.workspaceRoot !== input.capturedWorkspaceRoot
   ) {
+    return;
+  }
+  if (input.disposition === "preferred-target") {
+    try {
+      const handled = await current.onOpenWorkspaceFileInPreferredTarget?.(input.target);
+      if (handled) {
+        return;
+      }
+    } catch (error) {
+      current.toast?.error(error instanceof Error ? error.message : "Failed to open file");
+      return;
+    }
+    current.onOpenWorkspaceFile?.(input.target, "side");
     return;
   }
   current.onOpenWorkspaceFile?.(input.target, input.disposition);

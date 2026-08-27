@@ -1,4 +1,4 @@
-import { useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useCallback, useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { Platform, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { isNative, isWeb } from "@/constants/platform";
@@ -30,7 +30,7 @@ export function AssistantMarkdownLink({
   monoSurface,
   children,
 }: AssistantMarkdownLinkProps) {
-  const { target, onHoverIn, onPress } = useFileLink(source);
+  const { target, onHoverIn, onPress, onOpenInPreferredTarget } = useFileLink(source);
   const { configRef } = useAssistantFileLinkResolverContext();
   const workspaceRoot = configRef.current.workspaceRoot;
   const tooltipPath = useMemo(
@@ -42,6 +42,17 @@ export function AssistantMarkdownLink({
     [onPress],
   );
   const unwrapForMarkdownCopy = source.sourceType === "inline-code" || source.markup === "linkify";
+  const handleClickCapture = useCallback(
+    (event: MouseEvent<HTMLAnchorElement>) => {
+      event.preventDefault();
+      if (!event.ctrlKey && !event.metaKey) {
+        return;
+      }
+      event.stopPropagation();
+      onOpenInPreferredTarget();
+    },
+    [onOpenInPreferredTarget],
+  );
 
   if (isNative) {
     // Must be a MarkdownTextSpan, not a plain <Text>: on iOS the link renders
@@ -83,7 +94,7 @@ export function AssistantMarkdownLink({
       {...(unwrapForMarkdownCopy ? { "data-paseo-markdown-unwrap": "true" } : {})}
       href={source.href}
       title={source.title}
-      onClickCapture={preventAnchorNavigation}
+      onClickCapture={handleClickCapture}
       onAuxClickCapture={preventAnchorNavigation}
       style={LINK_ANCHOR_STYLE}
     >

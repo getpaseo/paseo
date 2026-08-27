@@ -175,7 +175,7 @@ describe("editor target registry", () => {
       { command: "/bin/zeditor", args: ["/repo", "/repo/src/app.ts:7:2"] },
       {
         command: "/bin/webstorm",
-        args: ["--line", "7", "--column", "2", "/repo", "/repo/src/app.ts"],
+        args: ["/repo", "--line", "7", "--column", "2", "/repo/src/app.ts"],
       },
       { command: "/bin/idea", args: ["/repo"] },
     ]);

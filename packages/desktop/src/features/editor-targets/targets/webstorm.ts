@@ -22,10 +22,10 @@ export const webstormTarget: EditorTarget = {
       await runtime.spawnDetached({ command, args: [input.workspacePath] });
       return;
     }
-    const args: string[] = [];
+    const args: string[] = [input.workspacePath];
     if (input.line) args.push("--line", String(input.line));
     if (input.column) args.push("--column", String(input.column));
-    args.push(input.workspacePath, input.filePath);
+    args.push(input.filePath);
     await runtime.spawnDetached({ command, args });
   },
 };
