@@ -1,5 +1,6 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
+import type { Locator } from "@playwright/test";
 import { test, expect, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import {
@@ -77,6 +78,24 @@ async function waitForSidebarProjectListReady(page: Page): Promise<void> {
     .waitFor({ state: "visible", timeout: 60_000 });
 }
 
+async function expectSidebarRowIsInMotion(row: Locator) {
+  await expect
+    .poll(
+      () =>
+        row.evaluate((element) => {
+          let current: Element | null = element;
+          let lowestOpacity = 1;
+          for (let depth = 0; current && depth < 6; depth += 1) {
+            lowestOpacity = Math.min(lowestOpacity, Number(getComputedStyle(current).opacity));
+            current = current.parentElement;
+          }
+          return lowestOpacity;
+        }),
+      { timeout: 150 },
+    )
+    .toBeLessThan(1);
+}
+
 test.describe("Project picker search", () => {
   test("opens a project from a fuzzy directory-name search", async ({
     page,
@@ -129,6 +148,7 @@ test.describe("Project with no workspaces persists", () => {
       projectId = await addProjectFromPicker(page, repo.path);
       const projectRow = page.getByTestId(`sidebar-project-row-${projectId}`);
       await expect(projectRow).toBeVisible({ timeout: 30_000 });
+      await expectSidebarRowIsInMotion(projectRow);
       await expect(projectRow).toContainText(path.basename(repo.path));
       await expect(page.getByTestId(`sidebar-workspace-list-${projectId}`)).toHaveCount(0);
 
@@ -144,6 +164,34 @@ test.describe("Project with no workspaces persists", () => {
       }
       await client.close().catch(() => undefined);
       await repo.cleanup().catch(() => undefined);
+    }
+  });
+
+  test("adding a workspace falls into its project list", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "workspace-fall-in-" });
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+
+      const created = await workspace.client.createWorkspace({
+        source: {
+          kind: "directory",
+          path: workspace.repoPath,
+          projectId: workspace.projectId,
+        },
+        title: "Falling workspace",
+      });
+      if (!created.workspace) {
+        throw new Error(created.error ?? "Failed to create workspace");
+      }
+
+      const row = page.getByTestId(workspaceRowTestId(created.workspace.id));
+      await expect(row).toBeAttached({ timeout: 30_000 });
+      await expectSidebarRowIsInMotion(row);
+      await expect(row).toBeVisible();
+    } finally {
+      await workspace.cleanup();
     }
   });
 
@@ -171,6 +219,7 @@ test.describe("Project with no workspaces persists", () => {
       await expect(page.getByTestId("changes-primary-cta")).toHaveCount(0);
 
       await archiveWorkspaceFromSidebar(page, workspace.workspaceId);
+      await expectSidebarRowIsInMotion(workspaceRow);
 
       // The workspace row goes away, but its project parent stays and exposes a
       // child row for creating the next workspace.
@@ -211,6 +260,7 @@ test.describe("Project remove", () => {
       });
 
       await removeProjectFromSidebar(page, projectViewKey);
+      await expectSidebarRowIsInMotion(projectRow);
 
       await expect(page.getByTestId(workspaceRowTestId(workspace.workspaceId))).toHaveCount(0, {
         timeout: 30_000,

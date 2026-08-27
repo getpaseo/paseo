@@ -28,6 +28,7 @@ export interface ArchiveWorkspaceInput {
   aheadOfOrigin?: number | null;
   diffStat?: { additions: number; deletions: number } | null;
   warningLabels?: WorktreeArchiveWarningLabels;
+  onBeforeArchive?: () => Promise<void>;
   onArchiveStarted: () => void;
   onSetHiding?: (hiding: boolean) => void;
 }
@@ -46,6 +47,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     aheadOfOrigin,
     diffStat,
     warningLabels = DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
+    onBeforeArchive,
     onArchiveStarted,
     onSetHiding,
   } = input;
@@ -60,6 +62,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     }
     onSetHiding?.(true);
     try {
+      await onBeforeArchive?.();
       onArchiveStarted();
       await archiveWorkspaceOptimistically({
         client,
@@ -76,7 +79,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
     } finally {
       onSetHiding?.(false);
     }
-  }, [onArchiveStarted, onSetHiding, serverId, t, toast, workspaceId]);
+  }, [onArchiveStarted, onBeforeArchive, onSetHiding, serverId, t, toast, workspaceId]);
 
   const archive = useCallback(() => {
     void (async () => {
