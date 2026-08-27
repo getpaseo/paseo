@@ -15,6 +15,7 @@ export interface DesktopSettings {
   releaseChannel: ReleaseChannel;
   notifications: {
     playSound: boolean;
+    customSoundPath: string | null;
   };
   daemon: {
     manageBuiltInDaemon: boolean;
@@ -32,6 +33,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   releaseChannel: "stable",
   notifications: {
     playSound: true,
+    customSoundPath: null,
   },
   daemon: {
     manageBuiltInDaemon: true,
@@ -161,6 +163,10 @@ function parseDesktopSettings(raw: unknown): DesktopSettings {
         typeof notifications.playSound === "boolean"
           ? notifications.playSound
           : DEFAULT_DESKTOP_SETTINGS.notifications.playSound,
+      customSoundPath:
+        typeof notifications.customSoundPath === "string"
+          ? notifications.customSoundPath
+          : DEFAULT_DESKTOP_SETTINGS.notifications.customSoundPath,
     },
     daemon: {
       manageBuiltInDaemon:

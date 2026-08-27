@@ -1,5 +1,5 @@
 import { Asset } from "expo-asset";
-import { getDesktopHost } from "@/desktop/host";
+import { getDesktopHost, type DesktopNotificationSendResult } from "@/desktop/host";
 import { buildNotificationRoute, resolveNotificationTarget } from "./notification-routing";
 import { isNative } from "@/constants/platform";
 
@@ -21,22 +21,64 @@ export const WEB_NOTIFICATION_CLICK_EVENT = "paseo:web-notification-click";
 
 let permissionRequest: Promise<boolean> | null = null;
 let notificationIconUrl: string | null | undefined;
+let customSoundRequest: Promise<string | null> | null = null;
 
-function getDesktopNotificationSender():
-  | ((payload: {
-      title: string;
-      body?: string;
-      data?: Record<string, unknown>;
-    }) => Promise<boolean>)
-  | null {
+interface NotificationAudio {
+  play: () => Promise<void>;
+}
+
+export function resetCustomNotificationSound(): void {
+  customSoundRequest = null;
+}
+
+async function requestCustomNotificationSound(): Promise<string | null> {
+  const getCustomSound = getDesktopHost()?.notification?.getCustomSound;
+  if (typeof getCustomSound !== "function") {
+    return null;
+  }
+  const sound = await getCustomSound();
+  return sound?.dataUrl ?? null;
+}
+
+function getAudioConstructor(): (new (src: string) => NotificationAudio) | null {
+  return (globalThis as { Audio?: new (src: string) => NotificationAudio }).Audio ?? null;
+}
+
+async function playCustomNotificationSound(): Promise<void> {
+  try {
+    customSoundRequest ??= requestCustomNotificationSound();
+    const dataUrl = await customSoundRequest;
+    if (!dataUrl) {
+      customSoundRequest = null;
+      return;
+    }
+    const AudioConstructor = getAudioConstructor();
+    if (!AudioConstructor) {
+      return;
+    }
+    await new AudioConstructor(dataUrl).play();
+  } catch {
+    customSoundRequest = null;
+  }
+}
+
+type DesktopNotificationSender = (payload: {
+  title: string;
+  body?: string;
+  data?: Record<string, unknown>;
+}) => Promise<boolean | DesktopNotificationSendResult>;
+
+function getDesktopNotificationSender(): DesktopNotificationSender | null {
   const sendNotification = getDesktopHost()?.notification?.sendNotification;
   return typeof sendNotification === "function"
-    ? (sendNotification as (payload: {
-        title: string;
-        body?: string;
-        data?: Record<string, unknown>;
-      }) => Promise<boolean>)
+    ? (sendNotification as DesktopNotificationSender)
     : null;
+}
+
+function normalizeSendResult(
+  result: boolean | DesktopNotificationSendResult,
+): DesktopNotificationSendResult {
+  return typeof result === "boolean" ? { shown: result, playsCustomSound: result } : result;
 }
 
 function getWebNotificationConstructor(): {
@@ -171,7 +213,11 @@ export async function sendOsNotification(payload: OsNotificationPayload): Promis
 
   const desktopNotificationSender = getDesktopNotificationSender();
   if (desktopNotificationSender) {
-    return await desktopNotificationSender(payload);
+    const result = normalizeSendResult(await desktopNotificationSender(payload));
+    if (result.playsCustomSound) {
+      await playCustomNotificationSound();
+    }
+    return result.shown;
   }
 
   const NotificationConstructor = getWebNotificationConstructor();

@@ -8,6 +8,7 @@ export interface DesktopSettings {
   releaseChannel: AppReleaseChannel;
   notifications: {
     playSound: boolean;
+    customSoundPath: string | null;
   };
   daemon: {
     manageBuiltInDaemon: boolean;
@@ -44,6 +45,7 @@ export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   releaseChannel: "stable",
   notifications: {
     playSound: true,
+    customSoundPath: null,
   },
   daemon: {
     manageBuiltInDaemon: true,
@@ -69,6 +71,16 @@ function coerceReleaseChannel(value: unknown): AppReleaseChannel | null {
 
 function coerceBoolean(value: unknown): boolean | null {
   return typeof value === "boolean" ? value : null;
+}
+
+function coerceCustomSoundPath(value: unknown): string | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  return value.length > 0 ? value : null;
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
@@ -111,6 +123,11 @@ function coerceDesktopSettings(input: unknown): DesktopSettings {
     if (playSound !== null) {
       result.notifications.playSound = playSound;
     }
+
+    const customSoundPath = coerceCustomSoundPath(input.notifications.customSoundPath);
+    if (customSoundPath !== undefined) {
+      result.notifications.customSoundPath = customSoundPath;
+    }
   }
 
   if (isRecord(input.daemon)) {
@@ -141,9 +158,17 @@ function coerceDesktopSettingsPatch(input: unknown): DesktopSettingsPatch {
   }
 
   if (isRecord(input.notifications)) {
+    const notificationsPatch: Partial<DesktopSettings["notifications"]> = {};
     const playSound = coerceBoolean(input.notifications.playSound);
     if (playSound !== null) {
-      patch.notifications = { playSound };
+      notificationsPatch.playSound = playSound;
+    }
+    const customSoundPath = coerceCustomSoundPath(input.notifications.customSoundPath);
+    if (customSoundPath !== undefined) {
+      notificationsPatch.customSoundPath = customSoundPath;
+    }
+    if (Object.keys(notificationsPatch).length > 0) {
+      patch.notifications = notificationsPatch;
     }
   }
 
