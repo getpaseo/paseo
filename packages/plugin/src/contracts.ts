@@ -17,6 +17,35 @@ export interface PluginTheme {
   };
 }
 
+export interface PluginHostProps {
+  theme: PluginTheme;
+  host: {
+    id: string;
+    label: string;
+  };
+  layout: {
+    compact: boolean;
+    platform: "ios" | "android" | "web";
+  };
+}
+
+interface PluginNavigableHostProps extends PluginHostProps {
+  /** Client-owned navigation. Undefined on older hosts; hide dependent affordances when absent. */
+  readonly navigation?: {
+    readonly openAgent: (input: { readonly agentId: string }) => void;
+    readonly openWorkspace: (input: { readonly workspaceId: string }) => void;
+  };
+}
+
+export interface PluginSurfaceProps extends PluginNavigableHostProps {}
+
+export interface PluginIconProps {
+  name: string;
+  size?: number;
+  color?: string;
+  accessible?: boolean;
+  accessibilityLabel?: string;
+}
 export interface PluginWorkspaceSnapshot {
   readonly id: string;
   readonly projectId: string;
