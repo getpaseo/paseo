@@ -15,7 +15,7 @@ import type { ManagedAgent } from "../agent-manager.js";
 const logger = createTestLogger();
 
 function passThroughWorkspaceAgentRegistrationLease<Value>(
-  _workspaceId: string,
+  _workspaceId: string | undefined,
   action: () => Promise<Value>,
 ): Promise<Value> {
   return action();
@@ -296,6 +296,58 @@ test("mcp create holds its workspace registration lease during provider resoluti
     expect(agentManager.listAgents()).toEqual([]);
   } finally {
     finishProviderResolution.resolve();
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+test("top-level mcp create holds an unresolved lease during workspace provisioning", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-provisioning-lease-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const provisioningStarted = deferredVoid();
+  const finishProvisioning = deferredVoid();
+
+  try {
+    const creation = createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        ensureWorkspaceForCreate: async () => {
+          provisioningStarted.resolve();
+          await finishProvisioning.promise;
+          return "ws-created-during-archive-race";
+        },
+      },
+      {
+        kind: "mcp",
+        provider: "codex",
+        cwd: workdir,
+        title: "provisioning lease",
+        background: true,
+        notifyOnFinish: false,
+      },
+    );
+    await provisioningStarted.promise;
+
+    let archiveStarted = false;
+    const archive = agentManager.runWithWorkspaceArchiveExclusion(
+      ["ws-affinity-expiring"],
+      async () => {
+        archiveStarted = true;
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(archiveStarted).toBe(false);
+
+    finishProvisioning.resolve();
+    const created = await creation;
+    await archive;
+    expect(created.snapshot.workspaceId).toBe("ws-created-during-archive-race");
+    expect(archiveStarted).toBe(true);
+  } finally {
+    finishProvisioning.resolve();
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
 });

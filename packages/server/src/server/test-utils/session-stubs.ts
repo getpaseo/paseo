@@ -38,7 +38,7 @@ export function asAgentManager(stub: {
 }): SessionOptions["agentManager"] {
   return createStub<SessionOptions["agentManager"]>({
     runWithWorkspaceAgentRegistrationLease: async <Value>(
-      _workspaceId: string,
+      _workspaceId: string | undefined,
       action: () => Promise<Value>,
     ) => action(),
     ...stub,

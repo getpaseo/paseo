@@ -1533,6 +1533,55 @@ test("workspace archive exclusion rejects new registrations before provider star
   await archive;
 });
 
+test("workspace archive exclusion rejects unresolved workspace creation leases", async () => {
+  const manager = new AgentManager({
+    clients: {},
+    logger,
+  });
+  const archiveStarted = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archive = manager.runWithWorkspaceArchiveExclusion(["workspace-archive"], async () => {
+    archiveStarted.resolve();
+    await finishArchive.promise;
+  });
+  await archiveStarted.promise;
+  const createWork = vi.fn(async () => undefined);
+
+  expect(() => manager.runWithWorkspaceAgentRegistrationLease(undefined, createWork)).toThrow(
+    WorkspaceAgentRegistrationBlockedError,
+  );
+  expect(createWork).not.toHaveBeenCalled();
+
+  finishArchive.resolve();
+  await archive;
+});
+
+test("workspace archive exclusion drains unresolved workspace creation leases", async () => {
+  const manager = new AgentManager({
+    clients: {},
+    logger,
+  });
+  const creationStarted = deferred<void>();
+  const finishCreation = deferred<void>();
+  const creation = manager.runWithWorkspaceAgentRegistrationLease(undefined, async () => {
+    creationStarted.resolve();
+    await finishCreation.promise;
+  });
+  await creationStarted.promise;
+
+  let archiveStarted = false;
+  const archive = manager.runWithWorkspaceArchiveExclusion(["workspace-archive"], async () => {
+    archiveStarted = true;
+  });
+  await Promise.resolve();
+  expect(archiveStarted).toBe(false);
+
+  finishCreation.resolve();
+  await creation;
+  await archive;
+  expect(archiveStarted).toBe(true);
+});
+
 test("workspace archive exclusion drains registrations that already started", async () => {
   const client = new HeldAgentCreationClient();
   const manager = new AgentManager({

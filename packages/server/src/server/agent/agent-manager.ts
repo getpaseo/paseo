@@ -116,8 +116,12 @@ export class AgentManagerShuttingDownError extends Error {
 }
 
 export class WorkspaceAgentRegistrationBlockedError extends Error {
-  constructor(workspaceId: string) {
-    super(`Workspace ${workspaceId} is being archived`);
+  constructor(workspaceId?: string) {
+    super(
+      workspaceId
+        ? `Workspace ${workspaceId} is being archived`
+        : "Workspace creation is blocked while archival is in progress",
+    );
     this.name = "WorkspaceAgentRegistrationBlockedError";
   }
 }
@@ -695,8 +699,10 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasksByWorkspace = new Map<string, Set<Promise<void>>>();
+  private readonly unresolvedWorkspaceAgentRegistrationTasks = new Set<Promise<void>>();
   private readonly workspaceArchiveExclusions = new Set<string>();
   private readonly workspaceArchiveTails = new Map<string, Promise<void>>();
+  private activeWorkspaceArchiveTransactions = 0;
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
@@ -810,20 +816,29 @@ export class AgentManager {
       const nestedAction = excludedAction;
       excludedAction = () => this.runWithSingleWorkspaceArchiveExclusion(workspaceId, nestedAction);
     }
-    return excludedAction();
+    return this.runWithUnresolvedWorkspaceArchiveExclusion(excludedAction);
   }
 
   /**
-   * Registers create-command work against a workspace before the command reaches the final
-   * provider-session registration boundary. Archive transactions either reject it before work
-   * starts or wait for the command to settle.
+   * Registers create-command work before the command reaches the final provider-session
+   * registration boundary. A known workspace uses a scoped lease. An unresolved top-level create
+   * uses a daemon-wide provisioning lease because its backing workspace identity does not exist
+   * yet. Archive transactions either reject the command before work starts or wait for it to
+   * settle.
    */
   runWithWorkspaceAgentRegistrationLease<Value>(
-    workspaceId: string,
+    workspaceId: string | undefined,
     action: () => Promise<Value>,
   ): Promise<Value> {
+    if (workspaceId === undefined && this.activeWorkspaceArchiveTransactions > 0) {
+      throw new WorkspaceAgentRegistrationBlockedError();
+    }
     this.assertWorkspaceAcceptingAgentRegistrations(workspaceId);
-    return this.trackAgentRegistrationOperation(Promise.resolve().then(action), workspaceId);
+    return this.trackAgentRegistrationOperation(
+      Promise.resolve().then(action),
+      workspaceId,
+      workspaceId === undefined,
+    );
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -3280,6 +3295,18 @@ export class AgentManager {
     }
   }
 
+  private async runWithUnresolvedWorkspaceArchiveExclusion<Value>(
+    action: () => Promise<Value>,
+  ): Promise<Value> {
+    this.activeWorkspaceArchiveTransactions += 1;
+    try {
+      await this.waitForUnresolvedWorkspaceAgentRegistrations();
+      return await action();
+    } finally {
+      this.activeWorkspaceArchiveTransactions -= 1;
+    }
+  }
+
   private runWithSingleWorkspaceArchiveExclusion<Value>(
     workspaceId: string,
     action: () => Promise<Value>,
@@ -3315,6 +3342,12 @@ export class AgentManager {
       const pending = this.agentRegistrationTasksByWorkspace.get(workspaceId);
       if (!pending || pending.size === 0) return;
       await Promise.allSettled(pending);
+    }
+  }
+
+  private async waitForUnresolvedWorkspaceAgentRegistrations(): Promise<void> {
+    while (this.unresolvedWorkspaceAgentRegistrationTasks.size > 0) {
+      await Promise.allSettled(this.unresolvedWorkspaceAgentRegistrationTasks);
     }
   }
 
@@ -4658,12 +4691,19 @@ export class AgentManager {
     });
   }
 
-  private trackAgentRegistrationOperation<T>(result: Promise<T>, workspaceId?: string): Promise<T> {
+  private trackAgentRegistrationOperation<T>(
+    result: Promise<T>,
+    workspaceId?: string,
+    unresolvedWorkspace = false,
+  ): Promise<T> {
     const settled = result.then(
       () => undefined,
       () => undefined,
     );
     this.agentRegistrationTasks.add(settled);
+    if (unresolvedWorkspace) {
+      this.unresolvedWorkspaceAgentRegistrationTasks.add(settled);
+    }
     if (workspaceId) {
       const workspaceTasks = this.agentRegistrationTasksByWorkspace.get(workspaceId) ?? new Set();
       workspaceTasks.add(settled);
@@ -4671,6 +4711,7 @@ export class AgentManager {
     }
     void settled.then(() => {
       this.agentRegistrationTasks.delete(settled);
+      this.unresolvedWorkspaceAgentRegistrationTasks.delete(settled);
       if (workspaceId) {
         const workspaceTasks = this.agentRegistrationTasksByWorkspace.get(workspaceId);
         workspaceTasks?.delete(settled);

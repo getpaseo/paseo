@@ -192,12 +192,11 @@ export async function createAgentCommand(
     return { resolved, snapshot };
   };
   const initialWorkspaceId = initialWorkspaceRegistrationId(dependencies.agentManager, input);
-  const { resolved, snapshot } = initialWorkspaceId
-    ? await dependencies.agentManager.runWithWorkspaceAgentRegistrationLease(
-        initialWorkspaceId,
-        resolveAndCreate,
-      )
-    : await resolveAndCreate();
+  const { resolved, snapshot } =
+    await dependencies.agentManager.runWithWorkspaceAgentRegistrationLease(
+      initialWorkspaceId,
+      resolveAndCreate,
+    );
 
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;
