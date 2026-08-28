@@ -4776,6 +4776,125 @@ test("open_project_request does not unarchive an archived parent workspace for a
   expect(projects.get(home)?.archivedAt).toBe(archivedAt);
 });
 
+test("open_project_request serializes archived workspace activation with expiry", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const logger = createTestLogger();
+  const leaseManager = new AgentManager({ clients: {}, logger });
+  const workspaceId = "ws-open-project-affinity-race";
+  const projectId = "project-open-project-affinity-race";
+  const cwd = REPO_CWD;
+  const archivedAt = "2026-08-28T20:00:00.000Z";
+  let project = createPersistedProjectRecord({
+    projectId,
+    rootPath: cwd,
+    kind: "non_git",
+    displayName: "repo",
+    createdAt: "2026-08-28T19:00:00.000Z",
+    updatedAt: archivedAt,
+  });
+  let workspace = createPersistedWorkspaceRecord({
+    workspaceId,
+    projectId,
+    cwd,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-08-28T19:00:00.000Z",
+    updatedAt: archivedAt,
+    archivedAt,
+  });
+  const directoryLookupStarted = deferred<void>();
+  const finishDirectoryLookup = deferred<void>();
+  const archiveHolding = deferred<void>();
+  const finishArchive = deferred<void>();
+  let directoryLookupCount = 0;
+  const session = createSessionForWorkspaceTests({
+    agentManager: {
+      runWithWorkspaceAgentRegistrationLease:
+        leaseManager.runWithWorkspaceAgentRegistrationLease.bind(leaseManager),
+    },
+    onMessage: (message) => {
+      if (isSessionOutboundMessage(message)) emitted.push(message);
+    },
+  });
+  session.filesystem.isDirectory = async () => {
+    directoryLookupCount += 1;
+    directoryLookupStarted.resolve(undefined);
+    await finishDirectoryLookup.promise;
+    return true;
+  };
+  session.projectRegistry.get = async (requestedProjectId: string) =>
+    requestedProjectId === projectId ? project : null;
+  session.projectRegistry.list = async () => [project];
+  session.projectRegistry.upsert = async (record: PersistedProjectRecord) => {
+    project = record;
+  };
+  session.workspaceRegistry.get = async (requestedWorkspaceId: string) =>
+    requestedWorkspaceId === workspaceId ? workspace : null;
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.upsert = async (record: PersistedWorkspaceRecord) => {
+    workspace = record;
+  };
+
+  try {
+    const openBeforeArchive = session.handleMessage({
+      type: "open_project_request",
+      cwd,
+      requestId: "req-open-before-expiry",
+    });
+    await directoryLookupStarted.promise;
+
+    let archiveEntered = false;
+    const archiveAfterOpen = leaseManager.runWithWorkspaceArchiveExclusion(
+      [workspaceId],
+      async () => {
+        archiveEntered = true;
+      },
+    );
+    await waitForImmediate();
+    expect(archiveEntered).toBe(false);
+
+    finishDirectoryLookup.resolve(undefined);
+    await openBeforeArchive;
+    await archiveAfterOpen;
+    expect(archiveEntered).toBe(true);
+    expect(workspace.archivedAt).toBeNull();
+    expect(findByType(emitted, "open_project_response")?.payload).toMatchObject({
+      requestId: "req-open-before-expiry",
+      workspace: { id: workspaceId },
+      error: null,
+    });
+
+    workspace = { ...workspace, archivedAt, updatedAt: archivedAt };
+    const archiveBeforeOpen = leaseManager.runWithWorkspaceArchiveExclusion(
+      [workspaceId],
+      async () => {
+        archiveHolding.resolve(undefined);
+        await finishArchive.promise;
+      },
+    );
+    await archiveHolding.promise;
+
+    await session.handleMessage({
+      type: "open_project_request",
+      cwd,
+      requestId: "req-open-after-expiry",
+    });
+    expect(directoryLookupCount).toBe(1);
+    expect(filterByType(emitted, "open_project_response").at(-1)?.payload).toMatchObject({
+      requestId: "req-open-after-expiry",
+      workspace: null,
+      error: "Workspace creation is blocked while archival is in progress",
+    });
+
+    finishArchive.resolve(undefined);
+    await archiveBeforeOpen;
+  } finally {
+    finishDirectoryLookup.resolve(undefined);
+    finishArchive.resolve(undefined);
+    await leaseManager.flush().catch(() => undefined);
+  }
+});
+
 test("open_project_request reclassifies an archived directory workspace when git metadata becomes available", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();

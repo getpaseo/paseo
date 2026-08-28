@@ -6095,76 +6095,80 @@ export class Session {
   ): Promise<void> {
     const requestedCwd = request.cwd;
     const cwd = expandTilde(requestedCwd);
-    const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
-    if (!directoryExists) {
-      this.sessionLogger.info(
-        { requestedCwd, resolvedCwd: cwd, reason: "directory_not_found" },
-        "Open project rejected",
-      );
-      this.emit({
-        type: "open_project_response",
-        payload: {
-          requestId: request.requestId,
-          workspace: null,
-          error: `Directory not found: ${cwd}`,
-          errorCode: "directory_not_found",
-        },
-      });
-      return;
-    }
-
     try {
-      const projectsBefore = new Map<string, PersistedProjectRecord>();
-      for (const project of await this.projectRegistry.list()) {
-        projectsBefore.set(project.projectId, project);
-      }
-      const workspacesBefore = new Map<string, PersistedWorkspaceRecord>();
-      for (const workspaceRecord of await this.workspaceRegistry.list()) {
-        workspacesBefore.set(workspaceRecord.workspaceId, workspaceRecord);
-      }
-      const workspace = await this.workspaceProvisioning.findOrCreateWorkspaceForDirectory(cwd);
-      const project = await this.projectRegistry.get(workspace.projectId);
-      await this.syncWorkspaceGitObserverForWorkspace(workspace);
-      const descriptor = await this.describeWorkspaceRecord(workspace);
-      await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
-      this.sessionLogger.info(
-        {
-          requestedCwd,
-          resolvedCwd: cwd,
-          workspaceCwd: workspace.cwd,
-          workspaceId: workspace.workspaceId,
-          workspaceKind: workspace.kind,
-          workspaceTransition: describeRegistryTransition(
-            workspacesBefore.get(workspace.workspaceId) ?? null,
-          ),
-          projectId: workspace.projectId,
-          projectKind: project?.kind ?? null,
-          projectTransition: describeRegistryTransition(
-            projectsBefore.get(workspace.projectId) ?? null,
-          ),
-        },
-        "Project opened",
-      );
-      this.emit({
-        type: "open_project_response",
-        payload: {
-          requestId: request.requestId,
-          workspace: descriptor,
-          error: null,
-        },
-      });
-      void this.workspaceGitService
-        .getSnapshot(workspace.cwd, {
-          force: true,
-          includeForge: true,
-          reason: "open_project",
-        })
-        .catch((error) => {
-          this.sessionLogger.warn(
-            { err: error, cwd: workspace.cwd },
-            "Background snapshot refresh failed after open_project",
+      // The exact workspace is unknown until directory and registry lookup complete. Register the
+      // activation before either lookup so expiry cannot resolve an archived empty target first.
+      await this.agentManager.runWithWorkspaceAgentRegistrationLease(undefined, async () => {
+        const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
+        if (!directoryExists) {
+          this.sessionLogger.info(
+            { requestedCwd, resolvedCwd: cwd, reason: "directory_not_found" },
+            "Open project rejected",
           );
+          this.emit({
+            type: "open_project_response",
+            payload: {
+              requestId: request.requestId,
+              workspace: null,
+              error: `Directory not found: ${cwd}`,
+              errorCode: "directory_not_found",
+            },
+          });
+          return;
+        }
+
+        const projectsBefore = new Map<string, PersistedProjectRecord>();
+        for (const project of await this.projectRegistry.list()) {
+          projectsBefore.set(project.projectId, project);
+        }
+        const workspacesBefore = new Map<string, PersistedWorkspaceRecord>();
+        for (const workspaceRecord of await this.workspaceRegistry.list()) {
+          workspacesBefore.set(workspaceRecord.workspaceId, workspaceRecord);
+        }
+        const workspace = await this.workspaceProvisioning.findOrCreateWorkspaceForDirectory(cwd);
+        const project = await this.projectRegistry.get(workspace.projectId);
+        await this.syncWorkspaceGitObserverForWorkspace(workspace);
+        const descriptor = await this.describeWorkspaceRecord(workspace);
+        await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+        this.sessionLogger.info(
+          {
+            requestedCwd,
+            resolvedCwd: cwd,
+            workspaceCwd: workspace.cwd,
+            workspaceId: workspace.workspaceId,
+            workspaceKind: workspace.kind,
+            workspaceTransition: describeRegistryTransition(
+              workspacesBefore.get(workspace.workspaceId) ?? null,
+            ),
+            projectId: workspace.projectId,
+            projectKind: project?.kind ?? null,
+            projectTransition: describeRegistryTransition(
+              projectsBefore.get(workspace.projectId) ?? null,
+            ),
+          },
+          "Project opened",
+        );
+        this.emit({
+          type: "open_project_response",
+          payload: {
+            requestId: request.requestId,
+            workspace: descriptor,
+            error: null,
+          },
         });
+        void this.workspaceGitService
+          .getSnapshot(workspace.cwd, {
+            force: true,
+            includeForge: true,
+            reason: "open_project",
+          })
+          .catch((error) => {
+            this.sessionLogger.warn(
+              { err: error, cwd: workspace.cwd },
+              "Background snapshot refresh failed after open_project",
+            );
+          });
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to open project";
       this.sessionLogger.error({ err: error, cwd }, "Failed to open project");
