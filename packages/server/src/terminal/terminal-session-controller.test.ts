@@ -190,14 +190,18 @@ describe("terminal-session-controller legacy terminal creation", () => {
     const appCwd = "/work/repo/packages/app";
     const terminalCwd = "/work/repo/packages/app/src";
     const outboundMessages: SessionOutboundMessage[] = [];
+    const leaseWorkspaceIds: Array<string | undefined> = [];
+    let leaseDepth = 0;
     const createTerminal = vi.fn(
-      async (options: Parameters<TerminalManager["createTerminal"]>[0]) =>
-        listSession({
+      async (options: Parameters<TerminalManager["createTerminal"]>[0]) => {
+        expect(leaseDepth).toBe(2);
+        return listSession({
           id: "term-1",
           name: options.name ?? "Terminal 1",
           cwd: options.cwd,
           workspaceId: options.workspaceId,
-        }),
+        });
+      },
     );
     const terminalManager: TerminalManager = {
       getTerminals: vi.fn(),
@@ -225,10 +229,22 @@ describe("terminal-session-controller legacy terminal creation", () => {
       hasBinaryChannel: () => true,
       isPathWithinRoot: isSameOrDescendantPath,
       sessionLogger: createLogger(),
-      listTerminalWorkspaceRefs: async () => [
-        { workspaceId: "ws-root", cwd: rootCwd },
-        { workspaceId: "ws-app", cwd: appCwd },
-      ],
+      listTerminalWorkspaceRefs: async () => {
+        expect(leaseDepth).toBe(1);
+        return [
+          { workspaceId: "ws-root", cwd: rootCwd },
+          { workspaceId: "ws-app", cwd: appCwd },
+        ];
+      },
+      runWithWorkspaceTerminalCreationLease: async (workspaceId, action) => {
+        leaseWorkspaceIds.push(workspaceId);
+        leaseDepth += 1;
+        try {
+          return await action();
+        } finally {
+          leaseDepth -= 1;
+        }
+      },
     });
 
     await controller.dispatch({
@@ -245,6 +261,8 @@ describe("terminal-session-controller legacy terminal creation", () => {
         name: "App Shell",
       }),
     );
+    expect(leaseWorkspaceIds).toEqual([undefined, "ws-app"]);
+    expect(leaseDepth).toBe(0);
     expect(outboundMessages).toEqual([
       {
         type: "create_terminal_response",
@@ -265,14 +283,17 @@ describe("terminal-session-controller legacy terminal creation", () => {
 
   test("forwards the client-provided viewport size to the terminal manager", async () => {
     const outboundMessages: SessionOutboundMessage[] = [];
+    let activeWorkspaceLease: string | undefined;
     const createTerminal = vi.fn(
-      async (options: Parameters<TerminalManager["createTerminal"]>[0]) =>
-        listSession({
+      async (options: Parameters<TerminalManager["createTerminal"]>[0]) => {
+        expect(activeWorkspaceLease).toBe("ws-1");
+        return listSession({
           id: "term-1",
           name: options.name ?? "Terminal 1",
           cwd: options.cwd,
           workspaceId: options.workspaceId,
-        }),
+        });
+      },
     );
     const terminalManager: TerminalManager = {
       getTerminals: vi.fn(),
@@ -301,6 +322,14 @@ describe("terminal-session-controller legacy terminal creation", () => {
       isPathWithinRoot: isSameOrDescendantPath,
       sessionLogger: createLogger(),
       listTerminalWorkspaceRefs: async () => [],
+      runWithWorkspaceTerminalCreationLease: async (workspaceId, action) => {
+        activeWorkspaceLease = workspaceId;
+        try {
+          return await action();
+        } finally {
+          activeWorkspaceLease = undefined;
+        }
+      },
     });
 
     await controller.dispatch({

@@ -11,6 +11,7 @@ import {
   AgentManagerShuttingDownError,
   WorkspaceAgentRegistrationBlockedError,
   WorkspaceRelationshipMutationBlockedError,
+  WorkspaceTerminalCreationBlockedError,
   commandMayHaveChangedExternalState,
   type AgentManagerEvent,
   type ManagedAgent,
@@ -1617,6 +1618,67 @@ test("workspace archive exclusion drains unresolved workspace creation leases", 
   expect(archiveStarted).toBe(true);
 });
 
+test("workspace archive exclusion drains terminal creations that already started", async () => {
+  const manager = new AgentManager({
+    clients: {},
+    logger,
+  });
+  const creationStarted = deferred<void>();
+  const finishCreation = deferred<void>();
+  const creation = manager.runWithWorkspaceTerminalCreationLease(
+    "workspace-terminal-archive",
+    async () => {
+      creationStarted.resolve();
+      await finishCreation.promise;
+    },
+  );
+  await creationStarted.promise;
+
+  let archiveStarted = false;
+  const archive = manager.runWithWorkspaceArchiveExclusion(
+    ["workspace-terminal-archive"],
+    async () => {
+      archiveStarted = true;
+    },
+  );
+  await Promise.resolve();
+  expect(archiveStarted).toBe(false);
+
+  finishCreation.resolve();
+  await creation;
+  await archive;
+  expect(archiveStarted).toBe(true);
+});
+
+test("workspace archive exclusion rejects new terminal creation leases", async () => {
+  const manager = new AgentManager({
+    clients: {},
+    logger,
+  });
+  const archiveStarted = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archive = manager.runWithWorkspaceArchiveExclusion(
+    ["workspace-terminal-archive"],
+    async () => {
+      archiveStarted.resolve();
+      await finishArchive.promise;
+    },
+  );
+  await archiveStarted.promise;
+  const createWork = vi.fn(async () => undefined);
+
+  expect(() =>
+    manager.runWithWorkspaceTerminalCreationLease("workspace-terminal-archive", createWork),
+  ).toThrow(WorkspaceTerminalCreationBlockedError);
+  expect(() => manager.runWithWorkspaceTerminalCreationLease(undefined, createWork)).toThrow(
+    WorkspaceTerminalCreationBlockedError,
+  );
+  expect(createWork).not.toHaveBeenCalled();
+
+  finishArchive.resolve();
+  await archive;
+});
+
 test("workspace archive exclusion drains registrations that already started", async () => {
   const client = new HeldAgentCreationClient();
   const manager = new AgentManager({
@@ -1734,6 +1796,125 @@ test("workspace archive exclusion drains a detach that already started", async (
   expect({ archiveStarted, parentAtArchive }).toEqual({
     archiveStarted: true,
     parentAtArchive: null,
+  });
+});
+
+test("workspace archive exclusion drains stored-only detach lookup before observing labels", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stored-detach-archive-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-stored-detach-race";
+  const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId,
+  });
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+    workspaceId,
+  });
+  await manager.closeAgent(child.id);
+  await manager.flush();
+
+  const lookupStarted = deferred<void>();
+  const finishLookup = deferred<void>();
+  const originalGet = storage.get.bind(storage);
+  let holdChildLookup = true;
+  vi.spyOn(storage, "get").mockImplementation(async (agentId) => {
+    if (agentId === child.id && holdChildLookup) {
+      holdChildLookup = false;
+      lookupStarted.resolve();
+      await finishLookup.promise;
+    }
+    return originalGet(agentId);
+  });
+
+  const detach = manager.detachAgent(child.id);
+  await lookupStarted.promise;
+
+  let archiveStarted = false;
+  let parentAtArchive: string | null = "not-observed";
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted = true;
+    parentAtArchive = (await storage.get(child.id))?.labels[PARENT_AGENT_ID_LABEL] ?? null;
+  });
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(archiveStarted).toBe(false);
+  } finally {
+    finishLookup.resolve();
+    await Promise.allSettled([detach, archive]);
+  }
+  await detach;
+  await archive;
+  expect({ archiveStarted, parentAtArchive }).toEqual({
+    archiveStarted: true,
+    parentAtArchive: null,
+  });
+});
+
+test("workspace archive exclusion drains stored-only reparent lookup before observing labels", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stored-reparent-archive-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-stored-reparent-race";
+  const originalParent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId,
+  });
+  const replacementParent = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    undefined,
+    { workspaceId },
+  );
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    labels: { [PARENT_AGENT_ID_LABEL]: originalParent.id },
+    workspaceId,
+  });
+  await manager.closeAgent(child.id);
+  await manager.flush();
+
+  const lookupStarted = deferred<void>();
+  const finishLookup = deferred<void>();
+  const originalGet = storage.get.bind(storage);
+  let holdChildLookup = true;
+  vi.spyOn(storage, "get").mockImplementation(async (agentId) => {
+    if (agentId === child.id && holdChildLookup) {
+      holdChildLookup = false;
+      lookupStarted.resolve();
+      await finishLookup.promise;
+    }
+    return originalGet(agentId);
+  });
+
+  const reparent = manager.updateAgentMetadata(child.id, {
+    labels: { [PARENT_AGENT_ID_LABEL]: replacementParent.id },
+  });
+  await lookupStarted.promise;
+
+  let archiveStarted = false;
+  let parentAtArchive: string | null = "not-observed";
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted = true;
+    parentAtArchive = (await storage.get(child.id))?.labels[PARENT_AGENT_ID_LABEL] ?? null;
+  });
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(archiveStarted).toBe(false);
+  } finally {
+    finishLookup.resolve();
+    await Promise.allSettled([reparent, archive]);
+  }
+  await reparent;
+  await archive;
+  expect({ archiveStarted, parentAtArchive }).toEqual({
+    archiveStarted: true,
+    parentAtArchive: replacementParent.id,
   });
 });
 
