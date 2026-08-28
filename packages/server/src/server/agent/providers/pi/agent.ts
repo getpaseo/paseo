@@ -89,6 +89,8 @@ import {
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
 const PI_BINARY_COMMAND = process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi";
+const PI_AGENT_DIR_NAME = ".pi";
+const PI_DISPLAY_NAME = "Pi";
 const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
@@ -184,6 +186,14 @@ export interface PiRpcAgentClientOptions {
   providerParams?: unknown;
   runtime?: PiRuntime;
   usagePollScheduler?: PiUsagePollScheduler;
+  /** Provider id override (defaults to "pi"). Used by forks like Prime Agent. */
+  provider?: string;
+  /** Binary command override (defaults to PI_BINARY_COMMAND / PI_COMMAND env). */
+  binaryCommand?: string;
+  /** Agent directory name under home (defaults to ".pi"). Prime Agent uses ".prime". */
+  agentDirName?: string;
+  /** Display name for diagnostics and permission prompts (defaults to "Pi"). */
+  displayName?: string;
 }
 
 interface PiPromptPayload {
@@ -226,6 +236,8 @@ interface PiRpcAgentSessionOptions {
   extensionTimeoutMs?: number;
   logger: Logger;
   usagePollScheduler?: PiUsagePollScheduler;
+  provider?: string;
+  displayName?: string;
 }
 
 interface PiResumeConfig {
@@ -526,10 +538,11 @@ function toPiMcpConfig(config: McpServerConfig): PiMcpServerConfig {
   };
 }
 
-function resolvePiAgentDir(env: Record<string, string> | undefined): string {
+function resolvePiAgentDir(env: Record<string, string> | undefined, agentDirName?: string): string {
+  const dirName = agentDirName ?? PI_AGENT_DIR_NAME;
   const configured = env?.PI_CODING_AGENT_DIR?.trim() || process.env.PI_CODING_AGENT_DIR?.trim();
   if (!configured) {
-    return join(homedir(), ".pi", "agent");
+    return join(homedir(), dirName, "agent");
   }
   if (configured === "~") {
     return homedir();
@@ -540,8 +553,11 @@ function resolvePiAgentDir(env: Record<string, string> | undefined): string {
   return resolvePath(configured);
 }
 
-function readPiGlobalMcpConfig(env: Record<string, string> | undefined): Record<string, unknown> {
-  const globalConfigPath = join(resolvePiAgentDir(env), "mcp.json");
+function readPiGlobalMcpConfig(
+  env: Record<string, string> | undefined,
+  agentDirName?: string,
+): Record<string, unknown> {
+  const globalConfigPath = join(resolvePiAgentDir(env, agentDirName), "mcp.json");
   if (!existsSync(globalConfigPath)) {
     return {};
   }
@@ -565,10 +581,11 @@ function createPiMcpConfigFile(
   servers: Record<string, McpServerConfig>,
   options?: {
     piGlobalConfigEnv?: Record<string, string>;
+    agentDirName?: string;
   },
 ): PiMcpConfigFile {
   const globalConfig = options?.piGlobalConfigEnv
-    ? readPiGlobalMcpConfig(options.piGlobalConfigEnv)
+    ? readPiGlobalMcpConfig(options.piGlobalConfigEnv, options.agentDirName)
     : {};
   let configuredServers: Record<string, unknown> = {};
   if (isRecord(globalConfig.mcpServers)) {
@@ -1184,17 +1201,22 @@ function mapPiModel(model: PiModel, provider: AgentProvider): AgentModelDefiniti
   };
 }
 
-function createRuntime(logger: Logger, runtimeSettings?: ProviderRuntimeSettings): PiRuntime {
+function createRuntime(
+  logger: Logger,
+  runtimeSettings?: ProviderRuntimeSettings,
+  binaryCommand?: string,
+): PiRuntime {
   return new PiCliRuntime({
     logger,
     runtimeSettings,
-    command: [PI_BINARY_COMMAND],
+    command: [binaryCommand ?? PI_BINARY_COMMAND],
     commandsRpcName: "get_commands",
   });
 }
 
 export class PiRpcAgentSession implements AgentSession {
   readonly provider: AgentProvider;
+  readonly displayName: string;
   readonly capabilities: AgentCapabilityFlags;
 
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
@@ -1237,7 +1259,8 @@ export class PiRpcAgentSession implements AgentSession {
     this.config = options.config;
     this.state = options.initialState;
     this.capabilities = options.capabilities;
-    this.provider = PI_PROVIDER;
+    this.provider = options.provider ?? PI_PROVIDER;
+    this.displayName = options.displayName ?? PI_DISPLAY_NAME;
     this.currentModeId = options.currentModeId ?? null;
     this.cleanup = options.cleanup;
     this.lastKnownThinkingOptionId =
@@ -1947,7 +1970,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.activeAskUserDialog.allowMultiple === false;
     const request = mapExtensionUiRequestToPermission(event, {
       provider: this.provider,
-      label: "Pi",
+      label: this.displayName,
       combineOptionalComment: shouldCombineOptionalComment,
       allowFreeform: this.activeAskUserDialog?.allowFreeform,
     });
@@ -2400,14 +2423,21 @@ export class PiRpcAgentClient implements AgentClient {
   private readonly providerParams: PiProviderParams;
   private readonly runtime: PiRuntime;
   private readonly usagePollScheduler?: PiUsagePollScheduler;
+  private readonly binaryCommand: string;
+  private readonly agentDirName: string;
+  private readonly displayName: string;
 
   constructor(options: PiRpcAgentClientOptions) {
-    this.provider = PI_PROVIDER;
+    this.provider = options.provider ?? PI_PROVIDER;
     this.capabilities = capabilitiesForClient();
     this.logger = options.logger;
     this.runtimeSettings = options.runtimeSettings;
     this.providerParams = PiProviderParamsSchema.parse(options.providerParams ?? {});
-    this.runtime = options.runtime ?? createRuntime(options.logger, options.runtimeSettings);
+    this.binaryCommand = options.binaryCommand ?? PI_BINARY_COMMAND;
+    this.agentDirName = options.agentDirName ?? PI_AGENT_DIR_NAME;
+    this.displayName = options.displayName ?? PI_DISPLAY_NAME;
+    this.runtime =
+      options.runtime ?? createRuntime(options.logger, options.runtimeSettings, this.binaryCommand);
     this.usagePollScheduler = options.usagePollScheduler;
   }
 
@@ -2450,6 +2480,8 @@ export class PiRpcAgentClient implements AgentClient {
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
+        provider: this.provider,
+        displayName: this.displayName,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -2513,6 +2545,8 @@ export class PiRpcAgentClient implements AgentClient {
         extensionTimeoutMs: this.providerParams.extensionTimeoutMs,
         logger: this.logger,
         usagePollScheduler: this.usagePollScheduler,
+        provider: this.provider,
+        displayName: this.displayName,
       });
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
@@ -2550,7 +2584,7 @@ export class PiRpcAgentClient implements AgentClient {
           await runProviderRefreshActivity(context, "get_available_models", () =>
             catalogSession.getAvailableModels(null),
           )
-        ).map((model) => mapPiModel(model, PI_PROVIDER)),
+        ).map((model) => mapPiModel(model, this.provider)),
       );
       return { models, modes: [] };
     } finally {
@@ -2570,6 +2604,7 @@ export class PiRpcAgentClient implements AgentClient {
       ...options,
       sessionDir: this.providerParams.sessionDir,
       runtimeSettings: this.runtimeSettings,
+      agentDirName: this.agentDirName,
     });
   }
 
@@ -2598,24 +2633,25 @@ export class PiRpcAgentClient implements AgentClient {
     try {
       const launch = await this.resolvePiLaunch();
       const availability = await checkProviderLaunchAvailable(launch);
-      const authConfigPath = join(homedir(), ".pi", "agent", "auth.json");
+      const authConfigPath = join(homedir(), this.agentDirName, "agent", "auth.json");
+      const authConfigLabel = `Auth config (~/${this.agentDirName}/agent/auth.json)`;
 
       return {
-        diagnostic: formatProviderDiagnostic("Pi", [
+        diagnostic: formatProviderDiagnostic(this.displayName, [
           ...(await buildCommandResolutionDiagnosticRows(launch, {
             knownBinaryNames: [launch.command],
           })),
           ...(await buildBinaryDiagnosticRows(launch, availability)),
           {
-            label: "Auth config (~/.pi/agent/auth.json)",
+            label: authConfigLabel,
             value: existsSync(authConfigPath) ? "found" : "not found",
           },
         ]),
       };
     } catch (error) {
-      this.logger.debug({ err: error }, "Pi diagnostic lookup failed");
+      this.logger.debug({ err: error }, `${this.displayName} diagnostic lookup failed`);
       return {
-        diagnostic: formatProviderDiagnosticError("Pi", error),
+        diagnostic: formatProviderDiagnosticError(this.displayName, error),
       };
     }
   }
@@ -2631,7 +2667,10 @@ export class PiRpcAgentClient implements AgentClient {
     if (!(await this.detectMcpAdapter(cwd, env))) {
       return null;
     }
-    return createPiMcpConfigFile(servers, { piGlobalConfigEnv: env });
+    return createPiMcpConfigFile(servers, {
+      piGlobalConfigEnv: env,
+      agentDirName: this.agentDirName,
+    });
   }
 
   private async detectMcpAdapter(cwd: string, env?: Record<string, string>): Promise<boolean> {
@@ -2655,7 +2694,7 @@ export class PiRpcAgentClient implements AgentClient {
   private async resolvePiLaunch(): Promise<ResolvedProviderLaunch> {
     return resolveProviderLaunch({
       commandConfig: this.runtimeSettings?.command,
-      defaultBinary: PI_BINARY_COMMAND,
+      defaultBinary: this.binaryCommand,
     });
   }
 }

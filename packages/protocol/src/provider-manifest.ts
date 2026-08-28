@@ -255,6 +255,15 @@ export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
     defaultModeId: "full",
     modes: OMP_MODES,
   },
+  {
+    id: "prime",
+    label: "Prime Agent",
+    description:
+      "Self-improving RLM agent for coding workflows and long-running autonomous tasks with background sessions",
+    enabledByDefault: false,
+    defaultModeId: null,
+    modes: [],
+  },
 ];
 
 export const DEV_AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [

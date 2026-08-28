@@ -27,6 +27,7 @@ interface PiSessionDescriptorOptions extends ListImportableSessionsOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
+  agentDirName?: string;
 }
 
 interface PiSessionHeader {
@@ -111,7 +112,12 @@ async function resolvePiSessionsDir(options: PiSessionDescriptorOptions): Promis
     return resolveConfigPath(options.sessionDir, { baseDir, homeDir });
   }
 
-  const agentDir = resolvePiAgentDir({ runtimeSettings: options.runtimeSettings, env, homeDir });
+  const agentDir = resolvePiAgentDir({
+    runtimeSettings: options.runtimeSettings,
+    env,
+    homeDir,
+    agentDirName: options.agentDirName,
+  });
 
   const envSessionDir =
     options.runtimeSettings?.env?.[PI_SESSION_DIR_ENV] ?? env[PI_SESSION_DIR_ENV];
@@ -122,6 +128,7 @@ async function resolvePiSessionsDir(options: PiSessionDescriptorOptions): Promis
   const settingsSessionDir = await readConfiguredSessionDir({
     agentDir,
     cwd: options.cwd,
+    agentDirName: options.agentDirName,
   });
   if (settingsSessionDir?.trim()) {
     return resolveConfigPath(settingsSessionDir, { baseDir, homeDir });
@@ -134,23 +141,25 @@ function resolvePiAgentDir(input: {
   runtimeSettings?: ProviderRuntimeSettings;
   env: NodeJS.ProcessEnv;
   homeDir: string;
+  agentDirName?: string;
 }): string {
   const configured = input.runtimeSettings?.env?.[PI_AGENT_DIR_ENV] ?? input.env[PI_AGENT_DIR_ENV];
   if (configured?.trim()) {
     return resolveConfigPath(configured, { baseDir: process.cwd(), homeDir: input.homeDir });
   }
-  return path.join(input.homeDir, PI_CONFIG_DIR_NAME, "agent");
+  const dirName = input.agentDirName ?? PI_CONFIG_DIR_NAME;
+  return path.join(input.homeDir, dirName, "agent");
 }
 
 async function readConfiguredSessionDir(input: {
   agentDir: string;
   cwd: string | undefined;
+  agentDirName?: string;
 }): Promise<string | null> {
+  const dirName = input.agentDirName ?? PI_CONFIG_DIR_NAME;
   const values = await Promise.all([
     readSessionDirFromSettings(path.join(input.agentDir, "settings.json")),
-    input.cwd
-      ? readSessionDirFromSettings(path.join(input.cwd, PI_CONFIG_DIR_NAME, "settings.json"))
-      : null,
+    input.cwd ? readSessionDirFromSettings(path.join(input.cwd, dirName, "settings.json")) : null,
   ]);
   return values[1] ?? values[0] ?? null;
 }
