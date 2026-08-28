@@ -10,6 +10,49 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("collects timeline transformers and renderers", () => {
+    const plugin = evaluatePluginClientBundle(
+      "reports",
+      bundle(`
+        function Card() { return null; }
+        const schema = { safeParse(value) { return { success: true, data: value }; } };
+        plugin.addTimelineTransformer({
+          id: "test-report",
+          query: { itemType: "tool_call" },
+          transform() { return { items: [] }; },
+        });
+        plugin.addTimelineRenderer({
+          kind: "test-report",
+          version: 1,
+          schema,
+          Component: Card,
+        });
+      `),
+    );
+
+    expect(plugin.timelineTransformers.map(({ id, query }) => ({ id, query }))).toEqual([
+      { id: "test-report", query: { itemType: "tool_call" } },
+    ]);
+    expect(plugin.timelineRenderers.map(({ kind, version }) => ({ kind, version }))).toEqual([
+      { kind: "test-report", version: 1 },
+    ]);
+  });
+
+  it("rejects unknown timeline item types", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "reports",
+        bundle(`
+          plugin.addTimelineTransformer({
+            id: "bad-query",
+            query: { itemType: "settled" },
+            transform() { return { items: [] }; },
+          });
+        `),
+      ),
+    ).toThrow("Timeline transformer bad-query has invalid item type: settled");
+  });
+
   it("collects a surface and its sidebar placement", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
@@ -288,6 +331,28 @@ describe("evaluatePluginClientBundle", () => {
     expect(() =>
       evaluatePluginClientBundle("example", `(function() { return { default: function() {} }; })`),
     ).toThrow("must return a cleanup function");
+  });
+
+  it("provides the host Icon component through @getpaseo/plugin", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { Icon } = require("@getpaseo/plugin");
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          plugin.addSurface("main", function Surface() {
+            return Icon({ name: "Settings", size: 18, color: "#123456" });
+          });
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    const Component = plugin.surfaces[0]?.Component;
+    expect(Component).toBeTypeOf("function");
+    const element = (Component as (props: never) => { props: unknown })({} as never);
+    expect(element).toMatchObject({ props: { size: 18, color: "#123456" } });
   });
 
   it("resolves @getpaseo/plugin/server for shared RPC contracts", () => {

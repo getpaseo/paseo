@@ -117,7 +117,7 @@ function buildInvalidHelloError(rawText: string, parsed?: unknown): Error {
 
 const HANDSHAKE_RETRY_MS = 1000;
 const MAX_PENDING_SENDS = 200;
-const REHANDSHAKE_KEY_MISMATCH_CLOSE_CODE = 1008;
+const REHANDSHAKE_REJECTION_CODE = 1008;
 const ENCRYPTED_PAYLOAD_OVERHEAD_BYTES = 40;
 
 export function base64EncryptedWireByteLength(plaintextBytes: number): number {
@@ -503,31 +503,25 @@ export class EncryptedChannel {
   private async handleDaemonRehello(message: E2EEHelloMessage): Promise<void> {
     if (!this.options.daemonKeyPair) return;
     const clientPublicKey = importPublicKey(message.key);
-    const nextSharedKey = deriveSharedKey(this.options.daemonKeyPair.secretKey, clientPublicKey);
+    const retryKey = deriveSharedKey(this.options.daemonKeyPair.secretKey, clientPublicKey);
+    if (!keysEqual(retryKey, this.sharedKey)) return this.rejectKeyRotation();
+    await this.sendReadyForRetry();
+  }
 
-    // If it's the same client key (handshake retry), re-send
-    // "ready" but do not re-key. Re-keying here would desync
-    // the channel and cause decrypt failures.
-    if (keysEqual(nextSharedKey, this.sharedKey)) {
-      await this.transport.send(
-        JSON.stringify({
-          type: "e2ee_ready",
-          ...(this.options.binaryCiphertext
-            ? { capabilities: { binaryCiphertext: true } satisfies E2EECapabilities }
-            : {}),
-        } satisfies E2EEReadyMessage),
-      );
-      return;
-    }
-
-    // A different key on an already-open encrypted channel is not an
-    // authenticated reconnect. Close and require a fresh transport instead of
-    // allowing the relay to switch this channel to an attacker-chosen key.
-    this.state = "closed";
-    this.transport.close(
-      REHANDSHAKE_KEY_MISMATCH_CLOSE_CODE,
-      REHANDSHAKE_KEY_MISMATCH_CLOSE_REASON,
+  private async sendReadyForRetry(): Promise<void> {
+    await this.transport.send(
+      JSON.stringify({
+        type: "e2ee_ready",
+        ...(this.options.binaryCiphertext
+          ? { capabilities: { binaryCiphertext: true } satisfies E2EECapabilities }
+          : {}),
+      } satisfies E2EEReadyMessage),
     );
+  }
+
+  private rejectKeyRotation(): void {
+    this.state = "closed";
+    this.transport.close(REHANDSHAKE_REJECTION_CODE, REHANDSHAKE_KEY_MISMATCH_CLOSE_REASON);
   }
 
   close(code = 1000, reason = "Normal closure"): void {

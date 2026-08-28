@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.6.1",
+  "version": "0.7.0-beta.1",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
@@ -11,7 +11,7 @@
     "voice-assistant"
   ],
   "homepage": "https://paseo.sh",
-  "license": "AGPL-3.0-or-later",
+  "license": "Apache-2.0",
   "author": {
     "name": "Mohamed Boudra",
     "email": "hello@moboudra.com"

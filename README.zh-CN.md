@@ -154,7 +154,6 @@ npm run typecheck
 ## 相关项目
 
 - [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — 官方分布式 relay，使用 Elixir 编写
-- [paseo-skins](https://github.com/huangguang1999/paseo-skins) — Paseo 桌面端社区主题与零 patch 换肤工具，支持 Agent Skill
 - [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code 扩展
 
 ### 自托管 relay TLS
@@ -205,4 +204,4 @@ server {
 
 ## License
 
-AGPL-3.0
+Apache-2.0

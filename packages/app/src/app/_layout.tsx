@@ -961,18 +961,9 @@ function RootProviders({ children }: { children: ReactNode }) {
   );
 }
 
-function recordUserActivity(): void {
-  getHostRuntimeStore().recordUserActivity();
-}
-
 function RootAppTree() {
   return (
-    <GestureHandlerRootView
-      style={flexStyle}
-      onTouchStart={recordUserActivity}
-      onTouchEnd={recordUserActivity}
-      onTouchCancel={recordUserActivity}
-    >
+    <GestureHandlerRootView style={flexStyle}>
       <View style={layoutStyles.surfaceFill}>
         <RootProviders>
           <RuntimeProviders>

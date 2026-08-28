@@ -113,6 +113,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { projectCompletedResponseFolds } from "./completed-response-fold";
 import { CompletedResponseFoldRow } from "./completed-response-fold-row";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
+import { PluginTimelineItemView } from "@/plugins/timeline";
 
 function renderLiveAuxiliaryNode(input: {
   pendingPermissions: ReactNode;
@@ -944,6 +945,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             );
             break;
 
+          case "plugin":
+            content = (
+              <PluginTimelineItemView agentId={agentId} item={item} serverId={resolvedServerId} />
+            );
+            break;
+
           default:
             content = null;
         }
@@ -958,11 +965,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
         );
       },
       [
+        agentId,
         completedResponseProjection.foldsByAnchorItemId,
         renderUserMessageItem,
         renderAssistantMessageItem,
         renderThoughtItem,
         renderToolCallItem,
+        resolvedServerId,
         toggleCompletedResponse,
       ],
     );

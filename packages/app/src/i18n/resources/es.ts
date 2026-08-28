@@ -8,7 +8,7 @@ export const es: TranslationResources = {
     actions: {
       back: "Atrás",
       cancel: "Cancelar",
-      close: "Cerca",
+      close: "Cerrar",
       copy: "Copiar",
       dismiss: "Despedir",
       retry: "Rever",
@@ -429,6 +429,7 @@ export const es: TranslationResources = {
     },
     fileActions: {
       openFile: "Abrir archivo",
+      openIn: "Abrir en {{target}}",
       openToSide: "Abrir al lado",
       copyPath: "Copiar ruta",
       copyRelativePath: "Copiar ruta relativa",
@@ -593,14 +594,14 @@ export const es: TranslationResources = {
         rename: "Rebautizar",
         closeAbove: "Cerrar pestañas arriba",
         closeBelow: "Cerrar pestañas a continuación",
-        closeLeft: "Cerca de la izquierda",
-        closeRight: "Cerca de la derecha",
+        closeLeft: "Cerrar pestañas a la izquierda",
+        closeRight: "Cerrar pestañas a la derecha",
         closeOthers: "Cerrar otras pestañas",
         moveToMain: "Mover al panel principal",
         reloadAgent: "Recargar agente",
         reloadAgentTooltip:
           "Vuelva a cargar el agente para actualizar habilidades, MCP o estado de inicio de sesión.",
-        close: "Cerca",
+        close: "Cerrar",
         renameTerminal: "Cambiar nombre de terminal",
         renameAgent: "Cambiar nombre del agente",
       },
@@ -651,7 +652,7 @@ export const es: TranslationResources = {
         closePaneTitle: "¿Cerrar panel?",
         bulkUnsaved:
           "{{count}} pestaña(s) tienen cambios sin guardar. Al cerrar se descartarán esos borradores.",
-        close: "Cerca",
+        close: "Cerrar",
         cancel: "Cancelar",
         archive: "Archivo",
         closeTerminalTitle: "¿Cerrar terminal?",

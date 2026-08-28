@@ -8,6 +8,8 @@ import type {
   PluginSurfaceContribution,
   PluginSurfaceProps,
   PluginThemeContribution,
+  PluginTimelineRendererContribution,
+  PluginTimelineTransformerContribution,
   PluginWorkspacePanelContribution,
 } from "./contracts.js";
 import { PluginRpcProvider } from "./rpc-context.js";
@@ -22,6 +24,8 @@ interface PluginCollector {
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
   addTheme(contribution: PluginThemeContribution): void;
+  addTimelineTransformer(contribution: PluginTimelineTransformerContribution): void;
+  addTimelineRenderer(contribution: PluginTimelineRendererContribution): void;
 }
 
 export interface PluginRegistrationCollector {
@@ -31,6 +35,8 @@ export interface PluginRegistrationCollector {
   commandCenterItems: PluginCommandCenterItemContribution[];
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
+  timelineTransformers: PluginTimelineTransformerContribution[];
+  timelineRenderers: PluginTimelineRendererContribution[];
 }
 
 export function createPluginContext(
@@ -43,6 +49,8 @@ export function createPluginContext(
   | "addCommandCenterItem"
   | "addAttachmentSource"
   | "addTheme"
+  | "addTimelineTransformer"
+  | "addTimelineRenderer"
 > {
   return {
     addSurface(id, Component) {
@@ -62,6 +70,12 @@ export function createPluginContext(
     },
     addTheme(contribution) {
       collector.addTheme(contribution);
+    },
+    addTimelineTransformer(contribution) {
+      collector.addTimelineTransformer(contribution);
+    },
+    addTimelineRenderer(contribution) {
+      collector.addTimelineRenderer(contribution);
     },
   };
 }
