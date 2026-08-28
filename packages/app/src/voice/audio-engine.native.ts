@@ -74,8 +74,7 @@ export function createAudioEngine(
   const refs: {
     initialized: boolean;
     captureActive: boolean;
-    captureLifecycle: Promise<void>;
-    destroyPromise: Promise<void> | null;
+    captureStopPromise: Promise<void> | null;
     muted: boolean;
     queue: QueuedAudio[];
     processingQueue: boolean;
@@ -89,8 +88,7 @@ export function createAudioEngine(
   } = {
     initialized: false,
     captureActive: false,
-    captureLifecycle: Promise.resolve(),
-    destroyPromise: null,
+    captureStopPromise: null,
     muted: false,
     queue: [],
     processingQueue: false,
@@ -182,22 +180,29 @@ export function createAudioEngine(
     }
   }
 
-  function runCaptureLifecycle(operation: () => Promise<void>): Promise<void> {
-    const result = refs.captureLifecycle.then(operation, operation);
-    refs.captureLifecycle = result.catch(() => undefined);
-    return result;
-  }
-
-  async function stopCaptureNow(): Promise<void> {
+  async function stopCapture(): Promise<void> {
+    if (refs.captureStopPromise) {
+      await refs.captureStopPromise;
+      return;
+    }
     if (!refs.captureActive) {
       return;
     }
 
-    await native.stopRecording();
-    refs.captureActive = false;
-    refs.muted = false;
-    callbacks.onVolumeLevel(0);
-    releaseSessionIfIdle();
+    const stopping = (async () => {
+      await native.stopRecording();
+      refs.captureActive = false;
+      refs.muted = false;
+      callbacks.onVolumeLevel(0);
+      releaseSessionIfIdle();
+    })();
+
+    refs.captureStopPromise = stopping;
+    try {
+      await stopping;
+    } finally {
+      refs.captureStopPromise = null;
+    }
   }
 
   async function playAudio(audio: AudioPlaybackSource): Promise<number> {
@@ -268,70 +273,56 @@ export function createAudioEngine(
       await ensureInitialized();
     },
 
-    destroy() {
-      if (refs.destroyPromise) {
-        return refs.destroyPromise;
+    async destroy() {
+      if (refs.destroyed) {
+        return;
       }
       refs.destroyed = true;
-      refs.destroyPromise = runCaptureLifecycle(async () => {
-        await stopCaptureNow();
-        this.stop();
-        this.clearQueue();
-        clearPlaybackTimeout();
-        refs.muted = false;
-        callbacks.onVolumeLevel(0);
-        if (refs.initialized) {
-          native.tearDown();
-          refs.initialized = false;
-        }
-        microphoneSubscription.remove();
-        volumeSubscription.remove();
-        interruptionSubscription.remove();
-      });
-      return refs.destroyPromise;
+      await stopCapture();
+      this.stop();
+      this.clearQueue();
+      clearPlaybackTimeout();
+      refs.muted = false;
+      callbacks.onVolumeLevel(0);
+      if (refs.initialized) {
+        native.tearDown();
+        refs.initialized = false;
+      }
+      microphoneSubscription.remove();
+      volumeSubscription.remove();
+      interruptionSubscription.remove();
     },
 
-    startCapture() {
+    async startCapture() {
+      if (refs.captureStopPromise) {
+        await refs.captureStopPromise;
+      }
       if (refs.destroyed) {
-        return Promise.reject(new Error("Audio engine has been destroyed"));
+        throw new Error("Audio engine has been destroyed");
+      }
+      if (refs.captureActive) {
+        return;
       }
 
-      return runCaptureLifecycle(async () => {
-        if (refs.destroyed) {
-          throw new Error("Audio engine has been destroyed");
+      try {
+        await ensureMicrophonePermission();
+        await ensureInitialized();
+        const isRecording = native.toggleRecording(true);
+        if (!isRecording) {
+          throw new Error(
+            "Microphone capture could not start because Android audio focus is unavailable.",
+          );
         }
-        if (refs.captureActive) {
-          return;
-        }
-
-        try {
-          await ensureMicrophonePermission();
-          if (refs.destroyed) {
-            throw new Error("Audio engine has been destroyed");
-          }
-          await ensureInitialized();
-          if (refs.destroyed) {
-            throw new Error("Audio engine has been destroyed");
-          }
-          const isRecording = native.toggleRecording(true);
-          if (!isRecording) {
-            throw new Error(
-              "Microphone capture could not start because Android audio focus is unavailable.",
-            );
-          }
-          refs.captureActive = true;
-        } catch (error) {
-          const wrapped = error instanceof Error ? error : new Error(String(error));
-          if (!refs.destroyed) {
-            callbacks.onError?.(wrapped);
-          }
-          throw wrapped;
-        }
-      });
+        refs.captureActive = true;
+      } catch (error) {
+        const wrapped = error instanceof Error ? error : new Error(String(error));
+        callbacks.onError?.(wrapped);
+        throw wrapped;
+      }
     },
 
-    stopCapture() {
-      return runCaptureLifecycle(stopCaptureNow);
+    async stopCapture() {
+      await stopCapture();
     },
 
     toggleMute() {

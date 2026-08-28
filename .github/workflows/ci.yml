@@ -123,9 +123,6 @@ jobs:
       - name: Build server stack
         run: npm run build:server
 
-      - name: Build native app dependency
-        run: npm run build --workspace=@getpaseo/expo-two-way-audio
-
       - name: Typecheck all packages
         run: npm run typecheck
 

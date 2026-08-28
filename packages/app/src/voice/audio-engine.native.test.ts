@@ -105,60 +105,6 @@ describe("native audio capture", () => {
     expect(nativeAudio.tearDown).toHaveBeenCalledOnce();
   });
 
-  it("does not finish an in-flight capture start after destruction", async () => {
-    let resolvePermission!: (permission: { granted: boolean }) => void;
-    nativeAudio.getMicrophonePermissionsAsync.mockImplementationOnce(
-      () =>
-        new Promise((resolve) => {
-          resolvePermission = resolve;
-        }),
-    );
-    const engine = createAudioEngine({
-      onCaptureData: vi.fn(),
-      onVolumeLevel: vi.fn(),
-    });
-
-    const started = engine.startCapture();
-    await Promise.resolve();
-    const destroyed = engine.destroy();
-    resolvePermission({ granted: true });
-
-    await expect(started).rejects.toThrow("Audio engine has been destroyed");
-    await destroyed;
-
-    expect(nativeAudio.initialize).not.toHaveBeenCalled();
-    expect(nativeAudio.toggleRecording).not.toHaveBeenCalled();
-  });
-
-  it("makes concurrent destruction wait for the same capture drain", async () => {
-    const engine = createAudioEngine({
-      onCaptureData: vi.fn(),
-      onVolumeLevel: vi.fn(),
-    });
-
-    await engine.startCapture();
-    let firstFinished = false;
-    let secondFinished = false;
-    const first = engine.destroy().then(() => {
-      firstFinished = true;
-      return undefined;
-    });
-    const second = engine.destroy().then(() => {
-      secondFinished = true;
-      return undefined;
-    });
-    await Promise.resolve();
-
-    expect(firstFinished).toBe(false);
-    expect(secondFinished).toBe(false);
-    expect(nativeAudio.stopRecording).toHaveBeenCalledOnce();
-
-    nativeAudio.resolveStop();
-    await Promise.all([first, second]);
-
-    expect(nativeAudio.tearDown).toHaveBeenCalledOnce();
-  });
-
   it("does not restart capture when destruction overtakes a pending stop", async () => {
     const engine = createAudioEngine({
       onCaptureData: vi.fn(),
@@ -169,9 +115,7 @@ describe("native audio capture", () => {
     const stopped = engine.stopCapture();
     const restarted = engine.startCapture();
     const destroyed = engine.destroy();
-    await Promise.resolve();
 
-    expect(nativeAudio.stopRecording).toHaveBeenCalledOnce();
     nativeAudio.resolveStop();
     await stopped;
     await expect(restarted).rejects.toThrow("Audio engine has been destroyed");
