@@ -102,7 +102,14 @@ function autoModeChoice(): CommandCenterContribution {
 }
 
 function workspace(id: string, title = id, subtitle = "host"): CommandCenterWorkspaceResult {
-  return { kind: "workspace", id, title, subtitle, run: () => undefined };
+  return {
+    kind: "workspace",
+    id,
+    title,
+    subtitle,
+    changeRequestNumber: null,
+    run: () => undefined,
+  };
 }
 
 function sectionResultIds(sections: ReturnType<typeof buildContributionSections>): string[] {

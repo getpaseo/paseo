@@ -34,6 +34,7 @@ export function PluginCatalogSync({
             if (!cancelled) {
               const timelineChanged = pluginRegistry.installCatalog(serverId, catalog, {
                 replacePluginId,
+                client,
               });
               if (timelineChanged) {
                 useSessionStore

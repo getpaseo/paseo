@@ -1,8 +1,72 @@
 import { useMutation } from "@tanstack/react-query";
-import { type PluginWorkspacePanelProps, useRpc, useWorkspace } from "@getpaseo/plugin";
+import {
+  Icon,
+  type PluginClientContext,
+  type PluginComposerPillProps,
+  type PluginWorkspacePanelProps,
+  useAgent,
+  useRpc,
+  useWorkspace,
+} from "@getpaseo/plugin";
 import React, { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { incrementRpc } from "./increment.shared";
+
+export function OpenCounterPill({ theme, workspaceId, agentId }: PluginComposerPillProps) {
+  const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
+  const agent = useAgent(agentId, ({ title }) => ({ title }));
+  const textStyle = useMemo(() => ({ color: theme.colors.foregroundMuted }), [theme]);
+  return (
+    <>
+      <Icon name="Blocks" size={14} color={theme.colors.foregroundMuted} />
+      <Text style={textStyle} numberOfLines={1}>
+        {agent?.title ?? workspace?.name ?? "Counter"}
+      </Text>
+    </>
+  );
+}
+
+export function contributeClient(client: PluginClientContext) {
+  const pills = new Map<string, () => void>();
+  let stopped = false;
+  const register = (agent: { id: string; workspaceId?: string | null }) => {
+    if (stopped || !agent.workspaceId) return;
+    pills.get(agent.id)?.();
+    const workspaceId = agent.workspaceId;
+    const remove = client.addComposerPill({
+      id: "open-counter",
+      title: "Open plugin counter",
+      workspaceId,
+      agentId: agent.id,
+      Component: OpenCounterPill,
+      onPress() {
+        client.openPanel("counter", { workspaceId });
+      },
+    });
+    pills.set(agent.id, remove);
+  };
+  const remove = (agentId: string) => {
+    pills.get(agentId)?.();
+    pills.delete(agentId);
+  };
+  const unsubscribe = client.paseo.agents.subscribe((update) => {
+    if (update.kind === "remove") remove(update.agentId);
+    else register(update.agent);
+  });
+  void client.paseo.agents
+    .list()
+    .then(({ entries }) => {
+      for (const { agent } of entries) register(agent);
+      return undefined;
+    })
+    .catch(() => undefined);
+  return () => {
+    stopped = true;
+    unsubscribe();
+    for (const dispose of pills.values()) dispose();
+    pills.clear();
+  };
+}
 
 export function ExamplePanel({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
   const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));

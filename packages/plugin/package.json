@@ -18,6 +18,11 @@
       "source": "./src/server.ts",
       "default": "./dist/server.js"
     },
+    "./react-native": {
+      "types": "./dist/react-native.d.ts",
+      "source": "./src/react-native.ts",
+      "default": "./dist/react-native.js"
+    },
     "./host": {
       "types": "./dist/host.d.ts",
       "source": "./src/host.ts",

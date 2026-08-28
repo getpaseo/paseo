@@ -784,6 +784,7 @@ function directoryEntityForRow(row: ReplicaRow): keyof DirectoryCheckpoint | und
 
 export class ReplicaCache {
   private readonly activeServerIds = new Set<string>();
+  private readonly hostRevisions = new Map<string, number>();
   private readonly storedRows = new Map<string, Map<string, ReplicaRow>>();
   private readonly hostBytes = new Map<string, number>();
   private readonly hostWriteOrder = new Map<string, true>();
@@ -897,9 +898,13 @@ export class ReplicaCache {
     ids?: readonly string[],
   ): Promise<ReplicaRow[]> {
     if (!this.activeServerIds.has(serverId)) return [];
+    const revision = this.hostRevisions.get(serverId) ?? 0;
     try {
       await this.prepareStore();
-      return await this.rowStore.read(serverId, kinds, ids);
+      await this.flush();
+      if (!this.canReadHostRevision(serverId, revision)) return [];
+      const rows = await this.rowStore.read(serverId, kinds, ids);
+      return this.canReadHostRevision(serverId, revision) ? rows : [];
     } catch {
       return [];
     }
@@ -985,6 +990,7 @@ export class ReplicaCache {
     },
   ): void {
     if (!this.activeServerIds.has(serverId)) return;
+    this.advanceHostRevision(serverId);
     this.clearPendingDirectoryChanges(serverId);
     const desiredRows: ReplicaRow[] = [];
     for (const agent of directory.agents.values()) {
@@ -1013,6 +1019,7 @@ export class ReplicaCache {
   commitTimeline(serverId: string, agentId: string, timeline: CachedTimeline): void {
     if (!this.activeServerIds.has(serverId)) return;
     if (timeline.agentId !== agentId) throw new Error("Timeline cache key does not match payload");
+    this.advanceHostRevision(serverId);
     const stored = serializeTimeline(timeline);
     if (stored) this.queueEntityUpsert(serverId, "timeline", agentId, stored);
     else this.queueEntityDelete(serverId, "timeline", agentId);
@@ -1022,6 +1029,8 @@ export class ReplicaCache {
   setHosts(serverIds: Iterable<string>): void {
     const next = new Set(serverIds);
     const removed = [...this.activeServerIds].filter((serverId) => !next.has(serverId));
+    const added = [...next].filter((serverId) => !this.activeServerIds.has(serverId));
+    for (const serverId of [...removed, ...added]) this.advanceHostRevision(serverId);
     this.activeServerIds.clear();
     for (const serverId of next) this.activeServerIds.add(serverId);
     for (const serverId of removed) {
@@ -1032,6 +1041,8 @@ export class ReplicaCache {
   }
 
   reconcileServerId(oldServerId: string, newServerId: string): void {
+    this.advanceHostRevision(oldServerId);
+    this.advanceHostRevision(newServerId);
     const rows = this.storedRows.get(oldServerId);
     if (rows) {
       const newRows = this.storedRows.get(newServerId) ?? new Map<string, ReplicaRow>();
@@ -1140,6 +1151,29 @@ export class ReplicaCache {
       this.pendingDeletes.size > 0 ||
       this.pendingDirectoryReplacements.size > 0
     );
+  }
+
+  private canReadHostRevision(serverId: string, revision: number): boolean {
+    return (
+      this.activeServerIds.has(serverId) &&
+      (this.hostRevisions.get(serverId) ?? 0) === revision &&
+      !this.hasPendingHostChanges(serverId)
+    );
+  }
+
+  private hasPendingHostChanges(serverId: string): boolean {
+    if (this.pendingDirectoryReplacements.has(serverId)) return true;
+    for (const row of this.pendingUpserts.values()) {
+      if (row.serverId === serverId) return true;
+    }
+    for (const row of this.pendingDeletes.values()) {
+      if (row.serverId === serverId) return true;
+    }
+    return false;
+  }
+
+  private advanceHostRevision(serverId: string): void {
+    this.hostRevisions.set(serverId, (this.hostRevisions.get(serverId) ?? 0) + 1);
   }
 
   private drainPendingChanges(): PendingReplicaChanges {

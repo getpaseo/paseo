@@ -14,7 +14,7 @@ category: Plugins
 See the [plugin roadmap](https://github.com/getpaseo/paseo/labels/plugins) for planned contribution
 surfaces and their current status.
 
-Paseo plugins add native workspace panels, Command Center items, global surfaces, app themes, daemon behavior, and composer attachment sources. They run on every Paseo client connected to the host, including mobile.
+Paseo plugins add native workspace panels, composer pills, Command Center items, global surfaces, app themes, daemon behavior, and composer attachment sources. They run on every Paseo client connected to the host, including mobile.
 
 Plugins are trusted local code. Install only code you trust: backend code runs unsandboxed with access to the daemon machine, and client contributions run inside the Paseo app.
 

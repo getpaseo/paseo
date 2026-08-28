@@ -6,6 +6,7 @@ import { ComposerTrackBar } from "@/composer/tracks";
 import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
 import { useSettings } from "@/hooks/use-settings";
+import { PluginComposerPills } from "@/plugins";
 import { useSessionStore } from "@/stores/session-store";
 import {
   type ArchiveFinishedStatus,
@@ -30,19 +31,23 @@ import { openComposerChanges } from "@/workspace-tabs/open-supporting-view";
 export const AgentTracks = memo(function AgentTracks({
   serverId,
   workspaceId,
+  agentId,
   cwd,
   subagentRows,
   tasks,
   archiveFinishedStatus,
   onArchiveFinished,
+  hasPluginComposerPills,
 }: {
   serverId: string;
   workspaceId: string;
+  agentId: string;
   cwd: string;
   subagentRows: SubagentRow[];
   tasks: TodoEntry[] | undefined;
   archiveFinishedStatus: ArchiveFinishedStatus;
   onArchiveFinished: () => void;
+  hasPluginComposerPills: boolean;
 }): ReactElement | null {
   const { tabId, openTab } = usePaneContext();
   const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
@@ -107,7 +112,15 @@ export const AgentTracks = memo(function AgentTracks({
     });
   }, [cwd, isCompact, openInSidePane, serverId, workspaceKey]);
 
-  if (!hasWorkspaceDiffStat && !hasAgentTracks({ subagentRows, tasks, archiveFinishedStatus })) {
+  if (
+    !hasWorkspaceDiffStat &&
+    !hasAgentTracks({
+      subagentRows,
+      tasks,
+      archiveFinishedStatus,
+      hasPluginComposerPills,
+    })
+  ) {
     return null;
   }
 
@@ -123,6 +136,12 @@ export const AgentTracks = memo(function AgentTracks({
         archiveFinishedStatus={archiveFinishedStatus}
         onDetachSubagent={canDetachSubagents ? detachSubagent : undefined}
       />
+      <PluginComposerPills
+        serverId={serverId}
+        workspaceId={workspaceId}
+        agentId={agentId}
+        compact={isCompact}
+      />
       <WorkspaceDiffStatPill
         serverId={serverId}
         workspaceId={workspaceId}
@@ -136,10 +155,17 @@ export function hasAgentTracks({
   subagentRows,
   tasks,
   archiveFinishedStatus,
+  hasPluginComposerPills = false,
 }: {
   subagentRows: readonly SubagentRow[];
   tasks: readonly TodoEntry[] | undefined;
   archiveFinishedStatus: ArchiveFinishedStatus;
+  hasPluginComposerPills?: boolean;
 }): boolean {
-  return subagentRows.length > 0 || Boolean(tasks?.length) || archiveFinishedStatus.kind !== "idle";
+  return (
+    subagentRows.length > 0 ||
+    Boolean(tasks?.length) ||
+    archiveFinishedStatus.kind !== "idle" ||
+    hasPluginComposerPills
+  );
 }

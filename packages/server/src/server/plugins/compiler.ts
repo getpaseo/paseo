@@ -4,7 +4,10 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { parse } from "@babel/parser";
 import type { Plugin } from "esbuild";
-import { PLUGIN_SDK_SPECIFIERS } from "./plugin-sdk-specifiers.js";
+import {
+  PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS,
+  PLUGIN_SDK_SPECIFIERS,
+} from "./plugin-sdk-specifiers.js";
 
 const nodeRequire = createRequire(import.meta.url);
 const ESBUILD_BINARY_PATH = "ESBUILD_BINARY_PATH";
@@ -80,6 +83,7 @@ const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<str
     "addSidebarItem",
     "addWorkspacePanel",
     "addCommandCenterItem",
+    "addClientSide",
     "addAttachmentSource",
     "addTheme",
     "addTimelineTransformer",
@@ -272,10 +276,23 @@ function makeHermesInteropEager(code: string): string {
   return code.replaceAll("get: () => from[key]", "value: from[key]");
 }
 
+function exactSpecifierFilter(specifiers: readonly string[]): RegExp {
+  const alternatives = specifiers.map((specifier) =>
+    specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+  );
+  return new RegExp(`^(${alternatives.join("|")})$`);
+}
+
 function createUnusedPlatformModulePlugin(target: PluginBuildTarget): Plugin {
   const filter =
     target === "server"
-      ? /^(@tanstack\/react-query|react|react\/jsx-runtime|react-native)$/
+      ? exactSpecifierFilter([
+          "@tanstack/react-query",
+          "react",
+          "react/jsx-runtime",
+          "react-native",
+          ...PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS,
+        ])
       : /^node:/;
   return {
     name: `paseo-plugin-${target}-unused-platform-modules`,

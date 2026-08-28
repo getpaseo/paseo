@@ -212,6 +212,28 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("Duplicate Command Center item: review");
   });
 
+  it("collects one explicit client-side entrypoint", () => {
+    const plugin = evaluatePluginClientBundle(
+      "review",
+      bundle(`
+        function contributeClient() { return function() {}; }
+        plugin.addClientSide(contributeClient);
+      `),
+    );
+    expect(plugin.clientSide).toBeTypeOf("function");
+
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+          function contributeClient() { return function() {}; }
+          plugin.addClientSide(contributeClient);
+          plugin.addClientSide(contributeClient);
+        `),
+      ),
+    ).toThrow("Plugin has more than one client-side entrypoint");
+  });
+
   it("rejects duplicate attachment source ids", () => {
     expect(() =>
       evaluatePluginClientBundle(
@@ -353,6 +375,26 @@ describe("evaluatePluginClientBundle", () => {
     expect(Component).toBeTypeOf("function");
     const element = (Component as (props: never) => { props: unknown })({} as never);
     expect(element).toMatchObject({ props: { size: 18, color: "#123456" } });
+  });
+
+  it("provides Paseo UI through @getpaseo/plugin/react-native", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      `(function(require) {
+        const { Icon, Modal, useToast } = require("@getpaseo/plugin/react-native");
+        const module = { exports: {} };
+        module.exports.default = function(plugin) {
+          if (typeof Icon !== "function" || typeof Modal !== "function" || typeof Modal.Content !== "function" || typeof useToast !== "function") {
+            throw new Error("React Native plugin UI is incomplete");
+          }
+          plugin.addSurface("main", function Surface() { return null; });
+          return function() {};
+        };
+        return module.exports;
+      })`,
+    );
+
+    expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
   });
 
   it("resolves @getpaseo/plugin/server for shared RPC contracts", () => {
