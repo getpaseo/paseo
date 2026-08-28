@@ -1283,7 +1283,11 @@ export class MockLoadTestAgentSession implements AgentSession {
       title: "Plan",
       description: "Review the proposed plan before implementation starts.",
       input: {
-        plan: "1. Add the README note.\n2. Keep the change scoped.\n3. Verify the diff.",
+        // The (c), the quoted flag and the --- are load-bearing: they trip
+        // three different markdown-it typographer rules, and
+        // plan-card-markdown.spec.ts asserts all three render verbatim. That
+        // is the only guard against the plan card's parser prop going missing.
+        plan: '1. Add the (c) README note.\n2. Run --name="my repo".\n3. Verify ---buzz in the diff.',
       },
       actions: [
         {

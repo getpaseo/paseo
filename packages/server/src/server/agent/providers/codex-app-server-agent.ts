@@ -459,6 +459,27 @@ function codexMicrosoftStorePackageRoot(): string | null {
   return path.join(localAppData, "Packages");
 }
 
+export function codexMicrosoftStoreBinaryCandidates(
+  packageRoot: string,
+  entries: Dirent[],
+): string[] {
+  return entries
+    .filter((entry) => entry.isDirectory() && entry.name.startsWith("OpenAI.Codex_"))
+    .map((entry) =>
+      path.join(
+        packageRoot,
+        entry.name,
+        "LocalCache",
+        "Local",
+        "OpenAI",
+        "Codex",
+        "bin",
+        "codex.exe",
+      ),
+    )
+    .sort();
+}
+
 export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
   if (process.platform !== "win32") {
     return null;
@@ -476,22 +497,7 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
     return null;
   }
 
-  const codexPackages = entries
-    .filter((entry) => entry.isDirectory() && entry.name.startsWith("OpenAI.Codex_"))
-    .map((entry) => entry.name)
-    .sort();
-
-  for (const packageName of codexPackages) {
-    const candidate = path.join(
-      packageRoot,
-      packageName,
-      "LocalCache",
-      "Local",
-      "OpenAI",
-      "Codex",
-      "bin",
-      "codex.exe",
-    );
+  for (const candidate of codexMicrosoftStoreBinaryCandidates(packageRoot, entries)) {
     if (await probeExecutable(candidate)) {
       return candidate;
     }
@@ -501,7 +507,9 @@ export async function findCodexMicrosoftStoreBinary(): Promise<string | null> {
 }
 
 export async function findDefaultCodexBinary(): Promise<string | null> {
-  return (await findExecutable("codex")) ?? (await findCodexMicrosoftStoreBinary());
+  const pathBinary = await findExecutable("codex");
+  if (pathBinary) return pathBinary;
+  return await findCodexMicrosoftStoreBinary();
 }
 
 async function resolveCodexLaunchPrefix(runtimeSettings?: ProviderRuntimeSettings): Promise<{
@@ -915,8 +923,10 @@ function filterCodexThreadsByCwd(
   // falls back to process.cwd() if the field is missing, so we only match
   // here when the row genuinely carries a cwd string — otherwise threads
   // with no cwd would falsely match the daemon's own cwd.
-  const matchesCwd = createPathEquivalenceMatcher(cwd);
-  return threads.filter((thread) => typeof thread.cwd === "string" && matchesCwd(thread.cwd));
+  const belongsToWorkspace = createPathEquivalenceMatcher(cwd);
+  return threads.filter(
+    (thread) => typeof thread.cwd === "string" && belongsToWorkspace(thread.cwd),
+  );
 }
 
 export function toAgentUsage(tokenUsage: unknown): AgentUsage | undefined {
@@ -3050,6 +3060,30 @@ interface CodexSkillPromptBlock {
   path: string;
 }
 
+function enabledCodexSkills(
+  entries: unknown[],
+): Array<{ name: string; description: string; path: string }> {
+  const skillsByName = new Map<string, { name: string; description: string; path: string }>();
+  for (const entry of entries) {
+    const skillRecord = toObjectRecord(entry);
+    if (
+      !skillRecord ||
+      skillRecord.enabled === false ||
+      typeof skillRecord.name !== "string" ||
+      typeof skillRecord.path !== "string" ||
+      skillsByName.has(skillRecord.name)
+    ) {
+      continue;
+    }
+    skillsByName.set(skillRecord.name, {
+      name: skillRecord.name,
+      description: resolveSkillDescription(skillRecord),
+      path: skillRecord.path,
+    });
+  }
+  return Array.from(skillsByName.values());
+}
+
 type CodexPromptContentBlock = AgentPromptContentBlock | CodexSkillPromptBlock;
 type CodexPromptInput = string | CodexPromptContentBlock[];
 interface CodexTextElement {
@@ -3530,28 +3564,13 @@ export class CodexAppServerAgentSession implements AgentSession {
         }),
       );
       const entries = Array.isArray(response?.data) ? response.data : [];
-      const skillsByName = new Map<string, { name: string; description: string; path: string }>();
+      const allSkills: unknown[] = [];
       for (const entry of entries) {
         const entryRecord = toObjectRecord(entry);
         const list = Array.isArray(entryRecord?.skills) ? entryRecord.skills : [];
-        for (const skill of list) {
-          const skillRecord = toObjectRecord(skill);
-          if (typeof skillRecord?.name !== "string" || typeof skillRecord?.path !== "string")
-            continue;
-          // Codex skills/list returns disabled skills with enabled:false; omit them from
-          // slash-command surfaces so Paseo matches Codex CLI/TUI behavior.
-          // Missing enabled (older binaries) is treated as enabled.
-          if (skillRecord.enabled === false) continue;
-          if (!skillsByName.has(skillRecord.name)) {
-            skillsByName.set(skillRecord.name, {
-              name: skillRecord.name,
-              description: resolveSkillDescription(skillRecord),
-              path: skillRecord.path,
-            });
-          }
-        }
+        allSkills.push(...list);
       }
-      this.cachedSkills = Array.from(skillsByName.values());
+      this.cachedSkills = enabledCodexSkills(allSkills);
     } catch (error) {
       this.logger.trace(
         {
@@ -7065,22 +7084,17 @@ export class CodexAppServerAgentClient implements AgentClient {
   }
 
   async archiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
-    const threadId = handle.nativeHandle ?? handle.sessionId;
-    if (!threadId) return;
-
-    const child = await this.spawnAppServer();
-    const client = new CodexAppServerClient(child, this.logger);
-
-    try {
-      await client.request("initialize", buildCodexAppServerInitializeParams());
-      client.notify("initialized", {});
-      await client.request("thread/archive", { threadId });
-    } finally {
-      await client.dispose();
-    }
+    await this.updateNativeThreadArchiveState(handle, "archive");
   }
 
   async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
+    await this.updateNativeThreadArchiveState(handle, "restore");
+  }
+
+  private async updateNativeThreadArchiveState(
+    handle: AgentPersistenceHandle,
+    state: "archive" | "restore",
+  ): Promise<void> {
     const threadId = handle.nativeHandle ?? handle.sessionId;
     if (!threadId) return;
 
@@ -7090,12 +7104,14 @@ export class CodexAppServerAgentClient implements AgentClient {
     try {
       await client.request("initialize", buildCodexAppServerInitializeParams());
       client.notify("initialized", {});
+      if (state === "archive") {
+        await client.request("thread/archive", { threadId });
+        return;
+      }
       try {
         await client.request("thread/unarchive", { threadId });
       } catch (error) {
-        if (!isCodexAlreadyUnarchivedError(error, threadId)) {
-          throw error;
-        }
+        if (!isCodexAlreadyUnarchivedError(error, threadId)) throw error;
         try {
           await client.request("thread/read", { threadId });
         } catch {

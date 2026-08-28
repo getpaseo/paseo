@@ -67,6 +67,7 @@ import {
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { RenderProfile } from "@/utils/render-profiler";
+import { useHasPluginComposerPills } from "@/plugins";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
 import {
   type HostRuntimeConnectionStatus,
@@ -1288,11 +1289,13 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     parentAgentId: agentId,
     rows: subagentRows,
   });
+  const hasPluginComposerPills = useHasPluginComposerPills(serverId, workspaceId, agentId);
   const hasActiveComposer = !agentState.archivedAt && !isArchivingCurrentAgent;
   const hasVisibleAgentTracks = hasAgentTracks({
     subagentRows,
     tasks,
     archiveFinishedStatus: archiveFinishedSubagents.status,
+    hasPluginComposerPills,
   });
   const rawAgentInputDraft = useAgentInputDraft({
     draftKey: buildDraftStoreKey({
@@ -1306,7 +1309,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
     text,
     editText,
     replaceText,
-    textReplacementKey,
+    textReplacement,
     attachments,
     setAttachments,
     clear,
@@ -1319,7 +1322,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       text,
       editText,
       replaceText,
-      textReplacementKey,
+      textReplacement,
       attachments,
       setAttachments,
       clear,
@@ -1331,7 +1334,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
       text,
       editText,
       replaceText,
-      textReplacementKey,
+      textReplacement,
       attachments,
       setAttachments,
       clear,
@@ -1379,11 +1382,13 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
         <AgentTracks
           serverId={serverId}
           workspaceId={workspaceId}
+          agentId={agentId}
           cwd={cwd}
           subagentRows={subagentRows}
           tasks={tasks}
           archiveFinishedStatus={archiveFinishedSubagents.status}
           onArchiveFinished={archiveFinishedSubagents.archiveFinished}
+          hasPluginComposerPills={hasPluginComposerPills}
         />
       ) : null}
     </ReanimatedAnimated.View>
@@ -1720,7 +1725,7 @@ function ActiveAgentComposer({
         isPaneFocused={isPaneFocused}
         value={agentInputDraft.text}
         onChangeText={agentInputDraft.editText}
-        textReplacementKey={agentInputDraft.textReplacementKey}
+        textReplacement={agentInputDraft.textReplacement}
         attachments={agentInputDraft.attachments}
         attachmentScopeKeys={attachmentScopeKeys}
         onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}

@@ -96,6 +96,7 @@ export class WorkspaceDirectoryReplica {
     workspace: WorkspaceDescriptor,
     project: ProjectDescriptor | undefined,
   ): void {
+    if (shouldSuppressWorkspaceForLocalArchive({ serverId: this.serverId, workspace })) return;
     const snapshot = this.read();
     snapshot.workspaces.set(workspace.id, workspace);
     if (project) snapshot.projects.set(project.projectId, project);

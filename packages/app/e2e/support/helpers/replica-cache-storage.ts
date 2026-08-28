@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 const DATABASE_NAME = "paseo-replica-row-store";
 const STORE_NAME = "rows";
@@ -114,6 +114,23 @@ export async function readReplicaCache(page: Page): Promise<ReplicaCacheRecord |
     storeName: STORE_NAME,
   });
   return rows.length > 0 ? assembleCache(rows) : null;
+}
+
+export async function waitForWorkspaceInReplicaCache(
+  page: Page,
+  workspaceId: string,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const cache = await readReplicaCache(page);
+        return cache?.hosts?.some((host) =>
+          host.workspaces.some((workspace) => workspace.id === workspaceId),
+        );
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
 }
 
 export async function writeReplicaCache(page: Page, value: ReplicaCacheRecord): Promise<void> {

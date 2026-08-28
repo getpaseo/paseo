@@ -162,7 +162,7 @@ Communicates with the daemon via the same WebSocket protocol as the app.
 
 Enables remote access when the daemon is behind a firewall.
 
-- Curve25519 ECDH key exchange + XSalsa20-Poly1305 (NaCl `box`) encryption
+- Curve25519 establishes the relay-session secret; NaCl `box` protects each payload with XSalsa20-Poly1305
 - The relay is zero-knowledge — it routes encrypted bytes and cannot read content
 - Client and daemon channels with identical API (`createClientChannel`, `createDaemonChannel`)
 - Pairing via QR code transfers the daemon's public key to the client

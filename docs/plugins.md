@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
+composer pills, app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
 subprocess and evaluates the client contribution in the app runtime. Plugin code is trusted code;
 Paseo does not sandbox it.
 
@@ -121,15 +121,20 @@ code lives behind filename boundaries:
 | `*.server.ts`  | Node APIs, filesystem and process access, credentials, and handlers. |
 | `*.shared.ts`  | Zod RPC contracts and plain values used by both runtimes.            |
 
-Shared files import contracts from `@getpaseo/plugin/server`. Client files import hooks from
-`@getpaseo/plugin`. Plugin UI runs on desktop and mobile across multiple themes: color every
-`Text` from `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from
-`layout.compact`. See `public-docs/plugins/reference.md`.
+Shared files import contracts from `@getpaseo/plugin/server`. Client files import Paseo UI from
+`@getpaseo/plugin/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
+set; an unknown name renders nothing so it cannot break the plugin surface.
+Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
+`<Modal.Content>`.
+Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
+`theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
+See `public-docs/plugins/reference.md`.
 
-| Module                    | Use it for                                               |
-| ------------------------- | -------------------------------------------------------- |
-| `@getpaseo/plugin`        | hooks and UI types                                       |
-| `@getpaseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, and handler types |
+| Module                          | Use it for                                               |
+| ------------------------------- | -------------------------------------------------------- |
+| `@getpaseo/plugin`              | contribution contracts and client data hooks             |
+| `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks               |
+| `@getpaseo/plugin/server`       | `defineRpc`, `defineAttachmentSource`, and handler types |
 
 The compiler removes client registrations and imports from the server entry point, and server
 registrations and imports from the client entry point. Importing a `*.server` module from a client
@@ -200,6 +205,66 @@ They use typed plugin RPC only for plugin-specific backend work. Navigation is l
 plugin's registered global surfaces and workspace panels; plugins do not receive Expo Router or
 workspace-layout store access.
 
+## Contribute composer pills
+
+Register a headless client entrypoint, then add and remove targeted pills from that client
+lifecycle. `addClientSide` runs once per plugin installation in each connected app and never runs
+in the daemon subprocess. It can subscribe to the client API, call plugin RPCs, and own arbitrary
+client state without mounting a panel or surface.
+
+```tsx
+export function contributeClient(client: PluginClientContext) {
+  const pills = new Map<string, () => void>();
+  const unsubscribe = client.paseo.agents.subscribe((update) => {
+    if (update.kind !== "upsert" || !update.agent.workspaceId) return;
+    const { id: agentId, workspaceId } = update.agent;
+    pills.get(agentId)?.();
+    pills.set(
+      agentId,
+      client.addComposerPill({
+        id: "review",
+        title: "Open review",
+        workspaceId,
+        agentId,
+        Component: ReviewPill,
+        async onPress() {
+          await client.rpc(refreshReview, { agentId });
+          client.openPanel("review", { workspaceId, agentId });
+        },
+      }),
+    );
+  });
+  return () => {
+    unsubscribe();
+    for (const remove of pills.values()) remove();
+  };
+}
+```
+
+Wire it from `index.ts` with `plugin.addClientSide(contributeClient)`. `addComposerPill` exists only
+on `PluginClientContext`; it returns an idempotent removal function. A pill appears only in the
+matching workspace and agent track bar alongside Tasks and Subagents. Paseo owns the pressable,
+shared chrome, pending state, error reporting, and placement. The component owns its icon and text;
+the callback is client code by construction. Removing the pill, reloading the plugin, disconnecting
+the host, or unloading the app tears down the contribution.
+
+## Contribute timeline items
+
+Timeline transformers and renderers are client contributions. The daemon's canonical rows and
+built-in projection stay unchanged. The app transforms fetched projected history before building
+its render model. A matching live event requests a fresh projected tail, so lifecycle deltas are
+collapsed before the transformer replaces anything.
+
+`query.itemType` selects one public `AgentTimelineItem.type`. The callback owns any detailed
+recognition and returns plain plugin item objects. `undefined` keeps the source item, `items`
+replaces it, and an empty array removes it. Output `data` must be JSON-compatible. Paseo adds the
+runtime plugin ID, preserves the source timeline cursor, validates renderer data with its Zod
+schema, and mounts the component inside the normal plugin runtime and error boundary.
+
+Transformers run synchronously and must be deterministic. When several transformers match, the
+first one that returns a result owns that source item. Plugin and registration ordering is stable.
+See `plugin-examples/timeline-items` for the complete contract.
+
 ## Contribute composer attachments
 
 Register a declarative attachment source backed by a plugin RPC. Paseo owns the attachment menu,
@@ -247,4 +312,5 @@ against the installed catalog on every change; an id nothing contributes falls b
 preference instead of painting the reserved slot's placeholder colors.
 
 See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
-attachment-source example, and `plugin-examples/catppuccin` for a theme.
+attachment-source example, `plugin-examples/timeline-items` for timeline projection, and
+`plugin-examples/catppuccin` for a theme.

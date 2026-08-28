@@ -414,6 +414,7 @@ export const en = {
     },
     fileActions: {
       openFile: "Open file",
+      openIn: "Open in {{target}}",
       openToSide: "Open to the side",
       copyPath: "Copy path",
       copyRelativePath: "Copy relative path",

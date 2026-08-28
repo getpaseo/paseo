@@ -2208,6 +2208,22 @@ describe("ACPAgentClient listImportableSessions", () => {
     expect(listSessions).toHaveBeenCalledWith({});
   });
 
+  test("stops at the requested session limit after a source-scoped page", async () => {
+    const listSessions = vi.fn().mockResolvedValue({
+      sessions: [
+        { sessionId: "s1", cwd: "/Users/moonshot", title: null, updatedAt: null },
+        { sessionId: "s2", cwd: "/Users/moonshot", title: null, updatedAt: null },
+      ],
+      nextCursor: "later",
+    });
+    const client = makeClient({ listSessions });
+
+    await expect(
+      client.listImportableSessions({ cwd: "/Users/moonshot", limit: 1 }),
+    ).resolves.toHaveLength(1);
+    expect(listSessions).toHaveBeenCalledTimes(1);
+  });
+
   test("forwards cwd alongside the pagination cursor across pages", async () => {
     const listSessions = vi
       .fn()
