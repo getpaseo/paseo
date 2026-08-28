@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import { i18n } from "@/i18n/i18next";
 import type { PaseoSubagentRow, ProviderSubagentRow, SubagentRow } from "./select";
 import {
+  buildSubagentPillPresentation,
   buildSubagentRowPresentationData,
   countFinishedSubagents,
-  formatHeaderLabel,
   resolveRowLabel,
 } from "./track-presentation";
 
@@ -23,55 +24,72 @@ function row(
   };
 }
 
-describe("formatHeaderLabel", () => {
-  it("uses singular 'subagent' for a single row", () => {
-    expect(formatHeaderLabel([row({ id: "a" })])).toBe("1 subagent");
+describe("buildSubagentPillPresentation", () => {
+  // The real instance, so a label that names a key nobody added renders as that key and fails.
+  beforeAll(async () => {
+    if (!i18n.isInitialized) {
+      await i18n.init();
+    }
+    await i18n.changeLanguage("en");
   });
 
-  it("uses plural 'subagents' for two rows with no running rows", () => {
-    expect(formatHeaderLabel([row({ id: "a" }), row({ id: "b" })])).toBe("2 subagents");
+  const pill = (rows: SubagentRow[]) => buildSubagentPillPresentation(i18n.t, rows);
+
+  it("counts the children that are working, not the fan-out", () => {
+    expect(pill([row({ id: "a" }), row({ id: "b", status: "running" })])).toEqual({
+      segments: [{ bucket: "running", text: "1 working" }],
+      accessibilityLabel: "1 working",
+    });
   });
 
-  it("appends the running count when at least one row is running", () => {
+  it("counts every child in the state it reports", () => {
     expect(
-      formatHeaderLabel([row({ id: "a", status: "running" }), row({ id: "b" }), row({ id: "c" })]),
-    ).toBe("3 subagents · 1 running");
-  });
-
-  it("counts every running row in the suffix", () => {
-    expect(
-      formatHeaderLabel([
+      pill([
         row({ id: "a", status: "running" }),
         row({ id: "b", status: "running" }),
-        row({ id: "c", requiresAttention: true }),
-        row({ id: "d" }),
-        row({ id: "e" }),
+        row({ id: "c" }),
       ]),
-    ).toBe("5 subagents · 2 running");
+    ).toEqual({
+      segments: [{ bucket: "running", text: "2 working" }],
+      accessibilityLabel: "2 working",
+    });
   });
 
-  it("ignores requiresAttention on non-running rows in the header copy", () => {
+  it("keeps a working child visible behind a failed one instead of collapsing to the worst", () => {
     expect(
-      formatHeaderLabel([
-        row({ id: "a", status: "error", requiresAttention: false }),
-        row({ id: "b", status: "idle", requiresAttention: false }),
-        row({ id: "c", status: "idle", requiresAttention: true }),
+      pill([
+        row({ id: "a", status: "running" }),
+        row({ id: "b", status: "error", requiresAttention: true }),
+        row({ id: "c", status: "error" }),
       ]),
-    ).toBe("3 subagents");
+    ).toEqual({
+      segments: [
+        { bucket: "failed", text: "2 failed" },
+        { bucket: "running", text: "1 working" },
+      ],
+      accessibilityLabel: "2 failed, 1 working",
+    });
   });
 
-  it("still counts running rows even when they require attention", () => {
-    expect(
-      formatHeaderLabel([
-        row({ id: "a", status: "error", requiresAttention: true }),
-        row({ id: "b", status: "running", requiresAttention: true }),
-        row({ id: "c", status: "idle", requiresAttention: true }),
-      ]),
-    ).toBe("3 subagents · 1 running");
+  it("names what it opens once every child is done", () => {
+    expect(pill([row({ id: "a" }), row({ id: "b" })])).toEqual({
+      segments: [{ bucket: null, text: "2 subagents" }],
+      accessibilityLabel: "2 subagents",
+    });
   });
 
-  it("uses singular 'subagent' for a single row that requires attention upstream", () => {
-    expect(formatHeaderLabel([row({ id: "a", requiresAttention: true })])).toBe("1 subagent");
+  it("keeps the singular for a lone child", () => {
+    expect(pill([row({ id: "a" })])).toEqual({
+      segments: [{ bucket: null, text: "1 subagent" }],
+      accessibilityLabel: "1 subagent",
+    });
+  });
+
+  it("has nothing to mark without rows", () => {
+    expect(pill([])).toEqual({
+      segments: [{ bucket: null, text: "0 subagents" }],
+      accessibilityLabel: "0 subagents",
+    });
   });
 });
 

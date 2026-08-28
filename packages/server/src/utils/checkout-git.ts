@@ -19,6 +19,7 @@ import type {
   ForgeAuthState,
   ForgeService,
   ForgeSpecificStatusFacts,
+  PullRequestCheck as ForgePullRequestCheck,
   PullRequestMergeable,
 } from "../services/forge-service.js";
 import {
@@ -1813,7 +1814,6 @@ function buildPullRequestLookupTargetFromMetadata(
 
 function buildInitialPullRequestLookupTarget(input: {
   currentBranch: string | null;
-  metadata: PaseoWorktreeMetadata | null;
   branchRemoteName: string | null;
   branchMergeRef: string | null;
   branchRemoteUrl: string | null;
@@ -1838,17 +1838,14 @@ function buildInitialPullRequestLookupTarget(input: {
     });
   }
 
-  return (
-    buildPullRequestLookupTargetFromMetadata(input.metadata, input.currentBranch) ??
-    buildPullRequestLookupTargetFromBranchConfig({
-      currentBranch: input.currentBranch,
-      branchRemoteName: input.branchRemoteName,
-      branchMergeRef: input.branchMergeRef,
-      branchRemoteUrl: input.branchRemoteUrl,
-      originRemoteUrl: input.originRemoteUrl,
-      resolvedBaseRef: input.resolvedBaseRef,
-    })
-  );
+  return buildPullRequestLookupTargetFromBranchConfig({
+    currentBranch: input.currentBranch,
+    branchRemoteName: input.branchRemoteName,
+    branchMergeRef: input.branchMergeRef,
+    branchRemoteUrl: input.branchRemoteUrl,
+    originRemoteUrl: input.originRemoteUrl,
+    resolvedBaseRef: input.resolvedBaseRef,
+  });
 }
 
 async function resolvePullRequestLookupTargetFromPushConfig(
@@ -1881,6 +1878,49 @@ async function resolvePullRequestLookupTargetFromPushConfig(
     originRemoteUrl: knownOriginRemoteUrl ?? originRemoteUrl,
     resolvedBaseRef: knownResolvedBaseRef ?? resolvedBaseRef,
   });
+}
+
+async function resolveFactsPullRequestLookupTarget(input: {
+  cwd: string;
+  inspected: CheckoutInspectionContext;
+  metadata: PaseoWorktreeMetadata | null;
+  branchRemoteName: string | null;
+  branchMergeRef: string | null;
+  branchRemoteUrl: string | null;
+  resolvedBaseRef: string | null;
+  context?: CheckoutContext;
+}): Promise<PullRequestStatusLookupTarget | null> {
+  const { cwd, inspected, metadata, context } = input;
+  const metadataTarget = inspected.currentBranch
+    ? buildPullRequestLookupTargetFromMetadata(metadata, inspected.currentBranch)
+    : null;
+  if (metadataTarget) {
+    return metadataTarget;
+  }
+
+  let target = buildInitialPullRequestLookupTarget({
+    currentBranch: inspected.currentBranch,
+    branchRemoteName: input.branchRemoteName,
+    branchMergeRef: input.branchMergeRef,
+    branchRemoteUrl: input.branchRemoteUrl,
+    originRemoteUrl: inspected.remoteUrl,
+    resolvedBaseRef: input.resolvedBaseRef,
+  });
+  if (
+    inspected.currentBranch &&
+    target?.headRef === inspected.currentBranch &&
+    !target.headRepositoryOwner
+  ) {
+    target =
+      (await resolvePullRequestLookupTargetFromPushConfig(
+        cwd,
+        inspected.currentBranch,
+        inspected.remoteUrl,
+        input.resolvedBaseRef,
+        context,
+      )) ?? target;
+  }
+  return target;
 }
 
 export async function getCheckoutSnapshotFacts(
@@ -1938,29 +1978,16 @@ export async function getCheckoutSnapshotFacts(
       ]);
     }
   }
-  let pullRequestLookupTarget = buildInitialPullRequestLookupTarget({
-    currentBranch: inspected.currentBranch,
+  let pullRequestLookupTarget = await resolveFactsPullRequestLookupTarget({
+    cwd,
+    inspected,
     metadata: paseoWorktreeMetadata,
     branchRemoteName,
     branchMergeRef,
     branchRemoteUrl,
-    originRemoteUrl: inspected.remoteUrl,
     resolvedBaseRef,
+    context,
   });
-  if (
-    inspected.currentBranch &&
-    pullRequestLookupTarget?.headRef === inspected.currentBranch &&
-    !pullRequestLookupTarget.headRepositoryOwner
-  ) {
-    pullRequestLookupTarget =
-      (await resolvePullRequestLookupTargetFromPushConfig(
-        cwd,
-        inspected.currentBranch,
-        inspected.remoteUrl,
-        resolvedBaseRef,
-        context,
-      )) ?? pullRequestLookupTarget;
-  }
   pullRequestLookupTarget = await addHeadShaToPullRequestLookupTarget(
     cwd,
     pullRequestLookupTarget,
@@ -3848,13 +3875,7 @@ export function forgeAuthStateFromError(error: unknown): ForgeAuthState {
   return "unauthenticated";
 }
 
-export interface PullRequestCheck {
-  name: string;
-  status: "success" | "failure" | "pending" | "skipped" | "cancelled";
-  url: string | null;
-  workflow?: string;
-  duration?: string;
-}
+export type PullRequestCheck = ForgePullRequestCheck;
 
 export type ChecksStatus = "none" | "pending" | "success" | "failure";
 
@@ -3952,9 +3973,8 @@ async function getPullRequestStatusUncached(
   context?: CheckoutContext,
   headSha?: string | null,
 ): Promise<PullRequestStatusResult> {
-  if (context?.facts?.isGit === false) {
-    return buildPullRequestStatusResult(null, "no_remote");
-  }
+  const unavailable = getUnavailablePullRequestStatus(context?.facts);
+  if (unavailable) return unavailable;
   if (!context?.facts?.isGit) {
     await requireGitRepo(cwd);
   }
@@ -3994,4 +4014,20 @@ async function getPullRequestStatusUncached(
     }
     throw error;
   }
+}
+
+function getUnavailablePullRequestStatus(
+  facts: CheckoutSnapshotFacts | null | undefined,
+): PullRequestStatusResult | null {
+  if (facts?.isGit === false) {
+    return buildPullRequestStatusResult(null, "no_remote");
+  }
+  if (
+    facts?.isGit === true &&
+    facts.paseoWorktree.isPaseoOwnedWorktree &&
+    facts.pullRequestLookupTarget === null
+  ) {
+    return buildPullRequestStatusResult(null, "authenticated");
+  }
+  return null;
 }

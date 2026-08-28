@@ -67,6 +67,17 @@ export function parseHexColor(hex: string): [number, number, number] | null {
   ];
 }
 
+/** Adds alpha to a theme-owned hex color in a format accepted by Canvas and Skia. */
+export function hexColorWithAlpha(hex: string, alpha: number): string {
+  const rgb = parseHexColor(hex);
+  if (!rgb) throw new TypeError(`Expected a hex color, received ${hex}`);
+  if (!Number.isFinite(alpha) || alpha < 0 || alpha > 1) {
+    throw new RangeError(`Color alpha must be between 0 and 1, received ${alpha}`);
+  }
+  const [r, g, b] = rgb.map((channel) => Math.round(channel * 255));
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function toHexChannel(channel: number): string {
   const clamped = Math.min(255, Math.max(0, Math.round(channel * 255)));
   return clamped.toString(16).padStart(2, "0");

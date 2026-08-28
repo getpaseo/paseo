@@ -105,6 +105,7 @@ export function MobilePanelOverlay({
 const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
+    zIndex: 1,
   },
   backdrop: {
     ...StyleSheet.absoluteFillObject,

@@ -57,6 +57,7 @@ const styles = StyleSheet.create((theme) => ({
     minHeight: 48,
     flexDirection: "row",
     alignItems: "center",
+    flexWrap: "wrap",
     gap: theme.spacing[3],
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
@@ -66,20 +67,22 @@ const styles = StyleSheet.create((theme) => ({
   },
   message: {
     flex: 1,
+    flexBasis: 180,
     minWidth: 0,
     gap: theme.spacing[1],
   },
   title: {
     color: theme.colors.palette.amber[500],
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
   description: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   actions: {
     flexShrink: 0,
+    marginLeft: "auto",
     flexDirection: "row",
     gap: theme.spacing[2],
   },

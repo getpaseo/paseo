@@ -8,8 +8,9 @@ export function normalizeForgeSearchKinds(
   if (!kinds) return ["issue", "change_request"];
 
   return kinds.map((kind) => {
-    // COMPAT(githubSearchKind): added in v0.1.106, remove with the legacy
-    // github_search_request RPC after 2026-12-28.
+    // COMPAT(githubSearchKind): legacy GitHub kind aliases retained when
+    // neutral forge search shipped in v0.2.0-beta.1. Remove after 2027-01-17
+    // together with the legacy github_search_request RPC.
     if (kind === "github-issue") return "issue";
     if (kind === "github-pr" || kind === "pr") return "change_request";
     return kind;
@@ -63,9 +64,12 @@ export interface PullRequestCheck {
   status: PullRequestCheckStatus;
   url: string | null;
   workflow?: string;
+  /** How long the check took, or how long it has been running. Formatted, never raw. */
   duration?: string;
   checkRunId?: number;
   workflowRunId?: number;
+  /** Open forge-neutral refinements such as manual, action_required, or warning. */
+  traits?: string[];
 }
 
 export type PullRequestChecksStatus = "none" | "pending" | "success" | "failure";
@@ -321,6 +325,11 @@ export interface PipelineJob {
   name: string;
   stage: string;
   status: PipelineJobStatus;
+  /**
+   * COMPAT(pipelineRawStatus): unread by clients but required by peers
+   * <= v0.2.0-rc.1, so adapters must keep populating it. Remove together with
+   * the wire field after 2027-01-17 once the client floor is >= v0.2.0.
+   */
   rawStatus: string;
   url: string | null;
   allowFailure: boolean;
@@ -341,6 +350,7 @@ export interface PipelineStage {
 export interface PipelineDetails {
   id: number;
   status: PipelineJobStatus;
+  /** COMPAT(pipelineRawStatus): see {@link PipelineJob.rawStatus}. */
   rawStatus: string;
   url: string | null;
   ref: string | null;
@@ -390,7 +400,9 @@ export interface SearchResult {
   featuresEnabled: boolean;
   authState: ForgeAuthState;
   /**
-   * COMPAT(githubFeaturesEnabled): added in v0.1.106, remove after 2026-12-28.
+   * COMPAT(githubFeaturesEnabled): legacy search result flag retained when
+   * neutral authState shipped in v0.2.0-beta.1. Remove after 2027-01-17 once
+   * supported client and daemon floors are >= v0.2.0.
    */
   githubFeaturesEnabled?: boolean;
 }

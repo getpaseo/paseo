@@ -226,7 +226,7 @@ describe("keyboard-shortcuts", () => {
       name: "matches Mod+T to open new tab",
       event: { key: "t", code: "KeyT", metaKey: true },
       context: { isMac: true },
-      action: "workspace.tab.new",
+      action: "workspace.tab.menu.open",
     },
     {
       name: "matches Alt+Shift+W to close current tab on web",
@@ -589,7 +589,7 @@ describe("keyboard-shortcuts", () => {
     expectShortcutResolution({
       event: { key: "t", code: "KeyT", ctrlKey: true },
       context: { isDesktop: true, focusScope: "browser" },
-      action: "workspace.tab.new",
+      action: "workspace.tab.menu.open",
     });
   });
 
@@ -993,7 +993,7 @@ describe("unassigned shortcuts", () => {
         bindings,
       });
 
-      expect(result.match?.action).toBe("workspace.tab.new");
+      expect(result.match?.action).toBe("workspace.tab.menu.open");
     });
 
     it("treats a stored empty combo as unassigned too", () => {
@@ -1017,7 +1017,7 @@ describe("unassigned shortcuts", () => {
           context: desktopNonMac,
           bindings,
         }).match?.action,
-      ).toBe("workspace.tab.new");
+      ).toBe("workspace.tab.menu.open");
       expect(
         resolveShortcut({
           event: { key: "t", code: "KeyT", ctrlKey: true },
@@ -1038,7 +1038,7 @@ describe("unassigned shortcuts", () => {
         bindings,
       });
 
-      expect(result.match?.action).toBe("workspace.tab.new");
+      expect(result.match?.action).toBe("workspace.tab.menu.open");
     });
   });
 
@@ -1135,5 +1135,64 @@ describe("unassigned shortcuts", () => {
 
       expect(findRow(sections, "workspace-tab-new")?.chord).toBeNull();
     });
+  });
+});
+
+describe("direct new-tab target shortcuts", () => {
+  const desktopNonMac = { isMac: false, isDesktop: true };
+  const targetCases = [
+    ["a", "KeyA", "workspace.tab.target.agent"],
+    ["b", "KeyB", "workspace.tab.target.browser"],
+    ["g", "KeyG", "workspace.tab.target.changes"],
+    ["e", "KeyE", "workspace.tab.target.files"],
+  ] as const;
+
+  it("leaves bare letters to the open menu", () => {
+    const result = resolveShortcut({
+      event: { key: "a", code: "KeyA" },
+      context: { ...desktopNonMac, focusScope: "other" },
+      bindings: buildEffectiveBindings({}),
+    });
+
+    expect(result.match).toBeNull();
+  });
+
+  it.each(targetCases)("routes Ctrl+Shift+%s directly to %s", (key, code, action) => {
+    const result = resolveShortcut({
+      event: { key, code, ctrlKey: true, shiftKey: true },
+      context: { ...desktopNonMac, focusScope: "other" },
+      bindings: buildEffectiveBindings({}),
+    });
+    expect(result.match?.action).toBe(action);
+  });
+
+  it.each(targetCases)("routes Cmd+Shift+%s directly to %s", (key, code, action) => {
+    const result = resolveShortcut({
+      event: { key, code, metaKey: true, shiftKey: true },
+      context: { isMac: true, isDesktop: true, focusScope: "other" },
+      bindings: buildEffectiveBindings({}),
+    });
+    expect(result.match?.action).toBe(action);
+  });
+
+  it("uses the existing override map for target matching and display", () => {
+    const bindingId = "workspace-tab-target-agent-ctrl-shift-a-non-mac";
+    const overrides = { [bindingId]: "Ctrl+Shift+H" };
+    const rebound = resolveShortcut({
+      event: { key: "h", code: "KeyH", ctrlKey: true, shiftKey: true },
+      context: { ...desktopNonMac, focusScope: "other" },
+      bindings: buildEffectiveBindings(overrides),
+    });
+    const original = resolveShortcut({
+      event: { key: "a", code: "KeyA", ctrlKey: true, shiftKey: true },
+      context: { ...desktopNonMac, focusScope: "other" },
+      bindings: buildEffectiveBindings(overrides),
+    });
+
+    expect(rebound.match?.action).toBe("workspace.tab.target.agent");
+    expect(original.match).toBeNull();
+    expect(
+      resolveShortcutKeysForAction("workspace-tab-target-agent", overrides, desktopNonMac),
+    ).toEqual([["ctrl", "shift", "H"]]);
   });
 });

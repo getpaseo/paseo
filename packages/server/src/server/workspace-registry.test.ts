@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { beforeEach, afterEach, describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../test-utils/test-logger.js";
+import { writeJsonFileAtomic } from "./atomic-file.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -97,6 +98,57 @@ describe("workspace registries", () => {
     await projectRegistry.remove("remote:github.com/acme/repo");
     expect(await projectRegistry.get("remote:github.com/acme/repo")).toBeNull();
     expect(await projectRegistry.list()).toEqual([]);
+  });
+
+  test("preserves a concurrent project update when archiving", async () => {
+    let pauseNextWrite = false;
+    let releaseWrite!: () => void;
+    let writeStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      writeStarted = resolve;
+    });
+    const release = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const concurrentRegistry = new FileBackedProjectRegistry(
+      path.join(tmpDir, "projects", "concurrent-projects.json"),
+      logger,
+      {
+        writeRecords: async (filePath, records) => {
+          if (pauseNextWrite) {
+            pauseNextWrite = false;
+            writeStarted();
+            await release;
+          }
+          await writeJsonFileAtomic(filePath, records);
+        },
+      },
+    );
+    const project = createPersistedProjectRecord({
+      projectId: "project-concurrent",
+      rootPath: "/tmp/project-concurrent",
+      kind: "git",
+      displayName: "project-concurrent",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+    await concurrentRegistry.upsert(project);
+    pauseNextWrite = true;
+
+    const update = concurrentRegistry.update(project.projectId, (current) => ({
+      ...current,
+      customName: "Kept name",
+      updatedAt: "2026-03-02T00:00:00.000Z",
+    }));
+    await started;
+    const archive = concurrentRegistry.archive(project.projectId, "2026-03-03T00:00:00.000Z");
+    releaseWrite();
+    await Promise.all([update, archive]);
+
+    expect(await concurrentRegistry.get(project.projectId)).toMatchObject({
+      customName: "Kept name",
+      archivedAt: "2026-03-03T00:00:00.000Z",
+    });
   });
 
   test("publishes only project mutations that change the persisted lifecycle", async () => {

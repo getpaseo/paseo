@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
 import {
   navigateToLastWorkspace,
   navigateToWorkspace,
@@ -22,7 +23,7 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const deps: NavigateToWorkspaceDeps = {
     getSessionWorkspaces: () => null,
     getSessionAgents: () => [] as Agent[],
-    openTabFocused: (workspaceKey, target) => {
+    openTab: ({ workspaceKey, target }) => {
       openedTabs.push({ workspaceKey, target });
       return target.kind === "agent" ? target.agentId : null;
     },
@@ -173,6 +174,21 @@ describe("workspace navigation", () => {
     expect(selection).toEqual({
       serverId: "server-1",
       workspaceId: "/tmp/paseo-missing-workspace",
+    });
+  });
+
+  // Desktop cold-starts at "/" (packages/desktop/src/main.ts) and restores the
+  // remembered workspace, so a workspace is mounted while the pathname carries
+  // no workspace at all. Anything that identifies the active workspace from the
+  // pathname alone silently gets nothing there — and reports that workspace's
+  // panes as closed.
+  it("resolves a workspace the pathname alone cannot identify", () => {
+    const params = { serverId: "server-1", workspaceId: "workspace-a" };
+
+    expect(parseHostWorkspaceRouteFromPathname("/")).toBeNull();
+    expect(parseActiveWorkspaceSelection({ pathname: "/", params })).toEqual({
+      serverId: "server-1",
+      workspaceId: "workspace-a",
     });
   });
 

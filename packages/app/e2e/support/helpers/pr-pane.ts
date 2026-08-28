@@ -1,10 +1,10 @@
 import { expect, type Page } from "@playwright/test";
+import type { CheckPresentationCounts } from "@/git/check-presentation";
 import { getStateLabel } from "@/git/pull-request-panel/data";
+import { openPullRequestPanel } from "./workspace-tabs";
 
 export async function openPrPane(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Open explorer" }).click();
-  await page.getByTestId("explorer-tab-pr").click();
-  await expect(page.getByTestId("pr-pane")).toBeVisible({ timeout: 15_000 });
+  await openPullRequestPanel(page);
 }
 
 export async function expectPrPaneTitle(page: Page, title: string): Promise<void> {
@@ -30,10 +30,10 @@ async function assertCheckPill(page: Page, testId: string, count: number): Promi
 
 export async function expectPrPaneCheckSummary(
   page: Page,
-  counts: { passed: number; failed: number; pending: number },
+  counts: Pick<CheckPresentationCounts, "success" | "failure" | "pending">,
 ): Promise<void> {
-  await assertCheckPill(page, "pr-pane-check-passed", counts.passed);
-  await assertCheckPill(page, "pr-pane-check-failed", counts.failed);
+  await assertCheckPill(page, "pr-pane-check-success", counts.success);
+  await assertCheckPill(page, "pr-pane-check-failure", counts.failure);
   await assertCheckPill(page, "pr-pane-check-pending", counts.pending);
 }
 

@@ -25,6 +25,7 @@ export interface ProjectHostEntry {
   gitRuntime?: WorkspaceDescriptor["gitRuntime"];
   githubRuntime?: WorkspaceDescriptor["githubRuntime"];
   customIconRevision?: string | null;
+  iconRevision?: string;
 }
 
 export interface ProjectSummary {
@@ -87,9 +88,10 @@ interface HostGroup {
   isOnline: boolean;
   workspaces: WorkspaceDescriptor[];
   customIconRevision?: string | null;
-  // Repo root for a project parent that has no workspaces yet. Without it the
-  // host's repoRoot resolves to "" and the project reads as non-editable.
-  fallbackRepoRoot: string;
+  iconRevision?: string;
+  // The project record exists before its first workspace. Keep its editable
+  // root at the project boundary instead of deriving it from child rows.
+  projectRoot: string;
 }
 
 interface ProjectGroup {
@@ -124,8 +126,11 @@ function buildHostProjectEntries(hosts: ProjectHost[]): HostProjectListItem[] {
   });
 }
 
-function resolveHostRepoRoot(group: HostGroup): string {
-  return group.workspaces[0]?.projectRootPath ?? group.fallbackRepoRoot;
+function resolveHostRepoRoot(input: {
+  projectRoot: string;
+  workspaces: readonly WorkspaceDescriptor[];
+}): string {
+  return input.workspaces[0]?.projectRootPath || input.projectRoot;
 }
 
 function toWorkspaceSummary(workspace: WorkspaceDescriptor): WorkspaceSummary {
@@ -159,6 +164,7 @@ function toHostEntry(group: HostGroup): ProjectHostEntry {
     gitRuntime: canonical?.gitRuntime,
     githubRuntime: canonical?.githubRuntime,
     customIconRevision: canonical?.projectCustomIconRevision ?? group.customIconRevision,
+    iconRevision: group.iconRevision,
   };
 }
 
@@ -223,7 +229,8 @@ function addHostProjects(
         isOnline: host.isOnline,
         workspaces: [],
         customIconRevision: placement.customIconRevision,
-        fallbackRepoRoot: repoRootByProjectId.get(projectId) ?? "",
+        iconRevision: placement.iconRevision,
+        projectRoot: repoRootByProjectId.get(projectId) ?? "",
       });
     }
   }

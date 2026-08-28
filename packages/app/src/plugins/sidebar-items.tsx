@@ -5,9 +5,11 @@ import { resolvePluginIcon } from "./icons";
 import { useInstalledPlugins } from "./registry";
 import { buildPluginSurfaceRoute, hostIdFromPathname } from "./routes";
 import {
-  groupPluginSidebarContributions,
   getPreferredPluginContributionHost,
   rememberPluginContributionHost,
+} from "./contribution-host";
+import {
+  groupPluginSidebarContributions,
   type PluginSidebarGroup,
   type PluginSidebarTarget,
 } from "./sidebar-groups";
@@ -52,15 +54,17 @@ function PluginSidebarItemRow({
   onBeforeNavigate?: () => void;
 }) {
   const target = selectTarget(group, currentHostId);
-  const route = buildPluginSurfaceRoute(
-    target.plugin.serverId,
-    group.pluginId,
-    group.contributionId,
-  );
+  const route = buildPluginSurfaceRoute(target.plugin.serverId, group.pluginId, {
+    kind: "sidebar",
+    id: group.contributionId,
+  });
   const isActive = group.targets.some(
     (candidate) =>
       pathname ===
-      buildPluginSurfaceRoute(candidate.plugin.serverId, group.pluginId, group.contributionId),
+      buildPluginSurfaceRoute(candidate.plugin.serverId, group.pluginId, {
+        kind: "sidebar",
+        id: group.contributionId,
+      }),
   );
   const navigate = useCallback(() => {
     rememberPluginContributionHost(group.key, target.plugin.serverId);

@@ -5,18 +5,17 @@ import {
 } from "./session-resume-revalidation";
 
 describe("session resume revalidation", () => {
-  it("refreshes both directories and timeline history after a stale resume", async () => {
+  it("refreshes demanded timeline history without manufacturing directory demand", async () => {
     const calls: string[] = [];
 
     const revalidated = await revalidateSessionAfterResume({
       awayMs: SESSION_STALE_AFTER_MS,
       serverId: "server",
       bumpHistorySyncGeneration: (serverId) => calls.push(`history:${serverId}`),
-      refreshDirectories: async () => calls.push("directories"),
     });
 
     expect(revalidated).toBe(true);
-    expect(calls).toEqual(["history:server", "directories"]);
+    expect(calls).toEqual(["history:server"]);
   });
 
   it("does nothing after a brief background interval", async () => {
@@ -26,27 +25,9 @@ describe("session resume revalidation", () => {
       awayMs: SESSION_STALE_AFTER_MS - 1,
       serverId: "server",
       bumpHistorySyncGeneration: () => calls.push("history"),
-      refreshDirectories: async () => calls.push("directories"),
     });
 
     expect(revalidated).toBe(false);
     expect(calls).toEqual([]);
-  });
-
-  it("defers stale resume revalidation while the host is disconnected", async () => {
-    const calls: string[] = [];
-
-    const revalidated = await revalidateSessionAfterResume({
-      awayMs: SESSION_STALE_AFTER_MS,
-      serverId: "server",
-      bumpHistorySyncGeneration: (serverId) => calls.push(`history:${serverId}`),
-      refreshDirectories: async () => {
-        calls.push("directories");
-        throw new Error("Host server is not connected");
-      },
-    });
-
-    expect(revalidated).toBe(false);
-    expect(calls).toEqual(["history:server", "directories"]);
   });
 });

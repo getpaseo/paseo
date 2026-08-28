@@ -261,12 +261,12 @@ const styles = StyleSheet.create((theme) => ({
   },
   percentageLabel: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
   skeletonLabel: {
     width: 22,
-    height: theme.fontSize.sm,
+    height: theme.fontSize.base,
     borderRadius: theme.borderRadius.full,
     backgroundColor: theme.colors.surface3,
   },
@@ -276,16 +276,16 @@ const styles = StyleSheet.create((theme) => ({
   },
   tooltipTitle: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   tooltipText: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.4,
+    fontSize: theme.fontSize.base,
+    lineHeight: theme.fontSize.base * 1.4,
   },
   tooltipDetail: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
-    lineHeight: theme.fontSize.xs * 1.4,
+    fontSize: theme.fontSize.sm,
+    lineHeight: theme.fontSize.sm * 1.4,
   },
 }));

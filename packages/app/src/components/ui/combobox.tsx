@@ -13,7 +13,6 @@ import {
   Text,
   Pressable,
   Modal,
-  TextInput,
   ScrollView,
   Platform,
   StatusBar,
@@ -26,6 +25,7 @@ import {
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
@@ -191,11 +191,11 @@ export function SearchInput({
   onChangeText,
   onSubmitEditing,
   autoFocus = false,
-  useBottomSheetInput = false,
+  useBottomSheetInput: _useBottomSheetInput = false,
   resetKey,
 }: SearchInputProps): ReactElement {
   const { theme } = useUnistyles();
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<EditingTextInputHandle>(null);
 
   useEffect(() => {
     if (autoFocus && IS_WEB && inputRef.current) {
@@ -209,32 +209,18 @@ export function SearchInput({
   return (
     <View style={styles.searchInputContainer}>
       <Search size={16} color={theme.colors.foregroundMuted} />
-      {useBottomSheetInput ? (
-        <AdaptiveTextInput
-          ref={inputRef}
-          // @ts-expect-error - outlineStyle is web-only
-          style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
-          placeholder={placeholder}
-          resetKey={resetKey}
-          onChangeText={onChangeText}
-          autoCapitalize="none"
-          autoCorrect={false}
-          onSubmitEditing={onSubmitEditing}
-        />
-      ) : (
-        <TextInput
-          key={resetKey}
-          ref={inputRef}
-          // @ts-expect-error - outlineStyle is web-only
-          style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
-          placeholder={placeholder}
-          placeholderTextColor={theme.colors.foregroundMuted}
-          onChangeText={onChangeText}
-          autoCapitalize="none"
-          autoCorrect={false}
-          onSubmitEditing={onSubmitEditing}
-        />
-      )}
+      <AdaptiveTextInput
+        ref={inputRef}
+        // @ts-expect-error - outlineStyle is web-only
+        style={[styles.searchInput, IS_WEB && { outlineStyle: "none" }]}
+        placeholder={placeholder}
+        placeholderTextColor={theme.colors.foregroundMuted}
+        resetKey={resetKey}
+        onChangeText={onChangeText}
+        autoCapitalize="none"
+        autoCorrect={false}
+        onSubmitEditing={onSubmitEditing}
+      />
     </View>
   );
 }
@@ -1683,7 +1669,7 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     paddingVertical: theme.spacing[3],
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   comboboxItem: {
     flexDirection: "row",
@@ -1744,12 +1730,12 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
   },
   comboboxItemLabel: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
     flexShrink: 0,
   },
   comboboxItemDescription: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },
@@ -1757,7 +1743,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.spacing[3],
     paddingVertical: theme.spacing[2],
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   footer: {
     borderTopWidth: 1,
@@ -1768,7 +1754,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingBottom: theme.spacing[2],
   },
   comboboxTitle: {
-    fontSize: theme.fontSize.lg,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     textAlign: "left",
   },

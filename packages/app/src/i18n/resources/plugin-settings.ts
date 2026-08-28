@@ -1,5 +1,14 @@
 const shared = {
   directoryPlaceholder: "/absolute/path/on/host",
+  logs: {
+    action: "Logs",
+    title: "Logs: {{id}}",
+    loading: "Loading logs…",
+    refresh: "Refresh",
+    refreshing: "Refreshing…",
+    errorTitle: "Unable to load plugin logs",
+    empty: "No plugin output yet",
+  },
 } as const;
 
 export const pluginSettings = {

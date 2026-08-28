@@ -20,6 +20,7 @@ import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attentio
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { isNative as platformIsNative } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { useLongPressDragInteraction } from "@/components/sidebar/use-long-press-drag-interaction";
 import {
   SidebarWorkspaceContextMenu,
@@ -264,7 +265,8 @@ function WorkspaceRowBody({
   onMarkAsRead,
   archiveShortcutKeys,
 }: WorkspaceRowBodyProps) {
-  const isTouchPlatform = platformIsNative;
+  const isCompact = useIsCompactFormFactor();
+  const isTouchPlatform = platformIsNative || isCompact;
   const [isPressed, setIsPressed] = useState(false);
   const trailing = useSidebarWorkspaceTrailing();
   const draggable = Boolean(drag);
@@ -463,6 +465,9 @@ function WorkspaceRowTrailingActions({
               <SidebarWorkspaceMenu
                 {...kebab.menuProps}
                 workspaceKey={workspace.workspaceKey}
+                serverId={workspace.serverId}
+                workspaceId={workspace.workspaceId}
+                workspaceLabels={workspace.labels}
                 onCopyPath={onCopyPath}
                 onCopyBranchName={onCopyBranchName}
                 onRename={onRename}
@@ -494,8 +499,8 @@ function getWorkspaceRowStyle({
 }) {
   return [
     styles.workspaceRow,
-    selected && styles.sidebarRowSelected,
     isHovered && styles.workspaceRowHovered,
+    selected && styles.sidebarRowSelected,
     isDragging && styles.workspaceRowDragging,
     isPressed && styles.workspaceRowPressed,
   ];
@@ -535,11 +540,11 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.shadow.md,
   },
   sidebarRowSelected: {
-    backgroundColor: theme.colors.surfaceSidebarHover,
+    backgroundColor: theme.colors.surfaceSidebarSelected,
   },
   workspaceCreatingText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     flexShrink: 0,
   },
 }));

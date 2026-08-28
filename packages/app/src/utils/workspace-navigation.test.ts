@@ -22,7 +22,13 @@ function createFakeLayout() {
   return {
     openedTabs,
     pinnedAgents,
-    openTabFocused: (key: string, target: WorkspaceTabTarget) => {
+    openTab: ({
+      workspaceKey: key,
+      target,
+    }: {
+      workspaceKey: string;
+      target: WorkspaceTabTarget;
+    }) => {
       openedTabs.push({ key, target });
       return target.kind === "agent" ? target.agentId : null;
     },

@@ -3,12 +3,18 @@ import { createProjectViewKey } from "@/projects/workspace-structure";
 import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 import { buildProjects, getProjectSummaryForHostProject } from "./projects";
 
-function descriptor(id: string, key: string, root: string): ProjectDescriptor {
+function descriptor(
+  id: string,
+  key: string,
+  root: string,
+  iconRevision?: string,
+): ProjectDescriptor {
   return {
     projectId: id,
     projectKey: key,
     projectDisplayName: "acme/app",
     projectCustomName: null,
+    projectIconRevision: iconRevision,
     projectRootPath: root,
     projectKind: "git",
   };
@@ -42,14 +48,14 @@ describe("buildProjects", () => {
           serverId: "host-a",
           serverName: "Host A",
           isOnline: true,
-          projects: [descriptor("prj_a", key, "/a/app")],
+          projects: [descriptor("prj_a", key, "/a/app", "revision-a")],
           workspaces: [workspace("ws-a", "prj_a", "/a/app")],
         },
         {
           serverId: "host-b",
           serverName: "Host B",
           isOnline: false,
-          projects: [descriptor("prj_b", key, "/b/app")],
+          projects: [descriptor("prj_b", key, "/b/app", "revision-b")],
           workspaces: [workspace("ws-b", "prj_b", "/b/app")],
         },
       ],
@@ -62,8 +68,16 @@ describe("buildProjects", () => {
         onlineHostCount: 1,
         totalWorkspaceCount: 2,
         hosts: [
-          expect.objectContaining({ serverId: "host-a", projectId: "prj_a" }),
-          expect.objectContaining({ serverId: "host-b", projectId: "prj_b" }),
+          expect.objectContaining({
+            serverId: "host-a",
+            projectId: "prj_a",
+            iconRevision: "revision-a",
+          }),
+          expect.objectContaining({
+            serverId: "host-b",
+            projectId: "prj_b",
+            iconRevision: "revision-b",
+          }),
         ],
       }),
     ]);
@@ -86,6 +100,22 @@ describe("buildProjects", () => {
       totalWorkspaceCount: 0,
       hosts: [{ projectId: "prj_a", repoRoot: "/a/app" }],
     });
+  });
+
+  test("keeps a new project's own root when it has not created a workspace", () => {
+    const result = buildProjects({
+      hosts: [
+        {
+          serverId: "host-a",
+          serverName: "Host A",
+          isOnline: true,
+          projects: [descriptor("prj_a", "local-a", "/a/new-project")],
+          workspaces: [],
+        },
+      ],
+    });
+
+    expect(result.projects[0]?.hosts[0]?.repoRoot).toBe("/a/new-project");
   });
 
   test("looks up a grouped project by host-local identity", () => {

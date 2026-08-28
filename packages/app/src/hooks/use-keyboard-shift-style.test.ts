@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveKeyboardShift } from "./keyboard-shift-policy";
+import {
+  resolveKeyboardShift,
+  shouldUseCompactExplorerKeyboardPadding,
+} from "./keyboard-shift-policy";
 
 describe("resolveKeyboardShift", () => {
   it("keeps the existing open-keyboard offset behavior", () => {
@@ -36,5 +39,19 @@ describe("resolveKeyboardShift", () => {
         iosMinHeight: 120,
       }),
     ).toBe(0);
+  });
+});
+
+describe("shouldUseCompactExplorerKeyboardPadding", () => {
+  it("keeps the changes viewport stable while preserving padding for other tabs", () => {
+    expect(shouldUseCompactExplorerKeyboardPadding({ isGit: true, explorerTab: "changes" })).toBe(
+      false,
+    );
+    expect(shouldUseCompactExplorerKeyboardPadding({ isGit: true, explorerTab: "files" })).toBe(
+      true,
+    );
+    expect(shouldUseCompactExplorerKeyboardPadding({ isGit: false, explorerTab: "changes" })).toBe(
+      true,
+    );
   });
 });

@@ -22,10 +22,12 @@ import {
   DEFAULT_TERMINAL_PROFILES,
 } from "@getpaseo/protocol/terminal-profiles";
 import { AgentProfilesSection } from "@/agent-profiles";
+import { AgentSkillsSection } from "@/agent-skills";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { SettingsTextAreaCard } from "@/components/settings-textarea";
 import { Alert as InlineAlert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { StatusBadge, type StatusBadgeVariant } from "@/components/ui/status-badge";
 import { Switch } from "@/components/ui/switch";
 import {
   ProfileDraft,
@@ -170,45 +172,30 @@ function HostStatusBadges({ serverId }: { serverId: string }) {
   const activeConnection = snapshot?.activeConnection ?? null;
   const statusLabel = formatConnectionStatus(connectionStatus);
   const statusTone = getConnectionStatusTone(connectionStatus);
-  let statusColor: string;
+  let statusVariant: StatusBadgeVariant = "muted";
+  let statusDotColor = theme.colors.foregroundMuted;
   if (statusTone === "success") {
-    statusColor = theme.colors.palette.green[400];
+    statusVariant = "success";
+    statusDotColor = theme.colors.statusDotSuccess;
   } else if (statusTone === "warning") {
-    statusColor = theme.colors.palette.amber[500];
+    statusVariant = "warning";
+    statusDotColor = theme.colors.statusDotWarning;
   } else if (statusTone === "error") {
-    statusColor = theme.colors.destructive;
-  } else {
-    statusColor = theme.colors.foregroundMuted;
-  }
-  let statusPillBg: string;
-  if (statusTone === "success") {
-    statusPillBg = "rgba(74, 222, 128, 0.1)";
-  } else if (statusTone === "warning") {
-    statusPillBg = "rgba(245, 158, 11, 0.1)";
-  } else if (statusTone === "error") {
-    statusPillBg = "rgba(248, 113, 113, 0.1)";
-  } else {
-    statusPillBg = "rgba(161, 161, 170, 0.1)";
+    statusVariant = "error";
+    statusDotColor = theme.colors.statusDotDanger;
   }
   const connectionBadge = formatActiveConnectionBadge(activeConnection, theme, t);
   const versionBadgeText = formatDaemonVersionBadge(daemonVersion);
 
-  const statusPillStyle = useMemo(
-    () => [styles.statusPill, { backgroundColor: statusPillBg }],
-    [statusPillBg],
-  );
   const statusDotStyle = useMemo(
-    () => [styles.statusDot, { backgroundColor: statusColor }],
-    [statusColor],
+    () => [styles.statusDot, { backgroundColor: statusDotColor }],
+    [statusDotColor],
   );
-  const statusTextStyle = useMemo(() => [styles.statusText, { color: statusColor }], [statusColor]);
+  const statusLeading = useMemo(() => <View style={statusDotStyle} />, [statusDotStyle]);
 
   return (
     <View style={styles.identityBadges} testID="host-page-identity">
-      <View style={statusPillStyle}>
-        <View style={statusDotStyle} />
-        <Text style={statusTextStyle}>{statusLabel}</Text>
-      </View>
+      <StatusBadge label={statusLabel} variant={statusVariant} leading={statusLeading} />
       {connectionBadge ? (
         <View style={styles.badgePill}>
           {connectionBadge.icon}
@@ -289,6 +276,7 @@ export function HostAgentsPage({ serverId }: { serverId: string }) {
           <Text style={styles.emptyText}>{t("settings.host.agents.unavailable")}</Text>
         </View>
       )}
+      <AgentSkillsSection serverId={serverId} />
       <AgentProfilesSection serverId={serverId} />
     </View>
   );
@@ -1807,7 +1795,7 @@ const terminalProfileStyles = StyleSheet.create((theme) => ({
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     textAlign: "center",
   },
 }));
@@ -1836,22 +1824,10 @@ const styles = StyleSheet.create((theme) => ({
     flexWrap: "wrap",
     marginBottom: theme.spacing[6],
   },
-  statusPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: theme.spacing[2],
-    paddingVertical: 4,
-    borderRadius: theme.borderRadius.full,
-  },
   statusDot: {
     width: 6,
     height: 6,
     borderRadius: theme.borderRadius.full,
-  },
-  statusText: {
-    fontSize: theme.fontSize.xs,
-    fontWeight: theme.fontWeight.normal,
   },
   badgePill: {
     flexDirection: "row",
@@ -1866,23 +1842,23 @@ const styles = StyleSheet.create((theme) => ({
     maxWidth: 200,
   },
   badgeText: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.normal,
     color: theme.colors.foregroundMuted,
     flexShrink: 1,
   },
   errorText: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     marginBottom: theme.spacing[2],
   },
   connectionLatency: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     marginRight: theme.spacing[2],
   },
   confirmText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   confirmActions: {
     flexDirection: "row",
@@ -1901,7 +1877,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   emptyText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));
 

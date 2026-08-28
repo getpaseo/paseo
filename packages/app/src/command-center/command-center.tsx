@@ -3,7 +3,6 @@ import {
   Modal,
   Pressable,
   Text,
-  TextInput,
   View,
   type LayoutChangeEvent,
   type ListRenderItemInfo,
@@ -18,12 +17,15 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
   BottomSheetBackdrop,
   BottomSheetFlatList,
-  BottomSheetTextInput,
   type BottomSheetFlatListMethods,
 } from "@gorhom/bottom-sheet";
 import { AgentStatusDot } from "@/components/agent-status-dot";
 import { MaterialFileIcon } from "@/components/material-file-icon";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import {
+  EditingTextInput as TextInput,
+  type EditingTextInputHandle,
+} from "@/components/ui/text-input";
 import { Shortcut } from "@/components/ui/shortcut";
 import {
   IsolatedBottomSheetModal,
@@ -44,7 +46,7 @@ import {
   type CommandCenterScope,
 } from "@/stores/keyboard-shortcuts-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { keyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher";
+import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
 import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
@@ -56,8 +58,10 @@ import { shortenPath } from "@/utils/shorten-path";
 import { useCommandCenterContributions } from "./provider";
 import {
   buildContributionSections,
+  filterAndRankBuiltInResults,
   joinSubtitleParts,
   moveActiveResultId,
+  PINNED_SECTION_BAND,
   preserveActiveResultId,
   projectCommandCenterRows,
   type CommandCenterAgentResult,
@@ -65,11 +69,12 @@ import {
   type CommandCenterListRow,
   type CommandCenterResult,
   type CommandCenterResultSection,
+  type CommandCenterSearchFields,
   type CommandCenterWorkspaceResult,
 } from "./results";
 import { useWorkspaceFileSearch } from "./workspace-file-search";
 
-const ThemedBottomSheetTextInput = withUnistyles(BottomSheetTextInput, (theme) => ({
+const ThemedBottomSheetTextInput = withUnistyles(TextInput, (theme) => ({
   placeholderTextColor: theme.colors.foregroundMuted,
 }));
 const ThemedTextInput = withUnistyles(TextInput, (theme) => ({
@@ -86,7 +91,6 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner, (theme) => ({
 }));
 const COMMAND_CENTER_SNAP_POINTS = ["60%", "90%"];
 const KEYBOARD_SHOULD_PERSIST_TAPS = "always" as const;
-const DEFAULT_CATEGORY_RESULT_LIMIT = 5;
 
 function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
   const leftNeedsInput = (left.pendingPermissionCount ?? 0) > 0 ? 1 : 0;
@@ -101,41 +105,59 @@ function sortAgents(left: AggregatedAgent, right: AggregatedAgent): number {
   return right.lastActivityAt.getTime() - left.lastActivityAt.getTime();
 }
 
-function matchesQuery(searchText: string, query: string): boolean {
-  const normalized = query.trim().toLowerCase();
-  return !normalized || searchText.includes(normalized);
+function compareWorkspacesByTitle(
+  left: CommandCenterWorkspaceResult,
+  right: CommandCenterWorkspaceResult,
+): number {
+  const titleDelta = left.title.localeCompare(right.title, undefined, {
+    numeric: true,
+    sensitivity: "base",
+  });
+  return titleDelta || left.subtitle.localeCompare(right.subtitle);
 }
 
-function limitDefaultCategoryResults<Result>(results: Result[], query: string): Result[] {
-  return query.trim() ? results : results.slice(0, DEFAULT_CATEGORY_RESULT_LIMIT);
+/** `cwd` is not rendered, so a path match must never outrank a match on text the user can see. */
+function agentSearchFields(result: CommandCenterAgentResult): CommandCenterSearchFields {
+  return { visible: [result.title, result.subtitle], hidden: [result.agent.cwd] };
 }
 
-function useBuiltInSections(open: boolean, query: string): CommandCenterResultSection[] {
+function workspaceSearchFields(result: CommandCenterWorkspaceResult): CommandCenterSearchFields {
+  return { visible: [result.title, result.subtitle], hidden: [] };
+}
+
+/**
+ * Build every pinned row, in its default order. Deliberately not keyed on `query`: none of this
+ * work depends on what was typed, and rebuilding it per keystroke means re-running an Intl
+ * collation sort over every workspace.
+ *
+ * The cost is that `formatTimeAgo` is baked into the agent subtitle here, so relative timestamps
+ * now refresh when agents or projects change rather than on every keystroke.
+ */
+function useBuiltInRows(open: boolean): {
+  workspaces: CommandCenterWorkspaceResult[];
+  agents: CommandCenterAgentResult[];
+} {
   const { t } = useTranslation();
-  const { agents } = useAggregatedAgents();
+  const { agents } = useAggregatedAgents({ demand: open });
   const { projects } = useProjects({ enabled: open });
   const showHost = useHosts().length > 1;
 
   return useMemo(() => {
-    if (!open) return [];
+    if (!open) return { workspaces: [], agents: [] };
     const allWorkspaces: CommandCenterWorkspaceResult[] = [];
     for (const project of projects) {
       for (const host of project.hosts) {
         for (const workspace of host.workspaces) {
           if (workspace.archivingAt) continue;
-          const title = workspace.title ?? workspace.name;
-          const subtitle = joinSubtitleParts([
-            showHost ? host.serverName : null,
-            project.projectName,
-            workspace.currentBranch,
-          ]);
-          const searchText = `${title} ${subtitle}`.toLowerCase();
           allWorkspaces.push({
             kind: "workspace",
             id: `workspace:${host.serverId}:${workspace.id}`,
-            title,
-            subtitle,
-            searchText,
+            title: workspace.title ?? workspace.name,
+            subtitle: joinSubtitleParts([
+              showHost ? host.serverName : null,
+              project.projectName,
+              workspace.currentBranch,
+            ]),
             run: () => {
               clearCommandCenterFocusRestoreElement();
               navigateToWorkspace({ serverId: host.serverId, workspaceId: workspace.id });
@@ -144,60 +166,66 @@ function useBuiltInSections(open: boolean, query: string): CommandCenterResultSe
         }
       }
     }
-    allWorkspaces.sort((left, right) => {
-      const titleDelta = left.title.localeCompare(right.title, undefined, {
-        numeric: true,
-        sensitivity: "base",
-      });
-      return titleDelta || left.subtitle.localeCompare(right.subtitle);
-    });
+    allWorkspaces.sort(compareWorkspacesByTitle);
     const workspaceTitleByKey = new Map(
       allWorkspaces.map((workspace) => [workspace.id.slice("workspace:".length), workspace.title]),
     );
-    const workspaces = limitDefaultCategoryResults(
-      allWorkspaces.filter((workspace) => matchesQuery(workspace.searchText, query)),
-      query,
-    );
-    const agentResults = limitDefaultCategoryResults(
-      agents
-        .map<CommandCenterAgentResult>((agent) => {
-          const title = agent.title || t("shell.commandCenter.newAgent");
-          const workspaceTitle = agent.workspaceId
-            ? workspaceTitleByKey.get(`${agent.serverId}:${agent.workspaceId}`)
-            : undefined;
-          const location = workspaceTitle ?? shortenPath(agent.cwd);
-          const subtitle = joinSubtitleParts([
+    const agentRows = agents
+      .map<CommandCenterAgentResult>((agent) => {
+        const workspaceTitle = agent.workspaceId
+          ? workspaceTitleByKey.get(`${agent.serverId}:${agent.workspaceId}`)
+          : undefined;
+        return {
+          kind: "agent",
+          id: `agent:${agent.serverId}:${agent.id}`,
+          agent,
+          title: agent.title || t("shell.commandCenter.newAgent"),
+          subtitle: joinSubtitleParts([
             showHost ? agent.serverLabel : null,
-            location,
+            workspaceTitle ?? shortenPath(agent.cwd),
             formatTimeAgo(agent.lastActivityAt),
-          ]);
-          return {
-            kind: "agent",
-            id: `agent:${agent.serverId}:${agent.id}`,
-            agent,
-            title,
-            subtitle,
-            searchText: `${title} ${subtitle} ${agent.cwd}`.toLowerCase(),
-            run: () => {
-              clearCommandCenterFocusRestoreElement();
-              navigateToAgent({ serverId: agent.serverId, agentId: agent.id });
-            },
-          };
-        })
-        .filter((agent) => matchesQuery(agent.searchText, query))
-        .sort((left, right) => sortAgents(left.agent, right.agent)),
-      query,
-    );
+          ]),
+          run: () => {
+            clearCommandCenterFocusRestoreElement();
+            navigateToAgent({ serverId: agent.serverId, agentId: agent.id });
+          },
+        };
+      })
+      .sort((left, right) => sortAgents(left.agent, right.agent));
+    return { workspaces: allWorkspaces, agents: agentRows };
+  }, [agents, open, projects, showHost, t]);
+}
+
+function useBuiltInSections(open: boolean, query: string): CommandCenterResultSection[] {
+  const { t } = useTranslation();
+  const rows = useBuiltInRows(open);
+
+  return useMemo(() => {
+    if (!open) return [];
     return [
       {
         id: "workspaces",
+        band: PINNED_SECTION_BAND,
         rank: 2,
         title: t("shell.commandCenter.workspaces"),
-        results: workspaces,
+        results: filterAndRankBuiltInResults(
+          rows.workspaces,
+          query,
+          workspaceSearchFields,
+          compareWorkspacesByTitle,
+        ),
       },
-      { id: "agents", rank: 3, title: t("shell.commandCenter.agents"), results: agentResults },
+      {
+        id: "agents",
+        band: PINNED_SECTION_BAND,
+        rank: 3,
+        title: t("shell.commandCenter.agents"),
+        results: filterAndRankBuiltInResults(rows.agents, query, agentSearchFields, (left, right) =>
+          sortAgents(left.agent, right.agent),
+        ),
+      },
     ];
-  }, [agents, open, projects, query, showHost, t]);
+  }, [open, query, rows, t]);
 }
 
 interface CommandCenterState {
@@ -211,7 +239,7 @@ interface CommandCenterState {
   results: readonly CommandCenterResult[];
   rowIndexByResultId: ReadonlyMap<string, number>;
   offsets: readonly number[];
-  inputRef: React.RefObject<TextInput | null>;
+  inputRef: React.RefObject<EditingTextInputHandle | null>;
   fileSearchLoading: boolean;
   fileSearchError: string | null;
   close(): void;
@@ -220,15 +248,16 @@ interface CommandCenterState {
 }
 
 function useCommandCenterState(): CommandCenterState {
+  const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const { t } = useTranslation();
   const open = useKeyboardShortcutsStore((state) => state.commandCenterOpen);
   const scope = useKeyboardShortcutsStore((state) => state.commandCenterScope);
   const setOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
   const setScope = useKeyboardShortcutsStore((state) => state.setCommandCenterScope);
   const snapshot = useCommandCenterContributions();
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<EditingTextInputHandle>(null);
   const previousOpenRef = useRef(open);
-  const [query, setQuery] = useState("");
+  const [query, setQueryState] = useState("");
   const [activeId, setActiveId] = useState<string | null>(null);
   const builtInSections = useBuiltInSections(open, query);
   const {
@@ -247,10 +276,20 @@ function useCommandCenterState(): CommandCenterState {
       filePath: entry.path,
       title: entry.name,
       subtitle: entry.directory,
-      searchText: entry.path.toLowerCase(),
       run: () => openFile(entry.path),
     }));
-    return [{ id: "files", rank: 4, title: t("shell.commandCenter.files"), results }];
+    // File rows are matched by the daemon, so they carry no client-side score and cannot be
+    // relevance-compared against the rows that do. Pinning them keeps the section comparator
+    // total: band is decided before any score is read.
+    return [
+      {
+        id: "files",
+        band: PINNED_SECTION_BAND,
+        rank: 4,
+        title: t("shell.commandCenter.files"),
+        results,
+      },
+    ];
   }, [fileSearchEntries, openFile, t]);
   const contributionSections = useMemo(
     () => buildContributionSections(snapshot.contributions, query),
@@ -266,6 +305,14 @@ function useCommandCenterState(): CommandCenterState {
     [builtInSections, contributionSections, fileSections, scope],
   );
   const resolvedActiveId = preserveActiveResultId(activeId, projection.selectableResults);
+
+  // Editing the query re-ranks everything, so an arrow-key selection made under the previous
+  // query is no longer meaningful. Reset it in the same update as the query rather than in an
+  // effect, so there is no intermediate render holding the stale selection.
+  const setQuery = useCallback((next: string) => {
+    setQueryState(next);
+    setActiveId(null);
+  }, []);
 
   const close = useCallback(() => setOpen(false), [setOpen]);
   const select = useCallback(
@@ -309,7 +356,7 @@ function useCommandCenterState(): CommandCenterState {
       const timer = setTimeout(() => inputRef.current?.focus(), 0);
       return () => clearTimeout(timer);
     }
-    setQuery("");
+    setQueryState("");
     setActiveId(null);
     if (!wasOpen) return;
     const element = takeCommandCenterFocusRestoreElement();
@@ -321,7 +368,7 @@ function useCommandCenterState(): CommandCenterState {
         keyboardActionDispatcher.dispatch({ id: "message-input.focus", scope: "message-input" }),
     });
     return cancel;
-  }, [open]);
+  }, [keyboardActionDispatcher, open]);
 
   return {
     open,
@@ -546,7 +593,7 @@ export function CommandCenter() {
   const modalLayer = useGlobalWebOverlayLayer("modal", isWeb && state.open && !showBottomSheet);
   const listRef = useRef<FlatList<CommandCenterListRow>>(null);
   const bottomSheetListRef = useRef<BottomSheetFlatListMethods>(null);
-  const bottomSheetInputRef = useRef<React.ElementRef<typeof BottomSheetTextInput>>(null);
+  const bottomSheetInputRef = useRef<EditingTextInputHandle>(null);
   const scrollMetricsRef = useRef({ offset: 0, visibleLength: 0 });
   const { sheetRef, handleSheetChange, handleSheetDismiss } = useIsolatedBottomSheetVisibility({
     visible: state.open,
@@ -710,7 +757,8 @@ export function CommandCenter() {
           <ThemedBottomSheetTextInput
             testID="command-center-input"
             ref={bottomSheetInputRef}
-            value={state.query}
+            initialValue={state.query}
+            variant="bottom-sheet"
             onChangeText={state.setQuery}
             onKeyPress={keyPress}
             onSubmitEditing={submit}
@@ -748,7 +796,7 @@ export function CommandCenter() {
               <ThemedTextInput
                 testID="command-center-input"
                 ref={state.inputRef}
-                value={state.query}
+                initialValue={state.query}
                 onChangeText={state.setQuery}
                 placeholder={
                   state.scope === "files"
@@ -866,14 +914,14 @@ const styles = StyleSheet.create((theme) => ({
   },
   scopeChipLabel: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: "500",
   },
   results: { flex: 1 },
   sectionLabel: {
     paddingHorizontal: theme.spacing[4],
     paddingBottom: theme.spacing[2],
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   sectionDivider: {
@@ -901,14 +949,14 @@ const styles = StyleSheet.create((theme) => ({
   textContent: { flex: 1, minWidth: 0 },
   title: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: 18,
     flexShrink: 1,
   },
-  fileLine: { flex: 1, minWidth: 0, fontSize: theme.fontSize.sm, lineHeight: 20 },
+  fileLine: { flex: 1, minWidth: 0, fontSize: theme.fontSize.base, lineHeight: 20 },
   fileName: { color: theme.colors.foreground },
   filePath: { color: theme.colors.foregroundMuted },
-  subtitle: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.xs, lineHeight: 16 },
+  subtitle: { color: theme.colors.foregroundMuted, fontSize: theme.fontSize.sm, lineHeight: 16 },
   iconSlot: { width: 16, height: 20, alignItems: "center", justifyContent: "center" },
   rowShortcut: { flexShrink: 0 },
   breadcrumb: {
@@ -926,7 +974,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   breadcrumbGroup: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     lineHeight: 20,
     flexShrink: 0,
   },
@@ -935,7 +983,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingVertical: theme.spacing[6],
     textAlign: "center",
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   errorText: {
     paddingHorizontal: theme.spacing[4],
@@ -943,7 +991,7 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
     color: theme.colors.statusDanger,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   sheetBackground: { backgroundColor: theme.colors.surface0 },
   sheetHandle: { backgroundColor: theme.colors.palette.zinc[600] },

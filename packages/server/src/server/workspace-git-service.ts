@@ -31,6 +31,7 @@ import type {
   ForgeAuthState,
   ForgeService,
   ForgeSpecificStatusFacts,
+  PullRequestCheck,
   PullRequestMergeable,
 } from "../services/forge-service.js";
 import { createForgeService } from "../services/forge-registry.js";
@@ -159,13 +160,7 @@ export interface WorkspaceGitRuntimeSnapshot {
       isMerged: boolean;
       isDraft?: boolean;
       mergeable?: PullRequestMergeable;
-      checks?: Array<{
-        name: string;
-        status: "success" | "failure" | "pending" | "skipped" | "cancelled";
-        url: string | null;
-        workflow?: string;
-        duration?: string;
-      }>;
+      checks?: PullRequestCheck[];
       checksStatus?: "none" | "pending" | "success" | "failure";
       reviewDecision?: "approved" | "changes_requested" | "pending" | null;
       forgeSpecific?: ForgeSpecificStatusFacts;
@@ -2569,6 +2564,9 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
       target.latestFacts?.isGit && target.latestFacts.currentBranch === git.currentBranch
         ? target.latestFacts.pullRequestLookupTarget
         : null;
+    if (target.latestFacts?.isGit && target.latestFacts.paseoWorktree.isPaseoOwnedWorktree) {
+      return lookupTarget;
+    }
     if (lookupTarget) {
       return lookupTarget;
     }

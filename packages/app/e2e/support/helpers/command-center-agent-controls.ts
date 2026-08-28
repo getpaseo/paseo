@@ -1,10 +1,25 @@
-import { expect, type Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import type { SeededWorkspace } from "./seed-client";
 import { openCommandCenter } from "./command-center";
+import { openAgentRoute, type MockAgentWorkspace } from "./mock-agent";
 
 export interface CommandCenterAgentControlChoice {
   query: string;
   choice: string;
+}
+
+/**
+ * Focuses a seeded mock agent — which is what makes its model and mode contributions register —
+ * opens the Command Center over it, and hands back the query input. Seeding stays in the test so
+ * the workspace lifecycle is owned by the `try`/`finally` that cleans it up.
+ */
+export async function openCommandCenterForAgent(
+  page: Page,
+  workspace: Pick<MockAgentWorkspace, "workspaceId" | "agentId">,
+): Promise<Locator> {
+  await openAgentRoute(page, { workspaceId: workspace.workspaceId, agentId: workspace.agentId });
+  const panel = await openCommandCenter(page);
+  return panel.getByTestId("command-center-input");
 }
 
 export async function chooseCommandCenterAgentControl(input: {
