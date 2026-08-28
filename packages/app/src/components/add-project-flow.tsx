@@ -81,6 +81,7 @@ import { useCloneGithubProject, useOpenProject } from "@/hooks/use-open-project"
 import {
   OverlayLayerProvider,
   useGlobalWebOverlayLayer,
+  useNativeOverlayKeys,
   useWebOverlayRegistration,
 } from "@/lib/overlay-root";
 import {
@@ -311,6 +312,8 @@ function setPageStatus(
     page.kind === kind ? { ...page, ...input } : page,
   );
 }
+
+const ADD_PROJECT_NATIVE_KEYS = ["ArrowUp", "ArrowDown", "Enter"] as const;
 
 // The product flow is intentionally one cohesive page-stack state machine.
 // eslint-disable-next-line complexity
@@ -797,6 +800,12 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     active: isWeb,
     layer: modalLayer,
     onKeyDown: handleWebOverlayKeyDown,
+  });
+  useNativeOverlayKeys({
+    active: true,
+    layer: modalLayer,
+    keys: ADD_PROJECT_NATIVE_KEYS,
+    onKey: handleKey,
   });
 
   const handleNativeKeyPress = useCallback(

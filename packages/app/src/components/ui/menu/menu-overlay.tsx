@@ -28,6 +28,7 @@ import {
   getOverlayRoot,
   OverlayLayerProvider,
   useOverlayLayer,
+  useNativeOverlayDismiss,
   useWebOverlayRegistration,
 } from "@/lib/overlay-root";
 import {
@@ -474,6 +475,7 @@ export function MenuOverlay({
     onKeyDown: handleWebOverlayKeyDown,
     restoreFocusRef,
   });
+  useNativeOverlayDismiss({ active: visible, layer: floatingLayer, onDismiss: onClose });
 
   if (!visible) return null;
 

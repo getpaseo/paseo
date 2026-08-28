@@ -10,6 +10,7 @@ import {
   getOverlayRoot,
   OverlayLayerProvider,
   useGlobalWebOverlayLayer,
+  useNativeOverlayDismiss,
   useWebOverlayRegistration,
 } from "../lib/overlay-root";
 import {
@@ -582,6 +583,7 @@ export function AdaptiveModalSheet({
     layer: modalLayer,
     onKeyDown: handleWebOverlayKeyDown,
   });
+  useNativeOverlayDismiss({ active: visible, layer: modalLayer, onDismiss: onClose });
 
   useEffect(() => {
     if (visible) {
