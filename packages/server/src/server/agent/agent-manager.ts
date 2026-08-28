@@ -813,6 +813,19 @@ export class AgentManager {
     return excludedAction();
   }
 
+  /**
+   * Registers create-command work against a workspace before the command reaches the final
+   * provider-session registration boundary. Archive transactions either reject it before work
+   * starts or wait for the command to settle.
+   */
+  runWithWorkspaceAgentRegistrationLease<Value>(
+    workspaceId: string,
+    action: () => Promise<Value>,
+  ): Promise<Value> {
+    this.assertWorkspaceAcceptingAgentRegistrations(workspaceId);
+    return this.trackAgentRegistrationOperation(Promise.resolve().then(action), workspaceId);
+  }
+
   setPaseoToolsEnabled(enabled: boolean): void {
     this.paseoToolsEnabled = enabled;
   }
