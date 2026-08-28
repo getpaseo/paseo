@@ -1,10 +1,89 @@
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { setImmediate as waitForImmediate } from "node:timers/promises";
 
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+
+interface FakeMcpClientRecord {
+  connectCalls: unknown[];
+  callToolCalls: Array<{ name: string; arguments: unknown }>;
+  closeCalls: number;
+}
+
+const { mcpClientInstances, mcpFixture } = vi.hoisted(() => ({
+  mcpClientInstances: [] as FakeMcpClientRecord[],
+  mcpFixture: {
+    tools: [] as Array<{ name: string; description?: string; inputSchema: unknown }>,
+    callToolResult: { content: [{ type: "text", text: "ok" }] } as unknown,
+  },
+}));
+
+// Mocks the MCP SDK modules providers/omp/mcp-tool-bridge.ts imports, so the
+// "OMP MCP tool bridge wiring" suite below can exercise the real createSession
+// -> setHostTools -> host_tool_call -> executeTool path without a network call.
+vi.mock("@modelcontextprotocol/sdk/client/index.js", () => {
+  class FakeMcpBridgeClient implements FakeMcpClientRecord {
+    connectCalls: unknown[] = [];
+    callToolCalls: Array<{ name: string; arguments: unknown }> = [];
+    closeCalls = 0;
+
+    constructor() {
+      mcpClientInstances.push(this);
+    }
+
+    connect(transport: unknown): Promise<void> {
+      this.connectCalls.push(transport);
+      return Promise.resolve();
+    }
+
+    listTools(): Promise<{ tools: typeof mcpFixture.tools }> {
+      return Promise.resolve({ tools: mcpFixture.tools });
+    }
+
+    callTool(params: { name: string; arguments: unknown }): Promise<unknown> {
+      this.callToolCalls.push(params);
+      return Promise.resolve(mcpFixture.callToolResult);
+    }
+
+    close(): Promise<void> {
+      this.closeCalls += 1;
+      return Promise.resolve();
+    }
+  }
+  return { Client: FakeMcpBridgeClient };
+});
+
+vi.mock("@modelcontextprotocol/sdk/client/streamableHttp.js", () => {
+  class FakeStreamableHTTPClientTransport {
+    constructor(
+      readonly url: URL,
+      readonly options: unknown,
+    ) {}
+  }
+  return { StreamableHTTPClientTransport: FakeStreamableHTTPClientTransport };
+});
+
+beforeEach(() => {
+  mcpClientInstances.length = 0;
+  mcpFixture.tools = [
+    {
+      name: "finish_execution",
+      description: "Complete this Hub execution with a structured classification result.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          classification: { type: "string", enum: ["safe", "needs_review", "blocked"] },
+          confidence: { type: "number" },
+          summary: { type: "string" },
+        },
+        required: ["classification", "confidence", "summary"],
+      },
+    },
+  ];
+  mcpFixture.callToolResult = { content: [{ type: "text", text: "ok" }] };
+});
 
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
@@ -121,7 +200,7 @@ describe("OMP agent client and session", () => {
       [expect.objectContaining({ name: "create_agent" })],
     ]);
     expect(omp.capabilities()).toMatchObject({
-      supportsMcpServers: false,
+      supportsMcpServers: true,
       supportsNativePaseoTools: true,
     });
   });
@@ -643,5 +722,72 @@ describe("OMP agent client and session", () => {
     expect(omp.timeline().filter((item) => item.type === "user_message")).toEqual([
       { type: "user_message", text: "hello OMP", messageId: "user-1" },
     ]);
+  });
+});
+
+describe("OMP MCP tool bridge wiring", () => {
+  test("bridged HTTP MCP tools are announced to OMP and executing them drives the MCP client", async () => {
+    const omp = new OmpHarness();
+    await omp.start({
+      mcpServers: {
+        hub: {
+          type: "http",
+          url: "http://127.0.0.1/execution",
+          headers: { Authorization: "Bearer t" },
+        },
+      },
+    });
+
+    // Registration: the bridged tool reaches OMP's setHostTools call.
+    expect(omp.registeredHostTools()).toEqual([
+      [expect.objectContaining({ name: "finish_execution" })],
+    ]);
+    expect(mcpClientInstances).toHaveLength(1);
+
+    // Execution: the assertion that matters is that calling the tool drives
+    // the MCP client's callTool — not just that setHostTools announced it.
+    // Registering the merged catalog while dispatching against the native
+    // one only would leave this call unresolved ("Paseo tool not found").
+    const resultPromise = omp.runtime().nextHostToolResult();
+    omp.runtime().emit({
+      type: "host_tool_call",
+      id: "call-1",
+      toolCallId: "tc-1",
+      toolName: "finish_execution",
+      arguments: { classification: "safe", confidence: 1, summary: "done" },
+    });
+    const result = await resultPromise;
+
+    expect(mcpClientInstances[0].callToolCalls).toEqual([
+      {
+        name: "finish_execution",
+        arguments: { classification: "safe", confidence: 1, summary: "done" },
+      },
+    ]);
+    expect(result).toMatchObject({ type: "host_tool_result", id: "call-1" });
+    expect(result.isError).not.toBe(true);
+  });
+
+  test("without mcpServers, no MCP client is created and native tools register as before", async () => {
+    const omp = new OmpHarness();
+    await omp.start({}, createToolCatalog());
+
+    expect(mcpClientInstances).toHaveLength(0);
+    expect(omp.registeredHostTools()).toEqual([
+      [expect.objectContaining({ name: "create_agent" })],
+    ]);
+  });
+
+  test("closing the session closes every bridged MCP client", async () => {
+    const omp = new OmpHarness();
+    await omp.start({
+      mcpServers: { hub: { type: "http", url: "http://127.0.0.1/execution" } },
+    });
+    expect(mcpClientInstances).toHaveLength(1);
+    expect(mcpClientInstances[0].closeCalls).toBe(0);
+
+    await omp.close();
+
+    expect(mcpClientInstances[0].closeCalls).toBe(1);
   });
 });

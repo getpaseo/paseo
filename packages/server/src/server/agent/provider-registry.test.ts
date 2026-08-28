@@ -624,6 +624,29 @@ test("OMP is a disabled built-in backed by the real OMP adapter", async () => {
   await session.close();
 });
 
+test("OMP accepts the Hub's exact MCP grant for its injected server", () => {
+  const registry = buildProviderRegistry(logger, { ompRuntime: new FakeOmp() });
+  const config = {
+    provider: "omp",
+    cwd: "/tmp/registry-omp-toolpolicy",
+    mcpServers: { hub: { type: "http" as const, url: "http://127.0.0.1/execution" } },
+  };
+  const toolPolicy: ToolPolicy = {
+    preapproved: [
+      { kind: "mcp", server: "hub", tool: "reply" },
+      { kind: "mcp", server: "hub", tool: "finish_execution" },
+    ],
+  };
+
+  // Without an `omp` entry in PROVIDER_CONTRACTS this throws
+  // ToolPolicyUnsupportedError (code "tool_policy_unsupported") and the Hub
+  // execution never starts.
+  expect(registry.omp.applyToolPolicy(config, toolPolicy)).toEqual({
+    ...config,
+    toolPolicy,
+  });
+});
+
 test("OMP can be enabled without custom provider boilerplate", () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
