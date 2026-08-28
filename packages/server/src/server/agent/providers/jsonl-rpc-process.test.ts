@@ -62,6 +62,7 @@ interface InMemoryChildProcess extends ChildProcessWithoutNullStreams {
 
 interface StartProcessOptions {
   child?: ChildProcessWithoutNullStreams;
+  defaultRequestTimeoutMs?: number;
 }
 
 function createInMemoryChildProcess(): InMemoryChildProcess {
@@ -89,6 +90,7 @@ function startProcess(options: StartProcessOptions = {}): JsonlRpcProcess {
       env: { JSONL_RPC_TEST_VALUE: "resolved-env" },
     },
     logger: pino({ level: "silent" }),
+    defaultRequestTimeoutMs: options.defaultRequestTimeoutMs,
     ...(child ? { spawn: () => child } : {}),
   });
 }
@@ -157,13 +159,13 @@ describe("JsonlRpcProcess", () => {
 
   test("includes buffered stderr when a request times out", async () => {
     const child = createInMemoryChildProcess();
-    const transport = startProcess({ child });
+    const transport = startProcess({ child, defaultRequestTimeoutMs: 50 });
 
     try {
       child.stderr.write("still waiting");
 
-      await expect(transport.request({ type: "hang" }, 50)).rejects.toThrow(
-        "JSONL RPC request timed out for hang\nstill waiting",
+      await expect(transport.request({ type: "hang" })).rejects.toThrow(
+        /JSONL RPC request timed out phase=hang elapsedMs=\d+ timeoutMs=50\nstill waiting/,
       );
     } finally {
       await transport.close();

@@ -47,6 +47,7 @@ export interface OmpCliRuntimeOptions {
   runtimeSettings?: ProviderRuntimeSettings;
   command?: [string, ...string[]];
   commandsRpcName?: "get_available_commands";
+  requestTimeoutMs?: number;
   spawnProcess?: (launch: OmpRuntimeLaunch) => ChildProcessWithoutNullStreams;
 }
 
@@ -79,13 +80,14 @@ export class OmpCliRuntime implements OmpRuntime {
       launch: processLaunch,
       logger: this.options.logger,
       diagnosticName: "OMP RPC",
+      defaultRequestTimeoutMs: this.options.requestTimeoutMs,
       ...(spawn ? { spawn: () => spawn(launch) } : {}),
     };
     const process = new JsonlRpcProcess(processOptions);
     const handleAbort = () => void process.close(input.signal?.reason).catch(() => undefined);
     input.signal?.addEventListener("abort", handleAbort, { once: true });
     try {
-      await establishOmpProtocol(process, this.options.logger);
+      await establishOmpProtocol(process, this.options.logger, this.options.requestTimeoutMs);
       input.signal?.throwIfAborted();
       return new OmpCliRuntimeSession(process, this.commandsRpcName);
     } catch (error) {
