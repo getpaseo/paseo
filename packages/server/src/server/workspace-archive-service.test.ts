@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino, { type Logger } from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 import type { ForgeService } from "../services/forge-service.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -586,6 +587,80 @@ describe("archiveByScope", () => {
     expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceId]);
     expect(deps.agentManager.archiveAgent).not.toHaveBeenCalled();
     expect(deps.agentManager.archiveSnapshot).not.toHaveBeenCalled();
+  });
+
+  test("gives archive guards same-workspace ancestry inside the exclusion", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const workspaceId = "ws-affinity-descendant";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId, cwd: repoDir, kind: "local_checkout" }],
+    });
+    const root: StoredAgentRecord = {
+      id: "affinity-root",
+      provider: "codex",
+      cwd: repoDir,
+      workspaceId,
+      createdAt: "2026-08-06T12:00:00.000Z",
+      updatedAt: "2026-08-06T12:00:00.000Z",
+      labels: {},
+      lastStatus: "closed",
+      config: null,
+      persistence: null,
+      archivedAt: "2026-08-06T12:01:00.000Z",
+      owner: {
+        kind: "daemon",
+        daemonId: "daemon-1",
+        executionId: "affinity-execution",
+        workspaceAffinityId: "expected-affinity",
+      },
+    };
+    const child = {
+      id: "affinity-child",
+      workspaceId,
+      labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+    } as ManagedAgent;
+    let exclusionActive = false;
+    deps.agentManager.runWithWorkspaceArchiveExclusion = async <Value>(
+      _workspaceIds: Iterable<string>,
+      action: () => Promise<Value>,
+    ) => {
+      exclusionActive = true;
+      try {
+        return await action();
+      } finally {
+        exclusionActive = false;
+      }
+    };
+    deps.agentManager.listAgents = () => {
+      expect(exclusionActive).toBe(true);
+      return [child];
+    };
+    deps.agentManager.getAgent = (agentId) => (agentId === child.id ? child : null);
+    deps.agentStorage.listByWorkspace = async () => {
+      expect(exclusionActive).toBe(true);
+      return [root];
+    };
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-affinity-descendant",
+      canArchiveAgent: (agent, context) => {
+        if (agent.owner?.workspaceAffinityId === "expected-affinity") return true;
+        const parentId = agent.labels[PARENT_AGENT_ID_LABEL];
+        return (
+          typeof parentId === "string" &&
+          context.getAgent(parentId)?.owner?.workspaceAffinityId === "expected-affinity"
+        );
+      },
+    });
+
+    expect(result).toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+      blockedWorkspaceIds: [],
+      failedWorkspaceIds: [],
+    });
+    expect(deps.agentManager.archiveAgent).toHaveBeenCalledWith(child.id);
   });
 
   test("worktree scope keeps the directory when one record teardown fails", async () => {

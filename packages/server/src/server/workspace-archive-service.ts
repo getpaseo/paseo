@@ -122,8 +122,15 @@ export interface ArchiveByScopeRequest {
   failureMode?: "throw" | "return";
 }
 
-export type WorkspaceArchiveAgent = Pick<ManagedAgent, "id" | "workspaceId" | "owner">;
-export type WorkspaceArchiveAgentGuard = (agent: WorkspaceArchiveAgent) => boolean;
+export type WorkspaceArchiveAgent = Pick<ManagedAgent, "id" | "workspaceId" | "owner" | "labels">;
+/** Resolves same-workspace ancestry from the snapshot taken inside the archive exclusion. */
+export interface WorkspaceArchiveAgentContext {
+  getAgent(agentId: string): WorkspaceArchiveAgent | undefined;
+}
+export type WorkspaceArchiveAgentGuard = (
+  agent: WorkspaceArchiveAgent,
+  context: WorkspaceArchiveAgentContext,
+) => boolean;
 
 export async function requireActiveWorkspaceForArchive(
   dependencies: Pick<ArchiveDependencies, "listActiveWorkspaces">,
@@ -556,13 +563,24 @@ async function findWorkspaceArchiveBlocker(
   workspaceId: string,
   canArchiveAgent: WorkspaceArchiveAgentGuard,
 ): Promise<WorkspaceArchiveAgent | null> {
-  const liveBlocker = dependencies.agentManager
+  const liveAgents = dependencies.agentManager
     .listAgents()
-    .find((agent) => agent.workspaceId === workspaceId && !canArchiveAgent(agent));
+    .filter((agent) => agent.workspaceId === workspaceId);
+  const storedRecords = await dependencies.agentStorage.listByWorkspace(workspaceId);
+  const workspaceAgentsById = new Map<string, WorkspaceArchiveAgent>(
+    storedRecords.map((record) => [record.id, record]),
+  );
+  for (const agent of liveAgents) workspaceAgentsById.set(agent.id, agent);
+  const context: WorkspaceArchiveAgentContext = {
+    getAgent: (agentId) => workspaceAgentsById.get(agentId),
+  };
+
+  const liveBlocker = liveAgents.find((agent) => !canArchiveAgent(agent, context));
   if (liveBlocker) return liveBlocker;
 
-  const storedRecords = await dependencies.agentStorage.listByWorkspace(workspaceId);
-  return storedRecords.find((record) => !record.archivedAt && !canArchiveAgent(record)) ?? null;
+  return (
+    storedRecords.find((record) => !record.archivedAt && !canArchiveAgent(record, context)) ?? null
+  );
 }
 
 async function maybeRemoveDirectory(

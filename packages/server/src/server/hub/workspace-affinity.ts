@@ -4,6 +4,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type pino from "pino";
 import { z } from "zod";
+import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type {
   CreateAgentWorktreeTarget,
   HubExecutionWorkspaceAffinity,
@@ -12,7 +13,11 @@ import { CreateAgentWorktreeTargetSchema } from "@getpaseo/protocol/messages";
 
 import type { AgentStorage, StoredAgentRecord } from "../agent/agent-storage.js";
 import { ensurePrivateFile, writePrivateFileAtomicSync } from "../private-files.js";
-import type { WorkspaceArchiveAgentGuard } from "../workspace-archive-service.js";
+import type {
+  WorkspaceArchiveAgent,
+  WorkspaceArchiveAgentContext,
+  WorkspaceArchiveAgentGuard,
+} from "../workspace-archive-service.js";
 
 const FILE_NAME = "workspace-affinities.json";
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
@@ -340,7 +345,8 @@ export class WorkspaceAffinityManager {
     const archived = await this.options.archiveWorkspace(
       placement.workspaceId,
       `workspace-affinity:${affinityId}:${parseDeadline(persisted.retainUntil).getTime()}:${randomUUID()}`,
-      (agent) => isAffinityOwned(agent, this.options.daemonId, affinityId),
+      (agent, context) =>
+        isAffinityOwnedOrDescendant(agent, context, this.options.daemonId, affinityId),
     );
     return archived !== false;
   }
@@ -474,4 +480,22 @@ function isAffinityOwned(
     owner.daemonId === daemonId &&
     owner.workspaceAffinityId === affinityId
   );
+}
+
+function isAffinityOwnedOrDescendant(
+  record: WorkspaceArchiveAgent,
+  context: WorkspaceArchiveAgentContext,
+  daemonId: string,
+  affinityId: string,
+): boolean {
+  let current: WorkspaceArchiveAgent | undefined = record;
+  const visited = new Set<string>();
+  while (current && !visited.has(current.id)) {
+    if (isAffinityOwned(current, daemonId, affinityId)) return true;
+    visited.add(current.id);
+    const parentAgentId = getParentAgentIdFromLabels(current.labels);
+    current = parentAgentId === null ? undefined : context.getAgent(parentAgentId);
+    if (current?.workspaceId !== record.workspaceId) return false;
+  }
+  return false;
 }

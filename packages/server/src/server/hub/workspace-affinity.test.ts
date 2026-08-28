@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
 import { afterEach, expect, test } from "vitest";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import type { StoredAgentRecord } from "../agent/agent-storage.js";
 import {
   WorkspaceAffinityManager,
@@ -142,11 +143,16 @@ test("rejects target changes and retries after an unrelated live agent blocks ar
     agentStorage: storage,
     ensureWorkspace: async () => undefined,
     archiveWorkspace: async (workspaceId, _requestId, canArchiveAgent) => {
+      const workspaceAgents = storage.records.filter(
+        (record) => record.workspaceId === workspaceId,
+      );
       const blocker = storage.records.find(
         (record) =>
           record.workspaceId === workspaceId &&
           !record.archivedAt &&
-          canArchiveAgent?.(record) === false,
+          canArchiveAgent?.(record, {
+            getAgent: (agentId) => workspaceAgents.find((agent) => agent.id === agentId),
+          }) === false,
       );
       if (blocker) return false;
       archived.push(workspaceId);
@@ -197,6 +203,94 @@ test("rejects target changes and retries after an unrelated live agent blocks ar
     archivedAt: "2026-08-06T12:01:30.000Z",
   };
   await clock.advanceBy(60_000);
+  expect(archived).toEqual(["workspace-1"]);
+});
+
+test("allows same-workspace descendants of an affinity-owned agent during archival", async () => {
+  home = await mkdtemp(path.join(tmpdir(), "paseo-workspace-affinity-"));
+  const clock = new ManualClock();
+  const storage = new MemoryAgentStorage();
+  const archived: string[] = [];
+  const manager = new WorkspaceAffinityManager({
+    paseoHome: home,
+    daemonId: "daemon-1",
+    agentStorage: storage,
+    ensureWorkspace: async () => undefined,
+    archiveWorkspace: async (workspaceId, _requestId, canArchiveAgent) => {
+      const workspaceAgents = storage.records.filter(
+        (record) => record.workspaceId === workspaceId,
+      );
+      const blocker = workspaceAgents.find(
+        (record) =>
+          !record.archivedAt &&
+          canArchiveAgent?.(record, {
+            getAgent: (agentId) => workspaceAgents.find((agent) => agent.id === agentId),
+          }) === false,
+      );
+      if (blocker) return false;
+      archived.push(workspaceId);
+      return true;
+    },
+    logger: pino({ level: "silent" }),
+    clock,
+  });
+  const affinityKey = "shared-key";
+  await manager.create({
+    affinity: {
+      key: affinityKey,
+      retainUntil: "2026-08-06T12:01:00.000Z",
+      autoArchive: true,
+    },
+    cwd: "/repo",
+    create: async () => ({ value: undefined, workspaceId: "workspace-1", cwd: "/repo" }),
+  });
+  storage.records.push(
+    {
+      id: "affinity-root",
+      provider: "codex",
+      cwd: "/repo",
+      workspaceId: "workspace-1",
+      createdAt: "2026-08-06T12:00:00.000Z",
+      updatedAt: "2026-08-06T12:00:00.000Z",
+      labels: {},
+      lastStatus: "closed",
+      config: null,
+      persistence: null,
+      owner: {
+        kind: "daemon",
+        daemonId: "daemon-1",
+        executionId: "affinity-execution",
+        workspaceAffinityId: workspaceAffinityId(affinityKey),
+      },
+    },
+    {
+      id: "child",
+      provider: "codex",
+      cwd: "/repo",
+      workspaceId: "workspace-1",
+      createdAt: "2026-08-06T12:00:10.000Z",
+      updatedAt: "2026-08-06T12:00:10.000Z",
+      labels: { [PARENT_AGENT_ID_LABEL]: "affinity-root" },
+      lastStatus: "closed",
+      config: null,
+      persistence: null,
+    },
+    {
+      id: "grandchild",
+      provider: "codex",
+      cwd: "/repo",
+      workspaceId: "workspace-1",
+      createdAt: "2026-08-06T12:00:20.000Z",
+      updatedAt: "2026-08-06T12:00:20.000Z",
+      labels: { [PARENT_AGENT_ID_LABEL]: "child" },
+      lastStatus: "closed",
+      config: null,
+      persistence: null,
+    },
+  );
+
+  await clock.advanceBy(60_000);
+
   expect(archived).toEqual(["workspace-1"]);
 });
 

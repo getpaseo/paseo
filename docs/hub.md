@@ -58,7 +58,9 @@ but it is not a sliding idle timer. When auto-archive is enabled, the daemon kee
 through the latest lease deadline and then archives it. At normal Hub execution archive, an
 affinity-owned execution archives only its own agent so a later matching event can reopen the same
 workspace. The daemon will not auto-archive a workspace containing an unrelated live agent. Matching
-executions are not serialized; they use separate agents in the shared workspace.
+executions are not serialized; they use separate agents in the shared workspace. Same-workspace MCP
+descendants of an affinity-owned agent remain inside that cleanup scope; detached agents and other
+unrelated roots continue to block affinity expiry.
 
 The wire field is an optional progressive capability. Hubs accept a successful create response
 without the workspace-affinity acknowledgement, so older daemons continue their existing fresh-

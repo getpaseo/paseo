@@ -262,7 +262,8 @@ effect after the daemon is updated to a version that acknowledges workspace affi
 Affinity shares a workspace, not an agent or a queue: matching executions may run concurrently.
 Every use of the same key must use the same daemon environment target, cwd, worktree target, and
 auto-archive policy. A target mismatch is rejected. In particular, a worktree branch containing
-`${{ paseo.execution.id }}` is unique per execution and cannot be used with workspace affinity.
+`${{ paseo.execution.id }}` is unique per execution, so Hub rejects that combination during
+configuration validation.
 
 ### Prompt semantics
 
