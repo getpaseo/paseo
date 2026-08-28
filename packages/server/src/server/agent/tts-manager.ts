@@ -28,6 +28,8 @@ type PreparedSegmentResult =
   | { kind: "error"; error: unknown };
 
 const MAX_TTS_SEGMENT_CHARS = 260;
+const FIRST_SEGMENT_TARGET_CHARS = 90;
+const FIRST_SEGMENT_MIN_LEAD_CHARS = 24;
 const TTS_PREFETCH_SEGMENTS = 2;
 const CLOSED_AUDIO_ID_TTL_MS = 10_000;
 
@@ -103,6 +105,38 @@ function splitOversizedFragment(fragment: string, maxChars: number): string[] {
   return parts;
 }
 
+/**
+ * Nothing plays until the first segment finishes synthesizing, and synthesis
+ * cost grows with length — a long opening sentence delays all speech. Peel off
+ * the opening clause at the last clause boundary inside the target window so
+ * the reply starts sooner; cutting anywhere else sounds broken, so a sentence
+ * without a usable boundary stays whole.
+ */
+function splitLeadClause(sentence: string): string[] {
+  if (sentence.length <= FIRST_SEGMENT_TARGET_CHARS) {
+    return [sentence];
+  }
+
+  let splitEnd = -1;
+  for (const match of sentence.matchAll(/[,;:]\s/g)) {
+    const end = match.index + 1;
+    if (end > FIRST_SEGMENT_TARGET_CHARS) {
+      break;
+    }
+    if (end >= FIRST_SEGMENT_MIN_LEAD_CHARS) {
+      splitEnd = end;
+    }
+  }
+
+  if (splitEnd === -1) {
+    return [sentence];
+  }
+
+  const lead = sentence.slice(0, splitEnd).trim();
+  const rest = sentence.slice(splitEnd).trim();
+  return rest ? [lead, rest] : [lead];
+}
+
 function splitTextForTts(text: string): TtsSegment[] {
   const normalized = text.trim().replace(/\s+/g, " ");
   if (!normalized) {
@@ -114,10 +148,13 @@ function splitTextForTts(text: string): TtsSegment[] {
   let segmentIndex = 0;
 
   for (const sentence of sentences) {
-    const fragments = splitOversizedFragment(sentence, MAX_TTS_SEGMENT_CHARS);
-    for (const fragment of fragments) {
-      parts.push({ index: segmentIndex, text: fragment });
-      segmentIndex += 1;
+    const clauses = segmentIndex === 0 ? splitLeadClause(sentence) : [sentence];
+    for (const clause of clauses) {
+      const fragments = splitOversizedFragment(clause, MAX_TTS_SEGMENT_CHARS);
+      for (const fragment of fragments) {
+        parts.push({ index: segmentIndex, text: fragment });
+        segmentIndex += 1;
+      }
     }
   }
 
