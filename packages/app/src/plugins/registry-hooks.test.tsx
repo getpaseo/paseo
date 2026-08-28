@@ -7,6 +7,9 @@ import { expect, it, vi } from "vitest";
 vi.mock("./evaluate", () => ({
   evaluatePluginClientBundle: vi.fn(),
 }));
+vi.mock("./composer-pills/lifecycle", () => ({
+  startPluginClientSide: vi.fn(),
+}));
 
 import { usePluginInstallations } from "./registry";
 

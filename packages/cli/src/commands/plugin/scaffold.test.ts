@@ -81,17 +81,7 @@ import { Text } from "react-native";
 import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
 import {
   type PluginAgentPanelProps,
-1: import { Pressable, Text, View } from "react-native";
-import { Icon, useAgent, useWorkspace } from "@getpaseo/plugin";
-import { defineRpc } from "@getpaseo/plugin/server";
-import { z } from "zod";
-
-const recordComposerOpen = defineRpc({
-  name: "composer.open",
-  input: z.object({ workspaceId: z.string() }),
-  output: z.object({ opened: z.boolean() }),
-});
-2:   type PluginClientContext,
+  type PluginClientContext,
   type PluginComposerPillProps,
   type PluginSurfaceProps,
   useAgent,

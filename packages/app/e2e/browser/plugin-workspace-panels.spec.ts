@@ -31,7 +31,7 @@ function isSettledWorkspaceUrl(url: URL): boolean {
 
 function pluginSource(input: { workspaceId: string; agentId: string }): string {
   return `import React, { useRef } from "react";
-1: import { Pressable, Text, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { Icon, useAgent, useWorkspace } from "@getpaseo/plugin";
 import { defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
@@ -41,9 +41,6 @@ const recordComposerOpen = defineRpc({
   input: z.object({ workspaceId: z.string() }),
   output: z.object({ opened: z.boolean() }),
 });
-2:   type PluginClientContext,
-  type PluginComposerPillProps,
-  type PluginSurfaceProps,
 
 function WorkspacePanel({ workspaceId, host, layout }) {
   const workspace = useWorkspace(workspaceId, (value) => ({ id: value.id }));
@@ -319,11 +316,11 @@ test.describe("plugin workspace panels and Command Center", () => {
         await expect(page.getByTestId("workspace-header-title")).toHaveText(
           "Opened from composer pill",
         );
-        await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();
+        await expect(page.getByText(`Agent bridge ${navigationAgentId}`)).toBeVisible();
         await expect(page.getByText("Layout compact", { exact: true })).toBeVisible();
         await capture(page, testInfo, "plugin-agent-panel-compact");
 
-        await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
+        await page.goto(buildAgentRoute(primary.workspaceId, navigationAgentId));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
         await expect(page.getByRole("button", { name: "Open composer review" })).toHaveCount(0);
         await openCompactSidebar(page);
