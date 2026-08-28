@@ -2603,15 +2603,20 @@ function renderExpandableBadgeIconSlot({
   showChevron,
   chevronStyle,
   iconNode,
+  isActive,
 }: {
   showChevron: boolean;
   chevronStyle: StyleProp<ViewStyle>;
   iconNode: ReactNode;
+  isActive: boolean;
 }): ReactNode {
   if (showChevron) {
     return (
       <View style={chevronStyle}>
-        <ThemedChevronRightIcon size={12} uniProps={foregroundColorMapping} />
+        <ThemedChevronRightIcon
+          size={12}
+          uniProps={isActive ? foregroundColorMapping : foregroundMutedColorMapping}
+        />
       </View>
     );
   }
@@ -2981,6 +2986,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
     showChevron: isInteractive && (alwaysShowChevron || isHovered || isExpanded),
     chevronStyle,
     iconNode,
+    isActive,
   });
 
   const pressHandlers = isInteractive
