@@ -90,16 +90,6 @@ interface RecorderRefs {
   stoppedReject: ((error: unknown) => void) | null;
 }
 
-function emptyRecorderRefs(): RecorderRefs {
-  return {
-    recorder: null,
-    audioChunks: [],
-    stoppedPromise: null,
-    stoppedResolve: null,
-    stoppedReject: null,
-  };
-}
-
 function safeDisconnectNode(node: AudioNode | null): void {
   if (!node) return;
   try {
@@ -147,33 +137,34 @@ function stopMediaRecorderIfActive(recorder: MediaRecorder | null): void {
   }
 }
 
-async function decodeStoppedRecorder(input: {
+async function finalizeRecorderStoppedPromise(input: {
   stoppedPromise: Promise<Blob>;
   context: AudioContext | null;
   decodeAudioData: (context: AudioContext, arrayBuffer: ArrayBuffer) => Promise<AudioBuffer>;
+  emitPcmSegments: (pcm: Int16Array) => void;
   onError: ((err: Error) => void) | undefined;
-}): Promise<Int16Array> {
-  const { stoppedPromise, context, decodeAudioData, onError } = input;
+}): Promise<void> {
+  const { stoppedPromise, context, decodeAudioData, emitPcmSegments, onError } = input;
   try {
     const blob = await stoppedPromise;
     const arrayBuffer = await blob.arrayBuffer();
     if (arrayBuffer.byteLength === 0) {
-      return new Int16Array(0);
+      return;
     }
     const parsedWav = parsePcm16Wav(arrayBuffer);
     if (parsedWav) {
       const floatPcm = int16ToFloat32(parsedWav.samples);
-      return resampleToPcm16(floatPcm, parsedWav.sampleRate, 16000);
+      emitPcmSegments(resampleToPcm16(floatPcm, parsedWav.sampleRate, 16000));
+      return;
     }
     if (context) {
       const decoded = await decodeAudioData(context, arrayBuffer);
       const floatPcm = decoded.getChannelData(0);
-      return resampleToPcm16(floatPcm, decoded.sampleRate, 16000);
+      emitPcmSegments(resampleToPcm16(floatPcm, decoded.sampleRate, 16000));
     }
   } catch (err) {
     onError?.(err instanceof Error ? err : new Error(String(err)));
   }
-  return new Int16Array(0);
 }
 
 export function useDictationAudioSource(config: DictationAudioSourceConfig): DictationAudioSource {
@@ -194,9 +185,8 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
     processor: ScriptProcessorNode | null;
     gain: GainNode | null;
     pending: Int16Array;
-    emittedSamples: number;
-    pcmWaiters: Array<() => void>;
     started: boolean;
+    mode: "pcm" | "recorder";
     recorder: RecorderRefs;
   }>({
     stream: null,
@@ -205,10 +195,15 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
     processor: null,
     gain: null,
     pending: new Int16Array(0),
-    emittedSamples: 0,
-    pcmWaiters: [],
     started: false,
-    recorder: emptyRecorderRefs(),
+    mode: "pcm",
+    recorder: {
+      recorder: null,
+      audioChunks: [],
+      stoppedPromise: null,
+      stoppedResolve: null,
+      stoppedReject: null,
+    },
   });
 
   const decodeAudioData = useCallback(
@@ -235,27 +230,6 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
     }
     if (pending.length > 0) {
       onPcmSegmentRef.current(int16ToBase64(pending));
-    }
-  }, []);
-
-  const emitPcm = useCallback(
-    (pcm: Int16Array) => {
-      if (pcm.length === 0) return;
-      emitPcmSegments(pcm);
-      refs.current.emittedSamples += pcm.length;
-    },
-    [emitPcmSegments],
-  );
-
-  const resolvePcmWaiters = useCallback(() => {
-    const waiters = refs.current.pcmWaiters;
-    refs.current.pcmWaiters = [];
-    for (const resolve of waiters) resolve();
-  }, []);
-
-  const waitForPcmSamples = useCallback(async (targetSamples: number) => {
-    while (refs.current.emittedSamples + refs.current.pending.length < targetSamples) {
-      await new Promise<void>((resolve) => refs.current.pcmWaiters.push(resolve));
     }
   }, []);
 
@@ -306,55 +280,6 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
 
     const context = new AudioContextCtor();
 
-    let recorderRefs = emptyRecorderRefs();
-    const RecorderCtor =
-      typeof window !== "undefined"
-        ? (window as Window & { MediaRecorder?: typeof MediaRecorder }).MediaRecorder
-        : undefined;
-    if (RecorderCtor) {
-      try {
-        const preferredMimeType = "audio/webm;codecs=opus";
-        const options =
-          typeof RecorderCtor.isTypeSupported !== "function" ||
-          RecorderCtor.isTypeSupported(preferredMimeType)
-            ? { mimeType: preferredMimeType }
-            : undefined;
-        const recorder = new RecorderCtor(stream, options);
-        recorderRefs = {
-          recorder,
-          audioChunks: [],
-          stoppedPromise: null,
-          stoppedResolve: null,
-          stoppedReject: null,
-        };
-        recorder.ondataavailable = (event: BlobEvent) => {
-          const data: Blob | undefined = event?.data;
-          if (data) recorderRefs.audioChunks.push(data);
-        };
-        recorder.addEventListener("error", (event: Event) => {
-          recorderRefs.stoppedReject?.(event);
-        });
-        recorder.addEventListener("stop", () => {
-          try {
-            const blob =
-              recorderRefs.audioChunks.length > 0
-                ? new Blob(recorderRefs.audioChunks, { type: recorder.mimeType })
-                : new Blob([], { type: recorder.mimeType });
-            recorderRefs.stoppedResolve?.(blob);
-          } catch (err) {
-            recorderRefs.stoppedReject?.(err);
-          }
-        });
-        recorderRefs.stoppedPromise = new Promise<Blob>((resolve, reject) => {
-          recorderRefs.stoppedResolve = resolve;
-          recorderRefs.stoppedReject = reject;
-        });
-        recorder.start();
-      } catch {
-        recorderRefs = emptyRecorderRefs();
-      }
-    }
-
     try {
       const source = context.createMediaStreamSource(stream);
       const processor = context.createScriptProcessor(4096, 1, 1);
@@ -365,6 +290,7 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       const chunkSamples = outputRate; // ~1s
 
       refs.current.started = true;
+      refs.current.mode = "pcm";
 
       processor.onaudioprocess = (event) => {
         if (!refs.current.started) {
@@ -387,9 +313,8 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
         while (refs.current.pending.length >= chunkSamples) {
           const chunk = refs.current.pending.slice(0, chunkSamples);
           refs.current.pending = refs.current.pending.slice(chunkSamples);
-          emitPcm(chunk);
+          onPcmSegmentRef.current(int16ToBase64(chunk));
         }
-        resolvePcmWaiters();
       };
 
       source.connect(processor);
@@ -404,10 +329,7 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
         processor,
         gain,
         pending: new Int16Array(0),
-        emittedSamples: 0,
-        pcmWaiters: [],
         started: true,
-        recorder: recorderRefs,
       };
       return;
     } catch {
@@ -415,8 +337,56 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       // isn't available (e.g., Playwright tests with a stubbed getUserMedia).
     }
 
-    if (!recorderRefs.recorder) {
+    const RecorderCtor =
+      typeof window !== "undefined"
+        ? (window as Window & { MediaRecorder?: typeof MediaRecorder }).MediaRecorder
+        : undefined;
+    if (!RecorderCtor) {
       throw new Error("MediaRecorder unavailable");
+    }
+
+    const recorder = new RecorderCtor(stream, {
+      mimeType: "audio/webm;codecs=opus",
+    } as MediaRecorderOptions);
+
+    const recorderRefs: RecorderRefs = {
+      recorder,
+      audioChunks: [],
+      stoppedPromise: null,
+      stoppedResolve: null,
+      stoppedReject: null,
+    };
+
+    recorder.ondataavailable = (event: BlobEvent) => {
+      const data: Blob | undefined = event?.data;
+      if (data) {
+        recorderRefs.audioChunks.push(data);
+      }
+    };
+    recorder.addEventListener("error", (event: Event) => {
+      recorderRefs.stoppedReject?.(event);
+    });
+    recorder.addEventListener("stop", () => {
+      try {
+        const blob =
+          recorderRefs.audioChunks.length > 0
+            ? new Blob(recorderRefs.audioChunks, { type: recorder.mimeType })
+            : new Blob([], { type: recorder.mimeType });
+        recorderRefs.stoppedResolve?.(blob);
+      } catch (err) {
+        recorderRefs.stoppedReject?.(err);
+      }
+    });
+
+    recorderRefs.stoppedPromise = new Promise<Blob>((resolve, reject) => {
+      recorderRefs.stoppedResolve = resolve;
+      recorderRefs.stoppedReject = reject;
+    });
+
+    try {
+      recorder.start();
+    } catch (err) {
+      throw err instanceof Error ? err : new Error(String(err));
     }
 
     refs.current = {
@@ -427,37 +397,32 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       processor: null,
       gain: null,
       pending: new Int16Array(0),
-      emittedSamples: 0,
-      pcmWaiters: [],
       started: true,
+      mode: "recorder",
       recorder: recorderRefs,
     };
-  }, [emitPcm, resolvePcmWaiters]);
+  }, []);
 
   const stop = useCallback(async () => {
+    refs.current.started = false;
     setVolume(0);
 
-    const { processor, source, gain, context, stream, recorder } = refs.current;
+    const { processor, source, gain, context, stream, pending, mode, recorder } = refs.current;
 
-    stopMediaRecorderIfActive(recorder.recorder);
-
-    let recordedPcm: Int16Array<ArrayBufferLike> = new Int16Array(0);
-    if (recorder.stoppedPromise) {
-      recordedPcm = await decodeStoppedRecorder({
-        stoppedPromise: recorder.stoppedPromise,
-        context,
-        decodeAudioData,
-        onError: onErrorRef.current,
-      });
-    }
-
-    if (processor && recordedPcm.length > 0) {
-      await waitForPcmSamples(recordedPcm.length);
-    }
-
-    refs.current.started = false;
-    resolvePcmWaiters();
     disconnectDictationAudioGraph({ processor, source, gain, stream });
+
+    if (mode === "recorder") {
+      stopMediaRecorderIfActive(recorder.recorder);
+      if (recorder.stoppedPromise) {
+        await finalizeRecorderStoppedPromise({
+          stoppedPromise: recorder.stoppedPromise,
+          context,
+          decodeAudioData,
+          emitPcmSegments,
+          onError: onErrorRef.current,
+        });
+      }
+    }
 
     if (context) {
       try {
@@ -467,12 +432,8 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       }
     }
 
-    if (processor) {
-      if (refs.current.pending.length > 0) {
-        emitPcm(refs.current.pending);
-      }
-    } else {
-      emitPcm(recordedPcm);
+    if (pending.length > 0) {
+      onPcmSegmentRef.current(int16ToBase64(pending));
     }
 
     refs.current = {
@@ -482,12 +443,17 @@ export function useDictationAudioSource(config: DictationAudioSourceConfig): Dic
       processor: null,
       gain: null,
       pending: new Int16Array(0),
-      emittedSamples: 0,
-      pcmWaiters: [],
       started: false,
-      recorder: emptyRecorderRefs(),
+      mode: "pcm",
+      recorder: {
+        recorder: null,
+        audioChunks: [],
+        stoppedPromise: null,
+        stoppedResolve: null,
+        stoppedReject: null,
+      },
     };
-  }, [decodeAudioData, emitPcm, resolvePcmWaiters, waitForPcmSamples]);
+  }, [decodeAudioData, emitPcmSegments]);
 
   useEffect(() => {
     return () => {

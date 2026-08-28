@@ -1,3 +1,4 @@
+import * as native from "@getpaseo/expo-two-way-audio";
 import type {
   AudioEngine,
   AudioEngineCallbacks,
@@ -12,24 +13,6 @@ interface QueuedAudio {
 
 interface AudioEngineTraceOptions {
   traceLabel?: string;
-  nativeModule?: object;
-}
-
-interface NativeAudioModule {
-  addExpoTwoWayAudioEventListener(
-    eventName: string,
-    handler: (event: { data: never }) => void,
-  ): { remove(): void };
-  getMicrophonePermissionsAsync(): Promise<{ granted: boolean }>;
-  requestMicrophonePermissionsAsync(): Promise<{ granted: boolean }>;
-  initialize(): Promise<boolean>;
-  toggleRecording(active: boolean): boolean;
-  stopRecording(): Promise<void>;
-  releaseAudioSession(): void;
-  resumePlayback(): void;
-  playPCMData(data: Uint8Array): void;
-  tearDown(): void;
-  stopPlayback(): void;
 }
 
 function parsePcmSampleRate(mimeType: string): number | null {
@@ -88,9 +71,6 @@ export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
   _options?: AudioEngineTraceOptions,
 ): AudioEngine {
-  const native = (_options?.nativeModule ??
-    require("@getpaseo/expo-two-way-audio")) as NativeAudioModule;
-
   const refs: {
     initialized: boolean;
     captureActive: boolean;
