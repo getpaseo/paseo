@@ -85,6 +85,11 @@ export interface WorkspaceAffinityManagerOptions {
   paseoHome: string;
   daemonId: string;
   agentStorage: Pick<AgentStorage, "list">;
+  /** Prevents workspace archival from overtaking affinity restoration and agent creation. */
+  runWithWorkspaceAgentRegistrationLease: <Value>(
+    workspaceId: string,
+    action: () => Promise<Value>,
+  ) => Promise<Value>;
   ensureWorkspace: (workspaceId: string) => Promise<void>;
   archiveWorkspace: (
     workspaceId: string,
@@ -149,12 +154,20 @@ export class WorkspaceAffinityManager {
         const placement = await this.resolvePlacement(affinityId, persisted);
         if (placement) {
           this.arm(affinityId);
-          await this.options.ensureWorkspace(placement.workspaceId!);
-          const created = await input.create(placement);
-          if (created.workspaceId !== placement.workspaceId || created.cwd !== placement.cwd) {
-            throw new Error(`Workspace affinity ${affinityId} create escaped its bound workspace`);
+          const workspaceId = placement.workspaceId;
+          if (!workspaceId) {
+            throw new Error(`Workspace affinity ${affinityId} resolved without a workspace`);
           }
-          return created.value;
+          return this.options.runWithWorkspaceAgentRegistrationLease(workspaceId, async () => {
+            await this.options.ensureWorkspace(workspaceId);
+            const created = await input.create(placement);
+            if (created.workspaceId !== workspaceId || created.cwd !== placement.cwd) {
+              throw new Error(
+                `Workspace affinity ${affinityId} create escaped its bound workspace`,
+              );
+            }
+            return created.value;
+          });
         }
         // The provisional mapping survived an interrupted failed create, but no owned agent
         // establishes a workspace to recover. A new create may safely replace it.
@@ -233,7 +246,9 @@ export class WorkspaceAffinityManager {
       }
       this.persist();
       this.arm(affinityId);
-      await this.options.ensureWorkspace(input.workspaceId);
+      await this.options.runWithWorkspaceAgentRegistrationLease(input.workspaceId, () =>
+        this.options.ensureWorkspace(input.workspaceId),
+      );
     });
   }
 

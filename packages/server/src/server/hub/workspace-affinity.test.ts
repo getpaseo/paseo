@@ -4,6 +4,7 @@ import path from "node:path";
 import pino from "pino";
 import { afterEach, expect, test } from "vitest";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import { AgentManager } from "../agent/agent-manager.js";
 import type { StoredAgentRecord } from "../agent/agent-storage.js";
 import {
   WorkspaceAffinityManager,
@@ -51,6 +52,21 @@ class MemoryAgentStorage {
   }
 }
 
+function passThroughWorkspaceRegistrationLease<Value>(
+  _workspaceId: string,
+  action: () => Promise<Value>,
+): Promise<Value> {
+  return action();
+}
+
+function deferredSignal(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 let home: string | null = null;
 
 afterEach(async () => {
@@ -68,6 +84,7 @@ test("reuses and restores a hashed affinity workspace until the latest workflow 
     paseoHome: home,
     daemonId: "daemon-1",
     agentStorage: storage,
+    runWithWorkspaceAgentRegistrationLease: passThroughWorkspaceRegistrationLease,
     ensureWorkspace: async (workspaceId) => {
       restored.push(workspaceId);
     },
@@ -132,6 +149,74 @@ test("reuses and restores a hashed affinity workspace until the latest workflow 
   expect(persisted).toContain(workspaceAffinityId("slack-thread-1"));
 });
 
+test("holds the workspace registration lease across affinity restoration and creation", async () => {
+  home = await mkdtemp(path.join(tmpdir(), "paseo-workspace-affinity-"));
+  const clock = new ManualClock();
+  const storage = new MemoryAgentStorage();
+  const logger = pino({ level: "silent" });
+  const agentManager = new AgentManager({ clients: {}, logger });
+  const leaseStates: boolean[] = [];
+  let leaseActive = false;
+  const manager = new WorkspaceAffinityManager({
+    paseoHome: home,
+    daemonId: "daemon-1",
+    agentStorage: storage,
+    runWithWorkspaceAgentRegistrationLease: (workspaceId, action) =>
+      agentManager.runWithWorkspaceAgentRegistrationLease(workspaceId, async () => {
+        leaseActive = true;
+        try {
+          return await action();
+        } finally {
+          leaseActive = false;
+        }
+      }),
+    ensureWorkspace: async () => {
+      leaseStates.push(leaseActive);
+    },
+    archiveWorkspace: async () => undefined,
+    logger,
+    clock,
+  });
+  const affinity = {
+    key: "lease-thread",
+    retainUntil: "2026-08-06T12:02:00.000Z",
+    autoArchive: true,
+  };
+  await manager.create({
+    affinity,
+    cwd: "/repo",
+    create: async () => ({ value: "first", workspaceId: "workspace-1", cwd: "/repo" }),
+  });
+  const createStarted = deferredSignal();
+  const finishCreate = deferredSignal();
+  const reused = manager.create({
+    affinity,
+    cwd: "/repo",
+    create: async () => {
+      leaseStates.push(leaseActive);
+      createStarted.resolve();
+      await finishCreate.promise;
+      return { value: "second", workspaceId: "workspace-1", cwd: "/repo" };
+    },
+  });
+  await createStarted.promise;
+
+  let archiveStarted = false;
+  const archive = agentManager.runWithWorkspaceArchiveExclusion(["workspace-1"], async () => {
+    archiveStarted = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  const archiveStartedBeforeCreateFinished = archiveStarted;
+
+  finishCreate.resolve();
+  await expect(reused).resolves.toBe("second");
+  await archive;
+  expect(archiveStartedBeforeCreateFinished).toBe(false);
+  expect(archiveStarted).toBe(true);
+  expect(leaseStates).toEqual([true, true]);
+  manager.dispose();
+});
+
 test("rejects target changes and retries after an unrelated live agent blocks archival", async () => {
   home = await mkdtemp(path.join(tmpdir(), "paseo-workspace-affinity-"));
   const clock = new ManualClock();
@@ -141,6 +226,7 @@ test("rejects target changes and retries after an unrelated live agent blocks ar
     paseoHome: home,
     daemonId: "daemon-1",
     agentStorage: storage,
+    runWithWorkspaceAgentRegistrationLease: passThroughWorkspaceRegistrationLease,
     ensureWorkspace: async () => undefined,
     archiveWorkspace: async (workspaceId, _requestId, canArchiveAgent) => {
       const workspaceAgents = storage.records.filter(
@@ -215,6 +301,7 @@ test("allows same-workspace descendants of an affinity-owned agent during archiv
     paseoHome: home,
     daemonId: "daemon-1",
     agentStorage: storage,
+    runWithWorkspaceAgentRegistrationLease: passThroughWorkspaceRegistrationLease,
     ensureWorkspace: async () => undefined,
     archiveWorkspace: async (workspaceId, _requestId, canArchiveAgent) => {
       const workspaceAgents = storage.records.filter(
@@ -304,6 +391,7 @@ test("retries workspace archival after a transient failure", async () => {
     paseoHome: home,
     daemonId: "daemon-1",
     agentStorage: storage,
+    runWithWorkspaceAgentRegistrationLease: passThroughWorkspaceRegistrationLease,
     ensureWorkspace: async () => undefined,
     archiveWorkspace: async (workspaceId) => {
       attempts++;
@@ -339,6 +427,7 @@ test("resumes retention for a retired relationship after daemon restart", async 
   const options = {
     paseoHome: home,
     agentStorage: storage,
+    runWithWorkspaceAgentRegistrationLease: passThroughWorkspaceRegistrationLease,
     ensureWorkspace: async () => undefined,
     archiveWorkspace: async (workspaceId: string) => {
       archived.push(workspaceId);
@@ -415,6 +504,7 @@ test("recovers a provisional mapping and archives it after restart without a Hub
   const managers = new WorkspaceAffinityManagerPool({
     paseoHome: home,
     agentStorage: storage,
+    runWithWorkspaceAgentRegistrationLease: passThroughWorkspaceRegistrationLease,
     ensureWorkspace: async () => undefined,
     archiveWorkspace: async (workspaceId) => {
       archived.push(workspaceId);

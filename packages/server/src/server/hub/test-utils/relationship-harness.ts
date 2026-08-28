@@ -1285,6 +1285,8 @@ export class HubRelationshipHarness {
       paseoHome: this.paseoHome,
       daemonId: this.relationshipFile()!.relationship.daemonId,
       agentStorage: storage,
+      runWithWorkspaceAgentRegistrationLease: (workspaceId, action) =>
+        manager.runWithWorkspaceAgentRegistrationLease(workspaceId, action),
       ensureWorkspace: async () => undefined,
       archiveWorkspace: async () => undefined,
       logger: pino({ level: "silent" }),

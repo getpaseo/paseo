@@ -1250,6 +1250,8 @@ export async function createPaseoDaemon(
   const hubWorkspaceAffinityManagers = new WorkspaceAffinityManagerPool({
     paseoHome: config.paseoHome,
     agentStorage,
+    runWithWorkspaceAgentRegistrationLease: (workspaceId, action) =>
+      agentManager.runWithWorkspaceAgentRegistrationLease(workspaceId, action),
     ensureWorkspace: ensureHubAffinityWorkspaceExternal,
     archiveWorkspace: archiveWorkspaceByIdExternal,
     logger,
