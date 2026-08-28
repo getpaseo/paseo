@@ -86,15 +86,18 @@ Configure via `daemon.hostnames` in `config.json`:
 
 By default, anyone who can reach the daemon's listening address can connect. On localhost this is fine, only local processes have access. But if you bind to a network interface (e.g. your LAN IP or `0.0.0.0`), or if you don't fully trust your local network, you can require a password.
 
-When a password is configured, all HTTP requests must include an `Authorization: Bearer <password>` header and all WebSocket connections must authenticate via subprotocol. Unauthenticated requests receive a `401 Unauthorized` response. Only the `/api/health` liveness endpoint is exempt, so that process supervisors and load balancers can probe without credentials.
+When a password is configured, remote HTTP requests must include an `Authorization: Bearer <password>` header and remote WebSocket connections must authenticate via subprotocol. Unauthenticated remote requests receive a `401 Unauthorized` response. Loopback clients are exempt by default so local CLI commands keep working. The `/api/health` liveness endpoint is always exempt so process supervisors and load balancers can probe without credentials.
 
 If you enable the [bundled web UI](/docs/web-ui), its static files are also served without the password so the login screen can render. This is by design, the API and WebSocket still require authentication before any agent data is returned or any command runs. Set a password before binding the daemon to a network so the data behind the page stays protected.
 
 The password is stored as a bcrypt hash in `config.json`, the daemon never stores it in plaintext. See [Configuration](/docs/configuration#password-authentication) for setup instructions.
 
+Set `daemon.auth.exemptLoopback` to `false` on shared machines or when an externally reachable reverse proxy connects to the daemon through loopback. The exemption checks the socket peer address and does not trust forwarded headers.
+
 ### What password auth does and does not do
 
-- **Does:** Prevents unauthorized clients from controlling your agents, even if they can reach the daemon over the network.
+- **Does:** Prevents unauthorized remote clients from controlling your agents, even if they can reach the daemon over the network.
+- **Does not:** Isolate local users when `daemon.auth.exemptLoopback` is enabled.
 - **Does not:** Encrypt traffic. Password auth protects access, not confidentiality. If you need encrypted connections over an untrusted network, use the relay (which provides end-to-end encryption) or a VPN like Tailscale.
 
 ### When to use it

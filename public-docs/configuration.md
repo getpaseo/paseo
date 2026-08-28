@@ -158,7 +158,7 @@ Legacy fields `log.level` and `log.format` are still supported and map to the ne
 
 ## Password authentication
 
-You can require a password to connect to the daemon. When set, all HTTP and WebSocket clients must authenticate. Only the `/api/health` liveness endpoint is exempt, so that process supervisors and load balancers can probe without credentials.
+You can require a password to connect to the daemon. When set, remote HTTP and WebSocket clients must authenticate. Loopback clients are exempt by default so local CLI commands do not need the daemon password. The `/api/health` liveness endpoint is always exempt so process supervisors and load balancers can probe without credentials.
 
 The easiest way to set a password is with the CLI:
 
@@ -180,13 +180,16 @@ Or write the hash directly in `config.json`:
 {
   "daemon": {
     "auth": {
-      "password": "$2b$12$..."
+      "password": "$2b$12$...",
+      "exemptLoopback": true
     }
   }
 }
 ```
 
-After setting a password, restart the daemon for the change to take effect.
+Set `exemptLoopback` to `false` to require the password from local clients too. Use `false` on shared machines and when an externally reachable reverse proxy connects to the daemon through loopback, because the daemon sees the proxy itself as the peer. The default is `true`.
+
+After changing authentication settings, restart the daemon for the change to take effect.
 
 ### Connecting with a password
 

@@ -8,7 +8,9 @@ import {
   isAgentMcpRequestAuthorized,
   isBearerTokenValidAsync,
   isBearerTokenValid,
+  isLoopbackAddress,
   shouldBypassBearerAuth,
+  shouldRequireDaemonPassword,
 } from "./auth.js";
 
 const CORRECT_PASSWORD_HASH = "$2b$12$OLxyuuP9uLK30Uzc4wQX0O6liuU/Q1t5P2b0Ebf36mULvpVK3DRZW";
@@ -68,6 +70,31 @@ describe("daemon bearer validator", () => {
     // Everything else stays behind the daemon password.
     expect(shouldBypassBearerAuth("GET", "/api/status")).toBe(false);
     expect(shouldBypassBearerAuth("POST", "/api/files/upload")).toBe(false);
+  });
+
+  test("exempts loopback addresses from password auth by default", () => {
+    const auth = { password: CORRECT_PASSWORD_HASH };
+
+    expect(shouldRequireDaemonPassword(auth, "127.0.0.1")).toBe(false);
+    expect(shouldRequireDaemonPassword(auth, "127.42.0.9")).toBe(false);
+    expect(shouldRequireDaemonPassword(auth, "::1")).toBe(false);
+    expect(shouldRequireDaemonPassword(auth, "0:0:0:0:0:0:0:1")).toBe(false);
+    expect(shouldRequireDaemonPassword(auth, "::ffff:127.0.0.1")).toBe(false);
+    expect(isLoopbackAddress("::ffff:127.42.0.9")).toBe(true);
+  });
+
+  test("requires password auth for external, unknown, and explicitly protected loopback peers", () => {
+    expect(shouldRequireDaemonPassword({ password: CORRECT_PASSWORD_HASH }, "100.64.0.1")).toBe(
+      true,
+    );
+    expect(shouldRequireDaemonPassword({ password: CORRECT_PASSWORD_HASH }, undefined)).toBe(true);
+    expect(
+      shouldRequireDaemonPassword(
+        { password: CORRECT_PASSWORD_HASH, exemptLoopback: false },
+        "127.0.0.1",
+      ),
+    ).toBe(true);
+    expect(shouldRequireDaemonPassword(undefined, "100.64.0.1")).toBe(false);
   });
 });
 

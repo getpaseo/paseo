@@ -370,7 +370,7 @@ describe("paseo daemon bootstrap", () => {
     }
 
     const daemonHandle = await createTestPaseoDaemon({
-      auth: { password: hashDaemonPassword("secret") },
+      auth: { password: hashDaemonPassword("secret"), exemptLoopback: false },
     });
     try {
       daemonHandle.daemon.serviceProxy.registerWorkspaceService({
