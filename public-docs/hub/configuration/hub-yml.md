@@ -254,6 +254,11 @@ use `idle_timeout`, which remains a liveness deadline for the current execution.
 Disconnecting or revoking the Hub relationship does not cancel a deadline the daemon already
 acknowledged; persisted affinity cleanup resumes after daemon restart.
 
+At expiry, same-workspace descendants of affinity-owned agents remain in cleanup scope, while
+detached agents and unrelated roots block workspace archival. A detach or parent-label change that
+already started finishes before expiry classification; a new relationship change is rejected once
+the workspace archive exclusion begins.
+
 Workspace affinity is a progressive daemon capability. Older daemons ignore the optional lease and
 continue using their existing fresh-workspace behavior; Hub still runs the workflow and does not
 require an immediate daemon upgrade. Exact reuse, retention, and archived-workspace restoration take

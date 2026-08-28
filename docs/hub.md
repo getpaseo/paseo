@@ -60,7 +60,9 @@ affinity-owned execution archives only its own agent so a later matching event c
 workspace. The daemon will not auto-archive a workspace containing an unrelated live agent. Matching
 executions are not serialized; they use separate agents in the shared workspace. Same-workspace MCP
 descendants of an affinity-owned agent remain inside that cleanup scope; detached agents and other
-unrelated roots continue to block affinity expiry.
+unrelated roots continue to block affinity expiry. Detach and parent-label changes that already
+started finish before expiry classification, while new relationship changes are rejected after the
+workspace archive exclusion begins.
 
 The wire field is an optional progressive capability. Hubs accept a successful create response
 without the workspace-affinity acknowledgement, so older daemons continue their existing fresh-

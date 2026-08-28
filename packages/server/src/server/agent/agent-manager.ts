@@ -126,6 +126,13 @@ export class WorkspaceAgentRegistrationBlockedError extends Error {
   }
 }
 
+export class WorkspaceRelationshipMutationBlockedError extends Error {
+  constructor(workspaceId: string) {
+    super(`Workspace ${workspaceId} is being archived`);
+    this.name = "WorkspaceRelationshipMutationBlockedError";
+  }
+}
+
 export class AgentRunCancellationError extends Error {
   constructor(agentId: string, action: "reload" | "replace" | "rewind" | "stop") {
     super(
@@ -702,6 +709,7 @@ export class AgentManager {
   private readonly unresolvedWorkspaceAgentRegistrationTasks = new Set<Promise<void>>();
   private readonly workspaceArchiveExclusions = new Set<string>();
   private readonly workspaceArchiveTails = new Map<string, Promise<void>>();
+  private readonly workspaceRelationshipMutationTasks = new Map<string, Set<Promise<void>>>();
   private activeWorkspaceArchiveTransactions = 0;
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
@@ -803,8 +811,9 @@ export class AgentManager {
 
   /**
    * Prevents agents from entering the supplied workspaces while an archive transaction runs.
-   * Registrations that started before the exclusion are allowed to settle (or are rejected at
-   * their final registration boundary) before the transaction observes workspace contents.
+   * Registrations and relationship mutations that started before the exclusion are allowed to
+   * settle (or are rejected at their final boundary) before the transaction observes workspace
+   * contents.
    */
   runWithWorkspaceArchiveExclusion<Value>(
     workspaceIds: Iterable<string>,
@@ -1863,10 +1872,15 @@ export class AgentManager {
   }
 
   async setLabels(agentId: string, labels: Record<string, string>): Promise<void> {
-    await this.runLifecycleMutation(agentId, async () => {
+    const write = async () => {
       const agent = this.requireAgent(agentId);
       await this.writeLabels(agent.id, labels);
-    });
+    };
+    await this.runLifecycleMutation(agentId, () =>
+      Object.prototype.hasOwnProperty.call(labels, PARENT_AGENT_ID_LABEL)
+        ? this.runWorkspaceRelationshipMutation(agentId, write)
+        : write(),
+    );
   }
 
   private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
@@ -1909,7 +1923,9 @@ export class AgentManager {
     live: boolean;
     previousParentAgentId: string | null;
   }> {
-    return this.runLifecycleMutation(agentId, () => this.detachAgentUnlocked(agentId));
+    return this.runLifecycleMutation(agentId, () =>
+      this.runWorkspaceRelationshipMutation(agentId, () => this.detachAgentUnlocked(agentId)),
+    );
   }
 
   private async detachAgentUnlocked(agentId: string): Promise<{
@@ -2053,8 +2069,11 @@ export class AgentManager {
       labels?: Record<string, string>;
     },
   ): Promise<void> {
+    const update = () => this.updateAgentMetadataUnlocked(agentId, updates);
     await this.runLifecycleMutation(agentId, () =>
-      this.updateAgentMetadataUnlocked(agentId, updates),
+      updates.labels && Object.prototype.hasOwnProperty.call(updates.labels, PARENT_AGENT_ID_LABEL)
+        ? this.runWorkspaceRelationshipMutation(agentId, update)
+        : update(),
     );
   }
 
@@ -2093,6 +2112,55 @@ export class AgentManager {
       if (this.lifecycleMutationTails.get(agentId) === tail) {
         this.lifecycleMutationTails.delete(agentId);
       }
+    });
+    return result;
+  }
+
+  private runWorkspaceRelationshipMutation<T>(
+    agentId: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      return this.runWorkspaceRelationshipMutationForWorkspace(liveAgent.workspaceId, mutation);
+    }
+
+    if (!this.registry) {
+      return mutation();
+    }
+    return this.registry
+      .get(agentId)
+      .then((record) =>
+        this.runWorkspaceRelationshipMutationForWorkspace(record?.workspaceId, mutation),
+      );
+  }
+
+  private runWorkspaceRelationshipMutationForWorkspace<T>(
+    workspaceId: string | undefined,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    if (!workspaceId) {
+      return mutation();
+    }
+    if (this.workspaceArchiveExclusions.has(workspaceId)) {
+      throw new WorkspaceRelationshipMutationBlockedError(workspaceId);
+    }
+
+    const result = Promise.resolve().then(mutation);
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    const workspaceTasks = this.workspaceRelationshipMutationTasks.get(workspaceId) ?? new Set();
+    workspaceTasks.add(settled);
+    this.workspaceRelationshipMutationTasks.set(workspaceId, workspaceTasks);
+    void settled.then(() => {
+      const currentTasks = this.workspaceRelationshipMutationTasks.get(workspaceId);
+      currentTasks?.delete(settled);
+      if (currentTasks?.size === 0) {
+        this.workspaceRelationshipMutationTasks.delete(workspaceId);
+      }
+      return undefined;
     });
     return result;
   }
@@ -3317,7 +3385,10 @@ export class AgentManager {
       .then(async () => {
         this.workspaceArchiveExclusions.add(workspaceId);
         try {
-          await this.waitForWorkspaceAgentRegistrations(workspaceId);
+          await Promise.all([
+            this.waitForWorkspaceAgentRegistrations(workspaceId),
+            this.waitForWorkspaceRelationshipMutations(workspaceId),
+          ]);
           return await action();
         } finally {
           this.workspaceArchiveExclusions.delete(workspaceId);
@@ -3340,6 +3411,14 @@ export class AgentManager {
   private async waitForWorkspaceAgentRegistrations(workspaceId: string): Promise<void> {
     while (true) {
       const pending = this.agentRegistrationTasksByWorkspace.get(workspaceId);
+      if (!pending || pending.size === 0) return;
+      await Promise.allSettled(pending);
+    }
+  }
+
+  private async waitForWorkspaceRelationshipMutations(workspaceId: string): Promise<void> {
+    while (true) {
+      const pending = this.workspaceRelationshipMutationTasks.get(workspaceId);
       if (!pending || pending.size === 0) return;
       await Promise.allSettled(pending);
     }

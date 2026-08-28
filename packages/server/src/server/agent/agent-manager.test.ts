@@ -10,6 +10,7 @@ import {
   AgentManager,
   AgentManagerShuttingDownError,
   WorkspaceAgentRegistrationBlockedError,
+  WorkspaceRelationshipMutationBlockedError,
   commandMayHaveChangedExternalState,
   type AgentManagerEvent,
   type ManagedAgent,
@@ -1612,6 +1613,102 @@ test("workspace archive exclusion drains registrations that already started", as
     agents: manager.listAgents(),
     sessionClosed: client.createdSessionClosed,
   }).toEqual({ archiveStarted: true, agents: [], sessionClosed: true });
+});
+
+test("workspace archive exclusion drains a detach that already started", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-detach-archive-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-detach-race";
+  const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId,
+  });
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+    workspaceId,
+  });
+  const detachPersistStarted = deferred<void>();
+  const finishDetachPersist = deferred<void>();
+  const originalApplySnapshot = storage.applySnapshot.bind(storage);
+  let heldChildPersist = false;
+  vi.spyOn(storage, "applySnapshot").mockImplementation(async (agent, options) => {
+    if (agent.id === child.id && !heldChildPersist) {
+      heldChildPersist = true;
+      detachPersistStarted.resolve();
+      await finishDetachPersist.promise;
+    }
+    await originalApplySnapshot(agent, options);
+  });
+
+  const detach = manager.detachAgent(child.id);
+  await detachPersistStarted.promise;
+
+  let archiveStarted = false;
+  let parentAtArchive: string | null = "not-observed";
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted = true;
+    parentAtArchive = manager.getAgent(child.id)?.labels[PARENT_AGENT_ID_LABEL] ?? null;
+  });
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(archiveStarted).toBe(false);
+  } finally {
+    finishDetachPersist.resolve();
+    await Promise.allSettled([detach, archive]);
+  }
+  await detach;
+  await archive;
+  expect({ archiveStarted, parentAtArchive }).toEqual({
+    archiveStarted: true,
+    parentAtArchive: null,
+  });
+});
+
+test("workspace archive exclusion rejects new detach and parent-label mutations", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-relationship-archive-fence-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-relationship-fence";
+  const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId,
+  });
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+    workspaceId,
+  });
+  const archiveStarted = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted.resolve();
+    await finishArchive.promise;
+  });
+  await archiveStarted.promise;
+
+  try {
+    await expect(manager.detachAgent(child.id)).rejects.toBeInstanceOf(
+      WorkspaceRelationshipMutationBlockedError,
+    );
+    await expect(
+      manager.setLabels(child.id, { [PARENT_AGENT_ID_LABEL]: "replacement-parent" }),
+    ).rejects.toBeInstanceOf(WorkspaceRelationshipMutationBlockedError);
+    await expect(
+      manager.updateAgentMetadata(child.id, {
+        labels: { [PARENT_AGENT_ID_LABEL]: "replacement-parent" },
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceRelationshipMutationBlockedError);
+    expect(manager.getAgent(child.id)?.labels[PARENT_AGENT_ID_LABEL]).toBe(parent.id);
+  } finally {
+    finishArchive.resolve();
+    await archive;
+  }
 });
 
 test("flush waits for rejected session cleanup that starts after shutdown", async () => {
