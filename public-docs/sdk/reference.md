@@ -97,7 +97,7 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 | `archive()`                 | `{ archivedAt }`                  | Soft-deletes the agent and closes its runtime.                                                          |
 | `detach()`                  | `Promise<void>`                   | Removes the parent relationship without stopping the agent.                                             |
 
-`workspaceId` through `archivedAt` mirror the last snapshot the handle observed and are `null` until one arrives. A handle from `ref()` reads `null` for all of them until `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or `subscribe()` delivers a snapshot, so `null` means "not observed yet" rather than "the daemon reported nothing". Call `current()` when you want the whole snapshot instead of one field.
+`workspaceId` through `archivedAt` mirror the last snapshot the handle observed. A handle from `ref()` reads `null` for all of them until `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or `subscribe()` delivers a snapshot. Optional values in an observed snapshot also read as `null`. Call `current()` when you need the whole snapshot or need to distinguish those states.
 
 `PaseoAgentRunResult` contains `status`, `final`, `error`, and `lastMessage`. `final` refreshes the handle when present.
 

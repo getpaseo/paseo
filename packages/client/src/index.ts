@@ -268,10 +268,10 @@ export interface PaseoAgentHandle {
   readonly id: string;
   /**
    * `workspaceId` through `archivedAt` mirror the last snapshot this handle
-   * observed, and are `null` until one arrives. A handle from `ref()` reads
-   * `null` for all of them until `refresh()`, `run()`, `waitForFinish()`, a
-   * timeline refetch, or `subscribe()` delivers a snapshot, so `null` means
-   * "not observed yet" rather than "the daemon reported nothing".
+   * observed. A handle from `ref()` reads `null` for all of them until
+   * `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or
+   * `subscribe()` delivers a snapshot. Optional snapshot values also read as
+   * `null`; use `current()` when you need to distinguish those states.
    */
   readonly workspaceId: string | null;
   readonly cwd: string | null;
