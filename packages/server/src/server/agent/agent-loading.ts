@@ -25,6 +25,7 @@ export type AgentLoaderManager = Pick<
   | "getRegisteredProviderIds"
   | "hydrateTimelineFromProvider"
   | "resumeAgentFromPersistence"
+  | "runWithWorkspaceAgentRegistrationLease"
 > &
   Partial<Pick<AgentManager, "waitForAgentClose">>;
 
@@ -90,49 +91,68 @@ export async function ensureAgentLoaded(
   const pendingOptions = {
     broadcastTimeline: deps.broadcastTimeline === true,
   };
-  const initPromise = (async () => {
-    const record = await deps.agentStorage.get(agentId);
-    if (!record) {
-      throw new Error(`Agent not found: ${agentId}`);
-    }
-
-    const validProviders = deps.validProviders ?? deps.agentManager.getRegisteredProviderIds();
-    if (!isStoredAgentProviderAvailable(record, validProviders)) {
-      throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
-    }
-
-    const handle = toAgentPersistenceHandle(validProviders, record.persistence);
-
-    let snapshot: ManagedAgent;
-    if (handle) {
-      snapshot = await deps.agentManager.resumeAgentFromPersistence(
-        handle,
-        buildConfigOverrides(record),
-        agentId,
-        extractTimestamps(record),
-        record.archivedAt ? { purpose: "history" } : undefined,
-      );
-      deps.logger.info({ agentId, provider: record.provider }, "Agent resumed from persistence");
-    } else {
-      const config = buildSessionConfig(record, {
-        validProviders,
-      });
-      if (!config) {
-        throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
+  // The workspace is not known until storage resolves. Register that lookup first, then retain
+  // the resolved workspace lease through provider startup, registration, and history hydration.
+  const initPromise = deps.agentManager.runWithWorkspaceAgentRegistrationLease(
+    undefined,
+    async () => {
+      const record = await deps.agentStorage.get(agentId);
+      if (!record) {
+        throw new Error(`Agent not found: ${agentId}`);
       }
-      snapshot = await deps.agentManager.createAgent(config, agentId, {
-        labels: record.labels,
-        workspaceId: record.workspaceId,
-        owner: record.owner,
-      });
-      deps.logger.info({ agentId, provider: record.provider }, "Agent created from stored config");
-    }
 
-    await deps.agentManager.hydrateTimelineFromProvider(agentId, {
-      broadcast: () => pendingOptions.broadcastTimeline,
-    });
-    return deps.agentManager.getAgent(agentId) ?? snapshot;
-  })();
+      const initialize = async (): Promise<ManagedAgent> => {
+        const validProviders = deps.validProviders ?? deps.agentManager.getRegisteredProviderIds();
+        if (!isStoredAgentProviderAvailable(record, validProviders)) {
+          throw new Error(`Agent ${agentId} references unavailable provider '${record.provider}'`);
+        }
+
+        const handle = toAgentPersistenceHandle(validProviders, record.persistence);
+
+        let snapshot: ManagedAgent;
+        if (handle) {
+          snapshot = await deps.agentManager.resumeAgentFromPersistence(
+            handle,
+            buildConfigOverrides(record),
+            agentId,
+            extractTimestamps(record),
+            record.archivedAt ? { purpose: "history" } : undefined,
+          );
+          deps.logger.info(
+            { agentId, provider: record.provider },
+            "Agent resumed from persistence",
+          );
+        } else {
+          const config = buildSessionConfig(record, {
+            validProviders,
+          });
+          if (!config) {
+            throw new Error(
+              `Agent ${agentId} references unavailable provider '${record.provider}'`,
+            );
+          }
+          snapshot = await deps.agentManager.createAgent(config, agentId, {
+            labels: record.labels,
+            workspaceId: record.workspaceId,
+            owner: record.owner,
+          });
+          deps.logger.info(
+            { agentId, provider: record.provider },
+            "Agent created from stored config",
+          );
+        }
+
+        await deps.agentManager.hydrateTimelineFromProvider(agentId, {
+          broadcast: () => pendingOptions.broadcastTimeline,
+        });
+        return deps.agentManager.getAgent(agentId) ?? snapshot;
+      };
+
+      return record.workspaceId
+        ? deps.agentManager.runWithWorkspaceAgentRegistrationLease(record.workspaceId, initialize)
+        : initialize();
+    },
+  );
 
   const pending: PendingAgentInitialization = { promise: initPromise, options: pendingOptions };
   pendingAgentInitializations.set(agentId, pending);

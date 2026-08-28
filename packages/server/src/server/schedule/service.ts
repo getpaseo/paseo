@@ -214,6 +214,7 @@ type ScheduleAgentManager = Pick<
     | "getRegisteredProviderIds"
     | "hydrateTimelineFromProvider"
     | "resumeAgentFromPersistence"
+    | "runWithWorkspaceAgentRegistrationLease"
     | "runAgent"
     | "waitForAgentEvent"
     | "waitForAgentClose"
