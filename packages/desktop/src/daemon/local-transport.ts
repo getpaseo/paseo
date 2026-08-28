@@ -189,6 +189,10 @@ function formatSshFailure(
   return `ssh exited with code ${code ?? "unknown"}`;
 }
 
+export function resolveSshFailureDetail(failure: string | null, stderr: string): string | null {
+  return failure ?? (stderr.trim() || null);
+}
+
 function createSshProxy(target: SshTransportTarget): Promise<TransportEndpoint> {
   let server: Server | null = null;
   let socket: Socket | null = null;
@@ -254,7 +258,7 @@ function createSshProxy(target: SshTransportTarget): Promise<TransportEndpoint> 
       resolve({
         url: `ws://127.0.0.1:${address.port}${WS_ENDPOINT_PATH}`,
         close,
-        failureDetail: () => failure,
+        failureDetail: () => resolveSshFailureDetail(failure, stderr),
       });
     });
   });

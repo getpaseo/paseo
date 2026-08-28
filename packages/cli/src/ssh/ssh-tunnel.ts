@@ -21,6 +21,10 @@ function formatSshFailure(
   return `ssh exited with code ${code ?? "unknown"}`;
 }
 
+export function resolveSshFailureDetail(failure: string | null, stderr: string): string | null {
+  return failure ?? (stderr.trim() || null);
+}
+
 export function createSshTunnel(target: SshTransportTarget): Promise<SshTunnel> {
   let server: Server | null = null;
   let socket: Socket | null = null;
@@ -79,7 +83,7 @@ export function createSshTunnel(target: SshTransportTarget): Promise<SshTunnel> 
       resolve({
         endpoint: `127.0.0.1:${address.port}`,
         close,
-        failureDetail: () => failure,
+        failureDetail: () => resolveSshFailureDetail(failure, stderr),
       });
     });
   });

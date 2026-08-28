@@ -4,6 +4,7 @@ import {
   createLocalTransportManager,
   LOCAL_TRANSPORT_SETUP_TIMEOUT_MS,
   parseTransportTarget,
+  resolveSshFailureDetail,
   type TransportEndpoint,
   type TransportEventPayload,
   type TransportWebSocket,
@@ -110,6 +111,13 @@ describe("Remote SSH desktop transport", () => {
     expect(() =>
       parseTransportTarget({ transportType: "ssh", host: "build-box", daemonPort: 65536 }),
     ).toThrow("Daemon port must be between 1 and 65535");
+  });
+
+  it("surfaces SSH stderr before the child exit event settles", () => {
+    expect(resolveSshFailureDetail(null, "Permission denied.\n")).toBe("Permission denied.");
+    expect(resolveSshFailureDetail("ssh exited with code 255", "earlier stderr")).toBe(
+      "ssh exited with code 255",
+    );
   });
 });
 

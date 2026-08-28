@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveSshFailureDetail } from "../ssh/ssh-tunnel.js";
 import { connectToDaemon } from "./client.js";
 
 const mocks = vi.hoisted(() => ({
@@ -19,7 +20,10 @@ vi.mock("@getpaseo/client/internal/daemon-client", () => ({
   },
 }));
 
-vi.mock("../ssh/ssh-tunnel.js", () => ({ createSshTunnel: mocks.createSshTunnel }));
+vi.mock("../ssh/ssh-tunnel.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../ssh/ssh-tunnel.js")>()),
+  createSshTunnel: mocks.createSshTunnel,
+}));
 vi.mock("./client-id.js", () => ({ getOrCreateCliClientId: async () => "cli-test-id" }));
 
 describe("CLI SSH transport", () => {
@@ -31,6 +35,15 @@ describe("CLI SSH transport", () => {
       close: vi.fn(),
       failureDetail: () => null,
     });
+  });
+
+  it("surfaces SSH stderr before the child exit event settles", () => {
+    expect(resolveSshFailureDetail(null, "Host key verification failed.\n")).toBe(
+      "Host key verification failed.",
+    );
+    expect(resolveSshFailureDetail("ssh exited with code 255", "earlier stderr")).toBe(
+      "ssh exited with code 255",
+    );
   });
 
   it("routes an SSH host through a local tunnel", async () => {
