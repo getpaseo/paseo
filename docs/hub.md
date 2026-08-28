@@ -121,6 +121,10 @@ succeeds or fails. A failed request returns a warning that server-side revocatio
 `--force` skips the remote request. Legacy persisted `disconnecting` records are removed on startup;
 the daemon does not retry revocation in the background.
 
+Disconnect and revocation end relationship execution authority, but they do not cancel an already
+acknowledged workspace-affinity retention deadline. Affinity cleanup remains owned by the daemon and
+is reconstructed from persisted mappings after daemon restart, even when that relationship is gone.
+
 `paseo hub logout` removes only the active human CLI credential and preserves credentials for other origins. Interactive logout inspects and optionally disconnects a same-origin daemon before deleting the login; a failed requested disconnect preserves the login. JSON and noninteractive logout never prompt or disconnect implicitly.
 
 ## Cross-repository compatibility

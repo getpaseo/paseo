@@ -6,6 +6,7 @@ import { afterEach, expect, test } from "vitest";
 import type { StoredAgentRecord } from "../agent/agent-storage.js";
 import {
   WorkspaceAffinityManager,
+  WorkspaceAffinityManagerPool,
   type WorkspaceAffinityClock,
   type WorkspaceAffinityPlacement,
   workspaceAffinityId,
@@ -226,4 +227,40 @@ test("retries workspace archival after a transient failure", async () => {
   await clock.advanceBy(60_000);
   expect(attempts).toBe(2);
   expect(archived).toEqual(["workspace-1"]);
+});
+
+test("resumes retention for a retired relationship after daemon restart", async () => {
+  home = await mkdtemp(path.join(tmpdir(), "paseo-workspace-affinity-"));
+  const clock = new ManualClock();
+  const storage = new MemoryAgentStorage();
+  const archived: string[] = [];
+  const options = {
+    paseoHome: home,
+    agentStorage: storage,
+    ensureWorkspace: async () => undefined,
+    archiveWorkspace: async (workspaceId: string) => {
+      archived.push(workspaceId);
+    },
+    logger: pino({ level: "silent" }),
+    clock,
+  };
+  const activeRelationshipManagers = new WorkspaceAffinityManagerPool(options);
+  activeRelationshipManagers.start();
+  await activeRelationshipManagers.forDaemon("retired-daemon").create({
+    affinity: {
+      key: "retired-thread",
+      retainUntil: "2026-08-06T12:01:00.000Z",
+      autoArchive: true,
+    },
+    cwd: "/repo",
+    create: async () => ({ value: undefined, workspaceId: "workspace-1", cwd: "/repo" }),
+  });
+  activeRelationshipManagers.dispose();
+
+  const restartedManagers = new WorkspaceAffinityManagerPool(options);
+  restartedManagers.start();
+  await clock.advanceBy(60_000);
+
+  expect(archived).toEqual(["workspace-1"]);
+  restartedManagers.dispose();
 });

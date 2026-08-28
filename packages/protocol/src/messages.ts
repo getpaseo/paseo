@@ -2923,7 +2923,6 @@ export const HubExecutionAgentCreateRequestSchema = z.object({
       retainUntil: z.string().datetime(),
       autoArchive: z.boolean(),
     })
-    .strict()
     .optional(),
 });
 

@@ -143,6 +143,37 @@ describe("Hub session protocol", () => {
     });
   });
 
+  test("ignores additive workspace affinity lease fields from a newer Hub", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-future-affinity",
+      executionId: "execution-future-affinity",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Implement the requested change",
+      workspaceAffinity: {
+        key: "github:pull-request:42",
+        retainUntil: "2026-08-06T12:02:00.000Z",
+        autoArchive: true,
+        futureLeasePolicy: { mode: "newer-hub-only" },
+      },
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual({
+      type: message.type,
+      requestId: message.requestId,
+      executionId: message.executionId,
+      provider: message.provider,
+      cwd: message.cwd,
+      prompt: message.prompt,
+      workspaceAffinity: {
+        key: message.workspaceAffinity.key,
+        retainUntil: message.workspaceAffinity.retainUntil,
+        autoArchive: message.workspaceAffinity.autoArchive,
+      },
+    });
+  });
+
   test("keeps the retired Hub workspace selector wire-compatible", () => {
     const message = {
       type: "hub.execution.agent.create.request",

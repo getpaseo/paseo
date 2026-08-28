@@ -167,7 +167,6 @@ export class DaemonExecutions implements HubExecutionAgents {
       ...this.pendingCreates.values(),
       ...this.pendingControlActions.values(),
     ]);
-    this.workspaceAffinities?.dispose();
   }
 
   subscribe(listener: (event: OwnedAgentEvent) => void): () => void {
@@ -189,8 +188,27 @@ export class DaemonExecutions implements HubExecutionAgents {
   ): Promise<OwnedAgentSnapshot> {
     const existing = await this.agentStorage.findByDaemonExecution(owner);
     if (existing) {
-      requireExecutionWorkspaceId(existing);
+      const workspaceId = requireExecutionWorkspaceId(existing);
       this.requireAuthority(authorityGeneration);
+      const existingOwner = this.requireOwner(existing);
+      if (input.workspaceAffinity && existingOwner.workspaceAffinityId) {
+        const workspaceAffinities = this.workspaceAffinities;
+        if (!workspaceAffinities) {
+          throw new Error("This Paseo daemon does not support workspace affinity");
+        }
+        const requestedAffinityId = workspaceAffinities.affinityId(input.workspaceAffinity.key);
+        if (requestedAffinityId !== existingOwner.workspaceAffinityId) {
+          throw new Error("The existing Hub execution belongs to a different workspace affinity");
+        }
+        await workspaceAffinities.bindExisting({
+          affinity: input.workspaceAffinity,
+          cwd: input.cwd,
+          ...(input.worktree === undefined ? {} : { worktree: input.worktree }),
+          workspaceId,
+          workspaceCwd: existing.cwd,
+        });
+        this.requireAuthority(authorityGeneration);
+      }
       return this.resolveRecord(existing);
     }
     this.requireAuthority(authorityGeneration);

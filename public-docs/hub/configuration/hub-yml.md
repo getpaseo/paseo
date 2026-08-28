@@ -251,6 +251,8 @@ matching event arrives. Each matching event extends retention through its own wo
 With `auto_archive: true`, the daemon archives the workspace at that retained deadline; it does not
 use `idle_timeout`, which remains a liveness deadline for the current execution. With
 `auto_archive: false`, the daemon does not perform affinity-driven workspace archiving.
+Disconnecting or revoking the Hub relationship does not cancel a deadline the daemon already
+acknowledged; persisted affinity cleanup resumes after daemon restart.
 
 Workspace affinity is a progressive daemon capability. Older daemons ignore the optional lease and
 continue using their existing fresh-workspace behavior; Hub still runs the workflow and does not

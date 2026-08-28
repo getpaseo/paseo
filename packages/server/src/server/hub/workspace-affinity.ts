@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type pino from "pino";
@@ -177,6 +177,45 @@ export class WorkspaceAffinityManager {
     });
   }
 
+  /** Repairs or recreates the durable mapping before an existing affinity-owned agent is replayed. */
+  async bindExisting(input: {
+    affinity: HubExecutionWorkspaceAffinity;
+    cwd: string;
+    worktree?: CreateAgentWorktreeTarget;
+    workspaceId: string;
+    workspaceCwd: string;
+  }): Promise<void> {
+    this.requireUsable();
+    const affinityId = this.affinityId(input.affinity.key);
+    const target = affinityTarget(input);
+    await this.withAffinity(affinityId, async () => {
+      let persisted = this.state.affinities[affinityId];
+      if (persisted) {
+        assertMatchingTarget(affinityId, persisted.target, target);
+        if (persisted.workspaceId && persisted.workspaceId !== input.workspaceId) {
+          throw new Error(`Workspace affinity ${affinityId} resolves to multiple workspaces`);
+        }
+        if (persisted.cwd && persisted.cwd !== input.workspaceCwd) {
+          throw new Error(`Workspace affinity ${affinityId} resolves to multiple workspace paths`);
+        }
+        extendRetention(persisted, input.affinity.retainUntil);
+        persisted.workspaceId = input.workspaceId;
+        persisted.cwd = input.workspaceCwd;
+      } else {
+        persisted = {
+          target,
+          workspaceId: input.workspaceId,
+          cwd: input.workspaceCwd,
+          retainUntil: input.affinity.retainUntil,
+        };
+        this.state.affinities[affinityId] = persisted;
+      }
+      this.persist();
+      this.arm(affinityId);
+      await this.options.ensureWorkspace(input.workspaceId);
+    });
+  }
+
   /** Called after an affinity-owned agent is archived. */
   async release(affinityId: string): Promise<void> {
     if (this.disposed) return;
@@ -334,6 +373,55 @@ export class WorkspaceAffinityManager {
       return undefined;
     });
     return result;
+  }
+}
+
+/**
+ * Keeps affinity retention alive at daemon scope rather than relationship-authority scope.
+ * Persisted daemon ids are discovered on startup so a disconnected or revoked relationship can
+ * still finish its previously acknowledged auto-archive leases.
+ */
+export class WorkspaceAffinityManagerPool {
+  private readonly managers = new Map<string, WorkspaceAffinityManager>();
+  private started = false;
+  private disposed = false;
+
+  constructor(private readonly options: Omit<WorkspaceAffinityManagerOptions, "daemonId">) {}
+
+  start(): void {
+    this.requireActive();
+    if (this.started) return;
+    this.started = true;
+    const executionsDirectory = path.join(this.options.paseoHome, "hub-executions");
+    if (!existsSync(executionsDirectory)) return;
+    for (const entry of readdirSync(executionsDirectory, { withFileTypes: true })) {
+      if (
+        entry.isDirectory() &&
+        existsSync(path.join(executionsDirectory, entry.name, FILE_NAME))
+      ) {
+        this.forDaemon(entry.name);
+      }
+    }
+  }
+
+  forDaemon(daemonId: string): WorkspaceAffinityManager {
+    this.requireActive();
+    const existing = this.managers.get(daemonId);
+    if (existing) return existing;
+    const manager = new WorkspaceAffinityManager({ ...this.options, daemonId });
+    this.managers.set(daemonId, manager);
+    return manager;
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const manager of this.managers.values()) manager.dispose();
+    this.managers.clear();
+  }
+
+  private requireActive(): void {
+    if (this.disposed) throw new Error("Workspace affinity manager pool is no longer active");
   }
 }
 

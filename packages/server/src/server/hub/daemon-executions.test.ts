@@ -66,6 +66,27 @@ test("matching workspace affinity reuses an active workspace and archives only t
   expect(await hub.archivedWorkspaceAt(workspaceId)).toBeNull();
 });
 
+test("relationship disconnect keeps daemon-owned affinity retention cleanup active", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("retired-affinity", "retired-affinity-execution", {
+    workspaceAffinity: {
+      key: "discord-thread-retired",
+      retainUntil: "2026-07-13T00:01:00.000Z",
+      autoArchive: true,
+    },
+  });
+  const created = await hub.ownedCreateResult("retired-affinity");
+  if (created.type !== "hub.execution.agent.create.response" || !created.payload.agentId) {
+    throw new Error("Expected affinity-owned agent");
+  }
+  const workspaceId = await hub.ownedWorkspaceId(created.payload.agentId);
+
+  await hub.disconnect(true);
+  await hub.advanceWorkspaceAffinityBy(60_000);
+
+  await expect(hub.workspaceArchivedBecomes(workspaceId)).resolves.toEqual(expect.any(String));
+}, 10_000);
+
 test("Hub MCP configuration reaches the provider alongside Paseo MCP without entering snapshots", async () => {
   const hub = await HubRelationshipHarness.startWithAgentMcp();
   await hub.beginConnect().result;
@@ -277,6 +298,37 @@ test("replaying a pre-affinity execution does not acknowledge an unapplied affin
   });
   expect(replay.payload).not.toHaveProperty("workspaceAffinityApplied");
   expect(hub.executionProviderCreations()).toBe(executionProviderCreations);
+});
+
+test("replay repairs a provisional mapping before acknowledging affinity", async () => {
+  const hub = await launchRelationship();
+  const affinity = {
+    key: "github-pr-crash-recovery",
+    retainUntil: "2099-08-06T12:02:00.000Z",
+    autoArchive: true,
+  };
+  hub.beginOwnedCreate("affinity-before-crash", "affinity-crash-execution", {
+    workspaceAffinity: affinity,
+  });
+  const original = await hub.ownedCreateResult("affinity-before-crash");
+  if (original.type !== "hub.execution.agent.create.response" || !original.payload.agentId) {
+    throw new Error("Expected affinity-owned agent");
+  }
+  const workspaceId = await hub.ownedWorkspaceId(original.payload.agentId);
+  await hub.makeWorkspaceAffinityMappingProvisional(affinity.key);
+
+  const replay = await hub.reconstructAffinityAndReplay("affinity-crash-execution", affinity);
+
+  expect(replay).toMatchObject({
+    executionId: "affinity-crash-execution",
+    agent: { id: original.payload.agentId },
+    workspaceAffinityApplied: true,
+  });
+  expect(hub.workspaceAffinityMapping(affinity.key)).toMatchObject({
+    workspaceId,
+    cwd: original.payload.agent?.cwd,
+    retainUntil: affinity.retainUntil,
+  });
 });
 
 test("removing a daemon-owned agent removes its execution association", async () => {

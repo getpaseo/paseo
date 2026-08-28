@@ -226,7 +226,10 @@ import {
   type HubRelationshipRemote,
 } from "./hub/relationship-remote.js";
 import { DaemonExecutions } from "./hub/daemon-executions.js";
-import { WorkspaceAffinityManager, type WorkspaceAffinityClock } from "./hub/workspace-affinity.js";
+import {
+  WorkspaceAffinityManagerPool,
+  type WorkspaceAffinityClock,
+} from "./hub/workspace-affinity.js";
 import { PluginService } from "./plugins/index.js";
 import { ManagedPluginSources } from "./plugins/managed-source.js";
 
@@ -1219,6 +1222,14 @@ export async function createPaseoDaemon(
       killTerminalsForWorkspace({ terminalManager, sessionLogger: logger }, workspaceId),
     logger,
   });
+  const hubWorkspaceAffinityManagers = new WorkspaceAffinityManagerPool({
+    paseoHome: config.paseoHome,
+    agentStorage,
+    ensureWorkspace: ensureHubAffinityWorkspaceExternal,
+    archiveWorkspace: archiveWorkspaceByIdExternal,
+    logger,
+    clock: dependencies.hubWorkspaceAffinityClock,
+  });
   const hubRelationships = new HubRelationshipController({
     paseoHome: config.paseoHome,
     hostname: getHostname(),
@@ -1243,15 +1254,7 @@ export async function createPaseoDaemon(
         archiveAgent: (agentId) =>
           archiveAgentCommand({ agentManager, agentStorage, logger }, agentId),
         archiveWorkspace: archiveWorkspaceByIdExternal,
-        workspaceAffinities: new WorkspaceAffinityManager({
-          paseoHome: config.paseoHome,
-          daemonId,
-          agentStorage,
-          ensureWorkspace: ensureHubAffinityWorkspaceExternal,
-          archiveWorkspace: archiveWorkspaceByIdExternal,
-          logger,
-          clock: dependencies.hubWorkspaceAffinityClock,
-        }),
+        workspaceAffinities: hubWorkspaceAffinityManagers.forDaemon(daemonId),
         cleanupFailedCreate: (input) =>
           hubAgentLifecycle.cleanupCreatedWorktreeAfterFailedAgentCreate(input),
       }),
@@ -1712,6 +1715,7 @@ export async function createPaseoDaemon(
             daemonConfigStore.onFieldChange("relay.enabled", (value) => {
               relayRuntime?.setEnabled(value === true);
             });
+            hubWorkspaceAffinityManagers.start();
             await hubRelationships.start();
           };
 
@@ -1735,6 +1739,7 @@ export async function createPaseoDaemon(
       speechService.start();
       scriptHealthMonitor.start();
     } catch (error) {
+      hubWorkspaceAffinityManagers.dispose();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
       if (mainStarted) {
@@ -1748,6 +1753,7 @@ export async function createPaseoDaemon(
   const stop = async () => {
     await pluginRuntime.stopAllPlugins();
     await hubRelationships.stop();
+    hubWorkspaceAffinityManagers.dispose();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
     // Freeze both ingress and registration before taking the agent closure snapshot.
