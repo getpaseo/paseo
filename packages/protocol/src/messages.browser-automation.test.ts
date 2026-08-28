@@ -12,6 +12,12 @@ import {
 
 describe("browser automation protocol integration", () => {
   const browserId = "11111111-1111-4111-8111-111111111111";
+  const viewerRequest = (command: unknown) =>
+    SessionInboundMessageSchema.parse({
+      type: "browser.tab.execute.request",
+      requestId: "req-1",
+      command,
+    });
 
   test("browser host capability parses supported commands in hello", () => {
     expect(
@@ -154,6 +160,50 @@ describe("browser automation protocol integration", () => {
     });
 
     expect(parsed.type).toBe("browser.automation.execute.response");
+  });
+
+  test("a viewer may drive a mirrored tab", () => {
+    expect(
+      viewerRequest({
+        command: "input_at",
+        args: { browserId, event: { kind: "click", x: 10, y: 20 } },
+      }),
+    ).toMatchObject({ type: "browser.tab.execute.request" });
+  });
+
+  test.each([
+    { command: "screencast_start", args: { browserId, slot: 0 } },
+    { command: "screencast_stop", args: { browserId } },
+    { command: "evaluate", args: { browserId, function: "() => document.title" } },
+    { command: "upload", args: { browserId, ref: "@e1", filePaths: ["/tmp/a.png"] } },
+    { command: "snapshot", args: { browserId } },
+  ])("a viewer cannot execute $command", (command) => {
+    expect(() => viewerRequest(command)).toThrow();
+  });
+
+  test("input_at separates a complete click from a single pointer phase", () => {
+    expect(() =>
+      viewerRequest({
+        command: "input_at",
+        args: { browserId, event: { kind: "pointer", x: 10, y: 20 } },
+      }),
+    ).toThrow();
+
+    const parsed = viewerRequest({
+      command: "input_at",
+      args: {
+        browserId,
+        event: { kind: "pointer", phase: "down", x: 10, y: 20 },
+      },
+    });
+
+    expect(parsed).toMatchObject({
+      command: {
+        args: {
+          event: { kind: "pointer", phase: "down", button: "left", clickCount: 1, modifiers: [] },
+        },
+      },
+    });
   });
 
   test("mutable daemon config defaults browser tools off and accepts opt-in patches", () => {

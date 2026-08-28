@@ -513,6 +513,10 @@ export const en = {
         title: "Browser is desktop-only",
         subtitle: "Open this workspace in Electron to use the built-in browser.",
       },
+      mirror: {
+        keyboard: "Mirrored browser keyboard",
+        connecting: "Connecting to the browser on the host…",
+      },
       session: "Browser session {{browserId}}",
       controls: {
         back: "Back",
@@ -540,9 +544,11 @@ export const en = {
       devices: {
         label: "Device size",
         responsive: "Responsive",
+        landscape: "Landscape",
       },
       errors: {
         failedToLoad: "Failed to load page",
+        openTabFailed: "Unable to open a tab on the host",
         invalidUrl: "Invalid browser URL",
         unsupportedProtocol: "Blocked unsupported browser URL: {{protocol}}",
       },

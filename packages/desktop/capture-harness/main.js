@@ -1422,6 +1422,218 @@ async function attachAutomationDebugger(guest) {
   return (command, params = {}) => guest.debugger.sendCommand(command, params);
 }
 
+const SUSTAINED_STREAM_MS = 2000,
+  STOP_SETTLE_MS = 250,
+  MIN_SUSTAINED_FRAMES = 5;
+
+async function runScreencastGroup() {
+  const outputDir = path.join(OUT_DIR, "screencast");
+  const state = PERMANENT_PARKING_STATES.find((entry) => entry.code === "P1");
+  const variant = PERMANENT_THROTTLING_VARIANTS.find((entry) => entry.code === "attach-off");
+  await fsp.rm(outputDir, { recursive: true, force: true });
+  ensureDirSync(outputDir);
+
+  const { win, tracker } = await createPermanentHarnessWindow(state, variant);
+  let guest;
+  let send;
+  let streaming = false;
+  let listener;
+  try {
+    ({ guest } = await appendPermanentWebview({
+      win,
+      tracker,
+      state,
+      sourceUrl: targetUrlForVariant(state, variant, "screencast", "viewport", 0),
+    }));
+    await waitForGuestLoad(guest);
+    const guestMetrics = await readGuestMetrics(guest);
+    if (guestMetrics.innerWidth !== VIEWPORT_WIDTH || guestMetrics.innerHeight !== VIEWPORT_HEIGHT)
+      fail(
+        `screencast guest viewport inner=${guestMetrics.innerWidth}x${guestMetrics.innerHeight} expected=${VIEWPORT_WIDTH}x${VIEWPORT_HEIGHT}`,
+      );
+
+    send = await attachAutomationDebugger(guest);
+    const frames = [],
+      frameWaiters = [],
+      ackPromises = [],
+      ackErrors = [];
+    listener = (_event, method, params = {}) => {
+      if (method !== "Page.screencastFrame") return;
+      frames.push(params);
+      ackPromises.push(
+        send("Page.screencastFrameAck", { sessionId: params.sessionId }).catch((error) =>
+          ackErrors.push(error instanceof Error ? error.message : String(error)),
+        ),
+      );
+      for (let index = frameWaiters.length - 1; index >= 0; index -= 1) {
+        const waiter = frameWaiters[index];
+        const frame = frames.slice(waiter.index).find(waiter.predicate);
+        if (frame) frameWaiters.splice(index, 1)[0].resolve(frame);
+      }
+    };
+    guest.debugger.on("message", listener);
+
+    const waitForFrame = async (index, label, predicate = () => true) => {
+      const existingFrame = frames.slice(index).find(predicate);
+      if (existingFrame) return existingFrame;
+      try {
+        return await withTimeout(
+          new Promise((resolve) => frameWaiters.push({ index, predicate, resolve })),
+          `screencast ${label} frame`,
+        );
+      } catch (error) {
+        fail(
+          `screencast ${label} frameCount=${frames.length} error=${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    };
+    const recordFrame = async (frame, phase) => {
+      const image = nativeImage.createFromBuffer(Buffer.from(frame.data, "base64"));
+      const size = image.getSize();
+      const analysis = analyzeImage(
+        image,
+        { width: size.width, height: size.height, minBrightRatio: 0.65 },
+        guestMetrics,
+      );
+      const outputPath = path.join(outputDir, `${phase}.png`);
+      if (!image.isEmpty()) await saveImage(image, outputPath);
+      const logicalSize = `${frame.metadata?.deviceWidth || 0}x${frame.metadata?.deviceHeight || 0}`;
+      let failure = "";
+      if (image.isEmpty()) failure = "empty JPEG";
+      else if (
+        frame.metadata?.deviceWidth !== guestMetrics.innerWidth ||
+        frame.metadata?.deviceHeight !== guestMetrics.innerHeight
+      )
+        failure = `logical size ${logicalSize} did not match guest viewport ${guestMetrics.innerWidth}x${guestMetrics.innerHeight}`;
+      else if (analysis.brightRatio < 0.65)
+        failure = `bright ratio ${analysis.brightRatio.toFixed(4)} was below 0.6500`;
+      else if (!analysis.textNonUniform) failure = "text=false";
+      if (failure)
+        fail(
+          `screencast ${phase} size=${analysisSize(analysis)} logical=${logicalSize} bright=${analysis.brightRatio.toFixed(4)} text=${analysis.textNonUniform} error=${failure} file=${image.isEmpty() ? "none" : outputPath}`,
+        );
+      pass(
+        `screencast ${phase} size=${analysisSize(analysis)} logical=${logicalSize} bright=${analysis.brightRatio.toFixed(4)} text=${analysis.textNonUniform} file=${outputPath}`,
+      );
+      return {
+        group: "screencast",
+        phase,
+        sessionId: frame.sessionId,
+        logicalWidth: frame.metadata.deviceWidth,
+        logicalHeight: frame.metadata.deviceHeight,
+        jpegWidth: size.width,
+        jpegHeight: size.height,
+        outputPath,
+        analysis: summarizeAnalysis(analysis),
+        pass: true,
+      };
+    };
+
+    const options = {
+      format: "jpeg",
+      quality: 60,
+      maxWidth: VIEWPORT_WIDTH,
+      maxHeight: VIEWPORT_HEIGHT,
+      everyNthFrame: 1,
+    };
+    await send("Page.startScreencast", options);
+    streaming = true;
+    const initialFrame = await waitForFrame(0, "initial");
+    const results = [await recordFrame(initialFrame, "initial")];
+
+    const frameCountBeforeMutation = frames.length;
+    await guest.executeJavaScript(
+      `new Promise((resolve) => {
+        document.querySelector(".label").textContent = "PASEO SCREENCAST UPDATED";
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      })`,
+      true,
+    );
+    const mutatedFrame = await waitForFrame(
+      frameCountBeforeMutation,
+      "mutated",
+      (frame) => frame.data !== initialFrame.data,
+    );
+    results.push(await recordFrame(mutatedFrame, "mutated"));
+
+    const sustainedStartIndex = frames.length;
+    const sustainedStartedAt = Date.now();
+    await guest.executeJavaScript(
+      `new Promise((resolve) => {
+        const label = document.querySelector(".label");
+        const startedAt = Date.now();
+        const tick = () => {
+          label.textContent = "PASEO SCREENCAST " + (Date.now() - startedAt);
+          if (Date.now() - startedAt < ${SUSTAINED_STREAM_MS}) requestAnimationFrame(tick);
+          else resolve();
+        };
+        requestAnimationFrame(tick);
+      })`,
+      true,
+    );
+    const sustainedElapsedMs = Date.now() - sustainedStartedAt;
+    const sustainedFrames = frames.slice(sustainedStartIndex);
+    if (sustainedFrames.length < MIN_SUSTAINED_FRAMES)
+      fail(
+        `screencast sustained frames=${sustainedFrames.length} over ${sustainedElapsedMs}ms was below ${MIN_SUSTAINED_FRAMES}`,
+      );
+    const sustainedBytes = sustainedFrames.map(
+      (frame) => Buffer.from(frame.data, "base64").byteLength,
+    );
+    const sustainedFps = (sustainedFrames.length / sustainedElapsedMs) * 1000;
+    const meanFrameBytes = Math.round(
+      sustainedBytes.reduce((sum, bytes) => sum + bytes, 0) / sustainedBytes.length,
+    );
+    pass(
+      `screencast sustained frames=${sustainedFrames.length} elapsed=${sustainedElapsedMs}ms fps=${sustainedFps.toFixed(1)} meanFrameBytes=${meanFrameBytes}`,
+    );
+    results.push(await recordFrame(sustainedFrames.at(-1), "sustained"));
+
+    await send("Page.stopScreencast");
+    streaming = false;
+    await delay(STOP_SETTLE_MS);
+    const stoppedFrameCount = frames.length;
+    await guest.executeJavaScript(
+      `document.querySelector(".sub").textContent = "SCREENCAST STOPPED"`,
+      true,
+    );
+    await delay(500);
+    if (frames.length !== stoppedFrameCount)
+      fail(`screencast received ${frames.length - stoppedFrameCount} frame(s) after stop`);
+    guest.debugger.removeListener?.("message", listener);
+    listener = null;
+    await Promise.all(ackPromises);
+    if (ackErrors.length > 0) fail(`screencast frame ack failed: ${ackErrors.join("; ")}`);
+    pass(`screencast stopped frameCount=${stoppedFrameCount} framesAfterStop=0`);
+
+    const sustained = {
+      frames: sustainedFrames.length,
+      elapsedMs: sustainedElapsedMs,
+      fps: Number(sustainedFps.toFixed(2)),
+      meanFrameBytes,
+    };
+    const evidence = {
+      generatedAt: new Date().toISOString(),
+      options,
+      guestMetrics,
+      frameCount: stoppedFrameCount,
+      framesAfterStop: 0,
+      sustained,
+      results,
+    };
+    await fsp.writeFile(
+      path.join(outputDir, "results.json"),
+      `${JSON.stringify(evidence, null, 2)}\n`,
+    );
+    return results;
+  } finally {
+    if (streaming && send) await send("Page.stopScreencast").catch(() => {});
+    if (guest && listener) guest.debugger.removeListener?.("message", listener);
+    if (guest?.debugger.isAttached()) guest.debugger.detach();
+    await closeHarnessWindow(win);
+  }
+}
+
 async function automationRefPoint(guest, ref, fingerprint) {
   const result = await guest.executeJavaScript(
     String.raw`(async () => {
@@ -2636,9 +2848,14 @@ async function runBrowserProfileGroup() {
 async function main() {
   ensureDirSync(OUT_DIR);
   if (
-    !["all", "existing", "permanent-parking", "automation", "browser-profile"].includes(
-      HARNESS_GROUP,
-    )
+    ![
+      "all",
+      "existing",
+      "permanent-parking",
+      "screencast",
+      "automation",
+      "browser-profile",
+    ].includes(HARNESS_GROUP)
   ) {
     fail(`unknown harness group ${HARNESS_GROUP}`);
   }
@@ -2671,6 +2888,12 @@ async function main() {
       )}\n`,
     );
     pass(`capture harness automation complete output=${OUT_DIR}`);
+    return;
+  }
+
+  if (HARNESS_GROUP === "screencast") {
+    await runScreencastGroup();
+    pass(`capture harness screencast complete output=${path.join(OUT_DIR, "screencast")}`);
     return;
   }
 

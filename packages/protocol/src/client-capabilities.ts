@@ -27,7 +27,14 @@ export const CLIENT_CAPS = {
   // COMPAT(timelineReplacementInvalidation): added in v0.5.0, remove legacy
   // reconstructed timeline replay after 2027-02-21 once the client floor supports invalidation.
   timelineReplacementInvalidation: "timeline_replacement_invalidation",
+  // The host end of browser automation: this client owns browser tabs and can
+  // run automation commands against them. Its value is the host's command list.
   browserHost: "browser_host",
+  // COMPAT(browserMirror): added in v0.6.0. The viewer end: this client parses
+  // `browser.tabs.changed`. Older apps have no branch for it, so the daemon
+  // pushes mirror messages only to clients that advertise this. Remove the gate
+  // after 2027-09-01 once the supported client floor is >= v0.6.0.
+  browserMirror: "browser_mirror",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];

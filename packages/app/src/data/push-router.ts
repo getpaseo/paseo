@@ -5,6 +5,7 @@ import type {
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
+import { readWorkspaceBrowsersQueryWorkspaceId, type WorkspaceBrowserTabs } from "@/data/browsers";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
@@ -26,12 +27,14 @@ type SubscribeCheckoutDiffResponseMessage = Extract<
 >;
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
+type BrowserTabsChangedMessage = Extract<SessionOutboundMessage, { type: "browser.tabs.changed" }>;
 type ServerDataEventType =
   | "providers_snapshot_update"
   | "checkout_diff_update"
   | "subscribe_checkout_diff_response"
   | "status"
-  | "terminals_changed";
+  | "terminals_changed"
+  | "browser.tabs.changed";
 type CheckoutDiffResponsePayload = SubscribeCheckoutDiffResponseMessage["payload"];
 type CheckoutDiffCachePayload = Omit<CheckoutDiffResponsePayload, "subscriptionId">;
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
@@ -130,6 +133,14 @@ const RECONNECT_REPAIR_POLICIES: ReconnectRepairPolicy[] = [
     invalidate: ({ queryClient, serverId }) => {
       void queryClient.invalidateQueries({
         predicate: (query) => isQueryForServer(query.queryKey, "terminals", serverId),
+      });
+    },
+  },
+  {
+    domain: "workspaceBrowsers",
+    invalidate: ({ queryClient, serverId }) => {
+      void queryClient.invalidateQueries({
+        predicate: (query) => isQueryForServer(query.queryKey, "browsers", serverId),
       });
     },
   },
@@ -320,6 +331,13 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
       message,
     });
   });
+  const unsubscribeBrowserTabsChanged = input.client.on("browser.tabs.changed", (message) => {
+    applyBrowserTabsChanged({
+      queryClient: input.queryClient,
+      serverId: input.serverId,
+      message,
+    });
+  });
   let reconnectSubscriptionRepairs = reconnectSubscriptionRepairsByServerId.get(input.serverId);
   if (!reconnectSubscriptionRepairs) {
     reconnectSubscriptionRepairs = new Set();
@@ -341,6 +359,7 @@ export function mountServerDataPushRouter(input: PushRouterInput): () => void {
     unsubscribeCheckoutDiffUpdate();
     unsubscribeCheckoutDiffResponse();
     unsubscribeTerminalsChanged();
+    unsubscribeBrowserTabsChanged();
     for (const subscriptionId of activeCheckoutDiffSubscriptions.keys()) {
       unsubscribeCheckoutDiff(input.client, subscriptionId);
     }
@@ -533,6 +552,27 @@ function applyTerminalsChanged(input: {
       terminals: matchingTerminals,
       requestId: current?.requestId ?? `terminals-changed-${Date.now()}`,
     }));
+  }
+}
+
+/**
+ * Browser tabs are not subscription-scoped: the daemon pushes every tab it can
+ * see, and each workspace query keeps the ones that belong to it.
+ */
+function applyBrowserTabsChanged(input: {
+  queryClient: QueryClient;
+  serverId: string;
+  message: BrowserTabsChangedMessage;
+}): void {
+  for (const query of input.queryClient.getQueryCache().getAll()) {
+    const workspaceId = readWorkspaceBrowsersQueryWorkspaceId(query.queryKey, input.serverId);
+    if (workspaceId === null || query.getObserversCount() === 0) {
+      continue;
+    }
+    const workspaceTabs = input.message.payload.tabs.filter(
+      (tab) => tab.workspaceId === workspaceId,
+    );
+    input.queryClient.setQueryData<WorkspaceBrowserTabs>(query.queryKey, workspaceTabs);
   }
 }
 

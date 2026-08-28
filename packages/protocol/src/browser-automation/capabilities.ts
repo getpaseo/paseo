@@ -36,6 +36,24 @@ export const BrowserAutomationHostCapabilitySchema = z
 
 export type BrowserAutomationHostCapability = z.infer<typeof BrowserAutomationHostCapabilitySchema>;
 
+/**
+ * What a host must be able to do before the daemon offers a mirror of its tabs.
+ * A host that only drives an agent registers without these, and its tabs stay
+ * out of the mirror UI rather than reaching a subscribe that cannot succeed.
+ */
+export const BROWSER_MIRROR_COMMAND_NAMES = [
+  "input_at",
+  "screencast_start",
+  "screencast_stop",
+] as const satisfies readonly BrowserAutomationCommandName[];
+
+export function supportsBrowserMirror(
+  supportedCommands: Iterable<BrowserAutomationCommandName>,
+): boolean {
+  const available = new Set<BrowserAutomationCommandName>(supportedCommands);
+  return BROWSER_MIRROR_COMMAND_NAMES.every((command) => available.has(command));
+}
+
 function isKnownBrowserAutomationCommandName(value: string): value is BrowserAutomationCommandName {
   return KNOWN_BROWSER_AUTOMATION_COMMAND_NAMES.has(value);
 }

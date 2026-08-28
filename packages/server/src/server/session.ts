@@ -29,6 +29,16 @@ import type {
 import { TerminalSessionController } from "../terminal/terminal-session-controller.js";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
+import type { BrowserTabExecuteRequest } from "@getpaseo/protocol/browser-automation/client-command";
+import type {
+  BrowserScreencastSubscribeRequest,
+  BrowserScreencastUnsubscribeRequest,
+} from "@getpaseo/protocol/browser-automation/screencast";
+import type { BrowserToolsBroker } from "./browser-tools/broker.js";
+import type {
+  BrowserScreencastRegistry,
+  BrowserScreencastViewer,
+} from "./browser-tools/screencast.js";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import { describeAgentHistoryMatches, rankAgentHistoryCandidates } from "./agent-history-search.js";
@@ -441,6 +451,8 @@ export interface SessionOptions {
   onMessageToSource?: (source: object, msg: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
   onBinaryMessageToSource?: (source: object, frame: Uint8Array) => Promise<void>;
+  /** Settles once the frame has left the outbound queue of the socket that subscribed. */
+  onScreencastFrame?: (source: object, frame: Uint8Array) => Promise<void>;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
@@ -500,6 +512,8 @@ export interface SessionOptions {
   sttLanguage?: string;
   tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
+  browserToolsBroker?: BrowserToolsBroker;
+  browserScreencast?: BrowserScreencastRegistry;
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
   hubExecutionAgents?: HubExecutionAgents;
@@ -664,6 +678,9 @@ export class Session {
   private readonly onBinaryMessageToSource:
     | ((source: object, frame: Uint8Array) => Promise<void>)
     | null;
+  private readonly onScreencastFrame:
+    | ((source: object, frame: Uint8Array) => Promise<void>)
+    | undefined;
   private readonly getTransportBufferedAmount: () => number | null;
   private readonly onLifecycleIntent: ((intent: SessionLifecycleIntent) => void) | null;
   private readonly onWorkspaceRecovered:
@@ -732,6 +749,16 @@ export class Session {
   private readonly serviceProxyPublicBaseUrl: string | null;
   private readonly resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
   private readonly terminalController: TerminalSessionController;
+  private readonly browserToolsBroker: BrowserToolsBroker | undefined;
+  private readonly browserScreencast: BrowserScreencastRegistry | undefined;
+  /**
+   * One viewer per socket. Several app windows share a client id and land on one
+   * session, so a viewer keyed by session would let one window's unsubscribe
+   * stop the stream a sibling window is still showing, and push every JPEG to
+   * windows that never subscribed.
+   */
+  private readonly screencastViewersBySource = new Map<object, BrowserScreencastViewer>();
+  private readonly defaultScreencastSource = {};
   private inflightRequests = 0;
   private peakInflightRequests = 0;
   private readonly workspaceSetupSnapshots: Map<string, WorkspaceSetupSnapshot>;
@@ -760,6 +787,7 @@ export class Session {
       onMessageToSource,
       onBinaryMessage,
       onBinaryMessageToSource,
+      onScreencastFrame,
       getTransportBufferedAmount,
       onLifecycleIntent,
       onWorkspaceRecovered,
@@ -788,6 +816,8 @@ export class Session {
       sttLanguage,
       tts,
       terminalManager,
+      browserToolsBroker,
+      browserScreencast,
       providerSnapshotManager,
       providerUsageService,
       serviceProxy,
@@ -816,6 +846,7 @@ export class Session {
     this.onMessageToSource = onMessageToSource ?? null;
     this.onBinaryMessage = onBinaryMessage ?? null;
     this.onBinaryMessageToSource = onBinaryMessageToSource ?? null;
+    this.onScreencastFrame = onScreencastFrame;
     this.getTransportBufferedAmount = getTransportBufferedAmount ?? (() => 0);
     this.onLifecycleIntent = onLifecycleIntent ?? null;
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
@@ -985,6 +1016,8 @@ export class Session {
       : null;
     this.daemonConfigStore = daemonConfigStore;
     this.terminalManager = terminalManager;
+    this.browserToolsBroker = browserToolsBroker;
+    this.browserScreencast = browserScreencast;
     this.terminalController = new TerminalSessionController({
       terminalManager,
       emit: (msg) => this.emit(msg),
@@ -1942,7 +1975,7 @@ export class Session {
       this.dispatchPluginMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchScheduleMessage(msg) ??
-      this.dispatchMiscMessage(msg);
+      this.dispatchMiscMessage(msg, source);
     if (promise) await promise;
   }
 
@@ -2576,6 +2609,130 @@ export class Session {
     }
   }
 
+  private dispatchBrowserMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "browser.tab.execute.request":
+        return this.handleBrowserTabExecuteRequest(msg);
+      case "browser.screencast.subscribe.request":
+        return this.handleBrowserScreencastSubscribeRequest(msg, source);
+      case "browser.screencast.unsubscribe.request":
+        return this.handleBrowserScreencastUnsubscribeRequest(msg, source);
+      default:
+        return undefined;
+    }
+  }
+
+  private async handleBrowserTabExecuteRequest(msg: BrowserTabExecuteRequest): Promise<void> {
+    if (!this.browserToolsBroker) {
+      this.emit({
+        type: "browser.tab.execute.response",
+        payload: {
+          requestId: msg.requestId,
+          ok: false,
+          error: {
+            code: "browser_disabled",
+            message: "Browser tools are disabled on this daemon.",
+            retryable: false,
+          },
+        },
+      });
+      return;
+    }
+    const payload = await this.browserToolsBroker.execute({
+      command: msg.command,
+      // A viewer only ever reaches a host that can serve the mirror it is
+      // driving, so a tab it cannot subscribe to never reaches its UI.
+      hostScope: "mirror",
+      requestId: msg.requestId,
+      ...(msg.workspaceId ? { workspaceId: msg.workspaceId } : {}),
+      ...(msg.cwd ? { cwd: msg.cwd } : {}),
+    });
+    this.emit({ type: "browser.tab.execute.response", payload });
+  }
+
+  private async handleBrowserScreencastSubscribeRequest(
+    msg: BrowserScreencastSubscribeRequest,
+    source?: object,
+  ): Promise<void> {
+    if (!this.browserScreencast) {
+      this.emitForSource(
+        {
+          type: "browser.screencast.subscribe.response",
+          payload: {
+            requestId: msg.requestId,
+            browserId: msg.browserId,
+            error: "Browser tools are disabled on this daemon.",
+          },
+        },
+        source,
+      );
+      return;
+    }
+    const viewer = this.screencastViewer(source);
+    const subscription = await this.browserScreencast.subscribe({
+      viewer,
+      browserId: msg.browserId,
+      workspaceId: msg.workspaceId,
+      maxWidth: msg.maxWidth,
+      maxHeight: msg.maxHeight,
+    });
+    this.emitForSource(
+      {
+        type: "browser.screencast.subscribe.response",
+        payload: subscription.ok
+          ? {
+              requestId: msg.requestId,
+              browserId: msg.browserId,
+              slot: subscription.slot,
+              error: null,
+            }
+          : { requestId: msg.requestId, browserId: msg.browserId, error: subscription.error },
+      },
+      source,
+    );
+    if (subscription.ok && subscription.replay) {
+      void viewer.sendFrame(subscription.replay);
+    }
+  }
+
+  private async handleBrowserScreencastUnsubscribeRequest(
+    msg: BrowserScreencastUnsubscribeRequest,
+    source?: object,
+  ): Promise<void> {
+    const viewer = this.screencastViewersBySource.get(source ?? this.defaultScreencastSource);
+    if (!viewer) {
+      return;
+    }
+    await this.browserScreencast?.unsubscribe({ viewer, browserId: msg.browserId });
+  }
+
+  /** The socket's viewer, created on its first subscribe and dropped when it detaches. */
+  private screencastViewer(source: object | undefined): BrowserScreencastViewer {
+    const key = source ?? this.defaultScreencastSource;
+    const existing = this.screencastViewersBySource.get(key);
+    if (existing) {
+      return existing;
+    }
+    const viewer: BrowserScreencastViewer = {
+      sendFrame: (frame) => this.emitScreencastFrame(key, frame),
+    };
+    this.screencastViewersBySource.set(key, viewer);
+    return viewer;
+  }
+
+  /** A socket that detached takes its subscriptions with it, not the session's. */
+  public async removeScreencastViewer(source: object): Promise<void> {
+    const viewer = this.screencastViewersBySource.get(source);
+    if (!viewer) {
+      return;
+    }
+    this.screencastViewersBySource.delete(source);
+    await this.browserScreencast?.removeViewer(viewer);
+  }
+
   private dispatchTerminalMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
       case "start_workspace_script_request":
@@ -2616,7 +2773,12 @@ export class Session {
     }
   }
 
-  private async dispatchMiscMessage(msg: SessionInboundMessage): Promise<void> {
+  private async dispatchMiscMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
+    const browser = this.dispatchBrowserMessage(msg, source);
+    if (browser) {
+      await browser;
+      return;
+    }
     switch (msg.type) {
       case "list_commands_request":
         await this.handleListCommandsRequest(msg);
@@ -2648,6 +2810,13 @@ export class Session {
   public async handleBinaryFrame(binaryFrame: BinaryFrame): Promise<void> {
     if (binaryFrame.kind === "file_transfer") {
       await this.workspaceFilesSession.handleFileTransferFrame(binaryFrame.frame);
+      return;
+    }
+    if (binaryFrame.kind === "browser_screencast") {
+      this.browserScreencast?.handleFrame({
+        frame: binaryFrame.frame,
+        sourceClientId: this.clientId,
+      });
       return;
     }
     this.terminalController.handleBinaryFrame(binaryFrame.frame);
@@ -7533,6 +7702,18 @@ export class Session {
     this.onMessage(msg);
   }
 
+  /**
+   * Unlike terminal output, a screencast frame is awaited: the registry keeps
+   * one frame in flight per viewer and replaces what is waiting behind it, so
+   * a viewer that falls behind loses frames instead of filling its socket.
+   */
+  private emitScreencastFrame(source: object, frame: Uint8Array): Promise<void> {
+    if (!this.onScreencastFrame) {
+      return Promise.resolve();
+    }
+    return this.onScreencastFrame(source, frame);
+  }
+
   private emitBinary(frame: Uint8Array): void {
     if (!this.onBinaryMessage) {
       return;
@@ -7590,6 +7771,12 @@ export class Session {
     await this.voiceSession.cleanup();
 
     this.terminalController.dispose();
+
+    const screencastViewers = Array.from(this.screencastViewersBySource.values());
+    this.screencastViewersBySource.clear();
+    await Promise.all(
+      screencastViewers.map((viewer) => this.browserScreencast?.removeViewer(viewer)),
+    );
 
     this.checkoutSession.cleanup();
 

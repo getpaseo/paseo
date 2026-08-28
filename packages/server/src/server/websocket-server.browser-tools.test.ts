@@ -1,5 +1,6 @@
 import { createServer, type Server as HTTPServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { hostname } from "node:os";
 
 import type {
   BrowserAutomationCommandName,
@@ -7,7 +8,12 @@ import type {
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import { BROWSER_AUTOMATION_COMMAND_NAMES } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type { BrowserTabsChanged } from "@getpaseo/protocol/browser-automation/client-command";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import type {
+  BrowserScreencastEvent,
+  DaemonClientTrace,
+} from "@getpaseo/client/internal/daemon-client";
 import type pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -29,6 +35,7 @@ interface BrowserToolsDaemonHarness {
   connectBrowserHostClient(
     options?: ConnectBrowserHostClientOptions,
   ): Promise<BrowserHostClientHandle>;
+  connectViewerClient(options?: ConnectViewerClientOptions): Promise<DaemonClient>;
   stop(): Promise<void>;
 }
 
@@ -37,10 +44,18 @@ interface ConnectBrowserHostClientOptions {
   capabilities?: Record<string, unknown>;
 }
 
+interface ConnectViewerClientOptions {
+  understandsBrowserMirror?: boolean;
+  clientId?: string;
+  trace?: DaemonClientTrace;
+}
+
 interface BrowserHostClientHandle {
   clientId: string;
+  announceBrowserTabs(): void;
   nextBrowserRequest(): Promise<BrowserAutomationExecuteRequest>;
   respondToBrowserRequest(response: BrowserAutomationExecuteResponse): void;
+  sendScreencastFrame(input: { slot: number; data: Uint8Array }): void;
   disconnect(): Promise<void>;
 }
 
@@ -52,6 +67,7 @@ interface QueuedBrowserRequests {
 
 const harnesses: BrowserToolsDaemonHarness[] = [];
 const BROWSER_ID = "11111111-1111-4111-8111-111111111111";
+const SECOND_BROWSER_ID = "22222222-2222-4222-8222-222222222222";
 
 afterEach(async () => {
   await Promise.all(harnesses.splice(0).map((harness) => harness.stop()));
@@ -194,7 +210,220 @@ describe("WebSocketServer browser tools wiring", () => {
     expect(harness.broker.getRegisteredClientCount()).toBe(1);
     expect(harness.broker.getPendingRequestCount()).toBe(0);
   });
+
+  it("advertises browser mirroring only while a capable host is registered", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const viewer = await harness.connectViewerClient();
+    expect(viewer.getLastServerInfoMessage()?.features?.browserMirror).toBeUndefined();
+
+    await harness.connectBrowserHostClient({
+      capabilities: browserHostCapabilities(["list_tabs", "navigate"]),
+    });
+    await waitFor(() => harness.broker.getRegisteredClientCount() === 1);
+    expect(viewer.getLastServerInfoMessage()?.features?.browserMirror).toBeUndefined();
+
+    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    await waitFor(() => viewer.getLastServerInfoMessage()?.features?.browserMirror === true);
+    await browserHost.disconnect();
+    await waitFor(() => viewer.getLastServerInfoMessage()?.features?.browserMirror === undefined);
+  });
+
+  it("lists tabs across capable hosts and stamps their identity", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const firstHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const secondHost = await harness.connectBrowserHostClient({ clientId: "browser-host-2" });
+    await harness.connectBrowserHostClient({
+      capabilities: browserHostCapabilities(["input_at", "screencast_start", "screencast_stop"]),
+    });
+    const viewer = await harness.connectViewerClient();
+
+    const commandPromise = viewer.runBrowserCommand({
+      command: { command: "list_tabs", args: {} },
+      workspaceId: "workspace-1",
+    });
+
+    await respondWithTab(firstHost, BROWSER_ID, "https://one.example");
+    await respondWithTab(secondHost, SECOND_BROWSER_ID, "https://two.example");
+
+    await expect(commandPromise).resolves.toMatchObject({
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [
+          { browserId: BROWSER_ID, hostId: "browser-host-1", hostLabel: hostname() },
+          { browserId: SECOND_BROWSER_ID, hostId: "browser-host-2", hostLabel: hostname() },
+        ],
+      },
+    });
+  });
+
+  it("publishes tab changes only to capable viewers, including host removal", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const viewer = await harness.connectViewerClient();
+    const legacyViewer = await harness.connectViewerClient({ understandsBrowserMirror: false });
+
+    const pushes: BrowserTabsChanged[] = [];
+    const legacyPushes: BrowserTabsChanged[] = [];
+    viewer.on("browser.tabs.changed", (message) => pushes.push(message));
+    legacyViewer.on("browser.tabs.changed", (message) => legacyPushes.push(message));
+
+    browserHost.announceBrowserTabs();
+    await respondWithTab(browserHost, BROWSER_ID, "https://one.example");
+    await waitFor(() => pushes.length === 1);
+
+    expect(pushes[0]).toMatchObject({
+      type: "browser.tabs.changed",
+      payload: {
+        tabs: [{ browserId: BROWSER_ID, hostId: "browser-host-1", hostLabel: hostname() }],
+      },
+    });
+    expect(legacyPushes).toEqual([]);
+
+    await browserHost.disconnect();
+    await waitFor(() => pushes.length === 2);
+    expect(pushes[1]).toMatchObject({ payload: { tabs: [] } });
+  });
+
+  it("returns the broker failure payload untouched when no host can run the command", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const viewer = await harness.connectViewerClient();
+
+    await expect(
+      viewer.runBrowserCommand({ command: { command: "list_tabs", args: {} } }),
+    ).resolves.toMatchObject({
+      ok: false,
+      error: { code: "browser_no_host", retryable: true },
+    });
+  });
+
+  it("mirrors screencast frames from the host to a subscribed viewer", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const viewer = await harness.connectViewerClient();
+
+    const frames: BrowserScreencastEvent[] = [];
+    viewer.onBrowserScreencastFrame((event) => frames.push(event));
+    await startScreencast({ viewer, host: browserHost, browserId: BROWSER_ID });
+
+    browserHost.sendScreencastFrame({ slot: 0, data: new TextEncoder().encode("jpeg-bytes") });
+    await waitFor(() => frames.length === 1);
+
+    expect(frames[0]).toMatchObject({
+      browserId: BROWSER_ID,
+      metadata: { deviceWidth: 1280, deviceHeight: 800 },
+    });
+    expect(new TextDecoder().decode(frames[0].data)).toBe("jpeg-bytes");
+
+    viewer.unsubscribeBrowserScreencast(BROWSER_ID);
+    const stopRequest = await browserHost.nextBrowserRequest();
+    expect(stopRequest.command).toEqual({
+      command: "screencast_stop",
+      args: { browserId: BROWSER_ID },
+    });
+  });
+
+  it("ignores a tab announcement from a client that is not a browser host", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const viewer = await harness.connectViewerClient();
+
+    viewer.announceBrowserTabs();
+
+    // A viewer has no tab set to announce, so the daemon must not run the
+    // `list_tabs` fan-out every connected host and client pays for.
+    await expect(browserHost.nextBrowserRequest()).rejects.toThrow(
+      "Timed out waiting for browser automation request",
+    );
+  });
+
+  it("keys viewers per socket when windows share a client id", async () => {
+    const harness = await startBrowserToolsDaemonHarness();
+    const browserHost = await harness.connectBrowserHostClient({ clientId: "browser-host-1" });
+    const clientId = "app-client-1";
+    const firstWindow = await harness.connectViewerClient({ clientId });
+    const secondWindow = await harness.connectViewerClient({ clientId });
+    const unwatched = createScreencastPushCounter();
+    await harness.connectViewerClient({ clientId, trace: unwatched.trace });
+
+    const secondWindowFrames: BrowserScreencastEvent[] = [];
+    secondWindow.onBrowserScreencastFrame((event) => secondWindowFrames.push(event));
+    await startScreencast({ viewer: firstWindow, host: browserHost, browserId: BROWSER_ID });
+    await expect(secondWindow.subscribeBrowserScreencast(BROWSER_ID)).resolves.toMatchObject({
+      browserId: BROWSER_ID,
+      slot: 0,
+    });
+
+    firstWindow.unsubscribeBrowserScreencast(BROWSER_ID);
+
+    await expect(browserHost.nextBrowserRequest()).rejects.toThrow(
+      "Timed out waiting for browser automation request",
+    );
+    browserHost.sendScreencastFrame({ slot: 0, data: new TextEncoder().encode("jpeg-bytes") });
+    await waitFor(() => secondWindowFrames.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(new TextDecoder().decode(secondWindowFrames[0].data)).toBe("jpeg-bytes");
+    expect(unwatched.count()).toBe(0);
+  });
 });
+
+async function respondWithTab(
+  host: BrowserHostClientHandle,
+  browserId: string,
+  url: string,
+): Promise<void> {
+  const request = await host.nextBrowserRequest();
+  host.respondToBrowserRequest({
+    type: "browser.automation.execute.response",
+    payload: {
+      requestId: request.requestId,
+      ok: true,
+      result: {
+        command: "list_tabs",
+        tabs: [{ browserId, url, title: url }],
+      },
+    },
+  });
+}
+
+function createScreencastPushCounter(): { trace: DaemonClientTrace; count: () => number } {
+  let count = 0;
+  return {
+    trace: {
+      isEnabled: () => true,
+      beginSection: (name, args) => {
+        if (name === "paseo.ws.message.inbound" && args?.messageType === "browser_screencast") {
+          count += 1;
+        }
+      },
+      endSection: () => {},
+    },
+    count: () => count,
+  };
+}
+
+async function startScreencast(params: {
+  viewer: DaemonClient;
+  host: BrowserHostClientHandle;
+  browserId: string;
+}): Promise<void> {
+  const subscribePromise = params.viewer.subscribeBrowserScreencast(params.browserId);
+  const startRequest = await params.host.nextBrowserRequest();
+  expect(startRequest.command).toMatchObject({
+    command: "screencast_start",
+    args: { browserId: params.browserId, slot: 0 },
+  });
+  params.host.respondToBrowserRequest({
+    type: "browser.automation.execute.response",
+    payload: {
+      requestId: startRequest.requestId,
+      ok: true,
+      result: { command: "screencast_start", browserId: params.browserId, slot: 0 },
+    },
+  });
+  await expect(subscribePromise).resolves.toMatchObject({ browserId: params.browserId, slot: 0 });
+}
 
 async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarness> {
   const httpServer = createServer();
@@ -228,16 +457,41 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
 
       return {
         clientId: clientId ?? "",
+        announceBrowserTabs: () => client.announceBrowserTabs(),
         nextBrowserRequest: () => requests.next(),
         respondToBrowserRequest: (response) =>
           client.sendBrowserAutomationExecuteResponse(response),
+        sendScreencastFrame: (input) =>
+          client.sendBrowserScreencastFrame({
+            slot: input.slot,
+            metadata: { deviceWidth: 1280, deviceHeight: 800 },
+            data: input.data,
+          }),
         async disconnect() {
+          const remaining = Math.max(0, broker.getRegisteredClientCount() - 1);
           requests.close();
           clients.delete(client);
           await client.close();
-          await waitFor(() => broker.getRegisteredClientCount() === 0);
+          await waitFor(() => broker.getRegisteredClientCount() === remaining);
         },
       };
+    },
+    async connectViewerClient(options = {}) {
+      const understandsBrowserMirror = options.understandsBrowserMirror ?? true;
+      const client = new DaemonClient({
+        url,
+        clientType: "browser",
+        connectTimeoutMs: 500,
+        reconnect: { enabled: false },
+        ...(options.clientId ? { clientId: options.clientId } : {}),
+        ...(options.trace ? { trace: options.trace } : {}),
+        ...(understandsBrowserMirror
+          ? { capabilities: { [CLIENT_CAPS.browserMirror]: true } }
+          : {}),
+      });
+      clients.add(client);
+      await client.connect();
+      return client;
     },
     async stop() {
       await Promise.all(Array.from(clients, (client) => client.close()));

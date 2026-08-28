@@ -202,6 +202,8 @@ file after the daemon confirms persistence.
 > **In-app browser ownership.** Each registered guest records its owning host window. The active browser is keyed by `(host window, workspace)`, and application-menu Reload / Force Reload resolve only within the window Electron supplies to the menu callback. A non-null active update must name a browser owned by that host; a null update clears only that host/workspace. Browser automation continues to target explicit browser ids returned by `browser_new_tab` or `browser_list_tabs`.
 >
 > **Browser keyboard boundary.** Guest pages receive renderer-published shortcuts first. `Cmd/Ctrl+L` and `Cmd/Ctrl+R` are explicit guest-shell reservations; ordinary Paseo shortcuts run only after the page declines them. The sandboxed guest preload runs in every frame so focused iframes use the same boundary, while Node integration remains disabled. Human guest input disables Electron's menu fallback for plain keys. Agent-generated keys use guest `sendInputEvent` with `skipIfUnhandled`, so an unhandled Enter stops at the guest instead of reaching the host composer. Main selects the preload; it exposes no APIs to guest pages.
+>
+> **In-app browser mirroring.** A guest never moves. It stays in the desktop app that owns it, and other clients watch a CDP screencast of it: the host encodes JPEG frames, the daemon fans them out to subscribed viewers without re-encoding, and viewers send input back as commands the host replays through CDP. This keeps one set of cookies and one signed-in session on one machine, which is the whole point — a laptop opening the same site would otherwise get an empty profile. Tabs are announced by their host and adopted into every viewer's tab strip the same way terminals are.
 
 ```text
 Human key -> guest WebContents
@@ -221,7 +223,7 @@ TanStack Router + Cloudflare Workers. Serves paseo.sh.
 
 ## WebSocket protocol
 
-All clients speak the same WebSocket protocol over a single connection that mixes JSON text frames and a small binary framing for terminal streams. Schemas live in `packages/protocol/src/messages.ts`.
+All clients speak the same WebSocket protocol over a single connection that mixes JSON text frames and a small binary framing for terminal streams and mirrored browser frames. Schemas live in `packages/protocol/src/messages.ts`.
 
 **Handshake:**
 

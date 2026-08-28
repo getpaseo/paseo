@@ -6,6 +6,7 @@ import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
 import { daemonPairingOfferQueryKey } from "@/data/daemon-pairing";
 import { providersSnapshotQueryKey } from "@/data/providers-snapshot";
+import { workspaceBrowsersQueryKey } from "@/data/browsers";
 import {
   checkoutDiffPushRoute,
   invalidateServerDataQueriesAfterReconnect,
@@ -24,12 +25,14 @@ type SubscribeCheckoutDiffResponseMessage = Extract<
 >;
 type StatusMessage = Extract<SessionOutboundMessage, { type: "status" }>;
 type TerminalsChangedMessage = Extract<SessionOutboundMessage, { type: "terminals_changed" }>;
+type BrowserTabsChangedMessage = Extract<SessionOutboundMessage, { type: "browser.tabs.changed" }>;
 type RouterMessage =
   | ProvidersSnapshotUpdateMessage
   | CheckoutDiffUpdateMessage
   | SubscribeCheckoutDiffResponseMessage
   | StatusMessage
-  | TerminalsChangedMessage;
+  | TerminalsChangedMessage
+  | BrowserTabsChangedMessage;
 type RouterMessageType = RouterMessage["type"];
 type RouterHandler = (message: RouterMessage) => void;
 type RouterClient = Parameters<typeof mountServerDataPushRouter>[0]["client"];
@@ -63,6 +66,7 @@ function createFakeClient(config: { rejectCheckoutDiffSubscribe?: boolean } = {}
     subscribe_checkout_diff_response: [],
     status: [],
     terminals_changed: [],
+    "browser.tabs.changed": [],
   };
   const subscribeCheckoutDiffCalls: Array<{
     cwd: string;
@@ -531,5 +535,60 @@ describe("server data push router", () => {
     expect(queryClient.getQueryState(diffKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(terminalKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(otherProviderKey)?.isInvalidated).toBe(false);
+  });
+
+  it("routes browser.tabs.changed into the workspace browser tab list", () => {
+    const serverId = "server-1";
+    const workspaceId = "workspace-a";
+    const queryClient = new QueryClient();
+    const fake = createFakeClient();
+    const queryKey = workspaceBrowsersQueryKey(serverId, workspaceId);
+    const observer = new QueryObserver(queryClient, {
+      queryKey,
+      queryFn: skipToken,
+      enabled: true,
+      gcTime: Infinity,
+      staleTime: Infinity,
+    });
+    const unsubscribeObserver = observer.subscribe(() => undefined);
+    const unmount = mountServerDataPushRouter({ client: fake.client, queryClient, serverId });
+
+    fake.emit({
+      type: "browser.tabs.changed",
+      payload: {
+        tabs: [
+          {
+            browserId: "browser-a",
+            workspaceId,
+            url: "https://example.com",
+            title: "Example",
+            isActive: false,
+            isLoading: false,
+          },
+          {
+            browserId: "browser-b",
+            workspaceId: "workspace-b",
+            url: "https://other.example",
+            title: "Other",
+            isActive: false,
+            isLoading: false,
+          },
+        ],
+      },
+    });
+
+    expect(queryClient.getQueryData(queryKey)).toEqual([
+      {
+        browserId: "browser-a",
+        workspaceId,
+        url: "https://example.com",
+        title: "Example",
+        isActive: false,
+        isLoading: false,
+      },
+    ]);
+
+    unsubscribeObserver();
+    unmount();
   });
 });

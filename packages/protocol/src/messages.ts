@@ -60,6 +60,17 @@ import {
 } from "./browser-automation/rpc-schemas.js";
 import { BrowserAutomationHostCapabilitySchema } from "./browser-automation/capabilities.js";
 import {
+  BrowserScreencastSubscribeRequestSchema,
+  BrowserScreencastSubscribeResponseSchema,
+  BrowserScreencastUnsubscribeRequestSchema,
+} from "./browser-automation/screencast.js";
+import {
+  BrowserTabExecuteRequestSchema,
+  BrowserTabExecuteResponseSchema,
+  BrowserTabsAnnounceRequestSchema,
+  BrowserTabsChangedSchema,
+} from "./browser-automation/client-command.js";
+import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
   PaseoMetadataGenerationEntrySchema,
@@ -3141,6 +3152,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceScriptStopRequestSchema,
   SubscribeTerminalRequestSchema,
   UnsubscribeTerminalRequestSchema,
+  BrowserScreencastSubscribeRequestSchema,
+  BrowserScreencastUnsubscribeRequestSchema,
+  BrowserTabExecuteRequestSchema,
+  BrowserTabsAnnounceRequestSchema,
   TerminalInputSchema,
   KillTerminalRequestSchema,
   CaptureTerminalRequestSchema,
@@ -3338,6 +3353,11 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
+        // COMPAT(browserMirror): added in v0.6.0, remove after 2027-09-01 once the
+        // supported client floor always gates browser tabs on this flag. True only
+        // while a host that can serve a mirror — screencast plus viewport input —
+        // is connected; a host registered for agent automation alone does not set it.
+        browserMirror: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -6276,6 +6296,9 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentUpdateSchema,
   HubExecutionAgentStreamSchema,
   BrowserAutomationExecuteRequestSchema,
+  BrowserScreencastSubscribeResponseSchema,
+  BrowserTabExecuteResponseSchema,
+  BrowserTabsChangedSchema,
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,
   PluginLogsGetResponseSchema,
@@ -6951,6 +6974,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
       [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
+      [CLIENT_CAPS.browserMirror]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()

@@ -2,7 +2,13 @@ import type { Rectangle } from "electron";
 import { describe, expect, test, vi } from "vitest";
 import type { TabImage } from "./service.js";
 import { adaptWebContents, HostSnapshotEngineRegistry } from "./ipc.js";
-import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
+import type { BrowserInputEvent } from "./trusted-input.js";
+
+type DebugMessageListener = (
+  event: unknown,
+  method: string,
+  params?: Record<string, unknown>,
+) => void;
 
 class FakeImage implements TabImage {
   public toPNG(): Uint8Array {
@@ -24,9 +30,7 @@ class FakeDebugger {
   public readonly promptDialogs: unknown[] = [];
   public failPromptDrain = false;
   public beforeCommand: ((command: string) => void) | null = null;
-  private messageListener:
-    | ((event: unknown, method: string, params?: Record<string, unknown>) => void)
-    | null = null;
+  private readonly messageListeners = new Set<DebugMessageListener>();
   private detachListener: (() => void) | null = null;
   private readonly blockedCommands: Array<() => void> = [];
 
@@ -75,14 +79,21 @@ class FakeDebugger {
       this.detachListener = listener;
       return;
     }
-    this.messageListener = listener;
+    this.messageListeners.add(listener);
+  }
+
+  public removeListener(event: "message", listener: DebugMessageListener): void {
+    expect(event).toBe("message");
+    this.messageListeners.delete(listener);
   }
 
   public emitMessage(method: string, params?: Record<string, unknown>): void {
-    if (!this.messageListener) {
+    if (this.messageListeners.size === 0) {
       throw new Error("Debugger message listener was not registered");
     }
-    this.messageListener({}, method, params);
+    for (const listener of this.messageListeners) {
+      listener({}, method, params);
+    }
   }
 
   public emitDetach(): void {
@@ -109,7 +120,7 @@ type ConsoleMessageListener = (
 
 class FakeWebContents {
   public readonly debugger = new FakeDebugger();
-  public readonly inputEvents: IsolatedKeyboardInputEvent[] = [];
+  public readonly inputEvents: BrowserInputEvent[] = [];
   public readonly loadedUrls: string[] = [];
   public readonly captures: Array<{
     rect: Rectangle | undefined;
@@ -117,7 +128,7 @@ class FakeWebContents {
   }> = [];
   public readonly invalidations: string[] = [];
   private consoleMessageListener: ConsoleMessageListener | null = null;
-  private destroyedListener: (() => void) | null = null;
+  private readonly destroyedListeners = new Set<() => void>();
   public destroyed = false;
 
   public constructor(private readonly webContentsId: number) {}
@@ -179,7 +190,7 @@ class FakeWebContents {
     this.invalidations.push("invalidate");
   }
 
-  public sendInputEvent(event: IsolatedKeyboardInputEvent): void {
+  public sendInputEvent(event: BrowserInputEvent): void {
     this.inputEvents.push(event);
   }
 
@@ -190,7 +201,7 @@ class FakeWebContents {
 
   public once(event: "destroyed", listener: () => void): void {
     expect(event).toBe("destroyed");
-    this.destroyedListener = listener;
+    this.destroyedListeners.add(listener);
   }
 
   public emitConsoleMessage(input: {
@@ -208,7 +219,10 @@ class FakeWebContents {
   public destroy(): void {
     this.destroyed = true;
     this.debugger.emitDetach();
-    this.destroyedListener?.();
+    for (const listener of this.destroyedListeners) {
+      listener();
+    }
+    this.destroyedListeners.clear();
   }
 }
 
@@ -235,6 +249,23 @@ describe("browser automation IPC adapter", () => {
     expect(contents.inputEvents).toEqual([
       { type: "keyDown", keyCode: "Enter", skipIfUnhandled: true },
     ]);
+  });
+
+  test("subscribes to debugger messages and removes the listener", () => {
+    const contents = new FakeWebContents(33);
+    const tab = adaptWebContents(contents);
+    const messages: Array<{ method: string; params: Record<string, unknown> }> = [];
+
+    const stopListening = tab.onDebugMessage((method, params) => {
+      messages.push({ method, params });
+    });
+    contents.debugger.emitMessage("Page.screencastFrame", { sessionId: 4 });
+    stopListening();
+
+    expect(messages).toEqual([{ method: "Page.screencastFrame", params: { sessionId: 4 } }]);
+    expect(() => contents.debugger.emitMessage("Page.screencastFrame")).toThrow(
+      "Debugger message listener was not registered",
+    );
   });
 
   test("delegates viewport capture to the guest without a renderer prep bridge", async () => {
@@ -645,12 +676,17 @@ describe("browser automation IPC adapter", () => {
 
 class FakeHostWebContents {
   private destroyedListener: (() => void) | null = null;
+  public readonly sent: Array<{ channel: string; payload: unknown }> = [];
 
   public constructor(public readonly id: number) {}
 
   public once(event: "destroyed", listener: () => void): void {
     expect(event).toBe("destroyed");
     this.destroyedListener = listener;
+  }
+
+  public send(channel: string, payload: unknown): void {
+    this.sent.push({ channel, payload });
   }
 
   public destroy(): void {

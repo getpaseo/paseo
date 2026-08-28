@@ -130,6 +130,9 @@ import {
   asUint8Array,
   decodeFileTransferFrame,
   encodeFileTransferFrame,
+  decodeBrowserScreencastFrame,
+  encodeBrowserScreencastFrame,
+  type BrowserScreencastMetadata,
   decodeTerminalStreamFrame,
   FileTransferOpcode,
   TerminalStreamOpcode,
@@ -152,11 +155,20 @@ import {
   normalizeProviderSnapshotUpdateMessage,
   normalizeProvidersSnapshotPayload,
 } from "./compat/normalize-provider-models.js";
+import {
+  BrowserScreencastRouter,
+  type BrowserScreencastEvent,
+} from "./browser-screencast-router.js";
 import { TerminalStreamRouter, type TerminalStreamEvent } from "./terminal-stream-router.js";
 import type {
   BrowserAutomationExecuteRequest,
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type { BrowserScreencastSubscribeResponse } from "@getpaseo/protocol/browser-automation/screencast";
+import type {
+  BrowserTabExecuteRequest,
+  BrowserTabExecuteResponse,
+} from "@getpaseo/protocol/browser-automation/client-command";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -503,6 +515,16 @@ type ListTerminalsPayload = ListTerminalsResponse["payload"];
 type CreateTerminalPayload = CreateTerminalResponse["payload"];
 export type RenameTerminalResult = z.infer<typeof RenameTerminalResponseSchema>["payload"];
 type SubscribeTerminalPayload = SubscribeTerminalResponse["payload"];
+type BrowserScreencastSubscribePayload = BrowserScreencastSubscribeResponse["payload"];
+
+/** `maxWidth`/`maxHeight` are the device pixels the viewer can display. */
+export interface BrowserScreencastSubscribeOptions {
+  workspaceId?: string;
+  maxWidth?: number;
+  maxHeight?: number;
+  requestId?: string;
+}
+type BrowserTabExecutePayload = BrowserTabExecuteResponse["payload"];
 type CloseItemsPayload = CloseItemsResponse["payload"];
 type KillTerminalPayload = KillTerminalResponse["payload"];
 type CaptureTerminalPayload = CaptureTerminalResponse["payload"];
@@ -1095,6 +1117,7 @@ export class DaemonClient {
     { cwd: string; path: string; onUpdate: (version: FileVersion) => void }
   >();
   private readonly terminalStreams = new TerminalStreamRouter();
+  private readonly browserScreencasts = new BrowserScreencastRouter();
   private pendingBinaryFileReads = new Map<string, PendingBinaryFileRead>();
   private activeBinaryFileTransfers = new Map<string, BinaryFileTransferState>();
   private completedBinaryFileReads = new Map<string, FileReadResult>();
@@ -1374,6 +1397,7 @@ export class DaemonClient {
     this.rejectPendingSendQueue(new Error("Daemon client closed"));
     this.rejectPingProbe(new Error("Daemon client closed"));
     this.terminalStreams.clearSlots();
+    this.browserScreencasts.clearSlots();
     this.fileSubscriptions.clear();
     this.lastServerInfoMessage = null;
     if (this.runtimeMetricsInterval) {
@@ -4747,6 +4771,83 @@ export class DaemonClient {
     this.sendSessionMessageStrict(response);
   }
 
+  async subscribeBrowserScreencast(
+    browserId: string,
+    options?: BrowserScreencastSubscribeOptions,
+  ): Promise<BrowserScreencastSubscribePayload> {
+    const resolvedRequestId = this.createRequestId(options?.requestId);
+    const payload = await this.sendCorrelatedRequest({
+      requestId: resolvedRequestId,
+      message: SessionInboundMessageSchema.parse({
+        type: "browser.screencast.subscribe.request",
+        requestId: resolvedRequestId,
+        browserId,
+        ...(options?.workspaceId ? { workspaceId: options.workspaceId } : {}),
+        maxWidth: options?.maxWidth,
+        maxHeight: options?.maxHeight,
+      }),
+      responseType: "browser.screencast.subscribe.response",
+      options: { skipQueue: true },
+    });
+    if (payload.error === null) {
+      this.browserScreencasts.setSlot(browserId, payload.slot);
+    }
+    return payload;
+  }
+
+  unsubscribeBrowserScreencast(browserId: string): void {
+    this.browserScreencasts.removeBrowser(browserId);
+    this.sendSessionMessage({ type: "browser.screencast.unsubscribe.request", browserId });
+  }
+
+  onBrowserScreencastFrame(handler: (event: BrowserScreencastEvent) => void): () => void {
+    return this.browserScreencasts.onEvent(handler);
+  }
+
+  async runBrowserCommand(input: {
+    command: BrowserTabExecuteRequest["command"];
+    workspaceId?: string;
+    cwd?: string;
+    requestId?: string;
+  }): Promise<BrowserTabExecutePayload> {
+    const resolvedRequestId = this.createRequestId(input.requestId);
+    return this.sendCorrelatedRequest({
+      requestId: resolvedRequestId,
+      message: SessionInboundMessageSchema.parse({
+        type: "browser.tab.execute.request",
+        requestId: resolvedRequestId,
+        command: input.command,
+        ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+        ...(input.cwd ? { cwd: input.cwd } : {}),
+      }),
+      responseType: "browser.tab.execute.response",
+      options: { skipQueue: true },
+    });
+  }
+
+  /**
+   * Used by a browser host to tell the daemon its tab set changed. The daemon
+   * answers by pushing `browser.tabs.changed` to every mirror-capable client.
+   */
+  announceBrowserTabs(): void {
+    this.sendSessionMessage({ type: "browser.tabs.announce.request" });
+  }
+
+  /** Used by a browser host to push a captured frame up to the daemon. */
+  sendBrowserScreencastFrame(input: {
+    slot: number;
+    metadata: BrowserScreencastMetadata;
+    data: Uint8Array;
+  }): void {
+    this.sendBinaryFrame(
+      encodeBrowserScreencastFrame({
+        slot: input.slot,
+        metadata: input.metadata,
+        payload: input.data,
+      }),
+    );
+  }
+
   async readProjectConfig(repoRoot: string, requestId?: string): Promise<ReadProjectConfigPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -5769,6 +5870,24 @@ export class DaemonClient {
       return true;
     }
 
+    const screencastFrame = decodeBrowserScreencastFrame(rawBytes);
+    if (screencastFrame) {
+      this.traceInstant("paseo.ws.message.inbound", {
+        envelopeType: "binary",
+        messageType: "browser_screencast",
+        opcode: String(screencastFrame.opcode),
+      });
+      this.consecutiveLivenessFailures = 0;
+      const screencastStartMs = perfNow();
+      this.browserScreencasts.handleFrame(screencastFrame);
+      this.runtimeMetrics?.recordBinaryFrame(
+        "other",
+        rawBytes.byteLength,
+        perfNow() - screencastStartMs,
+      );
+      return true;
+    }
+
     const frame = decodeTerminalStreamFrame(rawBytes);
     if (!frame) {
       return false;
@@ -5932,6 +6051,7 @@ export class DaemonClient {
     this.rejectPendingSendQueue(new Error(reason ?? "Connection lost"));
     this.rejectPingProbe(new Error(reason ?? "Connection lost"));
     this.terminalStreams.clearSlots();
+    this.browserScreencasts.clearSlots();
     this.lastServerInfoMessage = null;
 
     if (wasDisposed) {

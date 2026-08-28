@@ -257,6 +257,13 @@ export interface WorkspaceTabReconcileState {
   explorerSidebarPaneId: string | null;
 }
 
+/** Browser ids reported by the daemon plus ids hosted by this client. */
+export interface WorkspaceBrowsersSnapshot {
+  hydrated: boolean;
+  knownIds: Iterable<string>;
+  liveIds: Iterable<string>;
+}
+
 export interface WorkspaceTabSnapshot {
   agentsHydrated: boolean;
   terminalsHydrated: boolean;
@@ -265,6 +272,8 @@ export interface WorkspaceTabSnapshot {
   knownAgentIds: Iterable<string>;
   knownTerminalIds?: Iterable<string>;
   standaloneTerminalIds: Iterable<string>;
+  /** Absent means this client knows of no browser tabs at all. */
+  browsers?: WorkspaceBrowsersSnapshot;
   hasActivePendingTerminalCreate?: boolean;
   hasActivePendingDraftCreate?: boolean;
 }
@@ -2206,10 +2215,36 @@ function isAgentTab(
   return tab.target.kind === "agent";
 }
 
-function isTerminalTab(
-  tab: WorkspaceTab,
-): tab is WorkspaceTab & { target: { kind: "terminal"; terminalId: string } } {
-  return tab.target.kind === "terminal";
+/** Host-owned tabs adopted and pruned by the same rules. */
+interface EntityTabSync {
+  hydrated: boolean;
+  knownIds: Set<string>;
+  adoptableIds: Set<string>;
+  entityIdOf(tab: WorkspaceTab): string | null;
+  targetFor(entityId: string): WorkspaceTabTarget;
+}
+
+function buildEntityTabSyncs(snapshot: WorkspaceTabSnapshot): EntityTabSync[] {
+  const standaloneTerminalIds = normalizeStringSet(snapshot.standaloneTerminalIds);
+  const browsers = snapshot.browsers;
+  return [
+    {
+      hydrated: snapshot.terminalsHydrated,
+      knownIds: snapshot.knownTerminalIds
+        ? normalizeStringSet(snapshot.knownTerminalIds)
+        : standaloneTerminalIds,
+      adoptableIds: snapshot.hasActivePendingTerminalCreate ? new Set() : standaloneTerminalIds,
+      entityIdOf: (tab) => (tab.target.kind === "terminal" ? tab.target.terminalId : null),
+      targetFor: (terminalId) => ({ kind: "terminal", terminalId }),
+    },
+    {
+      hydrated: browsers?.hydrated ?? false,
+      knownIds: normalizeStringSet(browsers?.knownIds ?? []),
+      adoptableIds: normalizeStringSet(browsers?.liveIds ?? []),
+      entityIdOf: (tab) => (tab.target.kind === "browser" ? tab.target.browserId : null),
+      targetFor: (browserId) => ({ kind: "browser", browserId }),
+    },
+  ];
 }
 
 function openEntityTabWithoutFocusing(input: {
@@ -2283,9 +2318,9 @@ function collapseStaleEntityTabs(input: {
   layout: WorkspaceLayout;
   snapshot: WorkspaceTabSnapshot;
   visibleAgentIds: Set<string>;
-  knownTerminalIds: Set<string>;
+  entitySyncs: EntityTabSync[];
 }): WorkspaceLayout {
-  const { snapshot, visibleAgentIds, knownTerminalIds } = input;
+  const { snapshot, visibleAgentIds, entitySyncs } = input;
   let nextLayout = input.layout;
   for (const tab of collectAllTabs(nextLayout.root)) {
     if (isAgentTab(tab) && snapshot.agentsHydrated && !visibleAgentIds.has(tab.target.agentId)) {
@@ -2294,12 +2329,13 @@ function collapseStaleEntityTabs(input: {
           layout: nextLayout,
           tabId: tab.tabId,
         }) ?? nextLayout;
+      continue;
     }
-    if (
-      isTerminalTab(tab) &&
-      snapshot.terminalsHydrated &&
-      !knownTerminalIds.has(tab.target.terminalId)
-    ) {
+    for (const sync of entitySyncs) {
+      const entityId = sync.entityIdOf(tab);
+      if (!entityId || !sync.hydrated || sync.knownIds.has(entityId)) {
+        continue;
+      }
       nextLayout =
         closeTabInLayout({
           layout: nextLayout,
@@ -2314,16 +2350,14 @@ function addMissingEntityTabs(input: {
   layout: WorkspaceLayout;
   autoOpenAgentIds: Set<string>;
   representedAgentIds: Set<string>;
-  standaloneTerminalIds: Set<string>;
-  hasActivePendingTerminalCreate: boolean;
+  entitySyncs: EntityTabSync[];
   hasActivePendingDraftCreate: boolean;
   explorerSidebarPaneId: string | null;
 }): WorkspaceLayout {
   const {
     autoOpenAgentIds,
     representedAgentIds,
-    standaloneTerminalIds,
-    hasActivePendingTerminalCreate,
+    entitySyncs,
     hasActivePendingDraftCreate,
     explorerSidebarPaneId,
   } = input;
@@ -2331,9 +2365,6 @@ function addMissingEntityTabs(input: {
   const currentEntityTabs = collectAllTabs(nextLayout.root);
   const currentAgentIds = new Set(
     currentEntityTabs.filter(isAgentTab).map((tab) => tab.target.agentId),
-  );
-  const currentTerminalIds = new Set(
-    currentEntityTabs.filter(isTerminalTab).map((tab) => tab.target.terminalId),
   );
 
   const sortedAutoOpenAgentIds = [...autoOpenAgentIds].sort();
@@ -2352,18 +2383,20 @@ function addMissingEntityTabs(input: {
     currentAgentIds.add(agentId);
   }
 
-  const sortedTerminalIds = [...standaloneTerminalIds].sort();
-  if (!hasActivePendingTerminalCreate) {
-    for (const terminalId of sortedTerminalIds) {
-      if (currentTerminalIds.has(terminalId)) {
+  for (const sync of entitySyncs) {
+    const currentEntityIds = new Set(
+      currentEntityTabs.flatMap((tab) => sync.entityIdOf(tab) ?? []),
+    );
+    for (const entityId of [...sync.adoptableIds].sort()) {
+      if (currentEntityIds.has(entityId)) {
         continue;
       }
       nextLayout = openEntityTabWithoutFocusing({
         layout: nextLayout,
-        target: { kind: "terminal", terminalId },
+        target: sync.targetFor(entityId),
         explorerSidebarPaneId,
       });
-      currentTerminalIds.add(terminalId);
+      currentEntityIds.add(entityId);
     }
   }
   return nextLayout;
@@ -2373,14 +2406,15 @@ function seedDraftForEmptyWorkspace(input: {
   layout: WorkspaceLayout;
   snapshot: WorkspaceTabSnapshot;
   activeAgentIds: Set<string>;
-  knownTerminalIds: Set<string>;
+  entitySyncs: EntityTabSync[];
   explorerSidebarPaneId: string | null;
 }): WorkspaceLayout {
   const ready = input.snapshot.agentsHydrated && input.snapshot.terminalsHydrated;
   const creatingContent =
     input.snapshot.hasActivePendingDraftCreate === true ||
     input.snapshot.hasActivePendingTerminalCreate === true;
-  const hasWorkspaceEntities = input.activeAgentIds.size > 0 || input.knownTerminalIds.size > 0;
+  const hasWorkspaceEntities =
+    input.activeAgentIds.size > 0 || input.entitySyncs.some((sync) => sync.knownIds.size > 0);
   const explorerTabIds = new Set(
     input.explorerSidebarPaneId
       ? (findPaneById(input.layout.root, input.explorerSidebarPaneId)?.tabIds ?? [])
@@ -2420,10 +2454,7 @@ export function reconcileWorkspaceTabs(
   const activeAgentIds = normalizeStringSet(snapshot.activeAgentIds);
   const autoOpenAgentIds = normalizeStringSet(snapshot.autoOpenAgentIds);
   const knownAgentIds = normalizeStringSet(snapshot.knownAgentIds);
-  const standaloneTerminalIds = normalizeStringSet(snapshot.standaloneTerminalIds);
-  const knownTerminalIds = snapshot.knownTerminalIds
-    ? normalizeStringSet(snapshot.knownTerminalIds)
-    : standaloneTerminalIds;
+  const entitySyncs = buildEntityTabSyncs(snapshot);
   const visibleAgentIds = applyPinnedAndHidden({
     baseAgentIds: activeAgentIds,
     pinnedAgentIds,
@@ -2481,15 +2512,14 @@ export function reconcileWorkspaceTabs(
     layout: nextLayout,
     snapshot,
     visibleAgentIds,
-    knownTerminalIds,
+    entitySyncs,
   });
 
   nextLayout = addMissingEntityTabs({
     layout: nextLayout,
     autoOpenAgentIds: autoOpenSet,
     representedAgentIds,
-    standaloneTerminalIds,
-    hasActivePendingTerminalCreate: snapshot.hasActivePendingTerminalCreate ?? false,
+    entitySyncs,
     hasActivePendingDraftCreate: snapshot.hasActivePendingDraftCreate ?? false,
     explorerSidebarPaneId: state.explorerSidebarPaneId,
   });
@@ -2498,7 +2528,7 @@ export function reconcileWorkspaceTabs(
     layout: nextLayout,
     snapshot,
     activeAgentIds,
-    knownTerminalIds,
+    entitySyncs,
     explorerSidebarPaneId: state.explorerSidebarPaneId,
   });
 
@@ -2510,8 +2540,5 @@ export function reconcileWorkspaceTabs(
       }) ?? nextLayout;
   }
 
-  return {
-    ...state,
-    layout: nextLayout,
-  };
+  return { ...state, layout: nextLayout };
 }

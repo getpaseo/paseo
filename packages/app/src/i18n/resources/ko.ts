@@ -516,6 +516,10 @@ export const ko: TranslationResources = {
         title: "브라우저는 데스크톱 전용입니다",
         subtitle: "내장 브라우저를 사용하려면 이 워크스페이스를 Electron에서 여세요.",
       },
+      mirror: {
+        keyboard: "미러링된 브라우저 키보드",
+        connecting: "호스트의 브라우저에 연결하는 중…",
+      },
       session: "브라우저 세션 {{browserId}}",
       controls: {
         back: "뒤로",
@@ -543,9 +547,11 @@ export const ko: TranslationResources = {
       devices: {
         label: "장치 크기",
         responsive: "반응형",
+        landscape: "가로 모드",
       },
       errors: {
         failedToLoad: "페이지를 불러오지 못했습니다",
+        openTabFailed: "호스트에서 탭을 열 수 없습니다",
         invalidUrl: "잘못된 브라우저 URL",
         unsupportedProtocol: "지원되지 않는 브라우저 URL을 차단했습니다: {{protocol}}",
       },

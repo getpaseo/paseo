@@ -515,6 +515,10 @@ export const zhCN: TranslationResources = {
         title: "浏览器仅桌面端可用",
         subtitle: "在 Electron 中打开此 workspace 以使用内置浏览器。",
       },
+      mirror: {
+        keyboard: "镜像浏览器键盘",
+        connecting: "正在连接主机上的浏览器…",
+      },
       session: "浏览器会话 {{browserId}}",
       controls: {
         back: "后退",
@@ -542,9 +546,11 @@ export const zhCN: TranslationResources = {
       devices: {
         label: "设备尺寸",
         responsive: "自适应",
+        landscape: "横向",
       },
       errors: {
         failedToLoad: "页面加载失败",
+        openTabFailed: "无法在主机上打开标签页",
         invalidUrl: "浏览器 URL 无效",
         unsupportedProtocol: "已阻止不支持的浏览器 URL：{{protocol}}",
       },

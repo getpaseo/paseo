@@ -5,8 +5,13 @@ import type {
   BrowserAutomationConsoleLogEntry,
   BrowserAutomationDialogEvent,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
-import type { TabContents, BrowserRegistry, TabImage } from "./service.js";
-import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
+import type {
+  BrowserRegistry,
+  BrowserScreencastFrameEvent,
+  TabContents,
+  TabImage,
+} from "./service.js";
+import type { BrowserInputEvent } from "./trusted-input.js";
 import { CdpSessionQueue } from "./cdp-session-queue.js";
 import {
   dialogAcceptValue,
@@ -38,6 +43,7 @@ interface IpcHandlerRegistry {
 
 interface HostWebContents {
   readonly id: number;
+  send(channel: string, payload: unknown): void;
   once(event: "destroyed", listener: () => void): void;
 }
 
@@ -70,11 +76,15 @@ interface WebContentsDebugger {
   isAttached(): boolean;
   attach(protocolVersion?: string): void;
   sendCommand(command: string, params?: Record<string, unknown>): Promise<unknown>;
-  on?(
+  on(
     event: "message",
     listener: (event: unknown, method: string, params?: Record<string, unknown>) => void,
   ): void;
-  on?(event: "detach", listener: () => void): void;
+  on(event: "detach", listener: () => void): void;
+  removeListener(
+    event: "message",
+    listener: (event: unknown, method: string, params?: Record<string, unknown>) => void,
+  ): void;
 }
 
 interface ConsoleMessageEmitter {
@@ -107,7 +117,7 @@ interface BrowserAutomationWebContents extends ConsoleMessageEmitter {
   reload(): void;
   capturePage(rect?: Rectangle, options?: { stayHidden?: boolean }): Promise<TabImage>;
   invalidate(): void;
-  sendInputEvent(event: IsolatedKeyboardInputEvent): void;
+  sendInputEvent(event: BrowserInputEvent): void;
 }
 
 export function adaptWebContents(contents: BrowserAutomationWebContents): TabContents {
@@ -131,6 +141,25 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     capturePage: (captureOptions) => contents.capturePage(undefined, captureOptions),
     invalidate: () => contents.invalidate(),
     sendInputEvent: (event) => contents.sendInputEvent(event),
+    onDebugMessage(listener) {
+      function debugMessageListener(
+        _event: unknown,
+        method: string,
+        params?: Record<string, unknown>,
+      ): void {
+        listener(method, params ?? {});
+      }
+      contents.debugger.on("message", debugMessageListener);
+      return () => {
+        // The teardown also runs from the "destroyed" event, where touching the
+        // debugger throws and would crash the main process.
+        if (contents.isDestroyed()) {
+          return;
+        }
+        contents.debugger.removeListener("message", debugMessageListener);
+      };
+    },
+    onceDestroyed: (listener) => contents.once("destroyed", listener),
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (task) => dialogMonitor.capture(task),
     sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
@@ -234,9 +263,6 @@ class DialogMonitor {
 
   private async enable(): Promise<void> {
     if (this.enabled) {
-      return;
-    }
-    if (!this.contents.debugger.on) {
       return;
     }
     if (!this.listenerRegistered) {
@@ -430,6 +456,9 @@ export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistr
     }
     return executeAutomationCommand(parsed.data, registry, {
       snapshotEngine: hostSnapshotEngines.get(hostContents),
+      emitScreencastFrame(frame: BrowserScreencastFrameEvent): void {
+        hostContents.send("paseo:event:browser-screencast-frame", frame);
+      },
     });
   });
 }

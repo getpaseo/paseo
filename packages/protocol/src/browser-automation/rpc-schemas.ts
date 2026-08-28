@@ -43,6 +43,9 @@ export const BROWSER_AUTOMATION_COMMAND_NAMES = [
   "scroll",
   "resize",
   "close_tab",
+  "input_at",
+  "screencast_start",
+  "screencast_stop",
 ] as const;
 
 export const BrowserAutomationCommandNameSchema = z.enum(BROWSER_AUTOMATION_COMMAND_NAMES);
@@ -61,6 +64,9 @@ const BrowserAutomationTabTargetSchema = z
 const BrowserAutomationRefSchema = z.string().regex(/^@e\d+$/);
 const BrowserAutomationMouseButtonSchema = z.enum(["left", "right", "middle"]);
 const BrowserAutomationInputModifierSchema = z.enum(["Alt", "Control", "Meta", "Shift"]);
+// "hover" is a move with nothing held: without it the guest reads unpressed
+// motion as a drag, so pages with hover menus cannot be used through a mirror.
+const BrowserAutomationMousePhaseSchema = z.enum(["down", "move", "up", "hover"]);
 const BrowserAutomationHttpUrlSchema = z
   .string()
   .url()
@@ -231,6 +237,73 @@ export const BrowserAutomationCloseTabCommandSchema = z.object({
   args: BrowserAutomationTabTargetSchema,
 });
 
+/**
+ * Viewport-coordinate input, used when a viewer drives a mirrored tab it cannot
+ * snapshot for refs. Coordinates are in guest viewport pixels.
+ *
+ * `click` is a complete press and release, which is what a viewer without a real
+ * pointer sends. `pointer` is one half of a gesture, so a viewer that owns a
+ * pointer can produce a drag the guest sees as a drag.
+ */
+export const BrowserAutomationInputAtCommandSchema = z.object({
+  command: z.literal("input_at"),
+  args: BrowserAutomationTabTargetSchema.extend({
+    event: z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("click"),
+        x: z.number().nonnegative(),
+        y: z.number().nonnegative(),
+        button: BrowserAutomationMouseButtonSchema.default("left"),
+        clickCount: z.number().int().min(1).max(3).default(1),
+        modifiers: z.array(BrowserAutomationInputModifierSchema).default([]),
+      }),
+      z.object({
+        kind: z.literal("pointer"),
+        phase: BrowserAutomationMousePhaseSchema,
+        x: z.number().nonnegative(),
+        y: z.number().nonnegative(),
+        button: BrowserAutomationMouseButtonSchema.default("left"),
+        // Chromium derives double-click selection and triple-click line
+        // selection from the count carried by the press and the release.
+        clickCount: z.number().int().min(1).max(3).default(1),
+        modifiers: z.array(BrowserAutomationInputModifierSchema).default([]),
+      }),
+      z.object({
+        kind: z.literal("wheel"),
+        x: z.number().nonnegative(),
+        y: z.number().nonnegative(),
+        deltaX: z.number().default(0),
+        deltaY: z.number().default(0),
+      }),
+      z.object({
+        kind: z.literal("key"),
+        key: z.string().min(1),
+        modifiers: z.array(BrowserAutomationInputModifierSchema).default([]),
+      }),
+    ]),
+  }),
+});
+
+/**
+ * The daemon allocates one slot per mirrored browser and hands the same slot to
+ * the host and to every viewer, so frames are forwarded without re-encoding.
+ */
+export const BrowserAutomationScreencastStartCommandSchema = z.object({
+  command: z.literal("screencast_start"),
+  args: BrowserAutomationTabTargetSchema.extend({
+    slot: z.number().int().min(0).max(255),
+    quality: z.number().int().min(1).max(100).default(60),
+    maxWidth: z.number().int().positive().default(1280),
+    maxHeight: z.number().int().positive().default(800),
+    everyNthFrame: z.number().int().min(1).max(10).default(1),
+  }),
+});
+
+export const BrowserAutomationScreencastStopCommandSchema = z.object({
+  command: z.literal("screencast_stop"),
+  args: BrowserAutomationTabTargetSchema,
+});
+
 export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsCommandSchema,
   BrowserAutomationNewTabCommandSchema,
@@ -254,10 +327,15 @@ export const BrowserAutomationCommandSchema = z.discriminatedUnion("command", [
   BrowserAutomationScrollCommandSchema,
   BrowserAutomationResizeCommandSchema,
   BrowserAutomationCloseTabCommandSchema,
+  BrowserAutomationInputAtCommandSchema,
+  BrowserAutomationScreencastStartCommandSchema,
+  BrowserAutomationScreencastStopCommandSchema,
 ]);
 
 export const BrowserAutomationTabInfoSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
+  hostId: z.string().min(1).optional(),
+  hostLabel: z.string().min(1).optional(),
   workspaceId: z.string().min(1).optional(),
   url: z.string(),
   title: z.string(),
@@ -455,6 +533,22 @@ export const BrowserAutomationCloseTabResultSchema = z.object({
   browserId: BrowserAutomationBrowserIdSchema,
 });
 
+export const BrowserAutomationInputAtResultSchema = z.object({
+  command: z.literal("input_at"),
+  browserId: BrowserAutomationBrowserIdSchema,
+});
+
+export const BrowserAutomationScreencastStartResultSchema = z.object({
+  command: z.literal("screencast_start"),
+  browserId: BrowserAutomationBrowserIdSchema,
+  slot: z.number().int().min(0).max(255),
+});
+
+export const BrowserAutomationScreencastStopResultSchema = z.object({
+  command: z.literal("screencast_stop"),
+  browserId: BrowserAutomationBrowserIdSchema,
+});
+
 export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationListTabsResultSchema,
   BrowserAutomationNewTabResultSchema,
@@ -478,6 +572,9 @@ export const BrowserAutomationResultSchema = z.discriminatedUnion("command", [
   BrowserAutomationScrollResultSchema,
   BrowserAutomationResizeResultSchema,
   BrowserAutomationCloseTabResultSchema,
+  BrowserAutomationInputAtResultSchema,
+  BrowserAutomationScreencastStartResultSchema,
+  BrowserAutomationScreencastStopResultSchema,
 ]);
 
 export const BrowserAutomationErrorSchema = z.object({
@@ -528,6 +625,7 @@ export type BrowserAutomationErrorCode = z.infer<typeof BrowserAutomationErrorCo
 export type BrowserAutomationCommandName = z.infer<typeof BrowserAutomationCommandNameSchema>;
 export type BrowserAutomationCommand = z.infer<typeof BrowserAutomationCommandSchema>;
 export type BrowserAutomationResult = z.infer<typeof BrowserAutomationResultSchema>;
+export type BrowserAutomationTabInfo = z.infer<typeof BrowserAutomationTabInfoSchema>;
 export type BrowserAutomationConsoleLogEntry = z.infer<
   typeof BrowserAutomationConsoleLogEntrySchema
 >;

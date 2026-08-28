@@ -60,6 +60,7 @@ import {
 import { normalizeWorkspaceTabTarget } from "@/workspace-tabs/identity";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import { panelTargetSupportsHostForWorkspaceKey } from "@/plugins/workspace-panels/locations";
+import { removeWorkspaceBrowsersFromQueryCache } from "@/data/browsers";
 
 export {
   AMBIENT_PLACEMENT,
@@ -1013,6 +1014,9 @@ export function createWorkspaceLayoutStore(
             if (!nextLayout) {
               return state;
             }
+            if (closingTab?.target.kind === "browser") {
+              removeWorkspaceBrowsersFromQueryCache([closingTab.target.browserId]);
+            }
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
@@ -1440,6 +1444,16 @@ export function createWorkspaceLayoutStore(
             if (!nextLayout) {
               return state;
             }
+            const droppedTabIds = new Set(
+              isExplorerSidebar ? [] : findPaneById(layout.root, normalizedPaneId)?.tabIds,
+            );
+            removeWorkspaceBrowsersFromQueryCache(
+              collectAllTabs(layout.root).flatMap((tab) =>
+                droppedTabIds.has(tab.tabId) && tab.target.kind === "browser"
+                  ? [tab.target.browserId]
+                  : [],
+              ),
+            );
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),

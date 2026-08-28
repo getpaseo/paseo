@@ -9,18 +9,24 @@ import type {
   BrowserAutomationExecuteRequest,
   BrowserAutomationNetworkLogEntry,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import type { BrowserScreencastMetadata } from "@getpaseo/protocol/binary-frames/screencast";
 import { waitForActionableTarget, type ActionabilityResult } from "./actionability.js";
+import type { CdpCommandSender } from "./cdp-session-queue.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   dispatchTrustedClick,
   dispatchTrustedDrag,
   dispatchTrustedHover,
   dispatchTrustedKey,
+  dispatchTrustedKeyEvent,
+  dispatchTrustedMousePhase,
   dispatchTrustedScroll,
   dispatchTrustedText,
+  type BrowserInputEvent,
   type ClickInputOptions,
-  type IsolatedKeyboardInputEvent,
 } from "./trusted-input.js";
+
+type DebugMessageListener = (method: string, params: Record<string, unknown>) => void;
 
 export interface TabContents {
   readonly id: number;
@@ -37,7 +43,9 @@ export interface TabContents {
   reload(): void;
   capturePage(options?: TabCapturePageOptions): Promise<TabImage>;
   invalidate(): void;
-  sendInputEvent(event: IsolatedKeyboardInputEvent): void;
+  sendInputEvent(event: BrowserInputEvent): void;
+  onDebugMessage(listener: DebugMessageListener): () => void;
+  onceDestroyed(listener: () => void): void;
   getConsoleMessages?(): BrowserAutomationConsoleLogEntry[];
   captureDialogs?<T>(
     task: () => Promise<T>,
@@ -62,6 +70,33 @@ export interface BrowserRegistry {
   getWorkspaceActiveBrowserId(workspaceId: string): string | null;
 }
 
+export interface BrowserScreencastFrameEvent {
+  browserId: string;
+  slot: number;
+  metadata: BrowserScreencastMetadata;
+  data: Uint8Array;
+}
+
+interface AutomationCommandOptions {
+  snapshotEngine?: BrowserSnapshotEngine;
+  emitScreencastFrame?: (frame: BrowserScreencastFrameEvent) => void;
+}
+
+interface ActiveScreencast {
+  slot: number;
+  stopListening: () => void;
+  sendDebugCommand: NonNullable<TabContents["sendDebugCommand"]>;
+  hasEmitted: boolean;
+  stopped: boolean;
+}
+
+const SCREENCAST_FIRST_FRAME_MS = 600;
+
+type BrowserAutomationInputAtEvent = Extract<
+  BrowserAutomationCommand,
+  { command: "input_at" }
+>["args"]["event"];
+
 export type AutomationCommandPayload = BrowserAutomationExecuteResponse["payload"];
 type FailurePayload = Extract<AutomationCommandPayload, { ok: false }>;
 
@@ -76,6 +111,7 @@ const MAX_EVALUATE_RESULT_JSON_LENGTH = 80_000;
 const MAX_EVALUATE_RESULT_PREVIEW_LENGTH = 79_000;
 const MAX_EVALUATE_ERROR_MESSAGE_LENGTH = 2_000;
 let pixelCaptureQueue: Promise<void> = Promise.resolve();
+const activeScreencastsByContentsId = new Map<number, ActiveScreencast>();
 
 function fail(
   requestId: string,
@@ -221,14 +257,27 @@ function tabInfoFromContents(
 export function executeAutomationCommand(
   request: BrowserAutomationExecuteRequest,
   registry: BrowserRegistry,
-  options?: { snapshotEngine?: BrowserSnapshotEngine },
+  options?: AutomationCommandOptions,
 ): AutomationCommandPayload | Promise<AutomationCommandPayload> {
   const { requestId, command } = request;
   const workspaceId = request.workspaceId;
   const snapshotEngine = options?.snapshotEngine ?? defaultSnapshotEngine;
+  const emitScreencastFrame = options?.emitScreencastFrame ?? ignoreScreencastFrame;
   const handler = commandHandlers[command.command];
 
-  return handler({ request, command, requestId, workspaceId, registry, snapshotEngine });
+  return handler({
+    request,
+    command,
+    requestId,
+    workspaceId,
+    registry,
+    snapshotEngine,
+    emitScreencastFrame,
+  });
+}
+
+function ignoreScreencastFrame(frame: BrowserScreencastFrameEvent): void {
+  void frame;
 }
 
 interface CommandHandlerContext {
@@ -238,6 +287,7 @@ interface CommandHandlerContext {
   workspaceId: string | undefined;
   registry: BrowserRegistry;
   snapshotEngine: BrowserSnapshotEngine;
+  emitScreencastFrame: (frame: BrowserScreencastFrameEvent) => void;
 }
 
 type CommandHandler = (
@@ -468,11 +518,275 @@ const commandHandlers: Record<BrowserAutomationCommand["command"], CommandHandle
     fail(requestId, "browser_unsupported", "browser_resize is handled by the app runtime."),
   close_tab: ({ requestId }) =>
     fail(requestId, "browser_unsupported", "browser_close_tab is handled by the app runtime."),
+  input_at: ({ command, requestId, workspaceId, registry }) => {
+    const inputAtCommand = command as Extract<BrowserAutomationCommand, { command: "input_at" }>;
+    return executeInputAt(
+      requestId,
+      workspaceId,
+      inputAtCommand.args.browserId,
+      inputAtCommand.args.event,
+      registry,
+    );
+  },
+  screencast_start: ({ command, requestId, workspaceId, registry, emitScreencastFrame }) => {
+    const startCommand = command as Extract<
+      BrowserAutomationCommand,
+      { command: "screencast_start" }
+    >;
+    return executeScreencastStart(
+      requestId,
+      workspaceId,
+      startCommand.args,
+      registry,
+      emitScreencastFrame,
+    );
+  },
+  screencast_stop: ({ command, requestId, workspaceId, registry }) => {
+    const stopCommand = command as Extract<
+      BrowserAutomationCommand,
+      { command: "screencast_stop" }
+    >;
+    return executeScreencastStop(requestId, workspaceId, stopCommand.args.browserId, registry);
+  },
 };
 
 interface ResolvedTabTarget {
   browserId: string;
   contents: TabContents;
+}
+
+async function executeInputAt(
+  requestId: string,
+  workspaceId: string | undefined,
+  browserId: string,
+  event: BrowserAutomationInputAtEvent,
+  registry: BrowserRegistry,
+): Promise<AutomationCommandPayload> {
+  const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
+  if ("ok" in target) {
+    return target;
+  }
+  if (event.kind === "click" || event.kind === "pointer") {
+    // Same trusted CDP path as ref-based click; sendInputEvent mouse wheels do
+    // not scroll a guest, so pointer input stays on one mechanism.
+    await dispatchMouseInput(cdpSender(target.contents), event);
+  } else if (event.kind === "wheel") {
+    await dispatchTrustedScroll(
+      cdpSender(target.contents),
+      { x: event.x, y: event.y },
+      event.deltaX,
+      event.deltaY,
+    );
+  } else {
+    // sendInputEvent's keyDown/char/keyUp triple types the character three
+    // times in a guest that is not presented, so keys ride the same CDP path.
+    await dispatchTrustedKeyEvent(cdpSender(target.contents), event.key, event.modifiers);
+  }
+  return {
+    requestId,
+    ok: true,
+    result: { command: "input_at", browserId: target.browserId },
+  };
+}
+
+function dispatchMouseInput(
+  send: CdpCommandSender,
+  event: Extract<BrowserAutomationInputAtEvent, { kind: "click" | "pointer" }>,
+): Promise<void> {
+  const point = { x: event.x, y: event.y };
+  if (event.kind === "pointer") {
+    return dispatchTrustedMousePhase(send, point, {
+      phase: event.phase,
+      button: event.button,
+      clickCount: event.clickCount,
+      modifiers: event.modifiers,
+    });
+  }
+  return dispatchTrustedClick(send, point, {
+    button: event.button,
+    doubleClick: event.clickCount >= 2,
+    modifiers: event.modifiers,
+  });
+}
+
+async function executeScreencastStart(
+  requestId: string,
+  workspaceId: string | undefined,
+  args: Extract<BrowserAutomationCommand, { command: "screencast_start" }>["args"],
+  registry: BrowserRegistry,
+  emitFrame: (frame: BrowserScreencastFrameEvent) => void,
+): Promise<AutomationCommandPayload> {
+  const target = resolveTabTarget({
+    requestId,
+    workspaceId,
+    browserId: args.browserId,
+    registry,
+  });
+  if ("ok" in target) {
+    return target;
+  }
+  // A previous stream can outlive the renderer that started it, leaving frames
+  // addressed to a dead window and pinned to a slot the daemon no longer routes.
+  // The daemon owns the slot, so always re-arm rather than reuse.
+  const existing = activeScreencastsByContentsId.get(target.contents.id);
+  if (existing) {
+    removeScreencast(target.contents.id, existing);
+    await existing.sendDebugCommand("Page.stopScreencast").catch(() => {});
+  }
+  if (!target.contents.sendDebugCommand) {
+    return fail(
+      requestId,
+      "browser_unsupported",
+      "browser_screencast_start requires Chrome DevTools Protocol",
+    );
+  }
+
+  const contentsId = target.contents.id;
+  const sendDebugCommand = target.contents.sendDebugCommand.bind(target.contents);
+  const stopListening = target.contents.onDebugMessage((method, params) => {
+    if (method === "Page.screencastFrame") {
+      handleScreencastFrame(screencast, target.browserId, params, emitFrame);
+    }
+  });
+  const screencast: ActiveScreencast = {
+    slot: args.slot,
+    stopListening,
+    sendDebugCommand,
+    hasEmitted: false,
+    stopped: false,
+  };
+  activeScreencastsByContentsId.set(contentsId, screencast);
+  target.contents.onceDestroyed(() => {
+    removeScreencast(contentsId, screencast);
+  });
+
+  try {
+    await sendDebugCommand("Page.startScreencast", {
+      format: "jpeg",
+      quality: args.quality,
+      maxWidth: args.maxWidth,
+      maxHeight: args.maxHeight,
+      everyNthFrame: args.everyNthFrame,
+    });
+  } catch (error) {
+    removeScreencast(contentsId, screencast);
+    throw error;
+  }
+
+  void sendFirstScreencastFrame(screencast, target.browserId, emitFrame, args.quality);
+
+  return {
+    requestId,
+    ok: true,
+    result: { command: "screencast_start", browserId: target.browserId, slot: args.slot },
+  };
+}
+
+async function executeScreencastStop(
+  requestId: string,
+  workspaceId: string | undefined,
+  browserId: string,
+  registry: BrowserRegistry,
+): Promise<AutomationCommandPayload> {
+  const target = resolveTabTarget({ requestId, workspaceId, browserId, registry });
+  if ("ok" in target) {
+    return target;
+  }
+  const screencast = activeScreencastsByContentsId.get(target.contents.id);
+  if (screencast) {
+    removeScreencast(target.contents.id, screencast);
+    await screencast.sendDebugCommand("Page.stopScreencast").catch(() => {});
+  }
+  return {
+    requestId,
+    ok: true,
+    result: { command: "screencast_stop", browserId: target.browserId },
+  };
+}
+
+function handleScreencastFrame(
+  screencast: ActiveScreencast,
+  browserId: string,
+  params: Record<string, unknown>,
+  emitFrame: (frame: BrowserScreencastFrameEvent) => void,
+): void {
+  if (screencast.stopped) {
+    return;
+  }
+  const { sendDebugCommand, slot } = screencast;
+  const sessionId = readNumber(params.sessionId);
+  if (sessionId === null) {
+    return;
+  }
+  void sendDebugCommand("Page.screencastFrameAck", { sessionId });
+  if (typeof params.data !== "string" || !isRecord(params.metadata)) {
+    return;
+  }
+  const deviceWidth = readNumber(params.metadata.deviceWidth);
+  const deviceHeight = readNumber(params.metadata.deviceHeight);
+  if (deviceWidth === null || deviceHeight === null) {
+    return;
+  }
+  screencast.hasEmitted = true;
+  emitFrame({
+    browserId,
+    slot,
+    metadata: { deviceWidth, deviceHeight },
+    data: Buffer.from(params.data, "base64"),
+  });
+}
+
+/**
+ * Chrome only emits a screencast frame when the page is damaged, so a viewer
+ * that subscribes to a static page sees nothing. Capture one frame directly if
+ * the stream stays silent, at the quality the stream itself uses so the two are
+ * indistinguishable.
+ */
+async function sendFirstScreencastFrame(
+  screencast: ActiveScreencast,
+  browserId: string,
+  emitFrame: (frame: BrowserScreencastFrameEvent) => void,
+  quality: number,
+): Promise<void> {
+  await delay(SCREENCAST_FIRST_FRAME_MS);
+  if (screencast.hasEmitted || screencast.stopped) {
+    return;
+  }
+  const shot = await screencast
+    .sendDebugCommand("Page.captureScreenshot", { format: "jpeg", quality })
+    .catch(() => null);
+  const metrics = await screencast.sendDebugCommand("Page.getLayoutMetrics", {}).catch(() => null);
+  if (
+    screencast.hasEmitted ||
+    screencast.stopped ||
+    !isRecord(shot) ||
+    typeof shot.data !== "string"
+  ) {
+    return;
+  }
+  const viewport =
+    isRecord(metrics) && isRecord(metrics.cssVisualViewport) ? metrics.cssVisualViewport : null;
+  const deviceWidth = viewport ? readNumber(viewport.clientWidth) : null;
+  const deviceHeight = viewport ? readNumber(viewport.clientHeight) : null;
+  if (deviceWidth === null || deviceHeight === null) {
+    return;
+  }
+  screencast.hasEmitted = true;
+  emitFrame({
+    browserId,
+    slot: screencast.slot,
+    metadata: { deviceWidth, deviceHeight },
+    data: Buffer.from(shot.data, "base64"),
+  });
+}
+
+function removeScreencast(contentsId: number, screencast: ActiveScreencast): void {
+  screencast.stopped = true;
+  if (activeScreencastsByContentsId.get(contentsId) !== screencast) {
+    return;
+  }
+  screencast.stopListening();
+  activeScreencastsByContentsId.delete(contentsId);
 }
 
 function executeListTabs(
@@ -1577,6 +1891,10 @@ function readString(value: unknown): string | null {
 
 function readNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 const NETWORK_PERFORMANCE_SCRIPT = String.raw`(() => {

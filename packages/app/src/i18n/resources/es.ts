@@ -519,6 +519,10 @@ export const es: TranslationResources = {
         title: "El navegador es solo para escritorio",
         subtitle: "Abra este espacio de trabajo en Electron para usar el navegador integrado.",
       },
+      mirror: {
+        keyboard: "Teclado del navegador reflejado",
+        connecting: "Conectando con el navegador del host…",
+      },
       session: "Sesión de navegador{{browserId}}",
       controls: {
         back: "Atrás",
@@ -546,9 +550,11 @@ export const es: TranslationResources = {
       devices: {
         label: "Tamaño del dispositivo",
         responsive: "Adaptable",
+        landscape: "Horizontal",
       },
       errors: {
         failedToLoad: "No se pudo cargar la página",
+        openTabFailed: "No se pudo abrir una pestaña en el host",
         invalidUrl: "Navegador no válidoURL",
         unsupportedProtocol: "Navegador bloqueado no compatibleURL:{{protocol}}",
       },

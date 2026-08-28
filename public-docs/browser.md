@@ -42,10 +42,6 @@ The tools are part of the [Paseo MCP toolset](/docs/mcp), so **Enable Paseo tool
 
 > Browser tools let agents access and control Paseo browser tabs, including logged-in browser state. Only enable this for agents you trust.
 
-## Desktop only, for now
-
-Browser tabs are hosted by the Paseo desktop app. The daemon itself doesn't run a browser — it routes tool calls to a connected desktop app, and returns an error when none is connected. The wire contract is host-neutral, so other hosts can carry the same tools later.
-
 ## How an agent sees a page
 
 The primary tool is `browser_snapshot`, which returns the page as an accessibility tree — headings, text, form state, and hierarchy — instead of raw HTML:
@@ -65,10 +61,10 @@ For anything the tree can't capture, agents fall back to `browser_screenshot`, a
 ## Architecture
 
 ```
-agent ──MCP──▶ daemon (broker) ──▶ browser host (desktop app) ──▶ webview
+agent ──MCP──▶ daemon (broker) ──▶ browser host ──▶ desktop webview or CDP endpoint
 ```
 
-- **Workspace-scoped tabs.** An agent only sees and controls tabs in its own workspace. New tabs open in the background without stealing your focus.
+- **Workspace-scoped tabs.** An agent only sees and controls tabs in its own workspace. Tabs the daemon's own browser opened belong to the workspace that opened them; ones already open at the endpoint belong to none. New tabs open in the background without stealing your focus.
 - **Tab-to-host routing.** The daemon remembers which host owns each tab and routes tab commands there. `browser_list_tabs` aggregates all connected hosts.
 - **Trusted input.** Clicks, keys, hovers, and drags are dispatched as real browser input events — CSS `:hover` triggers, and pages can't tell an agent's click from a user's. Every action first waits for its target to be visible, enabled, and stable.
 - **Dialogs never block.** `alert` is accepted; `confirm`, `prompt`, and `beforeunload` are dismissed. Every handled dialog is reported in the tool result so the agent knows the page flow changed.

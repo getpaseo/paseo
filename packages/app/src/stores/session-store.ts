@@ -425,7 +425,7 @@ export interface SessionState {
 }
 
 // Global store state
-interface SessionStoreState {
+export interface SessionStoreState {
   sessions: Record<string, SessionState>;
 
   // Agent activity timestamps (top-level, keyed by agentId to prevent cascade rerenders)

@@ -108,7 +108,10 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import { useArchiveAgent } from "@/hooks/use-archive-agent";
 import { useStableEvent } from "@/hooks/use-stable-event";
 import { removeResidentBrowserWebview } from "@/desktop/browser/resident-webviews";
-import { createWorkspaceBrowser, useBrowserStore } from "@/desktop/browser/store";
+import { useCanOpenBrowserTabs } from "@/desktop/browser/capability";
+import { describeMirrorFailure, runMirrorCommand } from "@/desktop/browser/mirror/command";
+import { useBrowserStore } from "@/desktop/browser/store";
+import { useWorkspaceBrowsers } from "@/desktop/browser/use-workspace-browsers";
 import { getDesktopHost } from "@/desktop/host";
 import { buildProviderCommand } from "@/utils/provider-command-templates";
 import { generateDraftId } from "@/stores/draft-keys";
@@ -190,6 +193,7 @@ import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/l
 import { getIsElectron, isNative, isWeb } from "@/constants/platform";
 import type { SurfaceBackdrop } from "@/styles/surface-backdrop";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
+import { useShallow } from "zustand/react/shallow";
 import { useWorkspaceTerminals } from "@/screens/workspace/terminals/use-workspace-terminals";
 import type { TerminalProfile } from "@getpaseo/protocol/messages";
 import {
@@ -1565,6 +1569,13 @@ function WorkspaceScreenContent({
 
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
+  const workspaceBrowsers = useWorkspaceBrowsers({
+    serverId: normalizedServerId,
+    workspaceId: normalizedWorkspaceId,
+  });
+  // Tabs this client hosts itself are known before the daemon has listed them,
+  // so a freshly opened local tab is never pruned as unknown.
+  const localBrowserIds = useBrowserStore(useShallow((state) => Object.keys(state.browsersById)));
   const supportsProvidersSnapshot = useSessionStore(
     (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
   );
@@ -1868,28 +1879,57 @@ function WorkspaceScreenContent({
   const pendingByDraftId = useCreateFlowStore((state) => state.pendingByDraftId);
   const { closingTabIds, closeTab } = useCloseTabs();
   const closeWorkspaceTabWithCleanup = useCallback(
-    function closeWorkspaceTabWithCleanup(input: {
+    async function closeWorkspaceTabWithCleanup(input: {
       tabId: string;
       target?: WorkspaceTabTarget | null;
-    }) {
+    }): Promise<boolean> {
       const normalizedTabId = trimNonEmpty(input.tabId);
       if (!normalizedTabId || !persistenceKey) {
-        return;
+        return false;
       }
 
       if (input.target?.kind === "agent") {
         unpinWorkspaceAgent(persistenceKey, input.target.agentId);
         hideWorkspaceAgent(persistenceKey, input.target.agentId);
       }
+      if (input.target?.kind === "terminal") {
+        removeTerminalFromCache(input.target.terminalId);
+      }
       if (input.target?.kind === "browser") {
         const { browserId } = input.target;
+        const isLocalBrowser = Boolean(useBrowserStore.getState().browsersById[browserId]);
+        // A mirrored tab lives on another host. Dropping the pane before the host
+        // answers leaves the tab open there with nothing on screen to close it,
+        // so the local close waits for the confirmation and reports a refusal.
+        if (!isLocalBrowser) {
+          const outcome = await runMirrorCommand({
+            sender: client,
+            command: { command: "close_tab", args: { browserId } },
+            workspaceId: normalizedWorkspaceId,
+          });
+          if (outcome.status !== "ok") {
+            toast.error(describeMirrorFailure(outcome, t("common.errors.daemonClientUnavailable")));
+            return false;
+          }
+        }
         useBrowserStore.getState().removeBrowser(browserId);
         removeResidentBrowserWebview(browserId);
         void getDesktopHost()?.browser?.unregisterWorkspaceBrowser?.(browserId);
       }
       closeWorkspaceTab(persistenceKey, normalizedTabId);
+      return true;
     },
-    [closeWorkspaceTab, hideWorkspaceAgent, persistenceKey, unpinWorkspaceAgent],
+    [
+      client,
+      closeWorkspaceTab,
+      hideWorkspaceAgent,
+      normalizedWorkspaceId,
+      persistenceKey,
+      removeTerminalFromCache,
+      t,
+      toast,
+      unpinWorkspaceAgent,
+    ],
   );
 
   const focusedPaneTabState = useMemo(
@@ -2029,6 +2069,11 @@ function WorkspaceScreenContent({
         terminalsHydrated: terminalsQuery.isSuccess,
         knownTerminalIds,
         standaloneTerminalIds,
+        browsers: {
+          hydrated: workspaceBrowsers.isHydrated,
+          knownIds: [...workspaceBrowsers.browserIds, ...localBrowserIds],
+          liveIds: workspaceBrowsers.browserIds,
+        },
         hasActivePendingTerminalCreate:
           createTerminalMutation.isPending || pendingTerminalCreateInput !== null,
         hasActivePendingDraftCreate: hasActivePendingDraftCreateInWorkspace,
@@ -2046,10 +2091,13 @@ function WorkspaceScreenContent({
     persistenceKey,
     reconcileWorkspaceTabs,
     knownTerminalIds,
+    localBrowserIds,
     standaloneTerminalIds,
     terminalsQuery.isSuccess,
     uiTabs,
     workspaceAgentVisibility,
+    workspaceBrowsers.browserIds,
+    workspaceBrowsers.isHydrated,
   ]);
 
   const activeTabId = focusedPaneTabState.activeTabId;
@@ -2377,19 +2425,43 @@ function WorkspaceScreenContent({
     [createTerminal],
   );
 
-  const handleCreateBrowserTab = useCallback(
-    (input?: { paneId?: string }) => {
-      if (!persistenceKey || !getIsElectron()) {
+  // The daemon opens the tab on its own machine, so every client drives the same
+  // signed-in browser. The host that owns it adds its own tab locally; anyone
+  // else opens a mirror.
+  const openBrowserTabOnHost = useCallback(
+    async (url: string | undefined, openTarget: (target: WorkspaceTab["target"]) => void) => {
+      const outcome = await runMirrorCommand({
+        sender: client,
+        command: { command: "new_tab", args: url ? { url } : {} },
+        workspaceId: normalizedWorkspaceId,
+      });
+      if (outcome.status !== "ok") {
+        toast.error(describeMirrorFailure(outcome, t("common.errors.daemonClientUnavailable")));
         return;
       }
-      const { browserId } = createWorkspaceBrowser();
-      openWorkspaceTabFocused(
-        persistenceKey,
-        { kind: "browser", browserId },
-        paneLocalPlacement(input?.paneId),
+      if (outcome.result.command !== "new_tab") {
+        toast.error(t("workspace.browser.errors.openTabFailed"));
+        return;
+      }
+      const { browserId } = outcome.result;
+      if (useBrowserStore.getState().browsersById[browserId]) {
+        return;
+      }
+      openTarget({ kind: "browser", browserId });
+    },
+    [client, normalizedWorkspaceId, t, toast],
+  );
+
+  const handleCreateBrowserTab = useCallback(
+    (input?: { paneId?: string }) => {
+      if (!persistenceKey) {
+        return;
+      }
+      void openBrowserTabOnHost(undefined, (target) =>
+        openWorkspaceTabFocused(persistenceKey, target, paneLocalPlacement(input?.paneId)),
       );
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [openBrowserTabOnHost, openWorkspaceTabFocused, persistenceKey],
   );
 
   const handleCreateNewTab = useCallback(
@@ -2432,25 +2504,27 @@ function WorkspaceScreenContent({
         });
         return;
       }
-      const { browserId } = createWorkspaceBrowser();
-      openTarget({ kind: "browser", browserId });
+      void openBrowserTabOnHost(undefined, openTarget);
     },
-    [createTerminal, createWorkspaceTab, persistenceKey, replaceWorkspaceTabTarget],
+    [
+      createTerminal,
+      createWorkspaceTab,
+      openBrowserTabOnHost,
+      persistenceKey,
+      replaceWorkspaceTabTarget,
+    ],
   );
 
   const handleOpenUrlInBrowserTab = useCallback(
     (url: string) => {
-      if (!persistenceKey || !getIsElectron()) {
+      if (!persistenceKey) {
         return;
       }
-      const { browserId } = createWorkspaceBrowser({ initialUrl: url });
-      openWorkspaceTabFocused(
-        persistenceKey,
-        { kind: "browser", browserId },
-        FOCUSED_PANE_PLACEMENT,
+      void openBrowserTabOnHost(url, (target) =>
+        openWorkspaceTabFocused(persistenceKey, target, FOCUSED_PANE_PLACEMENT),
       );
     },
-    [openWorkspaceTabFocused, persistenceKey],
+    [openBrowserTabOnHost, openWorkspaceTabFocused, persistenceKey],
   );
 
   useDesktopBrowserNewTabRequests({
@@ -2495,10 +2569,9 @@ function WorkspaceScreenContent({
           return;
         }
 
-        removeTerminalFromCache(terminalId);
         setHoveredCloseTabKey((current) => (current === tabId ? null : current));
         if (persistenceKey) {
-          closeWorkspaceTabWithCleanup({
+          await closeWorkspaceTabWithCleanup({
             tabId,
             target: { kind: "terminal", terminalId },
           });
@@ -2513,7 +2586,6 @@ function WorkspaceScreenContent({
       invalidateTerminals,
       killTerminalAsync,
       persistenceKey,
-      removeTerminalFromCache,
       t,
     ],
   );
@@ -2567,7 +2639,7 @@ function WorkspaceScreenContent({
 
         setHoveredCloseTabKey((current) => (current === tabId ? null : current));
         if (persistenceKey) {
-          closeWorkspaceTabWithCleanup({
+          await closeWorkspaceTabWithCleanup({
             tabId,
             target: { kind: "agent", agentId },
           });
@@ -2593,13 +2665,21 @@ function WorkspaceScreenContent({
   );
 
   const handleClosePassiveTab = useCallback(
-    function handleClosePassiveTab(input: { tabId: string; target?: WorkspaceTabTarget | null }) {
+    async function handleClosePassiveTab(input: {
+      tabId: string;
+      target?: WorkspaceTabTarget | null;
+    }) {
       setHoveredCloseTabKey((current) => (current === input.tabId ? null : current));
-      if (persistenceKey) {
-        closeWorkspaceTabWithCleanup({ tabId: input.tabId, target: input.target });
+      if (!persistenceKey) {
+        return;
       }
+      // A mirrored browser tab waits on its host, so the tab shows the same
+      // closing state an agent or terminal tab does instead of hanging silent.
+      await closeTab(input.tabId, async () => {
+        await closeWorkspaceTabWithCleanup({ tabId: input.tabId, target: input.target });
+      });
     },
-    [closeWorkspaceTabWithCleanup, persistenceKey],
+    [closeTab, closeWorkspaceTabWithCleanup, persistenceKey],
   );
 
   const confirmDiscardModifiedTab = useCallback(
@@ -2641,7 +2721,7 @@ function WorkspaceScreenContent({
         await handleCloseAgentTab({ tabId, agentId: tab.target.agentId });
         return;
       }
-      handleClosePassiveTab({ tabId, target: tab.target });
+      await handleClosePassiveTab({ tabId, target: tab.target });
     },
     [
       allTabDescriptorsById,
@@ -2836,7 +2916,7 @@ function WorkspaceScreenContent({
         return false;
       }
 
-      await closeBulkWorkspaceTabs({
+      const allClosed = await closeBulkWorkspaceTabs({
         client,
         groups,
         closeTab,
@@ -2854,11 +2934,11 @@ function WorkspaceScreenContent({
             await archiveAgent({ serverId: normalizedServerId, agentId });
           }
         },
-        closeWorkspaceTabWithCleanup: (cleanupInput) => {
+        closeWorkspaceTabWithCleanup: async (cleanupInput) => {
           if (!persistenceKey) {
-            return;
+            return false;
           }
-          closeWorkspaceTabWithCleanup(cleanupInput);
+          return await closeWorkspaceTabWithCleanup(cleanupInput);
         },
         logLabel,
         warn: (message, payload) => {
@@ -2868,7 +2948,7 @@ function WorkspaceScreenContent({
 
       const closedKeys = new Set(tabsToClose.map((tab) => tab.key));
       setHoveredCloseTabKey((current) => (current && closedKeys.has(current) ? null : current));
-      return true;
+      return allClosed;
     },
     [
       archiveAgent,
@@ -3810,7 +3890,9 @@ function WorkspaceScreenContent({
     () => createTerminalMutation.isPending || pendingTerminalCreateInput !== null,
     [createTerminalMutation.isPending, pendingTerminalCreateInput],
   );
-  const showCreateBrowserTab = getIsElectron();
+  // Any client can open a browser tab as long as the daemon has a host that can
+  // actually mirror one; the tab lives there and is mirrored back here.
+  const showCreateBrowserTab = useCanOpenBrowserTabs(normalizedServerId);
   const newTabLauncher = useMemo<NewTabLauncher>(
     () => ({
       showChanges: isGitCheckout,

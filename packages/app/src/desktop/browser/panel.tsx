@@ -4,8 +4,17 @@ import { Globe } from "lucide-react-native";
 import invariant from "tiny-invariant";
 import { BrowserPane } from "@/desktop/browser/pane";
 import { usePaneContext, usePaneFocus } from "@/panels/pane-context";
-import { definePanel, type PanelDescriptor, type PanelIconProps } from "@/panels/panel-registry";
+import {
+  definePanel,
+  type PanelDescriptor,
+  type PanelDescriptorContext,
+  type PanelIconProps,
+} from "@/panels/panel-registry";
 import { useBrowserStore } from "@/desktop/browser/store";
+import {
+  findWorkspaceBrowserTab,
+  useWorkspaceBrowsers,
+} from "@/desktop/browser/use-workspace-browsers";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 
 function getBrowserLabel(input: { title: string; url: string }): string {
@@ -35,14 +44,22 @@ function createBrowserTabIcon(faviconUrl: string | null) {
   };
 }
 
-function useBrowserPanelDescriptor(target: {
-  kind: "browser";
-  browserId: string;
-}): PanelDescriptor {
+function useBrowserPanelDescriptor(
+  target: { kind: "browser"; browserId: string },
+  context: PanelDescriptorContext,
+): PanelDescriptor {
   const browser = useBrowserStore((state) => state.browsersById[target.browserId] ?? null);
-  const url = browser?.url ?? "https://example.com";
+  // A tab hosted by another client has no local record, so its title comes from
+  // the workspace tab list the daemon pushes.
+  const { tabs } = useWorkspaceBrowsers({
+    serverId: context.serverId,
+    workspaceId: context.workspaceId,
+  });
+  const remote = browser ? null : findWorkspaceBrowserTab(tabs, target.browserId);
+  const url = browser?.url ?? remote?.url ?? "https://example.com";
   const icon = createBrowserTabIcon(browser?.faviconUrl ?? null);
-  const label = getBrowserLabel({ title: browser?.title ?? "", url });
+  const label = getBrowserLabel({ title: browser?.title ?? remote?.title ?? "", url });
+  const isLoading = browser?.isLoading ?? remote?.isLoading ?? false;
 
   return {
     label,
@@ -50,7 +67,7 @@ function useBrowserPanelDescriptor(target: {
     tooltip: url || label,
     titleState: "ready",
     icon,
-    statusBucket: browser?.isLoading ? "running" : null,
+    statusBucket: isLoading ? "running" : null,
   };
 }
 

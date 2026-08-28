@@ -53,6 +53,8 @@ import {
   mountServerDataPushRouter,
 } from "@/data/push-router";
 import { mountBrowserAutomationDaemonClientHandler } from "@/desktop/browser/automation/handler";
+import { mountBrowserTabAnnouncer } from "@/desktop/browser/announce";
+import { mountBrowserScreencastForwarder } from "@/desktop/browser/mirror/host-frames";
 import { schedulesQueryBaseKey } from "@/schedules/aggregated-schedules";
 import { dispatchComposerAgentMessage, sendQueuedComposerMessageNow } from "@/composer/actions";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
@@ -488,6 +490,8 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
   const appCapabilities = {
     [CLIENT_CAPS.selectiveAgentTimeline]: true,
     [CLIENT_CAPS.timelineReplacementInvalidation]: true,
+    // Every build of this app parses `browser.tabs.changed`, host or not.
+    [CLIENT_CAPS.browserMirror]: true,
     ...browserAutomationCapabilities,
   };
 
@@ -558,7 +562,11 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
       const unmountBrowserAutomation = mountBrowserAutomationDaemonClientHandler(client, {
         serverId: host.serverId,
       });
+      const unmountScreencastFrames = mountBrowserScreencastForwarder(client);
+      const unmountTabAnnouncer = mountBrowserTabAnnouncer(host.serverId, client);
       return () => {
+        unmountTabAnnouncer();
+        unmountScreencastFrames();
         unmountBrowserAutomation();
         unmountServerData();
       };

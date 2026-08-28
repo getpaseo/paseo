@@ -89,13 +89,17 @@ import {
   CLIENT_SHUTDOWN_RPC_REASON,
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
-import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
-import type { BrowserAutomationExecuteResponse } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import type {
+  BrowserAutomationExecuteResponse,
+  BrowserAutomationTabInfo,
+} from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   BrowserAutomationHostCapabilitySchema,
   type BrowserAutomationHostCapability,
 } from "@getpaseo/protocol/browser-automation/capabilities";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
+import { BrowserScreencastRegistry } from "./browser-tools/screencast.js";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
@@ -485,6 +489,7 @@ interface SocketSessionOptions {
   onMessageToSource?: (source: object, message: SessionOutboundMessage) => void;
   onBinaryMessage?: (frame: Uint8Array) => void;
   onBinaryMessageToSource?: (source: object, frame: Uint8Array) => Promise<void>;
+  onScreencastFrame?: (source: object, frame: Uint8Array) => Promise<void>;
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   hubExecutionAgents?: HubExecutionAgents;
@@ -597,6 +602,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly providerUsageService: ProviderUsageService;
   private unsubscribeTerminalActivity: (() => void) | null = null;
   private readonly browserToolsBroker: BrowserToolsBroker | null;
+  private browserTabsChangedSequence = 0;
+  private readonly browserScreencast: BrowserScreencastRegistry | null;
   private readonly hubRelationships: HubRelationshipManagement | null;
   private readonly browserToolsRegistrations = new Map<string, BrowserToolsRegistration>();
   private connectionLifecycle: "starting" | "accepting" | "stopping" = "accepting";
@@ -665,6 +672,9 @@ export class VoiceAssistantWebSocketServer {
     this.daemonVersion = daemonVersion.trim();
     this.daemonRuntimeConfig = daemonRuntimeConfig;
     this.browserToolsBroker = browserToolsBroker ?? null;
+    this.browserScreencast = browserToolsBroker
+      ? new BrowserScreencastRegistry(browserToolsBroker)
+      : null;
     this.hubRelationships = hubRelationships ?? null;
     this.pluginRuntime = pluginRuntime;
     this.orchestrationSkills = orchestrationSkills;
@@ -1365,6 +1375,14 @@ export class VoiceAssistantWebSocketServer {
         }
         await this.sendBinaryToClientAndWait(source as WebSocketLike, frame);
       },
+      // Awaited so the registry learns when the subscribing socket has drained
+      // and can drop the frames that piled up meanwhile.
+      onScreencastFrame: async (source, frame) => {
+        if (!connection || !connection.sockets.has(source as WebSocketLike)) {
+          return;
+        }
+        await this.sendBinaryToClientAndWait(source as WebSocketLike, frame);
+      },
       getTransportBufferedAmount: () => {
         if (!connection) {
           return null;
@@ -1414,6 +1432,7 @@ export class VoiceAssistantWebSocketServer {
       onMessageToSource: options.onMessageToSource,
       onBinaryMessage: options.onBinaryMessage,
       onBinaryMessageToSource: options.onBinaryMessageToSource,
+      onScreencastFrame: options.onScreencastFrame,
       getTransportBufferedAmount: options.getTransportBufferedAmount,
       onLifecycleIntent: options.onLifecycleIntent,
       logger: options.connectionLogger.child({ module: "session" }),
@@ -1447,6 +1466,8 @@ export class VoiceAssistantWebSocketServer {
       sttLanguage: this.speech?.resolveSttLanguage() ?? "en",
       tts: () => this.speech?.resolveTts() ?? null,
       terminalManager: this.terminalManager,
+      browserToolsBroker: this.browserToolsBroker ?? undefined,
+      browserScreencast: this.browserScreencast ?? undefined,
       providerSnapshotManager: this.providerSnapshotManager,
       providerUsageService: this.providerUsageService,
       hubExecutionAgents: options.hubExecutionAgents,
@@ -1580,7 +1601,7 @@ export class VoiceAssistantWebSocketServer {
       this.externalSessionsByKey.set(clientId, connection);
     }
     pending.identity.sessionId = connection.session.getSessionId();
-    this.syncBrowserToolsClientRegistration(connection);
+    this.syncBrowserToolsClientRegistration(connection, pending.identity.peer);
     this.sendToClient(ws, this.createServerInfoMessage());
     connection.connectionLogger.info(
       {
@@ -1619,12 +1640,12 @@ export class VoiceAssistantWebSocketServer {
       JSON.stringify(newClientCapabilities ?? null)
     ) {
       existing.clientCapabilities = newClientCapabilities;
-      this.syncBrowserToolsClientRegistration(existing);
+      this.syncBrowserToolsClientRegistration(existing, pending.identity.peer);
     }
     existing.sockets.add(ws);
     this.sessions.set(ws, existing);
     pending.identity.sessionId = existing.session.getSessionId();
-    this.syncBrowserToolsClientRegistration(existing);
+    this.syncBrowserToolsClientRegistration(existing, pending.identity.peer);
     this.sendToClient(ws, this.createServerInfoMessage());
     pending.connectionLogger.info(
       {
@@ -1650,6 +1671,9 @@ export class VoiceAssistantWebSocketServer {
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
+        // COMPAT(browserMirror): added in v0.6.0, remove after 2027-09-01 once the
+        // supported client floor always gates browser tabs on this flag.
+        ...(this.hasBrowserMirrorHost() ? { browserMirror: true } : {}),
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
@@ -1899,6 +1923,9 @@ export class VoiceAssistantWebSocketServer {
     }
     connection.sockets.delete(ws);
     connection.session.clearAgentTimelineSubscription(ws);
+    // Not awaited: dropping the last viewer of a stream waits out the grace and
+    // the host's stop, and the socket is already gone.
+    void connection.session.removeScreencastViewer(ws);
     this.socketIdentities.delete(ws);
 
     if (connection.sockets.size === 0) {
@@ -1989,7 +2016,75 @@ export class VoiceAssistantWebSocketServer {
     await connection.session.cleanup();
   }
 
-  private syncBrowserToolsClientRegistration(connection: TrustedSessionConnection): void {
+  /**
+   * A host announced that its tab set changed, so re-run the `list_tabs` fan-out
+   * and push the result to every client. Announces overlap, so only the newest
+   * fan-out is allowed to broadcast; a slower older one would publish stale tabs.
+   */
+  private broadcastBrowserTabsChanged(): void {
+    const broker = this.browserToolsBroker;
+    if (!broker) {
+      return;
+    }
+    const sequence = ++this.browserTabsChangedSequence;
+    // The fan-out has nobody to ask once the last mirror host is gone, and its
+    // failure would leave viewers listing tabs no host serves any more.
+    if (!this.hasBrowserMirrorHost()) {
+      this.publishBrowserTabList([]);
+      return;
+    }
+    void this.publishBrowserTabs(broker, sequence).catch((error: unknown) => {
+      this.logger.warn({ err: error }, "Failed to broadcast browser.tabs.changed");
+    });
+  }
+
+  private async publishBrowserTabs(broker: BrowserToolsBroker, sequence: number): Promise<void> {
+    const payload = await broker.execute({
+      command: { command: "list_tabs", args: {} },
+      hostScope: "mirror",
+    });
+    if (sequence !== this.browserTabsChangedSequence) {
+      return;
+    }
+    if (!payload.ok || payload.result.command !== "list_tabs") {
+      return;
+    }
+    this.publishBrowserTabList(payload.result.tabs);
+  }
+
+  private publishBrowserTabList(tabs: BrowserAutomationTabInfo[]): void {
+    this.broadcastToCapableSockets(
+      CLIENT_CAPS.browserMirror,
+      wrapSessionMessage({ type: "browser.tabs.changed", payload: { tabs } }),
+    );
+  }
+
+  /**
+   * An older app has no branch for `browser.tabs.changed`, so the push goes only
+   * to sockets that said they understand it.
+   */
+  private broadcastToCapableSockets(
+    capability: ClientCapability,
+    message: WSOutboundMessage,
+  ): void {
+    const capableSockets = [...this.sessions]
+      .filter(
+        ([ws, connection]) =>
+          connection.kind === "trusted" && connection.session.supportsForSource(capability, ws),
+      )
+      .map(([ws]) => ws);
+    this.sendMessageToSockets(capableSockets, message);
+  }
+
+  /** A mirror is only advertised while a host that can actually serve one is connected. */
+  private hasBrowserMirrorHost(): boolean {
+    return (this.browserToolsBroker?.getMirrorCapableClientCount() ?? 0) > 0;
+  }
+
+  private syncBrowserToolsClientRegistration(
+    connection: TrustedSessionConnection,
+    peer: WebSocketConnectionIdentity["peer"],
+  ): void {
     if (!this.browserToolsBroker) {
       return;
     }
@@ -1998,7 +2093,9 @@ export class VoiceAssistantWebSocketServer {
       this.unregisterBrowserToolsClient(connection.clientId);
       return;
     }
-    const capabilitySignature = JSON.stringify(browserHostCapability);
+    const hadBrowserMirror = this.hasBrowserMirrorHost();
+    const isDaemonLocal = peer === "local_ipc" || peer === "loopback";
+    const capabilitySignature = JSON.stringify({ ...browserHostCapability, isDaemonLocal });
     const existing = this.browserToolsRegistrations.get(connection.clientId);
     if (existing?.capabilitySignature === capabilitySignature) {
       return;
@@ -2011,6 +2108,8 @@ export class VoiceAssistantWebSocketServer {
     const unregister = this.browserToolsBroker.registerClient({
       id: connection.clientId,
       hostKind: browserHostCapability.hostKind,
+      label: isDaemonLocal ? getHostname() : browserHostCapability.hostKind,
+      isDaemonLocal,
       supportedCommands: browserHostCapability.supportedCommands,
       sendBrowserAutomationRequest: (request) => {
         this.sendToConnection(connection, wrapSessionMessage(request));
@@ -2020,6 +2119,9 @@ export class VoiceAssistantWebSocketServer {
       capabilitySignature,
       unregister,
     });
+    if (hadBrowserMirror !== this.hasBrowserMirrorHost()) {
+      this.broadcastCapabilitiesUpdate();
+    }
   }
 
   private unregisterBrowserToolsClient(clientId: string): void {
@@ -2027,8 +2129,15 @@ export class VoiceAssistantWebSocketServer {
     if (!registration) {
       return;
     }
+    const hadBrowserMirror = this.hasBrowserMirrorHost();
     this.browserToolsRegistrations.delete(clientId);
     registration.unregister();
+    if (hadBrowserMirror !== this.hasBrowserMirrorHost()) {
+      this.broadcastCapabilitiesUpdate();
+    }
+    // The tabs this host was serving left with it. Until they are republished
+    // viewers keep listing and rendering them, and every action on them fails.
+    this.broadcastBrowserTabsChanged();
   }
 
   private handleInvalidInboundMessage(args: {
@@ -2301,6 +2410,23 @@ export class VoiceAssistantWebSocketServer {
       message.message.type === "browser.automation.execute.response"
     ) {
       this.browserToolsBroker?.receiveResponse(message.message as BrowserAutomationExecuteResponse);
+      return;
+    }
+
+    if (
+      activeConnection.kind === "trusted" &&
+      message.message.type === "browser.tabs.announce.request"
+    ) {
+      // Only a client the daemon registered as a browser host has a tab set to
+      // announce; from anyone else it is a fan-out every other client pays for.
+      if (this.browserToolsRegistrations.has(activeConnection.clientId)) {
+        this.broadcastBrowserTabsChanged();
+        return;
+      }
+      activeConnection.connectionLogger.warn(
+        { clientId: activeConnection.clientId },
+        "ws_browser_tabs_announce_from_non_host",
+      );
       return;
     }
 

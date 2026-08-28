@@ -515,6 +515,10 @@ export const ar: TranslationResources = {
         title: "المتصفح مخصص لسطح المكتب فقط",
         subtitle: "افتح مساحة العمل هذه في Electron لاستخدام المتصفح المدمج.",
       },
+      mirror: {
+        keyboard: "لوحة مفاتيح المتصفح المعكوس",
+        connecting: "جارٍ الاتصال بالمتصفح على المضيف…",
+      },
       session: "جلسة المتصفح{{browserId}}",
       controls: {
         back: "خلف",
@@ -542,9 +546,11 @@ export const ar: TranslationResources = {
       devices: {
         label: "حجم الجهاز",
         responsive: "متجاوب",
+        landscape: "أفقي",
       },
       errors: {
         failedToLoad: "فشل تحميل الصفحة",
+        openTabFailed: "تعذر فتح علامة تبويب على المضيف",
         invalidUrl: "متصفح غير صالح URL",
         unsupportedProtocol: "متصفح محظور غير مدعوم URL:{{protocol}}",
       },

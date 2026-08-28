@@ -7,17 +7,32 @@ import {
   type BrowserAutomationExecuteRequest,
   type BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { supportsBrowserMirror } from "@getpaseo/protocol/browser-automation/capabilities";
 import { browserToolsFailure, type BrowserToolsResponsePayload } from "./errors.js";
+
+/** The {@link BrowserHostClient.hostKind} of the daemon's own CDP fallback. */
 
 export interface BrowserHostClient {
   id: string;
   hostKind: string;
+  /** Human-readable machine the host runs on, shown next to its tabs. */
+  label: string;
+  /** The host runs on the daemon's own machine, so new tabs belong there. */
+  isDaemonLocal: boolean;
   supportedCommands: readonly BrowserAutomationCommandName[];
   sendBrowserAutomationRequest(request: BrowserAutomationExecuteRequest): void | Promise<void>;
 }
 
+/**
+ * Which hosts a command may reach. `mirror` is the viewer-facing pool: hosts
+ * that can serve a screencast and take viewport input. `any` is the agent-facing
+ * pool, where a host registered for automation alone still answers `browser_*`.
+ */
+export type BrowserHostScope = "any" | "mirror";
+
 export interface BrowserToolsExecuteInput {
   command: BrowserAutomationCommand;
+  hostScope?: BrowserHostScope;
   agentId?: string;
   cwd?: string;
   workspaceId?: string;
@@ -36,6 +51,7 @@ interface RegisteredBrowserHost {
   client: BrowserHostClient;
   registeredAt: number;
   supportedCommands: ReadonlySet<BrowserAutomationCommandName>;
+  isMirrorCapable: boolean;
 }
 
 export interface BrowserToolsBrokerOptions {
@@ -52,6 +68,7 @@ export class BrowserToolsBroker {
   private readonly pending = new Map<string, PendingBrowserToolsRequest>();
   private readonly browserHostByBrowserId = new Map<string, string>();
   private readonly strandedBrowserHostByBrowserId = new Map<string, string>();
+  private readonly browserWorkspaceByBrowserId = new Map<string, string>();
   private registrationSequence = 0;
 
   public constructor(options: BrowserToolsBrokerOptions) {
@@ -66,6 +83,7 @@ export class BrowserToolsBroker {
       client,
       registeredAt,
       supportedCommands: new Set(client.supportedCommands),
+      isMirrorCapable: supportsBrowserMirror(client.supportedCommands),
     });
     return () => this.unregisterClient(client.id, registeredAt);
   }
@@ -110,6 +128,20 @@ export class BrowserToolsBroker {
     return this.clients.size;
   }
 
+  public getMirrorCapableClientCount(): number {
+    return this.eligibleHosts("mirror").length;
+  }
+
+  /** The connected host that owns a tab, or null while no host claims it. */
+  public getBrowserHostClientId(browserId: string): string | null {
+    return this.browserHostByBrowserId.get(browserId) ?? null;
+  }
+
+  /** The workspace a host reported the tab in, or null when it reported none. */
+  public getBrowserWorkspaceId(browserId: string): string | null {
+    return this.browserWorkspaceByBrowserId.get(browserId) ?? null;
+  }
+
   public async execute(input: BrowserToolsExecuteInput): Promise<BrowserToolsResponsePayload> {
     const requestId = input.requestId ?? this.createRequestId();
 
@@ -130,14 +162,17 @@ export class BrowserToolsBroker {
       });
     }
 
+    const hostScope = input.hostScope ?? "any";
+
     if (request.data.command.command === "list_tabs") {
       return this.executeListTabs({
         request: request.data,
         timeoutMs: input.timeoutMs ?? this.defaultTimeoutMs,
+        hostScope,
       });
     }
 
-    const host = this.selectHostForCommand(request.data.command, requestId);
+    const host = this.selectHostForCommand(request.data.command, requestId, hostScope);
     if (!host.ok) {
       return host.payload;
     }
@@ -200,29 +235,31 @@ export class BrowserToolsBroker {
   private async executeListTabs(params: {
     request: BrowserAutomationExecuteRequest;
     timeoutMs: number;
+    hostScope: BrowserHostScope;
   }): Promise<BrowserToolsResponsePayload> {
-    const hosts = Array.from(this.clients.values());
-    if (hosts.length === 0) {
+    const eligible = this.eligibleHosts(params.hostScope);
+    if (eligible.length === 0) {
       return this.noBrowserHostFailure(params.request.requestId);
     }
 
-    for (const host of hosts) {
-      const unsupported = this.unsupportedCommandFailure({
-        host,
+    // A host that cannot list tabs is skipped rather than failing the fan-out:
+    // one old or wedged host must not mute every other host's tabs.
+    const hosts = eligible.filter((host) => host.supportedCommands.has("list_tabs"));
+    if (hosts.length === 0) {
+      return unsupportedCommandPayload({
+        host: eligible[0],
         commandName: "list_tabs",
         requestId: params.request.requestId,
       });
-      if (unsupported) {
-        return unsupported;
-      }
     }
 
     if (hosts.length === 1) {
-      return this.sendRequest({
+      const payload = await this.sendRequest({
         host: hosts[0],
         request: params.request,
         timeoutMs: params.timeoutMs,
       });
+      return withBrowserHostIdentity(payload, hosts[0]);
     }
 
     const hostResponses = await Promise.all(
@@ -240,12 +277,12 @@ export class BrowserToolsBroker {
       })),
     );
 
-    const failed = hostResponses.find(({ payload }) => !payload.ok);
-    if (failed) {
-      return withBrowserToolsRequestId(failed.payload, params.request.requestId);
+    const answered = hostResponses.filter(({ payload }) => payload.ok);
+    if (answered.length === 0) {
+      return withBrowserToolsRequestId(hostResponses[0].payload, params.request.requestId);
     }
 
-    for (const { host, payload } of hostResponses) {
+    for (const { host, payload } of answered) {
       this.rememberBrowserHostForPayload(host.client.id, payload);
     }
 
@@ -254,32 +291,41 @@ export class BrowserToolsBroker {
       ok: true,
       result: {
         command: "list_tabs",
-        tabs: hostResponses.flatMap(({ payload }) =>
-          payload.ok && payload.result.command === "list_tabs" ? payload.result.tabs : [],
-        ),
+        tabs: answered.flatMap(({ host, payload }) => {
+          const stamped = withBrowserHostIdentity(payload, host);
+          return stamped.ok && stamped.result.command === "list_tabs" ? stamped.result.tabs : [];
+        }),
       },
     };
+  }
+
+  private eligibleHosts(hostScope: BrowserHostScope): RegisteredBrowserHost[] {
+    const hosts = Array.from(this.clients.values());
+    return hostScope === "mirror" ? hosts.filter((host) => host.isMirrorCapable) : hosts;
   }
 
   private selectHostForCommand(
     command: BrowserAutomationCommand,
     requestId: string,
+    hostScope: BrowserHostScope,
   ):
     | { ok: true; value: RegisteredBrowserHost }
     | { ok: false; payload: BrowserToolsResponsePayload } {
+    const eligible = this.eligibleHosts(hostScope);
+
     if (command.command === "new_tab") {
-      const host = this.selectMostRecentlyRegisteredHost();
+      const host = selectDaemonLocalHost(eligible) ?? selectMostRecentlyRegisteredHost(eligible);
       return host
         ? { ok: true, value: host }
         : { ok: false, payload: this.noBrowserHostFailure(requestId) };
     }
 
+    // list_tabs and new_tab are the only commands without a tab, and both are
+    // answered above, so anything here names a browser and must go to its owner.
+    // Falling back to an arbitrary host would run it against the wrong tab.
     const browserId = getBrowserIdForCommand(command);
     if (!browserId) {
-      const host = this.selectMostRecentlyRegisteredHost();
-      return host
-        ? { ok: true, value: host }
-        : { ok: false, payload: this.noBrowserHostFailure(requestId) };
+      return { ok: false, payload: this.noBrowserHostFailure(requestId) };
     }
 
     const ownerClientId = this.browserHostByBrowserId.get(browserId);
@@ -308,14 +354,11 @@ export class BrowserToolsBroker {
       };
     }
 
-    if (this.clients.size === 1) {
-      const host = this.selectMostRecentlyRegisteredHost();
-      if (host) {
-        return { ok: true, value: host };
-      }
+    if (eligible.length === 1) {
+      return { ok: true, value: eligible[0] };
     }
 
-    if (this.clients.size === 0) {
+    if (eligible.length === 0) {
       return { ok: false, payload: this.noBrowserHostFailure(requestId) };
     }
 
@@ -329,14 +372,6 @@ export class BrowserToolsBroker {
     };
   }
 
-  private selectMostRecentlyRegisteredHost(): RegisteredBrowserHost | null {
-    let selected: RegisteredBrowserHost | null = null;
-    for (const host of this.clients.values()) {
-      selected = host;
-    }
-    return selected;
-  }
-
   private unsupportedCommandFailure(params: {
     host: RegisteredBrowserHost;
     commandName: BrowserAutomationCommandName;
@@ -345,11 +380,7 @@ export class BrowserToolsBroker {
     if (params.host.supportedCommands.has(params.commandName)) {
       return null;
     }
-    return browserToolsFailure({
-      requestId: params.requestId,
-      code: "browser_unsupported",
-      message: `Browser automation command "${params.commandName}" is not supported by the ${describeBrowserHost(params.host)}.`,
-    });
+    return unsupportedCommandPayload(params);
   }
 
   private noBrowserHostFailure(requestId: string): BrowserToolsResponsePayload {
@@ -385,6 +416,7 @@ export class BrowserToolsBroker {
       for (const tab of payload.result.tabs) {
         this.browserHostByBrowserId.set(tab.browserId, clientId);
         this.strandedBrowserHostByBrowserId.delete(tab.browserId);
+        this.rememberBrowserWorkspace(tab.browserId, tab.workspaceId);
       }
       return;
     }
@@ -392,13 +424,25 @@ export class BrowserToolsBroker {
     if (payload.result.command === "close_tab") {
       this.browserHostByBrowserId.delete(payload.result.browserId);
       this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);
+      this.browserWorkspaceByBrowserId.delete(payload.result.browserId);
       return;
     }
 
     if ("browserId" in payload.result) {
       this.browserHostByBrowserId.set(payload.result.browserId, clientId);
       this.strandedBrowserHostByBrowserId.delete(payload.result.browserId);
+      if ("workspaceId" in payload.result) {
+        this.rememberBrowserWorkspace(payload.result.browserId, payload.result.workspaceId);
+      }
     }
+  }
+
+  /** Hosts that scope tabs to a workspace report it; the ones that do not leave it unset. */
+  private rememberBrowserWorkspace(browserId: string, workspaceId: string | undefined): void {
+    if (!workspaceId) {
+      return;
+    }
+    this.browserWorkspaceByBrowserId.set(browserId, workspaceId);
   }
 
   private sendRequest(params: {
@@ -455,11 +499,57 @@ export class BrowserToolsBroker {
   }
 }
 
+/** A tab belongs on the daemon's own machine when a host is running there. */
+function selectDaemonLocalHost(
+  hosts: readonly RegisteredBrowserHost[],
+): RegisteredBrowserHost | null {
+  let selected: RegisteredBrowserHost | null = null;
+  for (const host of hosts) {
+    if (host.client.isDaemonLocal) {
+      selected = host;
+    }
+  }
+  return selected;
+}
+
+function selectMostRecentlyRegisteredHost(
+  hosts: readonly RegisteredBrowserHost[],
+): RegisteredBrowserHost | null {
+  return hosts.length > 0 ? hosts[hosts.length - 1] : null;
+}
+
+function unsupportedCommandPayload(params: {
+  host: RegisteredBrowserHost;
+  commandName: BrowserAutomationCommandName;
+  requestId: string;
+}): BrowserToolsResponsePayload {
+  return browserToolsFailure({
+    requestId: params.requestId,
+    code: "browser_unsupported",
+    message: `Browser automation command "${params.commandName}" is not supported by the ${describeBrowserHost(params.host)}.`,
+  });
+}
+
 function getBrowserIdForCommand(command: BrowserAutomationCommand): string | null {
   if (command.command === "list_tabs" || command.command === "new_tab") {
     return null;
   }
   return command.args.browserId;
+}
+
+function withBrowserHostIdentity(
+  payload: BrowserToolsResponsePayload,
+  host: RegisteredBrowserHost,
+): BrowserToolsResponsePayload {
+  if (!payload.ok || payload.result.command !== "list_tabs") {
+    return payload;
+  }
+  const tabs = payload.result.tabs.map((tab) => ({
+    ...tab,
+    hostId: host.client.id,
+    hostLabel: host.client.label,
+  }));
+  return { ...payload, result: { ...payload.result, tabs } };
 }
 
 function describeBrowserHost(host: RegisteredBrowserHost): string {

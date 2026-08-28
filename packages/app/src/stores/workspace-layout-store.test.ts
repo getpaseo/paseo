@@ -16,9 +16,15 @@ vi.mock("@react-native-async-storage/async-storage", () => {
 });
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { queryClient } from "@/data/query-client";
+import { workspaceBrowsersQueryKey, type WorkspaceBrowserTabs } from "@/data/browsers";
 import { buildWorkspaceTabPersistenceKey, type WorkspaceTab } from "@/workspace-tabs/model";
 import { defaultChangesState, type ChangesState } from "@/panels/changes/state";
 import { defaultFileState, type FileState } from "@/panels/file/state";
+import {
+  removeTerminalFromPayload,
+  type ListTerminalsPayload,
+} from "@/screens/workspace/terminals/state";
 import {
   canDismissPaneInLayout,
   collectAllPanes,
@@ -38,10 +44,12 @@ import {
   stripEphemeralTabsFromLayout,
   type SplitNode,
   type SplitPane,
+  type WorkspaceTabSnapshot,
 } from "@/stores/workspace-layout-store";
 
 const SERVER_ID = "server-1";
 const WORKSPACE_ID = "ws-main";
+const BROWSERS_QUERY_KEY = workspaceBrowsersQueryKey(SERVER_ID, WORKSPACE_ID);
 
 function createDeterministicWorkspaceLayoutIds() {
   let values: string[] = [];
@@ -138,6 +146,43 @@ function contentTabs(tabs: WorkspaceTab[]): WorkspaceTab[] {
       tab.target.kind !== "changes_tree",
   );
 }
+
+function mirroredEntitySnapshot(
+  standaloneTerminalIds: string[] = [],
+  knownBrowserIds: string[] = [],
+  liveBrowserIds: string[] = knownBrowserIds,
+): WorkspaceTabSnapshot {
+  return {
+    agentsHydrated: true,
+    terminalsHydrated: true,
+    activeAgentIds: [],
+    autoOpenAgentIds: [],
+    knownAgentIds: [],
+    knownTerminalIds: standaloneTerminalIds,
+    standaloneTerminalIds,
+    browsers: {
+      hydrated: true,
+      knownIds: knownBrowserIds,
+      liveIds: liveBrowserIds,
+    },
+    hasActivePendingDraftCreate: false,
+  };
+}
+
+const contentTabIds = (workspaceKey: string) =>
+  contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey)).map(
+    (tab) => tab.tabId,
+  );
+const browserTabIds = (workspaceKey: string) =>
+  workspaceLayoutStore
+    .getState()
+    .getWorkspaceTabs(workspaceKey)
+    .filter((tab) => tab.target.kind === "browser")
+    .map((tab) => tab.tabId);
+const cachedBrowserIds = () =>
+  (queryClient.getQueryData<WorkspaceBrowserTabs>(BROWSERS_QUERY_KEY) ?? []).map(
+    (tab) => tab.browserId,
+  );
 
 function expectGroup(node: SplitNode): Extract<SplitNode, { kind: "group" }> {
   expect(node.kind).toBe("group");
@@ -1014,6 +1059,7 @@ describe("workspace-layout-store actions", () => {
       focusRestorationByWorkspace: {},
       explorerSidebarPaneIdByWorkspace: {},
     });
+    queryClient.removeQueries({ queryKey: ["browsers"] });
   });
 
   it("replaces a pane's sole New tab when real content opens", () => {
@@ -3351,6 +3397,91 @@ describe("workspace-layout-store actions", () => {
     expect(contentTabs(workspaceLayoutStore.getState().getWorkspaceTabs(workspaceKey))).toEqual([]);
   });
 
+  it("adopts live browsers, keeps locally hosted ones, and prunes unknown ones", () => {
+    const workspaceKey = createWorkspaceKey();
+    const reconcile = workspaceLayoutStore.getState().reconcileTabs;
+    reconcile(workspaceKey, mirroredEntitySnapshot([], ["browser-1"]));
+    expect(browserTabIds(workspaceKey)).toEqual(["browser_browser-1"]);
+    reconcile(workspaceKey, mirroredEntitySnapshot([], ["browser-1"], []));
+    expect(browserTabIds(workspaceKey)).toEqual(["browser_browser-1"]);
+    reconcile(workspaceKey, mirroredEntitySnapshot());
+    expect(browserTabIds(workspaceKey)).toEqual([]);
+  });
+
+  it.each(["browser", "terminal"] as const)(
+    "does not re-adopt a locally closed %s from its filtered query cache",
+    (kind) => {
+      const browserId = "browser-1";
+      const terminalId = "terminal-1";
+      let terminals = {
+        requestId: "stale",
+        terminals: kind === "terminal" ? [{ id: terminalId }] : [],
+      } as ListTerminalsPayload;
+      queryClient.setQueryData<WorkspaceBrowserTabs>(BROWSERS_QUERY_KEY, [
+        { browserId } as WorkspaceBrowserTabs[number],
+      ]);
+      const initialSnapshot = mirroredEntitySnapshot(
+        kind === "terminal" ? [terminalId] : [],
+        kind === "browser" ? cachedBrowserIds() : [],
+      );
+      const tabId = kind === "browser" ? `browser_${browserId}` : `terminal_${terminalId}`;
+      const workspaceKey = createWorkspaceKey();
+      const store = workspaceLayoutStore.getState();
+
+      store.reconcileTabs(workspaceKey, initialSnapshot);
+      if (kind === "terminal") {
+        terminals = removeTerminalFromPayload(terminalId)(terminals) as ListTerminalsPayload;
+      }
+      store.closeTab(workspaceKey, tabId);
+      store.reconcileTabs(
+        workspaceKey,
+        mirroredEntitySnapshot(
+          terminals.terminals.map((terminal) => terminal.id),
+          kind === "browser" ? cachedBrowserIds() : [],
+        ),
+      );
+
+      expect(
+        workspaceLayoutStore
+          .getState()
+          .getWorkspaceTabs(workspaceKey)
+          .filter((tab) => tab.target.kind === kind),
+      ).toEqual([]);
+    },
+  );
+
+  it("re-adopts a browser when a later authoritative query lists it again", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    queryClient.setQueryData<WorkspaceBrowserTabs>(BROWSERS_QUERY_KEY, [
+      { browserId: "browser-1" } as WorkspaceBrowserTabs[number],
+    ]);
+    store.reconcileTabs(workspaceKey, mirroredEntitySnapshot([], cachedBrowserIds()));
+    store.closeTab(workspaceKey, "browser_browser-1");
+    queryClient.setQueryData<WorkspaceBrowserTabs>(BROWSERS_QUERY_KEY, [
+      { browserId: "browser-1" } as WorkspaceBrowserTabs[number],
+    ]);
+    store.reconcileTabs(workspaceKey, mirroredEntitySnapshot([], cachedBrowserIds()));
+    expect(browserTabIds(workspaceKey)).toEqual(["browser_browser-1"]);
+  });
+
+  it("closing a browser does not invalidate the query that would refetch it", () => {
+    // Invalidating refetches, and the host may not have processed the close yet,
+    // so the refetch is how the closed tab comes back. Its own announcement
+    // corrects the list instead.
+    const workspaceKey = createWorkspaceKey();
+    queryClient.setQueryData<WorkspaceBrowserTabs>(BROWSERS_QUERY_KEY, [
+      { browserId: "browser-1" } as WorkspaceBrowserTabs[number],
+    ]);
+    const store = workspaceLayoutStore.getState();
+    store.reconcileTabs(workspaceKey, mirroredEntitySnapshot([], cachedBrowserIds()));
+
+    store.closeTab(workspaceKey, "browser_browser-1");
+
+    expect(cachedBrowserIds()).toEqual([]);
+    expect(queryClient.getQueryState(BROWSERS_QUERY_KEY)?.isInvalidated).toBe(false);
+  });
+
   it("reconcileTabs lands on an existing agent instead of the initial New tab", () => {
     const workspaceKey = createWorkspaceKey();
 
@@ -3733,6 +3864,30 @@ describe("workspace-layout-store actions", () => {
     const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
     expect(collectContentTabs(layout.root).map((tab) => tab.tabId)).toEqual([keptTabId]);
     expect(collectAllPanes(layout.root).map((pane) => pane.id)).toEqual([splitPaneId]);
+  });
+
+  it("closePane filters every browser it drops before the next reconcile", () => {
+    const workspaceKey = createWorkspaceKey();
+    queryClient.setQueryData<WorkspaceBrowserTabs>(BROWSERS_QUERY_KEY, [
+      { browserId: "browser-1" } as WorkspaceBrowserTabs[number],
+      { browserId: "browser-2" } as WorkspaceBrowserTabs[number],
+    ]);
+    const snapshot = mirroredEntitySnapshot(["terminal-1"], ["browser-1", "browser-2"]);
+    const store = workspaceLayoutStore.getState();
+    store.reconcileTabs(workspaceKey, snapshot);
+    useWorkspaceLayoutIds("split", "group-1");
+    store.splitPane(workspaceKey, {
+      tabId: "terminal_terminal-1",
+      targetPaneId: "main",
+      position: "right",
+    });
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    const browserPaneId = findPaneContainingTab(layout.root, "browser_browser-1")?.id;
+
+    store.closePane(workspaceKey, browserPaneId as string);
+    store.reconcileTabs(workspaceKey, mirroredEntitySnapshot(["terminal-1"], cachedBrowserIds()));
+
+    expect(contentTabIds(workspaceKey)).toEqual(["terminal_terminal-1"]);
   });
 
   it("closePane refuses to close the last visible pane", () => {

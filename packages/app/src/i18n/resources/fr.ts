@@ -519,6 +519,10 @@ export const fr: TranslationResources = {
         title: "Le navigateur est réservé au bureau",
         subtitle: "Ouvrez cet espace de travail dans Electron pour utiliser le navigateur intégré.",
       },
+      mirror: {
+        keyboard: "Clavier du navigateur miroir",
+        connecting: "Connexion au navigateur de l'hôte…",
+      },
       session: "Session de navigateur{{browserId}}",
       controls: {
         back: "Dos",
@@ -546,9 +550,11 @@ export const fr: TranslationResources = {
       devices: {
         label: "Taille de l'appareil",
         responsive: "Adaptatif",
+        landscape: "Paysage",
       },
       errors: {
         failedToLoad: "Échec du chargement de la page",
+        openTabFailed: "Impossible d'ouvrir un onglet sur l'hôte",
         invalidUrl: "NavigateurURLinvalide",
         unsupportedProtocol: "Navigateur non pris en charge bloquéURL:{{protocol}}",
       },

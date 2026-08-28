@@ -393,6 +393,7 @@ export interface PaseoDaemonConfig {
   mcpEnabled?: boolean;
   mcpInjectIntoAgents?: boolean;
   browserToolsEnabled?: boolean;
+  /** CDP endpoint the daemon attaches to for its own browser host. */
   git?: {
     maxProcessesPerSecond: number;
     maxProcessConcurrency: number;
