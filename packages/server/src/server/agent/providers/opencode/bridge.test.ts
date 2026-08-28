@@ -1,13 +1,14 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { z } from "zod";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../../test-utils/test-logger.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
-import { OpenCodeBridge } from "./bridge.js";
+import { OpenCodeBridge, loadOpenCodeBridgePluginArtifact } from "./bridge.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -57,6 +58,41 @@ function readPluginOptions(env: Record<string, string>): {
 }
 
 describe("OpenCodeBridge", () => {
+  test("loads packaged bundle bytes without invoking source compilation", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "paseo-opencode-artifact-"));
+    temporaryDirectories.push(root);
+    const moduleUrl = pathToFileURL(path.join(root, "bridge.js")).href;
+    const bundle = Buffer.from("export default async () => ({})");
+    await writeFile(path.join(root, "bridge-plugin.bundle.mjs"), bundle);
+    const compileSource = vi.fn(async () => {
+      throw new Error("packaged runtime must not compile");
+    });
+
+    await expect(loadOpenCodeBridgePluginArtifact(moduleUrl, compileSource)).resolves.toEqual(
+      bundle,
+    );
+    expect(compileSource).not.toHaveBeenCalled();
+
+    await rm(path.join(root, "bridge-plugin.bundle.mjs"));
+    await expect(loadOpenCodeBridgePluginArtifact(moduleUrl, compileSource)).rejects.toThrow(
+      "artifact is missing",
+    );
+    expect(compileSource).not.toHaveBeenCalled();
+  });
+
+  test("allows source modules to compile the development artifact", async () => {
+    const artifact = new Uint8Array([1, 2, 3]);
+    const compileSource = vi.fn(async () => artifact);
+    const moduleUrl = new URL("./bridge.ts", import.meta.url).href;
+
+    await expect(loadOpenCodeBridgePluginArtifact(moduleUrl, compileSource)).resolves.toBe(
+      artifact,
+    );
+    expect(compileSource).toHaveBeenCalledWith(
+      fileURLToPath(new URL("./bridge-plugin.mjs", moduleUrl)),
+    );
+  });
+
   test("serves authenticated session context and caller-scoped tools", async () => {
     const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-bridge-"));
     temporaryDirectories.push(paseoHome);

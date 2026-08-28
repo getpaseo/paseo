@@ -5,7 +5,6 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type { Logger } from "pino";
-import { build } from "esbuild";
 
 import { writeFileAtomic } from "../../../atomic-file.js";
 import {
@@ -125,22 +124,7 @@ export class OpenCodeBridge {
   }
 
   private async materializePlugin(): Promise<string> {
-    const sourcePath = fileURLToPath(new URL("./bridge-plugin.mjs", import.meta.url));
-    const source = await readFile(sourcePath, "utf8");
-    const bundled = await build({
-      stdin: {
-        contents: source,
-        resolveDir: path.dirname(sourcePath),
-        sourcefile: path.basename(sourcePath),
-      },
-      bundle: true,
-      format: "esm",
-      platform: "neutral",
-      target: "es2022",
-      write: false,
-    });
-    const artifact = bundled.outputFiles[0]?.contents;
-    if (!artifact) throw new Error("Failed to bundle the OpenCode bridge plugin");
+    const artifact = await loadOpenCodeBridgePluginArtifact(import.meta.url);
     const digest = createHash("sha256").update(artifact).digest("hex");
     const destination = path.join(this.paseoHome, "runtime", "opencode", `paseo-${digest}.mjs`);
     await writeFileAtomic(destination, artifact);
@@ -245,6 +229,43 @@ export class OpenCodeBridge {
     if (!this.pluginUrl) throw new Error("OpenCode bridge plugin is not materialized");
     return this.pluginUrl;
   }
+}
+
+type CompileOpenCodeBridgePlugin = (sourcePath: string) => Promise<Uint8Array>;
+
+export async function loadOpenCodeBridgePluginArtifact(
+  moduleUrl: string,
+  compileSource: CompileOpenCodeBridgePlugin = compileOpenCodeBridgePlugin,
+): Promise<Uint8Array> {
+  const bundleUrl = new URL("./bridge-plugin.bundle.mjs", moduleUrl);
+  try {
+    return await readFile(bundleUrl);
+  } catch (error) {
+    if (!fileURLToPath(moduleUrl).endsWith(`${path.sep}bridge.ts`)) {
+      throw new Error("Bundled OpenCode bridge plugin artifact is missing", { cause: error });
+    }
+  }
+  return compileSource(fileURLToPath(new URL("./bridge-plugin.mjs", moduleUrl)));
+}
+
+async function compileOpenCodeBridgePlugin(sourcePath: string): Promise<Uint8Array> {
+  const source = await readFile(sourcePath, "utf8");
+  const { build } = await import("esbuild");
+  const bundled = await build({
+    stdin: {
+      contents: source,
+      resolveDir: path.dirname(sourcePath),
+      sourcefile: path.basename(sourcePath),
+    },
+    bundle: true,
+    format: "esm",
+    platform: "neutral",
+    target: "es2022",
+    write: false,
+  });
+  const artifact = bundled.outputFiles[0]?.contents;
+  if (!artifact) throw new Error("Failed to bundle the OpenCode bridge plugin");
+  return artifact;
 }
 
 function parseOpenCodeConfig(value: string | undefined): OpenCodeConfig {
