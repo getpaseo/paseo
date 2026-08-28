@@ -1716,7 +1716,13 @@ test("normalizeConfig leaves model selection to providers that own their default
 
     override async fetchCatalog() {
       this.fetchCatalogCalls += 1;
-      return await super.fetchCatalog();
+      return {
+        models: [
+          { provider: this.provider, id: "provider-model", label: "Provider model" },
+          { provider: this.provider, id: "other-model", label: "Other model" },
+        ],
+        modes: [],
+      };
     }
   }
   const client = new ProviderDefaultClient();
@@ -1741,9 +1747,54 @@ test("normalizeConfig leaves model selection to providers that own their default
     }).toEqual({
       omittedModel: undefined,
       omittedCreateModel: undefined,
-      fetchCatalogCalls: 0,
+      fetchCatalogCalls: 1,
       explicitModel: "gpt-5.4-mini",
       explicitCreateModel: "gpt-5.4-mini",
+    });
+  } finally {
+    await manager.flushForShutdown();
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("normalizeConfig honors configured default models over provider-owned defaults", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-configured-default-test-"));
+  class ProviderDefaultClient extends TestAgentClient {
+    readonly ownsDefaultModelSelection = true;
+
+    override async fetchCatalog() {
+      return {
+        models: [
+          {
+            provider: this.provider,
+            id: "configured-default",
+            label: "Configured default",
+            isDefault: true,
+          },
+          {
+            provider: this.provider,
+            id: "provider-model",
+            label: "Provider model",
+          },
+        ],
+        modes: [],
+      };
+    }
+  }
+  const client = new ProviderDefaultClient();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    expect({
+      storedModel: snapshot.config.model,
+      createModel: client.createdConfigs[0]?.model,
+    }).toEqual({
+      storedModel: "configured-default",
+      createModel: "configured-default",
     });
   } finally {
     await manager.flushForShutdown();

@@ -18,6 +18,7 @@ function providerEntry(): ProviderSnapshotEntry {
     provider: "pi",
     status: "ready",
     enabled: true,
+    ownsDefaultModelSelection: true,
     models: [
       {
         provider: "pi",

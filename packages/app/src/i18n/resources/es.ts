@@ -1602,6 +1602,7 @@ export const es: TranslationResources = {
   },
   providerSelection: {
     defaultModel: "Por defecto",
+    providerDefaultModel: "Predeterminado del proveedor",
     selectModel: "Seleccionar modelo",
     loading: "Cargando...",
     error: "Error",

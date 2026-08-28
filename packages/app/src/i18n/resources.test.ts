@@ -591,6 +591,7 @@ describe("translation resources", () => {
 
   it("includes provider selection utility keys for the Batch 4P migration", () => {
     expect(en.providerSelection.defaultModel).toBe("Default");
+    expect(en.providerSelection.providerDefaultModel).toBe("Provider default");
     expect(en.providerSelection.selectModel).toBe("Select model");
     expect(en.providerSelection.loading).toBe("Loading...");
     expect(en.providerSelection.error).toBe("Error");

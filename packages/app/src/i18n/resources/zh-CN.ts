@@ -1541,6 +1541,7 @@ export const zhCN: TranslationResources = {
   },
   providerSelection: {
     defaultModel: "默认",
+    providerDefaultModel: "提供商默认值",
     selectModel: "选择模型",
     loading: "正在加载...",
     error: "错误",

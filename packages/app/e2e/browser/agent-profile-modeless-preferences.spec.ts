@@ -22,6 +22,8 @@ const CREATE_AGENT_PREFERENCES_KEY = "@paseo:create-agent-preferences";
 const MODELESS_PROVIDER = "modeless-profile-e2e";
 const MODELESS_MODEL = "pi-profile-model";
 
+test.use({ e2eForkProviders: ["opencode"] });
+
 type WebSocketMessage = string | Buffer;
 
 interface CreateAgentRequestMessage {
@@ -30,6 +32,7 @@ interface CreateAgentRequestMessage {
     provider?: unknown;
     modeId?: unknown;
     featureValues?: unknown;
+    model?: unknown;
   };
 }
 
@@ -235,6 +238,38 @@ test.describe("Agent profiles repair modeless provider preferences", () => {
       await workspace.cleanup();
       await provider.restore();
       await profiles.restore();
+    }
+  });
+
+  test("OpenCode Provider default submits without a model", async ({ page }) => {
+    const workspace = await seedWorkspace({ repoPrefix: "opencode-provider-default-" });
+    const createAgentRecorder = await recordAndBlockCreateAgentRequest(page);
+
+    await page.addInitScript(
+      ({ preferencesKey }) => {
+        localStorage.setItem(
+          preferencesKey,
+          JSON.stringify({ provider: "opencode" } satisfies FormPreferences),
+        );
+      },
+      { preferencesKey: CREATE_AGENT_PREFERENCES_KEY },
+    );
+
+    try {
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openGlobalNewWorkspaceComposer(page);
+      await selectNewWorkspaceProject(page, {
+        projectKey: workspace.projectKey,
+        projectDisplayName: workspace.projectDisplayName,
+      });
+
+      await submitNewWorkspacePrompt(page, "Let OpenCode choose its default model.");
+      const createAgentRequest = await createAgentRecorder.waitForRequest();
+      expect(createAgentRequest.config).toMatchObject({ provider: "opencode" });
+      expect(createAgentRequest.config).not.toHaveProperty("model");
+    } finally {
+      await workspace.cleanup();
     }
   });
 });

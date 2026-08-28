@@ -71,6 +71,7 @@ export interface UseAgentFormStateResult {
   allProviderEntries?: ProviderSnapshotEntry[];
   modeOptions: AgentMode[];
   availableModels: AgentModelDefinition[];
+  ownsDefaultModelSelection?: boolean;
   allProviderModels: Map<string, AgentModelDefinition[]>;
   modelSelectorProviders: ProviderSelectorProvider[];
   isAllModelsLoading: boolean;
@@ -308,6 +309,11 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     () => buildSelectableProviderSelectorProviders(snapshotEntries),
     [snapshotEntries],
   );
+  const composerModelSelectorProviders = useMemo(
+    () =>
+      buildSelectableProviderSelectorProviders(snapshotEntries, { includeProviderDefault: true }),
+    [snapshotEntries],
+  );
   const snapshotSelectedEntry = useMemo(
     () =>
       formState.provider
@@ -428,8 +434,13 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       const providerDef = selectableProviderDefinitionMap.get(provider);
       const providerModels = allProviderModels.get(provider) ?? null;
       const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
+      const ownsDefaultModelSelection = Boolean(
+        snapshotEntries?.find((entry) => entry.provider === provider)?.ownsDefaultModelSelection,
+      );
       const normalizedModelId = normalizeSelectedModelId(modelId);
-      const nextModelId = normalizedModelId || resolveDefaultModelId(providerModels);
+      const nextModelId =
+        normalizedModelId ||
+        (ownsDefaultModelSelection ? "" : resolveDefaultModelId(providerModels));
 
       dispatch({
         type: "SET_PROVIDER_AND_MODEL_FROM_USER",
@@ -438,6 +449,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         providerDef,
         providerModels,
         providerPrefs,
+        ownsDefaultModelSelection,
       });
       void updateCurrentPreferences((current) =>
         mergeSelectedComposerPreferences({
@@ -449,7 +461,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         }),
       );
     },
-    [allProviderModels, selectableProviderDefinitionMap, updateCurrentPreferences],
+    [allProviderModels, selectableProviderDefinitionMap, snapshotEntries, updateCurrentPreferences],
   );
 
   const clearProviderSelectionFromUser = useCallback(() => {
@@ -618,6 +630,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     ? providerDefinitionMap.get(formState.provider)
     : undefined;
   const effectiveModel = resolveEffectiveModel(availableModels, formState.model);
+  const ownsDefaultModelSelection = Boolean(
+    snapshotEntries?.find((entry) => entry.provider === formState.provider)
+      ?.ownsDefaultModelSelection,
+  );
   const availableThinkingOptionsRaw = effectiveModel?.thinkingOptions;
   const availableThinkingOptions = useMemo(
     () => availableThinkingOptionsRaw ?? [],
@@ -649,8 +665,11 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       allProviderEntries,
       modeOptions,
       availableModels: availableModels ?? [],
+      ownsDefaultModelSelection,
       allProviderModels,
-      modelSelectorProviders,
+      modelSelectorProviders: isCreateFlow
+        ? composerModelSelectorProviders
+        : modelSelectorProviders,
       isAllModelsLoading,
       isProviderModelsRefreshing: snapshotIsRefreshing,
       availableThinkingOptions,
@@ -684,8 +703,11 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       allProviderEntries,
       modeOptions,
       availableModels,
+      ownsDefaultModelSelection,
       allProviderModels,
       modelSelectorProviders,
+      composerModelSelectorProviders,
+      isCreateFlow,
       isAllModelsLoading,
       snapshotIsRefreshing,
       availableThinkingOptions,

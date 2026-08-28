@@ -695,13 +695,13 @@ Every entry under `agents.providers` accepts these fields:
 
 Each entry in the `models` array:
 
-| Field             | Type               | Required | Description                           |
-| ----------------- | ------------------ | -------- | ------------------------------------- |
-| `id`              | `string`           | Yes      | Model identifier sent to the provider |
-| `label`           | `string`           | Yes      | Display name in the UI                |
-| `description`     | `string`           | No       | Short description                     |
-| `isDefault`       | `boolean`          | No       | Mark as the default model selection   |
-| `thinkingOptions` | `ThinkingOption[]` | No       | Available thinking/reasoning levels   |
+| Field             | Type               | Required | Description                                                                        |
+| ----------------- | ------------------ | -------- | ---------------------------------------------------------------------------------- |
+| `id`              | `string`           | Yes      | Model identifier sent to the provider                                              |
+| `label`           | `string`           | Yes      | Display name in the UI                                                             |
+| `description`     | `string`           | No       | Short description                                                                  |
+| `isDefault`       | `boolean`          | No       | Mark as the default model selection; takes precedence over provider self-selection |
+| `thinkingOptions` | `ThinkingOption[]` | No       | Available thinking/reasoning levels                                                |
 
 ### Thinking option
 

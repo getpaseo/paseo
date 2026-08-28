@@ -86,6 +86,7 @@ export type AgentFormAction =
       providerDef: AgentProviderDefinition | undefined;
       providerModels: AgentModelDefinition[] | null;
       providerPrefs?: ProviderPrefs | undefined;
+      ownsDefaultModelSelection?: boolean;
     }
   | {
       type: "APPLY_PROFILE_FROM_USER";
@@ -642,7 +643,9 @@ export function resolveAgentForm(
 
     case "SET_PROVIDER_AND_MODEL_FROM_USER": {
       const normalizedModelId = resolveCanonicalModelId(action.providerModels, action.modelId);
-      const nextModelId = normalizedModelId || resolveDefaultModelId(action.providerModels);
+      const nextModelId =
+        normalizedModelId ||
+        (action.ownsDefaultModelSelection ? "" : resolveDefaultModelId(action.providerModels));
       const nextThinkingOptionId = pickNextThinkingOptionForTarget({
         availableModels: action.providerModels,
         modelId: nextModelId,

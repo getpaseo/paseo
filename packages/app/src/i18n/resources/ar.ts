@@ -1558,6 +1558,7 @@ export const ar: TranslationResources = {
   },
   providerSelection: {
     defaultModel: "تقصير",
+    providerDefaultModel: "إعداد المزوّد الافتراضي",
     selectModel: "حدد النموذج",
     loading: "تحميل...",
     error: "خطأ",

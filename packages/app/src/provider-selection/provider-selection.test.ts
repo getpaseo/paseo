@@ -9,6 +9,7 @@ import {
   buildSelectedTriggerLabel,
   filterAndRankModelRows,
   matchesModelSearch,
+  resolveEffectiveComposerModelId,
   resolveSelectedModelLabel,
   resolveSubmissionReadiness,
 } from "./provider-selection";
@@ -62,6 +63,29 @@ describe("combined model selector data", () => {
               isDefault: undefined,
             },
           ],
+        },
+      },
+    ]);
+  });
+
+  it("puts Provider default before concrete models for providers that own selection in composer", () => {
+    expect(
+      buildSelectableProviderSelectorProviders(
+        [
+          snapshotEntry({
+            provider: "opencode",
+            label: "OpenCode",
+            ownsDefaultModelSelection: true,
+            models: [{ provider: "opencode", id: "openai/gpt-5.4", label: "GPT-5.4" }],
+          }),
+        ],
+        { includeProviderDefault: true },
+      ),
+    ).toMatchObject([
+      {
+        modelSelection: {
+          kind: "models",
+          rows: [{ modelId: "", modelLabel: "Provider default" }, { modelId: "openai/gpt-5.4" }],
         },
       },
     ]);
@@ -379,6 +403,24 @@ describe("combined model selector data", () => {
         allowsEmptyAutoSubmit: false,
         providerCount: 1,
         selection: {
+          provider: "opencode",
+          modelId: "",
+          availableModels: [codexModel],
+          isModelLoading: false,
+          ownsDefaultModelSelection: true,
+        },
+        autoSubmitConfig: null,
+        workspaceDirectory: "/repo",
+        hasClient: true,
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      resolveSubmissionReadiness({
+        text: "hello",
+        allowsEmptyAutoSubmit: false,
+        providerCount: 1,
+        selection: {
           provider: "codewhale",
           modelId: "",
           availableModels: [],
@@ -389,6 +431,20 @@ describe("combined model selector data", () => {
         hasClient: true,
       }),
     ).toEqual({ ok: true });
+  });
+
+  it("keeps a provider-owned default model omitted", () => {
+    expect(
+      resolveEffectiveComposerModelId({
+        provider: "opencode",
+        modelId: "",
+        modeId: "",
+        thinkingOptionId: "",
+        availableModels: [codexModel],
+        modeOptions: [],
+        ownsDefaultModelSelection: true,
+      }),
+    ).toBe("");
   });
 
   it("uses the active app language for utility labels", async () => {
