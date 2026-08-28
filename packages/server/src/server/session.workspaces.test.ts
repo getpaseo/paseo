@@ -741,7 +741,7 @@ function createSessionForWorkspaceTests(
   return session;
 }
 
-test("resume_agent_request binds a persisted resume to its workspace lease", async () => {
+test("resume_agent_request holds the workspace lease across unarchive and provider resume", async () => {
   const updatedAt = "2026-08-29T09:30:00.000Z";
   const archivedAt = "2026-08-29T09:45:00.000Z";
   const workspaceId = "workspace-resume-lease";
@@ -765,15 +765,40 @@ test("resume_agent_request binds a persisted resume to its workspace lease", asy
     updatedAt,
   });
   const resumeAgentFromPersistence = vi.fn(async () => managed);
+  let leaseDepth = 0;
+  const leasedWorkspaceIds: Array<string | undefined> = [];
   const session = createSessionForWorkspaceTests({
     agentManager: {
-      resumeAgentFromPersistence,
-      unarchiveSnapshot: async () => true,
+      runWithWorkspaceAgentRegistrationLease: async <Value>(
+        candidateWorkspaceId: string | undefined,
+        action: () => Promise<Value>,
+      ) => {
+        leasedWorkspaceIds.push(candidateWorkspaceId);
+        leaseDepth += 1;
+        try {
+          return await action();
+        } finally {
+          leaseDepth -= 1;
+        }
+      },
+      resumeAgentFromPersistence: async (
+        ...args: Parameters<typeof resumeAgentFromPersistence>
+      ) => {
+        expect(leaseDepth).toBe(2);
+        return resumeAgentFromPersistence(...args);
+      },
+      unarchiveSnapshot: async () => {
+        expect(leaseDepth).toBe(2);
+        return true;
+      },
       hydrateTimelineFromProvider: async () => undefined,
       getTimeline: () => [],
     },
     agentStorage: {
-      listByProviderSession: async () => [record],
+      listByProviderSession: async () => {
+        expect(leaseDepth).toBe(1);
+        return [record];
+      },
       get: async () => ({ ...record, archivedAt: null }),
     },
   });
@@ -785,6 +810,7 @@ test("resume_agent_request binds a persisted resume to its workspace lease", asy
     requestId: "request-resume-lease",
   });
 
+  expect(leasedWorkspaceIds).toEqual([undefined, workspaceId]);
   expect(resumeAgentFromPersistence).toHaveBeenCalledWith(
     handle,
     expect.objectContaining({ cwd: REPO_CWD }),

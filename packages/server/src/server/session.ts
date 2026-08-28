@@ -2887,11 +2887,9 @@ export class Session {
     });
   }
 
-  private async unarchiveAgentByHandle(handle: AgentPersistenceHandle): Promise<{
-    record: StoredAgentRecord;
-    didUnarchive: boolean;
-    originalArchivedAt: string | null;
-  } | null> {
+  private async findAgentByHandle(
+    handle: AgentPersistenceHandle,
+  ): Promise<StoredAgentRecord | null> {
     const records = await this.agentStorage.listByProviderSession(
       handle.provider,
       handle.sessionId,
@@ -2911,16 +2909,7 @@ export class Session {
     if (!matched) {
       return null;
     }
-    const didUnarchive = await unarchiveAgentState(
-      this.agentStorage,
-      this.agentManager,
-      matched.id,
-    );
-    return {
-      record: matched,
-      didUnarchive,
-      originalArchivedAt: matched.archivedAt ?? null,
-    };
+    return matched;
   }
 
   private async handleUpdateAgentRequest(
@@ -3682,25 +3671,40 @@ export class Session {
       `Resuming agent ${handle.sessionId} (${handle.provider})`,
     );
     try {
-      const matched = await this.unarchiveAgentByHandle(handle);
-      const effectiveOverrides = matched
-        ? { ...buildConfigOverrides(matched.record), ...overrides }
-        : overrides;
-      let snapshot: ManagedAgent;
-      try {
-        snapshot = await this.agentManager.resumeAgentFromPersistence(
-          handle,
-          effectiveOverrides,
-          matched?.record.id,
-          matched ? extractTimestamps(matched.record) : undefined,
-        );
-      } catch (error) {
-        if (matched?.didUnarchive && matched.originalArchivedAt) {
-          await this.agentManager.archiveSnapshot(matched.record.id, matched.originalArchivedAt);
-        }
-        throw error;
-      }
-      await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
+      const snapshot = await this.agentManager.runWithWorkspaceAgentRegistrationLease(
+        undefined,
+        async () => {
+          const matched = await this.findAgentByHandle(handle);
+          const effectiveOverrides = matched
+            ? { ...buildConfigOverrides(matched), ...overrides }
+            : overrides;
+          const resume = async (): Promise<ManagedAgent> => {
+            const originalArchivedAt = matched?.archivedAt ?? null;
+            const didUnarchive = matched
+              ? await unarchiveAgentState(this.agentStorage, this.agentManager, matched.id)
+              : false;
+            let resumed: ManagedAgent;
+            try {
+              resumed = await this.agentManager.resumeAgentFromPersistence(
+                handle,
+                effectiveOverrides,
+                matched?.id,
+                matched ? extractTimestamps(matched) : undefined,
+              );
+            } catch (error) {
+              if (matched && didUnarchive && originalArchivedAt) {
+                await this.agentManager.archiveSnapshot(matched.id, originalArchivedAt);
+              }
+              throw error;
+            }
+            await unarchiveAgentState(this.agentStorage, this.agentManager, resumed.id);
+            return resumed;
+          };
+          return matched?.workspaceId
+            ? this.agentManager.runWithWorkspaceAgentRegistrationLease(matched.workspaceId, resume)
+            : resume();
+        },
+      );
       await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
       await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
