@@ -48,13 +48,19 @@ export function toScheduleCommandError(code: string, action: string, error: unkn
   };
 }
 
-export async function requireNewAgentSchedule(
+export async function requireNewAgentUpdateTarget(
   client: ScheduleDaemonClient,
   id: string,
 ): Promise<void> {
   const payload = await client.scheduleInspect({ id });
-  if (payload.error || !payload.schedule || payload.schedule.target.type !== "new-agent") {
+  if (payload.error || !payload.schedule) {
     throw new Error(payload.error ?? `Schedule not found: ${id}`);
+  }
+  if (payload.schedule.target.type !== "new-agent") {
+    throw {
+      code: "INVALID_TARGET",
+      message: "--provider/--model/--mode/--cwd can only be used with a new-agent target",
+    } satisfies CommandError;
   }
 }
 

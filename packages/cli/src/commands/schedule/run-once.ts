@@ -3,7 +3,6 @@ import type { SingleResult } from "../../output/index.js";
 import { scheduleSchema } from "./schema.js";
 import {
   connectScheduleClient,
-  requireNewAgentSchedule,
   toScheduleCommandError,
   toScheduleRow,
   type ScheduleCommandOptions,
@@ -17,7 +16,6 @@ export async function runRunOnceCommand(
 ): Promise<SingleResult<ScheduleRow>> {
   const { client } = await connectScheduleClient(options.host);
   try {
-    await requireNewAgentSchedule(client, id);
     const payload = await client.scheduleRunOnce({ id });
     if (payload.error || !payload.schedule) {
       throw new Error(payload.error ?? `Failed to run schedule once: ${id}`);
