@@ -1443,7 +1443,10 @@ function ComposerContentImpl({
     draftConfig: commandDraftConfig,
     canExecuteClientSlashCommand: buildOutgoingAttachments(attachments).length === 0,
     onClientSlashCommand: runClientSlashCommand,
-    onSelectAgent: supportsAgentContextAttachments ? handleSelectAgentMention : undefined,
+    onSelectAgent:
+      mode.showAutocomplete && supportsAgentContextAttachments
+        ? handleSelectAgentMention
+        : undefined,
     onAutocompleteApplied: () => {
       messageInputRef.current?.focus();
     },
