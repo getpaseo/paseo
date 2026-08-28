@@ -2,7 +2,7 @@
 title: GitHub for Hub
 description: Create the GitHub App your Hub uses for repository access and event triggers.
 nav: GitHub App
-order: 75
+order: 76
 category: Hub
 ---
 

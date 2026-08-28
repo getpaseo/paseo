@@ -2,7 +2,7 @@
 title: Slack for Hub
 description: Connect Slack over Socket Mode, or use webhooks from a public Hub.
 nav: Slack app
-order: 76
+order: 77
 category: Hub
 ---
 

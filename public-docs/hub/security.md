@@ -2,7 +2,7 @@
 title: Hub security
 description: Security boundaries, untrusted input, provider controls, and explicit workflow authority.
 nav: Security
-order: 80
+order: 82
 category: Hub
 ---
 
@@ -27,7 +27,11 @@ filters:
   from_users: [U01234567]
 ```
 
-Use `from_users` on external triggers. Pin GitHub to `repo`, Slack to `workspace` and `channels`, and Discord to `guild` and `channels`. Allowlists reduce exposure but do not make a permitted account or its text trustworthy.
+Use `from_users` on reactive external triggers. Pin GitHub to `repo`, Linear to `project`, Slack to
+`workspace` and `channels`, and Discord to `guild` and `channels`. The autonomous
+`linear.issue_entered_scope` event has no actor allowlist; narrow its project scope with states,
+labels, excluded labels, and assignees. Allowlists and resource scopes reduce exposure but do not
+make a permitted account, issue, or comment trustworthy.
 
 Keep the triggering text explicit and delimited:
 
@@ -54,6 +58,7 @@ Keep secrets and unrelated repositories outside the selected `cwd`. Use a dedica
 
 - Put `slack.reply` only in a Slack workflow step that replies.
 - Put `discord.reply` only in a Discord workflow step that replies.
+- Put `linear.reply` only in a Linear workflow step that replies to the issue.
 - Put a [`github` block](/docs/hub/github) only on a step that needs GitHub.
 - Give classifiers no reply or repository authority.
 
@@ -177,7 +182,7 @@ Provider policy does not replace OS filesystem or network isolation. Test the ex
 ## Review checklist
 
 - The configuration repository is protected.
-- Every external trigger has narrow resource and sender filters.
+- Every reactive external trigger has narrow resource and sender filters; every autonomous Linear trigger has a narrow project scope.
 - Each environment points at the smallest useful working directory.
 - Dynamic environment and agent authority has finite choices.
 - Named agent options match the selected provider and remain complete.

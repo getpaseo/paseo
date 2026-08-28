@@ -2,7 +2,7 @@
 title: Hub FAQ
 description: Common questions about projects, connections, configuration, and daemons in Paseo Hub.
 nav: FAQ
-order: 78
+order: 80
 category: Hub
 ---
 
@@ -40,7 +40,9 @@ Yes, with a manual source. A project using a GitHub source is read-only in the d
 
 ## Who can trigger an agent?
 
-Only the users listed in a trigger's `from_users`. It is required and cannot be empty.
+Reactive external triggers start only for users listed in `from_users`; it is required and cannot
+be empty. `linear.issue_entered_scope` is the explicit autonomous exception. It requires a Linear
+project and runs only when an issue enters the complete configured scope.
 
 ## What happens if the daemon is offline?
 
@@ -50,12 +52,14 @@ Dispatch fails and the event is recorded as failed. Nothing is queued, so trigge
 
 No. The stored CLI login is a human organization credential; the enrolled daemon has its own relationship credential. Interactive `paseo hub logout` offers to disconnect a daemon related to the same Hub. Declining is normal, and JSON or noninteractive logout never disconnects unless you pass `--disconnect-daemon`.
 
-## Can an agent reply back to Slack or Discord?
+## Can an agent reply back to Linear, Slack, or Discord?
 
 Yes. Put `allow_outputs` on the step and tell the agent to call `hub.reply` in the prompt. [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call) shows the prompting; reply limits and `required` are in the [output capability reference](/docs/hub/configuration/hub-yml#output-capabilities).
+
+Use `linear.reply`, `slack.reply`, or `discord.reply` for the matching provider context.
 
 GitHub has no reply capability; give the step a [`github` block](/docs/hub/github) and the agent acts through the `gh` CLI.
 
 ## Can I use it without GitHub?
 
-Yes. A project with a manual configuration and a Discord or Slack connection works fine. GitHub is only needed if you want configuration synced from a repository.
+Yes. A project with a manual configuration and a Linear, Discord, or Slack connection works fine. GitHub is only needed if you want configuration synced from a repository or a workflow step to use explicit GitHub authority.

@@ -2,7 +2,7 @@
 title: Hub configuration reference
 description: Canonical Hub resource, workflow, agent, expression, and prompt fields.
 nav: Configuration reference
-order: 71
+order: 72
 category: Hub
 ---
 
@@ -170,6 +170,36 @@ Use `label` only with a label-added event. It has no match on other events. Use 
 
 See [GitHub triggers](/docs/hub/triggers/github) for complete triage, pull-request review, and ready-for-agent workflows.
 
+### Linear events and filters
+
+| `on`                         | Matches                                                                    |
+| ---------------------------- | -------------------------------------------------------------------------- |
+| `linear.issue_entered_scope` | An issue created in, or transitioning into, the complete configured scope. |
+| `linear.issue_assigned`      | An issue update that changes its assignee to a user.                       |
+| `linear.comment_created`     | A newly created issue comment.                                             |
+
+`linear.issue_entered_scope` requires `project` and does not require `from_users`. It is an
+intentionally autonomous, edge-triggered policy: an issue already in scope does not run again for
+an unrelated edit. The other two events require a non-empty `from_users` allowlist.
+
+All supplied Linear filters compose with AND.
+
+| Field            | Type                                | Applies to                    | Meaning                                                |
+| ---------------- | ----------------------------------- | ----------------------------- | ------------------------------------------------------ |
+| `connection`     | string                              | all Linear events             | Linear connection slug.                                |
+| `project`        | non-empty string                    | all Linear events             | Linear project id; required for `issue_entered_scope`. |
+| `states`         | non-empty list of non-empty strings | all Linear events             | Allowed current workflow-state ids.                    |
+| `labels`         | non-empty list of non-empty strings | all Linear events             | Every listed label id must be currently present.       |
+| `exclude_labels` | non-empty list of non-empty strings | all Linear events             | No listed label id may be currently present.           |
+| `assignees`      | non-empty list of non-empty strings | all Linear events             | Allowed resulting assignee ids.                        |
+| `from_users`     | non-empty list of strings           | assignment and comment events | Linear actor ids allowed to start the workflow.        |
+| `pattern`        | string                              | `linear.comment_created`      | Prefix of the original comment.                        |
+| `contains`       | string                              | `linear.comment_created`      | Substring of the original comment.                     |
+
+Use Linear ids, not display names. `from_users` is the actor who assigned or commented;
+`assignees` is the issue's resulting assignee. See [Linear triggers](/docs/hub/triggers/linear)
+for a reactive comment workflow and a guarded first-draft PR scout.
+
 ### Inputs and values
 
 Inputs have `type: string | number | boolean`, plus optional `required`, `default`, and `choices`. `required` and `default` cannot be combined. Finite `choices` are required when an input can choose authority such as an environment or named agent.
@@ -244,7 +274,9 @@ allow_outputs:
     required: true
 ```
 
-Slack workflows use `slack.reply`; Discord workflows use `discord.reply`. The declaration grants `hub.reply`, and the prompt must tell the agent to call it. GitHub has no reply output; use an explicit [`github` block](/docs/hub/github).
+Linear workflows use `linear.reply`; Slack workflows use `slack.reply`; Discord workflows use
+`discord.reply`. The declaration grants `hub.reply`, and the prompt must tell the agent to call it.
+GitHub has no reply output; use an explicit [`github` block](/docs/hub/github).
 
 Every step receives `hub.finish_execution`. The prompt must tell the agent when to call it; Hub does not append completion or reply instructions. If `output.schema` is present, `hub.finish_execution` requires an `output` value that matches the schema. If an `allow_outputs` entry is `required: true`, the agent must emit that output before finishing. `max` defaults to `1`.
 

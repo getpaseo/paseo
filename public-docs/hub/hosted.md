@@ -2,7 +2,7 @@
 title: Hosted Hub
 description: Sign in to the managed Paseo Hub or self-host the same service.
 nav: Hosted
-order: 73
+order: 74
 category: Hub
 ---
 
