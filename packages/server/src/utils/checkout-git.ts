@@ -3387,7 +3387,7 @@ export async function commitChanges(
   if (options.addAll ?? true) {
     await runGitCommand(["add", "-A"], { cwd, timeout: 120_000 });
   }
-  await runGitCommand(["-c", "commit.gpgsign=false", "commit", "-m", options.message], {
+  await runGitCommand(["commit", "-m", options.message], {
     cwd,
     timeout: 120_000,
   });
@@ -3565,7 +3565,7 @@ export async function mergeToBase(
       });
       const message =
         options.commitMessage ?? `Squash merge ${currentBranch} into ${normalizedBaseRef}`;
-      await runGitCommand(["-c", "commit.gpgsign=false", "commit", "-m", message], {
+      await runGitCommand(["commit", "-m", message], {
         cwd: operationCwd,
         timeout: 120_000,
       });
