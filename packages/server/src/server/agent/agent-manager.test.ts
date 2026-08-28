@@ -7920,6 +7920,93 @@ test("unarchiveSnapshot keeps the stored record archived when native unarchive f
   expect(client.unarchivedHandles).toHaveLength(1);
 });
 
+test("workspace archive exclusion drains snapshot unarchive before classifying blockers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchive-archive-drain-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-unarchive-drain";
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Unarchive before workspace classification",
+    },
+    undefined,
+    { workspaceId },
+  );
+  await manager.archiveAgent(agent.id);
+  const unarchiveStarted = deferred<void>();
+  const finishUnarchive = deferred<void>();
+  client.readArchivedAtDuringUnarchive = async () => {
+    unarchiveStarted.resolve();
+    await finishUnarchive.promise;
+    return (await storage.get(agent.id))?.archivedAt;
+  };
+
+  const unarchive = manager.unarchiveSnapshot(agent.id);
+  await unarchiveStarted.promise;
+  let archiveStarted = false;
+  let archivedAtDuringClassification: string | null | undefined;
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted = true;
+    archivedAtDuringClassification = (await storage.get(agent.id))?.archivedAt;
+  });
+  await Promise.resolve();
+  expect(archiveStarted).toBe(false);
+
+  finishUnarchive.resolve();
+  await expect(unarchive).resolves.toBe(true);
+  await archive;
+  expect(archiveStarted).toBe(true);
+  expect(archivedAtDuringClassification).toBeNull();
+});
+
+test("workspace archive exclusion rejects snapshot unarchive after classification begins", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchive-archive-reject-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-unarchive-reject";
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Unarchive after workspace classification",
+    },
+    undefined,
+    { workspaceId },
+  );
+  await manager.archiveAgent(agent.id);
+  const classificationFinished = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    expect((await storage.get(agent.id))?.archivedAt).toEqual(expect.any(String));
+    classificationFinished.resolve();
+    await finishArchive.promise;
+  });
+  await classificationFinished.promise;
+
+  const rejectedUnarchive = expect(manager.unarchiveSnapshot(agent.id)).rejects.toBeInstanceOf(
+    WorkspaceAgentRegistrationBlockedError,
+  );
+  finishArchive.resolve();
+  await archive;
+  await rejectedUnarchive;
+  expect((await storage.get(agent.id))?.archivedAt).toEqual(expect.any(String));
+  expect(client.unarchivedHandles).toEqual([]);
+});
+
 test("archiveAgent cascade archives in-memory children with the full archive contract", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cascade-contract-"));
   const storagePath = join(workdir, "agents");

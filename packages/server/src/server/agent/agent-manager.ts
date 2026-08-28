@@ -2057,41 +2057,56 @@ export class AgentManager {
     agentId: string,
     updates?: { workspaceId?: string; labels?: AgentLabelPatch },
   ): Promise<boolean> {
-    const registry = this.requireRegistry();
-    const record = await registry.get(agentId);
-    if (!record || !record.archivedAt) {
-      return false;
-    }
+    return this.runWithWorkspaceAgentRegistrationLease(undefined, async () => {
+      const registry = this.requireRegistry();
+      const record = await registry.get(agentId);
+      if (!record || !record.archivedAt) {
+        return false;
+      }
 
-    await this.syncNativeArchiveState(record.provider, record.persistence, "restore");
+      const restore = async (): Promise<boolean> => {
+        const current = await registry.get(agentId);
+        if (!current || !current.archivedAt) {
+          return false;
+        }
 
-    await registry.upsert({
-      ...record,
-      ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
-      ...(updates?.labels ? { labels: applyLabelPatch(record.labels, updates.labels) } : {}),
-      archivedAt: null,
-      updatedAt: new Date().toISOString(),
+        await this.syncNativeArchiveState(current.provider, current.persistence, "restore");
+
+        await registry.upsert({
+          ...current,
+          ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
+          ...(updates?.labels ? { labels: applyLabelPatch(current.labels, updates.labels) } : {}),
+          archivedAt: null,
+          updatedAt: new Date().toISOString(),
+        });
+
+        if (this.getAgent(agentId)) {
+          this.notifyAgentState(agentId);
+        }
+        return true;
+      };
+      const workspaceId = updates?.workspaceId ?? record.workspaceId;
+      return workspaceId
+        ? this.runWithWorkspaceAgentRegistrationLease(workspaceId, restore)
+        : restore();
     });
-
-    if (this.getAgent(agentId)) {
-      this.notifyAgentState(agentId);
-    }
-    return true;
   }
 
   async unarchiveSnapshotByHandle(handle: AgentPersistenceHandle): Promise<void> {
-    const registry = this.requireRegistry();
-    const records = await registry.list();
-    const matched = records.find(
-      (record) =>
-        record.persistence?.provider === handle.provider &&
-        record.persistence?.sessionId === handle.sessionId,
-    );
-    if (!matched) {
-      return;
-    }
+    await this.runWithWorkspaceAgentRegistrationLease(undefined, async () => {
+      const registry = this.requireRegistry();
+      const records = await registry.list();
+      const matched = records.find(
+        (record) =>
+          record.persistence?.provider === handle.provider &&
+          record.persistence?.sessionId === handle.sessionId,
+      );
+      if (!matched) {
+        return;
+      }
 
-    await this.unarchiveSnapshot(matched.id);
+      await this.unarchiveSnapshot(matched.id);
+    });
   }
 
   async updateAgentMetadata(
