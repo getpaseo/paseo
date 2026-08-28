@@ -190,7 +190,7 @@ Choose `github.issue_comment_created` for a comment on an issue and `github.pull
 
 ## Filter GitHub events
 
-Every externally sourced workflow needs a non-empty identity allowlist. GitHub accepts `from_users`, `from_teams`, or both. `from_users` matches the sender's GitHub login. `from_teams` accepts `organization/team-slug` and matches only active members of a listed team. A listed login or active team membership qualifies. Team filters require the GitHub App's organization **Members** permission with read access; pending, unavailable, or denied membership checks do not start a run.
+Every externally sourced workflow needs a non-empty identity allowlist. See [GitHub events and filters](/docs/hub/configuration/hub-yml#github-events-and-filters) for team filters.
 
 All other GitHub filters compose with AND: the repository, connection, content, changed label, and required current labels must all match.
 

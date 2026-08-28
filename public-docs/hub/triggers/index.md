@@ -56,29 +56,27 @@ Each provider page documents its events and the data they expose:
 
 ## Filters
 
-`filters` is required. Every externally sourced trigger needs a non-empty identity allowlist: `from_users` for every provider, or `from_teams` for GitHub. GitHub can use both; a listed login or an active membership in a listed team qualifies. A trigger without an identity allowlist is rejected at validation.
+`filters` is required. Every externally sourced trigger needs a non-empty identity allowlist. [GitHub events and filters](/docs/hub/configuration/hub-yml#github-events-and-filters) defines team filters. A trigger without an identity allowlist is rejected at validation.
 
 The allowlist is what keeps a stranger's comment on a public issue from starting an agent on your machine. There is no default, because a safe default differs per repository.
 
 An allowlist is one layer of defense. It does not make a permitted account trustworthy after compromise or make prompt injection harmless. See [Hub security](/docs/hub/security) before choosing the daemon, working directory, provider policy, and outputs for an external trigger.
 
-| Filter       | Applies to                | Matches                                                                               |
-| ------------ | ------------------------- | ------------------------------------------------------------------------------------- |
-| `from_users` | all                       | GitHub: login. Slack and Discord: **user id**, not display name                       |
-| `from_teams` | GitHub                    | `organization/team-slug`; the sender must be an active member of a listed GitHub team |
-| `repo`       | GitHub                    | `owner/name`                                                                          |
-| `workspace`  | Slack                     | Team id, `T01234567`                                                                  |
-| `guild`      | Discord                   | Guild id                                                                              |
-| `channels`   | Slack, Discord            | Channel ids                                                                           |
-| `contains`   | all                       | GitHub substring; Slack and Discord invocation prefix                                 |
-| `pattern`    | all                       | Invocation prefix                                                                     |
-| `connection` | all                       | A connection slug, when the organization has several                                  |
-| `label`      | GitHub label-added events | The label added by this delivery, case-insensitively                                  |
-| `labels`     | GitHub                    | Every listed current issue or pull-request label, case-insensitively                  |
+| Filter       | Applies to                | Matches                                                                            |
+| ------------ | ------------------------- | ---------------------------------------------------------------------------------- |
+| `from_users` | all                       | GitHub: login. Slack and Discord: **user id**, not display name                    |
+| `from_teams` | GitHub                    | [GitHub team allowlist](/docs/hub/configuration/hub-yml#github-events-and-filters) |
+| `repo`       | GitHub                    | `owner/name`                                                                       |
+| `workspace`  | Slack                     | Team id, `T01234567`                                                               |
+| `guild`      | Discord                   | Guild id                                                                           |
+| `channels`   | Slack, Discord            | Channel ids                                                                        |
+| `contains`   | all                       | GitHub substring; Slack and Discord invocation prefix                              |
+| `pattern`    | all                       | Invocation prefix                                                                  |
+| `connection` | all                       | A connection slug, when the organization has several                               |
+| `label`      | GitHub label-added events | The label added by this delivery, case-insensitively                               |
+| `labels`     | GitHub                    | Every listed current issue or pull-request label, case-insensitively               |
 
-GitHub team filters require the App's organization **Members** permission with read access. Pending, unavailable, or denied membership checks do not start a run.
-
-All non-identity conditions must pass. On GitHub, `from_users` and `from_teams` are alternatives; there is no general `any` mode.
+All non-identity conditions must pass. See [GitHub events and filters](/docs/hub/configuration/hub-yml#github-events-and-filters) for GitHub identity matching.
 
 ## Which connection an event comes from
 

@@ -29,13 +29,9 @@ GitHub uses these Hub URLs:
 
 Keep GitHub's SSL verification enabled.
 
-## Organization permissions
+## Team trigger filters
 
-| Permission | Access | Why                                     |
-| ---------- | ------ | --------------------------------------- |
-| Members    | Read   | Resolve GitHub `from_teams` allowlists. |
-
-**Members** is required only when a workflow uses GitHub `from_teams`. If you add it to an existing App, ensure each existing organization installation accepts the permission update before using team filters. Until then, Hub fails closed and does not start team-filtered runs.
+See [GitHub events and filters](/docs/hub/configuration/hub-yml#github-events-and-filters) for `from_teams` App setup and matching rules.
 
 ## Subscribe to GitHub events
 

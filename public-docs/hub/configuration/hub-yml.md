@@ -165,7 +165,7 @@ Existing configurations may continue to use `github.issues`, `github.issue_comme
 | `label`      | non-empty string                                   | `github.issue_label_added`, `github.pull_request_label_added` | The label added by the delivery.                                                |
 | `labels`     | non-empty list of non-empty strings                | issue, pull-request, and comment events                       | Every listed label must be currently present on the issue or pull request.      |
 
-`from_teams` requires the GitHub App's organization **Members** permission with read access. Pending, unavailable, or denied membership checks do not start a run.
+`from_teams` requires the GitHub App's organization **Members** permission with read access. If you add it to an existing App, each organization installation must accept the permission update before its team-filtered workflows can match. Pending, unavailable, or denied membership checks do not start a run.
 
 `label` and `labels` match GitHub labels case-insensitively. `label` checks the one changed label; `labels` checks the full current label set and requires every entry. For example, `labels: [bug, backend]` requires both `bug` and `backend`.
 
