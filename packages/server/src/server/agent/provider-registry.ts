@@ -219,6 +219,16 @@ const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
       runtimeSettings,
       providerParams: options?.providerParams,
     }),
+  prime: (logger, runtimeSettings, options) =>
+    new PiRpcAgentClient({
+      logger,
+      runtimeSettings,
+      providerParams: options?.providerParams,
+      provider: "prime",
+      binaryCommand: process.env.PRIME_AGENT_COMMAND ?? "prime-agent",
+      agentDirName: ".prime",
+      displayName: "Prime Agent",
+    }),
   omp: (logger, runtimeSettings, options) =>
     new OmpAgentClient({
       logger,
