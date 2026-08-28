@@ -2,10 +2,10 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type {
+import {
   AgentManager,
-  ManagedAgent,
-  ManagedImportableProviderSession,
+  type ManagedAgent,
+  type ManagedImportableProviderSession,
 } from "./agent-manager.js";
 import { AgentStorage, type StoredAgentRecord } from "./agent-storage.js";
 import type { FetchRecentProviderSessionsRequestMessage } from "@getpaseo/protocol/messages";
@@ -24,6 +24,14 @@ import {
 
 const directorySymlinkType = process.platform === "win32" ? "junction" : "dir";
 const importTestDirectories: string[] = [];
+
+function deferredSignal(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 const TEST_CAPABILITIES = {
   supportsStreaming: true,
@@ -615,6 +623,7 @@ class ProviderImportHarness {
         this.activeAgent = this.snapshot;
         return this.snapshot;
       },
+      runWithWorkspaceAgentRegistrationLease: async (_workspaceId, action) => action(),
       hydrateTimelineFromProvider: async () => {},
       getTimeline: () => this.timeline,
       closeAgent: async (agentId: string) => {
@@ -716,6 +725,126 @@ test("importProviderSession uses the provider import path with the requested lab
     timelineSize: 2,
     createdWorkspace: null,
   });
+});
+
+test("holds the requested workspace lease across import lookup and provider registration", async () => {
+  const harness = await ProviderImportHarness.create();
+  const logger = createTestLogger();
+  const leaseManager = new AgentManager({ clients: {}, logger });
+  const workspaceId = "ws-import-race";
+  const lookupStarted = deferredSignal();
+  const finishLookup = deferredSignal();
+  const providerImportStarted = deferredSignal();
+  const finishProviderImport = deferredSignal();
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId,
+    projectId: "project-import-race",
+    cwd: harness.snapshot.cwd,
+    kind: "directory",
+    displayName: "import race",
+    createdAt: "2026-04-30T00:00:00.000Z",
+    updatedAt: "2026-04-30T00:00:00.000Z",
+  });
+
+  harness.manager.runWithWorkspaceAgentRegistrationLease =
+    leaseManager.runWithWorkspaceAgentRegistrationLease.bind(leaseManager);
+  harness.manager.importProviderSession = async (request) => {
+    harness.freshImports.push(request);
+    providerImportStarted.resolve();
+    await finishProviderImport.promise;
+    harness.activeAgent = harness.snapshot;
+    return harness.snapshot;
+  };
+
+  try {
+    const imported = importProviderSession({
+      request: {
+        requestId: "import-race",
+        provider: "codex",
+        providerHandleId: "thread-import-race",
+        cwd: harness.snapshot.cwd,
+        workspaceId,
+      },
+      workspaceProvisioning: {
+        async runInImportWorkspace(_input, operation) {
+          lookupStarted.resolve();
+          await finishLookup.promise;
+          return { value: await operation(workspace), createdWorkspace: null };
+        },
+      },
+      agentManager: harness.manager,
+      agentStorage: harness.storage,
+      logger,
+    });
+    await lookupStarted.promise;
+
+    let archiveEntered = false;
+    const archive = leaseManager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+      archiveEntered = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(archiveEntered).toBe(false);
+
+    finishLookup.resolve();
+    await providerImportStarted.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(archiveEntered).toBe(false);
+
+    finishProviderImport.resolve();
+    await expect(imported).resolves.toMatchObject({ snapshot: harness.snapshot });
+    await archive;
+    expect(archiveEntered).toBe(true);
+  } finally {
+    finishLookup.resolve();
+    finishProviderImport.resolve();
+    await leaseManager.flush().catch(() => undefined);
+  }
+});
+
+test("rejects an import before workspace lookup once archival owns the workspace", async () => {
+  const harness = await ProviderImportHarness.create();
+  const logger = createTestLogger();
+  const leaseManager = new AgentManager({ clients: {}, logger });
+  const workspaceId = "ws-import-blocked";
+  const archiveEntered = deferredSignal();
+  const finishArchive = deferredSignal();
+  const runInImportWorkspace = vi.fn(async (): Promise<never> => {
+    throw new Error("workspace lookup must not run");
+  });
+
+  harness.manager.runWithWorkspaceAgentRegistrationLease =
+    leaseManager.runWithWorkspaceAgentRegistrationLease.bind(leaseManager);
+
+  try {
+    const archive = leaseManager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+      archiveEntered.resolve();
+      await finishArchive.promise;
+    });
+    await archiveEntered.promise;
+
+    await expect(
+      importProviderSession({
+        request: {
+          requestId: "import-blocked",
+          provider: "codex",
+          providerHandleId: "thread-import-blocked",
+          cwd: harness.snapshot.cwd,
+          workspaceId,
+        },
+        workspaceProvisioning: { runInImportWorkspace },
+        agentManager: harness.manager,
+        agentStorage: harness.storage,
+        logger,
+      }),
+    ).rejects.toThrow(`Workspace ${workspaceId} is being archived`);
+    expect(runInImportWorkspace).not.toHaveBeenCalled();
+
+    finishArchive.resolve();
+    await archive;
+  } finally {
+    finishArchive.resolve();
+    await leaseManager.flush().catch(() => undefined);
+  }
 });
 
 test("importProviderSession rejects a provider session with an active stored owner", async () => {
