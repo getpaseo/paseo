@@ -843,6 +843,10 @@ export class OmpAgentSession implements AgentSession {
 
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, OmpTrackedToolCall>();
+  private readonly deferredTaskResults = new Map<
+    string,
+    { toolCall: OmpTrackedToolCall; result: OmpToolResult }
+  >();
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
   private activeAskUserDialog: ActiveAskUserDialog | null = null;
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
@@ -1173,6 +1177,7 @@ export class OmpAgentSession implements AgentSession {
 
   private clearOmpTurnState(): void {
     clearOmpHostToolState(this.runtimeSession);
+    this.deferredTaskResults.clear();
     this.subagentCardTracker.clear();
   }
 
@@ -1641,6 +1646,7 @@ export class OmpAgentSession implements AgentSession {
       for (const mapped of this.subagentIndex.handleLifecycle(this.runtimeSession, payload)) {
         this.emit(mapped);
       }
+      this.settleDeferredTaskCalls();
       return true;
     }
     if (event.type === "subagent_progress") {
@@ -1653,6 +1659,7 @@ export class OmpAgentSession implements AgentSession {
       for (const mapped of this.subagentIndex.handleProgress(this.runtimeSession, payload)) {
         this.emit(mapped);
       }
+      this.settleDeferredTaskCalls();
       return true;
     }
     if (event.type === "subagent_event") {
@@ -1901,7 +1908,6 @@ export class OmpAgentSession implements AgentSession {
   ): void {
     const toolCall =
       this.activeToolCalls.get(event.toolCallId) ?? parseToolArgs(event.toolName, null);
-    this.activeToolCalls.delete(event.toolCallId);
 
     if (event.toolName === "ask_user") {
       this.activeAskUserDialog = null;
@@ -1909,6 +1915,17 @@ export class OmpAgentSession implements AgentSession {
     }
 
     const result = parseToolResult(event.result);
+    // `task` tool_execution_end is a dispatch ack. Children start later, so keep
+    // the call active until the index has a linked child and none are running.
+    if (event.toolName === "task" && !event.isError) {
+      this.activeToolCalls.set(event.toolCallId, toolCall);
+      this.deferredTaskResults.set(event.toolCallId, { toolCall, result });
+      this.emitToolCallEvent(event.toolCallId, toolCall, "running", result, null);
+      this.settleDeferredTaskCalls();
+      return;
+    }
+
+    this.activeToolCalls.delete(event.toolCallId);
     const error = event.isError ? event.result : null;
     const status = event.isError ? "failed" : "completed";
     this.emitToolCallEvent(event.toolCallId, toolCall, status, result, error);
@@ -1923,6 +1940,36 @@ export class OmpAgentSession implements AgentSession {
         this.logger.debug({ event }, "Dropped malformed OMP todo tool result");
       }
     }
+  }
+
+  private settleDeferredTaskCalls(): void {
+    const pendingIds = Array.from(this.deferredTaskResults.keys());
+    for (const toolCallId of pendingIds) {
+      if (
+        this.subagentIndex.hasLinkedChild(this.runtimeSession, toolCallId) &&
+        !this.subagentIndex.hasRunningLinkedTo(this.runtimeSession, toolCallId)
+      ) {
+        this.finalizeDeferredTask(toolCallId);
+      }
+    }
+  }
+
+  private forceSettleDeferredTaskCalls(): void {
+    const pendingIds = Array.from(this.deferredTaskResults.keys());
+    for (const toolCallId of pendingIds) {
+      this.finalizeDeferredTask(toolCallId);
+    }
+  }
+
+  private finalizeDeferredTask(toolCallId: string): void {
+    const pending = this.deferredTaskResults.get(toolCallId);
+    if (!pending) {
+      return;
+    }
+    this.deferredTaskResults.delete(toolCallId);
+    this.activeToolCalls.delete(toolCallId);
+    this.emitToolCallEvent(toolCallId, pending.toolCall, "completed", pending.result, null);
+    this.subagentCardTracker.delete(toolCallId);
   }
 
   private emitCompactionTimeline(input: {
@@ -2123,6 +2170,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
+    this.forceSettleDeferredTaskCalls();
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
@@ -2158,7 +2206,9 @@ export class OmpAgentSession implements AgentSession {
       try {
         const state = await this.runtimeSession.getState();
         this.state = state;
-        if (!state.isStreaming && !state.isCompacting) {
+        // Parent model idle is not enough: OMP-internal `task` children keep
+        // writing after agent_end / isStreaming=false (#2232).
+        if (!state.isStreaming && !state.isCompacting && !(await this.hasRunningOmpSubagents())) {
           this.completeTurn(turnId, messages);
           return;
         }
@@ -2167,6 +2217,19 @@ export class OmpAgentSession implements AgentSession {
       }
       await this.providerIdleScheduler.waitForRetry();
     }
+  }
+
+  private async hasRunningOmpSubagents(): Promise<boolean> {
+    try {
+      const snapshots = await this.runtimeSession.getSubagents();
+      for (const event of this.subagentIndex.reconcileSnapshots(this.runtimeSession, snapshots)) {
+        this.emit(event);
+      }
+    } catch (error) {
+      this.logger.debug({ err: error }, "OMP get_subagents unavailable during idle gate");
+    }
+    this.settleDeferredTaskCalls();
+    return this.subagentIndex.hasRunning(this.runtimeSession);
   }
 
   private async refreshState(): Promise<void> {

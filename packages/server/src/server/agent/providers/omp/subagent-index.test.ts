@@ -114,4 +114,78 @@ describe("OMP provider subagent mapper", () => {
       })[0],
     ).toMatchObject({ event: { id: "child-1", status: "canceled" } });
   });
+
+  test("treats a listed snapshot as running and its later absence as completed", () => {
+    const index = new OmpSubagentIndex();
+    const parent = {};
+
+    expect(
+      index.reconcileSnapshots(parent, [
+        {
+          id: "child-1",
+          index: 0,
+          agent: "ApiBudgetAudit",
+          status: "running",
+          parentToolCallId: "task-1",
+        },
+      ]),
+    ).toEqual([
+      expect.objectContaining({
+        event: {
+          type: "upsert",
+          id: "child-1",
+          title: "ApiBudgetAudit",
+          description: null,
+          status: "running",
+          toolCallId: "task-1",
+        },
+      }),
+    ]);
+    expect(index.hasRunning(parent)).toBe(true);
+
+    expect(index.reconcileSnapshots(parent, [])[0]).toMatchObject({
+      event: { type: "upsert", id: "child-1", status: "completed" },
+    });
+    expect(index.hasRunning(parent)).toBe(false);
+  });
+
+  test("does not complete a lifecycle-only child from an empty snapshot", () => {
+    const index = new OmpSubagentIndex();
+    const parent = {};
+    index.handleLifecycle(parent, {
+      id: "child-1",
+      agent: "worker",
+      status: "started",
+      index: 0,
+    });
+
+    expect(index.reconcileSnapshots(parent, [])).toEqual([]);
+    expect(index.hasRunning(parent)).toBe(true);
+  });
+
+  test("links children to their parent task call for deferred card settlement", () => {
+    const index = new OmpSubagentIndex();
+    const parent = {};
+    index.handleLifecycle(parent, {
+      id: "child-1",
+      agent: "worker",
+      status: "started",
+      parentToolCallId: "task-1",
+      index: 0,
+    });
+
+    expect(index.hasLinkedChild(parent, "task-1")).toBe(true);
+    expect(index.hasLinkedChild(parent, "task-other")).toBe(false);
+    expect(index.hasRunningLinkedTo(parent, "task-1")).toBe(true);
+
+    index.handleLifecycle(parent, {
+      id: "child-1",
+      agent: "worker",
+      status: "completed",
+      parentToolCallId: "task-1",
+      index: 0,
+    });
+    expect(index.hasLinkedChild(parent, "task-1")).toBe(true);
+    expect(index.hasRunningLinkedTo(parent, "task-1")).toBe(false);
+  });
 });

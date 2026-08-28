@@ -6,6 +6,14 @@ import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
 
+function lastToolCallStatus(omp: OmpHarness, callId: string): string | undefined {
+  const items = omp
+    .timeline()
+    .filter((item) => item.type === "tool_call" && item.callId === callId);
+  const last = items[items.length - 1];
+  return last?.type === "tool_call" ? last.status : undefined;
+}
+
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
   private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
@@ -327,6 +335,330 @@ describe("OMP agent client and session", () => {
     omp.reportProviderState({ isStreaming: false, isCompacting: false });
     scheduler.retry();
     await expect(completion).resolves.toMatchObject({ finalText: "first done" });
+  });
+
+  // #2232: parent model loop can go idle while OMP-internal `task` children
+  // keep writing. Wire order is tool_execution_end (dispatch ack) then
+  // subagent_lifecycle started — never the reverse.
+  test("stays active while OMP internal task subagents are still running", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    const session = omp;
+    await session.requireStartTurn("critically audit the entire repo");
+    const runtime = session.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("critically audit the entire repo", "user-audit");
+    runtime.streamAssistantText("spawning fan-out workers");
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "task-1",
+      toolName: "task",
+      args: { description: "audit API budget" },
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "task-1",
+      toolName: "task",
+      isError: false,
+      result: { text: "Spawned 1 background agent" },
+    });
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "ApiBudgetAudit",
+        agent: "ApiBudgetAudit",
+        description: "audit API budget",
+        status: "started",
+        parentToolCallId: "task-1",
+        index: 0,
+      },
+    });
+    runtime.state = { ...runtime.state, isStreaming: false, isCompacting: false };
+    runtime.finishTurn({
+      role: "assistant",
+      content: [{ type: "text", text: "spawning fan-out workers" }],
+    });
+
+    await session.waitForProviderStateChecks(1);
+    await scheduler.waitForWaits(1);
+    expect(session.completedTurnCount()).toBe(0);
+    expect(session.subagentUpserts()).toContainEqual({ id: "ApiBudgetAudit", status: "running" });
+
+    scheduler.retry();
+    await session.waitForProviderStateChecks(2);
+    await scheduler.waitForWaits(2);
+    expect(session.completedTurnCount()).toBe(0);
+
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "ApiBudgetAudit",
+        agent: "ApiBudgetAudit",
+        status: "completed",
+        parentToolCallId: "task-1",
+        index: 0,
+      },
+    });
+    scheduler.retry();
+    await session.waitForProviderStateChecks(3);
+    await waitForImmediate();
+    expect(session.completedTurnCount()).toBe(1);
+    expect(session.subagentUpserts()).toContainEqual({
+      id: "ApiBudgetAudit",
+      status: "completed",
+    });
+  });
+
+  test("stays active when get_subagents reports running children without prior events", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    await omp.requireStartTurn("fan out");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("fan out", "user-fanout");
+    runtime.streamAssistantText("delegating");
+    runtime.subagents = [
+      {
+        id: "PipelineFeedAudit",
+        index: 0,
+        agent: "PipelineFeedAudit",
+        status: "running",
+        parentToolCallId: "task-2",
+      },
+    ];
+    runtime.state = { ...runtime.state, isStreaming: false, isCompacting: false };
+    runtime.finishTurn({
+      role: "assistant",
+      content: [{ type: "text", text: "delegating" }],
+    });
+
+    await omp.waitForProviderStateChecks(1);
+    await scheduler.waitForWaits(1);
+    expect(omp.completedTurnCount()).toBe(0);
+
+    runtime.subagents = [];
+    scheduler.retry();
+    await omp.waitForProviderStateChecks(2);
+    await waitForImmediate();
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("does not treat an empty get_subagents reply as completion for never-listed children", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    await omp.requireStartTurn("audit");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("audit", "user-audit");
+    runtime.streamAssistantText("working");
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "OnlyLifecycle",
+        agent: "OnlyLifecycle",
+        status: "started",
+        index: 0,
+      },
+    });
+    runtime.subagents = [];
+    runtime.state = { ...runtime.state, isStreaming: false, isCompacting: false };
+    runtime.finishTurn({
+      role: "assistant",
+      content: [{ type: "text", text: "working" }],
+    });
+
+    await omp.waitForProviderStateChecks(1);
+    await scheduler.waitForWaits(1);
+    expect(omp.completedTurnCount()).toBe(0);
+
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "OnlyLifecycle",
+        agent: "OnlyLifecycle",
+        status: "completed",
+        index: 0,
+      },
+    });
+    scheduler.retry();
+    await omp.waitForProviderStateChecks(2);
+    await waitForImmediate();
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("keeps the parent active when get_subagents is unavailable", async () => {
+    const scheduler = new ManualIdleScheduler();
+    const omp = new OmpHarness({ providerIdleScheduler: scheduler });
+    await omp.start();
+
+    await omp.requireStartTurn("legacy omp");
+    const runtime = omp.runtime();
+    runtime.getSubagentsError = new Error("unknown command get_subagents");
+    runtime.beginTurn();
+    runtime.acceptPrompt("legacy omp", "user-legacy");
+    runtime.streamAssistantText("delegating");
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "LegacyChild",
+        agent: "LegacyChild",
+        status: "started",
+        index: 0,
+      },
+    });
+    runtime.state = { ...runtime.state, isStreaming: false, isCompacting: false };
+    runtime.finishTurn({
+      role: "assistant",
+      content: [{ type: "text", text: "delegating" }],
+    });
+
+    await omp.waitForProviderStateChecks(1);
+    await scheduler.waitForWaits(1);
+    expect(omp.completedTurnCount()).toBe(0);
+
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "LegacyChild",
+        agent: "LegacyChild",
+        status: "completed",
+        index: 0,
+      },
+    });
+    scheduler.retry();
+    await omp.waitForProviderStateChecks(2);
+    await waitForImmediate();
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
+  test("holds a task tool call open when its OMP children appear after the result", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.requireStartTurn("fan out");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("fan out", "user-fanout");
+    runtime.streamAssistantText("delegating");
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "task-1",
+      toolName: "task",
+      args: { description: "spawn workers" },
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "task-1",
+      toolName: "task",
+      isError: false,
+      result: { text: "Spawned 1 background agent" },
+    });
+    expect(lastToolCallStatus(omp, "task-1")).toBe("running");
+    expect(omp.runningToolCallIds()).toEqual(["task-1"]);
+
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "Worker",
+        agent: "Worker",
+        status: "started",
+        parentToolCallId: "task-1",
+        index: 0,
+      },
+    });
+    expect(lastToolCallStatus(omp, "task-1")).toBe("running");
+    expect(omp.runningToolCallIds()).toEqual(["task-1"]);
+
+    runtime.emit({
+      type: "subagent_progress",
+      payload: {
+        index: 0,
+        agent: "Worker",
+        parentToolCallId: "task-1",
+        progress: { id: "Worker", status: "running", recentOutput: ["still working"] },
+      },
+    });
+    expect(lastToolCallStatus(omp, "task-1")).toBe("running");
+
+    runtime.emit({
+      type: "subagent_lifecycle",
+      payload: {
+        id: "Worker",
+        agent: "Worker",
+        status: "completed",
+        parentToolCallId: "task-1",
+        index: 0,
+      },
+    });
+    expect(lastToolCallStatus(omp, "task-1")).toBe("completed");
+    expect(omp.runningToolCallIds()).toEqual([]);
+  });
+
+  test("force-settles a task that never produced a child when the turn completes", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    const session = omp;
+    await session.requireStartTurn("no child");
+    const runtime = session.runtime();
+    runtime.beginTurn();
+    runtime.acceptPrompt("no child", "user-orphan");
+    runtime.streamAssistantText("done");
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "task-orphan",
+      toolName: "task",
+      args: { description: "never spawned" },
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "task-orphan",
+      toolName: "task",
+      isError: false,
+      result: { text: "Spawned 0 background agents" },
+    });
+    expect(lastToolCallStatus(session, "task-orphan")).toBe("running");
+
+    runtime.state = { ...runtime.state, isStreaming: false, isCompacting: false };
+    runtime.finishTurn({
+      role: "assistant",
+      content: [{ type: "text", text: "done" }],
+    });
+    await waitForImmediate();
+    await waitForImmediate();
+    expect(session.completedTurnCount()).toBe(1);
+    expect(lastToolCallStatus(session, "task-orphan")).toBe("completed");
+    expect(session.runningToolCallIds()).toEqual([]);
+  });
+
+  test("completes a failed task immediately", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    await omp.requireStartTurn("task fails");
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.emit({
+      type: "tool_execution_start",
+      toolCallId: "task-fail",
+      toolName: "task",
+      args: { description: "boom" },
+    });
+    runtime.emit({
+      type: "tool_execution_end",
+      toolCallId: "task-fail",
+      toolName: "task",
+      isError: true,
+      result: { text: "spawn failed" },
+    });
+    expect(lastToolCallStatus(omp, "task-fail")).toBe("failed");
+    expect(omp.runningToolCallIds()).toEqual([]);
   });
 
   test("does not complete on OMP's extension-notice agent_end", async () => {

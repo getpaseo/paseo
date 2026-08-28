@@ -243,14 +243,19 @@ describe("OMP CLI runtime", () => {
     const commands: Record<string, unknown>[] = [];
     replyToCommands(child, (command) => {
       commands.push(command);
+      if (command.type === "get_subagents") {
+        return { subagents: [] };
+      }
       return undefined;
     });
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
 
     await session.setSubagentSubscription("events");
+    await session.getSubagents();
 
     expect(commands.map(withoutRequestId)).toEqual([
       { type: "set_subagent_subscription", level: "events" },
+      { type: "get_subagents" },
     ]);
   });
 

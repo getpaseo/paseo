@@ -512,6 +512,7 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   z.object({ ...OmpCommandBase, type: z.literal("set_auto_compaction"), enabled: z.boolean() }),
   z.object({ ...OmpCommandBase, type: z.literal("abort") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
+  z.object({ ...OmpCommandBase, type: z.literal("get_subagents") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_messages") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_available_models") }),
   z.object({
@@ -561,6 +562,23 @@ export const OmpCommandsResultSchema = z
   .passthrough();
 export const OmpHostToolsResultSchema = z
   .object({ toolNames: z.array(z.string()).optional() })
+  .passthrough();
+export const OmpSubagentSnapshotSchema = z
+  .object({
+    id: z.string(),
+    index: z.number().int().nonnegative(),
+    agent: z.string(),
+    description: z.string().optional(),
+    status: OmpSubagentStatusSchema,
+    task: z.string().optional(),
+    assignment: z.string().optional(),
+    sessionFile: z.string().optional(),
+    parentToolCallId: z.string().optional(),
+    lastUpdate: z.number().optional(),
+  })
+  .passthrough();
+export const OmpSubagentsResultSchema = z
+  .object({ subagents: z.array(OmpSubagentSnapshotSchema).optional() })
   .passthrough();
 export const OmpBranchResultSchema = z
   .object({ text: z.string().optional(), cancelled: z.boolean().optional() })
@@ -613,18 +631,7 @@ export type OmpAvailableCommandsUpdateEvent = z.infer<typeof OmpAvailableCommand
 export type OmpRpcCommand = z.infer<typeof OmpRpcCommandSchema>;
 export type OmpPromptAck = z.infer<typeof OmpPromptAckSchema> & { requestId?: string };
 
-export interface OmpSubagentSnapshot {
-  id: string;
-  index: number;
-  agent: string;
-  description?: string;
-  status: OmpSubagentStatus;
-  task?: string;
-  assignment?: string;
-  sessionFile?: string;
-  parentToolCallId?: string;
-  lastUpdate?: number;
-}
+export type OmpSubagentSnapshot = z.infer<typeof OmpSubagentSnapshotSchema>;
 
 export interface OmpSubagentMessagesResult {
   sessionFile: string;

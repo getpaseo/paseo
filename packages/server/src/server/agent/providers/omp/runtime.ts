@@ -9,6 +9,7 @@ import type {
   OmpRuntimeEvent,
   OmpSessionState,
   OmpSessionStats,
+  OmpSubagentSnapshot,
   OmpSubagentSubscriptionLevel,
   OmpThinkingLevel,
 } from "./rpc-types.js";
@@ -52,6 +53,7 @@ export interface OmpRuntimeSession {
   setAutoCompaction(enabled: boolean): Promise<void>;
   abort(): Promise<void>;
   getState(): Promise<OmpSessionState>;
+  getSubagents(): Promise<OmpSubagentSnapshot[]>;
   getMessages(): Promise<OmpAgentMessage[]>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
   setModel(provider: string, modelId: string): Promise<OmpModel>;

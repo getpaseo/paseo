@@ -7,6 +7,7 @@ import type {
   OmpSubagentEventPayload,
   OmpSubagentLifecyclePayload,
   OmpSubagentProgressPayload,
+  OmpSubagentSnapshot,
 } from "./rpc-types.js";
 
 interface OmpSubagentState {
@@ -15,6 +16,7 @@ interface OmpSubagentState {
   resolvedModel: string | null;
   toolCallId: string | null;
   status: "running" | "completed" | "failed" | "canceled";
+  seenInSnapshot: boolean;
   mapper: OmpHistoryMapper;
 }
 
@@ -64,6 +66,80 @@ export class OmpSubagentIndex {
     );
   }
 
+  hasRunning(parent: object): boolean {
+    const states = this.statesByParent.get(parent);
+    if (!states) {
+      return false;
+    }
+    for (const state of states.values()) {
+      if (state.status === "running") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  hasLinkedChild(parent: object, toolCallId: string): boolean {
+    const states = this.statesByParent.get(parent);
+    if (!states) {
+      return false;
+    }
+    for (const state of states.values()) {
+      if (state.toolCallId === toolCallId) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  hasRunningLinkedTo(parent: object, toolCallId: string): boolean {
+    const states = this.statesByParent.get(parent);
+    if (!states) {
+      return false;
+    }
+    for (const state of states.values()) {
+      if (state.toolCallId === toolCallId && state.status === "running") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Merge a successful `get_subagents` reply. That RPC lists only still-running
+   * children: an id that previously appeared and is now missing is finished.
+   * Never-listed lifecycle children stay running so an empty first reply cannot
+   * kill a child whose started frame beat the first snapshot.
+   */
+  reconcileSnapshots(parent: object, snapshots: OmpSubagentSnapshot[]): AgentStreamEvent[] {
+    const present = new Set<string>();
+    const events: AgentStreamEvent[] = [];
+
+    for (const snapshot of snapshots) {
+      present.add(snapshot.id);
+      const state = this.stateFor(parent, snapshot.id, snapshot.agent);
+      state.seenInSnapshot = true;
+      state.title = snapshot.agent || state.title;
+      state.description = snapshot.description ?? snapshot.assignment ?? state.description;
+      state.toolCallId = snapshot.parentToolCallId ?? state.toolCallId;
+      state.status = mapSnapshotStatus(snapshot.status);
+      events.push(this.upsert(snapshot.id, state.status, state));
+    }
+
+    const states = this.statesByParent.get(parent);
+    if (!states) {
+      return events;
+    }
+    for (const [id, state] of states) {
+      if (state.status !== "running" || !state.seenInSnapshot || present.has(id)) {
+        continue;
+      }
+      state.status = "completed";
+      events.push(this.upsert(id, state.status, state));
+    }
+    return events;
+  }
+
   terminalizeRunning(parent: object): AgentStreamEvent[] {
     const states = this.statesByParent.get(parent);
     if (!states) {
@@ -94,6 +170,7 @@ export class OmpSubagentIndex {
       resolvedModel: null,
       toolCallId: null,
       status: "running",
+      seenInSnapshot: false,
       mapper: new OmpHistoryMapper("omp", [], OMP_HISTORY_MAPPER_HOOKS),
     };
     states.set(id, state);
@@ -135,6 +212,13 @@ function mapLifecycleStatus(
 
 function mapProgressStatus(
   status: OmpSubagentProgressPayload["progress"]["status"],
+): "running" | "completed" | "failed" | "canceled" {
+  if (status === "completed" || status === "failed") return status;
+  return status === "aborted" ? "canceled" : "running";
+}
+
+function mapSnapshotStatus(
+  status: OmpSubagentSnapshot["status"],
 ): "running" | "completed" | "failed" | "canceled" {
   if (status === "completed" || status === "failed") return status;
   return status === "aborted" ? "canceled" : "running";
