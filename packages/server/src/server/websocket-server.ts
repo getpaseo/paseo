@@ -100,7 +100,6 @@ import {
 } from "@getpaseo/protocol/browser-automation/capabilities";
 import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { BrowserScreencastRegistry } from "./browser-tools/screencast.js";
-import type { BrowserScreencastFrame } from "@getpaseo/protocol/binary-frames/screencast";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
@@ -2075,22 +2074,6 @@ export class VoiceAssistantWebSocketServer {
       )
       .map(([ws]) => ws);
     this.sendMessageToSockets(capableSockets, message);
-  }
-
-  /**
-   * The daemon's own browser host has no socket to arrive on, so it hands its
-   * screencast frames and tab-set changes straight to the fan-out a connected
-   * host would have reached through the wire.
-   */
-  public handleBrowserScreencastFrame(params: {
-    frame: BrowserScreencastFrame;
-    sourceClientId: string;
-  }): void {
-    this.browserScreencast?.handleFrame(params);
-  }
-
-  public announceBrowserTabsChanged(): void {
-    this.broadcastBrowserTabsChanged();
   }
 
   /** A mirror is only advertised while a host that can actually serve one is connected. */
