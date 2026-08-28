@@ -757,6 +757,127 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
     archivedAt: "2026-05-16T01:00:00.000Z",
   });
   expect(agent.current()?.archivedAt).toBe("2026-05-16T01:00:00.000Z");
+  expect(agent.archivedAt).toBe("2026-05-16T01:00:00.000Z");
+
+  unsubscribe();
+  await client.close();
+});
+
+test("agent handles list the session's own commands through the existing daemon RPC", async () => {
+  const { client, ws } = await connectClient();
+  const agent = client.agents.ref("agent_sdk");
+
+  const commandsPromise = agent.commands({ requestId: "agent-commands-request" });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "list_commands_request",
+    agentId: "agent_sdk",
+    requestId: "agent-commands-request",
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "list_commands_response",
+      payload: {
+        requestId: "agent-commands-request",
+        agentId: "agent_sdk",
+        commands: [
+          {
+            name: "brainstorming",
+            description: "Turn an idea into a design",
+            argumentHint: "[topic]",
+            kind: "skill",
+          },
+          {
+            name: "usage",
+            description: "Show usage",
+            argumentHint: "",
+            kind: "command",
+          },
+        ],
+        error: null,
+      },
+    }),
+  );
+
+  await expect(commandsPromise).resolves.toMatchObject({
+    agentId: "agent_sdk",
+    error: null,
+    commands: [
+      { name: "brainstorming", kind: "skill" },
+      { name: "usage", kind: "command" },
+    ],
+  });
+  await client.close();
+});
+
+test("agent handles expose the observed snapshot through readonly properties", async () => {
+  const { client, ws } = await connectClient();
+  const agent = client.agents.ref("agent_sdk");
+
+  expect(agent.capabilities).toBeNull();
+  expect(agent.availableModes).toBeNull();
+  expect(agent.pendingPermissions).toBeNull();
+  expect(agent.activeTurn).toBeNull();
+  expect(agent.lastUsage).toBeNull();
+  expect(agent.lastError).toBeNull();
+  expect(agent.features).toBeNull();
+  expect(agent.runtimeInfo).toBeNull();
+  expect(agent.archivedAt).toBeNull();
+
+  const observedAgent = createAgent({
+    capabilities: {
+      supportsStreaming: false,
+      supportsSessionPersistence: false,
+      supportsDynamicModes: true,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsRewindBoth: true,
+      supportsRewindConversation: true,
+      supportsRewindFiles: true,
+      supportsToolInvocations: false,
+    },
+    availableModes: [{ id: "plan", label: "Plan" }],
+    pendingPermissions: [{ id: "permission-sdk", provider: "codex", name: "shell", kind: "tool" }],
+    activeTurn: { turnId: "turn-sdk", startedAt: "2026-05-16T00:05:00.000Z" },
+    lastUsage: { inputTokens: 120, outputTokens: 45, totalCostUsd: 0.02 },
+    lastError: "provider exited",
+    features: [{ type: "toggle", id: "web-search", label: "Web search", value: true }],
+    runtimeInfo: { provider: "codex", sessionId: "session-sdk", model: "gpt-5.4" },
+    archivedAt: "2026-05-16T02:00:00.000Z",
+  });
+  const unsubscribe = agent.subscribe(() => {});
+  ws.message(
+    sessionMessage({
+      type: "agent_update",
+      payload: {
+        kind: "upsert",
+        agent: observedAgent,
+        project: null,
+      },
+    }),
+  );
+
+  expect(agent.capabilities).toEqual(observedAgent.capabilities);
+  expect(agent.availableModes).toEqual([{ id: "plan", label: "Plan" }]);
+  expect(agent.pendingPermissions).toEqual([
+    { id: "permission-sdk", provider: "codex", name: "shell", kind: "tool" },
+  ]);
+  expect(agent.activeTurn).toEqual({
+    turnId: "turn-sdk",
+    startedAt: "2026-05-16T00:05:00.000Z",
+  });
+  expect(agent.lastUsage).toEqual({ inputTokens: 120, outputTokens: 45, totalCostUsd: 0.02 });
+  expect(agent.lastError).toBe("provider exited");
+  expect(agent.features).toEqual([
+    { type: "toggle", id: "web-search", label: "Web search", value: true },
+  ]);
+  expect(agent.runtimeInfo).toEqual({
+    provider: "codex",
+    sessionId: "session-sdk",
+    model: "gpt-5.4",
+  });
+  expect(agent.archivedAt).toBe("2026-05-16T02:00:00.000Z");
 
   unsubscribe();
   await client.close();

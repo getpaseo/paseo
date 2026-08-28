@@ -10,6 +10,7 @@ import {
   defineRpc,
   type PluginAttachmentSourceContribution,
   type PluginCommandCenterItemContribution,
+  type PluginClientContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
   type PluginThemeContribution,
@@ -25,6 +26,7 @@ import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
 import { Icon, resolvePluginIcon } from "./icons";
+import { pluginReactNativeRuntime } from "./react-native/runtime";
 import { parsePluginThemeContribution } from "./themes";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
@@ -71,6 +73,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
+    clientSide: null,
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
@@ -163,6 +166,13 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         keywords: contribution.keywords?.map((keyword) => keyword.trim()).filter(Boolean),
       });
     },
+    addClientSide(contribution: PluginClientContribution) {
+      if (collector.clientSide) throw new Error("Plugin has more than one client-side entrypoint");
+      if (typeof contribution !== "function") {
+        throw new Error("Plugin client-side entrypoint is not a function");
+      }
+      collector.clientSide = contribution;
+    },
     addAttachmentSource(contribution: PluginAttachmentSourceContribution) {
       const normalizedId = requireId(contribution.id, "attachment source id");
       if (attachmentSourceIds.has(normalizedId)) {
@@ -254,6 +264,9 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         useRpc,
       };
     }
+    if (name === "@getpaseo/plugin/react-native" || name === "@paseo/plugin/react-native") {
+      return pluginReactNativeRuntime;
+    }
     if (name === "@getpaseo/plugin/server") {
       return { defineAttachmentSource, defineRpc };
     }
@@ -299,6 +312,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     sidebarItems: collector.sidebarItems,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
+    clientSide: collector.clientSide,
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,

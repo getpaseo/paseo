@@ -42,7 +42,9 @@ The required root manifest is `paseo-plugin.json`. It contains the default plugi
 
 The entry point is `index.ts` at the plugin root. Plugin, surface, sidebar-item, workspace-panel, Command Center item, and attachment-source IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
 
-The generated declaration file supplies `@getpaseo/plugin` and `@getpaseo/plugin/server` types for local typechecking. Paseo supplies the runtime modules. Regenerate a fresh project with the matching CLI when the plugin contract changes.
+The generated declaration file supplies `@getpaseo/plugin`, `@getpaseo/plugin/react-native`, and
+`@getpaseo/plugin/server` types for local typechecking. Paseo supplies the runtime modules.
+Regenerate a fresh project with the matching CLI when the plugin contract changes.
 
 Add runtime-specific files as the plugin grows:
 
@@ -67,15 +69,16 @@ Paseo builds separate client and server bundles from `index.ts`. It rejects impo
 
 Paseo provides these modules to client code:
 
-| Module                    | Use it for                              |
-| ------------------------- | --------------------------------------- |
-| `@getpaseo/plugin`        | Host UI components, hooks, and UI types |
-| `@getpaseo/plugin/server` | Shared RPC and attachment contracts     |
-| `@tanstack/react-query`   | Request state and caching               |
-| `react`                   | Components and hooks                    |
-| `react/jsx-runtime`       | Compiled JSX                            |
-| `react-native`            | Cross-platform UI                       |
-| `zod`                     | Shared schemas                          |
+| Module                          | Use it for                            |
+| ------------------------------- | ------------------------------------- |
+| `@getpaseo/plugin`              | Contribution contracts and data hooks |
+| `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks      |
+| `@getpaseo/plugin/server`       | Shared RPC and attachment contracts   |
+| `@tanstack/react-query`         | Request state and caching             |
+| `react`                         | Components and hooks                  |
+| `react/jsx-runtime`             | Compiled JSX                          |
+| `react-native`                  | Cross-platform UI                     |
+| `zod`                           | Shared schemas                        |
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
@@ -166,15 +169,105 @@ export default function contribute(plugin: PluginContext) {
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
 
-Use the host-provided `Icon` component for Lucide icons inside client surfaces. It renders the icon from Paseo's installed Lucide version, so plugin bundles do not import `lucide-react-native` or `react-native-svg`. An unknown name renders nothing instead of failing the plugin surface.
+## Host UI
+
+Import Paseo-owned UI from `@getpaseo/plugin/react-native` in `*.client.tsx` files. This example
+opens a controlled modal, renders a host icon, and confirms the action with a toast:
 
 ```tsx
-import { Icon } from "@getpaseo/plugin";
+import type { PluginSurfaceProps } from "@getpaseo/plugin";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
+import { useState } from "react";
+import { Pressable, Text, View } from "react-native";
 
-<Icon name="Settings" size={18} color={theme.colors.foreground} />;
+export function IssueActions({ theme }: PluginSurfaceProps) {
+  const [open, setOpen] = useState(false);
+  const toast = useToast();
+
+  function saveIssue() {
+    toast.show("Issue saved", { variant: "success" });
+    setOpen(false);
+  }
+
+  return (
+    <View>
+      <Pressable accessibilityRole="button" onPress={() => setOpen(true)}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Icon name="Pencil" size={18} color={theme.colors.foreground} />
+          <Text style={{ color: theme.colors.foreground }}>Edit issue</Text>
+        </View>
+      </Pressable>
+
+      <Modal
+        title="Edit issue"
+        icon={<Icon name="Pencil" size={18} color={theme.colors.foreground} />}
+        open={open}
+        onOpenChange={setOpen}
+      >
+        <Modal.Content>
+          <Pressable accessibilityRole="button" onPress={saveIssue}>
+            <Text style={{ color: theme.colors.foreground }}>Save</Text>
+          </Pressable>
+        </Modal.Content>
+      </Modal>
+    </View>
+  );
+}
 ```
 
-Keep `Icon` in a `*.client.tsx` module.
+### Modal
+
+`Modal` uses a bottom sheet on compact layouts and a centered dialog otherwise. The plugin owns
+the `open` state.
+
+| Prop           | Type                      | Required | Behavior                                     |
+| -------------- | ------------------------- | -------- | -------------------------------------------- |
+| `title`        | `string`                  | Yes      | Labels the modal and its visible header.     |
+| `icon`         | `ReactNode`               | No       | Renders before the title in the header.      |
+| `open`         | `boolean`                 | Yes      | Shows the modal content when `true`.         |
+| `onOpenChange` | `(open: boolean) => void` | Yes      | Receives `false` when the user dismisses it. |
+| `children`     | `ReactNode`               | Yes      | Contains `Modal.Content`.                    |
+
+`Modal.Content` owns the body below the host-rendered header:
+
+| Prop       | Type        | Required | Behavior                                      |
+| ---------- | ----------- | -------- | --------------------------------------------- |
+| `children` | `ReactNode` | Yes      | Renders the plugin's React Native UI content. |
+
+The close button, backdrop, platform back action, web Escape key, and compact sheet gesture dismiss
+the modal. Dismissal calls `onOpenChange(false)`; the plugin must update `open` to close it.
+
+Modal children keep the plugin runtime context. `usePaseo`, `useRpc`, `useWorkspace`, and
+`useAgent` work inside them.
+
+### Toasts
+
+`useToast()` returns two methods:
+
+| Method                    | Behavior                                                    |
+| ------------------------- | ----------------------------------------------------------- |
+| `show(message, options?)` | Shows a toast for 2,200 ms unless `durationMs` is supplied. |
+| `error(message)`          | Shows an error toast for 3,200 ms.                          |
+
+`show` accepts these options:
+
+| Option       | Type                                                       | Default     |
+| ------------ | ---------------------------------------------------------- | ----------- |
+| `variant`    | `"default" \| "info" \| "success" \| "warning" \| "error"` | `"default"` |
+| `durationMs` | `number`                                                   | `2200`      |
+
+Showing another toast replaces the currently visible toast. An empty message is ignored.
+
+### Icons
+
+`Icon` renders a [Lucide icon](https://lucide.dev/icons/) from Paseo's installed icon set. Plugin bundles do not import
+`lucide-react-native` or `react-native-svg`.
+
+| Prop    | Type     | Required | Behavior                                        |
+| ------- | -------- | -------- | ----------------------------------------------- |
+| `name`  | `string` | Yes      | Lucide icon name. Unknown names render nothing. |
+| `size`  | `number` | No       | Icon width and height.                          |
+| `color` | `string` | No       | Icon color. Use a plugin theme token.           |
 
 ## Timeline items
 
@@ -477,6 +570,92 @@ Every callback receives:
 | `openPanel(id, options?)` | Workspace and agent | Opens a registered panel in the callback's current context. Pass `{ location: "explorer" }` to target Explorer. |
 
 An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown surface and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. Use `rpc` for plugin-specific filesystem, credential, vendor, or daemon-local work.
+
+## Composer pills
+
+Register a headless client entrypoint from `index.ts`:
+
+```ts
+import { contributeClient } from "./review.client";
+
+export default function contribute(plugin: PluginContext) {
+  plugin.addClientSide(contributeClient);
+  return () => {};
+}
+```
+
+The client entrypoint owns pill creation and removal:
+
+```tsx
+import {
+  Icon,
+  type PluginClientContext,
+  type PluginComposerPillProps,
+  useAgent,
+} from "@getpaseo/plugin";
+import { Text } from "react-native";
+
+function ReviewPill({ theme, agentId }: PluginComposerPillProps) {
+  const agent = useAgent(agentId, ({ title }) => ({ title }));
+  return (
+    <>
+      <Icon name="Scan" size={14} color={theme.colors.foregroundMuted} />
+      <Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>
+        {agent?.title ?? "Review"}
+      </Text>
+    </>
+  );
+}
+
+export function contributeClient(client: PluginClientContext) {
+  const pills = new Map<string, () => void>();
+  const unsubscribe = client.paseo.agents.subscribe((update) => {
+    if (update.kind !== "upsert" || !update.agent.workspaceId) return;
+    const { id: agentId, workspaceId } = update.agent;
+    pills.get(agentId)?.();
+    pills.set(
+      agentId,
+      client.addComposerPill({
+        id: "review",
+        title: "Open review",
+        workspaceId,
+        agentId,
+        Component: ReviewPill,
+        async onPress() {
+          await client.rpc(refreshReview, { agentId });
+          client.openPanel("review", { workspaceId, agentId });
+        },
+      }),
+    );
+  });
+  return () => {
+    unsubscribe();
+    for (const remove of pills.values()) remove();
+  };
+}
+```
+
+`addComposerPill` fields:
+
+| Field         | Required | Meaning                                                    |
+| ------------- | -------- | ---------------------------------------------------------- |
+| `id`          | Yes      | Plugin-local ID within the target agent.                   |
+| `title`       | Yes      | Accessible button label.                                   |
+| `workspaceId` | Yes      | Workspace whose composer track owns the pill.              |
+| `agentId`     | Yes      | Agent whose composer track owns the pill.                  |
+| `Component`   | Yes      | React Native component rendering the pill's icon and text. |
+| `onPress`     | Yes      | Client-side callback.                                      |
+
+`addClientSide` runs once per plugin installation in each connected app. Its context exposes
+`paseo`, typed `rpc`, `openSurface`, explicit-context `openPanel`, and `addComposerPill`.
+`addComposerPill` returns an idempotent removal function. Paseo also removes every outstanding pill
+when the client entrypoint, plugin installation, or host connection is torn down.
+
+Paseo owns the pressable, shared pill chrome, pending state, error reporting, and track-bar
+placement. The component receives `theme`, `host`, `layout`, `workspaceId`, and `agentId`. Read
+current values with `useWorkspace` and `useAgent`. The plugin owns when the pill exists, its icon
+and text, and the callback. `openPanel(id, { workspaceId, agentId? })` opens or focuses a panel
+registered by the same plugin.
 
 ## Use the Paseo SDK
 

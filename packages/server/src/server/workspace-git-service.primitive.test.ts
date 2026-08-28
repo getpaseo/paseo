@@ -17,7 +17,10 @@ import {
   type CheckoutStatusGit,
   type PullRequestStatusResult,
 } from "../utils/checkout-git.js";
-import { runGitCommand as runGitCommandReal } from "../utils/run-git-command.js";
+import {
+  runGitCommand as runGitCommandReal,
+  snapshotGitCommandRuntimeMetrics,
+} from "../utils/run-git-command.js";
 import {
   getWorkspaceGitSelfHealPhaseMs,
   WorkspaceGitServiceImpl,
@@ -446,6 +449,48 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     expect(getCheckoutStatus).toHaveBeenCalledTimes(1);
 
     service.dispose();
+  });
+
+  test("attributes Git commands submitted by a workspace refresh", async () => {
+    const tempDir = realpathSync(mkdtempSync(join(tmpdir(), "workspace-git-provenance-")));
+    const repoDir = join(tempDir, "repo");
+    mkdirSync(repoDir, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: repoDir, stdio: "pipe" });
+    writeFileSync(join(repoDir, "tracked.txt"), "tracked\n");
+    execFileSync("git", ["add", "tracked.txt"], { cwd: repoDir, stdio: "pipe" });
+    execFileSync(
+      "git",
+      [
+        "-c",
+        "commit.gpgsign=false",
+        "-c",
+        "user.name=Paseo Test",
+        "-c",
+        "user.email=paseo@example.test",
+        "commit",
+        "-m",
+        "initial",
+      ],
+      { cwd: repoDir, stdio: "pipe" },
+    );
+    snapshotGitCommandRuntimeMetrics();
+    const service = createService({
+      getCheckoutSnapshotFacts: getCheckoutSnapshotFactsUncached as never,
+      getCheckoutStatus: getCheckoutStatusUncached as never,
+    });
+
+    try {
+      await service.getSnapshot(repoDir, { force: true, reason: "provenance-test" });
+
+      const metrics = snapshotGitCommandRuntimeMetrics();
+      expect(metrics.submitted).toBeGreaterThan(0);
+      expect(metrics.provenanceTop).toEqual([
+        ["workspace-refresh:provenance-test", metrics.submitted],
+      ]);
+    } finally {
+      service.dispose();
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("getSnapshot cold-loads when no snapshot exists yet with one shell burst", async () => {

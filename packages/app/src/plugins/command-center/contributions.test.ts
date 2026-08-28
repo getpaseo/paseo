@@ -97,6 +97,7 @@ function plugin(onAgentSelect: AgentCommandItem["onSelect"]): InstalledPlugin {
         onSelect: onAgentSelect,
       },
     ],
+    clientSide: null,
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
