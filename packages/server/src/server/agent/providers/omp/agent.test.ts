@@ -4,8 +4,8 @@ import { setImmediate as waitForImmediate } from "node:timers/promises";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
+import { OmpRuntimeEventSchema } from "./rpc-types.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
-
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];
   private readonly waiters: Array<{ count: number; resolve: () => void }> = [];
@@ -520,6 +520,106 @@ describe("OMP agent client and session", () => {
     expect(omp.extensionUiResponses()).toEqual([
       { id: "approval-1", response: { value: "Approve" } },
     ]);
+  });
+
+  test("maps legacy select options without descriptions and preserves ordinary responses", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.emit({
+      type: "extension_ui_request",
+      id: "select-legacy",
+      method: "select",
+      title: "Choose",
+      options: ["Approve", "Deny"],
+    });
+
+    expect(omp.pendingPermissions()[0]?.input).toMatchObject({
+      questions: [{ options: [{ label: "Approve" }, { label: "Deny" }] }],
+    });
+    await omp.respondToPermission("select-legacy", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "Deny" } },
+    });
+    expect(omp.extensionUiResponses()).toContainEqual({
+      id: "select-legacy",
+      response: { value: "Deny" },
+    });
+  });
+
+  test("maps described and mixed select metadata by option index", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.emit({
+      type: "extension_ui_request",
+      id: "select-described",
+      method: "select",
+      title: "Choose",
+      options: ["First", "Second", "Third"],
+      optionDetails: [{ description: "First detail" }, {}, { description: " \t" }],
+    });
+
+    expect(omp.pendingPermissions()[0]?.input?.questions?.[0]?.options).toStrictEqual([
+      { label: "First", description: "First detail" },
+      { label: "Second" },
+      { label: "Third" },
+    ]);
+  });
+
+  test("accepts malformed or misaligned optional metadata and falls back to labels", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const parsed = OmpRuntimeEventSchema.safeParse({
+      type: "extension_ui_request",
+      id: "select-malformed",
+      method: "select",
+      options: ["First", "Second"],
+      optionDetails: [{ description: 42 }, { description: "\n\t" }, { description: "extra" }],
+    });
+    expect(parsed.success).toBe(true);
+    if (!parsed.success) throw new Error("Expected malformed metadata event to parse");
+
+    omp.emit(parsed.data);
+    expect(omp.pendingPermissions()[0]?.input?.questions?.[0]?.options).toStrictEqual([
+      { label: "First" },
+      { label: "Second" },
+    ]);
+  });
+
+  test("preserves combined selection descriptions and freeform sentinel behavior", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.emit({
+      type: "tool_execution_start",
+      toolCallId: "ask-user-1",
+      toolName: "ask_user",
+      args: { allowComment: true, allowFreeform: true, allowMultiple: false },
+    });
+    omp.emit({
+      type: "extension_ui_request",
+      id: "select-combined",
+      method: "select",
+      title: "Choose",
+      options: ["First", "✏️ Type custom response..."],
+      optionDetails: [{ description: "First detail" }, { description: "ignored" }],
+    });
+
+    const combinedInput = omp.pendingPermissions()[0]?.input;
+    expect(combinedInput?.questions?.[0]?.options).toStrictEqual([
+      { label: "First", description: "First detail" },
+    ]);
+    expect(combinedInput).toMatchObject({
+      questions: [{ allowOther: true }, { header: "Comment" }],
+    });
+    await omp.respondToPermission("select-combined", {
+      behavior: "allow",
+      updatedInput: { answers: { Response: "custom", Comment: "note" } },
+    });
+    expect(omp.extensionUiResponses()).toContainEqual({
+      id: "select-combined",
+      response: { value: "✏️ Type custom response..." },
+    });
   });
 
   test("exposes OMP modes and commands through the domain session", async () => {
