@@ -17,15 +17,6 @@ export function toggleRecording(val: boolean): boolean {
   return ExpoTwoWayAudioModule.toggleRecording(val);
 }
 
-export async function stopRecording(): Promise<void> {
-  // COMPAT(stopRecording): added in v0.7.0, remove after 2027-02-28. An OTA JS update can land on an older binary.
-  if (typeof ExpoTwoWayAudioModule.stopRecording !== "function") {
-    ExpoTwoWayAudioModule.toggleRecording(false);
-    return;
-  }
-  await ExpoTwoWayAudioModule.stopRecording();
-}
-
 export function isRecording(): boolean {
   return ExpoTwoWayAudioModule.isRecording();
 }

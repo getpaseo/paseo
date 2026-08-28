@@ -28,8 +28,6 @@ class AudioEngine {
     private var hasFirstInputBeenDiscarded = false
     private var discardRecording = false
     private var discardFirstInputMillis = 2000
-    private let recordingStopLock = NSLock()
-    private var recordingStopCompletions: [() -> Void] = []
 
     /// Buffers scheduled on `speechPlayer` that have not finished rendering yet.
     ///
@@ -179,7 +177,6 @@ class AudioEngine {
             if self?.isRecording == true && self?.discardRecording == false {
                 self?.processMicrophoneBuffer(buffer)
                 self?.updateInputVolume()
-                self?.finishPendingRecordingStop()
             }
         }
         
@@ -316,7 +313,6 @@ class AudioEngine {
             // Reset input buffer, so that volume levels report 0
             inputBuffer = [Float](repeating: 0, count: 2048)
             updateInputVolume()
-            resolvePendingRecordingStops()
         } else {
             activateAudioSessionIfNeeded()
             avAudioEngine.inputNode.isVoiceProcessingInputMuted = false
@@ -324,45 +320,6 @@ class AudioEngine {
         print("Recording \(isRecording ? "started" : "stopped")")
         
         return isRecording
-    }
-
-    func stopRecordingWhenDrained(_ completion: @escaping () -> Void) {
-        recordingStopLock.lock()
-        if !isRecording {
-            recordingStopLock.unlock()
-            completion()
-            return
-        }
-        recordingStopCompletions.append(completion)
-        let isFirstRequest = recordingStopCompletions.count == 1
-        recordingStopLock.unlock()
-
-        if isFirstRequest {
-            // The input tap can hold up to 2,048 frames (128 ms at 16 kHz). Let its next
-            // callback publish those frames before stopping; the timeout handles a stalled tap.
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(250)) { [weak self] in
-                self?.finishPendingRecordingStop()
-            }
-        }
-    }
-
-    private func finishPendingRecordingStop() {
-        recordingStopLock.lock()
-        let hasPendingStop = !recordingStopCompletions.isEmpty
-        recordingStopLock.unlock()
-        guard hasPendingStop else { return }
-
-        DispatchQueue.main.async { [weak self] in
-            self?.toggleRecording(false)
-        }
-    }
-
-    private func resolvePendingRecordingStops() {
-        recordingStopLock.lock()
-        let completions = recordingStopCompletions
-        recordingStopCompletions.removeAll()
-        recordingStopLock.unlock()
-        completions.forEach { $0() }
     }
     
     func stopRecordingAndPlayer(){

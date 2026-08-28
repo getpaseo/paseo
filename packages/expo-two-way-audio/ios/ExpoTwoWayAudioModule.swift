@@ -73,20 +73,6 @@ public class ExpoTwoWayAudioModule: Module {
             return isRecording
         }
 
-        AsyncFunction("stopRecording") { (promise: Promise) in
-            guard let audioEngine = self.audioEngine else {
-                promise.resolve(true)
-                return
-            }
-            audioEngine.stopRecordingWhenDrained {
-                self.sendEvent(
-                    ON_RECORDING_CHANGE_EVENT_NAME,
-                    ["data": false]
-                )
-                promise.resolve(true)
-            }
-        }
-
         Function("getMicrophoneModeIOS") { () -> String in
             if #available(iOS 15.0, *) {
                 let mode = AVCaptureDevice.preferredMicrophoneMode.rawValue

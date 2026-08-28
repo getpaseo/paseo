@@ -1,4 +1,3 @@
-import * as native from "@getpaseo/expo-two-way-audio";
 import type {
   AudioEngine,
   AudioEngineCallbacks,
@@ -71,10 +70,11 @@ export function createAudioEngine(
   callbacks: AudioEngineCallbacks,
   _options?: AudioEngineTraceOptions,
 ): AudioEngine {
+  const native = require("@getpaseo/expo-two-way-audio");
+
   const refs: {
     initialized: boolean;
     captureActive: boolean;
-    captureStopPromise: Promise<void> | null;
     muted: boolean;
     queue: QueuedAudio[];
     processingQueue: boolean;
@@ -88,7 +88,6 @@ export function createAudioEngine(
   } = {
     initialized: false,
     captureActive: false,
-    captureStopPromise: null,
     muted: false,
     queue: [],
     processingQueue: false,
@@ -180,31 +179,6 @@ export function createAudioEngine(
     }
   }
 
-  async function stopCapture(): Promise<void> {
-    if (refs.captureStopPromise) {
-      await refs.captureStopPromise;
-      return;
-    }
-    if (!refs.captureActive) {
-      return;
-    }
-
-    const stopping = (async () => {
-      await native.stopRecording();
-      refs.captureActive = false;
-      refs.muted = false;
-      callbacks.onVolumeLevel(0);
-      releaseSessionIfIdle();
-    })();
-
-    refs.captureStopPromise = stopping;
-    try {
-      await stopping;
-    } finally {
-      refs.captureStopPromise = null;
-    }
-  }
-
   async function playAudio(audio: AudioPlaybackSource): Promise<number> {
     await ensureInitialized();
 
@@ -278,9 +252,12 @@ export function createAudioEngine(
         return;
       }
       refs.destroyed = true;
-      await stopCapture();
       this.stop();
       this.clearQueue();
+      if (refs.captureActive) {
+        native.toggleRecording(false);
+        refs.captureActive = false;
+      }
       clearPlaybackTimeout();
       refs.muted = false;
       callbacks.onVolumeLevel(0);
@@ -294,12 +271,6 @@ export function createAudioEngine(
     },
 
     async startCapture() {
-      if (refs.captureStopPromise) {
-        await refs.captureStopPromise;
-      }
-      if (refs.destroyed) {
-        throw new Error("Audio engine has been destroyed");
-      }
       if (refs.captureActive) {
         return;
       }
@@ -322,7 +293,13 @@ export function createAudioEngine(
     },
 
     async stopCapture() {
-      await stopCapture();
+      if (refs.captureActive) {
+        native.toggleRecording(false);
+      }
+      refs.captureActive = false;
+      refs.muted = false;
+      callbacks.onVolumeLevel(0);
+      releaseSessionIfIdle();
     },
 
     toggleMute() {
