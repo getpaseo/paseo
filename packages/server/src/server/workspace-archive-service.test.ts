@@ -143,6 +143,10 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
     agentManager: {
       listAgents: () => [],
       getAgent: () => null,
+      runWithWorkspaceArchiveExclusion: async <Value>(
+        _workspaceIds: Iterable<string>,
+        action: () => Promise<Value>,
+      ) => action(),
       archiveAgent: vi.fn(async (agentId: string) => {
         archivedAgentIds.push(agentId);
         return { archivedAt: new Date().toISOString() };
@@ -506,6 +510,59 @@ describe("archiveByScope", () => {
     expect(existsSync(localCheckoutDir)).toBe(true);
   });
 
+  test("checks protected agents inside the workspace archive exclusion", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const workspaceId = "ws-affinity-guard";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId, cwd: repoDir, kind: "local_checkout" }],
+    });
+    let exclusionActive = false;
+    deps.agentManager.runWithWorkspaceArchiveExclusion = async <Value>(
+      workspaceIds: Iterable<string>,
+      action: () => Promise<Value>,
+    ) => {
+      expect(Array.from(workspaceIds)).toEqual([workspaceId]);
+      exclusionActive = true;
+      try {
+        return await action();
+      } finally {
+        exclusionActive = false;
+      }
+    };
+    deps.agentManager.listAgents = () => {
+      expect(exclusionActive).toBe(true);
+      return [
+        {
+          id: "unrelated-agent",
+          workspaceId,
+          owner: {
+            kind: "daemon",
+            daemonId: "daemon-1",
+            executionId: "unrelated-execution",
+          },
+        } as ManagedAgent,
+      ];
+    };
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-affinity-guard",
+      canArchiveAgent: (agent) => agent.owner?.workspaceAffinityId === "expected-affinity",
+    });
+
+    expect(result).toMatchObject({
+      archivedAgentIds: [],
+      archivedWorkspaceIds: [],
+      blockedWorkspaceIds: [workspaceId],
+      failedWorkspaceIds: [],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceId]);
+    expect(deps.agentManager.archiveAgent).not.toHaveBeenCalled();
+    expect(deps.agentManager.archiveSnapshot).not.toHaveBeenCalled();
+  });
+
   test("worktree scope keeps the directory when one record teardown fails", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
@@ -693,6 +750,10 @@ describe("archiveByScope", () => {
       listAgents: () => [{ id: liveAgentId, workspaceId: targetWorkspaceId }] as ManagedAgent[],
       getAgent: (agentId: string) =>
         agentId === liveAgentId ? ({ id: liveAgentId } as ManagedAgent) : null,
+      runWithWorkspaceArchiveExclusion: async <Value>(
+        _workspaceIds: Iterable<string>,
+        action: () => Promise<Value>,
+      ) => action(),
       archiveAgent: vi.fn(async (agentId: string) => {
         deps.archivedAgentIds.push(agentId);
         return { archivedAt: new Date().toISOString() };
@@ -741,6 +802,10 @@ describe("archiveByScope", () => {
     deps.agentManager = {
       listAgents: () => [{ id: agentId, workspaceId }] as ManagedAgent[],
       getAgent: () => null,
+      runWithWorkspaceArchiveExclusion: async <Value>(
+        _workspaceIds: Iterable<string>,
+        action: () => Promise<Value>,
+      ) => action(),
       archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
       archiveSnapshot: vi.fn(async (id: string) => {
         deps.archivedSnapshotIds.push(id);
@@ -748,8 +813,9 @@ describe("archiveByScope", () => {
       }),
     };
     deps.agentStorage = {
-      list: async () => [{ id: agentId, workspaceId, archivedAt: null }] as StoredAgentRecord[],
-    } as Pick<AgentStorage, "list">;
+      listByWorkspace: async () =>
+        [{ id: agentId, workspaceId, archivedAt: null }] as StoredAgentRecord[],
+    } as Pick<AgentStorage, "listByWorkspace">;
 
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId },

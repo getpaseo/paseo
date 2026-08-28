@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 
 import type { Logger } from "pino";
 
-import type { AgentManager } from "./agent/agent-manager.js";
+import type { AgentManager, ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ForgeService } from "../services/forge-service.js";
@@ -32,7 +32,14 @@ export interface ArchiveDependencies {
   paseoWorktreesBaseRoot?: string;
   github: ForgeService;
   workspaceGitService: Pick<WorkspaceGitService, "getSnapshot">;
-  agentManager: Pick<AgentManager, "listAgents" | "getAgent" | "archiveAgent" | "archiveSnapshot">;
+  agentManager: Pick<
+    AgentManager,
+    | "listAgents"
+    | "getAgent"
+    | "archiveAgent"
+    | "archiveSnapshot"
+    | "runWithWorkspaceArchiveExclusion"
+  >;
   agentStorage: Pick<AgentStorage, "listByWorkspace">;
   // Resolves the worktree at a path to its workspaceId for archive-by-path. The
   // path uniquely identifies a worktree workspace; this is a directory lookup for
@@ -66,13 +73,19 @@ export type ArchiveScope =
 export interface ArchiveResult {
   archivedAgentIds: string[];
   archivedWorkspaceIds: string[];
+  blockedWorkspaceIds?: string[];
+  failedWorkspaceIds?: string[];
   removedDirectory: boolean;
 }
 
 export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
   requestId: string;
+  canArchiveAgent?: WorkspaceArchiveAgentGuard;
 }
+
+export type WorkspaceArchiveAgent = Pick<ManagedAgent, "id" | "workspaceId" | "owner">;
+export type WorkspaceArchiveAgentGuard = (agent: WorkspaceArchiveAgent) => boolean;
 
 export async function requireActiveWorkspaceForArchive(
   dependencies: Pick<ArchiveDependencies, "listActiveWorkspaces">,
@@ -132,6 +145,18 @@ async function archiveByScopeWithPriority(
   const target = await resolveArchiveTarget(dependencies, request.scope);
   const targetWorkspaceIds = target.workspaceIds;
 
+  return dependencies.agentManager.runWithWorkspaceArchiveExclusion(targetWorkspaceIds, () =>
+    archiveResolvedTarget(dependencies, request, target),
+  );
+}
+
+async function archiveResolvedTarget(
+  dependencies: ArchiveDependencies,
+  request: ArchiveByScopeRequest,
+  target: ArchiveTarget,
+): Promise<ArchiveResult> {
+  const targetWorkspaceIds = target.workspaceIds;
+
   await stopWorkspaceSetups(dependencies, target.setupWorkspaceIds, request.requestId);
 
   if (targetWorkspaceIds.length > 0) {
@@ -145,11 +170,13 @@ async function archiveByScopeWithPriority(
       await dependencies.emitWorkspaceUpdatesForWorkspaceIds(targetWorkspaceIds);
     }
 
-    const { archivedAgents, archivedWorkspaceIds } = await archiveTargetRecords(
-      dependencies,
-      targetWorkspaceIds,
-      request.requestId,
-    );
+    const { archivedAgents, archivedWorkspaceIds, blockedWorkspaceIds, failedWorkspaceIds } =
+      await archiveTargetRecords(
+        dependencies,
+        targetWorkspaceIds,
+        request.requestId,
+        request.canArchiveAgent,
+      );
 
     if (target.backing?.mainRepoRoot) {
       try {
@@ -177,6 +204,8 @@ async function archiveByScopeWithPriority(
     return {
       archivedAgentIds: Array.from(archivedAgents),
       archivedWorkspaceIds,
+      blockedWorkspaceIds,
+      failedWorkspaceIds,
       removedDirectory,
     };
   } finally {
@@ -316,33 +345,80 @@ async function archiveTargetRecords(
   dependencies: ArchiveDependencies,
   targetWorkspaceIds: string[],
   requestId: string,
-): Promise<{ archivedAgents: Set<string>; archivedWorkspaceIds: string[] }> {
+  canArchiveAgent: WorkspaceArchiveAgentGuard | undefined,
+): Promise<{
+  archivedAgents: Set<string>;
+  archivedWorkspaceIds: string[];
+  blockedWorkspaceIds: string[];
+  failedWorkspaceIds: string[];
+}> {
   const archivedAgents = new Set<string>();
   const archivedWorkspaceIds: string[] = [];
+  const blockedWorkspaceIds: string[] = [];
+  const failedWorkspaceIds: string[] = [];
 
   const results = await Promise.allSettled(
     targetWorkspaceIds.map(async (workspaceId) => {
+      if (canArchiveAgent) {
+        const blocker = await findWorkspaceArchiveBlocker(
+          dependencies,
+          workspaceId,
+          canArchiveAgent,
+        );
+        if (blocker) {
+          dependencies.sessionLogger?.warn(
+            { workspaceId, agentId: blocker.id, requestId },
+            "Skipped workspace archive because an active agent is outside the allowed archive scope",
+          );
+          return { workspaceId, agents: null };
+        }
+      }
       const agents = await archiveWorkspaceContents(dependencies, workspaceId);
       await dependencies.archiveWorkspaceRecord(workspaceId);
       return { workspaceId, agents };
     }),
   );
 
-  for (const result of results) {
+  for (const [index, result] of results.entries()) {
     if (result.status === "fulfilled") {
+      if (result.value.agents === null) {
+        blockedWorkspaceIds.push(result.value.workspaceId);
+        continue;
+      }
       archivedWorkspaceIds.push(result.value.workspaceId);
       for (const agentId of result.value.agents) {
         archivedAgents.add(agentId);
       }
     } else {
+      const failedWorkspaceId = targetWorkspaceIds[index];
+      if (failedWorkspaceId) failedWorkspaceIds.push(failedWorkspaceId);
       dependencies.sessionLogger?.warn(
-        { err: result.reason, requestId },
+        { err: result.reason, workspaceId: failedWorkspaceId, requestId },
         "archiveByScope workspace teardown failed; continuing",
       );
     }
   }
 
-  return { archivedAgents, archivedWorkspaceIds };
+  return {
+    archivedAgents,
+    archivedWorkspaceIds,
+    blockedWorkspaceIds,
+    failedWorkspaceIds,
+  };
+}
+
+async function findWorkspaceArchiveBlocker(
+  dependencies: Pick<ArchiveDependencies, "agentManager" | "agentStorage">,
+  workspaceId: string,
+  canArchiveAgent: WorkspaceArchiveAgentGuard,
+): Promise<WorkspaceArchiveAgent | null> {
+  const liveBlocker = dependencies.agentManager
+    .listAgents()
+    .find((agent) => agent.workspaceId === workspaceId && !canArchiveAgent(agent));
+  if (liveBlocker) return liveBlocker;
+
+  const storedRecords = await dependencies.agentStorage.listByWorkspace(workspaceId);
+  return storedRecords.find((record) => !record.archivedAt && !canArchiveAgent(record)) ?? null;
 }
 
 async function maybeRemoveDirectory(

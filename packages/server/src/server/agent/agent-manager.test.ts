@@ -9,6 +9,7 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
   AgentManager,
   AgentManagerShuttingDownError,
+  WorkspaceAgentRegistrationBlockedError,
   commandMayHaveChangedExternalState,
   type AgentManagerEvent,
   type ManagedAgent,
@@ -1503,6 +1504,65 @@ test("does not register a session that finishes starting after shutdown begins",
     agents: [],
     sessionClosed: true,
   });
+});
+
+test("workspace archive exclusion rejects new registrations before provider startup", async () => {
+  const client = new SessionRecordingAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+  });
+  const archiveStarted = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archive = manager.runWithWorkspaceArchiveExclusion(["workspace-archive"], async () => {
+    archiveStarted.resolve();
+    await finishArchive.promise;
+  });
+  await archiveStarted.promise;
+
+  expect(() =>
+    manager.createAgent(
+      { provider: "codex", cwd: process.cwd() },
+      "00000000-0000-4000-8000-000000000101",
+      { workspaceId: "workspace-archive" },
+    ),
+  ).toThrow(WorkspaceAgentRegistrationBlockedError);
+  expect(client.sessions).toHaveLength(0);
+
+  finishArchive.resolve();
+  await archive;
+});
+
+test("workspace archive exclusion drains registrations that already started", async () => {
+  const client = new HeldAgentCreationClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000102",
+  });
+  const creation = manager.createAgent({ provider: "codex", cwd: process.cwd() }, undefined, {
+    workspaceId: "workspace-archive",
+  });
+  const rejectedCreation = expect(creation).rejects.toBeInstanceOf(
+    WorkspaceAgentRegistrationBlockedError,
+  );
+  await client.waitForCreationToStart();
+
+  let archiveStarted = false;
+  const archive = manager.runWithWorkspaceArchiveExclusion(["workspace-archive"], async () => {
+    archiveStarted = true;
+  });
+  await Promise.resolve();
+  expect(archiveStarted).toBe(false);
+
+  client.finishCreating();
+  await rejectedCreation;
+  await archive;
+  expect({
+    archiveStarted,
+    agents: manager.listAgents(),
+    sessionClosed: client.createdSessionClosed,
+  }).toEqual({ archiveStarted: true, agents: [], sessionClosed: true });
 });
 
 test("flush waits for rejected session cleanup that starts after shutdown", async () => {

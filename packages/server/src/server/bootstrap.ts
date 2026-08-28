@@ -160,6 +160,7 @@ import {
   archivePersistedWorkspaceRecord,
   killTerminalsForWorkspace,
   type ActiveWorkspaceRef,
+  type WorkspaceArchiveAgentGuard,
 } from "./workspace-archive-service.js";
 import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
@@ -1177,8 +1178,12 @@ export async function createPaseoDaemon(
   };
   const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
     createAgentCommand(createAgentCommandDependencies, input);
-  const archiveWorkspaceByIdExternal = (workspaceId: string, requestId: string) =>
-    archiveByScope(
+  const archiveWorkspaceByIdExternal = async (
+    workspaceId: string,
+    requestId: string,
+    canArchiveAgent?: WorkspaceArchiveAgentGuard,
+  ) => {
+    const result = await archiveByScope(
       {
         paseoHome: config.paseoHome,
         paseoWorktreesBaseRoot: config.worktreesRoot,
@@ -1198,8 +1203,13 @@ export async function createPaseoDaemon(
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
         sessionLogger: logger,
       },
-      { scope: { kind: "workspace", workspaceId }, requestId },
+      { scope: { kind: "workspace", workspaceId }, requestId, canArchiveAgent },
     );
+    return !(
+      result.blockedWorkspaceIds?.includes(workspaceId) ||
+      result.failedWorkspaceIds?.includes(workspaceId)
+    );
+  };
   const hubAgentLifecycle = new CreateAgentLifecycleDispatch({
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,

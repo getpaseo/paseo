@@ -12,6 +12,7 @@ import { CreateAgentWorktreeTargetSchema } from "@getpaseo/protocol/messages";
 
 import type { AgentStorage, StoredAgentRecord } from "../agent/agent-storage.js";
 import { ensurePrivateFile, writePrivateFileAtomicSync } from "../private-files.js";
+import type { WorkspaceArchiveAgentGuard } from "../workspace-archive-service.js";
 
 const FILE_NAME = "workspace-affinities.json";
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
@@ -78,9 +79,13 @@ interface WorkspaceAffinityCreateResult<Value> {
 export interface WorkspaceAffinityManagerOptions {
   paseoHome: string;
   daemonId: string;
-  agentStorage: Pick<AgentStorage, "list" | "listByWorkspace">;
+  agentStorage: Pick<AgentStorage, "list">;
   ensureWorkspace: (workspaceId: string) => Promise<void>;
-  archiveWorkspace: (workspaceId: string, requestId: string) => Promise<unknown>;
+  archiveWorkspace: (
+    workspaceId: string,
+    requestId: string,
+    canArchiveAgent?: WorkspaceArchiveAgentGuard,
+  ) => Promise<boolean | void>;
   logger: Pick<pino.Logger, "error" | "warn">;
   clock?: WorkspaceAffinityClock;
 }
@@ -332,22 +337,12 @@ export class WorkspaceAffinityManager {
     }
     const placement = await this.resolvePlacement(affinityId, persisted);
     if (!placement?.workspaceId) return true;
-    const records = await this.options.agentStorage.listByWorkspace(placement.workspaceId);
-    const protectedAgent = records.find(
-      (record) => !record.archivedAt && !isAffinityOwned(record, this.options.daemonId, affinityId),
-    );
-    if (protectedAgent) {
-      this.options.logger.warn(
-        { affinityId, workspaceId: placement.workspaceId, agentId: protectedAgent.id },
-        "Skipped Hub workspace affinity archive because the workspace has an unrelated live agent",
-      );
-      return false;
-    }
-    await this.options.archiveWorkspace(
+    const archived = await this.options.archiveWorkspace(
       placement.workspaceId,
       `workspace-affinity:${affinityId}:${parseDeadline(persisted.retainUntil).getTime()}:${randomUUID()}`,
+      (agent) => isAffinityOwned(agent, this.options.daemonId, affinityId),
     );
-    return true;
+    return archived !== false;
   }
 
   private requireUsable(): void {
@@ -468,7 +463,11 @@ function parseDeadline(value: string): Date {
   return deadline;
 }
 
-function isAffinityOwned(record: StoredAgentRecord, daemonId: string, affinityId: string): boolean {
+function isAffinityOwned(
+  record: Pick<StoredAgentRecord, "owner">,
+  daemonId: string,
+  affinityId: string,
+): boolean {
   const owner = record.owner;
   return (
     owner?.kind === "daemon" &&

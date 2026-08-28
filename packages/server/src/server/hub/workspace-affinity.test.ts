@@ -141,8 +141,16 @@ test("rejects target changes and retries after an unrelated live agent blocks ar
     daemonId: "daemon-1",
     agentStorage: storage,
     ensureWorkspace: async () => undefined,
-    archiveWorkspace: async (workspaceId) => {
+    archiveWorkspace: async (workspaceId, _requestId, canArchiveAgent) => {
+      const blocker = storage.records.find(
+        (record) =>
+          record.workspaceId === workspaceId &&
+          !record.archivedAt &&
+          canArchiveAgent?.(record) === false,
+      );
+      if (blocker) return false;
       archived.push(workspaceId);
+      return true;
     },
     logger: pino({ level: "silent" }),
     clock,
