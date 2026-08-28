@@ -610,14 +610,19 @@ describe("archiveByScope", () => {
       return originalArchiveWorkspaceRecord(workspaceId);
     };
 
-    const result = await archiveByScope(deps, {
-      scope: { kind: "worktree", targetPath: worktree.worktreePath },
-      requestId: "req-partial-failure",
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: worktree.worktreePath },
+        requestId: "req-partial-failure",
+      }),
+    ).rejects.toMatchObject({
+      name: "WorkspaceArchiveIncompleteError",
+      result: {
+        archivedWorkspaceIds: [workspaceB],
+        failedWorkspaceIds: [workspaceA],
+        removedDirectory: false,
+      },
     });
-
-    expect(result.archivedWorkspaceIds).toEqual([workspaceB]);
-    expect(result.archivedWorkspaceIds).not.toContain(workspaceA);
-    expect(result.removedDirectory).toBe(false);
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
@@ -653,6 +658,7 @@ describe("archiveByScope", () => {
     const firstResult = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId },
       requestId: "req-content-retry-1",
+      failureMode: "return",
     });
 
     expect(firstResult).toMatchObject({
@@ -714,6 +720,7 @@ describe("archiveByScope", () => {
     const firstResult = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId },
       requestId: "req-teardown-retry-1",
+      failureMode: "return",
     });
 
     expect(firstResult).toMatchObject({
@@ -766,6 +773,7 @@ describe("archiveByScope", () => {
     const firstResult = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId },
       requestId: "req-removal-retry-1",
+      failureMode: "return",
     });
 
     expect(firstResult).toMatchObject({

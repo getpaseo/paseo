@@ -107,10 +107,19 @@ export interface ArchiveResult {
   removedDirectory: boolean;
 }
 
+export class WorkspaceArchiveIncompleteError extends Error {
+  constructor(public readonly result: ArchiveResult) {
+    const failedWorkspaceIds = result.failedWorkspaceIds ?? [];
+    super(`Workspace archival incomplete for: ${failedWorkspaceIds.join(", ")}`);
+    this.name = "WorkspaceArchiveIncompleteError";
+  }
+}
+
 export interface ArchiveByScopeRequest {
   scope: ArchiveScope;
   requestId: string;
   canArchiveAgent?: WorkspaceArchiveAgentGuard;
+  failureMode?: "throw" | "return";
 }
 
 export type WorkspaceArchiveAgent = Pick<ManagedAgent, "id" | "workspaceId" | "owner">;
@@ -164,7 +173,13 @@ export async function archiveByScope(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {
-  return runWithGitCommandPriority("high", () => archiveByScopeWithPriority(dependencies, request));
+  const result = await runWithGitCommandPriority("high", () =>
+    archiveByScopeWithPriority(dependencies, request),
+  );
+  if (request.failureMode !== "return" && (result.failedWorkspaceIds?.length ?? 0) > 0) {
+    throw new WorkspaceArchiveIncompleteError(result);
+  }
+  return result;
 }
 
 async function archiveByScopeWithPriority(

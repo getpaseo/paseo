@@ -1203,7 +1203,12 @@ export async function createPaseoDaemon(
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
         sessionLogger: logger,
       },
-      { scope: { kind: "workspace", workspaceId }, requestId, canArchiveAgent },
+      {
+        scope: { kind: "workspace", workspaceId },
+        requestId,
+        canArchiveAgent,
+        failureMode: canArchiveAgent === undefined ? "throw" : "return",
+      },
     );
     return !(
       result.blockedWorkspaceIds?.includes(workspaceId) ||

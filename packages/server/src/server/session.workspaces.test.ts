@@ -574,6 +574,10 @@ function createSessionForWorkspaceTests(
     listAgents: () => [],
     listProviderSubagentActivity: () => [],
     getAgent: () => null,
+    runWithWorkspaceArchiveExclusion: async <Value>(
+      _workspaceIds: Iterable<string>,
+      action: () => Promise<Value>,
+    ) => action(),
     archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
     archiveSnapshot: async () => ({}),
     unarchiveSnapshot: async () => true,
@@ -5811,6 +5815,57 @@ test("archive_workspace_request hides non-destructive workspace records", async 
     | { payload: Record<string, unknown> }
     | undefined;
   expect(response?.payload.error).toBeNull();
+});
+
+test("archive_workspace_request reports incomplete teardown instead of success", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaceId = "ws-repo-archive-failure";
+  const agentId = "agent-repo-archive-failure";
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId,
+    projectId: "proj-repo-archive-failure",
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const archiveWorkspaceRecord = vi.fn(async () => {});
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => [workspace],
+      get: async () => workspace,
+      update: async (_id, updater) => updater(workspace),
+      upsert: async () => {},
+      archive: archiveWorkspaceRecord,
+      remove: async () => {},
+    },
+    agentManager: {
+      listAgents: () => [{ id: agentId, workspaceId } as ManagedAgent],
+      getAgent: () => ({ id: agentId, workspaceId }) as ManagedAgent,
+      archiveAgent: async () => {
+        throw new Error("intentional agent teardown failure");
+      },
+    },
+    agentStorage: { list: async () => [] },
+  });
+
+  await session.handleMessage({
+    type: "archive_workspace_request",
+    workspaceId,
+    requestId: "req-archive-failure",
+  });
+
+  const response = findByType(emitted, "archive_workspace_response");
+  expect(response?.payload).toMatchObject({
+    workspaceId,
+    archivedAt: null,
+    error: `Workspace archival incomplete for: ${workspaceId}`,
+  });
+  expect(archiveWorkspaceRecord).not.toHaveBeenCalled();
 });
 
 test("archive_workspace_request archives a worktree-kind workspace and removes the directory on last reference", async () => {
