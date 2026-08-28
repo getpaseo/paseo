@@ -193,6 +193,14 @@ async function archiveByScopeWithPriority(
   dependencies: ArchiveDependencies,
   request: ArchiveByScopeRequest,
 ): Promise<ArchiveResult> {
+  if (request.scope.kind === "workspace") {
+    const workspaceId = request.scope.workspaceId;
+    return dependencies.agentManager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+      const target = await resolveArchiveTarget(dependencies, request.scope);
+      return archiveResolvedTarget(dependencies, request, target);
+    });
+  }
+
   const target = await resolveArchiveTarget(dependencies, request.scope);
 
   return dependencies.agentManager.runWithWorkspaceArchiveExclusion(target.setupWorkspaceIds, () =>

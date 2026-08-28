@@ -536,7 +536,7 @@ describe("archiveByScope", () => {
     expect(existsSync(localCheckoutDir)).toBe(true);
   });
 
-  test("checks protected agents inside the workspace archive exclusion", async () => {
+  test("resolves workspace state and checks protected agents inside the archive exclusion", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const workspaceId = "ws-affinity-guard";
     const deps = createArchiveDeps({
@@ -555,6 +555,16 @@ describe("archiveByScope", () => {
       } finally {
         exclusionActive = false;
       }
+    };
+    const getWorkspace = deps.getWorkspace;
+    deps.getWorkspace = async (requestedWorkspaceId) => {
+      expect(exclusionActive).toBe(true);
+      return getWorkspace?.(requestedWorkspaceId) ?? null;
+    };
+    const listActiveWorkspaces = deps.listActiveWorkspaces;
+    deps.listActiveWorkspaces = async () => {
+      expect(exclusionActive).toBe(true);
+      return listActiveWorkspaces();
     };
     deps.agentManager.listAgents = () => {
       expect(exclusionActive).toBe(true);

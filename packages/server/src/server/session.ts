@@ -870,6 +870,8 @@ export class Session {
       getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
       getProject: (projectId) => this.projectRegistry.get(projectId),
       isDirectory: (path) => this.filesystem.isDirectory(path),
+      runWithWorkspaceActivationLease: (workspaceId, action) =>
+        this.agentManager.runWithWorkspaceAgentRegistrationLease(workspaceId, action),
       unarchiveWorkspace: async (workspace) => {
         await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
       },

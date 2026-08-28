@@ -64,6 +64,12 @@ export function createWorkspaceRecoveryService(deps: {
   getWorkspace: (workspaceId: string) => Promise<PersistedWorkspaceRecord | null>;
   getProject: (projectId: string) => Promise<PersistedProjectRecord | null>;
   isDirectory: (path: string) => Promise<boolean>;
+  // Recovery resolves persisted state and may recreate a worktree before activation. The lease
+  // must cover that whole plan so workspace archival cannot resolve an empty target concurrently.
+  runWithWorkspaceActivationLease: <Value>(
+    workspaceId: string,
+    action: () => Promise<Value>,
+  ) => Promise<Value>;
   unarchiveWorkspace: (workspace: PersistedWorkspaceRecord) => Promise<void>;
 }): WorkspaceRecoveryService {
   async function resolveRecovery(
@@ -141,16 +147,18 @@ export function createWorkspaceRecoveryService(deps: {
   async function restore(
     workspaceId: string,
   ): Promise<{ workspaceId: string; action: WorkspaceRecoveryAction }> {
-    const resolved = await resolveRecovery(workspaceId);
-    if (resolved.kind === "unavailable") {
-      throw new Error(resolved.message);
-    }
+    return deps.runWithWorkspaceActivationLease(workspaceId, async () => {
+      const resolved = await resolveRecovery(workspaceId);
+      if (resolved.kind === "unavailable") {
+        throw new Error(resolved.message);
+      }
 
-    if (resolved.kind === "restore") {
-      await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
-    }
-    await deps.unarchiveWorkspace(resolved.workspace);
-    return { workspaceId, action: resolved.kind };
+      if (resolved.kind === "restore") {
+        await recreateArchivedWorktree(resolved.workspace, resolved.sourceRepoRoot);
+      }
+      await deps.unarchiveWorkspace(resolved.workspace);
+      return { workspaceId, action: resolved.kind };
+    });
   }
 
   async function recreateArchivedWorktree(

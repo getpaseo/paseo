@@ -579,6 +579,10 @@ function createSessionForWorkspaceTests(
       _workspaceIds: Iterable<string>,
       action: () => Promise<Value>,
     ) => action(),
+    runWithWorkspaceAgentRegistrationLease: async <Value>(
+      _workspaceId: string | undefined,
+      action: () => Promise<Value>,
+    ) => action(),
     archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
     archiveSnapshot: async () => ({}),
     unarchiveSnapshot: async () => true,

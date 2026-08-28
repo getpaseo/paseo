@@ -908,6 +908,8 @@ export async function createPaseoDaemon(
         return false;
       }
     },
+    runWithWorkspaceActivationLease: (workspaceId, action) =>
+      agentManager.runWithWorkspaceAgentRegistrationLease(workspaceId, action),
     unarchiveWorkspace: async (workspace) => {
       await workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
     },
