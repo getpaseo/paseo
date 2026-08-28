@@ -8,6 +8,7 @@ import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Combobox, type ComboboxOption, type ComboboxProps } from "@/components/ui/combobox";
 import { ModelBrowser, ModelProviderGlyph, useModelBrowser } from "@/components/model-browser";
+import { useIsCompactFormFactor } from "@/constants/layout";
 import { isNative, isWeb } from "@/constants/platform";
 import type { ProviderSelectorProvider } from "@/provider-selection/provider-selection";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
@@ -20,6 +21,10 @@ const foregroundMutedMapping = (theme: Theme) => ({
 });
 
 function noop() {}
+
+function resolveModelBrowserScrolling(isCompact: boolean): "sheet" | "independent" {
+  return isWeb || !isCompact ? "independent" : "sheet";
+}
 
 interface CombinedModelSelectorProps {
   providers: ProviderSelectorProvider[];
@@ -87,6 +92,7 @@ export function CombinedModelSelector({
   toolbar,
 }: CombinedModelSelectorProps) {
   const { t } = useTranslation();
+  const isCompact = useIsCompactFormFactor();
   const anchorRef = useRef<View>(null);
   const [isOpen, setIsOpen] = useState(false);
   const [isContentReady, setIsContentReady] = useState(isWeb);
@@ -198,7 +204,7 @@ export function CombinedModelSelector({
       onEditProfile={onEditProfile ? handleEditProfile : undefined}
       onRetryProvider={onRetryProvider}
       isRetryingProvider={isRetryingProvider}
-      scrolling={isWeb ? "independent" : "sheet"}
+      scrolling={resolveModelBrowserScrolling(isCompact)}
     />
   ) : (
     <View style={styles.sheetLoadingState}>
