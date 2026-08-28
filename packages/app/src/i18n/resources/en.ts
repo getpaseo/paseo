@@ -26,6 +26,8 @@ export const en = {
       copiedLabel: "Copied {{label}}",
       downloadComplete: "Download complete",
       downloadFailed: "Download failed",
+      uploadComplete: "Upload complete",
+      uploadFailed: "Upload failed",
     },
     errors: {
       error: "Error",
@@ -420,6 +422,8 @@ export const en = {
       copyRelativePath: "Copy relative path",
       revealIn: "Reveal in {{target}}",
       download: "Download",
+      uploadFiles: "Upload files…",
+      uploadFolder: "Upload folder…",
       addToChat: "Add to chat",
       moreActions: "More actions",
       newFile: "New file",
@@ -1724,6 +1728,9 @@ export const en = {
     failed: "Failed to download file.",
     shareFile: "Share file",
     shareFileNamed: "Share {{fileName}}",
+  },
+  uploads: {
+    failed: "Failed to upload file.",
   },
   menu: {
     backdrop: "Menu backdrop",

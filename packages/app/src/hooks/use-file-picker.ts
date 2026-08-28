@@ -99,6 +99,60 @@ async function pickFilesWithDocumentPicker(): Promise<PickedFile[] | null> {
   );
 }
 
+/**
+ * Picks a folder and returns every file under it, each tagged with its path inside
+ * the tree so the upload can recreate the structure.
+ *
+ * Electron is Chromium, so this input works there too — no desktop dialog and no
+ * privileged directory-walk IPC is needed. iOS and Android have no equivalent:
+ * their pickers hand back files, never trees.
+ */
+function pickDirectoryWithWebInput(): Promise<PickedFile[] | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    // Not in the HTML type definitions, but supported by every Chromium and WebKit build
+    // that can reach this code path.
+    (input as HTMLInputElement & { webkitdirectory: boolean }).webkitdirectory = true;
+    input.style.display = "none";
+
+    input.addEventListener("change", async () => {
+      const files = Array.from(input.files ?? []);
+      if (files.length === 0) {
+        resolve(null);
+        return;
+      }
+
+      const result: PickedFile[] = [];
+      for (const file of files) {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        // `File` in this module is expo-file-system's class, not the DOM one, so this
+        // goes through unknown rather than intersecting the wrong type.
+        const { webkitRelativePath } = file as unknown as { webkitRelativePath?: string };
+        result.push({
+          fileName: file.name,
+          mimeType: file.type || getMimeTypeFromPath(file.name),
+          bytes,
+          relativePath: webkitRelativePath || file.name,
+        });
+      }
+      resolve(result);
+    });
+
+    input.addEventListener("cancel", () => {
+      resolve(null);
+    });
+
+    document.body.appendChild(input);
+    input.click();
+
+    setTimeout(() => {
+      input.remove();
+    }, 60_000);
+  });
+}
+
 export function useFilePicker() {
   const isPickingRef = useRef(false);
 
@@ -126,5 +180,24 @@ export function useFilePicker() {
     }
   }, []);
 
-  return { pickFiles };
+  const pickDirectory = useCallback(async (): Promise<PickedFile[] | null> => {
+    if (!isWeb) {
+      throw new Error("Folder upload is not available on this platform.");
+    }
+    if (isPickingRef.current) {
+      return null;
+    }
+    isPickingRef.current = true;
+
+    try {
+      return await pickDirectoryWithWebInput();
+    } catch (error) {
+      console.error("[FilePicker] Failed to pick a folder:", error);
+      throw error;
+    } finally {
+      isPickingRef.current = false;
+    }
+  }, []);
+
+  return { pickFiles, pickDirectory };
 }

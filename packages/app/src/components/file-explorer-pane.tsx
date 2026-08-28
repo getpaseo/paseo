@@ -59,8 +59,15 @@ import { useSessionStore } from "@/stores/session-store";
 import { FileActionsContextMenuContent } from "@/components/file-actions-menu";
 import { ContextMenu, ContextMenuTrigger, useContextMenu } from "@/components/ui/context-menu";
 import { useFileDownload } from "@/hooks/use-file-download";
-import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
+import { useFilePicker } from "@/hooks/use-file-picker";
+import { FileDropZone } from "@/components/file-drop/file-drop-zone";
+import { useFileDrop } from "@/components/file-drop/use-file-drop";
+import type { DroppedItem } from "@/components/file-drop/types";
+import type { PickedFile } from "@/attachments/picked-file";
+import { getMimeTypeFromPath } from "@/attachments/file-types";
+import { useUploadStore } from "@/stores/upload-store";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
+import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { buildWorkspaceExplorerStateKey } from "@/hooks/use-file-explorer-actions";
 import { usePanelStore, type ExpandedPathsUpdate, type SortOption } from "@/stores/panel-store";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
@@ -119,6 +126,8 @@ interface TreeRowItemProps {
   onRevealEntry?: (entry: ExplorerEntry) => void;
   revealTargetName?: string;
   onDownloadEntry: (entry: ExplorerEntry) => void;
+  onUploadFilesInto?: (parentPath: string) => void;
+  onUploadFolderInto?: (parentPath: string) => void;
   onAddToChat?: (path: string) => void;
   onOpenFileToSide?: (path: string) => void;
   onNewEntry?: (parentPath: string, kind: "file" | "directory") => void;
@@ -228,8 +237,33 @@ function EntryNameInputRow({
   );
 }
 
+/**
+ * Which upload actions a row offers. Folder upload needs a directory picker, which only
+ * the web/Electron builds have — the mobile pickers hand back files, never trees.
+ * Kept out of TreeRowItem so that component stays under the complexity budget.
+ */
+function resolveUploadActions(
+  canUploadInto: boolean,
+  handlers: {
+    onUploadFilesInto?: (parentPath: string) => void;
+    onUploadFolderInto?: (parentPath: string) => void;
+    handleUploadFiles: () => void;
+    handleUploadFolder: () => void;
+  },
+): { uploadFiles?: () => void; uploadFolder?: () => void } {
+  if (!canUploadInto) {
+    return {};
+  }
+  return {
+    uploadFiles: handlers.onUploadFilesInto ? handlers.handleUploadFiles : undefined,
+    uploadFolder: isWeb && handlers.onUploadFolderInto ? handlers.handleUploadFolder : undefined,
+  };
+}
+
 function TreeRowItem({
   serverId,
+  onUploadFilesInto,
+  onUploadFolderInto,
   workspaceId,
   entry,
   depth,
@@ -258,6 +292,12 @@ function TreeRowItem({
   const showNameHover = useCallback(() => setIsHovered(true), []);
   const hideNameHover = useCallback(() => setIsHovered(false), []);
   const isDirectory = entry.kind === "directory";
+  // Folder download streams a zip over the binary channel, which an older daemon
+  // cannot serve; withhold the action there rather than offering a dead menu item.
+  const supportsArchiveDownload = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceFileTransfer === true,
+  );
+  const canDownloadEntry = !isDirectory || supportsArchiveDownload;
   const dragSourceRef = useWorkspaceFileDragSource({
     enabled: !isDirectory,
     serverId,
@@ -306,6 +346,21 @@ function TreeRowItem({
   const handleDownload = useCallback(() => {
     onDownloadEntry(entry);
   }, [onDownloadEntry, entry]);
+
+  const handleUploadFiles = useCallback(() => {
+    onUploadFilesInto?.(entry.path);
+  }, [onUploadFilesInto, entry.path]);
+
+  const handleUploadFolder = useCallback(() => {
+    onUploadFolderInto?.(entry.path);
+  }, [onUploadFolderInto, entry.path]);
+
+  const uploadActions = resolveUploadActions(isDirectory && supportsArchiveDownload, {
+    onUploadFilesInto,
+    onUploadFolderInto,
+    handleUploadFiles,
+    handleUploadFolder,
+  });
 
   const handleAddToChat = useCallback(() => {
     onAddToChat?.(entry.path);
@@ -381,7 +436,9 @@ function TreeRowItem({
         onCopyRelativePath={handleCopyRelativePath}
         onReveal={onRevealEntry ? handleReveal : undefined}
         revealTargetName={revealTargetName}
-        onDownload={handleDownload}
+        onDownload={canDownloadEntry ? handleDownload : undefined}
+        onUploadFiles={uploadActions.uploadFiles}
+        onUploadFolder={uploadActions.uploadFolder}
         onAddToChat={onAddToChat ? handleAddToChat : undefined}
         onOpenToSide={!isDirectory && onOpenFileToSide ? handleOpenToSide : undefined}
         onNewFile={onNewEntry ? handleNewFile : undefined}
@@ -434,6 +491,8 @@ export function FileExplorerPane({
 
   const {
     requestDirectoryListing,
+    uploadEntry,
+    refreshDirectory,
     createEntry,
     renameEntry,
     duplicateEntry,
@@ -445,6 +504,11 @@ export function FileExplorerPane({
     workspaceRoot: normalizedWorkspaceRoot,
   });
   const toast = useToast();
+  const { pickFiles, pickDirectory } = useFilePicker();
+  const supportsFileTransfer = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceFileTransfer === true,
+  );
+  const startUploads = useUploadStore((state) => state.startUploads);
   const isLocalDaemon = useIsLocalDaemon(serverId);
   const { targets: desktopOpenTargets } = useDesktopOpenTargets({
     isLocalExecution: isLocalDaemon,
@@ -630,13 +694,61 @@ export function FileExplorerPane({
 
   const handleDownloadEntry = useCallback(
     (entry: ExplorerEntry) => {
-      if (entry.kind !== "file") {
-        return;
-      }
       downloadFile({ fileName: entry.name, path: entry.path });
     },
     [downloadFile],
   );
+
+  const runUploadInto = useCallback(
+    (parentPath: string, pick: () => Promise<PickedFile[] | null>) => {
+      void (async () => {
+        try {
+          const picked = await pick();
+          if (!picked || picked.length === 0) {
+            return;
+          }
+          await startUploads({
+            serverId,
+            scopeId: workspaceStateKey ?? normalizedWorkspaceRoot,
+            parentPath,
+            files: picked,
+            uploadEntry,
+            onUploaded: (uploadedInto) => void refreshDirectory(uploadedInto),
+          });
+        } catch (cause) {
+          toast.error(cause instanceof Error ? cause.message : t("uploads.failed"));
+        }
+      })();
+    },
+    [
+      normalizedWorkspaceRoot,
+      refreshDirectory,
+      serverId,
+      startUploads,
+      t,
+      toast,
+      uploadEntry,
+      workspaceStateKey,
+    ],
+  );
+
+  const handleUploadFilesInto = useCallback(
+    (parentPath: string) => runUploadInto(parentPath, pickFiles),
+    [pickFiles, runUploadInto],
+  );
+
+  const handleUploadFolderInto = useCallback(
+    (parentPath: string) => runUploadInto(parentPath, pickDirectory),
+    [pickDirectory, runUploadInto],
+  );
+
+  // A drop already carries its bytes, so it skips the picker and reuses the same upload path.
+  const handleDropFiles = useCallback(
+    (parentPath: string, files: PickedFile[]) => runUploadInto(parentPath, async () => files),
+    [runUploadInto],
+  );
+
+  const canDropIntoWorkspace = isWeb && supportsFileTransfer;
 
   const handleNewEntry = useCallback(
     (parentPath: string, kind: "file" | "directory") => {
@@ -984,6 +1096,8 @@ export function FileExplorerPane({
           onRevealEntry={fileManagerTarget ? handleRevealEntry : undefined}
           revealTargetName={fileManagerTarget?.label}
           onDownloadEntry={handleDownloadEntry}
+          onUploadFilesInto={handleUploadFilesInto}
+          onUploadFolderInto={handleUploadFolderInto}
           onAddToChat={onAddToChat}
           onOpenFileToSide={onOpenFileToSide}
           onNewEntry={fsEntryOpsEnabled ? handleNewEntry : undefined}
@@ -1004,6 +1118,8 @@ export function FileExplorerPane({
       handleOpenDirectoryInEditor,
       handleDeleteEntry,
       handleDownloadEntry,
+      handleUploadFilesInto,
+      handleUploadFolderInto,
       handleDraftCommit,
       handleDuplicateEntry,
       handleEditCancel,
@@ -1051,32 +1167,40 @@ export function FileExplorerPane({
   }
 
   return (
-    <View
-      {...{
-        onContextMenu: (event: { preventDefault?: () => void }) => event.preventDefault?.(),
-      }}
-      style={styles.container}
-    >
-      <FileExplorerPaneContent
-        error={error}
-        isCompact={isCompact}
-        showInitialLoading={showInitialLoading}
-        showBackFromError={showBackFromError}
-        listRows={listRows}
-        onNewEntryAtRoot={fsEntryOpsEnabled ? handleNewEntry : undefined}
-        currentSortLabel={currentSortLabel}
-        isRefreshFetching={isRefreshFetching}
-        treeListRef={treeListRef}
-        scrollbar={scrollbar}
-        renderTreeRow={renderTreeRow}
-        handleSortCycle={handleSortCycle}
-        handleToggleHiddenFiles={handleToggleHiddenFiles}
-        handleRefresh={handleRefresh}
-        handleBackFromError={handleBackFromError}
-        handleRetry={handleRetry}
-        sortTriggerStyle={sortTriggerStyle}
-      />
-    </View>
+    <FileDropZone style={styles.container} disabled={!canDropIntoWorkspace}>
+      <View
+        {...{
+          onContextMenu: (event: { preventDefault?: () => void }) => event.preventDefault?.(),
+        }}
+        style={styles.container}
+      >
+        {canDropIntoWorkspace ? (
+          <ExplorerDropTarget
+            currentPath={explorerState?.currentPath ?? "."}
+            onDropFiles={handleDropFiles}
+          />
+        ) : null}
+        <FileExplorerPaneContent
+          error={error}
+          isCompact={isCompact}
+          showInitialLoading={showInitialLoading}
+          showBackFromError={showBackFromError}
+          listRows={listRows}
+          onNewEntryAtRoot={fsEntryOpsEnabled ? handleNewEntry : undefined}
+          currentSortLabel={currentSortLabel}
+          isRefreshFetching={isRefreshFetching}
+          treeListRef={treeListRef}
+          scrollbar={scrollbar}
+          renderTreeRow={renderTreeRow}
+          handleSortCycle={handleSortCycle}
+          handleToggleHiddenFiles={handleToggleHiddenFiles}
+          handleRefresh={handleRefresh}
+          handleBackFromError={handleBackFromError}
+          handleRetry={handleRetry}
+          sortTriggerStyle={sortTriggerStyle}
+        />
+      </View>
+    </FileDropZone>
   );
 }
 
@@ -1092,6 +1216,46 @@ function isFileExplorerRowTarget(target: unknown): boolean {
     return false;
   }
   return target.closest('[data-testid^="file-explorer-row-"]') !== null;
+}
+
+/**
+ * Uploads anything dropped on the explorer into the folder currently being viewed.
+ *
+ * A separate component because useFileDrop must run inside the FileDropZone that owns
+ * the drop context. Rendering nothing keeps it out of the layout.
+ */
+function ExplorerDropTarget({
+  currentPath,
+  onDropFiles,
+}: {
+  currentPath: string;
+  onDropFiles: (parentPath: string, files: PickedFile[]) => void;
+}) {
+  const handleGenericFiles = useCallback(
+    (items: DroppedItem[]) => {
+      void (async () => {
+        const picked: PickedFile[] = [];
+        for (const item of items) {
+          if (item.kind !== "web-file") {
+            continue;
+          }
+          picked.push({
+            fileName: item.file.name,
+            mimeType: item.file.type || getMimeTypeFromPath(item.file.name),
+            bytes: new Uint8Array(await item.file.arrayBuffer()),
+            relativePath: item.relativePath,
+          });
+        }
+        if (picked.length > 0) {
+          onDropFiles(currentPath, picked);
+        }
+      })();
+    },
+    [currentPath, onDropFiles],
+  );
+
+  useFileDrop({ rawFiles: true, onGenericFiles: handleGenericFiles });
+  return null;
 }
 
 function RootCreationContextTarget({
@@ -1453,6 +1617,8 @@ function TreeRowDispatcher({
   onRevealEntry,
   revealTargetName,
   onDownloadEntry,
+  onUploadFilesInto,
+  onUploadFolderInto,
   onAddToChat,
   onOpenFileToSide,
   onNewEntry,
@@ -1477,6 +1643,8 @@ function TreeRowDispatcher({
   onRevealEntry?: (entry: ExplorerEntry) => void;
   revealTargetName?: string;
   onDownloadEntry: (entry: ExplorerEntry) => void;
+  onUploadFilesInto?: (parentPath: string) => void;
+  onUploadFolderInto?: (parentPath: string) => void;
   onAddToChat?: (path: string) => void;
   onOpenFileToSide?: (path: string) => void;
   onNewEntry?: (parentPath: string, kind: "file" | "directory") => void;
@@ -1510,6 +1678,8 @@ function TreeRowDispatcher({
       onRevealEntry={onRevealEntry}
       revealTargetName={revealTargetName}
       onDownloadEntry={onDownloadEntry}
+      onUploadFilesInto={onUploadFilesInto}
+      onUploadFolderInto={onUploadFolderInto}
       onAddToChat={onAddToChat}
       onOpenFileToSide={onOpenFileToSide}
       onNewEntry={onNewEntry}

@@ -10,7 +10,7 @@ import {
   resolveRasterImageMimeType,
 } from "@/attachments/file-types";
 import { isWeb } from "@/constants/platform";
-import type { DroppedItem, DroppedPathItem, FileDropSink } from "./types";
+import type { DroppedFileItem, DroppedItem, DroppedPathItem, FileDropSink } from "./types";
 import {
   parseWorkspaceFileDragPayload,
   WORKSPACE_FILE_DRAG_MIME,
@@ -55,6 +55,80 @@ interface UseDropListenersOptions {
   /** Stable getter for the currently registered sink. */
   getSink: () => FileDropSink | null;
   disabled: boolean;
+}
+
+/**
+ * Expands a dropped DataTransfer entry into files, recursing into directories.
+ *
+ * `dataTransfer.items` must be read synchronously in the drop handler — the entries are
+ * detached once the handler yields — so callers capture the entries first and await this
+ * afterwards.
+ */
+export async function expandDropEntry(
+  entry: FileSystemEntry,
+  prefix: string,
+): Promise<DroppedFileItem[]> {
+  if (entry.isFile) {
+    const fileEntry = entry as FileSystemFileEntry;
+    const file = await new Promise<File | null>((resolve) => {
+      fileEntry.file(resolve, () => resolve(null));
+    });
+    if (!file) {
+      return [];
+    }
+    // Only a file *inside* a dropped folder carries a tree path. A plain dropped file has
+    // no prefix, and tagging it with one would make the upload look like a tree.
+    return prefix
+      ? [{ kind: "web-file", file, relativePath: `${prefix}${file.name}` }]
+      : [{ kind: "web-file", file }];
+  }
+
+  if (!entry.isDirectory) {
+    return [];
+  }
+
+  const reader = (entry as FileSystemDirectoryEntry).createReader();
+  const children: FileSystemEntry[] = [];
+  // readEntries yields in batches and signals the end with an empty array.
+  for (;;) {
+    const batch = await new Promise<FileSystemEntry[]>((resolve) => {
+      reader.readEntries(resolve, () => resolve([]));
+    });
+    if (batch.length === 0) {
+      break;
+    }
+    children.push(...batch);
+  }
+
+  const nested = await Promise.all(
+    children.map((child) => expandDropEntry(child, `${prefix}${entry.name}/`)),
+  );
+  return nested.flat();
+}
+
+/** Must run synchronously inside the drop handler; the entries detach once it yields. */
+function collectDropEntries(dataTransfer: DataTransfer | null | undefined): FileSystemEntry[] {
+  return Array.from(dataTransfer?.items ?? [])
+    .map((item) => item.webkitGetAsEntry?.() ?? null)
+    .filter((entry): entry is FileSystemEntry => entry !== null);
+}
+
+/** Hands a raw-file sink everything that was dropped, folders expanded. */
+async function deliverRawDrop(
+  sink: FileDropSink,
+  entries: FileSystemEntry[],
+  files: File[],
+): Promise<void> {
+  try {
+    const expanded = entries.length
+      ? (await Promise.all(entries.map((entry) => expandDropEntry(entry, "")))).flat()
+      : files.map((file) => ({ kind: "web-file" as const, file }));
+    if (sink.onGenericFiles && expanded.length > 0) {
+      sink.onGenericFiles(expanded);
+    }
+  } catch (error) {
+    console.error("[useDropListeners] Failed to expand dropped folders:", error);
+  }
 }
 
 /**
@@ -162,7 +236,7 @@ export function useDropListeners({
               // composer the user dropped on (matches the web path below). No post-persist busy
               // re-check: a mixed drop's own generic upload flips the busy flag, and re-checking
               // would discard the image from the same drop.
-              sink.onFiles(attachments);
+              sink.onFiles?.(attachments);
               return;
             })
             .catch((error) => {
@@ -253,6 +327,13 @@ export function useDropListeners({
         }
 
         const files = Array.from(e.dataTransfer?.files ?? []);
+
+        if (sink.rawFiles) {
+          // Read the entries synchronously: DataTransfer is detached once this handler yields.
+          await deliverRawDrop(sink, collectDropEntries(e.dataTransfer), files);
+          return;
+        }
+
         const genericItems: DroppedItem[] = files.map((file) => ({
           kind: "web-file",
           file,
@@ -271,7 +352,7 @@ export function useDropListeners({
           // No post-persist busy re-check: a mixed drop's own generic upload flips the busy flag,
           // and re-checking would discard the image from the same drop. The guard at drop start
           // already rejects drops that begin while busy.
-          sink.onFiles(attachments);
+          sink.onFiles?.(attachments);
         } catch (error) {
           console.error("[useDropListeners] Failed to process dropped files:", error);
         }

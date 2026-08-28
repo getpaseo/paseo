@@ -4,6 +4,11 @@ import type { WorkspaceFileDragPayload } from "@/attachments/workspace-file-drag
 export interface DroppedFileItem {
   kind: "web-file";
   file: File;
+  /**
+   * Path inside a dropped folder, when the sink opted into directory expansion.
+   * Absent for a plain file drop.
+   */
+  relativePath?: string;
 }
 export interface DroppedPathItem {
   kind: "desktop-path";
@@ -17,7 +22,14 @@ export type DroppedItem = DroppedFileItem | DroppedPathItem;
  * everything else arrives raw via `onGenericFiles`.
  */
 export interface FileDropSink {
-  onFiles: (images: ImageAttachment[]) => void;
+  /** Omitted by a sink that takes raw files instead of persisted image attachments. */
+  onFiles?: (images: ImageAttachment[]) => void;
   onGenericFiles?: (items: DroppedItem[]) => void;
   onWorkspaceFile?: (payload: WorkspaceFileDragPayload) => void;
+  /**
+   * Take dropped bytes as-is: folders are expanded into their files, each tagged with
+   * `relativePath`, and raster images are not persisted as attachments. Everything
+   * arrives through `onGenericFiles`.
+   */
+  rawFiles?: boolean;
 }

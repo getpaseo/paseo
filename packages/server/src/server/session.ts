@@ -1134,6 +1134,11 @@ export class Session {
     }
   }
 
+  /** A socket going away must not strand the transfers it started. */
+  cancelWorkspaceTransfersForSource(source: object): void {
+    this.workspaceFilesSession.cancelTransfersForSource(source);
+  }
+
   clearAgentTimelineSubscription(source: object): void {
     this.clientCapabilitiesBySource.delete(source);
     if (this.viewedTimelineAgentIdsBySource.delete(source)) {
@@ -2528,6 +2533,16 @@ export class Session {
         return this.workspaceFilesSession.handleFileEntryDuplicateRequest(msg);
       case "fs.entry.delete.request":
         return this.workspaceFilesSession.handleFileEntryDeleteRequest(msg);
+      case "fs.entry.download.request":
+        return this.workspaceFilesSession.handleEntryDownloadRequest(msg, source);
+      case "fs.entry.upload.request":
+        return this.workspaceFilesSession.handleEntryUploadRequest(msg, source);
+      case "fs.transfer.ack":
+        this.workspaceFilesSession.handleFileTransferAck(msg);
+        return undefined;
+      case "fs.transfer.cancel":
+        this.workspaceFilesSession.handleFileTransferCancel(msg);
+        return undefined;
       case "project_icon_request":
         return this.workspaceFilesSession.handleProjectIconRequest(msg);
       case "project.icon.get.request":

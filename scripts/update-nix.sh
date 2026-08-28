@@ -35,7 +35,12 @@ NIXPKGS_URL="$(node -p "
 STDERR_LOG="$(mktemp)"
 trap "rm -f '$STDERR_LOG'" EXIT
 
-if ! NEW_HASH="$(nix shell "${NIXPKGS_URL}#prefetch-npm-deps" -c prefetch-npm-deps "$LOCK_FILE" 2>"$STDERR_LOG")"; then
+# The flake URL below needs nix-command and flakes. CI's installer enables them by
+# default, but a distro-packaged nix does not, so ask for them explicitly rather than
+# depending on the host's nix.conf.
+NIX_FEATURES=(--extra-experimental-features "nix-command flakes")
+
+if ! NEW_HASH="$(nix "${NIX_FEATURES[@]}" shell "${NIXPKGS_URL}#prefetch-npm-deps" -c prefetch-npm-deps "$LOCK_FILE" 2>"$STDERR_LOG")"; then
   echo "ERROR: prefetch-npm-deps failed:" >&2
   tail -20 "$STDERR_LOG" >&2
   exit 1

@@ -1,24 +1,50 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { Check, X, XCircle } from "lucide-react-native";
-import { useDownloadStore, formatSpeed, formatEta, type Download } from "@/stores/download-store";
+import { useDownloadStore, type Download } from "@/stores/download-store";
+import { getTransferStatusText, hasDeterminateProgress, type Transfer } from "./transfer-status";
+import { useUploadStore, type Upload } from "@/stores/upload-store";
 
 const AUTO_DISMISS_DELAY = 3000;
 
-function getDownloadStatusText(download: Download, t: TFunction): string {
-  if (download.status === "downloading") {
-    if (download.progress) {
-      return `${Math.round(download.progress.percent * 100)}% · ${formatSpeed(download.progress.speed)} · ${formatEta(download.progress.eta)}`;
-    }
-    return t("common.states.starting");
-  }
-  if (download.status === "complete") return t("common.states.downloadComplete");
-  return download.message ?? t("common.states.downloadFailed");
+function toTransfer(
+  download: Download,
+  dismiss: (id: string) => void,
+  cancel: (id: string) => void,
+): Transfer {
+  const inFlight = download.status === "downloading";
+  return {
+    id: download.id,
+    fileName: download.fileName,
+    inFlight,
+    complete: download.status === "complete",
+    message: download.message,
+    progress: download.progress,
+    dismiss: () => dismiss(download.id),
+    cancel: inFlight ? () => cancel(download.id) : undefined,
+  };
+}
+
+function uploadToTransfer(
+  upload: Upload,
+  dismiss: (id: string) => void,
+  cancel: (id: string) => void,
+): Transfer {
+  const inFlight = upload.status === "uploading";
+  return {
+    id: upload.id,
+    fileName: upload.fileName,
+    inFlight,
+    complete: upload.status === "complete",
+    message: upload.message,
+    progress: upload.progress,
+    dismiss: () => dismiss(upload.id),
+    cancel: inFlight ? () => cancel(upload.id) : undefined,
+  };
 }
 
 export function DownloadToast() {
@@ -28,9 +54,22 @@ export function DownloadToast() {
   const downloads = useDownloadStore((state) => state.downloads);
   const activeDownloadId = useDownloadStore((state) => state.activeDownloadId);
   const dismissDownload = useDownloadStore((state) => state.dismissDownload);
+  const cancelDownload = useDownloadStore((state) => state.cancelDownload);
+  const uploads = useUploadStore((state) => state.uploads);
+  const activeUploadId = useUploadStore((state) => state.activeUploadId);
+  const dismissUpload = useUploadStore((state) => state.dismissUpload);
+  const cancelUpload = useUploadStore((state) => state.cancelUpload);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const activeDownload = activeDownloadId ? downloads.get(activeDownloadId) : null;
+  const download = activeDownloadId ? downloads.get(activeDownloadId) : null;
+  const upload = activeUploadId ? uploads.get(activeUploadId) : null;
+  const isUpload = !download && Boolean(upload);
+  let activeDownload: Transfer | null = null;
+  if (download) {
+    activeDownload = toTransfer(download, dismissDownload, cancelDownload);
+  } else if (upload) {
+    activeDownload = uploadToTransfer(upload, dismissUpload, cancelUpload);
+  }
 
   useEffect(() => {
     if (dismissTimeoutRef.current) {
@@ -38,10 +77,9 @@ export function DownloadToast() {
       dismissTimeoutRef.current = null;
     }
 
-    if (activeDownload && activeDownload.status !== "downloading") {
-      dismissTimeoutRef.current = setTimeout(() => {
-        dismissDownload(activeDownload.id);
-      }, AUTO_DISMISS_DELAY);
+    if (activeDownload && !activeDownload.inFlight) {
+      const dismiss = activeDownload.dismiss;
+      dismissTimeoutRef.current = setTimeout(dismiss, AUTO_DISMISS_DELAY);
     }
 
     return () => {
@@ -49,7 +87,7 @@ export function DownloadToast() {
         clearTimeout(dismissTimeoutRef.current);
       }
     };
-  }, [activeDownload, dismissDownload]);
+  }, [activeDownload]);
 
   const containerStyle = useMemo(
     () => [styles.container, { bottom: theme.spacing[4] + insets.bottom }],
@@ -57,10 +95,12 @@ export function DownloadToast() {
   );
 
   const handleDismiss = useCallback(() => {
-    if (activeDownload) {
-      dismissDownload(activeDownload.id);
-    }
-  }, [activeDownload, dismissDownload]);
+    activeDownload?.dismiss();
+  }, [activeDownload]);
+
+  const handleCancel = useCallback(() => {
+    activeDownload?.cancel?.();
+  }, [activeDownload]);
 
   if (!activeDownload) {
     return null;
@@ -69,27 +109,37 @@ export function DownloadToast() {
   return (
     <View style={containerStyle} pointerEvents="box-none">
       <View style={styles.toast}>
-        {activeDownload.status === "downloading" ? (
+        {activeDownload.inFlight ? (
           <LoadingSpinner size="small" color={theme.colors.foreground} />
         ) : null}
-        {activeDownload.status === "complete" ? (
-          <Check size={18} color={theme.colors.primary} />
-        ) : null}
-        {activeDownload.status !== "downloading" && activeDownload.status !== "complete" ? (
+        {activeDownload.complete ? <Check size={18} color={theme.colors.primary} /> : null}
+        {!activeDownload.inFlight && !activeDownload.complete ? (
           <XCircle size={18} color={theme.colors.destructive} />
         ) : null}
         <View style={styles.textContainer}>
           <Text style={styles.fileName} numberOfLines={1}>
             {activeDownload.fileName}
           </Text>
-          <Text style={styles.status}>{getDownloadStatusText(activeDownload, t)}</Text>
-          {activeDownload.status === "downloading" && activeDownload.progress && (
+          <Text style={styles.status}>{getTransferStatusText(activeDownload, isUpload, t)}</Text>
+          {hasDeterminateProgress(activeDownload) && activeDownload.progress && (
             <View style={styles.progressBar}>
               <ProgressFill percent={activeDownload.progress.percent} />
             </View>
           )}
         </View>
-        {activeDownload.status !== "downloading" && (
+        {activeDownload.inFlight && activeDownload.cancel ? (
+          <Pressable
+            onPress={handleCancel}
+            hitSlop={8}
+            style={styles.dismiss}
+            accessibilityRole="button"
+            accessibilityLabel={t("common.actions.cancel")}
+            testID="transfer-toast-cancel"
+          >
+            <X size={16} color={theme.colors.foregroundMuted} />
+          </Pressable>
+        ) : null}
+        {!activeDownload.inFlight && (
           <Pressable onPress={handleDismiss} hitSlop={8} style={styles.dismiss}>
             <X size={16} color={theme.colors.foregroundMuted} />
           </Pressable>

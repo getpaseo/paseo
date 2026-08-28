@@ -105,6 +105,7 @@
     "uuid": "^9.0.1",
     "which": "^5.0.0",
     "ws": "^8.14.2",
+    "yazl": "^3.3.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -114,8 +115,10 @@
     "@types/qrcode": "^1.5.6",
     "@types/uuid": "^9.0.7",
     "@types/ws": "^8.5.8",
+    "@types/yazl": "^3.3.1",
     "@vitest/ui": "^4.1.6",
     "cross-env": "^10.1.0",
+    "jszip": "^3.10.1",
     "tsx": "^4.6.0",
     "typescript": "^5.2.2",
     "vitest": "^4.1.6"

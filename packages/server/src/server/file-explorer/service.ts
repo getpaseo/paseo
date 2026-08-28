@@ -4,6 +4,8 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { expandUserPath, resolvePathFromBase } from "../path-utils.js";
 import { runGitCommand } from "../../utils/run-git-command.js";
+import { ZipFile } from "yazl";
+import type { Readable } from "stream";
 
 export type ExplorerEntryKind = "file" | "directory";
 export type ExplorerFileKind = "text" | "image" | "binary";
@@ -99,6 +101,11 @@ export const MAX_EDITABLE_FILE_BYTES = 1024 * 1024;
 const READ_FILE_OPEN_FLAGS =
   process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
 const ACCESS_OUTSIDE_WORKSPACE_MESSAGE = "Access outside of workspace is not allowed";
+
+/** Safety nets, not product limits: a runaway tree should fail loudly, not stream forever. */
+export const MAX_ARCHIVE_ENTRIES = 20_000;
+export const MAX_ARCHIVE_BYTES = 2 * 1024 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 
 function fileRevision(stats: BigIntStats): string {
   return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeNs}`;
@@ -571,6 +578,379 @@ export async function getDownloadableFileInfo({ root, relativePath }: ReadFilePa
   } finally {
     await handle.close();
   }
+}
+
+export type DownloadableEntryKind = "file" | "directory";
+
+/**
+ * Describes what a download request would produce, without reading the entry.
+ *
+ * Separate from `getDownloadableFileInfo`, which stays file-only because the HTTP
+ * endpoint must keep refusing directories. Only the WebSocket path can serve a
+ * directory, and it serves it as a streamed archive.
+ */
+export async function getDownloadableEntryInfo({ root, relativePath }: ReadFileParams): Promise<{
+  path: string;
+  fileName: string;
+  mimeType: string;
+  size: number | null;
+  kind: DownloadableEntryKind;
+}> {
+  const scoped = await resolveScopedPath({ root, relativePath });
+  const stats = await fs.lstat(scoped.resolvedPath);
+
+  if (stats.isDirectory()) {
+    const base = path.basename(scoped.requestedPath) || path.basename(root) || "archive";
+    return {
+      path: normalizeRelativePath({ root, targetPath: scoped.requestedPath }),
+      fileName: `${base}.zip`,
+      mimeType: "application/zip",
+      // The archive is produced as it streams, so its length is not knowable here.
+      size: null,
+      kind: "directory",
+    };
+  }
+
+  const file = await getDownloadableFileInfo({ root, relativePath });
+  return {
+    path: file.path,
+    fileName: file.fileName,
+    mimeType: file.mimeType,
+    size: file.size,
+    kind: "file",
+  };
+}
+
+interface ArchiveEntry {
+  absolutePath: string;
+  archivePath: string;
+  mtime: Date;
+  size: number;
+}
+
+/**
+ * Collects the entries an archive will contain, in a deterministic order.
+ *
+ * Symlinks are skipped rather than followed: following one is how an archive ends up
+ * containing something outside the workspace, and a zip of a symlink is rarely what
+ * the user wanted anyway.
+ */
+async function collectArchiveEntries(
+  currentDir: string,
+  prefix: string,
+  entries: ArchiveEntry[],
+  totals: { bytes: number },
+  isCancelled: () => boolean,
+): Promise<void> {
+  if (isCancelled()) {
+    return;
+  }
+  const dirents = await fs.readdir(currentDir, { withFileTypes: true });
+  dirents.sort((a, b) => a.name.localeCompare(b.name));
+
+  for (const dirent of dirents) {
+    if (dirent.isSymbolicLink()) {
+      continue;
+    }
+    const absolutePath = path.join(currentDir, dirent.name);
+    const archivePath = prefix ? `${prefix}/${dirent.name}` : dirent.name;
+
+    if (isCancelled()) {
+      return;
+    }
+    if (dirent.isDirectory()) {
+      await collectArchiveEntries(absolutePath, archivePath, entries, totals, isCancelled);
+      continue;
+    }
+    if (!dirent.isFile()) {
+      continue;
+    }
+
+    const stats = await fs.lstat(absolutePath);
+    totals.bytes += stats.size;
+    if (entries.length >= MAX_ARCHIVE_ENTRIES) {
+      throw new Error("This folder has too many files to download as an archive.");
+    }
+    if (totals.bytes > MAX_ARCHIVE_BYTES) {
+      throw new Error("This folder is too large to download as an archive.");
+    }
+    entries.push({ absolutePath, archivePath, mtime: stats.mtime, size: stats.size });
+  }
+}
+
+/**
+ * Streams a directory as a zip.
+ *
+ * VS Code recurses into a FileSystemDirectoryHandle instead of archiving, but no
+ * directory handle exists on iOS, Android, Firefox or Safari — and the phone is the
+ * primary client here, so the archive is the only path that works everywhere.
+ *
+ * Breaking out of the returned iterable destroys the underlying stream, so a cancelled
+ * download stops the daemon reading.
+ */
+export async function* streamDirectoryArchive({
+  root,
+  relativePath,
+  isCancelled = () => false,
+}: ReadFileParams & {
+  /**
+   * Checked during the directory walk, which happens before any byte is produced. Without
+   * it a cancel could not take effect until the first zip chunk yielded, so cancelling a
+   * download of a large tree kept the daemon reading.
+   */
+  isCancelled?: () => boolean;
+}): AsyncGenerator<Uint8Array> {
+  const scoped = await resolveScopedPath({ root, relativePath });
+  const stats = await fs.lstat(scoped.resolvedPath);
+  if (!stats.isDirectory()) {
+    throw new Error("Requested path is not a directory");
+  }
+
+  const entries: ArchiveEntry[] = [];
+  await collectArchiveEntries(scoped.resolvedPath, "", entries, { bytes: 0 }, isCancelled);
+  if (isCancelled()) {
+    return;
+  }
+
+  const zip = new ZipFile();
+  for (const entry of entries) {
+    zip.addFile(entry.absolutePath, entry.archivePath, { mtime: entry.mtime });
+  }
+  zip.end();
+
+  // @types/yazl still describes this as the pre-Node-stream ReadableStream, which has no
+  // destroy(); at runtime it is a Node Readable and destroying it is what stops the reads.
+  const output = zip.outputStream as unknown as Readable;
+  try {
+    for await (const chunk of output) {
+      yield chunk as Uint8Array;
+    }
+  } finally {
+    output.destroy();
+  }
+}
+
+export type UploadOverwriteMode = "fail" | "replace" | "rename";
+
+export interface UploadCommitResult {
+  path: string;
+  size: number;
+  modifiedAt: string;
+  revision: string;
+}
+
+export interface UploadSink {
+  /** The path bytes will land at, already resolved for the "rename" mode. */
+  readonly targetPath: string;
+  write(chunk: Uint8Array): Promise<void>;
+  commit(): Promise<UploadCommitResult>;
+  abort(): Promise<void>;
+}
+
+/**
+ * Resolves the directory an upload will land in, refusing anything that leaves the root.
+ *
+ * resolveScopedPath cannot realpath a file that does not exist yet, so it would not catch
+ * a symlinked *parent* pointing outside the workspace. The parent is therefore resolved
+ * and checked on its own.
+ */
+async function resolveUploadParent(
+  root: string,
+  relativePath: string,
+  createMissingDirectories: boolean,
+): Promise<{ parentDir: string; fileName: string; realRoot: string }> {
+  // Everything downstream compares against the canonical root, so the request is scoped
+  // to it as well. Scoping to the caller's root instead leaves the two in different forms
+  // whenever the root is a symlink or a Windows 8.3 short name, and every comparison then
+  // reads as an escape out of the workspace.
+  const realRoot = await fs.realpath(expandUserPath(root));
+  const scoped = await resolveScopedPath({ root: realRoot, relativePath });
+  const fileName = path.basename(scoped.requestedPath);
+  if (!fileName || fileName === "." || fileName === "..") {
+    throw new Error("Upload target must be a file name");
+  }
+
+  const parentDir = path.dirname(scoped.requestedPath);
+  if (createMissingDirectories) {
+    await createScopedDirectories(realRoot, parentDir);
+  }
+
+  const realParent = await fs.realpath(parentDir);
+  const relative = path.relative(realRoot, realParent);
+  if (relative !== "" && (relative.startsWith("..") || path.isAbsolute(relative))) {
+    throw new Error(ACCESS_OUTSIDE_WORKSPACE_MESSAGE);
+  }
+  return { parentDir: realParent, fileName, realRoot };
+}
+
+/**
+ * Creates the missing directories of an uploaded folder tree, one segment at a time.
+ *
+ * A plain mkdir recursive would happily follow a symlinked segment out of the workspace,
+ * so the deepest directory that already exists is resolved and checked first, and only
+ * then are the remaining segments created. Freshly created directories cannot be
+ * symlinks, so each step stays inside the root by construction.
+ */
+async function createScopedDirectories(realRoot: string, targetDir: string): Promise<void> {
+  const relative = path.relative(realRoot, targetDir);
+  if (relative === "") {
+    return;
+  }
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(ACCESS_OUTSIDE_WORKSPACE_MESSAGE);
+  }
+
+  const segments = relative.split(path.sep).filter((segment) => segment.length > 0);
+  let current = realRoot;
+  for (const segment of segments) {
+    const next = path.join(current, segment);
+    const stats = await fs.lstat(next).catch(() => null);
+
+    if (!stats) {
+      await fs.mkdir(next);
+      current = next;
+      continue;
+    }
+    if (stats.isSymbolicLink()) {
+      throw new Error(ACCESS_OUTSIDE_WORKSPACE_MESSAGE);
+    }
+    if (!stats.isDirectory()) {
+      throw new Error("Upload target path passes through a file");
+    }
+    current = next;
+  }
+}
+
+async function resolveUploadTarget(
+  parentDir: string,
+  fileName: string,
+  overwrite: UploadOverwriteMode,
+): Promise<string> {
+  const candidate = path.join(parentDir, fileName);
+  const exists = await fs
+    .lstat(candidate)
+    .then(() => true)
+    .catch(() => false);
+
+  if (!exists) {
+    return candidate;
+  }
+  if (overwrite === "replace") {
+    return candidate;
+  }
+  if (overwrite === "fail") {
+    throw new Error("A file with that name already exists.");
+  }
+
+  const ext = path.extname(fileName);
+  const base = ext ? fileName.slice(0, -ext.length) : fileName;
+  for (let suffix = 1; suffix < 1000; suffix += 1) {
+    const next = path.join(parentDir, `${base} (${suffix})${ext}`);
+    const taken = await fs
+      .lstat(next)
+      .then(() => true)
+      .catch(() => false);
+    if (!taken) {
+      return next;
+    }
+  }
+  throw new Error("Could not find an unused file name.");
+}
+
+/**
+ * Streams an upload into the workspace tree.
+ *
+ * Bytes go to a temp file in the destination directory and are renamed into place on
+ * commit, so a failed or cancelled upload never leaves a half-written file where the
+ * user expects a whole one. rename() does not follow symlinks, so replacing a symlinked
+ * target swaps the link itself rather than writing through it.
+ */
+export async function createUploadSink({
+  root,
+  relativePath,
+  overwrite,
+  createMissingDirectories = false,
+}: {
+  root: string;
+  relativePath: string;
+  overwrite: UploadOverwriteMode;
+  /** Set when uploading a folder tree, whose intermediate directories may not exist. */
+  createMissingDirectories?: boolean;
+}): Promise<UploadSink> {
+  // realRoot, not root: the reported path has to be relative to the directory the bytes
+  // actually landed in.
+  const { parentDir, fileName, realRoot } = await resolveUploadParent(
+    root,
+    relativePath,
+    createMissingDirectories,
+  );
+  const targetPath = await resolveUploadTarget(parentDir, fileName, overwrite);
+  const temporaryPath = path.join(
+    parentDir,
+    `.${path.basename(targetPath)}.paseo-${randomUUID()}.tmp`,
+  );
+
+  // wx fails if anything is already there, so a planted symlink cannot be written through.
+  let handle: FileHandle | null = await fs.open(temporaryPath, "wx", 0o600);
+  let written = 0;
+  let settled = false;
+
+  const cleanup = async () => {
+    await handle?.close().catch(() => undefined);
+    handle = null;
+    await fs.unlink(temporaryPath).catch(() => undefined);
+  };
+
+  return {
+    targetPath: normalizeRelativePath({ root: realRoot, targetPath }),
+    async write(chunk) {
+      if (!handle) {
+        throw new Error("Upload is no longer open.");
+      }
+      written += chunk.byteLength;
+      if (written > MAX_UPLOAD_BYTES) {
+        await cleanup();
+        throw new Error("Upload is too large.");
+      }
+      await handle.write(chunk);
+    },
+    async commit() {
+      if (!handle || settled) {
+        throw new Error("Upload is no longer open.");
+      }
+      settled = true;
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      try {
+        if (overwrite === "replace") {
+          await fs.rename(temporaryPath, targetPath);
+        } else {
+          // "fail" and "rename" both promise not to destroy an existing file, but the
+          // target was only checked before the transfer — an agent can create that path
+          // while the bytes are still arriving, and rename() would replace it anyway.
+          // link() refuses when the destination exists, so the check and the commit are
+          // one step.
+          await fs.link(temporaryPath, targetPath);
+          await fs.unlink(temporaryPath).catch(() => undefined);
+        }
+      } catch (error) {
+        await fs.unlink(temporaryPath).catch(() => undefined);
+        throw error;
+      }
+      const stats = await fs.stat(targetPath, { bigint: true });
+      return {
+        path: normalizeRelativePath({ root: realRoot, targetPath }),
+        size: Number(stats.size),
+        modifiedAt: stats.mtime.toISOString(),
+        revision: fileRevision(stats),
+      };
+    },
+    async abort() {
+      settled = true;
+      await cleanup();
+    },
+  };
 }
 
 export interface ExplorerCreateEntryParams {

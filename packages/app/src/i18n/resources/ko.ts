@@ -29,6 +29,8 @@ export const ko: TranslationResources = {
       copiedLabel: "{{label}} 복사됨",
       downloadComplete: "다운로드 완료",
       downloadFailed: "다운로드 실패",
+      uploadComplete: "업로드 완료",
+      uploadFailed: "업로드 실패",
     },
     errors: {
       error: "오류",
@@ -423,6 +425,8 @@ export const ko: TranslationResources = {
       copyRelativePath: "상대 경로 복사",
       revealIn: "{{target}}에서 보기",
       download: "다운로드",
+      uploadFiles: "파일 업로드…",
+      uploadFolder: "폴더 업로드…",
       addToChat: "채팅에 추가",
       moreActions: "추가 작업",
       newFile: "새 파일",
@@ -1724,6 +1728,9 @@ export const ko: TranslationResources = {
     failed: "파일을 다운로드하지 못했습니다.",
     shareFile: "파일 공유",
     shareFileNamed: "{{fileName}} 공유",
+  },
+  uploads: {
+    failed: "파일을 업로드하지 못했습니다.",
   },
   menu: {
     backdrop: "메뉴 배경",

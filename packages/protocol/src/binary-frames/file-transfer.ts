@@ -16,6 +16,10 @@ export const FileBeginMetadataSchema = z.object({
   modifiedAt: z.string(),
   revision: z.string().optional(),
   fileName: z.string().optional(),
+  // False when the sender cannot know the total up front (a streamed directory archive).
+  // `size` is then a placeholder and receivers must not treat it as the transfer length.
+  // Absent means true, so an old sender keeps its current meaning.
+  sizeKnown: z.boolean().optional(),
 });
 
 export interface FileBegin {

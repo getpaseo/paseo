@@ -1651,6 +1651,8 @@ export class VoiceAssistantWebSocketServer {
         directorySync: true,
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         ...(this.workspaceLabelService ? { workspaceLabels: true } : {}),
+        // COMPAT(workspaceFileTransfer): added in v0.6.2, remove gate after 2027-08-24.
+        workspaceFileTransfer: true,
         // COMPAT(providersSnapshot): keep optional until all clients rely on snapshot flow.
         providersSnapshot: true,
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
@@ -1902,6 +1904,7 @@ export class VoiceAssistantWebSocketServer {
     }
     connection.sockets.delete(ws);
     connection.session.clearAgentTimelineSubscription(ws);
+    connection.session.cancelWorkspaceTransfersForSource(ws);
     this.socketIdentities.delete(ws);
 
     if (connection.sockets.size === 0) {

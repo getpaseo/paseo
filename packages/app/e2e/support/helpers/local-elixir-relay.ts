@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -56,10 +56,35 @@ async function waitUntilReady(
   );
 }
 
+/**
+ * Picks how to reach the relay checkout's pinned Erlang and Elixir.
+ *
+ * The repo pins tools in .tool-versions and drives them with mise (see .mise.toml and
+ * docs/android.md), but both mise and asdf read that file, so either can front the relay.
+ * Falling through to a bare `mix` covers a system-wide Elixir install.
+ */
+function resolveMixRunner(): { command: string; prefixArgs: string[] } {
+  const canRun = (command: string, args: string[]) =>
+    spawnSync(command, args, { stdio: "ignore" }).status === 0;
+
+  if (canRun("mise", ["--version"])) {
+    return { command: "mise", prefixArgs: ["exec", "--", "mix"] };
+  }
+  if (canRun("asdf", ["--version"])) {
+    return { command: "asdf", prefixArgs: ["exec", "mix"] };
+  }
+  if (canRun("mix", ["--version"])) {
+    return { command: "mix", prefixArgs: [] };
+  }
+  throw new Error(
+    "Could not find mise, asdf, or mix on PATH. The relay-deployment project needs the Erlang and Elixir versions pinned in the relay checkout's .tool-versions; `mise install` there provides them.",
+  );
+}
+
 export async function startLocalElixirRelay(): Promise<LocalElixirRelay> {
   if (process.platform === "win32") {
     throw new Error(
-      "The local Elixir relay requires asdf, which is not available on Windows; the relay-deployment Playwright project is POSIX-only.",
+      "The local Elixir relay harness is POSIX-only, so the relay-deployment Playwright project does not run on Windows.",
     );
   }
 
@@ -80,7 +105,8 @@ export async function startLocalElixirRelay(): Promise<LocalElixirRelay> {
       throw new Error("Elixir relay is already running");
     }
     output = [];
-    child = spawn("asdf", ["exec", "mix", "run", "--no-halt"], {
+    const runner = resolveMixRunner();
+    child = spawn(runner.command, [...runner.prefixArgs, "run", "--no-halt"], {
       cwd: relayRoot,
       env: {
         ...process.env,

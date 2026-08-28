@@ -253,6 +253,56 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     [client, normalizedWorkspaceRoot, t],
   );
 
+  const downloadEntry = useCallback(
+    async (input: {
+      path: string;
+      sink: {
+        onBegin?: (metadata: { size: number; sizeKnown?: boolean }) => void;
+        onChunk: (chunk: Uint8Array) => void | Promise<void>;
+      };
+      signal?: AbortSignal;
+    }) => {
+      if (!normalizedWorkspaceRoot) {
+        throw new Error(t("workspace.fileExplorer.states.unavailable"));
+      }
+      if (!client) {
+        throw new Error(t("workspace.terminal.hostDisconnected"));
+      }
+      return client.downloadEntry({
+        cwd: normalizedWorkspaceRoot,
+        path: input.path,
+        sink: input.sink,
+        signal: input.signal,
+      });
+    },
+    [client, normalizedWorkspaceRoot, t],
+  );
+
+  const uploadEntry = useCallback(
+    async (input: {
+      path: string;
+      bytes: Uint8Array;
+      mimeType: string;
+      overwrite: "fail" | "replace" | "rename";
+    }) => {
+      if (!normalizedWorkspaceRoot) {
+        throw new Error(t("workspace.fileExplorer.states.unavailable"));
+      }
+      if (!client) {
+        throw new Error(t("workspace.terminal.hostDisconnected"));
+      }
+      return client.uploadEntry({ cwd: normalizedWorkspaceRoot, ...input });
+    },
+    [client, normalizedWorkspaceRoot, t],
+  );
+
+  const refreshDirectory = useCallback(
+    async (path: string) => {
+      await requestDirectoryListing(path, { recordHistory: false, setCurrentPath: false });
+    },
+    [requestDirectoryListing],
+  );
+
   const createEntry = useCallback(
     async (input: { parentPath: string; name: string; kind: "file" | "directory" }) => {
       if (!client || !normalizedWorkspaceRoot) {
@@ -342,6 +392,9 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
     requestDirectoryListing,
     requestFilePreview,
     requestFileDownloadToken,
+    downloadEntry,
+    uploadEntry,
+    refreshDirectory,
     createEntry,
     renameEntry,
     duplicateEntry,

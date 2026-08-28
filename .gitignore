@@ -45,6 +45,8 @@ coverage/
 # Playwright
 test-results/
 **/test-results/
+# QA evidence captured by e2e runs; attach to the PR rather than committing.
+packages/app/e2e/artifacts/
 
 # Vercel
 .vercel/

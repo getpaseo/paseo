@@ -29,6 +29,8 @@ export const ru: TranslationResources = {
       copiedLabel: "Скопировано {{label}}",
       downloadComplete: "Загрузка завершена",
       downloadFailed: "Загрузка не удалась",
+      uploadComplete: "Загрузка завершена",
+      uploadFailed: "Ошибка загрузки",
     },
     errors: {
       error: "Ошибка",
@@ -425,6 +427,8 @@ export const ru: TranslationResources = {
       copyRelativePath: "Копировать относительный путь",
       revealIn: "Показать в {{target}}",
       download: "Скачать",
+      uploadFiles: "Загрузить файлы…",
+      uploadFolder: "Загрузить папку…",
       addToChat: "Добавить в чат",
       moreActions: "Дополнительные действия",
       newFile: "Новый файл",
@@ -1744,6 +1748,9 @@ export const ru: TranslationResources = {
     failed: "Не удалось загрузить файл.",
     shareFile: "Поделиться файлом",
     shareFileNamed: "Поделиться {{fileName}}",
+  },
+  uploads: {
+    failed: "Не удалось загрузить файл.",
   },
   menu: {
     backdrop: "Фон меню",

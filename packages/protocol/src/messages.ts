@@ -2674,6 +2674,41 @@ export const FileEntryDeleteRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const FileEntryDownloadRequestSchema = z.object({
+  type: z.literal("fs.entry.download.request"),
+  cwd: z.string(),
+  path: z.string(),
+  requestId: z.string(),
+});
+
+export const FileEntryUploadRequestSchema = z.object({
+  type: z.literal("fs.entry.upload.request"),
+  cwd: z.string(),
+  path: z.string(),
+  mimeType: z.string(),
+  size: z.number().int().nonnegative(),
+  modifiedAt: z.string(),
+  overwrite: z.enum(["fail", "replace", "rename"]),
+  // Set when uploading a folder tree, whose intermediate directories may not exist yet.
+  // Optional so an older client that only uploads flat files keeps parsing.
+  createMissingDirectories: z.boolean().optional(),
+  requestId: z.string(),
+});
+
+// Flow-control and teardown for an in-flight fs.entry.download / fs.entry.upload transfer.
+// These travel in both directions and have no one-to-one response; the correlation key is
+// requestId from the originating request.
+export const FileTransferAckSchema = z.object({
+  type: z.literal("fs.transfer.ack"),
+  requestId: z.string(),
+  bytesReceived: z.number().int().nonnegative(),
+});
+
+export const FileTransferCancelSchema = z.object({
+  type: z.literal("fs.transfer.cancel"),
+  requestId: z.string(),
+});
+
 export const ProjectIconRequestSchema = z.object({
   type: z.literal("project_icon_request"),
   cwd: z.string(),
@@ -3125,6 +3160,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   FileEntryRenameRequestSchema,
   FileEntryDuplicateRequestSchema,
   FileEntryDeleteRequestSchema,
+  FileEntryDownloadRequestSchema,
+  FileEntryUploadRequestSchema,
+  FileTransferAckSchema,
+  FileTransferCancelSchema,
   ProjectIconRequestSchema,
   ProjectIconGetRequestSchema,
   FileDownloadTokenRequestSchema,
@@ -3343,6 +3382,8 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
+        // COMPAT(workspaceFileTransfer): added in v0.6.2, remove gate after 2027-08-24.
+        workspaceFileTransfer: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -5628,6 +5669,37 @@ export const FileEntryDuplicateResponseSchema = z.object({
   }),
 });
 
+export const FileEntryDownloadResponseSchema = z.object({
+  type: z.literal("fs.entry.download.response"),
+  payload: z.object({
+    cwd: z.string(),
+    path: z.string(),
+    // `archive` is chosen by the daemon from a stat, not requested by the client.
+    kind: z.enum(["file", "archive"]).nullable(),
+    fileName: z.string().nullable(),
+    mimeType: z.string().nullable(),
+    // Null for an archive: the zip size is not known until it is written.
+    size: z.number().int().nonnegative().nullable(),
+    success: z.boolean(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
+export const FileEntryUploadResponseSchema = z.object({
+  type: z.literal("fs.entry.upload.response"),
+  payload: z.object({
+    cwd: z.string(),
+    path: z.string().nullable(),
+    size: z.number().int().nonnegative().nullable(),
+    modifiedAt: z.string().nullable(),
+    revision: z.string().optional(),
+    success: z.boolean(),
+    error: z.string().nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const FileEntryDeleteResponseSchema = z.object({
   type: z.literal("fs.entry.delete.response"),
   payload: z.object({
@@ -6441,6 +6513,10 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   FileEntryRenameResponseSchema,
   FileEntryDuplicateResponseSchema,
   FileEntryDeleteResponseSchema,
+  FileEntryDownloadResponseSchema,
+  FileEntryUploadResponseSchema,
+  FileTransferAckSchema,
+  FileTransferCancelSchema,
   FileUpdateSchema,
   ProjectIconResponseSchema,
   ProjectIconGetResponseSchema,
@@ -6877,6 +6953,12 @@ export type FileEntryDuplicateRequest = z.infer<typeof FileEntryDuplicateRequest
 export type FileEntryDuplicateResponse = z.infer<typeof FileEntryDuplicateResponseSchema>;
 export type FileEntryDeleteRequest = z.infer<typeof FileEntryDeleteRequestSchema>;
 export type FileEntryDeleteResponse = z.infer<typeof FileEntryDeleteResponseSchema>;
+export type FileEntryDownloadRequest = z.infer<typeof FileEntryDownloadRequestSchema>;
+export type FileEntryDownloadResponse = z.infer<typeof FileEntryDownloadResponseSchema>;
+export type FileEntryUploadRequest = z.infer<typeof FileEntryUploadRequestSchema>;
+export type FileEntryUploadResponse = z.infer<typeof FileEntryUploadResponseSchema>;
+export type FileTransferAck = z.infer<typeof FileTransferAckSchema>;
+export type FileTransferCancel = z.infer<typeof FileTransferCancelSchema>;
 export type FileWriteResult = z.infer<typeof FileWriteResultSchema>;
 export type FileUpdate = z.infer<typeof FileUpdateSchema>;
 export type ProjectIconRequest = z.infer<typeof ProjectIconRequestSchema>;

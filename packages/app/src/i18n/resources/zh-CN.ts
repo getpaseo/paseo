@@ -29,6 +29,8 @@ export const zhCN: TranslationResources = {
       copiedLabel: "已复制 {{label}}",
       downloadComplete: "下载完成",
       downloadFailed: "下载失败",
+      uploadComplete: "上传完成",
+      uploadFailed: "上传失败",
     },
     errors: {
       error: "错误",
@@ -422,6 +424,8 @@ export const zhCN: TranslationResources = {
       copyRelativePath: "复制相对路径",
       revealIn: "在 {{target}} 中显示",
       download: "下载",
+      uploadFiles: "上传文件…",
+      uploadFolder: "上传文件夹…",
       addToChat: "添加到聊天",
       moreActions: "更多操作",
       newFile: "新建文件",
@@ -1693,6 +1697,9 @@ export const zhCN: TranslationResources = {
     failed: "下载文件失败。",
     shareFile: "共享文件",
     shareFileNamed: "共享 {{fileName}}",
+  },
+  uploads: {
+    failed: "文件上传失败。",
   },
   menu: {
     backdrop: "菜单背景",

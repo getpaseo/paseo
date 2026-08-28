@@ -6,6 +6,11 @@ export interface PickedFile {
   fileName: string;
   mimeType: string;
   bytes: Uint8Array;
+  /**
+   * Path relative to the picked folder, when the file came from a directory pick.
+   * Absent for a flat file selection.
+   */
+  relativePath?: string;
 }
 
 function base64ToUint8Array(base64: string): Uint8Array {
