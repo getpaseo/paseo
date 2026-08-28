@@ -111,8 +111,8 @@ paseo ls                           # list running agents
 paseo attach abc123                # stream live output
 paseo send abc123 "also add tests" # follow-up task
 
-# run on a remote daemon
-paseo --host workstation.local:6767 run "run the full test suite"
+# run on a remote daemon (the path is resolved on that machine)
+paseo run --host workstation.local:6767 --cwd /path/to/project "run the full test suite"
 ```
 
 See the [full CLI reference](https://paseo.sh/docs/cli) for more.
