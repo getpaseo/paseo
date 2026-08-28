@@ -143,6 +143,45 @@ describe("Hub session protocol", () => {
     });
   });
 
+  test("preserves significant whitespace in an opaque workspace affinity key", () => {
+    const key = "  review:github:pull-request:42  ";
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-whitespace-affinity",
+      executionId: "execution-whitespace-affinity",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Implement the requested change",
+      workspaceAffinity: {
+        key,
+        retainUntil: "2026-08-06T12:02:00.000Z",
+        autoArchive: true,
+      },
+    };
+
+    const parsed = SessionInboundMessageSchema.parse(message);
+
+    expect(parsed).toMatchObject({ workspaceAffinity: { key } });
+  });
+
+  test.each(["", " ", "\t\n"])("rejects a blank workspace affinity key %#", (key) => {
+    expect(() =>
+      SessionInboundMessageSchema.parse({
+        type: "hub.execution.agent.create.request",
+        requestId: "request-blank-affinity",
+        executionId: "execution-blank-affinity",
+        provider: "codex",
+        cwd: "/workspace",
+        prompt: "Implement the requested change",
+        workspaceAffinity: {
+          key,
+          retainUntil: "2026-08-06T12:02:00.000Z",
+          autoArchive: true,
+        },
+      }),
+    ).toThrow();
+  });
+
   test("ignores additive workspace affinity lease fields from a newer Hub", () => {
     const message = {
       type: "hub.execution.agent.create.request",

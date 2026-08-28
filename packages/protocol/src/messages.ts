@@ -2919,7 +2919,11 @@ export const HubExecutionAgentCreateRequestSchema = z.object({
   worktree: CreateAgentWorktreeTargetSchema.optional(),
   workspaceAffinity: z
     .object({
-      key: z.string().trim().min(1).max(512),
+      key: z
+        .string()
+        .min(1)
+        .max(512)
+        .refine((key) => key.trim().length > 0, "Workspace affinity key cannot be blank"),
       retainUntil: z.string().datetime(),
       autoArchive: z.boolean(),
     })
