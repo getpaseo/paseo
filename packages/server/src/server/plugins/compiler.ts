@@ -80,7 +80,7 @@ const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<str
     "addSidebarItem",
     "addWorkspacePanel",
     "addCommandCenterItem",
-    "addComposerPill",
+    "addClientSide",
     "addAttachmentSource",
     "addTheme",
     "addTimelineTransformer",

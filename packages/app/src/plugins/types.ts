@@ -2,6 +2,8 @@ import type { QueryClient } from "@tanstack/react-query";
 import type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
+  PluginClientContribution,
+  PluginCleanup,
   PluginComposerPillContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
@@ -18,12 +20,12 @@ export type EvaluatedPluginWorkspacePanelContribution = PluginWorkspacePanelCont
 
 export interface EvaluatedPlugin {
   id: string;
-  cleanup: () => void;
+  cleanup: PluginCleanup;
   surfaces: PluginSurfaceContribution[];
   sidebarItems: PluginSidebarContribution[];
   workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
-  composerPills: PluginComposerPillContribution[];
+  clientSide: PluginClientContribution | null;
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];

@@ -3,6 +3,7 @@ import type {
   PluginAgentCommandContext,
   PluginCommandCapabilities,
   PluginPanelLocation,
+  PluginWorkspaceCommandContext,
 } from "@getpaseo/plugin";
 import type { PluginClientStateSource } from "@getpaseo/plugin/host";
 import { resolvePluginPanelOpenLocation } from "./workspace-panels/locations";
@@ -63,6 +64,31 @@ export function createPluginAgentActionContext(input: {
         return;
       }
       navigation.openAgentPanel(plugin.id, panelId, agent.id, location);
+    },
+  };
+}
+
+export function createPluginWorkspaceActionContext(input: {
+  plugin: InstalledPlugin;
+  runtime: PluginSurfaceRuntime;
+  navigation: PluginNavigation;
+  state: PluginClientStateSource;
+  workspaceId: string;
+}): PluginWorkspaceCommandContext | null {
+  const { plugin, runtime, navigation, state, workspaceId } = input;
+  const workspace = state.getWorkspace(workspaceId);
+  if (!workspace) return null;
+  return {
+    context: "workspace",
+    ...createPluginCapabilities(plugin, runtime, navigation),
+    workspace,
+    openPanel(panelId, options) {
+      const panel = plugin.workspacePanels.find(
+        (candidate) => candidate.id === panelId && candidate.context === "workspace",
+      );
+      if (!panel) throw new Error(`Workspace panel is unavailable: ${panelId}`);
+      const location = resolvePluginPanelOpenLocation(panel, options?.location);
+      navigation.openWorkspacePanel(plugin.id, panelId, location);
     },
   };
 }

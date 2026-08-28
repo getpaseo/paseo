@@ -212,34 +212,26 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("Duplicate Command Center item: review");
   });
 
-  it("collects and validates composer pills", () => {
+  it("collects one explicit client-side entrypoint", () => {
     const plugin = evaluatePluginClientBundle(
       "review",
       bundle(`
-        function ReviewPill() { return null; }
-        plugin.addComposerPill({
-          id: "review",
-          title: "Open review",
-          Component: ReviewPill,
-          onPress() {},
-        });
+        function contributeClient() { return function() {}; }
+        plugin.addClientSide(contributeClient);
       `),
     );
-    expect(plugin.composerPills.map(({ id, title }) => ({ id, title }))).toEqual([
-      { id: "review", title: "Open review" },
-    ]);
+    expect(plugin.clientSide).toBeTypeOf("function");
 
     expect(() =>
       evaluatePluginClientBundle(
         "review",
         bundle(`
-          function ReviewPill() { return null; }
-          const pill = { id: "review", title: "Review", Component: ReviewPill, onPress() {} };
-          plugin.addComposerPill(pill);
-          plugin.addComposerPill(pill);
+          function contributeClient() { return function() {}; }
+          plugin.addClientSide(contributeClient);
+          plugin.addClientSide(contributeClient);
         `),
       ),
-    ).toThrow("Duplicate composer pill: review");
+    ).toThrow("Plugin has more than one client-side entrypoint");
   });
 
   it("rejects duplicate attachment source ids", () => {

@@ -10,7 +10,7 @@ import {
   defineRpc,
   type PluginAttachmentSourceContribution,
   type PluginCommandCenterItemContribution,
-  type PluginComposerPillContribution,
+  type PluginClientContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
   type PluginThemeContribution,
@@ -72,7 +72,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
-    composerPills: [],
+    clientSide: null,
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
@@ -82,7 +82,6 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
   const sidebarItemIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
-  const composerPillIds = new Set<string>();
   const attachmentSourceIds = new Set<string>();
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
@@ -166,21 +165,12 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         keywords: contribution.keywords?.map((keyword) => keyword.trim()).filter(Boolean),
       });
     },
-    addComposerPill(contribution: PluginComposerPillContribution) {
-      const normalizedId = requireId(contribution.id, "composer pill id");
-      if (composerPillIds.has(normalizedId)) {
-        throw new Error(`Duplicate composer pill: ${normalizedId}`);
+    addClientSide(contribution: PluginClientContribution) {
+      if (collector.clientSide) throw new Error("Plugin has more than one client-side entrypoint");
+      if (typeof contribution !== "function") {
+        throw new Error("Plugin client-side entrypoint is not a function");
       }
-      const title = contribution.title.trim();
-      if (!title) throw new Error(`Composer pill ${normalizedId} has no title`);
-      if (typeof contribution.Component !== "function") {
-        throw new Error(`Composer pill ${normalizedId} is not a component`);
-      }
-      if (typeof contribution.onPress !== "function") {
-        throw new Error(`Composer pill ${normalizedId} has no callback`);
-      }
-      composerPillIds.add(normalizedId);
-      collector.composerPills.push({ ...contribution, id: normalizedId, title });
+      collector.clientSide = contribution;
     },
     addAttachmentSource(contribution: PluginAttachmentSourceContribution) {
       const normalizedId = requireId(contribution.id, "attachment source id");
@@ -318,7 +308,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     sidebarItems: collector.sidebarItems,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
-    composerPills: collector.composerPills,
+    clientSide: collector.clientSide,
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,

@@ -3,7 +3,7 @@ export { PluginClientStateProvider, type PluginClientStateSource } from "./clien
 import type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
-  PluginComposerPillContribution,
+  PluginClientContribution,
   PluginContext,
   PluginSidebarContribution,
   PluginSurfaceContribution,
@@ -23,7 +23,7 @@ interface PluginCollector {
   addSidebarItem(contribution: PluginSidebarContribution): void;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
-  addComposerPill(contribution: PluginComposerPillContribution): void;
+  addClientSide(contribution: PluginClientContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
   addTheme(contribution: PluginThemeContribution): void;
   addTimelineTransformer(contribution: PluginTimelineTransformerContribution): void;
@@ -35,7 +35,7 @@ export interface PluginRegistrationCollector {
   sidebarItems: PluginSidebarContribution[];
   workspacePanels: PluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
-  composerPills: PluginComposerPillContribution[];
+  clientSide: PluginClientContribution | null;
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
@@ -50,7 +50,7 @@ export function createPluginContext(
   | "addSidebarItem"
   | "addWorkspacePanel"
   | "addCommandCenterItem"
-  | "addComposerPill"
+  | "addClientSide"
   | "addAttachmentSource"
   | "addTheme"
   | "addTimelineTransformer"
@@ -69,8 +69,8 @@ export function createPluginContext(
     addCommandCenterItem(contribution) {
       collector.addCommandCenterItem(contribution);
     },
-    addComposerPill(contribution) {
-      collector.addComposerPill(contribution);
+    addClientSide(contribution) {
+      collector.addClientSide(contribution);
     },
     addAttachmentSource(contribution) {
       collector.addAttachmentSource(contribution);

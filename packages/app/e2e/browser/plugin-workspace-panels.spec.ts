@@ -69,6 +69,45 @@ function ComposerPill({ theme, workspaceId, agentId }) {
   return <><Icon name="Scan" size={14} color={theme.colors.foregroundMuted} /><Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>Review {workspace?.title}:{agent?.title}</Text></>;
 }
 
+function contributeClient(client) {
+  const pills = new Map();
+  const remove = (agentId) => {
+    pills.get(agentId)?.();
+    pills.delete(agentId);
+  };
+  const unsubscribe = client.paseo.agents.subscribe((update) => {
+    if (update.kind === "remove") {
+      remove(update.agentId);
+      return;
+    }
+    const agent = update.agent;
+    if (agent.title !== "Plugin panel context agent" || !agent.workspaceId) return;
+    remove(agent.id);
+    let removePill = () => {};
+    removePill = client.addComposerPill({
+      id: "review",
+      title: "Open composer review",
+      workspaceId: agent.workspaceId,
+      agentId: agent.id,
+      Component: ComposerPill,
+      async onPress() {
+        await client.rpc(recordComposerOpen, { workspaceId: agent.workspaceId });
+        removePill();
+        client.openPanel("agent", {
+          workspaceId: agent.workspaceId,
+          agentId: agent.id,
+        });
+      },
+    });
+    pills.set(agent.id, removePill);
+  });
+  return () => {
+    unsubscribe();
+    for (const removePill of pills.values()) removePill();
+    pills.clear();
+  };
+}
+
 export default function contribute(plugin) {
   plugin.handle(recordComposerOpen, async ({ workspaceId }, { paseo }) => {
     await paseo.workspaces.ref(workspaceId).setTitle("Opened from composer pill");
@@ -83,7 +122,7 @@ export default function contribute(plugin) {
   plugin.addCommandCenterItem({ id: "surface", title: "Open direct collision surface", icon: "Blocks", context: "workspace", onSelect({ openSurface }) { openSurface("collision"); } });
   plugin.addCommandCenterItem({ id: "workspace", title: "Open plugin workspace", icon: "PanelsTopLeft", context: "workspace", onSelect({ openPanel }) { openPanel("workspace"); } });
   plugin.addCommandCenterItem({ id: "agent", title: "Open plugin agent", icon: "PanelTop", context: "agent", onSelect({ openPanel }) { openPanel("agent"); } });
-  plugin.addComposerPill({ id: "review", title: "Open composer review", Component: ComposerPill, async onPress({ workspace, rpc, openPanel }) { await rpc(recordComposerOpen, { workspaceId: workspace.id }); openPanel("agent"); } });
+  plugin.addClientSide(contributeClient);
   return () => {};
 }`;
 }
@@ -236,17 +275,20 @@ test.describe("plugin workspace panels and Command Center", () => {
           "Review Unrelated title update:Plugin panel context agent",
         );
         await capture(page, testInfo, "plugin-composer-pill-wide");
-        await composerPill.click();
+        await page.setViewportSize(COMPACT_VIEWPORT);
+        await expect(page.getByRole("button", { name: "Open composer review" })).toBeVisible();
+        await capture(page, testInfo, "plugin-composer-pill-compact");
+        await page.getByRole("button", { name: "Open composer review" }).click();
         await expect(page.getByTestId("workspace-header-title")).toHaveText(
           "Opened from composer pill",
         );
         await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();
+        await expect(page.getByText("Layout compact", { exact: true })).toBeVisible();
+        await capture(page, testInfo, "plugin-agent-panel-compact");
 
         await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
-        await page.setViewportSize(COMPACT_VIEWPORT);
-        await expect(page.getByRole("button", { name: "Open composer review" })).toBeVisible();
-        await capture(page, testInfo, "plugin-composer-pill-compact");
+        await expect(page.getByRole("button", { name: "Open composer review" })).toHaveCount(0);
         await openCompactSidebar(page);
         await runCommand(page, "Open plugin agent");
         await closeMobileAgentSidebar(page);
@@ -257,7 +299,6 @@ test.describe("plugin workspace panels and Command Center", () => {
         ).toBeVisible();
         await expect(page.getByText(`Host ${getServerId()}`, { exact: true })).toBeVisible();
         await expect(page.getByText("Layout compact", { exact: true })).toBeVisible();
-        await capture(page, testInfo, "plugin-agent-panel-compact");
       });
 
       await test.step("removing the active plugin renders the panel unavailable", async () => {

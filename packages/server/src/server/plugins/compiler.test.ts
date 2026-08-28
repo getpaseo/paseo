@@ -135,11 +135,15 @@ describe("plugin contribution targets", () => {
     schema: { safeParse(value) { return { success: true, data: value }; } },
     Component() { return null; },
   });
-  plugin.addComposerPill({
-    id: "composer-card",
-    title: "Composer card",
-    Component() { return null; },
-    onPress() {},
+  plugin.addClientSide((client) => {
+    return client.addComposerPill({
+      id: "composer-card",
+      title: "Composer card",
+      workspaceId: "workspace-a",
+      agentId: "agent-a",
+      Component() { return null; },
+      onPress() {},
+    });
   });
   return () => undefined;
 }

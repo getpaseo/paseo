@@ -1,6 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 import {
   Icon,
+  type PluginClientContext,
   type PluginComposerPillProps,
   type PluginWorkspacePanelProps,
   useAgent,
@@ -23,6 +24,48 @@ export function OpenCounterPill({ theme, workspaceId, agentId }: PluginComposerP
       </Text>
     </>
   );
+}
+
+export function contributeClient(client: PluginClientContext) {
+  const pills = new Map<string, () => void>();
+  let stopped = false;
+  const register = (agent: { id: string; workspaceId?: string | null }) => {
+    if (stopped || !agent.workspaceId) return;
+    pills.get(agent.id)?.();
+    const workspaceId = agent.workspaceId;
+    const remove = client.addComposerPill({
+      id: "open-counter",
+      title: "Open plugin counter",
+      workspaceId,
+      agentId: agent.id,
+      Component: OpenCounterPill,
+      onPress() {
+        client.openPanel("counter", { workspaceId });
+      },
+    });
+    pills.set(agent.id, remove);
+  };
+  const remove = (agentId: string) => {
+    pills.get(agentId)?.();
+    pills.delete(agentId);
+  };
+  const unsubscribe = client.paseo.agents.subscribe((update) => {
+    if (update.kind === "remove") remove(update.agentId);
+    else register(update.agent);
+  });
+  void client.paseo.agents
+    .list()
+    .then(({ entries }) => {
+      for (const { agent } of entries) register(agent);
+      return undefined;
+    })
+    .catch(() => undefined);
+  return () => {
+    stopped = true;
+    unsubscribe();
+    for (const dispose of pills.values()) dispose();
+    pills.clear();
+  };
 }
 
 export function ExamplePanel({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {

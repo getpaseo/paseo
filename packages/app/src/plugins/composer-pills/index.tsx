@@ -1,6 +1,6 @@
 import { PluginClientStateProvider } from "@getpaseo/plugin/host";
 import type { PluginComposerPillProps, PluginTheme } from "@getpaseo/plugin";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useState, useSyncExternalStore } from "react";
 import { Platform, Pressable, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
@@ -8,15 +8,13 @@ import { composerPillStyles } from "@/composer/pill-styles";
 import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
-import { createPluginAgentActionContext } from "../actions";
 import { createPluginClientStateSource } from "../client-state/source";
-import { createPluginNavigation } from "../navigation";
-import { useInstalledPlugins } from "../registry";
 import { PluginRuntimeBoundary } from "../runtime-boundary";
 import { createPluginSurfaceRuntime } from "../surface-runtime";
 import { SurfaceErrorBoundary } from "../surface-error-boundary";
 import { toPluginTheme } from "../theme";
 import type { InstalledPlugin, PluginComposerPillContribution } from "../types";
+import { pluginComposerPillStore } from "./store";
 
 const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
 
@@ -50,10 +48,6 @@ function PluginComposerPill({
   const [pending, setPending] = useState(false);
   const runtime = useMemo(() => createPluginSurfaceRuntime(client, plugin.id), [client, plugin.id]);
   const state = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
-  const navigation = useMemo(
-    () => createPluginNavigation({ serverId, workspaceId }),
-    [serverId, workspaceId],
-  );
   const props = useMemo<PluginComposerPillProps>(
     () => ({
       theme,
@@ -64,22 +58,17 @@ function PluginComposerPill({
     }),
     [agentId, compact, hostLabel, serverId, theme, workspaceId],
   );
-  const press = useCallback(() => {
+  const press = useCallback(async () => {
     if (!runtime || pending) return;
-    const context = createPluginAgentActionContext({
-      plugin,
-      runtime,
-      navigation,
-      state,
-      workspaceId,
-      agentId,
-    });
-    if (!context) return;
     setPending(true);
-    void Promise.resolve(contribution.onPress(context))
-      .catch((error) => toast.error(error instanceof Error ? error.message : String(error)))
-      .finally(() => setPending(false));
-  }, [agentId, contribution, navigation, pending, plugin, runtime, state, toast, workspaceId]);
+    try {
+      await contribution.onPress();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPending(false);
+    }
+  }, [contribution, pending, runtime, toast]);
   const pillStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
       composerPillStyles.body,
@@ -122,43 +111,61 @@ export function PluginComposerPills({
   compact,
 }: {
   serverId: string;
-  workspaceId: string | null | undefined;
+  workspaceId: string;
   agentId: string;
   compact: boolean;
 }) {
-  const installed = useInstalledPlugins();
-  const hosts = useHosts();
-  const state = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
-  const plugins = useMemo(
-    () => installed.filter((plugin) => plugin.serverId === serverId),
-    [installed, serverId],
+  const registrations = useSyncExternalStore(
+    pluginComposerPillStore.subscribe,
+    pluginComposerPillStore.getSnapshot,
+    pluginComposerPillStore.getSnapshot,
   );
-  if (!workspaceId || !state.getWorkspace(workspaceId) || !state.getAgent(agentId)) return null;
+  const hosts = useHosts();
+  const visible = useMemo(
+    () =>
+      registrations.filter(
+        ({ installation, contribution }) =>
+          installation.serverId === serverId &&
+          contribution.workspaceId === workspaceId &&
+          contribution.agentId === agentId,
+      ),
+    [agentId, registrations, serverId, workspaceId],
+  );
   const hostLabel = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
   return (
     <>
-      {plugins.flatMap((plugin) =>
-        plugin.composerPills.map((contribution) => (
-          <ThemedPluginComposerPill
-            key={`${plugin.id}/${contribution.id}`}
-            plugin={plugin}
-            contribution={contribution}
-            serverId={serverId}
-            workspaceId={workspaceId}
-            agentId={agentId}
-            compact={compact}
-            hostLabel={hostLabel}
-            uniProps={pluginThemeMapping}
-          />
-        )),
-      )}
+      {visible.map(({ installation, contribution }) => (
+        <ThemedPluginComposerPill
+          key={`${installation.id}/${contribution.id}`}
+          plugin={installation}
+          contribution={contribution}
+          serverId={serverId}
+          workspaceId={workspaceId}
+          agentId={agentId}
+          compact={compact}
+          hostLabel={hostLabel}
+          uniProps={pluginThemeMapping}
+        />
+      ))}
     </>
   );
 }
 
-export function useHasPluginComposerPills(serverId: string): boolean {
-  return useInstalledPlugins().some(
-    (plugin) => plugin.serverId === serverId && plugin.composerPills.length > 0,
+export function useHasPluginComposerPills(
+  serverId: string,
+  workspaceId: string,
+  agentId: string,
+): boolean {
+  const registrations = useSyncExternalStore(
+    pluginComposerPillStore.subscribe,
+    pluginComposerPillStore.getSnapshot,
+    pluginComposerPillStore.getSnapshot,
+  );
+  return registrations.some(
+    ({ installation, contribution }) =>
+      installation.serverId === serverId &&
+      contribution.workspaceId === workspaceId &&
+      contribution.agentId === agentId,
   );
 }
 

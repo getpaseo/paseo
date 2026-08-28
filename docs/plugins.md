@@ -204,40 +204,46 @@ workspace-layout store access.
 
 ## Contribute composer pills
 
-Register an agent-context action in the track bar above the composer, alongside Tasks, Subagents,
-and Changes. Paseo owns the pressable, shared pill chrome, pending state, error reporting, and
-placement. The component renders the pill's icon and text and receives the current `workspaceId`
-and `agentId`; use the required-selector hooks to read only the fields it shows.
+Register a headless client entrypoint, then add and remove targeted pills from that client
+lifecycle. `addClientSide` runs once per plugin installation in each connected app and never runs
+in the daemon subprocess. It can subscribe to the client API, call plugin RPCs, and own arbitrary
+client state without mounting a panel or surface.
 
 ```tsx
-function ReviewPill({ theme, workspaceId, agentId }: PluginComposerPillProps) {
-  const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
-  const agent = useAgent(agentId, ({ title }) => ({ title }));
-  return (
-    <>
-      <Icon name="Scan" size={14} color={theme.colors.foregroundMuted} />
-      <Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>
-        {agent?.title ?? workspace?.name ?? "Review"}
-      </Text>
-    </>
-  );
+export function contributeClient(client: PluginClientContext) {
+  const pills = new Map<string, () => void>();
+  const unsubscribe = client.paseo.agents.subscribe((update) => {
+    if (update.kind !== "upsert" || !update.agent.workspaceId) return;
+    const { id: agentId, workspaceId } = update.agent;
+    pills.get(agentId)?.();
+    pills.set(
+      agentId,
+      client.addComposerPill({
+        id: "review",
+        title: "Open review",
+        workspaceId,
+        agentId,
+        Component: ReviewPill,
+        async onPress() {
+          await client.rpc(refreshReview, { agentId });
+          client.openPanel("review", { workspaceId, agentId });
+        },
+      }),
+    );
+  });
+  return () => {
+    unsubscribe();
+    for (const remove of pills.values()) remove();
+  };
 }
-
-plugin.addComposerPill({
-  id: "review",
-  title: "Open review",
-  Component: ReviewPill,
-  async onPress({ agent, rpc, openPanel }) {
-    await rpc(refreshReview, { agentId: agent.id });
-    openPanel("review");
-  },
-});
 ```
 
-`onPress` receives the same agent context as an agent Command Center item: workspace and agent
-snapshots, `paseo`, typed `rpc`, `openSurface`, and `openPanel`. `openPanel` opens or focuses a
-registered workspace or agent panel as a normal workspace tab. Pills appear only for a composer
-whose workspace and agent are available on the plugin's host.
+Wire it from `index.ts` with `plugin.addClientSide(contributeClient)`. `addComposerPill` exists only
+on `PluginClientContext`; it returns an idempotent removal function. A pill appears only in the
+matching workspace and agent track bar alongside Tasks and Subagents. Paseo owns the pressable,
+shared chrome, pending state, error reporting, and placement. The component owns its icon and text;
+the callback is client code by construction. Removing the pill, reloading the plugin, disconnecting
+the host, or unloading the app tears down the contribution.
 
 ## Contribute timeline items
 
