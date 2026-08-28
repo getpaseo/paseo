@@ -287,6 +287,40 @@ class HeldAgentCreationClient extends TestAgentClient {
   }
 }
 
+class HeldAgentResumeClient extends TestAgentClient {
+  private readonly resumeStarted = deferred<void>();
+  private readonly resumeAllowed = deferred<void>();
+  resumedSessionClosed = false;
+
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    const recordSessionClosed = () => {
+      this.resumedSessionClosed = true;
+    };
+    const session = new (class extends TestAgentSession {
+      override async close(): Promise<void> {
+        recordSessionClosed();
+      }
+    })({
+      provider: "codex",
+      cwd: config?.cwd ?? process.cwd(),
+    });
+    this.resumeStarted.resolve();
+    await this.resumeAllowed.promise;
+    return session;
+  }
+
+  waitForResumeToStart(): Promise<void> {
+    return this.resumeStarted.promise;
+  }
+
+  finishResuming(): void {
+    this.resumeAllowed.resolve();
+  }
+}
+
 class HeldAgentCreationAndCloseClient extends TestAgentClient {
   private readonly creationStarted = deferred<void>();
   private readonly creationAllowed = deferred<void>();
@@ -1612,6 +1646,41 @@ test("workspace archive exclusion drains registrations that already started", as
     archiveStarted,
     agents: manager.listAgents(),
     sessionClosed: client.createdSessionClosed,
+  }).toEqual({ archiveStarted: true, agents: [], sessionClosed: true });
+});
+
+test("workspace archive exclusion drains persisted resumes that already started", async () => {
+  const client = new HeldAgentResumeClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+  });
+  const workspaceId = "workspace-resume-archive";
+  const resume = manager.resumeAgentFromPersistence(
+    { provider: "codex", sessionId: "persisted-resume-archive" },
+    { provider: "codex", cwd: process.cwd() },
+    "00000000-0000-4000-8000-000000000103",
+    { workspaceId },
+  );
+  const rejectedResume = expect(resume).rejects.toBeInstanceOf(
+    WorkspaceAgentRegistrationBlockedError,
+  );
+  await client.waitForResumeToStart();
+
+  let archiveStarted = false;
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted = true;
+  });
+  await Promise.resolve();
+  expect(archiveStarted).toBe(false);
+
+  client.finishResuming();
+  await rejectedResume;
+  await archive;
+  expect({
+    archiveStarted,
+    agents: manager.listAgents(),
+    sessionClosed: client.resumedSessionClosed,
   }).toEqual({ archiveStarted: true, agents: [], sessionClosed: true });
 });
 

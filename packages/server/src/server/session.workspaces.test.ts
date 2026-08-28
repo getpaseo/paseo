@@ -111,6 +111,7 @@ interface SessionTestAccess {
   };
   agentStorage: {
     list(...args: unknown[]): Promise<unknown[]>;
+    listByProviderSession(...args: unknown[]): Promise<unknown[]>;
     get(agentId: string): Promise<unknown>;
     upsert(record: unknown): Promise<void>;
   };
@@ -739,6 +740,63 @@ function createSessionForWorkspaceTests(
   );
   return session;
 }
+
+test("resume_agent_request binds a persisted resume to its workspace lease", async () => {
+  const updatedAt = "2026-08-29T09:30:00.000Z";
+  const archivedAt = "2026-08-29T09:45:00.000Z";
+  const workspaceId = "workspace-resume-lease";
+  const agentId = "agent-resume-lease";
+  const handle: AgentPersistenceHandle = {
+    provider: "codex",
+    sessionId: "provider-session-resume-lease",
+  };
+  const record: StoredAgentRecord = {
+    ...makeStoredAgent({ id: agentId, cwd: REPO_CWD, updatedAt }),
+    workspaceId,
+    labels: { source: "persisted" },
+    persistence: handle,
+    archivedAt,
+  };
+  const managed = makeManagedAgent({
+    id: agentId,
+    cwd: REPO_CWD,
+    workspaceId,
+    lifecycle: "idle",
+    updatedAt,
+  });
+  const resumeAgentFromPersistence = vi.fn(async () => managed);
+  const session = createSessionForWorkspaceTests({
+    agentManager: {
+      resumeAgentFromPersistence,
+      unarchiveSnapshot: async () => true,
+      hydrateTimelineFromProvider: async () => undefined,
+      getTimeline: () => [],
+    },
+    agentStorage: {
+      listByProviderSession: async () => [record],
+      get: async () => ({ ...record, archivedAt: null }),
+    },
+  });
+  session.agentUpdates.forwardLiveAgent = async () => undefined;
+
+  await session.handleMessage({
+    type: "resume_agent_request",
+    handle,
+    requestId: "request-resume-lease",
+  });
+
+  expect(resumeAgentFromPersistence).toHaveBeenCalledWith(
+    handle,
+    expect.objectContaining({ cwd: REPO_CWD }),
+    agentId,
+    expect.objectContaining({
+      workspaceId,
+      labels: { source: "persisted" },
+      createdAt: new Date(updatedAt),
+      updatedAt: new Date(updatedAt),
+    }),
+  );
+});
 
 test("project.list.request catches up by sequence on the existing RPC", async () => {
   const emitted: SessionOutboundMessage[] = [];
