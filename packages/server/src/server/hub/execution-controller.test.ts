@@ -176,6 +176,43 @@ describe("HubExecutionController", () => {
     ]);
   });
 
+  test("acknowledges successful application of workspace affinity", async () => {
+    const agents = new ControlledHubExecutionAgents();
+    const messages: SessionOutboundMessage[] = [];
+    const controller = new HubExecutionController({
+      agents,
+      validateAgentConfiguration: async () => [],
+      send: (message) => messages.push(message),
+    });
+
+    const create = controller.createAgent({
+      type: "hub.execution.agent.create.request",
+      requestId: "affinity-create",
+      executionId: "execution-affinity",
+      provider: "codex",
+      cwd: "/tmp/paseo",
+      prompt: "retain the thread workspace",
+      workspaceAffinity: {
+        key: "thread-1",
+        retainUntil: "2026-08-06T12:02:00.000Z",
+        autoArchive: true,
+      },
+    });
+    await agents.creationStarted();
+    agents.finishCreate();
+    await create;
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        type: "hub.execution.agent.create.response",
+        payload: expect.objectContaining({
+          success: true,
+          workspaceAffinityApplied: true,
+        }),
+      }),
+    ]);
+  });
+
   test.each([
     {
       error: new ProviderOptionsValidationError("codex", [

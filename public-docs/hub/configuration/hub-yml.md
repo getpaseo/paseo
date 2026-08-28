@@ -188,20 +188,21 @@ An environment or dynamic named-agent expression must have a finite set of possi
 
 ### Steps
 
-| Field           | Required | Notes                                                                                    |
-| --------------- | -------- | ---------------------------------------------------------------------------------------- |
-| `id`            | yes      | Unique within the workflow.                                                              |
-| `environment`   | yes      | Literal environment name or finite expression resolving to one.                          |
-| `max_runtime`   | yes      | Step hard limit.                                                                         |
-| `idle_timeout`  | yes      | Idle limit no longer than `max_runtime`.                                                 |
-| `agent`         | yes      | Named agent, finite expression selecting a named agent, or complete static inline agent. |
-| `prompt`        | yes      | Ordered `text` and `include` blocks.                                                     |
-| `if`            | no       | Expression deciding whether the step runs.                                               |
-| `env`           | no       | Environment variables from connection values.                                            |
-| `output.schema` | no       | JSON Schema for structured step output.                                                  |
-| `allow_outputs` | no       | Provider output capabilities with optional `max` and `required`.                         |
-| `auto_archive`  | no       | Archive the agent after the step ends.                                                   |
-| `github`        | no       | Explicit GitHub authority for this step.                                                 |
+| Field                | Required | Notes                                                                                    |
+| -------------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `id`                 | yes      | Unique within the workflow.                                                              |
+| `environment`        | yes      | Literal environment name or finite expression resolving to one.                          |
+| `max_runtime`        | yes      | Step hard limit.                                                                         |
+| `idle_timeout`       | yes      | Idle limit no longer than `max_runtime`.                                                 |
+| `agent`              | yes      | Named agent, finite expression selecting a named agent, or complete static inline agent. |
+| `prompt`             | yes      | Ordered `text` and `include` blocks.                                                     |
+| `if`                 | no       | Expression deciding whether the step runs.                                               |
+| `env`                | no       | Environment variables from connection values.                                            |
+| `output.schema`      | no       | JSON Schema for structured step output.                                                  |
+| `allow_outputs`      | no       | Provider output capabilities with optional `max` and `required`.                         |
+| `auto_archive`       | no       | Archive the agent after the step ends.                                                   |
+| `workspace_affinity` | no       | Opt into a durable daemon-owned workspace key for related trigger arrivals.              |
+| `github`             | no       | Explicit GitHub authority for this step.                                                 |
 
 An inline agent is static and complete:
 
@@ -215,6 +216,51 @@ agent:
 ```
 
 An expression-valued `agent` selects a named agent. Dynamic provider fields inside an inline object are rejected.
+
+### Workspace affinity
+
+`workspace_affinity` is an explicit step-level lease for a daemon workspace. It is useful when
+multiple events from one Slack thread, Discord thread, GitHub issue, or pull request should use the
+same workspace:
+
+```yaml
+steps:
+  - id: reply
+    environment: paseo
+    max_runtime: 30m
+    idle_timeout: 5m
+    auto_archive: true
+    workspace_affinity:
+      key: "review:${{ paseo.trigger.conversation_key }}"
+    agent: codex-safe
+    prompt:
+      - text: Reply to the current conversation.
+```
+
+`paseo.trigger.conversation_key` is available only in `workspace_affinity.key`. It is generated
+from provider-authenticated event identifiers: Slack uses its connection, workspace, channel, and
+root thread; Discord uses its connection, guild, channel, and thread or starter message; GitHub
+uses its connection, repository, issue or pull-request type, and number. A literal key is also
+valid when intentionally sharing a workspace, and finite declared inputs, values, and step outputs
+may be composed into a key. Prompt text, ambient context, execution IDs, and unbounded values are
+rejected so an event cannot steer itself into a pre-existing workspace.
+
+Hub passes the opaque key and the workflow's `max_runtime` deadline to the daemon. The daemon hashes
+and persists the mapping, reuses an active workspace, and restores an archived workspace when a
+matching event arrives. Each matching event extends retention through its own workflow deadline.
+With `auto_archive: true`, the daemon archives the workspace at that retained deadline; it does not
+use `idle_timeout`, which remains a liveness deadline for the current execution. With
+`auto_archive: false`, the daemon does not perform affinity-driven workspace archiving.
+
+Workspace affinity is a progressive daemon capability. Older daemons ignore the optional lease and
+continue using their existing fresh-workspace behavior; Hub still runs the workflow and does not
+require an immediate daemon upgrade. Exact reuse, retention, and archived-workspace restoration take
+effect after the daemon is updated to a version that acknowledges workspace affinity.
+
+Affinity shares a workspace, not an agent or a queue: matching executions may run concurrently.
+Every use of the same key must use the same daemon environment target, cwd, worktree target, and
+auto-archive policy. A target mismatch is rejected. In particular, a worktree branch containing
+`${{ paseo.execution.id }}` is unique per execution and cannot be used with workspace affinity.
 
 ### Prompt semantics
 

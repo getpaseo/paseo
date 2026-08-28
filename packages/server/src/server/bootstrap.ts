@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
-import { open, rm } from "fs/promises";
+import { open, rm, stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
@@ -122,6 +122,7 @@ import { createWorkspaceLabelService } from "./workspace-labels/index.js";
 import { createGitHubService } from "../services/github-service.js";
 import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
+import { createWorkspaceRecoveryService } from "./session/workspace-recovery/workspace-recovery-service.js";
 import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
@@ -225,6 +226,7 @@ import {
   type HubRelationshipRemote,
 } from "./hub/relationship-remote.js";
 import { DaemonExecutions } from "./hub/daemon-executions.js";
+import { WorkspaceAffinityManager, type WorkspaceAffinityClock } from "./hub/workspace-affinity.js";
 import { PluginService } from "./plugins/index.js";
 import { ManagedPluginSources } from "./plugins/managed-source.js";
 
@@ -473,6 +475,7 @@ export interface PaseoDaemonDependencies {
   hubRelationshipRemote?: HubRelationshipRemote;
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
+  hubWorkspaceAffinityClock?: WorkspaceAffinityClock;
   createHubDaemonId?: () => string;
   serverFeatureOverrides?: {
     daemonStatusRpc?: boolean;
@@ -881,6 +884,22 @@ export async function createPaseoDaemon(
     workspaceGitService,
     logger,
   });
+  const hubWorkspaceRecovery = createWorkspaceRecoveryService({
+    paseoHome: config.paseoHome,
+    worktreesRoot: config.worktreesRoot,
+    getWorkspace: (workspaceId) => workspaceRegistry.get(workspaceId),
+    getProject: (projectId) => projectRegistry.get(projectId),
+    isDirectory: async (candidate) => {
+      try {
+        return (await stat(candidate)).isDirectory();
+      } catch {
+        return false;
+      }
+    },
+    unarchiveWorkspace: async (workspace) => {
+      await workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
+    },
+  });
   const providerSnapshotLogger = logger.child({ module: "provider-snapshot-manager" });
   const providerSnapshotManager = new ProviderSnapshotManager({
     logger: providerSnapshotLogger,
@@ -1029,6 +1048,15 @@ export async function createPaseoDaemon(
         session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
       ),
     );
+  };
+  const ensureHubAffinityWorkspaceExternal = async (workspaceId: string): Promise<void> => {
+    const workspace = await workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace affinity references missing workspace ${workspaceId}`);
+    }
+    if (!workspace.archivedAt) return;
+    await hubWorkspaceRecovery.restore(workspaceId);
+    await emitWorkspaceUpdatesExternal([workspaceId]);
   };
   const ensureWorkspaceForCreateAndBroadcastExternal = async (
     cwd: string,
@@ -1212,7 +1240,18 @@ export async function createPaseoDaemon(
         agentStorage,
         createAgent,
         interruptAgent: (agentId) => cancelAgentRunCommand({ agentManager, logger }, agentId),
+        archiveAgent: (agentId) =>
+          archiveAgentCommand({ agentManager, agentStorage, logger }, agentId),
         archiveWorkspace: archiveWorkspaceByIdExternal,
+        workspaceAffinities: new WorkspaceAffinityManager({
+          paseoHome: config.paseoHome,
+          daemonId,
+          agentStorage,
+          ensureWorkspace: ensureHubAffinityWorkspaceExternal,
+          archiveWorkspace: archiveWorkspaceByIdExternal,
+          logger,
+          clock: dependencies.hubWorkspaceAffinityClock,
+        }),
         cleanupFailedCreate: (input) =>
           hubAgentLifecycle.cleanupCreatedWorktreeAfterFailedAgentCreate(input),
       }),

@@ -46,14 +46,32 @@ daemon, execution, and agent identity with that terminal state. Paseo never stor
 replays the original prompt. A duplicate create returns the existing agent without starting another
 turn.
 
-Every Hub execution creates a fresh Paseo workspace. The workspace owns the execution's agents and
-terminals. Local checkout and worktree targets select only the workspace backing and isolation; the
-Hub cannot select or reuse an existing workspace. Hub creates use the same agent creation path as
-trusted clients. They may select any worktree target shape and carry optional MCP server configuration and provider-native
-`providerOptions` for the agent session. The daemon keeps that configuration in its private agent
-record so provider sessions can recover after a restart; neither ordinary client snapshots and
-updates nor Hub projections expose session configuration. See [providers.md](providers.md) for the
-supported provider keys.
+By default, every Hub execution creates a fresh Paseo workspace. A Hub create may instead carry an
+optional opaque workspace-affinity lease. The daemon—not Hub—hashes that key and owns its durable
+key-to-workspace mapping. It validates that later uses have the same cwd, worktree target, and
+auto-archive policy, then reuses the mapped active workspace or restores it when it was archived.
+Hub cannot select a workspace ID or bypass that target validation. The raw affinity key is never
+persisted in agent or workspace state.
+
+An affinity lease carries a fixed retention deadline. Each matching arrival can extend the deadline,
+but it is not a sliding idle timer. When auto-archive is enabled, the daemon keeps the workspace
+through the latest lease deadline and then archives it. At normal Hub execution archive, an
+affinity-owned execution archives only its own agent so a later matching event can reopen the same
+workspace. The daemon will not auto-archive a workspace containing an unrelated live agent. Matching
+executions are not serialized; they use separate agents in the shared workspace.
+
+The wire field is an optional progressive capability. Hubs accept a successful create response
+without the workspace-affinity acknowledgement, so older daemons continue their existing fresh-
+workspace lifecycle instead of blocking execution. A daemon that applies the lease returns
+`workspaceAffinityApplied: true`; exact reuse, retention, and restore semantics are available only
+after that capability is present.
+
+Local checkout and worktree targets select workspace backing and isolation. Hub creates use the same
+agent creation path as trusted clients. They may select any worktree target shape and carry optional
+MCP server configuration and provider-native `providerOptions` for the agent session. The daemon
+keeps that configuration in its private agent record so provider sessions can recover after a
+restart; neither ordinary client snapshots and updates nor Hub projections expose session
+configuration. See [providers.md](providers.md) for the supported provider keys.
 
 Hub tool preapproval is a private, structured list of `{ kind: "mcp", server, tool }` references.
 Every reference must name an MCP server injected by the same create request. The daemon translates
@@ -79,11 +97,13 @@ If no execution exists for that authenticated daemon and execution ID, interrupt
 success because the requested stopped or archived state already holds. An execution owned by another
 daemon is indistinguishable from a missing execution and is never exposed or affected.
 
-Interrupt uses the ordinary agent cancellation lifecycle. Archive resolves the execution agent's
-required workspaceId and sends it through the shared workspace archive service. The service archives
-that workspace's agents and terminals, then removes Paseo-owned backing directories only after their
-final active workspace reference disappears. Local checkouts remain on disk; sibling workspaces
-sharing a backing directory remain active.
+Interrupt uses the ordinary agent cancellation lifecycle. For ordinary Hub executions, archive
+resolves the execution agent's required workspaceId and sends it through the shared workspace archive
+service. For an affinity-owned execution, archive instead archives that agent and leaves the mapped
+workspace through its affinity deadline. The shared workspace archive service archives a workspace's
+agents and terminals, then removes Paseo-owned backing directories only after their final active
+workspace reference disappears. Local checkouts remain on disk; sibling workspaces sharing a backing
+directory remain active.
 
 ## Disconnect and revocation
 

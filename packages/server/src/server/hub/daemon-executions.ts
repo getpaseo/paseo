@@ -3,6 +3,7 @@ import type {
   AgentStreamEventPayload,
   CreateAgentWorktreeTarget,
   HubExecutionControlAction,
+  HubExecutionWorkspaceAffinity,
 } from "@getpaseo/protocol/messages";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 
@@ -14,6 +15,7 @@ import type { CreatePaseoWorktreeWorkflowResult } from "../worktree-session.js";
 import { buildStoredAgentPayload } from "../agent/agent-projections.js";
 import { serializeAgentSnapshot, serializeAgentStreamEvent } from "../messages.js";
 import { daemonExecutionKey, type DaemonAgentOwner } from "../agent/agent-owner.js";
+import { WorkspaceAffinityManager } from "./workspace-affinity.js";
 
 export interface HubExecutionAgentCreateInput {
   executionId: string;
@@ -29,6 +31,7 @@ export interface HubExecutionAgentCreateInput {
   env?: Record<string, string>;
   mcpServers?: Record<string, McpServerConfig>;
   worktree?: CreateAgentWorktreeTarget;
+  workspaceAffinity?: HubExecutionWorkspaceAffinity;
 }
 
 export interface HubExecutionControlInput {
@@ -57,7 +60,9 @@ interface DaemonExecutionsOptions {
   agentStorage: AgentStorage;
   createAgent: BoundCreateAgentCommand;
   interruptAgent: (agentId: string) => Promise<unknown>;
+  archiveAgent?: (agentId: string) => Promise<unknown>;
   archiveWorkspace: (workspaceId: string, requestId: string) => Promise<unknown>;
+  workspaceAffinities?: WorkspaceAffinityManager;
   cleanupFailedCreate?: (input: {
     createdWorktree: CreatePaseoWorktreeWorkflowResult | null;
     createdAgentId: string | null;
@@ -82,6 +87,7 @@ export class DaemonExecutions implements HubExecutionAgents {
   private authorityGeneration = 0;
   private authorityActive = true;
   private readonly cleanupFailedCreate: NonNullable<DaemonExecutionsOptions["cleanupFailedCreate"]>;
+  private readonly workspaceAffinities: WorkspaceAffinityManager | undefined;
 
   constructor(private readonly options: DaemonExecutionsOptions) {
     this.daemonId = options.daemonId;
@@ -89,13 +95,22 @@ export class DaemonExecutions implements HubExecutionAgents {
     this.agentStorage = options.agentStorage;
     this.createAgentCommand = options.createAgent;
     this.cleanupFailedCreate = options.cleanupFailedCreate ?? (async () => undefined);
+    this.workspaceAffinities = options.workspaceAffinities;
   }
 
   create(input: HubExecutionAgentCreateInput): Promise<OwnedAgentSnapshot> {
     if (!this.authorityActive) {
       return Promise.reject(new Error("Hub relationship authority is no longer active"));
     }
-    const owner = this.owner(input.executionId);
+    if (input.workspaceAffinity && !this.workspaceAffinities) {
+      return Promise.reject(new Error("This Paseo daemon does not support workspace affinity"));
+    }
+    const owner = this.owner(
+      input.executionId,
+      input.workspaceAffinity
+        ? this.workspaceAffinities!.affinityId(input.workspaceAffinity.key)
+        : undefined,
+    );
     const key = daemonExecutionKey(owner);
     const pending = this.pendingCreates.get(key);
     if (pending) {
@@ -151,6 +166,7 @@ export class DaemonExecutions implements HubExecutionAgents {
       ...this.pendingCreates.values(),
       ...this.pendingControlActions.values(),
     ]);
+    this.workspaceAffinities?.dispose();
   }
 
   subscribe(listener: (event: OwnedAgentEvent) => void): () => void {
@@ -180,6 +196,40 @@ export class DaemonExecutions implements HubExecutionAgents {
     requireHubMcpNamespace(input.mcpServers);
     requireToolPolicyServers(input.toolPolicy, input.mcpServers);
 
+    if (input.workspaceAffinity) {
+      const workspaceAffinities = this.workspaceAffinities;
+      if (!workspaceAffinities)
+        throw new Error("This Paseo daemon does not support workspace affinity");
+      return workspaceAffinities.create({
+        affinity: input.workspaceAffinity,
+        cwd: input.cwd,
+        ...(input.worktree === undefined ? {} : { worktree: input.worktree }),
+        create: async (placement) => {
+          const created = await this.createNewAgent(owner, input, placement, authorityGeneration);
+          return {
+            value: created.owned,
+            workspaceId: created.workspaceId,
+            cwd: created.cwd,
+          };
+        },
+      });
+    }
+    return (
+      await this.createNewAgent(
+        owner,
+        input,
+        { cwd: input.cwd, worktree: input.worktree },
+        authorityGeneration,
+      )
+    ).owned;
+  }
+
+  private async createNewAgent(
+    owner: DaemonAgentOwner,
+    input: HubExecutionAgentCreateInput,
+    placement: { cwd: string; workspaceId?: string; worktree?: CreateAgentWorktreeTarget },
+    authorityGeneration: number,
+  ): Promise<{ owned: OwnedAgentSnapshot; workspaceId: string; cwd: string }> {
     let createdWorktree: CreatePaseoWorktreeWorkflowResult | null = null;
     let createdAgentId: string | null = null;
     let result: Awaited<ReturnType<BoundCreateAgentCommand>>;
@@ -190,7 +240,8 @@ export class DaemonExecutions implements HubExecutionAgents {
         title: input.prompt,
         initialPrompt: input.prompt,
         promptFailure: "throw",
-        cwd: input.cwd,
+        cwd: placement.cwd,
+        ...(placement.workspaceId === undefined ? {} : { workspaceId: placement.workspaceId }),
         mode: input.modeId,
         thinking: input.thinkingOptionId,
         features: input.featureValues,
@@ -204,7 +255,7 @@ export class DaemonExecutions implements HubExecutionAgents {
               },
             }
           : {}),
-        worktree: toCreateAgentWorktree(input.worktree),
+        worktree: toCreateAgentWorktree(placement.worktree),
         background: true,
         notifyOnFinish: false,
         owner,
@@ -242,8 +293,12 @@ export class DaemonExecutions implements HubExecutionAgents {
     }
 
     return {
-      executionId: owner.executionId,
-      agent: serializeAgentSnapshot(result.liveSnapshot),
+      owned: {
+        executionId: owner.executionId,
+        agent: serializeAgentSnapshot(result.liveSnapshot),
+      },
+      workspaceId: requireExecutionWorkspaceId(result.liveSnapshot),
+      cwd: result.liveSnapshot.cwd,
     };
   }
 
@@ -258,12 +313,21 @@ export class DaemonExecutions implements HubExecutionAgents {
     if (!record) {
       return;
     }
-    this.requireOwner(record);
+    const recordOwner = this.requireOwner(record);
 
     if (input.action === "interrupt") {
       if (!record.archivedAt && this.agentManager.getAgent(record.id)) {
         await this.options.interruptAgent(record.id);
       }
+      return;
+    }
+
+    if (recordOwner.workspaceAffinityId) {
+      if (!this.options.archiveAgent) {
+        throw new Error("This Paseo daemon cannot archive workspace-affinity agents safely");
+      }
+      await this.options.archiveAgent(record.id);
+      await this.workspaceAffinities?.release(recordOwner.workspaceAffinityId);
       return;
     }
 
@@ -335,8 +399,13 @@ export class DaemonExecutions implements HubExecutionAgents {
     return agent?.owner?.kind === "daemon" && agent.owner.daemonId === this.daemonId;
   }
 
-  private owner(executionId: string): DaemonAgentOwner {
-    return { kind: "daemon", daemonId: this.daemonId, executionId };
+  private owner(executionId: string, workspaceAffinityId?: string): DaemonAgentOwner {
+    return {
+      kind: "daemon",
+      daemonId: this.daemonId,
+      executionId,
+      ...(workspaceAffinityId === undefined ? {} : { workspaceAffinityId }),
+    };
   }
 
   private requireOwner(record: StoredAgentRecord): DaemonAgentOwner {

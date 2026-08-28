@@ -108,6 +108,41 @@ describe("Hub session protocol", () => {
     expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
   });
 
+  test("accepts a bounded workspace affinity lease on Hub creates", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-affinity",
+      executionId: "execution-affinity",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Implement the requested change",
+      workspaceAffinity: {
+        key: "slack:thread:1700000000.000001",
+        retainUntil: "2026-08-06T12:02:00.000Z",
+        autoArchive: true,
+      },
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "hub.execution.agent.create.response",
+        payload: {
+          requestId: message.requestId,
+          executionId: message.executionId,
+          agentId: "agent-affinity",
+          agent,
+          success: true,
+          workspaceAffinityApplied: true,
+          error: null,
+        },
+      }),
+    ).toMatchObject({
+      type: "hub.execution.agent.create.response",
+      payload: { workspaceAffinityApplied: true },
+    });
+  });
+
   test("keeps the retired Hub workspace selector wire-compatible", () => {
     const message = {
       type: "hub.execution.agent.create.request",

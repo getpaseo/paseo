@@ -16,6 +16,7 @@ import type {
   HubExecutionControlResponse,
   HubExecutionAgentStream,
   HubExecutionAgentUpdate,
+  HubExecutionWorkspaceAffinity,
   RpcErrorMessage,
   CreateAgentWorktreeTarget,
   SessionOutboundMessage,
@@ -711,6 +712,7 @@ export class HubRelationshipHarness {
       mcpServers?: AgentSessionConfig["mcpServers"];
       providerOptions?: AgentSessionConfig["providerOptions"];
       toolPolicy?: AgentSessionConfig["toolPolicy"];
+      workspaceAffinity?: HubExecutionWorkspaceAffinity;
     } = {},
   ): void {
     const { prompt = "Create through the Hub", provider = "codex", ...requestOptions } = options;
@@ -817,8 +819,24 @@ export class HubRelationshipHarness {
     return this.workspaceArchivedAt(agent.workspaceId);
   }
 
+  async ownedWorkspaceId(agentId: string): Promise<string> {
+    const agent = await this.daemon!.agentStorage.get(agentId);
+    if (!agent?.workspaceId) throw new Error(`Owned agent ${agentId} has no workspace`);
+    return agent.workspaceId;
+  }
+
   async archivedWorkspaceAt(workspaceId: string): Promise<string | null> {
     return this.workspaceArchivedAt(workspaceId);
+  }
+
+  async archiveWorkspace(workspaceId: string): Promise<void> {
+    const client = await this.trustedClient();
+    try {
+      const result = await client.archiveWorkspace(workspaceId);
+      if (result.error) throw new Error(result.error);
+    } finally {
+      await client.close();
+    }
   }
 
   async createWorkspaceTerminal(workspaceId: string, cwd = this.root): Promise<string> {

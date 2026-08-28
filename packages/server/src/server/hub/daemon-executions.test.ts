@@ -27,6 +27,45 @@ test("sequential replay after reconstruction keeps one durable owned agent", asy
   expect(reconstructed.durableAgentCount).toBe(1);
 });
 
+test("matching workspace affinity reuses an active workspace and archives only the completed agent", async () => {
+  const hub = await launchRelationship();
+  const affinity = {
+    key: "slack-thread-1700000000.000001",
+    retainUntil: "2099-08-06T12:02:00.000Z",
+    autoArchive: true,
+  };
+  hub.beginOwnedCreate("affinity-first", "affinity-execution-1", { workspaceAffinity: affinity });
+  const first = await hub.ownedCreateResult("affinity-first");
+  expect(first).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, workspaceAffinityApplied: true },
+  });
+  if (first.type !== "hub.execution.agent.create.response" || !first.payload.agentId) {
+    throw new Error("Expected affinity-owned agent");
+  }
+  const workspaceId = await hub.ownedWorkspaceId(first.payload.agentId);
+
+  await hub.archiveExecution("affinity-execution-1");
+  expect(await hub.ownedAgentArchivedAt(first.payload.agentId)).not.toBeNull();
+  expect(await hub.archivedWorkspaceAt(workspaceId)).toBeNull();
+  await hub.archiveWorkspace(workspaceId);
+  expect(await hub.archivedWorkspaceAt(workspaceId)).not.toBeNull();
+
+  hub.beginOwnedCreate("affinity-second", "affinity-execution-2", {
+    workspaceAffinity: { ...affinity, retainUntil: "2099-08-06T12:03:00.000Z" },
+  });
+  const second = await hub.ownedCreateResult("affinity-second");
+  expect(second).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, workspaceAffinityApplied: true },
+  });
+  if (second.type !== "hub.execution.agent.create.response" || !second.payload.agentId) {
+    throw new Error("Expected second affinity-owned agent");
+  }
+  expect(await hub.ownedWorkspaceId(second.payload.agentId)).toBe(workspaceId);
+  expect(await hub.archivedWorkspaceAt(workspaceId)).toBeNull();
+});
+
 test("Hub MCP configuration reaches the provider alongside Paseo MCP without entering snapshots", async () => {
   const hub = await HubRelationshipHarness.startWithAgentMcp();
   await hub.beginConnect().result;
