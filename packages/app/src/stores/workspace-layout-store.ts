@@ -1182,13 +1182,15 @@ export function createWorkspaceLayoutStore(
           }
 
           set((state) => {
-            const currentLayout = getWorkspaceLayout(
-              state.layoutByWorkspace,
-              normalizedWorkspaceKey,
-            );
+            const rawLayout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
             const explorerSidebarPaneId = resolveExplorerSidebarPaneId(
-              currentLayout,
+              rawLayout,
               state.explorerSidebarPaneIdByWorkspace[normalizedWorkspaceKey],
+            );
+            const currentLayout = keepWorkspaceFocusOutOfExplorerSidebar(
+              rawLayout,
+              explorerSidebarPaneId,
+              rawLayout.focusedPaneId,
             );
             const nextState = reconcileWorkspaceTabs(
               {
@@ -1205,7 +1207,7 @@ export function createWorkspaceLayoutStore(
               explorerSidebarPaneId,
               currentLayout.focusedPaneId,
             );
-            if (nextLayout === currentLayout) {
+            if (nextLayout === rawLayout) {
               return state;
             }
 

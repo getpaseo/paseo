@@ -3449,6 +3449,16 @@ describe("workspace-layout-store actions", () => {
       "main",
     );
 
+    workspaceLayoutStore.setState((state) => ({
+      layoutByWorkspace: {
+        ...state.layoutByWorkspace,
+        [workspaceKey]: {
+          ...state.layoutByWorkspace[workspaceKey],
+          focusedPaneId: "explorer",
+        },
+      },
+    }));
+
     const emptySnapshot = {
       agentsHydrated: true,
       terminalsHydrated: true,
