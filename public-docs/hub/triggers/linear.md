@@ -1,6 +1,6 @@
 ---
 title: Linear triggers
-description: Start reactive or autonomous Hub workflows from Linear issues and comments.
+description: Start reactive, autonomous, or native agent-session Hub workflows from Linear.
 nav: Linear
 order: 70
 category: Hub
@@ -19,32 +19,84 @@ labels, assignees, or users.
 | `linear.issue_entered_scope` | An issue is created in, or transitions into, the configured project scope. |
 | `linear.issue_assigned`      | An issue's assignee changes to a user.                                     |
 | `linear.comment_created`     | A comment is created on an issue.                                          |
+| `linear.agent_session`       | A native agent session is created or receives another prompt.              |
 
 `linear.issue_entered_scope` is the intentionally autonomous event. It requires `filters.project`
 and fires only on the edge into the complete configured scope. Editing the title or description of
 an issue already in scope does not start another run.
 
-`linear.issue_assigned` and `linear.comment_created` are reactive. Both require a non-empty
-`filters.from_users` list containing the Linear IDs of actors allowed to start the workflow.
+`linear.issue_assigned`, `linear.comment_created`, and `linear.agent_session` are reactive. They
+require a non-empty `filters.from_users` list containing the Linear IDs of actors allowed to start
+the workflow.
 
 ## Filter Linear events
 
 All supplied filters compose with AND.
 
-| Filter           | Meaning                                                                       |
-| ---------------- | ----------------------------------------------------------------------------- |
-| `connection`     | Linear connection slug.                                                       |
-| `project`        | Linear project ID; required for `linear.issue_entered_scope`.                 |
-| `states`         | The issue's current workflow-state ID must be in the list.                    |
-| `labels`         | The issue must currently have every listed Linear label ID.                   |
-| `exclude_labels` | The issue must have none of the listed Linear label IDs.                      |
-| `assignees`      | The issue's resulting assignee ID must be in the list.                        |
-| `from_users`     | Actor IDs allowed to assign or comment; required for the two reactive events. |
-| `pattern`        | For comments, text that must occur at the start of the original comment.      |
-| `contains`       | For comments, text that must occur somewhere in the original comment.         |
+| Filter           | Meaning                                                                    |
+| ---------------- | -------------------------------------------------------------------------- |
+| `connection`     | Linear connection slug.                                                    |
+| `project`        | Linear project ID; required for `linear.issue_entered_scope`.              |
+| `states`         | The issue's current workflow-state ID must be in the list.                 |
+| `labels`         | The issue must currently have every listed Linear label ID.                |
+| `exclude_labels` | The issue must have none of the listed Linear label IDs.                   |
+| `assignees`      | The issue's resulting assignee ID must be in the list.                     |
+| `from_users`     | Actor IDs allowed to assign, comment, or prompt a session.                 |
+| `pattern`        | For comments or sessions, text that must start the direct user message.    |
+| `contains`       | For comments or sessions, text that must occur in the direct user message. |
 
-`from_users` identifies the person who performed the assignment or wrote the comment.
+`from_users` identifies the person who performed the assignment, wrote the comment, or prompted
+the agent session.
 `assignees` identifies the issue's resulting assignee. They are different checks.
+
+## Act as a native Linear agent
+
+Enable **Agent session events** when you [create the Linear app](/docs/hub/self-hosting/linear-app).
+Mentioning the app or delegating an issue creates a session; another message on that session sends
+a `prompted` event and starts another workflow run.
+
+`.paseo/workflows/linear-agent.yml`:
+
+```yaml
+name: linear-agent
+on: linear.agent_session
+max_runtime: 1h
+filters:
+  connection: acme-linear
+  project: 00000000-0000-0000-0000-000000000000
+  from_users: [11111111-1111-1111-1111-111111111111]
+steps:
+  - id: respond
+    environment: dev
+    max_runtime: 45m
+    idle_timeout: 5m
+    agent: codex
+    prompt:
+      - text: |
+          Act on this Linear agent-session request. Reply with hub.reply, then call
+          hub.finish_execution.
+
+          <current-turn>
+          ${{ paseo.prompt }}
+          </current-turn>
+
+          <linear-context>
+          ${{ paseo.context }}
+          </linear-context>
+    allow_outputs:
+      - { type: linear.reply, max: 1, required: true }
+```
+
+For a new session, `${{ paseo.prompt }}` is Linear's canonical `promptContext`, including its
+issue, relevant comments, and guidance. For a follow-up it is the new prompt activity's original
+body. `${{ paseo.context }}` exposes the session and issue; on follow-ups its chronological thread
+contains the issue root and up to 49 activities strictly before the triggering prompt. Optional
+history failure does not fail the run.
+
+Hub emits an ephemeral `thought` when it accepts the session. `linear.reply` becomes a native
+`response` activity, which completes the session, while a failed workflow emits an `error`
+activity. The example marks `linear.reply` as required so a successful run cannot finish without
+completing the session.
 
 ## Respond to a command comment
 

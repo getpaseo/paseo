@@ -177,28 +177,31 @@ See [GitHub triggers](/docs/hub/triggers/github) for complete triage, pull-reque
 | `linear.issue_entered_scope` | An issue created in, or transitioning into, the complete configured scope. |
 | `linear.issue_assigned`      | An issue update that changes its assignee to a user.                       |
 | `linear.comment_created`     | A newly created issue comment.                                             |
+| `linear.agent_session`       | A native agent session is created or receives another prompt.              |
 
 `linear.issue_entered_scope` requires `project` and does not require `from_users`. It is an
 intentionally autonomous, edge-triggered policy: an issue already in scope does not run again for
-an unrelated edit. The other two events require a non-empty `from_users` allowlist.
+an unrelated edit. The other three events require a non-empty `from_users` allowlist.
 
 All supplied Linear filters compose with AND.
 
-| Field            | Type                                | Applies to                    | Meaning                                                |
-| ---------------- | ----------------------------------- | ----------------------------- | ------------------------------------------------------ |
-| `connection`     | string                              | all Linear events             | Linear connection slug.                                |
-| `project`        | non-empty string                    | all Linear events             | Linear project id; required for `issue_entered_scope`. |
-| `states`         | non-empty list of non-empty strings | all Linear events             | Allowed current workflow-state ids.                    |
-| `labels`         | non-empty list of non-empty strings | all Linear events             | Every listed label id must be currently present.       |
-| `exclude_labels` | non-empty list of non-empty strings | all Linear events             | No listed label id may be currently present.           |
-| `assignees`      | non-empty list of non-empty strings | all Linear events             | Allowed resulting assignee ids.                        |
-| `from_users`     | non-empty list of strings           | assignment and comment events | Linear actor ids allowed to start the workflow.        |
-| `pattern`        | string                              | `linear.comment_created`      | Prefix of the original comment.                        |
-| `contains`       | string                              | `linear.comment_created`      | Substring of the original comment.                     |
+| Field            | Type                                | Applies to                 | Meaning                                                |
+| ---------------- | ----------------------------------- | -------------------------- | ------------------------------------------------------ |
+| `connection`     | string                              | all Linear events          | Linear connection slug.                                |
+| `project`        | non-empty string                    | all Linear events          | Linear project id; required for `issue_entered_scope`. |
+| `states`         | non-empty list of non-empty strings | all Linear events          | Allowed current workflow-state ids.                    |
+| `labels`         | non-empty list of non-empty strings | all Linear events          | Every listed label id must be currently present.       |
+| `exclude_labels` | non-empty list of non-empty strings | all Linear events          | No listed label id may be currently present.           |
+| `assignees`      | non-empty list of non-empty strings | all Linear events          | Allowed resulting assignee ids.                        |
+| `from_users`     | non-empty list of strings           | reactive Linear events     | Linear actor ids allowed to start the workflow.        |
+| `pattern`        | string                              | comment and session events | Prefix of the direct user message.                     |
+| `contains`       | string                              | comment and session events | Substring of the direct user message.                  |
 
-Use Linear ids, not display names. `from_users` is the actor who assigned or commented;
+Use Linear ids, not display names. `from_users` is the actor who assigned, commented, or prompted;
 `assignees` is the issue's resulting assignee. See [Linear triggers](/docs/hub/triggers/linear)
-for a reactive comment workflow and a guarded first-draft PR scout.
+for a native agent-session workflow, a reactive comment workflow, and a guarded first-draft PR
+scout. Mark `linear.reply` as required when a successful agent-session workflow must complete the
+session with a response.
 
 ### Inputs and values
 

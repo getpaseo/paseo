@@ -45,6 +45,7 @@ Field-by-field detail is in the [configuration reference](/docs/hub/configuratio
 | `linear.issue_entered_scope`          | An issue is created in, or enters, a project scope.  |
 | `linear.issue_assigned`               | An issue is assigned to a user.                      |
 | `linear.comment_created`              | A comment is created on an issue.                    |
+| `linear.agent_session`                | A native agent session starts or is prompted.        |
 | `slack.mention`                       | The bot is mentioned in a channel.                   |
 | `discord.mention`                     | The bot is mentioned in a guild.                     |
 | `manual.run`                          | A run started from the API.                          |
@@ -113,6 +114,10 @@ Put `allow_outputs` on the step that should reply. The reply capabilities are `l
 - Set `max` when a step needs more than one update.
 - Set `required: true` when the step must emit at least one reply before it can finish. A required type must be registered and available for the execution context.
 
-`linear.reply` posts to the triggering issue. GitHub has no reply capability; a step with a [`github` block](/docs/hub/github) comments through `gh` instead. The [output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) has the contract.
+`linear.reply` posts to the triggering issue for issue/comment events and emits a native response
+activity for an agent-session event. GitHub has no reply capability; a step with a
+[`github` block](/docs/hub/github) comments through `gh` instead. The
+[output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) has the
+contract.
 
 The declaration grants the `hub.reply` tool; the prompt has to tell the agent to call it. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).

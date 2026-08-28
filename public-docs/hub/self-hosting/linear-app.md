@@ -1,6 +1,6 @@
 ---
 title: Linear for Hub
-description: Create the Linear application your Hub uses for project triggers and issue replies.
+description: Create the Linear application your Hub uses for project triggers, agent sessions, and replies.
 nav: Linear app
 order: 79
 category: Hub
@@ -28,17 +28,25 @@ for the current origin:
 In Linear:
 
 1. Create an OAuth application and add the redirect URL.
-2. Add application webhooks for **Issue** and **Comment** events at the webhook URL.
+2. Add application webhooks for **Issue**, **Comment**, and **Agent session events** at the webhook
+   URL. Agent session events let people mention the app or delegate an issue to it.
 3. Choose a webhook signing secret.
 4. Copy the Client ID, Client Secret, and signing secret into Hub.
 
 Choose **Save and continue to Linear**. A workspace administrator authorizes the application with
-the narrow `read` and `comments:create` scopes. Hub saves the application and workspace connection
-only after that authorization succeeds. Replaying a completed or expired authorization link is
-rejected.
+`read`, `write`, `app:assignable`, and `app:mentionable`. The two app scopes make the application
+available as an issue delegate and an @mention target; `write` lets it emit native Agent
+Activities. Hub saves the application and workspace connection only after that authorization
+succeeds. Replaying a completed or expired authorization link is rejected.
 
-The OAuth request uses Linear's app actor, so comments emitted through `linear.reply` are visibly
-authored by the application rather than by the administrator who connected it.
+An existing Linear connection that predates these scopes appears as requiring reauthorization.
+Reconnect it once to enable native agent sessions.
+
+The OAuth request uses Linear's app actor. Ordinary issue-trigger replies are visibly authored by
+the application; an agent-session reply is emitted as a native `response` activity on that
+session.
+
+Linear currently labels its Agent APIs as Developer Preview, so its upstream contract may change.
 
 Choose **Connect another workspace** to authorize more workspaces. Each connection gets its own
 Hub slug for `filters.connection`.
