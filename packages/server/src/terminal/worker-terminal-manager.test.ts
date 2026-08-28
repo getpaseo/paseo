@@ -204,6 +204,52 @@ it("creates a terminal through the worker and streams output", async () => {
   expect(snapshots).toBe(snapshotsBeforeOutput);
 });
 
+it("holds the configured workspace creation lease through the worker response", async () => {
+  const worker = new FakeTerminalWorker();
+  let leaseActive = false;
+  const leasedWorkspaceIds: string[] = [];
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 100,
+    forkWorker: () => worker,
+    runWithWorkspaceTerminalCreationLease: async (workspaceId, action) => {
+      leasedWorkspaceIds.push(workspaceId);
+      leaseActive = true;
+      try {
+        return await action();
+      } finally {
+        leaseActive = false;
+      }
+    },
+  });
+
+  const creation = manager.createTerminal({ cwd: "/workspace", workspaceId: "ws-leased" });
+  const request = worker.sentMessages.find((message) => message.type === "createTerminal");
+  expect(request).toBeDefined();
+  expect(leaseActive).toBe(true);
+  if (!request || request.type !== "createTerminal") {
+    throw new Error("createTerminal request not sent");
+  }
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: request.requestId,
+    ok: true,
+    result: {
+      terminal: {
+        id: request.options.id!,
+        name: "Terminal 1",
+        cwd: "/workspace",
+        workspaceId: "ws-leased",
+        activity: null,
+      },
+      state: createTerminalState(),
+    },
+  });
+
+  await creation;
+  expect(leasedWorkspaceIds).toEqual(["ws-leased"]);
+  expect(leaseActive).toBe(false);
+});
+
 it("delivers rapid small writes complete and in order through worker coalescing", async () => {
   const cwd = mkdtempSync(join(tmpdir(), "worker-terminal-manager-coalesce-"));
   temporaryDirs.push(cwd);

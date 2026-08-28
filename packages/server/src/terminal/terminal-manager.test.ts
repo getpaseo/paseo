@@ -73,6 +73,30 @@ it("returns existing terminals on subsequent calls", async () => {
   expect(second.length).toBe(1);
 });
 
+it("holds the configured workspace creation lease through terminal registration", async () => {
+  let leaseActive = false;
+  const leasedWorkspaceIds: string[] = [];
+  manager = createTerminalManager({
+    runWithWorkspaceTerminalCreationLease: async (workspaceId, action) => {
+      leasedWorkspaceIds.push(workspaceId);
+      leaseActive = true;
+      try {
+        return await action();
+      } finally {
+        leaseActive = false;
+      }
+    },
+  });
+  const registrationLeaseStates: boolean[] = [];
+  manager.subscribeTerminalsChanged(() => registrationLeaseStates.push(leaseActive));
+
+  await manager.createTerminal({ cwd: realpathSync(tmpdir()), workspaceId: "ws-leased" });
+
+  expect(leasedWorkspaceIds).toEqual(["ws-leased"]);
+  expect(registrationLeaseStates).toEqual([true]);
+  expect(leaseActive).toBe(false);
+});
+
 it("throws for relative paths", async () => {
   manager = createTerminalManager();
   await expect(manager.getTerminals("tmp")).rejects.toThrow("cwd must be absolute path");

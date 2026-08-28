@@ -24,6 +24,7 @@ import type {
   TerminalWorkspaceContributionChangedListener,
   TerminalsChangedEvent,
   TerminalsChangedListener,
+  WorkspaceTerminalCreationLease,
 } from "./terminal-manager.js";
 import type {
   TerminalWorkerRequest,
@@ -93,6 +94,7 @@ interface WorkerTerminalManagerOptions {
   requestTimeoutMs?: number;
   forkWorker?: () => TerminalWorkerProcess;
   getTerminalActivityUrl?: () => string | null;
+  runWithWorkspaceTerminalCreationLease?: WorkspaceTerminalCreationLease;
 }
 
 function createActivityToken(): string {
@@ -152,6 +154,8 @@ export function createWorkerTerminalManager(
 ): TerminalManager {
   const worker = managerOptions.forkWorker ? managerOptions.forkWorker() : forkTerminalWorker();
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+  const runWithWorkspaceTerminalCreationLease =
+    managerOptions.runWithWorkspaceTerminalCreationLease ?? ((_workspaceId, action) => action());
   const pendingRequests = new Map<string, PendingRequest>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
@@ -679,36 +683,38 @@ export function createWorkerTerminalManager(
       return sessions;
     },
 
-    async createTerminal(
+    createTerminal(
       options: WorkerCreateTerminalOptions & { workspaceId: string },
     ): Promise<TerminalSession> {
-      const terminalId = options.id ?? randomUUID();
-      const activityToken = createActivityToken();
-      const terminalActivityUrl = managerOptions.getTerminalActivityUrl?.() ?? null;
-      terminalActivityTokenById.set(terminalId, activityToken);
-      let result: {
-        terminal: RequiredWorkerTerminalInfo;
-        state: TerminalState;
-      };
-      try {
-        result = (await sendRequest({
-          type: "createTerminal",
-          options: {
-            ...options,
-            id: terminalId,
-            activityToken,
-            activityUrl: terminalActivityUrl,
-          },
-        })) as {
+      return runWithWorkspaceTerminalCreationLease(options.workspaceId, async () => {
+        const terminalId = options.id ?? randomUUID();
+        const activityToken = createActivityToken();
+        const terminalActivityUrl = managerOptions.getTerminalActivityUrl?.() ?? null;
+        terminalActivityTokenById.set(terminalId, activityToken);
+        let result: {
           terminal: RequiredWorkerTerminalInfo;
           state: TerminalState;
         };
-      } catch (error) {
-        terminalActivityTokenById.delete(terminalId);
-        throw error;
-      }
-      const session = registerRecord({ info: result.terminal, state: result.state });
-      return session;
+        try {
+          result = (await sendRequest({
+            type: "createTerminal",
+            options: {
+              ...options,
+              id: terminalId,
+              activityToken,
+              activityUrl: terminalActivityUrl,
+            },
+          })) as {
+            terminal: RequiredWorkerTerminalInfo;
+            state: TerminalState;
+          };
+        } catch (error) {
+          terminalActivityTokenById.delete(terminalId);
+          throw error;
+        }
+        const session = registerRecord({ info: result.terminal, state: result.state });
+        return session;
+      });
     },
 
     registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void {

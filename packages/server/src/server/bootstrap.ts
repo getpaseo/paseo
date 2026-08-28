@@ -164,7 +164,10 @@ import {
 } from "./workspace-archive-service.js";
 import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
-import type { TerminalManager } from "../terminal/terminal-manager.js";
+import type {
+  TerminalManager,
+  WorkspaceTerminalCreationLease,
+} from "../terminal/terminal-manager.js";
 import { createConfiguredTerminalManager } from "../terminal/terminal-manager-factory.js";
 import { applyTerminalAgentHookSetting } from "../terminal/agent-hooks/terminal-agent-hook-setting.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
@@ -650,8 +653,13 @@ export async function createPaseoDaemon(
   });
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
+  let terminalCreationLease: WorkspaceTerminalCreationLease = async () => {
+    throw new Error("Terminal creation is unavailable while the agent manager initializes");
+  };
   const terminalManager = createConfiguredTerminalManager({
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
+    runWithWorkspaceTerminalCreationLease: (workspaceId, action) =>
+      terminalCreationLease(workspaceId, action),
   });
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
 
@@ -938,6 +946,8 @@ export async function createPaseoDaemon(
     mcpAuthToken: agentMcpAuthToken,
     logger,
   });
+  terminalCreationLease = (workspaceId, action) =>
+    agentManager.runWithWorkspaceTerminalCreationLease(workspaceId, action);
 
   const detachAgentStoragePersistence = attachAgentStoragePersistence(
     logger,
