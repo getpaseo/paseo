@@ -527,6 +527,7 @@ function wrapClientProvider(
         modes: catalog.modes,
       };
     },
+    ownsDefaultModelSelection: inner.ownsDefaultModelSelection,
     resolveDefaultModeId: inner.resolveDefaultModeId
       ? async ({ config, env, signal }: ResolveAgentDefaultModeInput) =>
           await inner.resolveDefaultModeId?.({
