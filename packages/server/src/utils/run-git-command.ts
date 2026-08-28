@@ -27,14 +27,9 @@ const DEFAULT_STDERR_LIMIT = 2048;
 let gitProcessScheduler = new GitProcessScheduler(resolveGitProcessPolicy({ env: process.env }));
 let gitRuntimeMetrics = createGitCommandRuntimeMetricsWindow(gitProcessScheduler.policy);
 const gitCommandPriority = new AsyncLocalStorage<GitProcessPriority>();
-const gitCommandProvenance = new AsyncLocalStorage<string>();
 
 export function runWithGitCommandPriority<T>(priority: GitProcessPriority, operation: () => T): T {
   return gitCommandPriority.run(priority, operation);
-}
-
-export function runWithGitCommandProvenance<T>(provenance: string, operation: () => T): T {
-  return gitCommandProvenance.run(provenance, operation);
 }
 
 function createGitCommandRuntimeMetricsWindow(policy: GitProcessPolicy) {
@@ -65,6 +60,15 @@ export interface GitCommandResult {
   truncated: boolean;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
+}
+
+export type RunGitCommand = (
+  args: string[],
+  options: GitCommandOptions,
+) => Promise<GitCommandResult>;
+
+export function createRunGitCommand(provenance: string): RunGitCommand {
+  return (args, options) => runGitCommandWithProvenance(args, options, provenance);
 }
 
 export interface GitCommandMetric {
@@ -254,19 +258,17 @@ function getEnvOverlayKeys(envOverlay: ProcessEnvRecord | undefined): string[] {
   return Object.keys(envOverlay ?? {}).sort();
 }
 
-export function runGitCommand(
+function runGitCommandWithProvenance(
   args: string[],
   options: GitCommandOptions,
+  provenance?: string,
 ): Promise<GitCommandResult> {
   const metricsState = submitGitCommandMetric(args, options.cwd);
   const commandTrace = submitGitCommandTrace(args, options.cwd, {
     active: gitProcessScheduler.activeCount,
     pending: gitProcessScheduler.pendingCount,
   });
-  const runtimeMetric = gitRuntimeMetrics.submit(
-    getGitOperation(args),
-    gitCommandProvenance.getStore(),
-  );
+  const runtimeMetric = gitRuntimeMetrics.submit(getGitOperation(args), provenance);
   const startCommand = () => {
     let releaseProcessSlot!: () => void;
     const exited = new Promise<void>((resolve) => {
@@ -533,6 +535,8 @@ export function runGitCommand(
   );
   return promise;
 }
+
+export const runGitCommand: RunGitCommand = runGitCommandWithProvenance;
 
 function formatGitCommand(args: string[]): string {
   return ["git", ...args].join(" ");
