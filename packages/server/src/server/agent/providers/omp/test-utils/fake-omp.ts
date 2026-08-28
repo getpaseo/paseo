@@ -58,18 +58,31 @@ export class FakeOmp implements OmpRuntime {
     FakeOmpSubagentSubscriptionLevel,
     Error
   >();
+  private readonly queuedStartErrors: Error[] = [];
+  private readonly sessionIdsByFile = new Map<string, string>();
+  private sessionIdCounter = 0;
 
   constructor(command: [string, ...string[]] = ["omp"]) {
     this.command = command;
   }
 
   async startSession(input: OmpStartSessionInput): Promise<FakeOmpSession> {
+    const startError = this.queuedStartErrors.shift();
+    if (startError) {
+      throw startError;
+    }
     const launch = buildOmpLaunch({
       command: this.command,
       session: input,
     });
     this.recordedLaunches.push(launch);
-    const session = new FakeOmpSession(launch);
+    // Real omp restores the same session id when reopening a session file, and
+    // mints a new one when there is nothing to resume. Model both so recovery
+    // tests can tell a resumed chat from a fresh one.
+    const resumed = launch.session ? this.sessionIdsByFile.get(launch.session) : undefined;
+    const sessionId = resumed ?? `omp-session-${(this.sessionIdCounter += 1)}`;
+    const session = new FakeOmpSession(launch, sessionId);
+    this.sessionIdsByFile.set(session.state.sessionFile, sessionId);
     session.commands = this.queuedCommands.shift() ?? [];
     for (const [level, error] of this.queuedSubagentSubscriptionErrors) {
       session.subagentSubscriptionErrors.set(level, error);
@@ -83,8 +96,16 @@ export class FakeOmp implements OmpRuntime {
     this.queuedCommands.push(commands);
   }
 
+  failNextStartSession(error: Error): void {
+    this.queuedStartErrors.push(error);
+  }
+
   failNextSubagentSubscription(level: FakeOmpSubagentSubscriptionLevel, error: Error): void {
     this.queuedSubagentSubscriptionErrors.set(level, error);
+  }
+
+  allSessions(): FakeOmpSession[] {
+    return [...this.sessions];
   }
 
   latestSession(): FakeOmpSession {
@@ -150,7 +171,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
     null;
 
-  constructor(launch: OmpRuntimeLaunch) {
+  constructor(launch: OmpRuntimeLaunch, sessionId = "omp-session-1") {
     this.state = {
       model: null,
       thinkingLevel: "medium",
@@ -158,7 +179,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
       isCompacting: false,
       autoCompactionEnabled: true,
       sessionFile: launch.session ?? "/tmp/omp-session",
-      sessionId: "omp-session-1",
+      sessionId,
       messageCount: 0,
       queuedMessageCount: 0,
     };

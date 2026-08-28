@@ -20,7 +20,7 @@ import {
 } from "../agent.js";
 import type { OmpUsagePollScheduler } from "../usage-poller.js";
 import type { OmpAgentMessage, OmpRpcSlashCommand } from "../rpc-types.js";
-import { FakeOmp } from "./fake-omp.js";
+import { FakeOmp, type FakeOmpSession } from "./fake-omp.js";
 
 const CWD = "/tmp/paseo-omp-agent-test";
 
@@ -82,8 +82,25 @@ export class OmpHarness {
     });
   }
 
+  failNextRuntimeStart(error: Error): void {
+    this.omp.failNextStartSession(error);
+  }
+
+  runtimeSessionCount(): number {
+    return this.omp.recordedLaunches.length;
+  }
+
+  async waitForRuntimeSessionCount(count: number): Promise<void> {
+    while (this.runtimeSessionCount() < count) {
+      await waitForImmediate();
+    }
+  }
   queueCommands(commands: OmpRpcSlashCommand[]): void {
     this.omp.queueCommands(commands);
+  }
+
+  runtimeLaunchSessions(): Array<string | undefined> {
+    return this.omp.recordedLaunches.map((launch) => launch.session);
   }
 
   failEventSubscription(error: Error): void {
@@ -186,6 +203,37 @@ export class OmpHarness {
     runtime.streamAssistantText(output);
     runtime.finishTurn();
     return await run;
+  }
+
+  async runPromptAfterRuntimeExit(input: string, output: string): Promise<unknown> {
+    const session = this.requireSession();
+    const run = session.run(input);
+    await this.waitForRuntimeSessionCount(2);
+    const promptStarted = this.omp.latestSession().nextPrompt();
+    await promptStarted;
+    const runtime = this.omp.latestSession();
+    runtime.beginTurn();
+    runtime.acceptPrompt(input, "user-1");
+    runtime.streamAssistantText(output);
+    runtime.finishTurn();
+    return await run;
+  }
+
+  /**
+   * Starts a turn without awaiting it, so a test can interleave another
+   * lifecycle call (a close, say) with the relaunch it triggers.
+   */
+  startTurnDetached(input: string): Promise<{ turnId: string }> {
+    return this.requireSession().startTurn(input);
+  }
+
+  runtimeSessions(): FakeOmpSession[] {
+    return this.omp.allSessions();
+  }
+
+  async startTurnAfterRuntimeExit(input: string): Promise<void> {
+    await this.requireSession().startTurn(input);
+    await waitForImmediate();
   }
 
   async startPromptWithEmptyAgentEnd(
@@ -502,6 +550,16 @@ export class OmpHarness {
 
   canceledTurnCount(): number {
     return this.events.filter((event) => event.type === "turn_canceled").length;
+  }
+
+  turnFailures(): string[] {
+    return this.events.flatMap((event) => (event.type === "turn_failed" ? [event.error] : []));
+  }
+
+  threadStartedSessionIds(): string[] {
+    return this.events.flatMap((event) =>
+      event.type === "thread_started" ? [event.sessionId] : [],
+    );
   }
 
   async close(): Promise<void> {
