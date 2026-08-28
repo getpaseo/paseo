@@ -5,6 +5,7 @@ import {
   encodeHerdrAttachedPiHandle,
   parseHerdrAttachedPiHandle,
   parseHerdrAttachedPiMetadata,
+  isAttachableHerdrPiAgent,
   validateHerdrAttachedPiTarget,
 } from "./herdr-attachment.js";
 
@@ -48,6 +49,22 @@ describe("Herdr attached Pi identity", () => {
         lastActivityAt: null,
       }),
     ).toEqual({ ok: true });
+  });
+
+  test("treats real Herdr Pi records with native session facts as attachable", () => {
+    expect(
+      isAttachableHerdrPiAgent({
+        target: "w1Q:p2",
+        kind: "pi",
+        status: "working",
+        cwd: "/workspace/project",
+        paneId: "w1Q:p2",
+        nativeSessionId: "01a04974-6e86-7db6-a718-ffd7c4f0af2d",
+        nativeSessionFile:
+          "/home/example/.pi/agent/sessions/--workspace-project--/2026-08-28T17-39-22-374Z_01a04974-6e86-7db6-a718-ffd7c4f0af2d.jsonl",
+        lastActivityAt: null,
+      }),
+    ).toBe(true);
   });
 
   test("refuses a changed native Pi session", () => {

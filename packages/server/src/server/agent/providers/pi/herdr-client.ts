@@ -174,28 +174,32 @@ function parseHerdrAgentRecord(value: unknown): HerdrAgent | null {
   const id = readString(value, "id");
   const name = readString(value, "name");
   const paneId = readFirstString(value, ["paneId", "pane_id"]);
+  const nativeSessionFile = readFirstString(
+    value,
+    ["nativeSessionFile", "native_session_file", "session_file", "sessionFile"],
+    agentSession,
+    ["file", "path", "sessionFile", "session_file", "value"],
+  );
   return {
     target,
     ...(id ? { id } : {}),
     ...(name ? { name } : {}),
-    kind: readFirstString(value, ["kind", "agent_kind", "provider", "type"]),
-    status: readFirstString(value, ["status", "lifecycle", "state"]),
-    cwd: readFirstString(value, ["cwd", "working_directory", "workingDirectory"], agentSession, [
-      "cwd",
-    ]),
+    kind: readFirstString(value, ["kind", "agent_kind", "agent", "provider", "type"]),
+    status: readFirstString(value, ["status", "agent_status", "lifecycle", "state"]),
+    cwd: readFirstString(
+      value,
+      ["foreground_cwd", "cwd", "working_directory", "workingDirectory"],
+      agentSession,
+      ["cwd"],
+    ),
     ...(paneId ? { paneId } : {}),
-    nativeSessionId: readFirstString(
-      value,
-      ["nativeSessionId", "native_session_id", "session_id"],
-      agentSession,
-      ["id", "sessionId", "session_id"],
-    ),
-    nativeSessionFile: readFirstString(
-      value,
-      ["nativeSessionFile", "native_session_file", "session_file", "sessionFile"],
-      agentSession,
-      ["file", "path", "sessionFile", "session_file"],
-    ),
+    nativeSessionId:
+      readFirstString(value, ["nativeSessionId", "native_session_id", "session_id"], agentSession, [
+        "id",
+        "sessionId",
+        "session_id",
+      ]) ?? derivePiSessionIdFromFile(nativeSessionFile),
+    nativeSessionFile,
     lastActivityAt: readDate(value, "lastActivityAt") ?? readDate(value, "last_activity_at"),
   };
 }
@@ -249,6 +253,17 @@ function readDate(value: unknown, key: string): Date | null {
   }
   const date = new Date(field);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function derivePiSessionIdFromFile(sessionFile: string | null): string | null {
+  const filename = sessionFile?.split(/[\\/]/u).at(-1);
+  if (!filename) {
+    return null;
+  }
+  const match = /^.+_([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/iu.exec(
+    filename,
+  );
+  return match?.[1] ?? null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

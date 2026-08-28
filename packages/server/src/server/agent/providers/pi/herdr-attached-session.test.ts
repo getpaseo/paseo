@@ -350,9 +350,9 @@ describe("Herdr attached Pi sessions", () => {
       pollIntervalMs: 60_000,
     });
     const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
 
     await session.startTurn("still running");
+    session.subscribe((event) => events.push(event));
     herdr.agents = [];
     await session.reconcileHistory();
 
@@ -384,9 +384,9 @@ describe("Herdr attached Pi sessions", () => {
       pollIntervalMs: 60_000,
     });
     const events: AgentStreamEvent[] = [];
-    session.subscribe((event) => events.push(event));
 
     await session.startTurn("new prompt", { clientMessageId: "new-client-message" });
+    session.subscribe((event) => events.push(event));
     await session.reconcileHistory();
 
     expect(events).not.toContainEqual(expect.objectContaining({ type: "turn_completed" }));

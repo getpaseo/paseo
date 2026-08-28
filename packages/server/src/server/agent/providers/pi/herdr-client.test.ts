@@ -66,4 +66,77 @@ describe("Herdr client parsing", () => {
       nativeSessionFile: "/tmp/pi/native.jsonl",
     });
   });
+
+  test("parses real path-shaped Herdr Pi list records", () => {
+    expect(
+      parseHerdrAgentListPayload({
+        id: "cli:agent:list",
+        result: {
+          agents: [
+            {
+              agent: "pi",
+              agent_session: {
+                agent: "pi",
+                kind: "path",
+                source: "herdr:pi",
+                value:
+                  "/home/example/.pi/agent/sessions/--workspace-project--/2026-08-28T17-39-22-374Z_01a04974-6e86-7db6-a718-ffd7c4f0af2d.jsonl",
+              },
+              agent_status: "working",
+              cwd: "/workspace/registered-project",
+              foreground_cwd: "/workspace/project",
+              pane_id: "w1Q:p2",
+            },
+          ],
+          type: "agent_list",
+        },
+      }),
+    ).toEqual([
+      {
+        target: "w1Q:p2",
+        kind: "pi",
+        status: "working",
+        cwd: "/workspace/project",
+        paneId: "w1Q:p2",
+        nativeSessionId: "01a04974-6e86-7db6-a718-ffd7c4f0af2d",
+        nativeSessionFile:
+          "/home/example/.pi/agent/sessions/--workspace-project--/2026-08-28T17-39-22-374Z_01a04974-6e86-7db6-a718-ffd7c4f0af2d.jsonl",
+        lastActivityAt: null,
+      },
+    ]);
+  });
+
+  test("parses real path-shaped Herdr Pi get records", () => {
+    expect(
+      parseHerdrAgentPayload({
+        id: "cli:agent:get",
+        result: {
+          agent: {
+            agent: "pi",
+            agent_session: {
+              agent: "pi",
+              kind: "path",
+              source: "herdr:pi",
+              value:
+                "/home/example/.pi/agent/sessions/--workspace-project--/2026-08-28T17-39-22-374Z_01a04974-6e86-7db6-a718-ffd7c4f0af2d.jsonl",
+            },
+            agent_status: "idle",
+            cwd: "/workspace/registered-project",
+            foreground_cwd: "/workspace/project",
+            pane_id: "w1Q:p2",
+          },
+          type: "agent_info",
+        },
+      }),
+    ).toMatchObject({
+      target: "w1Q:p2",
+      kind: "pi",
+      status: "idle",
+      cwd: "/workspace/project",
+      paneId: "w1Q:p2",
+      nativeSessionId: "01a04974-6e86-7db6-a718-ffd7c4f0af2d",
+      nativeSessionFile:
+        "/home/example/.pi/agent/sessions/--workspace-project--/2026-08-28T17-39-22-374Z_01a04974-6e86-7db6-a718-ffd7c4f0af2d.jsonl",
+    });
+  });
 });
