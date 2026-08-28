@@ -298,6 +298,82 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
     }
   });
 
+  it("waits for an in-flight auto-commit before finalizing", async () => {
+    const session = new FakeRealtimeSession();
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: (message) => emitted.push(message),
+      sessionId: "s1",
+      stt: new FakeSttProvider(session),
+      autoCommitSeconds: 1,
+    });
+
+    await manager.handleStart("d-delayed-auto-commit", "audio/pcm;rate=24000;bits=16");
+    await manager.handleChunk({
+      dictationId: "d-delayed-auto-commit",
+      seq: 0,
+      audioBase64: buildPcmBase64(2000, 24000),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+    expect(session.commitCalls).toBe(1);
+
+    await manager.handleFinish("d-delayed-auto-commit", 0);
+    await tick();
+
+    expect(emitted.find((message) => message.type === "dictation_stream_final")).toBeUndefined();
+    expect(session.closed).toBe(false);
+
+    session.emitCommitted("seg-tail");
+    session.emitTranscript("seg-tail", "the final words", true);
+    await tick();
+
+    const final = emitted.find((message) => message.type === "dictation_stream_final");
+    expect((final?.payload as { text?: string } | undefined)?.text).toBe("the final words");
+    expect(session.closed).toBe(true);
+  });
+
+  it("commits tail audio appended while an auto-commit is in flight", async () => {
+    const session = new FakeRealtimeSession();
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: (message) => emitted.push(message),
+      sessionId: "s1",
+      stt: new FakeSttProvider(session),
+      autoCommitSeconds: 1,
+    });
+
+    await manager.handleStart("d-tail-during-commit", "audio/pcm;rate=24000;bits=16");
+    await manager.handleChunk({
+      dictationId: "d-tail-during-commit",
+      seq: 0,
+      audioBase64: buildPcmBase64(2000, 24000),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+    await manager.handleChunk({
+      dictationId: "d-tail-during-commit",
+      seq: 1,
+      audioBase64: buildPcmBase64(2000, 2400),
+      format: "audio/pcm;rate=24000;bits=16",
+    });
+
+    session.emitCommitted("seg-first");
+    session.emitTranscript("seg-first", "the beginning", true);
+    await manager.handleFinish("d-tail-during-commit", 1);
+
+    expect(session.commitCalls).toBe(2);
+
+    session.emitCommitted("seg-tail");
+    session.emitTranscript("seg-tail", "the final words", true);
+    await tick();
+
+    const final = emitted.find((message) => message.type === "dictation_stream_final");
+    expect((final?.payload as { text?: string } | undefined)?.text).toBe(
+      "the beginning the final words",
+    );
+  });
+
   it("adapts finish timeout based on pending committed segments", async () => {
     const session = new FakeRealtimeSession();
     const emitted: Array<{ type: string; payload: unknown }> = [];
@@ -374,13 +450,14 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
         sessionId: "s1",
         stt: new FakeSttProvider(session),
         finalTimeoutMs: 5000,
+        autoCommitSeconds: 1,
       });
 
       await manager.handleStart("d-clear-tail", "audio/pcm;rate=24000;bits=16");
       await manager.handleChunk({
         dictationId: "d-clear-tail",
         seq: 0,
-        audioBase64: buildPcmBase64(2000, 2400),
+        audioBase64: buildPcmBase64(2000, 24000),
         format: "audio/pcm;rate=24000;bits=16",
       });
 
