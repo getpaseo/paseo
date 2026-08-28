@@ -99,6 +99,32 @@ export interface PluginAgentPanelProps extends PluginHostProps {
   agentId: string;
 }
 
+export interface PluginComposerPillProps extends PluginHostProps {
+  workspaceId: string;
+  agentId: string;
+}
+
+export interface PluginComposerPillContribution {
+  id: string;
+  title: string;
+  workspaceId: string;
+  agentId: string;
+  Component: ComponentType<PluginComposerPillProps>;
+  onPress(): void | Promise<void>;
+}
+
+export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
+  workspaceId: string;
+  agentId?: string;
+}
+
+export interface PluginClientContext extends PluginCommandCapabilities {
+  addComposerPill(contribution: PluginComposerPillContribution): PluginCleanup;
+  openPanel(id: string, options: PluginClientOpenPanelOptions): void;
+}
+
+export type PluginClientContribution = (client: PluginClientContext) => PluginCleanup;
+
 export type PluginWorkspacePanelContribution =
   | (PluginWorkspacePanelBase & {
       context: "workspace";
@@ -262,6 +288,7 @@ export interface PluginContext {
   addSidebarItem(contribution: PluginSidebarContribution): void;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
+  addClientSide(contribution: PluginClientContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
   addTheme(contribution: PluginThemeContribution): void;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
