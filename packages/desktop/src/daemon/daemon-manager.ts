@@ -539,10 +539,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     read_file_base64: (args) => readManagedFileBase64(args ?? {}),
     delete_attachment_file: (args) => deleteManagedAttachmentFile(args ?? {}),
     garbage_collect_attachment_files: (args) => garbageCollectManagedAttachmentFiles(args ?? {}),
-    open_local_daemon_transport: async (args) => {
-      const target = args as { transportType: "socket" | "pipe"; transportPath: string };
-      return await openLocalTransportSession(target);
-    },
+    open_local_daemon_transport: async (args) => await openLocalTransportSession(args),
     send_local_daemon_transport_message: async (args) => {
       await sendLocalTransportMessage(
         args as { sessionId: string; text?: string; binaryBase64?: string },
