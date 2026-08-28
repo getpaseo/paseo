@@ -1892,6 +1892,9 @@ function WorkspaceScreenContent({
         unpinWorkspaceAgent(persistenceKey, input.target.agentId);
         hideWorkspaceAgent(persistenceKey, input.target.agentId);
       }
+      if (input.target?.kind === "terminal") {
+        removeTerminalFromCache(input.target.terminalId);
+      }
       if (input.target?.kind === "browser") {
         const { browserId } = input.target;
         const isLocalBrowser = Boolean(useBrowserStore.getState().browsersById[browserId]);
@@ -1922,6 +1925,7 @@ function WorkspaceScreenContent({
       hideWorkspaceAgent,
       normalizedWorkspaceId,
       persistenceKey,
+      removeTerminalFromCache,
       t,
       toast,
       unpinWorkspaceAgent,
@@ -2565,7 +2569,6 @@ function WorkspaceScreenContent({
           return;
         }
 
-        removeTerminalFromCache(terminalId);
         setHoveredCloseTabKey((current) => (current === tabId ? null : current));
         if (persistenceKey) {
           await closeWorkspaceTabWithCleanup({
@@ -2583,7 +2586,6 @@ function WorkspaceScreenContent({
       invalidateTerminals,
       killTerminalAsync,
       persistenceKey,
-      removeTerminalFromCache,
       t,
     ],
   );

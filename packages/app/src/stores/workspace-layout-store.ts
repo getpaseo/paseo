@@ -14,14 +14,12 @@ import {
   clampNormalizedSizes,
   closePaneInLayout,
   closeTabInLayout,
-  CLOSED_ENTITY_SUPPRESSION_MS,
   collectAllPanes,
   collectAllTabs,
   convertDraftToAgentInLayout,
   createTabInLayout,
   createDefaultLayout,
   DEFAULT_PANE_ID,
-  EMPTY_CLOSED_ENTITY_IDS,
   AMBIENT_PLACEMENT,
   createWorkspaceLayoutWithExplorerSidebar,
   FOCUSED_PANE_PLACEMENT,
@@ -33,7 +31,6 @@ import {
   getFocusedBrowserId,
   getTreeDepth,
   insertSplit,
-  mirroredEntityIdOf,
   moveTabToPaneInLayout,
   normalizeLayout,
   openTabInLayoutBackground,
@@ -63,6 +60,7 @@ import {
 import { normalizeWorkspaceTabTarget } from "@/workspace-tabs/identity";
 import { createValidatedPersistStorage } from "@/storage/validated-persist-storage";
 import { panelTargetSupportsHostForWorkspaceKey } from "@/plugins/workspace-panels/locations";
+import { removeWorkspaceBrowsersFromQueryCache } from "@/data/browsers";
 
 export {
   AMBIENT_PLACEMENT,
@@ -110,8 +108,6 @@ interface WorkspaceLayoutStore {
   pinnedAgentIdsByWorkspace: Record<string, Set<string>>;
   pendingAgentIdsByWorkspace: Record<string, Set<string>>;
   hiddenAgentIdsByWorkspace: Record<string, Set<string>>;
-  /** Terminals and browsers closed here, mapped to the time their suppression expires. */
-  closedEntityIdsByWorkspace: Record<string, ReadonlyMap<string, number>>;
   focusRestorationByWorkspace: Record<string, WorkspaceFocusRestorationState>;
   explorerSidebarPaneIdByWorkspace: Record<string, string | null>;
   sidePaneIdByWorkspace: Record<string, string | null>;
@@ -511,40 +507,6 @@ function addAgentIdToWorkspaceSet(
   };
 }
 
-const EMPTY_DROPPED_TAB_IDS: ReadonlySet<string> = new Set();
-
-/**
- * Records closed terminals and browsers so the next reconcile does not adopt them
- * back while their host still lists them. Reconcile drops an entry once the host
- * agrees. Every path that drops a tab from the layout goes through here, whether
- * it closes one tab or the whole pane around it.
- */
-function rememberClosedEntities(input: {
-  state: Record<string, ReadonlyMap<string, number>>;
-  workspaceKey: string;
-  targets: ReadonlyArray<WorkspaceTabTarget>;
-}): Record<string, ReadonlyMap<string, number>> {
-  const entityIds: string[] = [];
-  for (const target of input.targets) {
-    const entityId = mirroredEntityIdOf(target);
-    if (entityId) {
-      entityIds.push(entityId);
-    }
-  }
-  if (entityIds.length === 0) {
-    return input.state;
-  }
-  const expiresAt = Date.now() + CLOSED_ENTITY_SUPPRESSION_MS;
-  const nextEntityIds = new Map(input.state[input.workspaceKey] ?? []);
-  for (const entityId of entityIds) {
-    nextEntityIds.set(entityId, expiresAt);
-  }
-  return {
-    ...input.state,
-    [input.workspaceKey]: nextEntityIds,
-  };
-}
-
 function removeAgentIdFromWorkspaceSet(
   state: Record<string, Set<string>>,
   workspaceKey: string,
@@ -804,7 +766,6 @@ export function createWorkspaceLayoutStore(
         pinnedAgentIdsByWorkspace: {},
         pendingAgentIdsByWorkspace: {},
         hiddenAgentIdsByWorkspace: {},
-        closedEntityIdsByWorkspace: {},
         focusRestorationByWorkspace: {},
         explorerSidebarPaneIdByWorkspace: {},
         sidePaneIdByWorkspace: {},
@@ -1053,14 +1014,12 @@ export function createWorkspaceLayoutStore(
             if (!nextLayout) {
               return state;
             }
+            if (closingTab?.target.kind === "browser") {
+              removeWorkspaceBrowsersFromQueryCache([closingTab.target.browserId]);
+            }
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-              closedEntityIdsByWorkspace: rememberClosedEntities({
-                state: state.closedEntityIdsByWorkspace,
-                workspaceKey: normalizedWorkspaceKey,
-                targets: closingTab ? [closingTab.target] : [],
-              }),
               ...reconcileRememberedSidePane(state, normalizedWorkspaceKey, nextLayout),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
@@ -1237,9 +1196,6 @@ export function createWorkspaceLayoutStore(
                 pinnedAgentIds: state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 pendingAgentIds: state.pendingAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 hiddenAgentIds: state.hiddenAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
-                closedEntityIds:
-                  state.closedEntityIdsByWorkspace[normalizedWorkspaceKey] ??
-                  EMPTY_CLOSED_ENTITY_IDS,
                 explorerSidebarPaneId: resolveExplorerSidebarPaneId(
                   currentLayout,
                   state.explorerSidebarPaneIdByWorkspace[normalizedWorkspaceKey],
@@ -1247,18 +1203,11 @@ export function createWorkspaceLayoutStore(
               },
               snapshot,
             );
-            const closedEntityIds = nextState.closedEntityIds ?? EMPTY_CLOSED_ENTITY_IDS;
-            const releasedClosedEntities =
-              closedEntityIds !==
-              (state.closedEntityIdsByWorkspace[normalizedWorkspaceKey] ?? EMPTY_CLOSED_ENTITY_IDS);
-            if (nextState.layout === currentLayout && !releasedClosedEntities) {
+            if (nextState.layout === currentLayout) {
               return state;
             }
 
             return {
-              closedEntityIdsByWorkspace: releasedClosedEntities
-                ? { ...state.closedEntityIdsByWorkspace, [normalizedWorkspaceKey]: closedEntityIds }
-                : state.closedEntityIdsByWorkspace,
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextState.layout,
@@ -1495,23 +1444,19 @@ export function createWorkspaceLayoutStore(
             if (!nextLayout) {
               return state;
             }
-
-            // Hiding the Explorer sidebar keeps its tabs, so only a real pane close
-            // drops the entities inside it.
-            const droppedTabIds = isExplorerSidebar
-              ? EMPTY_DROPPED_TAB_IDS
-              : new Set(findPaneById(layout.root, normalizedPaneId)?.tabIds ?? []);
-            const droppedTargets = collectAllTabs(layout.root)
-              .filter((tab) => droppedTabIds.has(tab.tabId))
-              .map((tab) => tab.target);
+            const droppedTabIds = new Set(
+              isExplorerSidebar ? [] : findPaneById(layout.root, normalizedPaneId)?.tabIds,
+            );
+            removeWorkspaceBrowsersFromQueryCache(
+              collectAllTabs(layout.root).flatMap((tab) =>
+                droppedTabIds.has(tab.tabId) && tab.target.kind === "browser"
+                  ? [tab.target.browserId]
+                  : [],
+              ),
+            );
 
             return {
               ...withoutFocusRestoration(state, normalizedWorkspaceKey),
-              closedEntityIdsByWorkspace: rememberClosedEntities({
-                state: state.closedEntityIdsByWorkspace,
-                workspaceKey: normalizedWorkspaceKey,
-                targets: droppedTargets,
-              }),
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
                 [normalizedWorkspaceKey]: nextLayout,
@@ -1843,7 +1788,6 @@ export function createWorkspaceLayoutStore(
               normalizedWorkspaceKey in state.pinnedAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.pendingAgentIdsByWorkspace ||
               normalizedWorkspaceKey in state.hiddenAgentIdsByWorkspace ||
-              normalizedWorkspaceKey in state.closedEntityIdsByWorkspace ||
               normalizedWorkspaceKey in state.focusRestorationByWorkspace ||
               normalizedWorkspaceKey in state.explorerSidebarPaneIdByWorkspace ||
               normalizedWorkspaceKey in state.sidePaneIdByWorkspace;
@@ -1864,8 +1808,6 @@ export function createWorkspaceLayoutStore(
               state.pendingAgentIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _hidden, ...hiddenAgentIdsByWorkspace } =
               state.hiddenAgentIdsByWorkspace;
-            const { [normalizedWorkspaceKey]: _closedEntities, ...closedEntityIdsByWorkspace } =
-              state.closedEntityIdsByWorkspace;
             const { [normalizedWorkspaceKey]: _restoration, ...focusRestorationByWorkspace } =
               state.focusRestorationByWorkspace;
             const {
@@ -1881,7 +1823,6 @@ export function createWorkspaceLayoutStore(
               pinnedAgentIdsByWorkspace,
               pendingAgentIdsByWorkspace,
               hiddenAgentIdsByWorkspace,
-              closedEntityIdsByWorkspace,
               focusRestorationByWorkspace,
               explorerSidebarPaneIdByWorkspace,
               sidePaneIdByWorkspace,
