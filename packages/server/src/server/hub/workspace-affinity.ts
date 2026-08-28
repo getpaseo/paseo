@@ -105,6 +105,7 @@ export class WorkspaceAffinityManager {
   private readonly filePath: string;
   private readonly clock: WorkspaceAffinityClock;
   private state: PersistedWorkspaceAffinities;
+  private readonly initialization: Promise<void>;
   private readonly tails = new Map<string, Promise<void>>();
   private readonly timers = new Map<string, ScheduledWorkspaceAffinityTask>();
   private unreadableState: Error | null = null;
@@ -114,7 +115,13 @@ export class WorkspaceAffinityManager {
     this.filePath = path.join(options.paseoHome, "hub-executions", options.daemonId, FILE_NAME);
     this.clock = options.clock ?? systemClock;
     this.state = this.load();
-    for (const affinityId of Object.keys(this.state.affinities)) this.arm(affinityId);
+    this.initialization = this.recoverProvisionalMappingsAndArm();
+    void this.initialization.catch((error: unknown) => {
+      this.options.logger.error(
+        { err: error, daemonId: this.options.daemonId },
+        "Failed to recover Hub workspace affinity state",
+      );
+    });
   }
 
   affinityId(key: string): string {
@@ -129,6 +136,8 @@ export class WorkspaceAffinityManager {
       placement: WorkspaceAffinityPlacement,
     ) => Promise<WorkspaceAffinityCreateResult<Value>>;
   }): Promise<Value> {
+    this.requireUsable();
+    await this.initialization;
     this.requireUsable();
     const affinityId = this.affinityId(input.affinity.key);
     const target = affinityTarget(input);
@@ -196,6 +205,8 @@ export class WorkspaceAffinityManager {
     workspaceCwd: string;
   }): Promise<void> {
     this.requireUsable();
+    await this.initialization;
+    this.requireUsable();
     const affinityId = this.affinityId(input.affinity.key);
     const target = affinityTarget(input);
     await this.withAffinity(affinityId, async () => {
@@ -229,6 +240,8 @@ export class WorkspaceAffinityManager {
   /** Called after an affinity-owned agent is archived. */
   async release(affinityId: string): Promise<void> {
     if (this.disposed) return;
+    await this.initialization;
+    if (this.disposed) return;
     await this.withAffinity(affinityId, async () => {
       try {
         if (!(await this.archiveIfDue(affinityId))) this.armRetry(affinityId);
@@ -246,6 +259,11 @@ export class WorkspaceAffinityManager {
     this.disposed = true;
     for (const timer of this.timers.values()) timer.cancel();
     this.timers.clear();
+  }
+
+  /** Resolves after recoverable provisional mappings are durable and retention timers are armed. */
+  waitUntilReady(): Promise<void> {
+    return this.initialization;
   }
 
   private load(): PersistedWorkspaceAffinities {
@@ -270,6 +288,22 @@ export class WorkspaceAffinityManager {
     writePrivateFileAtomicSync(this.filePath, `${JSON.stringify(this.state, null, 2)}\n`);
   }
 
+  private async recoverProvisionalMappingsAndArm(): Promise<void> {
+    const affinityIds = Object.keys(this.state.affinities);
+    const provisionalAffinityIds = affinityIds.filter((affinityId) => {
+      const persisted = this.state.affinities[affinityId];
+      return persisted !== undefined && (!persisted.workspaceId || !persisted.cwd);
+    });
+    if (provisionalAffinityIds.length > 0) {
+      const records = await this.options.agentStorage.list();
+      for (const affinityId of provisionalAffinityIds) {
+        const persisted = this.state.affinities[affinityId];
+        if (persisted) this.resolvePlacementFromRecords(affinityId, persisted, records);
+      }
+    }
+    for (const affinityId of affinityIds) this.arm(affinityId);
+  }
+
   private async resolvePlacement(
     affinityId: string,
     persisted: PersistedWorkspaceAffinity,
@@ -277,7 +311,22 @@ export class WorkspaceAffinityManager {
     if (persisted.workspaceId && persisted.cwd) {
       return { cwd: persisted.cwd, workspaceId: persisted.workspaceId };
     }
-    const records = (await this.options.agentStorage.list()).filter((record) =>
+    return this.resolvePlacementFromRecords(
+      affinityId,
+      persisted,
+      await this.options.agentStorage.list(),
+    );
+  }
+
+  private resolvePlacementFromRecords(
+    affinityId: string,
+    persisted: PersistedWorkspaceAffinity,
+    allRecords: readonly StoredAgentRecord[],
+  ): WorkspaceAffinityPlacement | null {
+    if (persisted.workspaceId && persisted.cwd) {
+      return { cwd: persisted.cwd, workspaceId: persisted.workspaceId };
+    }
+    const records = allRecords.filter((record) =>
       isAffinityOwned(record, this.options.daemonId, affinityId),
     );
     const placements = records.flatMap((record) =>
@@ -289,6 +338,12 @@ export class WorkspaceAffinityManager {
       throw new Error(`Workspace affinity ${affinityId} resolves to multiple workspaces`);
     }
     const placement = placements[0]!;
+    if (persisted.workspaceId && persisted.workspaceId !== placement.workspaceId) {
+      throw new Error(`Workspace affinity ${affinityId} resolves to multiple workspaces`);
+    }
+    if (persisted.cwd && persisted.cwd !== placement.cwd) {
+      throw new Error(`Workspace affinity ${affinityId} resolves to multiple workspace paths`);
+    }
     persisted.workspaceId = placement.workspaceId;
     persisted.cwd = placement.cwd;
     this.persist();
@@ -389,20 +444,23 @@ export class WorkspaceAffinityManagerPool {
 
   constructor(private readonly options: Omit<WorkspaceAffinityManagerOptions, "daemonId">) {}
 
-  start(): void {
+  async start(): Promise<void> {
     this.requireActive();
-    if (this.started) return;
-    this.started = true;
-    const executionsDirectory = path.join(this.options.paseoHome, "hub-executions");
-    if (!existsSync(executionsDirectory)) return;
-    for (const entry of readdirSync(executionsDirectory, { withFileTypes: true })) {
-      if (
-        entry.isDirectory() &&
-        existsSync(path.join(executionsDirectory, entry.name, FILE_NAME))
-      ) {
-        this.forDaemon(entry.name);
+    if (!this.started) {
+      this.started = true;
+      const executionsDirectory = path.join(this.options.paseoHome, "hub-executions");
+      if (existsSync(executionsDirectory)) {
+        for (const entry of readdirSync(executionsDirectory, { withFileTypes: true })) {
+          if (
+            entry.isDirectory() &&
+            existsSync(path.join(executionsDirectory, entry.name, FILE_NAME))
+          ) {
+            this.forDaemon(entry.name);
+          }
+        }
       }
     }
+    await Promise.all(Array.from(this.managers.values(), (manager) => manager.waitUntilReady()));
   }
 
   forDaemon(daemonId: string): WorkspaceAffinityManager {

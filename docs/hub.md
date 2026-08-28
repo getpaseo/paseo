@@ -128,6 +128,8 @@ the daemon does not retry revocation in the background.
 Disconnect and revocation end relationship execution authority, but they do not cancel an already
 acknowledged workspace-affinity retention deadline. Affinity cleanup remains owned by the daemon and
 is reconstructed from persisted mappings after daemon restart, even when that relationship is gone.
+Startup repairs a provisional mapping from its persisted affinity-owned agent before arming cleanup,
+so a crash between agent persistence and final mapping persistence does not require a Hub replay.
 
 `paseo hub logout` removes only the active human CLI credential and preserves credentials for other origins. Interactive logout inspects and optionally disconnects a same-origin daemon before deleting the login; a failed requested disconnect preserves the login. JSON and noninteractive logout never prompt or disconnect implicitly.
 

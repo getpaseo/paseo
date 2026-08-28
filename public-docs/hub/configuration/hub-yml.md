@@ -252,7 +252,9 @@ With `auto_archive: true`, the daemon archives the workspace at that retained de
 use `idle_timeout`, which remains a liveness deadline for the current execution. With
 `auto_archive: false`, the daemon does not perform affinity-driven workspace archiving.
 Disconnecting or revoking the Hub relationship does not cancel a deadline the daemon already
-acknowledged; persisted affinity cleanup resumes after daemon restart.
+acknowledged; persisted affinity cleanup resumes after daemon restart. If a crash interrupts the
+first binding after its affinity-owned agent is persisted, startup repairs the provisional mapping
+before arming cleanup; a Hub replay is not required.
 
 At expiry, same-workspace descendants of affinity-owned agents remain in cleanup scope, while
 detached agents and unrelated roots block workspace archival. A detach or parent-label change that

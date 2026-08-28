@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import pino from "pino";
@@ -347,7 +347,7 @@ test("resumes retention for a retired relationship after daemon restart", async 
     clock,
   };
   const activeRelationshipManagers = new WorkspaceAffinityManagerPool(options);
-  activeRelationshipManagers.start();
+  await activeRelationshipManagers.start();
   await activeRelationshipManagers.forDaemon("retired-daemon").create({
     affinity: {
       key: "retired-thread",
@@ -360,9 +360,77 @@ test("resumes retention for a retired relationship after daemon restart", async 
   activeRelationshipManagers.dispose();
 
   const restartedManagers = new WorkspaceAffinityManagerPool(options);
-  restartedManagers.start();
+  await restartedManagers.start();
   await clock.advanceBy(60_000);
 
   expect(archived).toEqual(["workspace-1"]);
   restartedManagers.dispose();
+});
+
+test("recovers a provisional mapping and archives it after restart without a Hub replay", async () => {
+  home = await mkdtemp(path.join(tmpdir(), "paseo-workspace-affinity-"));
+  const clock = new ManualClock();
+  const storage = new MemoryAgentStorage();
+  const archived: string[] = [];
+  const daemonId = "interrupted-daemon";
+  const affinityId = workspaceAffinityId("interrupted-thread");
+  const affinityDirectory = path.join(home, "hub-executions", daemonId);
+  await mkdir(affinityDirectory, { recursive: true });
+  await writeFile(
+    path.join(affinityDirectory, "workspace-affinities.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        affinities: {
+          [affinityId]: {
+            target: { cwd: "/repo", autoArchive: true },
+            workspaceId: null,
+            cwd: null,
+            retainUntil: "2026-08-06T12:01:00.000Z",
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  storage.records.push({
+    id: "persisted-affinity-agent",
+    provider: "codex",
+    cwd: "/repo",
+    workspaceId: "workspace-1",
+    createdAt: "2026-08-06T12:00:00.000Z",
+    updatedAt: "2026-08-06T12:00:00.000Z",
+    labels: {},
+    lastStatus: "closed",
+    config: null,
+    persistence: null,
+    owner: {
+      kind: "daemon",
+      daemonId,
+      executionId: "interrupted-execution",
+      workspaceAffinityId: affinityId,
+    },
+  });
+  const managers = new WorkspaceAffinityManagerPool({
+    paseoHome: home,
+    agentStorage: storage,
+    ensureWorkspace: async () => undefined,
+    archiveWorkspace: async (workspaceId) => {
+      archived.push(workspaceId);
+    },
+    logger: pino({ level: "silent" }),
+    clock,
+  });
+
+  await managers.start();
+  expect(
+    JSON.parse(await readFile(path.join(affinityDirectory, "workspace-affinities.json"), "utf8")),
+  ).toMatchObject({
+    affinities: { [affinityId]: { workspaceId: "workspace-1", cwd: "/repo" } },
+  });
+  await clock.advanceBy(60_000);
+
+  expect(archived).toEqual(["workspace-1"]);
+  managers.dispose();
 });

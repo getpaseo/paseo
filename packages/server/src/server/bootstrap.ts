@@ -1730,7 +1730,7 @@ export async function createPaseoDaemon(
             daemonConfigStore.onFieldChange("relay.enabled", (value) => {
               relayRuntime?.setEnabled(value === true);
             });
-            hubWorkspaceAffinityManagers.start();
+            await hubWorkspaceAffinityManagers.start();
             await hubRelationships.start();
           };
 
