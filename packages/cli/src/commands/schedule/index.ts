@@ -1,4 +1,4 @@
-import { Command, Option } from "commander";
+import { Command } from "commander";
 import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 import { runCreateCommand } from "./create.js";
@@ -23,7 +23,7 @@ export function createScheduleCommand(): Command {
       .option("--cron <expr>", "Cron cadence expression")
       .option("--timezone <iana>", "IANA time zone for cron cadence (default: UTC)")
       .option("--name <name>", "Optional schedule name")
-      .addOption(new Option("--target <target>", "Legacy schedule target").hideHelp())
+      .option("--target <target>", "Schedule target: new-agent or an agent ID")
       .option(
         "--provider <provider>",
         "Agent provider, or provider/model (e.g. codex or codex/gpt-5.4)",

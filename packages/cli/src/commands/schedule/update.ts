@@ -8,7 +8,7 @@ import {
 import {
   connectScheduleClient,
   parseScheduleUpdateInput,
-  requireNewAgentSchedule,
+  requireNewAgentUpdateTarget,
   toScheduleCommandError,
   type ScheduleCommandOptions,
 } from "./shared.js";
@@ -52,7 +52,9 @@ export async function runUpdateCommand(
   });
   const { client } = await connectScheduleClient(options.host);
   try {
-    await requireNewAgentSchedule(client, id);
+    if (input.newAgentConfig) {
+      await requireNewAgentUpdateTarget(client, id);
+    }
     const payload = await client.scheduleUpdate(input);
     if (payload.error || !payload.schedule) {
       throw new Error(payload.error ?? `Failed to update schedule: ${id}`);
