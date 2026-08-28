@@ -3,14 +3,17 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useHostFeature } from "@/runtime/host-features";
 import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { pluginRegistry } from "./registry";
+import type { PluginReactNativeRuntime } from "./evaluate";
 import { useSessionStore } from "@/stores/session-store";
 
 export function PluginCatalogSync({
   serverId,
   client,
+  reactNativeRuntime,
 }: {
   serverId: string;
   client: DaemonClient;
+  reactNativeRuntime?: PluginReactNativeRuntime;
 }) {
   const connected = useHostRuntimeIsConnected(serverId);
   const supported = useHostFeature(serverId, "plugins");
@@ -35,6 +38,7 @@ export function PluginCatalogSync({
               const timelineChanged = pluginRegistry.installCatalog(serverId, catalog, {
                 replacePluginId,
                 client,
+                reactNativeRuntime,
               });
               if (timelineChanged) {
                 useSessionStore
@@ -64,7 +68,7 @@ export function PluginCatalogSync({
       cancelled = true;
       unsubscribe();
     };
-  }, [client, connected, serverId, supported]);
+  }, [client, connected, reactNativeRuntime, serverId, supported]);
 
   useEffect(() => () => pluginRegistry.removeHost(serverId), [serverId]);
   return null;

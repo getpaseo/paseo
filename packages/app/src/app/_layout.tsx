@@ -27,6 +27,7 @@ import { CommandCenterRootActions } from "@/command-center/root-registration";
 import { CommandCenterProvider } from "@/command-center/provider";
 import { CommandCenterWorkspaceActions } from "@/command-center/workspace-registration";
 import { PluginCommandCenterActions } from "@/plugins/command-center/registration";
+import { pluginReactNativeRuntime } from "@/plugins/react-native/runtime";
 import { AddProjectFlowHost } from "@/components/add-project-flow-host";
 import { AppearanceStyleBoundary } from "@/components/appearance-style-boundary";
 import { WorktreeSetupCalloutSource } from "@/components/worktree-setup-callout-source";
@@ -276,7 +277,11 @@ function ManagedDaemonSession({ daemon }: { daemon: HostProfile }) {
   return (
     <SessionProvider key={daemon.serverId} serverId={daemon.serverId} client={client}>
       <LegacyFavoriteProfileMigrationBootstrap serverId={daemon.serverId} client={client} />
-      <PluginCatalogSync serverId={daemon.serverId} client={client} />
+      <PluginCatalogSync
+        serverId={daemon.serverId}
+        client={client}
+        reactNativeRuntime={pluginReactNativeRuntime}
+      />
     </SessionProvider>
   );
 }

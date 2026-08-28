@@ -7,8 +7,10 @@
 // both spellings resolve. Remove the @paseo/* entries after 2026-11-19.
 export const PLUGIN_SDK_SPECIFIERS = [
   "@getpaseo/plugin",
+  "@getpaseo/plugin/react-native",
   "@getpaseo/plugin/server",
   "@paseo/plugin",
+  "@paseo/plugin/react-native",
   "@paseo/plugin/server",
 ] as const;
 

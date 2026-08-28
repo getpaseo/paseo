@@ -28,6 +28,12 @@ import type { ComponentType } from "react";
 import { Icon, resolvePluginIcon } from "./icons";
 import { parsePluginThemeContribution } from "./themes";
 
+export interface PluginReactNativeRuntime {
+  Icon: unknown;
+  Modal: unknown;
+  useToast: unknown;
+}
+
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 const PANEL_LOCATIONS = ["workspace", "explorer"] as const;
 const TIMELINE_ITEM_TYPES = new Set([
@@ -66,7 +72,15 @@ function requireId(value: string, label: string): string {
   return id;
 }
 
-export function evaluatePluginClientBundle(id: string, bundle: string): EvaluatedPlugin {
+export function evaluatePluginClientBundle(
+  id: string,
+  bundle: string,
+  reactNativeRuntime: PluginReactNativeRuntime = {
+    Icon,
+    Modal: undefined,
+    useToast: undefined,
+  },
+): EvaluatedPlugin {
   const collector: PluginRegistrationCollector = {
     surfaces: [],
     sidebarItems: [],
@@ -262,6 +276,9 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         useWorkspace,
         useRpc,
       };
+    }
+    if (name === "@getpaseo/plugin/react-native" || name === "@paseo/plugin/react-native") {
+      return reactNativeRuntime;
     }
     if (name === "@getpaseo/plugin/server") {
       return { defineAttachmentSource, defineRpc };

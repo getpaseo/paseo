@@ -121,17 +121,18 @@ code lives behind filename boundaries:
 | `*.server.ts`  | Node APIs, filesystem and process access, credentials, and handlers. |
 | `*.shared.ts`  | Zod RPC contracts and plain values used by both runtimes.            |
 
-Shared files import contracts from `@getpaseo/plugin/server`. Client files import hooks and the
-host-provided `Icon` component from `@getpaseo/plugin`. `Icon` resolves a Lucide name using the
-client's installed icon set; an unknown name renders nothing so it cannot break the plugin surface.
+Shared files import contracts from `@getpaseo/plugin/server`. Client files import Paseo UI from
+`@getpaseo/plugin/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
+set; an unknown name renders nothing so it cannot break the plugin surface.
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
 See `public-docs/plugins/reference.md`.
 
-| Module                    | Use it for                                               |
-| ------------------------- | -------------------------------------------------------- |
-| `@getpaseo/plugin`        | host UI components, hooks, and UI types                  |
-| `@getpaseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, and handler types |
+| Module                          | Use it for                                               |
+| ------------------------------- | -------------------------------------------------------- |
+| `@getpaseo/plugin`              | contribution contracts and client data hooks             |
+| `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks               |
+| `@getpaseo/plugin/server`       | `defineRpc`, `defineAttachmentSource`, and handler types |
 
 The compiler removes client registrations and imports from the server entry point, and server
 registrations and imports from the client entry point. Importing a `*.server` module from a client

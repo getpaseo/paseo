@@ -71,6 +71,9 @@ const pluginAuthorRuntime = {
 };
 
 function runtimeRequire(name: string): unknown {
+  if (name.endsWith("/plugin/react-native")) {
+    throw new Error(`${name} is available only in plugin client code`);
+  }
   if (isPluginSdkSpecifier(name)) return pluginAuthorRuntime;
   return nodeRequire(name);
 }

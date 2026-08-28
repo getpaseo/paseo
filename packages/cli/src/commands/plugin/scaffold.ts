@@ -56,6 +56,37 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
   export const PluginAttachmentSearchPayloadSchema: import("zod").ZodType<PluginAttachmentSearchPayload>;
 }
 
+declare module "@getpaseo/plugin/react-native" {
+  import type { ComponentType, ReactNode } from "react";
+
+  export interface PluginIconProps {
+    name: string;
+    size?: number;
+    color?: string;
+  }
+
+  export interface ModalProps {
+    open: boolean;
+    onOpenChange(open: boolean): void;
+    title: string;
+    children: ReactNode;
+  }
+
+  export type ToastVariant = "default" | "info" | "success" | "warning" | "error";
+  export interface ToastOptions {
+    variant?: ToastVariant;
+    durationMs?: number;
+  }
+  export interface ToastApi {
+    show(message: string, options?: ToastOptions): void;
+    error(message: string): void;
+  }
+
+  export const Icon: ComponentType<PluginIconProps>;
+  export const Modal: ComponentType<ModalProps>;
+  export function useToast(): ToastApi;
+}
+
 declare module "@getpaseo/plugin" {
   import type { ComponentType } from "react";
   import type { PaseoApi } from "@getpaseo/client";

@@ -42,7 +42,9 @@ The required root manifest is `paseo-plugin.json`. It contains the default plugi
 
 The entry point is `index.ts` at the plugin root. Plugin, surface, sidebar-item, workspace-panel, Command Center item, and attachment-source IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
 
-The generated declaration file supplies `@getpaseo/plugin` and `@getpaseo/plugin/server` types for local typechecking. Paseo supplies the runtime modules. Regenerate a fresh project with the matching CLI when the plugin contract changes.
+The generated declaration file supplies `@getpaseo/plugin`, `@getpaseo/plugin/react-native`, and
+`@getpaseo/plugin/server` types for local typechecking. Paseo supplies the runtime modules.
+Regenerate a fresh project with the matching CLI when the plugin contract changes.
 
 Add runtime-specific files as the plugin grows:
 
@@ -67,15 +69,16 @@ Paseo builds separate client and server bundles from `index.ts`. It rejects impo
 
 Paseo provides these modules to client code:
 
-| Module                    | Use it for                              |
-| ------------------------- | --------------------------------------- |
-| `@getpaseo/plugin`        | Host UI components, hooks, and UI types |
-| `@getpaseo/plugin/server` | Shared RPC and attachment contracts     |
-| `@tanstack/react-query`   | Request state and caching               |
-| `react`                   | Components and hooks                    |
-| `react/jsx-runtime`       | Compiled JSX                            |
-| `react-native`            | Cross-platform UI                       |
-| `zod`                     | Shared schemas                          |
+| Module                          | Use it for                            |
+| ------------------------------- | ------------------------------------- |
+| `@getpaseo/plugin`              | Contribution contracts and data hooks |
+| `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks      |
+| `@getpaseo/plugin/server`       | Shared RPC and attachment contracts   |
+| `@tanstack/react-query`         | Request state and caching             |
+| `react`                         | Components and hooks                  |
+| `react/jsx-runtime`             | Compiled JSX                          |
+| `react-native`                  | Cross-platform UI                     |
+| `zod`                           | Shared schemas                        |
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
@@ -169,12 +172,45 @@ Paseo owns the route, header, close action, host picker, error boundary, and que
 Use the host-provided `Icon` component for Lucide icons inside client surfaces. It renders the icon from Paseo's installed Lucide version, so plugin bundles do not import `lucide-react-native` or `react-native-svg`. An unknown name renders nothing instead of failing the plugin surface.
 
 ```tsx
-import { Icon } from "@getpaseo/plugin";
+import { Icon } from "@getpaseo/plugin/react-native";
 
 <Icon name="Settings" size={18} color={theme.colors.foreground} />;
 ```
 
 Keep `Icon` in a `*.client.tsx` module.
+
+## Modals and toasts
+
+Import host UI from `@getpaseo/plugin/react-native`. `Modal` is controlled React state. Paseo
+renders it as a bottom sheet on compact layouts and a centered dialog otherwise.
+
+```tsx
+import { Modal, useToast } from "@getpaseo/plugin/react-native";
+import type { PluginSurfaceProps } from "@getpaseo/plugin";
+import { useState } from "react";
+import { Pressable, Text } from "react-native";
+
+function EditIssue({ theme }: PluginSurfaceProps) {
+  const [open, setOpen] = useState(false);
+  const toast = useToast();
+  return (
+    <>
+      <Pressable onPress={() => setOpen(true)}>
+        <Text style={{ color: theme.colors.foreground }}>Edit</Text>
+      </Pressable>
+      <Modal open={open} onOpenChange={setOpen} title="Edit issue">
+        <Pressable onPress={() => toast.show("Issue saved", { variant: "success" })}>
+          <Text style={{ color: theme.colors.foreground }}>Save</Text>
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
+```
+
+Modal children remain inside the plugin runtime: `usePaseo`, `useRpc`, `useWorkspace`, and
+`useAgent` work inside them. Dismissal through the backdrop, close button, Escape key, or compact
+sheet gesture calls `onOpenChange(false)`.
 
 ## Timeline items
 

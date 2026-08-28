@@ -276,7 +276,7 @@ function makeHermesInteropEager(code: string): string {
 function createUnusedPlatformModulePlugin(target: PluginBuildTarget): Plugin {
   const filter =
     target === "server"
-      ? /^(@tanstack\/react-query|react|react\/jsx-runtime|react-native)$/
+      ? /^(@tanstack\/react-query|react|react\/jsx-runtime|react-native|@getpaseo\/plugin\/react-native|@paseo\/plugin\/react-native)$/
       : /^node:/;
   return {
     name: `paseo-plugin-${target}-unused-platform-modules`,
