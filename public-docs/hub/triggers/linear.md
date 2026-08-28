@@ -135,7 +135,8 @@ steps:
       - text: |
           Assess this Linear issue for a safe, self-contained first-draft PR. Set eligible
           to true only when the change is clear, bounded, testable, and requires no product
-          or security decision.
+          or security decision. Then call hub.finish_execution with an output object containing
+          that eligible decision; do not return it only as prose.
 
           ${{ paseo.context }}
     output:

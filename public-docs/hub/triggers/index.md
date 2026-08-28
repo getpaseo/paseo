@@ -60,7 +60,8 @@ Each provider page documents its events and the data they expose:
 
 ## Filters
 
-`filters` is required. Reactive external triggers require a non-empty `from_users` allowlist.
+`filters` is required. `manual.run` and reactive external triggers require a non-empty `from_users`
+allowlist. For `manual.run`, it matches the `actor` supplied by the dispatch request.
 `linear.issue_entered_scope` is the deliberate exception: it is an autonomous policy, requires a
 Linear project, and fires only when an issue enters the complete configured scope.
 
@@ -70,7 +71,7 @@ An allowlist is one layer of defense. It does not make a permitted account trust
 
 | Filter           | Applies to                     | Matches                                                                         |
 | ---------------- | ------------------------------ | ------------------------------------------------------------------------------- |
-| `from_users`     | reactive external events       | GitHub login; Linear, Slack, and Discord **user id**, not display name          |
+| `from_users`     | manual and reactive events     | Manual actor; GitHub login; Linear, Slack, and Discord **user id**              |
 | `repo`           | GitHub                         | `owner/name`                                                                    |
 | `project`        | Linear                         | Project id                                                                      |
 | `states`         | Linear                         | Current workflow-state ids                                                      |
