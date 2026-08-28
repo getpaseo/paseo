@@ -1,4 +1,4 @@
-import { tool } from "@opencode-ai/plugin";
+import { z } from "zod";
 
 const INTERNAL_PREFIX = "/_internal/opencode";
 
@@ -29,7 +29,7 @@ export default async function paseoPlugin(input, options) {
   }
   const tools = {};
   for (const definition of manifest.tools ?? []) {
-    tools[`paseo_${definition.name}`] = tool({
+    tools[`paseo_${definition.name}`] = {
       description: definition.description,
       args: jsonSchemaObjectToZodShape(definition.inputSchema),
       execute: async (args, context) => {
@@ -53,7 +53,7 @@ export default async function paseoPlugin(input, options) {
           metadata: { paseoTool: definition.name },
         };
       },
-    });
+    };
   }
 
   return {
@@ -118,7 +118,6 @@ function jsonSchemaObjectToZodShape(schema) {
 }
 
 function jsonSchemaToZod(schema) {
-  const z = tool.schema;
   if (!schema || typeof schema !== "object") return z.any();
   if (schema.anyOf) return unionToZod(schema.anyOf);
   if (schema.oneOf) return unionToZod(schema.oneOf);
@@ -159,7 +158,6 @@ function jsonSchemaToZod(schema) {
 }
 
 function unionToZod(items) {
-  const z = tool.schema;
   const nonNull = items.filter((item) => item?.type !== "null");
   const nullable = nonNull.length !== items.length;
   const parsed = nonNull.map(jsonSchemaToZod);
