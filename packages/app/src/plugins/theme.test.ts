@@ -70,6 +70,7 @@ describe("toPluginTheme", () => {
         surface1: lightTheme.colors.surface1,
         surface2: lightTheme.colors.surface2,
         border: lightTheme.colors.border,
+        scrim: "rgba(0,0,0,0.55)",
         foreground: lightTheme.colors.foreground,
         foregroundMuted: lightTheme.colors.foregroundMuted,
         accent: lightTheme.colors.accent,
@@ -77,6 +78,7 @@ describe("toPluginTheme", () => {
         statusSuccess: lightTheme.colors.statusSuccess,
         statusWarning: lightTheme.colors.statusWarning,
         statusDanger: lightTheme.colors.statusDanger,
+        statusDangerTint: "rgba(157, 67, 59, 0.1)",
       },
     });
   });
