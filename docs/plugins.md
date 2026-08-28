@@ -1,7 +1,7 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
+composer pills, app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
 subprocess and evaluates the client contribution in the app runtime. Plugin code is trusted code;
 Paseo does not sandbox it.
 
@@ -201,6 +201,49 @@ Command Center callbacks use the selected host's existing `PaseoApi` for normal 
 They use typed plugin RPC only for plugin-specific backend work. Navigation is limited to the
 plugin's registered global surfaces and workspace panels; plugins do not receive Expo Router or
 workspace-layout store access.
+
+## Contribute composer pills
+
+Register a headless client entrypoint, then add and remove targeted pills from that client
+lifecycle. `addClientSide` runs once per plugin installation in each connected app and never runs
+in the daemon subprocess. It can subscribe to the client API, call plugin RPCs, and own arbitrary
+client state without mounting a panel or surface.
+
+```tsx
+export function contributeClient(client: PluginClientContext) {
+  const pills = new Map<string, () => void>();
+  const unsubscribe = client.paseo.agents.subscribe((update) => {
+    if (update.kind !== "upsert" || !update.agent.workspaceId) return;
+    const { id: agentId, workspaceId } = update.agent;
+    pills.get(agentId)?.();
+    pills.set(
+      agentId,
+      client.addComposerPill({
+        id: "review",
+        title: "Open review",
+        workspaceId,
+        agentId,
+        Component: ReviewPill,
+        async onPress() {
+          await client.rpc(refreshReview, { agentId });
+          client.openPanel("review", { workspaceId, agentId });
+        },
+      }),
+    );
+  });
+  return () => {
+    unsubscribe();
+    for (const remove of pills.values()) remove();
+  };
+}
+```
+
+Wire it from `index.ts` with `plugin.addClientSide(contributeClient)`. `addComposerPill` exists only
+on `PluginClientContext`; it returns an idempotent removal function. A pill appears only in the
+matching workspace and agent track bar alongside Tasks and Subagents. Paseo owns the pressable,
+shared chrome, pending state, error reporting, and placement. The component owns its icon and text;
+the callback is client code by construction. Removing the pill, reloading the plugin, disconnecting
+the host, or unloading the app tears down the contribution.
 
 ## Contribute timeline items
 

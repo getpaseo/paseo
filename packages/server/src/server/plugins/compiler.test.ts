@@ -117,7 +117,7 @@ export default function contribute(plugin: PluginContext) {
 });
 
 describe("plugin contribution targets", () => {
-  it("keeps timeline contributions out of the server bundle", async () => {
+  it("keeps client contributions out of the server bundle", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
     const entryPath = path.join(directory, "index.ts");
@@ -135,6 +135,16 @@ describe("plugin contribution targets", () => {
     schema: { safeParse(value) { return { success: true, data: value }; } },
     Component() { return null; },
   });
+  plugin.addClientSide((client) => {
+    return client.addComposerPill({
+      id: "composer-card",
+      title: "Composer card",
+      workspaceId: "workspace-a",
+      agentId: "agent-a",
+      Component() { return null; },
+      onPress() {},
+    });
+  });
   return () => undefined;
 }
 `,
@@ -142,7 +152,9 @@ describe("plugin contribution targets", () => {
 
     const { clientBundle, serverBundle } = await compilePlugin(entryPath);
     expect(clientBundle).toContain("timeline-card");
+    expect(clientBundle).toContain("composer-card");
     expect(serverBundle).not.toContain("timeline-card");
+    expect(serverBundle).not.toContain("composer-card");
   });
 });
 

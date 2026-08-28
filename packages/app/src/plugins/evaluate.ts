@@ -10,6 +10,7 @@ import {
   defineRpc,
   type PluginAttachmentSourceContribution,
   type PluginCommandCenterItemContribution,
+  type PluginClientContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
   type PluginThemeContribution,
@@ -71,6 +72,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
+    clientSide: null,
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
@@ -162,6 +164,13 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         icon,
         keywords: contribution.keywords?.map((keyword) => keyword.trim()).filter(Boolean),
       });
+    },
+    addClientSide(contribution: PluginClientContribution) {
+      if (collector.clientSide) throw new Error("Plugin has more than one client-side entrypoint");
+      if (typeof contribution !== "function") {
+        throw new Error("Plugin client-side entrypoint is not a function");
+      }
+      collector.clientSide = contribution;
     },
     addAttachmentSource(contribution: PluginAttachmentSourceContribution) {
       const normalizedId = requireId(contribution.id, "attachment source id");
@@ -299,6 +308,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     sidebarItems: collector.sidebarItems,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
+    clientSide: collector.clientSide,
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,

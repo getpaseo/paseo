@@ -212,6 +212,28 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("Duplicate Command Center item: review");
   });
 
+  it("collects one explicit client-side entrypoint", () => {
+    const plugin = evaluatePluginClientBundle(
+      "review",
+      bundle(`
+        function contributeClient() { return function() {}; }
+        plugin.addClientSide(contributeClient);
+      `),
+    );
+    expect(plugin.clientSide).toBeTypeOf("function");
+
+    expect(() =>
+      evaluatePluginClientBundle(
+        "review",
+        bundle(`
+          function contributeClient() { return function() {}; }
+          plugin.addClientSide(contributeClient);
+          plugin.addClientSide(contributeClient);
+        `),
+      ),
+    ).toThrow("Plugin has more than one client-side entrypoint");
+  });
+
   it("rejects duplicate attachment source ids", () => {
     expect(() =>
       evaluatePluginClientBundle(

@@ -155,8 +155,26 @@ declare module "@getpaseo/plugin" {
     agentId: string;
   }
 
+  export interface PluginComposerPillProps extends PluginHostProps {
+    workspaceId: string;
+    agentId: string;
+  }
+
+  export interface PluginComposerPillContribution {
+    id: string;
+    title: string;
+    workspaceId: string;
+    agentId: string;
+    Component: ComponentType<PluginComposerPillProps>;
+    onPress(): void | Promise<void>;
+  }
+
   export type PluginPanelLocation = "workspace" | "explorer";
   export interface PluginOpenPanelOptions { location?: PluginPanelLocation; }
+  export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
+    workspaceId: string;
+    agentId?: string;
+  }
 
   export type PluginWorkspacePanelContribution =
     | { id: string; title: string; icon: string; locations?: readonly PluginPanelLocation[]; context: "workspace"; Component: ComponentType<PluginWorkspacePanelProps> }
@@ -241,6 +259,12 @@ declare module "@getpaseo/plugin" {
     openPanel(id: string, options?: PluginOpenPanelOptions): void;
   }
 
+  export interface PluginClientContext extends PluginCommandCapabilities {
+    addComposerPill(contribution: PluginComposerPillContribution): PluginCleanup;
+    openPanel(id: string, options: PluginClientOpenPanelOptions): void;
+  }
+  export type PluginClientContribution = (client: PluginClientContext) => PluginCleanup;
+
   export type PluginCommandCenterItemContribution =
     | { id: string; title: string; icon: string; keywords?: readonly string[]; context: "global"; onSelect(context: PluginGlobalCommandContext): void | Promise<void> }
     | { id: string; title: string; icon: string; keywords?: readonly string[]; context: "workspace"; onSelect(context: PluginWorkspaceCommandContext): void | Promise<void> }
@@ -258,6 +282,7 @@ declare module "@getpaseo/plugin" {
     addSidebarItem(contribution: PluginSidebarContribution): void;
     addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
+    addClientSide(contribution: PluginClientContribution): void;
     addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
     addTheme(contribution: PluginThemeContribution): void;
     addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(contribution: PluginTimelineTransformerContribution<ItemType>): void;

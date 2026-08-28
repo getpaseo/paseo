@@ -478,6 +478,92 @@ Every callback receives:
 
 An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown surface and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. Use `rpc` for plugin-specific filesystem, credential, vendor, or daemon-local work.
 
+## Composer pills
+
+Register a headless client entrypoint from `index.ts`:
+
+```ts
+import { contributeClient } from "./review.client";
+
+export default function contribute(plugin: PluginContext) {
+  plugin.addClientSide(contributeClient);
+  return () => {};
+}
+```
+
+The client entrypoint owns pill creation and removal:
+
+```tsx
+import {
+  Icon,
+  type PluginClientContext,
+  type PluginComposerPillProps,
+  useAgent,
+} from "@getpaseo/plugin";
+import { Text } from "react-native";
+
+function ReviewPill({ theme, agentId }: PluginComposerPillProps) {
+  const agent = useAgent(agentId, ({ title }) => ({ title }));
+  return (
+    <>
+      <Icon name="Scan" size={14} color={theme.colors.foregroundMuted} />
+      <Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>
+        {agent?.title ?? "Review"}
+      </Text>
+    </>
+  );
+}
+
+export function contributeClient(client: PluginClientContext) {
+  const pills = new Map<string, () => void>();
+  const unsubscribe = client.paseo.agents.subscribe((update) => {
+    if (update.kind !== "upsert" || !update.agent.workspaceId) return;
+    const { id: agentId, workspaceId } = update.agent;
+    pills.get(agentId)?.();
+    pills.set(
+      agentId,
+      client.addComposerPill({
+        id: "review",
+        title: "Open review",
+        workspaceId,
+        agentId,
+        Component: ReviewPill,
+        async onPress() {
+          await client.rpc(refreshReview, { agentId });
+          client.openPanel("review", { workspaceId, agentId });
+        },
+      }),
+    );
+  });
+  return () => {
+    unsubscribe();
+    for (const remove of pills.values()) remove();
+  };
+}
+```
+
+`addComposerPill` fields:
+
+| Field         | Required | Meaning                                                    |
+| ------------- | -------- | ---------------------------------------------------------- |
+| `id`          | Yes      | Plugin-local ID within the target agent.                   |
+| `title`       | Yes      | Accessible button label.                                   |
+| `workspaceId` | Yes      | Workspace whose composer track owns the pill.              |
+| `agentId`     | Yes      | Agent whose composer track owns the pill.                  |
+| `Component`   | Yes      | React Native component rendering the pill's icon and text. |
+| `onPress`     | Yes      | Client-side callback.                                      |
+
+`addClientSide` runs once per plugin installation in each connected app. Its context exposes
+`paseo`, typed `rpc`, `openSurface`, explicit-context `openPanel`, and `addComposerPill`.
+`addComposerPill` returns an idempotent removal function. Paseo also removes every outstanding pill
+when the client entrypoint, plugin installation, or host connection is torn down.
+
+Paseo owns the pressable, shared pill chrome, pending state, error reporting, and track-bar
+placement. The component receives `theme`, `host`, `layout`, `workspaceId`, and `agentId`. Read
+current values with `useWorkspace` and `useAgent`. The plugin owns when the pill exists, its icon
+and text, and the callback. `openPanel(id, { workspaceId, agentId? })` opens or focuses a panel
+registered by the same plugin.
+
 ## Use the Paseo SDK
 
 Use `usePaseo()` for ordinary Paseo operations from a surface. It borrows the selected host's existing connection; do not create another client.
