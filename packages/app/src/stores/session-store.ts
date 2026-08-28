@@ -476,6 +476,11 @@ interface SessionStoreActions {
       taskSnapshot?: TodoEntry[];
     },
   ) => void;
+  truncateAgentStreamTailAtMessageId: (
+    serverId: string,
+    agentId: string,
+    messageId: string,
+  ) => void;
   applyAgentTurnLiveness: (
     serverId: string,
     agentId: string,
@@ -1053,6 +1058,33 @@ export const useSessionStore = create<SessionStore>()(
                 agentTasks,
                 messageSubmissions,
               },
+            },
+          };
+        });
+      },
+
+      truncateAgentStreamTailAtMessageId: (serverId, agentId, messageId) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session) return prev;
+          const currentTail = session.agentStreamTail.get(agentId);
+          if (!currentTail) return prev;
+          const targetIndex = currentTail.findIndex(
+            (item) =>
+              item.kind === "user_message" &&
+              (item.messageId === messageId || item.clientMessageId === messageId || item.id === messageId),
+          );
+          if (targetIndex === -1) return prev;
+          const truncated = currentTail.slice(0, targetIndex + 1);
+          // Also clear the live head so no stale streaming items remain visible
+          const nextTail = new Map(session.agentStreamTail).set(agentId, truncated);
+          const nextHead = new Map(session.agentStreamHead);
+          nextHead.delete(agentId);
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, agentStreamTail: nextTail, agentStreamHead: nextHead },
             },
           };
         });

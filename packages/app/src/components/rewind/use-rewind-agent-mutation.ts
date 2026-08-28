@@ -33,6 +33,12 @@ export function useRewindAgentMutation(input: UseRewindAgentMutationInput): {
       if (!input.client || !input.agentId || !input.messageId) {
         throw new Error(t("common.errors.daemonClientUnavailable"));
       }
+      // Optimistic truncation: slice the local stream immediately (Zed-style zero-flash)
+      if (mode !== "files" && input.serverId) {
+        useSessionStore
+          .getState()
+          .truncateAgentStreamTailAtMessageId(input.serverId, input.agentId, input.messageId);
+      }
       await input.client.rewindAgent(input.agentId, input.messageId, mode);
       if (mode !== "files") {
         const cursor = input.serverId
