@@ -247,6 +247,38 @@ test("reserved Paseo MCP input does not invalidate replay of an owned execution"
   expect(await hub.durableOwnedAgentIds()).toEqual([original.payload.agentId]);
 });
 
+test("replaying a pre-affinity execution does not acknowledge an unapplied affinity", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("legacy-create", "legacy-execution");
+  const original = await hub.ownedCreateResult("legacy-create");
+  expect(original).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, executionId: "legacy-execution" },
+  });
+  expect(original.payload).not.toHaveProperty("workspaceAffinityApplied");
+  const executionProviderCreations = hub.executionProviderCreations();
+
+  hub.beginOwnedCreate("affinity-replay", "legacy-execution", {
+    workspaceAffinity: {
+      key: "thread-added-after-upgrade",
+      retainUntil: "2099-08-06T12:02:00.000Z",
+      autoArchive: true,
+    },
+  });
+  const replay = await hub.ownedCreateResult("affinity-replay");
+
+  expect(replay).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: true,
+      executionId: "legacy-execution",
+      agentId: original.payload.agentId,
+    },
+  });
+  expect(replay.payload).not.toHaveProperty("workspaceAffinityApplied");
+  expect(hub.executionProviderCreations()).toBe(executionProviderCreations);
+});
+
 test("removing a daemon-owned agent removes its execution association", async () => {
   const hub = await launchRelationship();
   const created = await hub.createOwnedConcurrently();

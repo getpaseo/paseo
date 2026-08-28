@@ -43,6 +43,7 @@ export interface HubExecutionControlInput {
 export interface OwnedAgentSnapshot {
   executionId: string;
   agent: AgentSnapshotPayload;
+  workspaceAffinityApplied?: true;
 }
 
 export type OwnedAgentEvent =
@@ -296,6 +297,7 @@ export class DaemonExecutions implements HubExecutionAgents {
       owned: {
         executionId: owner.executionId,
         agent: serializeAgentSnapshot(result.liveSnapshot),
+        ...(owner.workspaceAffinityId ? { workspaceAffinityApplied: true as const } : {}),
       },
       workspaceId: requireExecutionWorkspaceId(result.liveSnapshot),
       cwd: result.liveSnapshot.cwd,
@@ -352,6 +354,7 @@ export class DaemonExecutions implements HubExecutionAgents {
     const live = this.agentManager.getAgent(record.id);
     return {
       executionId: owner.executionId,
+      ...(owner.workspaceAffinityId ? { workspaceAffinityApplied: true as const } : {}),
       agent: live
         ? serializeAgentSnapshot(live)
         : {

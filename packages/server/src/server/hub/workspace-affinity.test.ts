@@ -130,7 +130,7 @@ test("reuses and restores a hashed affinity workspace until the latest workflow 
   expect(persisted).toContain(workspaceAffinityId("slack-thread-1"));
 });
 
-test("rejects target changes and never auto-archives a workspace with an unrelated live agent", async () => {
+test("rejects target changes and retries after an unrelated live agent blocks archival", async () => {
   home = await mkdtemp(path.join(tmpdir(), "paseo-workspace-affinity-"));
   const clock = new ManualClock();
   const storage = new MemoryAgentStorage();
@@ -183,4 +183,47 @@ test("rejects target changes and never auto-archives a workspace with an unrelat
   });
   await clock.advanceBy(60_000);
   expect(archived).toEqual([]);
+  storage.records[0] = {
+    ...storage.records[0]!,
+    archivedAt: "2026-08-06T12:01:30.000Z",
+  };
+  await clock.advanceBy(60_000);
+  expect(archived).toEqual(["workspace-1"]);
+});
+
+test("retries workspace archival after a transient failure", async () => {
+  home = await mkdtemp(path.join(tmpdir(), "paseo-workspace-affinity-"));
+  const clock = new ManualClock();
+  const storage = new MemoryAgentStorage();
+  const archived: string[] = [];
+  let attempts = 0;
+  const manager = new WorkspaceAffinityManager({
+    paseoHome: home,
+    daemonId: "daemon-1",
+    agentStorage: storage,
+    ensureWorkspace: async () => undefined,
+    archiveWorkspace: async (workspaceId) => {
+      attempts++;
+      if (attempts === 1) throw new Error("temporary archive failure");
+      archived.push(workspaceId);
+    },
+    logger: pino({ level: "silent" }),
+    clock,
+  });
+  await manager.create({
+    affinity: {
+      key: "retry-key",
+      retainUntil: "2026-08-06T12:01:00.000Z",
+      autoArchive: true,
+    },
+    cwd: "/repo",
+    create: async () => ({ value: undefined, workspaceId: "workspace-1", cwd: "/repo" }),
+  });
+
+  await clock.advanceBy(60_000);
+  expect(attempts).toBe(1);
+  expect(archived).toEqual([]);
+  await clock.advanceBy(60_000);
+  expect(attempts).toBe(2);
+  expect(archived).toEqual(["workspace-1"]);
 });

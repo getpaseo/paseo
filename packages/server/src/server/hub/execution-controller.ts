@@ -173,7 +173,7 @@ export class HubExecutionController {
           agent: result.agent,
           success: true,
           ...(message.toolPolicy ? { toolPolicyApplied: true as const } : {}),
-          ...(message.workspaceAffinity ? { workspaceAffinityApplied: true as const } : {}),
+          ...(result.workspaceAffinityApplied ? { workspaceAffinityApplied: true as const } : {}),
           error: null,
         },
       });

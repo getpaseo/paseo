@@ -15,6 +15,7 @@ import { ensurePrivateFile, writePrivateFileAtomicSync } from "../private-files.
 
 const FILE_NAME = "workspace-affinities.json";
 const MAX_TIMER_DELAY_MS = 2_147_000_000;
+const ARCHIVE_RETRY_DELAY_MS = 60_000;
 
 const WorkspaceAffinityTargetSchema = z
   .object({
@@ -181,12 +182,13 @@ export class WorkspaceAffinityManager {
     if (this.disposed) return;
     await this.withAffinity(affinityId, async () => {
       try {
-        await this.archiveIfDue(affinityId);
+        if (!(await this.archiveIfDue(affinityId))) this.armRetry(affinityId);
       } catch (error) {
         this.options.logger.warn(
           { err: error, affinityId },
           "Failed to archive a released Hub workspace affinity",
         );
+        this.armRetry(affinityId);
       }
     });
   }
@@ -245,41 +247,52 @@ export class WorkspaceAffinityManager {
   }
 
   private arm(affinityId: string): void {
-    this.timers.get(affinityId)?.cancel();
-    this.timers.delete(affinityId);
-    if (this.disposed) return;
     const persisted = this.state.affinities[affinityId];
-    if (!persisted?.target.autoArchive || !persisted.workspaceId) return;
+    if (!persisted) return;
     const deadline = parseDeadline(persisted.retainUntil);
     const delayMs = Math.min(
       Math.max(0, deadline.getTime() - this.clock.now().getTime()),
       MAX_TIMER_DELAY_MS,
     );
+    this.schedule(affinityId, delayMs);
+  }
+
+  private armRetry(affinityId: string): void {
+    this.schedule(affinityId, ARCHIVE_RETRY_DELAY_MS);
+  }
+
+  private schedule(affinityId: string, delayMs: number): void {
+    this.timers.get(affinityId)?.cancel();
+    this.timers.delete(affinityId);
+    if (this.disposed) return;
+    const persisted = this.state.affinities[affinityId];
+    if (!persisted?.target.autoArchive || !persisted.workspaceId) return;
     const timer = this.clock.schedule(delayMs, () => {
       this.timers.delete(affinityId);
       void this.withAffinity(affinityId, async () => {
         try {
-          await this.archiveIfDue(affinityId);
+          if (!(await this.archiveIfDue(affinityId))) this.armRetry(affinityId);
         } catch (error) {
           this.options.logger.warn(
             { err: error, affinityId },
             "Failed to archive an expired Hub workspace affinity",
           );
+          this.armRetry(affinityId);
         }
       });
     });
     this.timers.set(affinityId, timer);
   }
 
-  private async archiveIfDue(affinityId: string): Promise<void> {
+  private async archiveIfDue(affinityId: string): Promise<boolean> {
     const persisted = this.state.affinities[affinityId];
-    if (!persisted?.target.autoArchive || this.disposed) return;
+    if (!persisted?.target.autoArchive || this.disposed) return true;
     if (parseDeadline(persisted.retainUntil).getTime() > this.clock.now().getTime()) {
       this.arm(affinityId);
-      return;
+      return true;
     }
     const placement = await this.resolvePlacement(affinityId, persisted);
-    if (!placement?.workspaceId) return;
+    if (!placement?.workspaceId) return true;
     const records = await this.options.agentStorage.listByWorkspace(placement.workspaceId);
     const protectedAgent = records.find(
       (record) => !record.archivedAt && !isAffinityOwned(record, this.options.daemonId, affinityId),
@@ -289,12 +302,13 @@ export class WorkspaceAffinityManager {
         { affinityId, workspaceId: placement.workspaceId, agentId: protectedAgent.id },
         "Skipped Hub workspace affinity archive because the workspace has an unrelated live agent",
       );
-      return;
+      return false;
     }
     await this.options.archiveWorkspace(
       placement.workspaceId,
       `workspace-affinity:${affinityId}:${parseDeadline(persisted.retainUntil).getTime()}:${randomUUID()}`,
     );
+    return true;
   }
 
   private requireUsable(): void {
