@@ -3,11 +3,13 @@ import {
   createElement,
   useCallback,
   useContext,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   type ReactNode,
 } from "react";
+import { isNative } from "@/constants/platform";
 
 /**
  * Shared overlay root for web portals (modals, toasts, etc.)
@@ -99,12 +101,22 @@ interface RemoveWebOverlayOptions {
   restoreFocus?: boolean;
 }
 
-function getTopWebOverlay(): WebOverlayEntry | undefined {
-  return webOverlayEntries.reduce<WebOverlayEntry | undefined>((top, entry) => {
+/**
+ * Topmost by paint order: higher layer wins, and the later registration breaks
+ * a tie so a menu opened inside a modal outranks the modal hosting it.
+ */
+function getTopOverlay<T extends { order: number; getLayer: () => number }>(
+  entries: readonly T[],
+): T | undefined {
+  return entries.reduce<T | undefined>((top, entry) => {
     if (!top) return entry;
     const layerDifference = entry.getLayer() - top.getLayer();
     return layerDifference > 0 || (layerDifference === 0 && entry.order > top.order) ? entry : top;
   }, undefined);
+}
+
+function getTopWebOverlay(): WebOverlayEntry | undefined {
+  return getTopOverlay(webOverlayEntries);
 }
 
 export function hasActiveWebOverlay(): boolean {
@@ -227,6 +239,168 @@ function addWebOverlay(entry: WebOverlayEntry): (options?: RemoveWebOverlayOptio
       entry.restoreFocus.focus();
     }
   };
+}
+
+// --- Native overlays ---
+
+/**
+ * The native counterpart to the web overlay stack, carrying only a dismiss.
+ *
+ * On web an overlay registers a focus scope and a key handler, and
+ * `dispatchTopWebOverlayKeyDown` gives the topmost one first refusal on every
+ * key. Native has no DOM scope to trap focus in and no key event to hand over,
+ * so the press arrives as a `UIKeyCommand` and the only thing an overlay can
+ * usefully answer is Escape. Arrow and Enter navigation stays web-only: the
+ * combobox and menu handlers read `event.target` and query the DOM.
+ *
+ * Registered separately from the web stack rather than as one list, because an
+ * overlay is active on the two platforms under different conditions — the
+ * command center registers a web scope only when it is not the bottom sheet,
+ * and the bottom sheet is exactly what native shows.
+ */
+interface NativeOverlayEntry {
+  id: symbol;
+  order: number;
+  getLayer: () => number;
+  /** DOM key names to register while this overlay is topmost, beyond Escape. */
+  getKeys: () => readonly string[];
+  handleKey: (key: string) => boolean;
+}
+
+const EMPTY_OVERLAY_KEYS: readonly string[] = [];
+
+const nativeOverlayEntries: NativeOverlayEntry[] = [];
+let nativeOverlayOrder = 0;
+const nativeOverlayListeners = new Set<() => void>();
+
+function notifyNativeOverlays(): void {
+  for (const listener of nativeOverlayListeners) {
+    listener();
+  }
+}
+
+export function hasActiveNativeOverlay(): boolean {
+  return nativeOverlayEntries.length > 0;
+}
+
+export function subscribeNativeOverlays(listener: () => void): () => void {
+  nativeOverlayListeners.add(listener);
+  return () => {
+    nativeOverlayListeners.delete(listener);
+  };
+}
+
+/**
+ * Offers a key to the topmost native overlay. Returns false when nothing is
+ * open or the overlay does not want it, in which case the caller carries on to
+ * app-wide shortcuts — the same fall-through `dispatchTopWebOverlayKeyDown` has.
+ */
+export function dispatchTopNativeOverlayKey(key: string): boolean {
+  const top = getTopOverlay(nativeOverlayEntries);
+  if (!top) return false;
+  return top.handleKey(key);
+}
+
+/** Closes the topmost native overlay. Returns false when none is open. */
+export function dismissTopNativeOverlay(): boolean {
+  return dispatchTopNativeOverlayKey("Escape");
+}
+
+/**
+ * The keys the topmost overlay wants delivered, beyond Escape.
+ *
+ * Only the topmost matters: it is the only one `dispatchTopNativeOverlayKey`
+ * will offer a press to, and registering a key no reachable overlay handles
+ * would take it away from whatever holds focus for nothing.
+ */
+export function getTopNativeOverlayKeys(): readonly string[] {
+  return getTopOverlay(nativeOverlayEntries)?.getKeys() ?? [];
+}
+
+/** Adds an entry and returns its removal. The hooks below are the usual callers. */
+export function registerNativeOverlay(input: {
+  getLayer: () => number;
+  getKeys?: () => readonly string[];
+  handleKey: (key: string) => boolean;
+}): () => void {
+  const getKeys = input.getKeys;
+  const entry: NativeOverlayEntry = {
+    id: Symbol("native-overlay"),
+    order: ++nativeOverlayOrder,
+    getLayer: input.getLayer,
+    getKeys: getKeys ?? (() => EMPTY_OVERLAY_KEYS),
+    handleKey: input.handleKey,
+  };
+  nativeOverlayEntries.push(entry);
+  notifyNativeOverlays();
+  return () => {
+    const index = nativeOverlayEntries.findIndex((candidate) => candidate.id === entry.id);
+    if (index === -1) return;
+    nativeOverlayEntries.splice(index, 1);
+    notifyNativeOverlays();
+  };
+}
+
+/**
+ * Registers an overlay's hardware-keyboard handling on native.
+ *
+ * Called alongside `useWebOverlayRegistration`, whose `active` answers a
+ * different question — that one wants a DOM scope and never registers without
+ * a `document`, so the two conditions do not collapse into one flag.
+ *
+ * `keys` are registered as `UIKeyCommand`s for as long as this overlay is the
+ * topmost one, which is why they are declared rather than inferred: a
+ * registered command is taken from whatever holds focus, so Enter and the
+ * arrows must belong to the palette only while the palette is open. Escape
+ * arrives without being declared — it is registered for `agent.interrupt`
+ * anyway. Never ask for Backspace: it would stop deleting text.
+ */
+export function useNativeOverlayKeys({
+  active,
+  layer,
+  keys,
+  onKey,
+}: {
+  active: boolean;
+  layer: number;
+  keys?: readonly string[];
+  onKey: (key: string) => boolean;
+}): void {
+  const onKeyRef = useRef(onKey);
+  onKeyRef.current = onKey;
+  const layerRef = useRef(layer);
+  layerRef.current = layer;
+  const keysRef = useRef(keys);
+  keysRef.current = keys;
+
+  useEffect(() => {
+    if (!isNative || !active) return;
+    return registerNativeOverlay({
+      getLayer: () => layerRef.current,
+      getKeys: () => keysRef.current ?? EMPTY_OVERLAY_KEYS,
+      handleKey: (key) => onKeyRef.current(key),
+    });
+  }, [active]);
+}
+
+/** The common case: an overlay that only needs Escape to close it. */
+export function useNativeOverlayDismiss({
+  active,
+  layer,
+  onDismiss,
+}: {
+  active: boolean;
+  layer: number;
+  onDismiss: () => void;
+}): void {
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
+  const handleKey = useCallback((key: string) => {
+    if (key !== "Escape") return false;
+    dismissRef.current();
+    return true;
+  }, []);
+  useNativeOverlayKeys({ active, layer, onKey: handleKey });
 }
 
 interface WebOverlayRegistration {
