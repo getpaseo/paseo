@@ -169,48 +169,91 @@ export default function contribute(plugin: PluginContext) {
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
 
-Use the host-provided `Icon` component for Lucide icons inside client surfaces. It renders the icon from Paseo's installed Lucide version, so plugin bundles do not import `lucide-react-native` or `react-native-svg`. An unknown name renders nothing instead of failing the plugin surface.
+## Host UI
+
+Import Paseo-owned UI from `@getpaseo/plugin/react-native` in `*.client.tsx` files. This example
+opens a controlled modal, renders a host icon, and confirms the action with a toast:
 
 ```tsx
-import { Icon } from "@getpaseo/plugin/react-native";
-
-<Icon name="Settings" size={18} color={theme.colors.foreground} />;
-```
-
-Keep `Icon` in a `*.client.tsx` module.
-
-## Modals and toasts
-
-Import host UI from `@getpaseo/plugin/react-native`. `Modal` is controlled React state. Paseo
-renders it as a bottom sheet on compact layouts and a centered dialog otherwise.
-
-```tsx
-import { Modal, useToast } from "@getpaseo/plugin/react-native";
 import type { PluginSurfaceProps } from "@getpaseo/plugin";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
 import { useState } from "react";
-import { Pressable, Text } from "react-native";
+import { Pressable, Text, View } from "react-native";
 
-function EditIssue({ theme }: PluginSurfaceProps) {
+export function IssueActions({ theme }: PluginSurfaceProps) {
   const [open, setOpen] = useState(false);
   const toast = useToast();
+
+  function saveIssue() {
+    toast.show("Issue saved", { variant: "success" });
+    setOpen(false);
+  }
+
   return (
-    <>
-      <Pressable onPress={() => setOpen(true)}>
-        <Text style={{ color: theme.colors.foreground }}>Edit</Text>
+    <View>
+      <Pressable accessibilityRole="button" onPress={() => setOpen(true)}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Icon name="Pencil" size={18} color={theme.colors.foreground} />
+          <Text style={{ color: theme.colors.foreground }}>Edit issue</Text>
+        </View>
       </Pressable>
+
       <Modal open={open} onOpenChange={setOpen} title="Edit issue">
-        <Pressable onPress={() => toast.show("Issue saved", { variant: "success" })}>
+        <Pressable accessibilityRole="button" onPress={saveIssue}>
           <Text style={{ color: theme.colors.foreground }}>Save</Text>
         </Pressable>
       </Modal>
-    </>
+    </View>
   );
 }
 ```
 
-Modal children remain inside the plugin runtime: `usePaseo`, `useRpc`, `useWorkspace`, and
-`useAgent` work inside them. Dismissal through the backdrop, close button, Escape key, or compact
-sheet gesture calls `onOpenChange(false)`.
+### Modal
+
+`Modal` uses a bottom sheet on compact layouts and a centered dialog otherwise. The plugin owns
+the `open` state.
+
+| Prop           | Type                      | Required | Behavior                                      |
+| -------------- | ------------------------- | -------- | --------------------------------------------- |
+| `open`         | `boolean`                 | Yes      | Shows the modal when `true`.                  |
+| `onOpenChange` | `(open: boolean) => void` | Yes      | Receives `false` when the user dismisses it.  |
+| `title`        | `string`                  | Yes      | Labels the modal and its visible header.      |
+| `children`     | `ReactNode`               | Yes      | Renders the plugin's React Native UI content. |
+
+The close button, backdrop, platform back action, web Escape key, and compact sheet gesture dismiss
+the modal. Dismissal calls `onOpenChange(false)`; the plugin must update `open` to close it.
+
+Modal children keep the plugin runtime context. `usePaseo`, `useRpc`, `useWorkspace`, and
+`useAgent` work inside them.
+
+### Toasts
+
+`useToast()` returns two methods:
+
+| Method                    | Behavior                                                    |
+| ------------------------- | ----------------------------------------------------------- |
+| `show(message, options?)` | Shows a toast for 2,200 ms unless `durationMs` is supplied. |
+| `error(message)`          | Shows an error toast for 3,200 ms.                          |
+
+`show` accepts these options:
+
+| Option       | Type                                                       | Default     |
+| ------------ | ---------------------------------------------------------- | ----------- |
+| `variant`    | `"default" \| "info" \| "success" \| "warning" \| "error"` | `"default"` |
+| `durationMs` | `number`                                                   | `2200`      |
+
+Showing another toast replaces the currently visible toast. An empty message is ignored.
+
+### Icons
+
+`Icon` renders a [Lucide icon](https://lucide.dev/icons/) from Paseo's installed icon set. Plugin bundles do not import
+`lucide-react-native` or `react-native-svg`.
+
+| Prop    | Type     | Required | Behavior                                        |
+| ------- | -------- | -------- | ----------------------------------------------- |
+| `name`  | `string` | Yes      | Lucide icon name. Unknown names render nothing. |
+| `size`  | `number` | No       | Icon width and height.                          |
+| `color` | `string` | No       | Icon color. Use a plugin theme token.           |
 
 ## Timeline items
 
