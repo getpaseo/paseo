@@ -1,11 +1,19 @@
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType, FunctionComponent, ReactNode } from "react";
 import type { PluginIconProps } from "./contracts.js";
 
 export interface ModalProps {
   open: boolean;
   onOpenChange(open: boolean): void;
+  children: ReactNode;
+}
+
+export interface ModalContentProps {
   title: string;
   children: ReactNode;
+}
+
+export interface ModalComponent extends FunctionComponent<ModalProps> {
+  Content: ComponentType<ModalContentProps>;
 }
 
 export type ToastVariant = "default" | "info" | "success" | "warning" | "error";
@@ -21,7 +29,7 @@ export interface ToastApi {
 }
 
 export declare const Icon: ComponentType<PluginIconProps>;
-export declare const Modal: ComponentType<ModalProps>;
+export declare const Modal: ModalComponent;
 export declare function useToast(): ToastApi;
 
 export type { PluginIconProps } from "./contracts.js";

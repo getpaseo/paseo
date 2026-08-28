@@ -378,14 +378,13 @@ describe("evaluatePluginClientBundle", () => {
   });
 
   it("provides Paseo UI through @getpaseo/plugin/react-native", () => {
-    const runtime = { Icon: () => null, Modal: () => null, useToast: () => ({}) };
     const plugin = evaluatePluginClientBundle(
       "example",
       `(function(require) {
         const { Icon, Modal, useToast } = require("@getpaseo/plugin/react-native");
         const module = { exports: {} };
         module.exports.default = function(plugin) {
-          if (typeof Icon !== "function" || typeof Modal !== "function" || typeof useToast !== "function") {
+          if (typeof Icon !== "function" || typeof Modal !== "function" || typeof Modal.Content !== "function" || typeof useToast !== "function") {
             throw new Error("React Native plugin UI is incomplete");
           }
           plugin.addSurface("main", function Surface() { return null; });
@@ -393,7 +392,6 @@ describe("evaluatePluginClientBundle", () => {
         };
         return module.exports;
       })`,
-      runtime,
     );
 
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);

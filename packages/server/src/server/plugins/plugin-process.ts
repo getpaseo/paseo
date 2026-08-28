@@ -9,7 +9,7 @@ import {
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
-import { isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
+import { isPluginClientOnlySdkSpecifier, isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
 
@@ -71,7 +71,7 @@ const pluginAuthorRuntime = {
 };
 
 function runtimeRequire(name: string): unknown {
-  if (name.endsWith("/plugin/react-native")) {
+  if (isPluginClientOnlySdkSpecifier(name)) {
     throw new Error(`${name} is available only in plugin client code`);
   }
   if (isPluginSdkSpecifier(name)) return pluginAuthorRuntime;

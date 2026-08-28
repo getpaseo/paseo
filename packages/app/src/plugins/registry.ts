@@ -3,7 +3,6 @@ import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { startPluginClientSide } from "./composer-pills/lifecycle";
 import { evaluatePluginClientBundle } from "./evaluate";
-import type { PluginReactNativeRuntime } from "./evaluate";
 import type { InstalledPlugin } from "./types";
 
 interface CatalogPlugin {
@@ -35,7 +34,6 @@ class PluginRegistry {
     options: {
       replacePluginId?: string;
       client?: DaemonClient;
-      reactNativeRuntime?: PluginReactNativeRuntime;
     } = {},
   ): boolean {
     const previous = this.byHost.get(serverId) ?? [];
@@ -68,11 +66,7 @@ class PluginRegistry {
           return [existing];
         }
         const queryClient = new QueryClient();
-        const evaluated = evaluatePluginClientBundle(
-          entry.id,
-          entry.clientBundle,
-          options.reactNativeRuntime,
-        );
+        const evaluated = evaluatePluginClientBundle(entry.id, entry.clientBundle);
         const installation: InstalledPlugin = {
           ...evaluated,
           serverId,

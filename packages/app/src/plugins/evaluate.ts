@@ -26,13 +26,8 @@ import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
 import { Icon, resolvePluginIcon } from "./icons";
+import { pluginReactNativeRuntime } from "./react-native/runtime";
 import { parsePluginThemeContribution } from "./themes";
-
-export interface PluginReactNativeRuntime {
-  Icon: unknown;
-  Modal: unknown;
-  useToast: unknown;
-}
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 const PANEL_LOCATIONS = ["workspace", "explorer"] as const;
@@ -72,15 +67,7 @@ function requireId(value: string, label: string): string {
   return id;
 }
 
-export function evaluatePluginClientBundle(
-  id: string,
-  bundle: string,
-  reactNativeRuntime: PluginReactNativeRuntime = {
-    Icon,
-    Modal: undefined,
-    useToast: undefined,
-  },
-): EvaluatedPlugin {
+export function evaluatePluginClientBundle(id: string, bundle: string): EvaluatedPlugin {
   const collector: PluginRegistrationCollector = {
     surfaces: [],
     sidebarItems: [],
@@ -278,7 +265,7 @@ export function evaluatePluginClientBundle(
       };
     }
     if (name === "@getpaseo/plugin/react-native" || name === "@paseo/plugin/react-native") {
-      return reactNativeRuntime;
+      return pluginReactNativeRuntime;
     }
     if (name === "@getpaseo/plugin/server") {
       return { defineAttachmentSource, defineRpc };

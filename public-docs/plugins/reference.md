@@ -198,10 +198,12 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
         </View>
       </Pressable>
 
-      <Modal open={open} onOpenChange={setOpen} title="Edit issue">
-        <Pressable accessibilityRole="button" onPress={saveIssue}>
-          <Text style={{ color: theme.colors.foreground }}>Save</Text>
-        </Pressable>
+      <Modal open={open} onOpenChange={setOpen}>
+        <Modal.Content title="Edit issue">
+          <Pressable accessibilityRole="button" onPress={saveIssue}>
+            <Text style={{ color: theme.colors.foreground }}>Save</Text>
+          </Pressable>
+        </Modal.Content>
       </Modal>
     </View>
   );
@@ -213,12 +215,18 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
 `Modal` uses a bottom sheet on compact layouts and a centered dialog otherwise. The plugin owns
 the `open` state.
 
-| Prop           | Type                      | Required | Behavior                                      |
-| -------------- | ------------------------- | -------- | --------------------------------------------- |
-| `open`         | `boolean`                 | Yes      | Shows the modal when `true`.                  |
-| `onOpenChange` | `(open: boolean) => void` | Yes      | Receives `false` when the user dismisses it.  |
-| `title`        | `string`                  | Yes      | Labels the modal and its visible header.      |
-| `children`     | `ReactNode`               | Yes      | Renders the plugin's React Native UI content. |
+| Prop           | Type                      | Required | Behavior                                     |
+| -------------- | ------------------------- | -------- | -------------------------------------------- |
+| `open`         | `boolean`                 | Yes      | Shows the modal content when `true`.         |
+| `onOpenChange` | `(open: boolean) => void` | Yes      | Receives `false` when the user dismisses it. |
+| `children`     | `ReactNode`               | Yes      | Contains `Modal.Content`.                    |
+
+`Modal.Content` owns the current modal presentation:
+
+| Prop       | Type        | Required | Behavior                                      |
+| ---------- | ----------- | -------- | --------------------------------------------- |
+| `title`    | `string`    | Yes      | Labels the modal and its visible header.      |
+| `children` | `ReactNode` | Yes      | Renders the plugin's React Native UI content. |
 
 The close button, backdrop, platform back action, web Escape key, and compact sheet gesture dismiss
 the modal. Dismissal calls `onOpenChange(false)`; the plugin must update `open` to close it.

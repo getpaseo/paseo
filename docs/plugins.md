@@ -124,6 +124,7 @@ code lives behind filename boundaries:
 Shared files import contracts from `@getpaseo/plugin/server`. Client files import Paseo UI from
 `@getpaseo/plugin/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
 set; an unknown name renders nothing so it cannot break the plugin surface.
+Its controlled modal uses `<Modal.Content title="…">` for the presented region.
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
 See `public-docs/plugins/reference.md`.

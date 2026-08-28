@@ -57,7 +57,7 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
 }
 
 declare module "@getpaseo/plugin/react-native" {
-  import type { ComponentType, ReactNode } from "react";
+  import type { ComponentType, FunctionComponent, ReactNode } from "react";
 
   export interface PluginIconProps {
     name: string;
@@ -68,8 +68,16 @@ declare module "@getpaseo/plugin/react-native" {
   export interface ModalProps {
     open: boolean;
     onOpenChange(open: boolean): void;
+    children: ReactNode;
+  }
+
+  export interface ModalContentProps {
     title: string;
     children: ReactNode;
+  }
+
+  export interface ModalComponent extends FunctionComponent<ModalProps> {
+    Content: ComponentType<ModalContentProps>;
   }
 
   export type ToastVariant = "default" | "info" | "success" | "warning" | "error";
@@ -83,7 +91,7 @@ declare module "@getpaseo/plugin/react-native" {
   }
 
   export const Icon: ComponentType<PluginIconProps>;
-  export const Modal: ComponentType<ModalProps>;
+  export const Modal: ModalComponent;
   export function useToast(): ToastApi;
 }
 

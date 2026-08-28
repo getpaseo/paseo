@@ -15,9 +15,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const { api, toast, dismiss } = useToastHost();
 
   return (
-    <ToastContext.Provider value={api}>
+    <ToastApiProvider api={api}>
       {children}
       <ToastViewport toast={toast} onDismiss={dismiss} />
-    </ToastContext.Provider>
+    </ToastApiProvider>
   );
+}
+
+export function ToastApiProvider({ api, children }: { api: ToastApi; children: ReactNode }) {
+  return <ToastContext.Provider value={api}>{children}</ToastContext.Provider>;
 }
