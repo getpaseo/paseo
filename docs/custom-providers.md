@@ -363,6 +363,26 @@ Override the command used to launch any provider with the `command` field. This 
 
 The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
 
+### Herdr-attached Pi sessions
+
+Enable Herdr on the built-in Pi provider to include its running Pi targets in import discovery:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "pi": {
+        "params": {
+          "herdr": { "enabled": true }
+        }
+      }
+    }
+  }
+}
+```
+
+Paseo runs the `herdr` command and uses its default session. Set `params.herdr.command` to a command array for another binary or wrapper, and set `params.herdr.session` to select a named Herdr session. Imported targets remain Pi agents in Paseo. Prompts and interrupts go through Herdr, while history comes from the native Pi JSONL session. Paseo rejects a saved attachment when its Herdr session, target, Pi session, session file, or working directory no longer matches.
+
 ### OMP profiles and Pi-compatible forks
 
 OMP ships as a first-class built-in provider option. It is disabled by default; enable it with:

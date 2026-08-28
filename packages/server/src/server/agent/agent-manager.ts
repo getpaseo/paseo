@@ -519,6 +519,27 @@ function attachPersistenceCwd(
   };
 }
 
+function persistenceHandlesEqual(
+  left: AgentPersistenceHandle | null,
+  right: AgentPersistenceHandle | null,
+): boolean {
+  return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+}
+
+function isHerdrAttachedPersistence(handle: AgentPersistenceHandle | null | undefined): boolean {
+  return handle?.metadata?.runtime === "herdr-attached";
+}
+
+function resolveHistoryPrimedForRegister(
+  options: { historyPrimed?: boolean; persistence?: AgentPersistenceHandle } | undefined,
+  durableTimelineHasRows: boolean,
+): boolean {
+  if (options?.historyPrimed !== undefined) {
+    return options.historyPrimed;
+  }
+  return isHerdrAttachedPersistence(options?.persistence) ? false : durableTimelineHasRows;
+}
+
 interface SubscriptionRecord {
   callback: AgentSubscriber;
   agentId: string | null;
@@ -686,6 +707,8 @@ export class AgentManager {
   private readonly durableTimelineStore?: AgentTimelineStore;
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
+  private readonly durableTimelineWrites = new Map<string, Promise<boolean>>();
+  private readonly blockedHerdrCursorAgents = new Set<string>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
@@ -2182,6 +2205,12 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
+    if (
+      this.blockedHerdrCursorAgents.has(agentId) &&
+      isHerdrAttachedPersistence(existingAgent.persistence)
+    ) {
+      throw new Error("Herdr-attached Pi session is unavailable after a persistence failure");
+    }
     this.logger.trace(
       {
         agentId,
@@ -3276,7 +3305,10 @@ export class AgentManager {
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
     }
     if (options?.timelineRows?.length) {
-      this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
+      const committed = this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
+      if (isHerdrAttachedPersistence(options.persistence) && !(await committed)) {
+        throw new Error(`Failed to persist imported timeline for agent ${agentId}`);
+      }
     }
     return { durableTimelineHasRows };
   }
@@ -3333,7 +3365,7 @@ export class AgentManager {
         options?.persistence ?? session.describePersistence(),
         config.cwd,
       ),
-      historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
+      historyPrimed: resolveHistoryPrimedForRegister(options, durableTimelineHasRows),
       lastUserMessageAt: options?.lastUserMessageAt ?? null,
       lastUsage: options?.lastUsage,
       lastError: options?.lastError,
@@ -3363,6 +3395,7 @@ export class AgentManager {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
+    this.blockedHerdrCursorAgents.delete(agent.id);
     if (agent.unsubscribeSession) {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
@@ -3495,6 +3528,21 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     event: AgentStreamEvent,
   ): Promise<void> {
+    if (
+      this.blockedHerdrCursorAgents.has(agent.id) &&
+      isHerdrAttachedPersistence(agent.persistence)
+    ) {
+      if (!isTurnTerminalEvent(event)) {
+        return;
+      }
+      const turnId = getAgentStreamEventTurnId(event);
+      event = {
+        type: "turn_failed",
+        provider: event.provider,
+        error: "Failed to persist Herdr-attached Pi timeline",
+        ...(turnId ? { turnId } : {}),
+      };
+    }
     if (event.type === "provider_subagent") {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       this.dispatch({ type: "provider_subagent", event: update });
@@ -3602,6 +3650,24 @@ export class AgentManager {
     await this.refreshRuntimeInfo(agent, options);
   }
 
+  private refreshSessionPersistence(agent: ActiveManagedAgent, event?: AgentStreamEvent): boolean {
+    if (
+      this.blockedHerdrCursorAgents.has(agent.id) &&
+      isHerdrAttachedPersistence(agent.persistence)
+    ) {
+      return false;
+    }
+    const handle = attachPersistenceCwd(agent.session.describePersistence(event), agent.cwd);
+    if (!handle || persistenceHandlesEqual(agent.persistence, handle)) {
+      return false;
+    }
+    if (agent.persistence && agent.persistence.sessionId !== handle.sessionId) {
+      return false;
+    }
+    agent.persistence = handle;
+    return true;
+  }
+
   private async refreshRuntimeInfo(
     agent: ActiveManagedAgent,
     options?: { emit?: boolean },
@@ -3614,14 +3680,15 @@ export class AgentManager {
         newInfo.sessionId !== agent.runtimeInfo?.sessionId ||
         newInfo.modeId !== agent.runtimeInfo?.modeId;
       agent.runtimeInfo = newInfo;
+      const persistenceChanged = this.refreshSessionPersistence(agent);
       if (!agent.persistence && newInfo.sessionId) {
         agent.persistence = attachPersistenceCwd(
           { provider: agent.provider, sessionId: newInfo.sessionId },
           agent.cwd,
         );
       }
-      // Emit state if runtimeInfo changed so clients get the updated model
-      if (changed && options?.emit !== false) {
+      // Emit state if runtimeInfo or persistence changed so clients get the updated model/handle.
+      if ((changed || persistenceChanged) && options?.emit !== false) {
         this.emitState(agent);
       }
     } catch {
@@ -3659,6 +3726,7 @@ export class AgentManager {
   ): Promise<void> {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
+    const durableWrites: Promise<boolean>[] = [];
     for await (const rawEvent of agent.session.streamHistory()) {
       const event = limitAgentStreamEventContent(rawEvent);
       if (event.type === "timeline") {
@@ -3675,8 +3743,6 @@ export class AgentManager {
     await this.deleteCommittedTimeline(agent.id);
     this.timelineStore.delete(agent.id);
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
-    agent.historyPrimed = true;
-
     for (const event of this.providerSubagents.deleteParent(agent.id)) {
       if (broadcast) {
         this.dispatch({ type: "provider_subagent", event });
@@ -3693,6 +3759,7 @@ export class AgentManager {
         agent.id,
         event.item,
         event.timestamp ? { timestamp: event.timestamp } : undefined,
+        (task) => durableWrites.push(task),
       );
       if (broadcastTimeline) {
         this.dispatchStream(agent.id, event, {
@@ -3702,6 +3769,15 @@ export class AgentManager {
         });
       }
     }
+    const herdrWriteFailed =
+      isHerdrAttachedPersistence(agent.persistence) &&
+      (await Promise.all(durableWrites)).some((committed) => !committed);
+    if (herdrWriteFailed) {
+      this.blockedHerdrCursorAgents.add(agent.id);
+      throw new Error(`Failed to persist hydrated timeline for agent ${agent.id}`);
+    }
+    agent.historyPrimed = true;
+    this.refreshSessionPersistence(agent);
     this.touchUpdatedAt(agent);
     this.emitState(agent);
   }
@@ -3716,6 +3792,7 @@ export class AgentManager {
       row: AgentTimelineRow;
     }> = [];
     const providerSubagentEvents: AgentManagerEvent[] = [];
+    const durableWrites: Promise<boolean>[] = [];
     agent.historyPrimed = false;
     try {
       for await (const rawEvent of agent.session.streamHistory()) {
@@ -3740,6 +3817,7 @@ export class AgentManager {
           agent.id,
           event.item,
           event.timestamp ? { timestamp: event.timestamp } : undefined,
+          (task) => durableWrites.push(task),
         );
         if (deferredBroadcast) {
           timelineEvents.push({ event, row });
@@ -3755,7 +3833,19 @@ export class AgentManager {
       this.logger.warn({ err: error, agentId: agent.id }, "Failed to hydrate provider history");
       throw error;
     }
+    const herdrWriteFailed =
+      isHerdrAttachedPersistence(agent.persistence) &&
+      (await Promise.all(durableWrites)).some((committed) => !committed);
+    if (herdrWriteFailed) {
+      this.blockedHerdrCursorAgents.add(agent.id);
+      throw new Error(`Failed to persist hydrated timeline for agent ${agent.id}`);
+    }
     agent.historyPrimed = true;
+
+    const persistenceChanged = this.refreshSessionPersistence(agent);
+    if (persistenceChanged) {
+      this.emitState(agent);
+    }
 
     if (typeof broadcast !== "function" || !broadcast()) {
       return;
@@ -4048,11 +4138,21 @@ export class AgentManager {
       return;
     }
 
-    if (
+    const submittedEcho =
       event.item.type === "user_message" &&
       event.item.clientMessageId &&
-      this.reconcileSubmittedPromptEcho(agent, event.item, event.turnId)
-    ) {
+      this.reconcileSubmittedPromptEcho(agent, event.item, event.turnId);
+    if (submittedEcho) {
+      const durable = await submittedEcho.durable;
+      if (!durable && isHerdrAttachedPersistence(agent.persistence)) {
+        this.blockedHerdrCursorAgents.add(agent.id);
+      }
+      const persistenceChanged = isHerdrAttachedPersistence(agent.persistence)
+        ? durable && this.refreshSessionPersistence(agent, event)
+        : false;
+      if (persistenceChanged) {
+        this.emitState(agent);
+      }
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
@@ -4069,9 +4169,28 @@ export class AgentManager {
       return;
     }
 
-    this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
+    let durable: Promise<boolean> = Promise.resolve(true);
+    this.recordAndDispatchTimelineItem(
+      agent.id,
+      event.item,
+      event.provider,
+      event.turnId,
+      undefined,
+      (task) => {
+        durable = task;
+      },
+    );
+    const timelineCommitted = await durable;
+    if (!timelineCommitted && isHerdrAttachedPersistence(agent.persistence)) {
+      this.blockedHerdrCursorAgents.add(agent.id);
+    }
+    const persistenceChanged = isHerdrAttachedPersistence(agent.persistence)
+      ? timelineCommitted && this.refreshSessionPersistence(agent, event)
+      : false;
     if (event.item.type === "user_message") {
       agent.lastUserMessageAt = new Date();
+      this.emitState(agent);
+    } else if (persistenceChanged) {
       this.emitState(agent);
     }
     flags.shouldDispatchEvent = false;
@@ -4283,8 +4402,9 @@ export class AgentManager {
     provider: AgentProvider,
     turnId?: string,
     options?: { providerMessageId?: string },
+    captureDurability?: (task: Promise<boolean>) => void,
   ): AgentStreamEvent {
-    const row = this.recordTimeline(agentId, item, { ...options, turnId });
+    const row = this.recordTimeline(agentId, item, { ...options, turnId }, captureDurability);
     const event: AgentStreamEvent = {
       type: "timeline",
       item,
@@ -4336,7 +4456,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     item: Extract<AgentTimelineItem, { type: "user_message" }>,
     turnId?: string,
-  ): AgentTimelineRow | null {
+  ): { row: AgentTimelineRow; durable: Promise<boolean> } | null {
     const { clientMessageId, messageId } = item;
     if (!clientMessageId) return null;
     let existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
@@ -4355,9 +4475,16 @@ export class AgentManager {
         clientMessageId,
         messageId,
       );
-      if (enriched) this.enqueueDurableTimelineUpdate(agent.id, enriched);
+      if (enriched) {
+        return { row: existing, durable: this.enqueueDurableTimelineUpdate(agent.id, enriched) };
+      }
     }
-    return existing;
+    return {
+      row: existing,
+      durable:
+        this.durableTimelineWrites.get(this.durableTimelineWriteKey(agent.id, existing.seq)) ??
+        Promise.resolve(true),
+    };
   }
 
   private async appendSystemErrorTimelineMessage(
@@ -4422,10 +4549,14 @@ export class AgentManager {
       providerMessageId?: string;
       turnId?: string;
     },
+    captureDurability?: (task: Promise<boolean>) => void,
   ): AgentTimelineRow {
     item = limitAgentTimelineItemContent(item);
     const row = this.timelineStore.append(agentId, item, options);
-    this.enqueueDurableTimelineAppend(agentId, row);
+    captureDurability?.(this.enqueueDurableTimelineAppend(agentId, row));
+    if (!captureDurability) {
+      this.enqueueDurableTimelineAppend(agentId, row);
+    }
     return row;
   }
 
@@ -4511,44 +4642,77 @@ export class AgentManager {
     this.trackBackgroundTask(task);
   }
 
-  private enqueueDurableTimelineAppend(agentId: string, row: AgentTimelineRow): void {
+  private enqueueDurableTimelineAppend(agentId: string, row: AgentTimelineRow): Promise<boolean> {
     if (!this.durableTimelineStore) {
-      return;
+      return Promise.resolve(true);
     }
-    const task = this.durableTimelineStore.bulkInsert(agentId, [row]).catch((err) => {
-      this.logger.error(
-        { err, agentId, seq: row.seq, itemType: row.item.type },
-        "Failed to append timeline row to durable store",
-      );
+    const key = this.durableTimelineWriteKey(agentId, row.seq);
+    const task = this.durableTimelineStore.bulkInsert(agentId, [row]).then(
+      () => true,
+      (err) => {
+        this.logger.error(
+          { err, agentId, seq: row.seq, itemType: row.item.type },
+          "Failed to append timeline row to durable store",
+        );
+        return false;
+      },
+    );
+    this.durableTimelineWrites.set(key, task);
+    void task.then((committed) => {
+      if (committed && this.durableTimelineWrites.get(key) === task) {
+        this.durableTimelineWrites.delete(key);
+      }
+      return undefined;
     });
-    this.trackBackgroundTask(task);
+    this.trackBackgroundTask(task.then(() => undefined));
+    return task;
   }
 
   private enqueueDurableTimelineBulkInsert(
     agentId: string,
     rows: readonly AgentTimelineRow[],
-  ): void {
+  ): Promise<boolean> {
     if (!this.durableTimelineStore || rows.length === 0) {
-      return;
+      return Promise.resolve(true);
     }
-    const task = this.durableTimelineStore.bulkInsert(agentId, rows).catch((err) => {
-      this.logger.error(
-        { err, agentId, rowCount: rows.length },
-        "Failed to seed durable timeline store",
-      );
-    });
-    this.trackBackgroundTask(task);
+    const task = this.durableTimelineStore.bulkInsert(agentId, rows).then(
+      () => true,
+      (err) => {
+        this.logger.error(
+          { err, agentId, rowCount: rows.length },
+          "Failed to seed durable timeline store",
+        );
+        return false;
+      },
+    );
+    this.trackBackgroundTask(task.then(() => undefined));
+    return task;
   }
 
-  private enqueueDurableTimelineUpdate(agentId: string, row: AgentTimelineRow): void {
-    if (!this.durableTimelineStore) return;
-    const task = this.durableTimelineStore.updateCommittedRow(agentId, row).catch((err) => {
-      this.logger.error(
-        { err, agentId, seq: row.seq, itemType: row.item.type },
-        "Failed to enrich durable timeline row",
-      );
+  private enqueueDurableTimelineUpdate(agentId: string, row: AgentTimelineRow): Promise<boolean> {
+    if (!this.durableTimelineStore) return Promise.resolve(true);
+    const pendingAppend =
+      this.durableTimelineWrites.get(this.durableTimelineWriteKey(agentId, row.seq)) ??
+      Promise.resolve(true);
+    const task = pendingAppend.then(async (appended) => {
+      if (!appended) return false;
+      try {
+        await this.durableTimelineStore!.updateCommittedRow(agentId, row);
+        return true;
+      } catch (err) {
+        this.logger.error(
+          { err, agentId, seq: row.seq, itemType: row.item.type },
+          "Failed to enrich durable timeline row",
+        );
+        return false;
+      }
     });
-    this.trackBackgroundTask(task);
+    this.trackBackgroundTask(task.then(() => undefined));
+    return task;
+  }
+
+  private durableTimelineWriteKey(agentId: string, seq: number): string {
+    return `${agentId}:${seq}`;
   }
 
   private trackBackgroundTask(task: Promise<void>): void {
