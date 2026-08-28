@@ -66,13 +66,14 @@ declare module "@getpaseo/plugin/react-native" {
   }
 
   export interface ModalProps {
+    title: string;
+    icon?: ReactNode;
     open: boolean;
     onOpenChange(open: boolean): void;
     children: ReactNode;
   }
 
   export interface ModalContentProps {
-    title: string;
     children: ReactNode;
   }
 

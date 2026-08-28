@@ -44,8 +44,13 @@ function Surface() {
         <Text>Open plugin modal</Text>
       </View>
     </Pressable>
-    <Modal open={open} onOpenChange={setOpen}>
-      <Modal.Content title="Edit plugin issue">
+    <Modal
+      title="Edit plugin issue"
+      icon={<Icon name="Pencil" size={18} />}
+      open={open}
+      onOpenChange={setOpen}
+    >
+      <Modal.Content>
         <ModalBody onSaved={() => setOpen(false)} />
       </Modal.Content>
     </Modal>

@@ -2,13 +2,14 @@ import type { ComponentType, FunctionComponent, ReactNode } from "react";
 import type { PluginIconProps } from "./contracts.js";
 
 export interface ModalProps {
+  title: string;
+  icon?: ReactNode;
   open: boolean;
   onOpenChange(open: boolean): void;
   children: ReactNode;
 }
 
 export interface ModalContentProps {
-  title: string;
   children: ReactNode;
 }
 

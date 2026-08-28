@@ -198,8 +198,13 @@ export function IssueActions({ theme }: PluginSurfaceProps) {
         </View>
       </Pressable>
 
-      <Modal open={open} onOpenChange={setOpen}>
-        <Modal.Content title="Edit issue">
+      <Modal
+        title="Edit issue"
+        icon={<Icon name="Pencil" size={18} color={theme.colors.foreground} />}
+        open={open}
+        onOpenChange={setOpen}
+      >
+        <Modal.Content>
           <Pressable accessibilityRole="button" onPress={saveIssue}>
             <Text style={{ color: theme.colors.foreground }}>Save</Text>
           </Pressable>
@@ -217,15 +222,16 @@ the `open` state.
 
 | Prop           | Type                      | Required | Behavior                                     |
 | -------------- | ------------------------- | -------- | -------------------------------------------- |
+| `title`        | `string`                  | Yes      | Labels the modal and its visible header.     |
+| `icon`         | `ReactNode`               | No       | Renders before the title in the header.      |
 | `open`         | `boolean`                 | Yes      | Shows the modal content when `true`.         |
 | `onOpenChange` | `(open: boolean) => void` | Yes      | Receives `false` when the user dismisses it. |
 | `children`     | `ReactNode`               | Yes      | Contains `Modal.Content`.                    |
 
-`Modal.Content` owns the current modal presentation:
+`Modal.Content` owns the body below the host-rendered header:
 
 | Prop       | Type        | Required | Behavior                                      |
 | ---------- | ----------- | -------- | --------------------------------------------- |
-| `title`    | `string`    | Yes      | Labels the modal and its visible header.      |
 | `children` | `ReactNode` | Yes      | Renders the plugin's React Native UI content. |
 
 The close button, backdrop, platform back action, web Escape key, and compact sheet gesture dismiss

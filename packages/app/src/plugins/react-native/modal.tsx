@@ -7,15 +7,20 @@ import { ToastApiProvider, useToast as useAppToast } from "@/contexts/toast-api-
 interface ModalContextValue {
   open: boolean;
   dismiss(): void;
+  header: {
+    title: string;
+    leading?: ReactNode;
+  };
 }
 
 const ModalContext = createContext<ModalContextValue | null>(null);
 
-function ModalRoot({ open, onOpenChange, children }: ModalProps) {
+function ModalRoot({ title, icon, open, onOpenChange, children }: ModalProps) {
   const onOpenChangeRef = useRef(onOpenChange);
   onOpenChangeRef.current = onOpenChange;
   const dismiss = useCallback(() => onOpenChangeRef.current(false), []);
-  const value = useMemo(() => ({ open, dismiss }), [dismiss, open]);
+  const header = useMemo(() => ({ title, leading: icon }), [icon, title]);
+  const value = useMemo(() => ({ open, dismiss, header }), [dismiss, header, open]);
   return <ModalContext.Provider value={value}>{children}</ModalContext.Provider>;
 }
 
@@ -25,12 +30,11 @@ function useModalContext(): ModalContextValue {
   return context;
 }
 
-function ModalContent({ title, children }: ModalContentProps) {
+function ModalContent({ children }: ModalContentProps) {
   const modal = useModalContext();
   const queryClient = useQueryClient();
   const toast = useAppToast();
   const bridgePluginRuntime = usePluginRuntimeContextBridge();
-  const header = useMemo(() => ({ title }), [title]);
   const contextBridge = useCallback(
     (content: ReactNode) => (
       <QueryClientProvider client={queryClient}>
@@ -46,7 +50,7 @@ function ModalContent({ title, children }: ModalContentProps) {
     <AdaptiveModalSheet
       visible={modal.open}
       onClose={modal.dismiss}
-      header={header}
+      header={modal.header}
       contextBridge={contextBridge}
     >
       {children}

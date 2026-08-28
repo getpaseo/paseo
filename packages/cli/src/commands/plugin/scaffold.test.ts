@@ -96,7 +96,7 @@ export function Surface() {
     source: { kind: "directory", path: "/repo" },
   });
   void createWorkspace;
-  return <><Icon name="Settings" size={18} color="#123456" /><Text onPress={() => toast.show("Ready")}>Paseo API</Text><Modal open={false} onOpenChange={() => {}}><Modal.Content title="Example"><Text>Modal</Text></Modal.Content></Modal></>;
+  return <><Icon name="Settings" size={18} color="#123456" /><Text onPress={() => toast.show("Ready")}>Paseo API</Text><Modal title="Example" icon={<Icon name="Settings" />} open={false} onOpenChange={() => {}}><Modal.Content><Text>Modal</Text></Modal.Content></Modal></>;
 }
 
 export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
