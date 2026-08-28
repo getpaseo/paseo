@@ -79,11 +79,15 @@ export async function inspectConfig(
         `import React from "react";
 import { Text } from "react-native";
 import {
+  Icon,
   type PluginAgentPanelProps,
+  type PluginClientContext,
+  type PluginComposerPillProps,
   useAgent,
   usePaseo,
   useWorkspace,
 } from "@getpaseo/plugin";
+import { inspect } from "./inspect.shared";
 
 export function Surface() {
   const paseo = usePaseo();
@@ -91,7 +95,7 @@ export function Surface() {
     source: { kind: "directory", path: "/repo" },
   });
   void createWorkspace;
-  return <Text>Paseo API</Text>;
+  return <><Icon name="Settings" size={18} color="#123456" /><Text>Paseo API</Text></>;
 }
 
 export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
@@ -107,12 +111,30 @@ export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
   });
   return <Text>{workspaceName}: {agentTitle}</Text>;
 }
+
+export function ComposerPill({ workspaceId, agentId }: PluginComposerPillProps) {
+  return <Text>{workspaceId}: {agentId}</Text>;
+}
+
+export function contributeClient(client: PluginClientContext) {
+  return client.addComposerPill({
+    id: "open-review",
+    title: "Open review",
+    workspaceId: "workspace-a",
+    agentId: "agent-a",
+    Component: ComposerPill,
+    async onPress() {
+      await client.rpc(inspect, {});
+      client.openPanel("review", { workspaceId: "workspace-a", agentId: "agent-a" });
+    },
+  });
+}
 `,
       ),
       writeFile(
         path.join(directory, "index.ts"),
         `import type { PluginContext } from "@getpaseo/plugin";
-import { AgentPanel, Surface } from "./main.client";
+import { AgentPanel, contributeClient, Surface } from "./main.client";
 import { inspectConfig } from "./inspect.server";
 import { inspect } from "./inspect.shared";
 
@@ -137,6 +159,7 @@ export default function contribute(plugin: PluginContext) {
       openPanel("review");
     },
   });
+  plugin.addClientSide(contributeClient);
   return () => {};
 }
 `,

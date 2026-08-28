@@ -102,8 +102,8 @@ import { DiffTooLargeState } from "@/git/diff-too-large-state";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { openWorkspaceSupportingView } from "@/workspace-tabs/open-supporting-view";
-import type { OpenInSidePanePreferences } from "@/hooks/use-settings";
+import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
+import type { PullRequestOpenLocation } from "@/hooks/use-settings";
 
 export type { GitActionId, GitAction, GitActions } from "@/git/policy";
 
@@ -1511,13 +1511,13 @@ function useDiffTabNavigation({
   workspaceId,
   cwd,
   isMobile,
-  openInSidePane,
+  pullRequestOpenLocation,
 }: {
   serverId: string;
   workspaceId?: string | null;
   cwd: string;
   isMobile: boolean;
-  openInSidePane: OpenInSidePanePreferences;
+  pullRequestOpenLocation: PullRequestOpenLocation;
 }) {
   const openTab = useWorkspaceLayoutStore((state) => state.openTab);
   const openWorkspaceTab = useCallback(
@@ -1545,14 +1545,13 @@ function useDiffTabNavigation({
   );
   const openPullRequest = useCallback(() => {
     if (!persistenceKey) return;
-    openWorkspaceSupportingView({
-      view: "pull-request",
+    openWorkspacePullRequest({
       isCompact: isMobile,
       workspaceKey: persistenceKey,
       checkout: { serverId, cwd, isGit: true },
-      preferences: openInSidePane,
+      destination: pullRequestOpenLocation,
     });
-  }, [cwd, isMobile, openInSidePane, persistenceKey, serverId]);
+  }, [cwd, isMobile, persistenceKey, pullRequestOpenLocation, serverId]);
   return {
     openDiff,
     openCommit,
@@ -1633,7 +1632,7 @@ export function ChangesSurface({
     workspaceId,
     cwd,
     isMobile,
-    openInSidePane: appSettings.openInSidePane,
+    pullRequestOpenLocation: appSettings.pullRequestOpenLocation,
   });
   const refreshSupported = useSessionStore(
     (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,

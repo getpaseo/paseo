@@ -54,8 +54,11 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
+    clientSide: null,
     attachmentSources: [],
     themes,
+    timelineTransformers: [],
+    timelineRenderers: [],
   };
 }
 
@@ -64,10 +67,15 @@ describe("toPluginTheme", () => {
     expect(toPluginTheme(lightTheme)).toEqual({
       colors: {
         surface0: lightTheme.colors.surface0,
+        surface1: lightTheme.colors.surface1,
+        surface2: lightTheme.colors.surface2,
+        border: lightTheme.colors.border,
         foreground: lightTheme.colors.foreground,
         foregroundMuted: lightTheme.colors.foregroundMuted,
         accent: lightTheme.colors.accent,
         accentForeground: lightTheme.colors.accentForeground,
+        statusSuccess: lightTheme.colors.statusSuccess,
+        statusWarning: lightTheme.colors.statusWarning,
         statusDanger: lightTheme.colors.statusDanger,
       },
     });

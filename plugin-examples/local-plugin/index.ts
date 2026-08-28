@@ -1,5 +1,5 @@
 import type { PluginContext } from "@getpaseo/plugin";
-import { ExamplePanel } from "./main.client";
+import { contributeClient, ExamplePanel } from "./main.client";
 import { increment } from "./increment.server";
 import { incrementRpc } from "./increment.shared";
 
@@ -22,5 +22,6 @@ export default function contribute(plugin: PluginContext) {
       openPanel("counter");
     },
   });
+  plugin.addClientSide(contributeClient);
   return () => {};
 }

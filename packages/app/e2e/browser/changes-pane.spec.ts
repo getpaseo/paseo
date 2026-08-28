@@ -19,6 +19,10 @@ interface WorkspaceFixtureOptions {
   includeDeletedFile?: boolean;
   includeNestedFolders?: boolean;
   includeRenamedFile?: boolean;
+  // A root-level file whose name sorts BEFORE the root-level "src" directory.
+  // zz-untracked.txt cannot stand in for it: "src" < "zz", so that file lands
+  // last whether paths are compared whole or segment by segment.
+  includeRootFileSortingFirst?: boolean;
   includeUntrackedFile?: boolean;
 }
 
@@ -459,6 +463,31 @@ test("changes tree aligns every file status after its diff stat", async ({ page 
   ]);
   if (!statBounds || !statusBounds) throw new Error("Changes tree trailing status has no bounds");
   expect(statusBounds.x - (statBounds.x + statBounds.width)).toBeGreaterThanOrEqual(8);
+});
+
+test("the scrolling diff lists files in changes tree order", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff({
+    includeNestedFolders: true,
+    includeRootFileSortingFirst: true,
+  });
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+
+  const tree = changesTree(page);
+  const treeNames = tree.locator('[data-testid^="diff-tree-file-"][data-testid$="-name"]');
+  const diffNames = page.locator('[data-testid^="diff-file-"][data-testid$="-name"]');
+
+  // Directories sort before files at every level, so the root note lands last
+  // even though "a-root-note.txt" compares below "src/..." as a whole string.
+  const expected = ["changed.ts", "root.ts", "use-mounted-tab-set.ts", "a-root-note.txt"];
+
+  // Equal counts also prove no folder is collapsed: flattenDiffTree drops the
+  // descendants of a collapsed folder, which would make the tree a subsequence
+  // of the diff rather than a match, and mask a real ordering difference.
+  await expect(treeNames).toHaveCount(expected.length);
+  await expect(diffNames).toHaveCount(expected.length);
+  await expect(treeNames).toHaveText(expected);
+  await expect(diffNames).toHaveText(expected);
 });
 
 test("changes context menu recursively collapses descendant folders", async ({ page }) => {
@@ -1284,6 +1313,9 @@ async function createWorkspaceWithMountedTabDiff(
   await writeFile(path.join(repo.path, "src/use-mounted-tab-set.ts"), AFTER);
   if (options.includeUntrackedFile) {
     await writeFile(path.join(repo.path, "zz-untracked.txt"), "remove me\n");
+  }
+  if (options.includeRootFileSortingFirst) {
+    await writeFile(path.join(repo.path, "a-root-note.txt"), "root note\n");
   }
   if (options.includeDeletedFile) {
     await unlink(path.join(repo.path, "src/zz-deleted.ts"));

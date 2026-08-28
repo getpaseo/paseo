@@ -9,7 +9,7 @@ order: 55
 
 Claude Desktop is Anthropic's desktop app for Claude. It includes Chat, Cowork, and Claude Code in one app. Claude Code runs in the desktop app on macOS and Windows.
 
-Paseo is an app for orchestrating coding agents, with native clients on desktop, mobile, web, and the CLI. Open source (AGPL-3.0).
+Paseo is an app for orchestrating coding agents, with native clients on desktop, mobile, web, and the CLI. Open source (Apache-2.0).
 
 ![Paseo desktop and mobile app](/hero-mockup.png)
 
@@ -97,7 +97,7 @@ Claude supports voice in Claude's own mobile and app surfaces. Claude Code itsel
 
 |                              | Paseo                                                           | Claude Desktop                    |
 | ---------------------------- | --------------------------------------------------------------- | --------------------------------- |
-| License                      | Open source (AGPL-3.0)                                          | Not published as open source      |
+| License                      | Open source (Apache-2.0)                                        | Not published as open source      |
 | Desktop platforms            | macOS, Linux, Windows                                           | macOS, Windows                    |
 | Native mobile                | iOS, Android                                                    | iOS, Android Claude apps          |
 | Coding agents                | Claude Code, Codex, OpenCode, Pi + 30+ via ACP catalog + custom | Claude Code                       |

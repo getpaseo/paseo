@@ -72,28 +72,48 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 
 ### Agent handle
 
-| Member                      | Result                            | Behavior                                                                                          |
-| --------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `id`                        | `string`                          | Stable daemon agent ID.                                                                           |
-| `workspaceId`               | `string \| null`                  | Current workspace placement.                                                                      |
-| `cwd`                       | `string \| null`                  | Current working directory.                                                                        |
-| `status`                    | Agent status or `null`            | Current lifecycle status.                                                                         |
-| `current()`                 | `PaseoAgent \| null`              | Current detailed value observed by this handle; never fetches.                                    |
-| `refresh(requestId?)`       | `PaseoAgentRefetchResult \| null` | Fetches the current agent and project placement.                                                  |
-| `send(text, options?)`      | `Promise<void>`                   | Resolves when the daemon accepts the prompt.                                                      |
-| `run(text, options?)`       | `PaseoAgentRunResult`             | Sends a prompt and waits for that turn. `timeoutMs` controls the wait; it defaults to 10 minutes. |
-| `waitForFinish(timeoutMs?)` | `PaseoAgentRunResult`             | Waits for the active turn, including an initial prompt. Default timeout: 10 minutes.              |
-| `subscribe(handler)`        | Unsubscribe function              | Filters agent-directory updates to this ID and refreshes the handle properties.                   |
-| `archive()`                 | `{ archivedAt }`                  | Soft-deletes the agent and closes its runtime.                                                    |
-| `detach()`                  | `Promise<void>`                   | Removes the parent relationship without stopping the agent.                                       |
+| Member                      | Result                            | Behavior                                                                                                |
+| --------------------------- | --------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `id`                        | `string`                          | Stable daemon agent ID.                                                                                 |
+| `workspaceId`               | `string \| null`                  | Current workspace placement.                                                                            |
+| `cwd`                       | `string \| null`                  | Current working directory.                                                                              |
+| `status`                    | Agent status or `null`            | Current lifecycle status.                                                                               |
+| `capabilities`              | Capability flags or `null`        | What the provider session supports.                                                                     |
+| `availableModes`            | Agent modes or `null`             | Modes the session can switch to.                                                                        |
+| `pendingPermissions`        | Permission requests or `null`     | Requests waiting on an answer.                                                                          |
+| `activeTurn`                | Active turn or `null`             | The turn in flight, with `turnId` and `startedAt`.                                                      |
+| `lastUsage`                 | Usage or `null`                   | Token counts, cost, and context-window use from the last turn.                                          |
+| `lastError`                 | `string \| null`                  | Last error the daemon recorded for the agent.                                                           |
+| `features`                  | Agent features or `null`          | Provider feature toggles and selects with their current values.                                         |
+| `runtimeInfo`               | Runtime info or `null`            | Live provider, session ID, model, thinking option, and mode.                                            |
+| `archivedAt`                | `string \| null`                  | Archive timestamp; `null` while the agent is active.                                                    |
+| `current()`                 | `PaseoAgent \| null`              | Current detailed value observed by this handle; never fetches.                                          |
+| `refresh(requestId?)`       | `PaseoAgentRefetchResult \| null` | Fetches the current agent and project placement.                                                        |
+| `send(text, options?)`      | `Promise<void>`                   | Resolves when the daemon accepts the prompt.                                                            |
+| `run(text, options?)`       | `PaseoAgentRunResult`             | Sends a prompt and waits for that turn. `timeoutMs` controls the wait; it defaults to 10 minutes.       |
+| `waitForFinish(timeoutMs?)` | `PaseoAgentRunResult`             | Waits for the active turn, including an initial prompt. Default timeout: 10 minutes.                    |
+| `commands(options?)`        | `PaseoAgentCommandsResult`        | Asks the live session for its slash commands and skills, including built-in ones. Options: `requestId`. |
+| `subscribe(handler)`        | Unsubscribe function              | Filters agent-directory updates to this ID and refreshes the handle properties.                         |
+| `archive()`                 | `{ archivedAt }`                  | Soft-deletes the agent and closes its runtime.                                                          |
+| `detach()`                  | `Promise<void>`                   | Removes the parent relationship without stopping the agent.                                             |
+
+`workspaceId` through `archivedAt` mirror the last snapshot the handle observed. A handle from `ref()` reads `null` for all of them until `refresh()`, `run()`, `waitForFinish()`, a timeline refetch, or `subscribe()` delivers a snapshot. Optional values in an observed snapshot also read as `null`. Call `current()` when you need the whole snapshot or need to distinguish those states.
 
 `PaseoAgentRunResult` contains `status`, `final`, `error`, and `lastMessage`. `final` refreshes the handle when present.
+
+`PaseoAgentCommandsResult` contains `agentId`, `commands`, and `error`. Each command has `name`, `description`, `argumentHint`, and an optional `kind` of `"command"` or `"skill"`. A provider that cannot answer reports it in `error` rather than rejecting; providers that expose no command list at all return an empty array.
 
 ### Timeline handle
 
 `agent.timeline.refetch(options?)` fetches a page. Options are `direction`, `cursor`, `limit`, `projection`, and `requestId`.
 
 `agent.timeline.subscribe(handler)` listens for stream events belonging to the agent and returns a local unsubscribe function.
+
+## `client.projects`
+
+| Method           | Result                   | Behavior                                                                      |
+| ---------------- | ------------------------ | ----------------------------------------------------------------------------- |
+| `list(options?)` | `PaseoProjectListResult` | Lists every registered project, including projects with no active workspaces. |
 
 ## `client.workspaces`
 
