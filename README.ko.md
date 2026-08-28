@@ -111,8 +111,8 @@ paseo ls                           # 실행 중인 에이전트 목록
 paseo attach abc123                # 실시간 출력 스트리밍
 paseo send abc123 "also add tests" # 후속 작업 전송
 
-# 원격 데몬에서 실행
-paseo --host workstation.local:6767 run "run the full test suite"
+# 원격 데몬에서 실행(경로는 원격 머신에서 해석됨)
+paseo run --host workstation.local:6767 --cwd /path/to/project "run the full test suite"
 ```
 
 자세한 내용은 [전체 CLI 레퍼런스](https://paseo.sh/docs/cli)를 참고하세요.

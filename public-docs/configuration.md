@@ -195,14 +195,14 @@ The CLI picks up a password from, in order:
 1. The `password` query parameter on a `tcp://` host URI:
 
    ```bash
-   paseo --host "tcp://192.168.1.10:6767?password=my-secret" ls
+   paseo ls --host "tcp://192.168.1.10:6767?password=my-secret"
    ```
 
 2. The `PASEO_PASSWORD` environment variable, used as a fallback when the host carries no embedded password (works for `localhost:6767`, bare `host:port`, or `tcp://` hosts without a `password=` query):
 
    ```bash
    PASEO_PASSWORD=my-secret paseo ls
-   PASEO_PASSWORD=my-secret paseo --host 192.168.1.10:6767 ls
+   PASEO_PASSWORD=my-secret paseo ls --host 192.168.1.10:6767
    ```
 
 A `password=` in the URI always wins over the env var, so you can keep `PASEO_PASSWORD` set globally and still target a different daemon by spelling its password into the URI.

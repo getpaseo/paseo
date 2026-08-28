@@ -101,8 +101,8 @@ paseo ls                           # 実行中のエージェントを一覧表�
 paseo attach abc123                # ライブ出力をストリーミング
 paseo send abc123 "also add tests" # 追加タスクを送信
 
-# リモートデーモンで実行
-paseo --host workstation.local:6767 run "run the full test suite"
+# リモートデーモンで実行（パスはリモートマシン上で解決されます）
+paseo run --host workstation.local:6767 --cwd /path/to/project "run the full test suite"
 ```
 
 詳細は[完全な CLI リファレンス](https://paseo.sh/docs/cli)を参照してください。

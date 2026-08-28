@@ -360,7 +360,9 @@ paseo ls --format yaml         # YAML output
 paseo ls -q                    # IDs only (quiet)
 ```
 
-## Global options
+## Common command options
+
+These options are registered on individual subcommands, so place them after the command name (for example, `paseo ls --host workstation.local:6767`, not `paseo --host workstation.local:6767 ls`). Not every command supports every option; for example, `paseo status` only reports the local daemon and does not accept `--host`.
 
 - `--host <target>`, connect to a different daemon (`host:port`, unix socket, or `https://app.paseo.sh/#offer=...` for relay). See [Connecting to a remote daemon](#connecting-to-a-remote-daemon).
 - `--json`, JSON output
