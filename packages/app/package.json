@@ -39,6 +39,7 @@
     "build:mermaid-runtime": "node ./src/components/markdown/fence/mermaid/build-runtime.mjs"
   },
   "dependencies": {
+    "@bacons/apple-targets": "4.0.7",
     "@codemirror/commands": "6.10.4",
     "@codemirror/language": "6.12.4",
     "@codemirror/search": "6.7.1",
@@ -106,6 +107,7 @@
     "markdown-it": "^10.0.0",
     "mermaid": "^11.16.0",
     "mnemonic-id": "^3.2.7",
+    "paseo-live-activity": "file:modules/paseo-live-activity",
     "qrcode": "^1.5.4",
     "react": "19.1.0",
     "react-dom": "19.1.0",

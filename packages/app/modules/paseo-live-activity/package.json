@@ -1,0 +1,11 @@
+{
+  "name": "paseo-live-activity",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local Expo module driving the Paseo fleet-mode iOS Live Activity",
+  "license": "MIT",
+  "main": "index",
+  "dependencies": {
+    "@bacons/xcode": "1.0.0-alpha.32"
+  }
+}
