@@ -6,17 +6,21 @@ import pino, { type Logger } from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import type { ForgeService } from "../services/forge-service.js";
+import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
-import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
+import { createWorktree, deletePaseoWorktree, type WorktreeConfig } from "../utils/worktree.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 import {
   archiveByScope,
   type ActiveWorkspaceRef,
   type ArchiveDependencies,
   type ArchiveResult,
+  killTerminalsForWorkspace,
   resolveWorkspaceIdAtPath,
+  WorkspaceTerminalTeardownError,
 } from "./workspace-archive-service.js";
 
 const cleanupPaths: string[] = [];
@@ -130,6 +134,7 @@ interface ArchiveTestDependencies extends ArchiveDependencies {
 function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
   const archivedWorkspaceIds = new Set<string>();
   const active = [...input.activeWorkspaces];
+  const all = [...active];
   const archivedAgentIds: string[] = [];
   const archivedSnapshotIds: string[] = [];
 
@@ -160,6 +165,26 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
       listByWorkspace: async (): Promise<StoredAgentRecord[]> => [],
     } as Pick<AgentStorage, "listByWorkspace">,
     findWorkspaceIdForCwd: input.findWorkspaceIdForCwd ?? vi.fn(async () => null),
+    getWorkspace: async (workspaceId: string) => {
+      const workspace = all.find((candidate) => candidate.workspaceId === workspaceId);
+      if (!workspace) return null;
+      return {
+        ...workspace,
+        projectId: "project-test",
+        displayName: workspace.workspaceId,
+        title: null,
+        branch: null,
+        worktreeRoot: workspace.worktreeRoot ?? null,
+        baseBranch: null,
+        isPaseoOwnedWorktree: workspace.isPaseoOwnedWorktree ?? false,
+        mainRepoRoot: workspace.mainRepoRoot ?? null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        archivedAt: archivedWorkspaceIds.has(workspaceId) ? "2026-01-01T00:00:00.000Z" : null,
+        autoArchivedChangeRequestUrl: null,
+        pinnedAt: null,
+      } satisfies PersistedWorkspaceRecord;
+    },
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !archivedWorkspaceIds.has(workspace.workspaceId)),
     archiveWorkspaceRecord: async (workspaceId: string) => {
@@ -596,6 +621,175 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
+  test("keeps a workspace active until agent and terminal teardown both succeed", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const workspaceId = "ws-content-retry";
+    const agentId = "agent-content-retry";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId, cwd: repoDir, kind: "local_checkout" }],
+    });
+    let archiveAttempts = 0;
+    let terminalAttempts = 0;
+    deps.agentManager = {
+      listAgents: () => [{ id: agentId, workspaceId }] as ManagedAgent[],
+      getAgent: () => ({ id: agentId, workspaceId }) as ManagedAgent,
+      runWithWorkspaceArchiveExclusion: async <Value>(
+        _workspaceIds: Iterable<string>,
+        action: () => Promise<Value>,
+      ) => action(),
+      archiveAgent: vi.fn(async () => {
+        archiveAttempts += 1;
+        if (archiveAttempts === 1) throw new Error("agent archive failed once");
+        return { archivedAt: new Date().toISOString() };
+      }),
+      archiveSnapshot: vi.fn(async () => ({})),
+    };
+    deps.killTerminalsForWorkspace = vi.fn(async () => {
+      terminalAttempts += 1;
+      if (terminalAttempts === 1) throw new Error("terminal teardown failed once");
+    });
+
+    const firstResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-content-retry-1",
+    });
+
+    expect(firstResult).toMatchObject({
+      archivedWorkspaceIds: [],
+      failedWorkspaceIds: [workspaceId],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceId]);
+
+    const secondResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-content-retry-2",
+    });
+
+    expect(secondResult).toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+      failedWorkspaceIds: [],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces).toEqual([]);
+    expect(archiveAttempts).toBe(2);
+    expect(terminalAttempts).toBe(2);
+  });
+
+  test("retries a failed worktree teardown command before archiving the workspace", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            "node -e \"const fs=require('fs');const marker=process.env.PASEO_SOURCE_CHECKOUT_PATH+'/teardown-retry.marker';if(!fs.existsSync(marker)){fs.writeFileSync(marker,'retry');process.exit(1)}\"",
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "retry teardown"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "teardown-retry");
+    const workspaceId = "ws-teardown-retry";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+
+    const firstResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-teardown-retry-1",
+    });
+
+    expect(firstResult).toMatchObject({
+      archivedWorkspaceIds: [],
+      failedWorkspaceIds: [workspaceId],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceId]);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+
+    const secondResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-teardown-retry-2",
+    });
+
+    expect(secondResult).toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+      failedWorkspaceIds: [],
+      removedDirectory: true,
+    });
+    expect(deps.activeWorkspaces).toEqual([]);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("retries worktree disk removal after the workspace record is archived", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "removal-retry");
+    const workspaceId = "ws-removal-retry";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    let removalAttempts = 0;
+    deps.removePaseoWorktree = vi.fn(async (options) => {
+      removalAttempts += 1;
+      if (removalAttempts === 1) throw new Error("worktree removal failed once");
+      await deletePaseoWorktree(options);
+    });
+
+    const firstResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-removal-retry-1",
+    });
+
+    expect(firstResult).toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+      failedWorkspaceIds: [workspaceId],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces).toEqual([]);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+
+    const secondResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-removal-retry-2",
+    });
+
+    expect(secondResult).toMatchObject({
+      archivedWorkspaceIds: [],
+      failedWorkspaceIds: [],
+      removedDirectory: true,
+    });
+    expect(removalAttempts).toBe(2);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
   test("workspace scope with unknown workspace id is a clean no-op", async () => {
     const { tempDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
@@ -891,5 +1085,38 @@ describe("resolveWorkspaceIdAtPath", () => {
     );
 
     expect(result).toBe("ws-nested");
+  });
+});
+
+describe("killTerminalsForWorkspace", () => {
+  test("reports terminal enumeration and kill failures for a retry", async () => {
+    const workspaceId = "ws-terminal-failure";
+    const terminalId = "terminal-failure";
+    const listError = new Error("terminal list failed");
+    const killError = new Error("terminal kill failed");
+    const terminalManager = {
+      listDirectories: () => ["/bad-terminals", "/good-terminals"],
+      getTerminals: vi.fn(async (cwd: string) => {
+        if (cwd === "/bad-terminals") throw listError;
+        return [{ id: terminalId, workspaceId }];
+      }),
+      killTerminalAndWait: vi.fn(async () => {
+        throw killError;
+      }),
+    } as unknown as TerminalManager;
+
+    const error: unknown = await killTerminalsForWorkspace(
+      { terminalManager, sessionLogger: createLogger() },
+      workspaceId,
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(WorkspaceTerminalTeardownError);
+    expect(error).toMatchObject({
+      workspaceId,
+      failures: [
+        { operation: "list", cwd: "/bad-terminals", error: listError },
+        { operation: "kill", terminalId, error: killError },
+      ],
+    });
   });
 });
