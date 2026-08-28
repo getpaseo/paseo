@@ -480,7 +480,7 @@ An agent callback may open either an agent panel or a workspace panel. A workspa
 
 ## Composer pills
 
-Register an action beside the built-in agent controls:
+Register an action in the track bar above the composer, alongside Tasks, Subagents, and Changes:
 
 ```tsx
 import { Icon, type PluginComposerPillProps, useAgent, useWorkspace } from "@getpaseo/plugin";
@@ -519,12 +519,12 @@ plugin.addComposerPill({
 | `Component` | Yes      | React Native component rendering the pill's icon and text. |
 | `onPress`   | Yes      | Client-side callback receiving the current agent context.  |
 
-Paseo owns the pressable, pending state, error reporting, and toolbar placement. The component
-receives `theme`, `host`, `layout`, `workspaceId`, and `agentId`; read current values with
-`useWorkspace` and `useAgent`. The callback receives the same capabilities as an agent Command
-Center item: snapshots, `paseo`, typed `rpc`, `openSurface`, and `openPanel`. A pill appears only
-when its installation is on the composer's host and both records are available. `openPanel` opens
-or focuses the registered workspace or agent panel as a normal workspace tab.
+Paseo owns the pressable, shared pill chrome, pending state, error reporting, and track-bar
+placement. The component receives `theme`, `host`, `layout`, `workspaceId`, and `agentId`; read
+current values with `useWorkspace` and `useAgent`. The callback receives the same capabilities as
+an agent Command Center item: snapshots, `paseo`, typed `rpc`, `openSurface`, and `openPanel`. A
+pill appears only when its installation is on the composer's host and both records are available.
+`openPanel` opens or focuses the registered workspace or agent panel as a normal workspace tab.
 
 ## Use the Paseo SDK
 

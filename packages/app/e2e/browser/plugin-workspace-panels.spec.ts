@@ -5,6 +5,7 @@ import type { TestInfo } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { openCommandCenter } from "../support/helpers/command-center";
+import { submitMessage } from "../support/helpers/composer";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { buildAgentRoute } from "../support/helpers/mock-agent";
@@ -226,6 +227,10 @@ test.describe("plugin workspace panels and Command Center", () => {
         });
         await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
+        await submitMessage(page, "emit 1 agent stream updates");
+        await expect(page.getByRole("button", { name: "1/1 tasks" })).toBeVisible({
+          timeout: 30_000,
+        });
         const composerPill = page.getByRole("button", { name: "Open composer review" });
         await expect(composerPill).toContainText(
           "Review Unrelated title update:Plugin panel context agent",

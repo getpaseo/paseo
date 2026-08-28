@@ -204,10 +204,10 @@ workspace-layout store access.
 
 ## Contribute composer pills
 
-Register an agent-context action in the composer toolbar. Paseo owns the pressable, pending state,
-error reporting, and placement. The component renders the pill's icon and text and receives the
-current `workspaceId` and `agentId`; use the required-selector hooks to read only the fields it
-shows.
+Register an agent-context action in the track bar above the composer, alongside Tasks, Subagents,
+and Changes. Paseo owns the pressable, shared pill chrome, pending state, error reporting, and
+placement. The component renders the pill's icon and text and receives the current `workspaceId`
+and `agentId`; use the required-selector hooks to read only the fields it shows.
 
 ```tsx
 function ReviewPill({ theme, workspaceId, agentId }: PluginComposerPillProps) {

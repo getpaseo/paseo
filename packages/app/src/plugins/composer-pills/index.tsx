@@ -4,6 +4,7 @@ import { useCallback, useMemo, useState } from "react";
 import { Platform, Pressable, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { composerPillStyles } from "@/composer/pill-styles";
 import { useToast } from "@/contexts/toast-context";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
@@ -81,12 +82,12 @@ function PluginComposerPill({
   }, [agentId, contribution, navigation, pending, plugin, runtime, state, toast, workspaceId]);
   const pillStyle = useCallback(
     ({ hovered, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
+      composerPillStyles.body,
       styles.pill,
-      hovered && styles.hovered,
-      pressed && styles.pressed,
-      (!runtime || pending) && styles.disabled,
+      (hovered || pressed) && composerPillStyles.bodyActive,
+      pending && styles.disabled,
     ],
-    [pending, runtime],
+    [pending],
   );
   const accessibilityState = useMemo(() => ({ busy: pending, disabled: pending }), [pending]);
   if (!runtime) return null;
@@ -155,23 +156,16 @@ export function PluginComposerPills({
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
+export function useHasPluginComposerPills(serverId: string): boolean {
+  return useInstalledPlugins().some(
+    (plugin) => plugin.serverId === serverId && plugin.composerPills.length > 0,
+  );
+}
+
+const styles = StyleSheet.create(() => ({
   pill: {
-    height: 28,
-    minWidth: 0,
     flexShrink: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    borderRadius: theme.borderRadius["2xl"],
-    backgroundColor: "transparent",
-  },
-  hovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  pressed: {
-    backgroundColor: theme.colors.surface0,
+    minWidth: 0,
   },
   disabled: {
     opacity: 0.5,

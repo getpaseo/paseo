@@ -135,11 +135,7 @@ import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerForgeAutoAttach } from "./forge-auto-attach";
 import { readClipboardImage } from "./clipboard-image";
 import { normalizeNativePastedImages, type NativePastedFile } from "./native-pasted-image";
-import {
-  PluginComposerPills,
-  PluginResourceAttachmentPill,
-  usePluginAttachmentPicker,
-} from "@/plugins";
+import { PluginResourceAttachmentPill, usePluginAttachmentPicker } from "@/plugins";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 import {
   appendWorkspaceFileAttachment,
@@ -2104,36 +2100,18 @@ function ComposerContentImpl({
     ],
   );
 
-  const leftContent = useMemo(() => {
-    const controls = renderLeftContent({
-      agentControls,
-      agentId,
-      serverId,
-      focusInput,
-      isCompactLayout,
-      showAgentControls: mode.showAgentControls,
-    });
-    if (!mode.showAgentControls) return controls;
-    return (
-      <>
-        {controls}
-        <PluginComposerPills
-          serverId={serverId}
-          workspaceId={workspaceId}
-          agentId={agentId}
-          compact={isCompactLayout}
-        />
-      </>
-    );
-  }, [
-    agentControls,
-    agentId,
-    focusInput,
-    isCompactLayout,
-    mode.showAgentControls,
-    serverId,
-    workspaceId,
-  ]);
+  const leftContent = useMemo(
+    () =>
+      renderLeftContent({
+        agentControls,
+        agentId,
+        serverId,
+        focusInput,
+        isCompactLayout,
+        showAgentControls: mode.showAgentControls,
+      }),
+    [agentControls, agentId, focusInput, isCompactLayout, mode.showAgentControls, serverId],
+  );
 
   const handleAttachButtonRef = useCallback((node: View | null) => {
     attachButtonRef.current = node;
