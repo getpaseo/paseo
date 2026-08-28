@@ -11,19 +11,20 @@ import type {
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { BrowserScreencastMetadata } from "@getpaseo/protocol/binary-frames/screencast";
 import { waitForActionableTarget, type ActionabilityResult } from "./actionability.js";
+import type { CdpCommandSender } from "./cdp-session-queue.js";
 import { BrowserSnapshotEngine } from "./snapshot-engine.js";
 import {
   dispatchTrustedClick,
   dispatchTrustedDrag,
   dispatchTrustedHover,
+  dispatchTrustedKey,
   dispatchTrustedKeyEvent,
   dispatchTrustedMousePhase,
   dispatchTrustedScroll,
   dispatchTrustedText,
-  type CdpCommandSender,
+  type BrowserInputEvent,
   type ClickInputOptions,
-} from "@getpaseo/server/browser-tools/cdp-input";
-import { dispatchTrustedKey, type BrowserInputEvent } from "./trusted-input.js";
+} from "./trusted-input.js";
 
 type DebugMessageListener = (method: string, params: Record<string, unknown>) => void;
 

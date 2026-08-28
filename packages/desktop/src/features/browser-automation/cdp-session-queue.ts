@@ -1,3 +1,8 @@
+export type CdpCommandSender = (
+  command: string,
+  params?: Record<string, unknown>,
+) => Promise<unknown>;
+
 /**
  * A CDP command that never settles used to wedge its webContents permanently:
  * the queue is serial, so every later command waited behind it and the tab
