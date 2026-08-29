@@ -5,7 +5,7 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
-import { usePluginNavigation } from "./use-plugin-navigation";
+import { usePluginHostNavigation } from "./host-navigation";
 
 vi.mock("@/utils/navigate-to-agent", () => ({
   navigateToAgent: vi.fn(),
@@ -17,14 +17,14 @@ vi.mock("@/stores/navigation-active-workspace-store", () => ({
 const navigateToAgentMock = vi.mocked(navigateToAgent);
 const navigateToWorkspaceMock = vi.mocked(navigateToWorkspace);
 
-describe("usePluginNavigation", () => {
+describe("usePluginHostNavigation", () => {
   beforeEach(() => {
     navigateToAgentMock.mockReset();
     navigateToWorkspaceMock.mockReset();
   });
 
   it("opens agents and workspaces on the rendering host", () => {
-    const { result } = renderHook(() => usePluginNavigation("host-1"));
+    const { result } = renderHook(() => usePluginHostNavigation("host-1"));
 
     act(() => result.current.openAgent({ agentId: "agent-1" }));
     act(() => result.current.openWorkspace({ workspaceId: "workspace-1" }));
@@ -37,7 +37,7 @@ describe("usePluginNavigation", () => {
   });
 
   it("keeps the capability stable until the rendering host changes", () => {
-    const { result, rerender } = renderHook(({ serverId }) => usePluginNavigation(serverId), {
+    const { result, rerender } = renderHook(({ serverId }) => usePluginHostNavigation(serverId), {
       initialProps: { serverId: "host-1" },
     });
     const initialNavigation = result.current;

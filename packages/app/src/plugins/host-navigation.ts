@@ -1,9 +1,11 @@
-import type { PluginHostProps } from "@getpaseo/plugin";
+import type { PluginSurfaceProps } from "@getpaseo/plugin";
 import { useMemo } from "react";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 
-export function usePluginNavigation(serverId: string): NonNullable<PluginHostProps["navigation"]> {
+export function usePluginHostNavigation(
+  serverId: string,
+): NonNullable<PluginSurfaceProps["navigation"]> {
   return useMemo(
     () => ({
       openAgent: ({ agentId }) => navigateToAgent({ serverId, agentId }),

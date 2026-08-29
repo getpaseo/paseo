@@ -178,7 +178,6 @@ test.describe("plugin workspace panels and Command Center", () => {
     const primaryClient = await connectNewWorkspaceDaemonClient({ ownProjects: false });
     const previousConfig = await primaryClient.getDaemonConfig();
     const primary = await seedWorkspace({ repoPrefix: "plugin-panel-primary-" });
-    let navigationAgentId = "";
     const secondaryDaemon = await startIsolatedHostDaemon("plugin-panel-secondary");
     const secondary = await seedWorkspace({
       repoPrefix: "plugin-panel-secondary-",
@@ -263,7 +262,7 @@ test.describe("plugin workspace panels and Command Center", () => {
           model: "ten-second-stream",
           modeId: "load-test",
         });
-        navigationAgentId = agent.id;
+        const navigationAgentId = agent.id;
         await writeFile(
           path.join(directory, "index.tsx"),
           pluginSource({ workspaceId: primary.workspaceId, agentId: navigationAgentId }),
@@ -298,7 +297,15 @@ test.describe("plugin workspace panels and Command Center", () => {
       });
 
       await test.step("agent context opens the compact panel with synchronous snapshots", async () => {
-        await page.goto(buildAgentRoute(primary.workspaceId, navigationAgentId));
+        const agent = await primary.client.createAgent({
+          provider: "mock",
+          cwd: primary.repoPath,
+          workspaceId: primary.workspaceId,
+          title: "Plugin panel context agent",
+          model: "ten-second-stream",
+          modeId: "load-test",
+        });
+        await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
         await submitMessage(page, "emit 1 agent stream updates");
         await expect(page.getByRole("button", { name: "1/1 tasks" })).toBeVisible({
@@ -316,18 +323,18 @@ test.describe("plugin workspace panels and Command Center", () => {
         await expect(page.getByTestId("workspace-header-title")).toHaveText(
           "Opened from composer pill",
         );
-        await expect(page.getByText(`Agent bridge ${navigationAgentId}`)).toBeVisible();
+        await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();
         await expect(page.getByText("Layout compact", { exact: true })).toBeVisible();
         await capture(page, testInfo, "plugin-agent-panel-compact");
 
-        await page.goto(buildAgentRoute(primary.workspaceId, navigationAgentId));
+        await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
         await expect(page.getByRole("button", { name: "Open composer review" })).toHaveCount(0);
         await openCompactSidebar(page);
         await runCommand(page, "Open plugin agent");
         await closeMobileAgentSidebar(page);
         await expectMobileAgentSidebarHidden(page);
-        await expect(page.getByText(`Agent bridge ${navigationAgentId}`)).toBeVisible();
+        await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();
         await expect(
           page.getByText(`Workspace ${primary.workspaceId}`, { exact: true }),
         ).toBeVisible();

@@ -30,6 +30,9 @@ export interface PluginHostProps {
     compact: boolean;
     platform: "ios" | "android" | "web";
   };
+}
+
+interface PluginNavigableHostProps extends PluginHostProps {
   /** Client-owned navigation. Undefined on older hosts; hide dependent affordances when absent. */
   readonly navigation?: {
     readonly openAgent: (input: { readonly agentId: string }) => void;
@@ -37,7 +40,7 @@ export interface PluginHostProps {
   };
 }
 
-export interface PluginSurfaceProps extends PluginHostProps {}
+export interface PluginSurfaceProps extends PluginNavigableHostProps {}
 
 export interface PluginIconProps {
   name: string;
@@ -93,12 +96,12 @@ interface PluginWorkspacePanelBase {
   locations?: readonly PluginPanelLocation[];
 }
 
-export interface PluginWorkspacePanelProps extends PluginHostProps {
+export interface PluginWorkspacePanelProps extends PluginNavigableHostProps {
   context: "workspace";
   workspaceId: string;
 }
 
-export interface PluginAgentPanelProps extends PluginHostProps {
+export interface PluginAgentPanelProps extends PluginNavigableHostProps {
   context: "agent";
   workspaceId: string;
   agentId: string;
