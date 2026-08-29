@@ -27,6 +27,7 @@ import {
 } from "./session-stream-reducers";
 import { isTimelineResumeSnapshotAuthoritative } from "./timeline-sync-plan";
 import { createInstalledTimelineTransform, type TimelineItemTransform } from "@/plugins/timeline";
+import { replaceWithCanonicalStream } from "@/types/stream";
 
 const PLUGIN_TIMELINE_REPROJECTION_DELAY_MS = 50;
 
@@ -51,21 +52,40 @@ async function prepareCachedTimeline(input: {
   const session = useSessionStore.getState().sessions[input.serverId];
   const currentTimeline = selectAgentTimelineState(session, input.agentId);
   const currentHead = session?.agentStreamHead.get(input.agentId);
-  if (currentHead !== beforeHead && currentTimeline.status !== "cold") return undefined;
-  if (beforeTimeline.status === "painted") {
-    return currentTimeline.status === "painted" && currentTimeline.items === beforeTimeline.items
-      ? stored
-      : undefined;
+  if (currentTimeline.status === "synced") return undefined;
+  if (!stored.range) {
+    if (currentHead !== beforeHead) return undefined;
+    if (beforeTimeline.status === "painted") {
+      return currentTimeline.status === "painted" && currentTimeline.items === beforeTimeline.items
+        ? stored
+        : undefined;
+    }
+    if (currentTimeline.status !== "cold") return undefined;
   }
-  if (currentTimeline.status !== "cold") return undefined;
+  const liveItems =
+    currentTimeline.status === "painted"
+      ? [...currentTimeline.items, ...(currentHead ?? [])]
+      : (currentHead ?? []);
+  const replacement = stored.range
+    ? replaceWithCanonicalStream({
+        canonical: stored.items,
+        previousTail: [],
+        previousHead: liveItems,
+        sendingClientMessageIds: getSendingClientMessageIds(
+          session?.messageSubmissions.get(input.agentId),
+        ),
+        preserveContinuity: true,
+        canonicalCoverage: stored.range,
+      })
+    : { tail: stored.items, head: liveItems, acknowledgedClientMessageIds: [] };
   useSessionStore.getState().applyAgentTimelineResponseState(input.serverId, input.agentId, {
-    items: stored.items,
-    head: currentHead ?? [],
+    items: replacement.tail,
+    head: replacement.head,
     range: stored.range,
     older: stored.hasOlder ? "available" : "none",
     newer: false,
     synchronized: false,
-    acknowledgedClientMessageIds: [],
+    acknowledgedClientMessageIds: replacement.acknowledgedClientMessageIds,
   });
   return stored;
 }

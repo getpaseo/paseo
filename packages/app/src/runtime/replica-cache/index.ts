@@ -898,13 +898,15 @@ export class ReplicaCache {
     ids?: readonly string[],
   ): Promise<ReplicaRow[]> {
     if (!this.activeServerIds.has(serverId)) return [];
-    const revision = this.hostRevisions.get(serverId) ?? 0;
     try {
       await this.prepareStore();
-      await this.flush();
-      if (!this.canReadHostRevision(serverId, revision)) return [];
-      const rows = await this.rowStore.read(serverId, kinds, ids);
-      return this.canReadHostRevision(serverId, revision) ? rows : [];
+      while (this.activeServerIds.has(serverId)) {
+        await this.flush();
+        const revision = this.hostRevisions.get(serverId) ?? 0;
+        const rows = await this.rowStore.read(serverId, kinds, ids);
+        if (this.canReadHostRevision(serverId, revision)) return rows;
+      }
+      return [];
     } catch {
       return [];
     }
