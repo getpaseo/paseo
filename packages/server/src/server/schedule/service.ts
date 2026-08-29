@@ -882,43 +882,57 @@ export class ScheduleService {
     if (!config) {
       throw new Error(`Schedule ${schedule.id} target changed during execution`);
     }
-    await this.assertNewAgentCwdDirectory(config.cwd);
-    let workspace: PersistedWorkspaceRecord | null = null;
+    const cleanupState: { workspace: PersistedWorkspaceRecord | null } = { workspace: null };
     let agentId: string | null = null;
     try {
-      workspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
-      await this.recordRunWorkspace({
-        scheduleId: schedule.id,
-        runId,
-        workspaceId: workspace.workspaceId,
-        agentId: null,
-      });
-      const runConfig = { ...config, cwd: workspace.cwd };
-      const created = await this.createAgent({
-        kind: "mcp",
-        provider: formatScheduleProviderModel(runConfig),
-        config: buildScheduleAgentConfig(runConfig),
-        cwd: workspace.cwd,
-        workspaceId: workspace.workspaceId,
-        title: resolveScheduleAgentTitle(config, schedule.prompt),
-        labels: {
-          "paseo.schedule-id": schedule.id,
-          "paseo.schedule-run": runId,
+      // A schedule run has no workspace identity until provisioning finishes. Hold the unresolved
+      // boundary through the resolved create command so expiry cannot remove a shared backing
+      // worktree between workspace persistence and the first agent registration.
+      const provisioned = await this.agentManager.runWithWorkspaceAgentRegistrationLease(
+        undefined,
+        async () => {
+          await this.assertNewAgentCwdDirectory(config.cwd);
+          const provisionedWorkspace = await this.createScheduleRunWorkspace(
+            config,
+            schedule.prompt,
+          );
+          cleanupState.workspace = provisionedWorkspace;
+          await this.recordRunWorkspace({
+            scheduleId: schedule.id,
+            runId,
+            workspaceId: provisionedWorkspace.workspaceId,
+            agentId: null,
+          });
+          const runConfig = { ...config, cwd: provisionedWorkspace.cwd };
+          const created = await this.createAgent({
+            kind: "mcp",
+            provider: formatScheduleProviderModel(runConfig),
+            config: buildScheduleAgentConfig(runConfig),
+            cwd: provisionedWorkspace.cwd,
+            workspaceId: provisionedWorkspace.workspaceId,
+            title: resolveScheduleAgentTitle(config, schedule.prompt),
+            labels: {
+              "paseo.schedule-id": schedule.id,
+              "paseo.schedule-run": runId,
+            },
+            mode: config.modeId,
+            thinking: config.thinkingOptionId,
+            features: config.featureValues,
+            unattended: true,
+            promptFailure: "return-error",
+            background: true,
+            notifyOnFinish: false,
+          });
+          return { created, workspace: provisionedWorkspace };
         },
-        mode: config.modeId,
-        thinking: config.thinkingOptionId,
-        features: config.featureValues,
-        unattended: true,
-        promptFailure: "return-error",
-        background: true,
-        notifyOnFinish: false,
-      });
+      );
+      const { created, workspace: activeWorkspace } = provisioned;
       const agent = created.snapshot;
       agentId = agent.id;
       await this.recordRunWorkspace({
         scheduleId: schedule.id,
         runId,
-        workspaceId: workspace.workspaceId,
+        workspaceId: activeWorkspace.workspaceId,
         agentId,
       });
       if (created.initialPromptError) {
@@ -947,8 +961,9 @@ export class ScheduleService {
         }),
       };
     } finally {
+      const workspace = cleanupState.workspace;
       if (
-        workspace &&
+        workspace !== null &&
         shouldArchiveScheduleRunWorkspace({ agentId, archiveOnFinish: config.archiveOnFinish })
       ) {
         try {
