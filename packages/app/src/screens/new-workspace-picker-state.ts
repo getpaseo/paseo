@@ -119,7 +119,8 @@ export function clearAttachmentsForWorkspaceHostChange(input: {
 /**
  * Draft attachment cleanup must follow the effective host, rather than only
  * explicit picker selections. Defer it until draft hydration has completed so
- * an automatic host change cannot overwrite an in-flight persisted draft.
+ * an automatic host change cannot overwrite an in-flight persisted draft; once
+ * hydrated, also reconcile a draft whose initial host was already selected.
  */
 export function reconcileNewWorkspaceHostAttachments(input: {
   attachments: UserComposerAttachment[];
@@ -131,7 +132,7 @@ export function reconcileNewWorkspaceHostAttachments(input: {
   didChangeHost: boolean;
   previousServerId: string;
 } {
-  if (!input.isHydrated || input.previousServerId === input.selectedServerId) {
+  if (!input.isHydrated) {
     return {
       attachments: input.attachments,
       didChangeHost: false,
@@ -146,7 +147,7 @@ export function reconcileNewWorkspaceHostAttachments(input: {
       nextTargetId: input.selectedServerId,
       nextServerId: input.selectedServerId,
     }),
-    didChangeHost: true,
+    didChangeHost: input.previousServerId !== input.selectedServerId,
     previousServerId: input.selectedServerId,
   };
 }

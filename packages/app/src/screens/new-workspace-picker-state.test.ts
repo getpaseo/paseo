@@ -227,21 +227,42 @@ describe("reconcileNewWorkspaceHostAttachments", () => {
     });
   });
 
-  it("does not rewrite attachments when the effective host is unchanged", () => {
-    const attachments = [issueAttachment(44), agentContextAttachment("server-b", "source-b")];
+  it("reconciles a hydrated draft against its initially selected host", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
+    const currentHostAgent = agentContextAttachment("server-b", "source-b");
+    const foreignHostAgent = agentContextAttachment("server-a", "source-a");
+    const issue = issueAttachment(44);
 
     expect(
       reconcileNewWorkspaceHostAttachments({
-        attachments,
+        attachments: [issue, pickerPr, currentHostAgent, foreignHostAgent],
         isHydrated: true,
         previousServerId: "server-b",
         selectedServerId: "server-b",
       }),
     ).toEqual({
+      attachments: [issue, pickerPr, currentHostAgent],
+      didChangeHost: false,
+      previousServerId: "server-b",
+    });
+  });
+
+  it("does not rewrite attachments when the effective host is unchanged", () => {
+    const attachments = [issueAttachment(44), agentContextAttachment("server-b", "source-b")];
+
+    const result = reconcileNewWorkspaceHostAttachments({
+      attachments,
+      isHydrated: true,
+      previousServerId: "server-b",
+      selectedServerId: "server-b",
+    });
+
+    expect(result).toEqual({
       attachments,
       didChangeHost: false,
       previousServerId: "server-b",
     });
+    expect(result.attachments).toBe(attachments);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useTranslation } from "react-i18next";
 import { Bot, Check, History } from "lucide-react-native";
@@ -7,12 +7,14 @@ import type { UserComposerAttachment } from "@/attachments/types";
 import {
   buildAgentContextSourceGroups,
   getAgentContextAttachmentKey,
+  getAgentContextPickerSearchResetKey,
   getAgentContextSourceKey,
   getAgentContextSourceTitle,
   getAgentContextSourceWorkspaceLabel,
   isAgentContextAttachment,
   isAgentContextSourceSelectionDisabled,
   MAX_AGENT_CONTEXT_ATTACHMENTS,
+  shouldResetAgentContextPickerState,
   type AgentContextSourceGroupKind,
 } from "@/components/agent-context-picker-view-model";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
@@ -226,6 +228,7 @@ export function AgentContextPicker({
   const isConnected = useHostRuntimeIsConnected(serverId);
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<readonly AggregatedAgent[]>([]);
+  const previousServerIdRef = useRef(serverId);
   const history = useAgentHistory({
     serverId,
     enabled: visible && supported && isConnected,
@@ -233,11 +236,17 @@ export function AgentContextPicker({
   });
 
   useEffect(() => {
-    if (!visible) {
-      setQuery("");
-      setSelection([]);
-    }
-  }, [visible]);
+    const shouldReset = shouldResetAgentContextPickerState({
+      previousServerId: previousServerIdRef.current,
+      serverId,
+      visible,
+    });
+    previousServerIdRef.current = serverId;
+
+    if (!shouldReset) return;
+    setQuery("");
+    setSelection([]);
+  }, [serverId, visible]);
 
   const existingKeys = useMemo(
     () =>
@@ -315,11 +324,13 @@ export function AgentContextPicker({
       search: {
         onChange: setQuery,
         placeholder: t("agentContext.searchPlaceholder"),
-        resetKey: visible ? 0 : 1,
+        // AdaptiveTextInput is uncontrolled, so its reset key must include
+        // the host scope as well as visibility.
+        resetKey: getAgentContextPickerSearchResetKey({ serverId, visible }),
         testID: "agent-context-search",
       },
     }),
-    [t, visible],
+    [serverId, t, visible],
   );
   const isEmpty = isConnected && groups.length === 0 && !history.isInitialLoad;
   const isConfirmDisabled = selection.length === 0 || !supported;

@@ -11,9 +11,11 @@ import {
   appendAgentContextAttachmentFromMention,
   appendAgentContextAttachmentFromPicker,
   buildAgentContextSourceGroups,
+  getAgentContextPickerSearchResetKey,
   isAgentContextAttachment,
   isAgentContextSourceSelectionDisabled,
   MAX_AGENT_CONTEXT_ATTACHMENTS,
+  shouldResetAgentContextPickerState,
 } from "./agent-context-picker-view-model";
 
 const TIMESTAMP = new Date("2026-07-22T10:00:00.000Z");
@@ -147,6 +149,44 @@ describe("buildAgentContextSourceGroups", () => {
     });
 
     expect(groupAgentIds(searchGroups)).toEqual([{ kind: "other", ids: ["documentation"] }]);
+  });
+});
+
+describe("agent context picker host scope", () => {
+  it("clears pending picker state on host changes and when closing", () => {
+    expect(
+      shouldResetAgentContextPickerState({
+        previousServerId: "server-a",
+        serverId: "server-a",
+        visible: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldResetAgentContextPickerState({
+        previousServerId: "server-a",
+        serverId: "server-b",
+        visible: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldResetAgentContextPickerState({
+        previousServerId: "server-b",
+        serverId: "server-b",
+        visible: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("resets the search field for a host change and close", () => {
+    expect(getAgentContextPickerSearchResetKey({ serverId: "server-a", visible: true })).toBe(
+      "open:server-a",
+    );
+    expect(getAgentContextPickerSearchResetKey({ serverId: "server-b", visible: true })).toBe(
+      "open:server-b",
+    );
+    expect(getAgentContextPickerSearchResetKey({ serverId: "server-b", visible: false })).toBe(
+      "closed:server-b",
+    );
   });
 });
 

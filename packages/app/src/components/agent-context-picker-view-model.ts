@@ -36,6 +36,21 @@ export function getAgentContextSourceWorkspaceLabel(
   return source.projectPlacement?.workspaceName?.trim() || source.cwd.trim();
 }
 
+export function shouldResetAgentContextPickerState(input: {
+  previousServerId: string;
+  serverId: string;
+  visible: boolean;
+}): boolean {
+  return !input.visible || input.previousServerId !== input.serverId;
+}
+
+export function getAgentContextPickerSearchResetKey(input: {
+  serverId: string;
+  visible: boolean;
+}): string {
+  return `${input.visible ? "open" : "closed"}:${input.serverId}`;
+}
+
 export function buildAgentContextAttachment(
   source: AggregatedAgent,
 ): Extract<UserComposerAttachment, { kind: "agent_context" }> {

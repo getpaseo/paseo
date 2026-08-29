@@ -1834,10 +1834,10 @@ export function NewWorkspaceScreen({
     });
     previousSelectedServerIdRef.current = nextHostAttachments.previousServerId;
 
-    if (!nextHostAttachments.didChangeHost) return;
     if (nextHostAttachments.attachments !== draftAttachments) {
       setDraftAttachments(nextHostAttachments.attachments);
     }
+    if (!nextHostAttachments.didChangeHost) return;
     dispatchPickerSelection({ type: "target-changed" });
   }, [draftAttachments, isChatDraftHydrated, selectedServerId, setDraftAttachments]);
 
