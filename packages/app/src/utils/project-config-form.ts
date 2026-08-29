@@ -20,12 +20,22 @@ export interface ProjectScriptDraft {
   rawEntry: PaseoScriptEntryRaw;
 }
 
+export interface ProjectLaunchDraft {
+  id: string;
+  name: string;
+  commandText: string;
+  rawEntry: PaseoLaunchEntryRaw;
+}
+
+type PaseoLaunchEntryRaw = NonNullable<PaseoConfigRaw["launches"]>[string];
+
 export interface ProjectConfigDraft {
   setupText: string;
   setupOriginalKind: LifecycleOriginalKind;
   teardownText: string;
   teardownOriginalKind: LifecycleOriginalKind;
   scripts: ProjectScriptDraft[];
+  launches: ProjectLaunchDraft[];
   metadataPrompts: Record<MetadataPromptKey, string>;
   metadataGenerationBase: PaseoMetadataGeneration | undefined;
 }
@@ -92,10 +102,34 @@ function parseScriptPort(value: string): number | string | undefined {
 }
 
 let scriptDraftIdCounter = 0;
+let launchDraftIdCounter = 0;
 
 function nextScriptDraftId(): string {
   scriptDraftIdCounter += 1;
   return `script-draft-${scriptDraftIdCounter}`;
+}
+
+function nextLaunchDraftId(): string {
+  launchDraftIdCounter += 1;
+  return `launch-draft-${launchDraftIdCounter}`;
+}
+
+function launchesFromDraft(launches: ProjectLaunchDraft[]): Record<string, PaseoLaunchEntryRaw> {
+  const nextLaunches: Record<string, PaseoLaunchEntryRaw> = {};
+  for (const row of launches) {
+    const trimmedName = row.name.trim();
+    if (trimmedName.length === 0) {
+      continue;
+    }
+    const nextEntry: Record<string, unknown> = { ...row.rawEntry };
+    if (row.commandText.trim().length === 0) {
+      delete nextEntry.command;
+    } else {
+      nextEntry.command = row.commandText;
+    }
+    nextLaunches[trimmedName] = nextEntry as PaseoLaunchEntryRaw;
+  }
+  return nextLaunches;
 }
 
 function emptyMetadataPrompts(): Record<MetadataPromptKey, string> {
@@ -126,6 +160,17 @@ export function configToDraft(config: PaseoConfigRaw | null | undefined): Projec
     });
   }
 
+  const launches: ProjectLaunchDraft[] = [];
+  const launchesRecord = config?.launches ?? {};
+  for (const [name, entry] of Object.entries(launchesRecord)) {
+    launches.push({
+      id: nextLaunchDraftId(),
+      name,
+      commandText: typeof entry.command === "string" ? entry.command : "",
+      rawEntry: entry,
+    });
+  }
+
   const metadataGeneration = config?.metadataGeneration;
   const metadataPrompts = emptyMetadataPrompts();
   for (const key of METADATA_PROMPT_KEYS) {
@@ -141,6 +186,7 @@ export function configToDraft(config: PaseoConfigRaw | null | undefined): Projec
     teardownText: teardown.text,
     teardownOriginalKind: teardown.kind,
     scripts,
+    launches,
     metadataPrompts,
     metadataGenerationBase: metadataGeneration,
   };
@@ -201,6 +247,8 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     nextScripts[trimmedName] = nextEntry as PaseoScriptEntryRaw;
   }
 
+  const nextLaunches = launchesFromDraft(input.draft.launches);
+
   const nextMetadataGeneration: Record<string, unknown> = {
     ...input.draft.metadataGenerationBase,
   };
@@ -236,6 +284,11 @@ export function applyDraftToConfig(input: ApplyDraftInput): PaseoConfigRaw {
     delete result.scripts;
   } else {
     result.scripts = nextScripts;
+  }
+  if (Object.keys(nextLaunches).length === 0) {
+    delete result.launches;
+  } else {
+    result.launches = nextLaunches;
   }
   if (Object.keys(nextMetadataGeneration).length === 0) {
     delete result.metadataGeneration;

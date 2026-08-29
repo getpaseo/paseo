@@ -961,6 +961,12 @@ export class Session {
         emit: (msg) => this.emit(msg),
       },
       projectRegistry: this.projectRegistry,
+      onProjectConfigWritten: async (projectId) => {
+        const workspaceIds = (await this.workspaceRegistry.list())
+          .filter((workspace) => workspace.projectId === projectId && !workspace.archivedAt)
+          .map((workspace) => workspace.workspaceId);
+        await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
+      },
       logger: this.sessionLogger,
     });
     this.daemonSession = new DaemonSession({

@@ -10,6 +10,7 @@ function emptyDraft(): ProjectConfigDraft {
     teardownText: "",
     teardownOriginalKind: "missing",
     scripts: [],
+    launches: [],
     metadataPrompts: {
       branchName: "",
       commitMessage: "",
@@ -62,6 +63,24 @@ describe("configToDraft", () => {
     expect(buildRow.commandOriginalKind).toBe("array");
     expect(buildRow.portText).toBe("");
     expect(buildRow.id).not.toBe(devRow.id);
+  });
+
+  it("converts launches into draft rows and preserves their raw entries", () => {
+    const draft = configToDraft({
+      launches: {
+        dev: { command: "./bin/dev", customLaunchField: { keep: true } },
+        docs: { command: "npm run docs" },
+      },
+    });
+
+    expect(draft.launches).toHaveLength(2);
+    expect(draft.launches[0]).toMatchObject({
+      name: "dev",
+      commandText: "./bin/dev",
+      rawEntry: { customLaunchField: { keep: true } },
+    });
+    expect(draft.launches[0]?.id).toMatch(/^launch-draft-\d+$/);
+    expect(draft.launches[1]?.name).toBe("docs");
   });
 });
 
@@ -170,6 +189,26 @@ describe("applyDraftToConfig", () => {
     const lintEntry = scripts.lint as Record<string, unknown>;
     expect(lintEntry.command).toBe("npm run lint");
     expect(lintEntry.type).toBe("task");
+  });
+
+  it("preserves and edits launches without disturbing their unknown fields", () => {
+    const base = PaseoConfigRawSchema.parse({
+      launches: {
+        dev: { command: "./bin/dev", customLaunchField: { keep: true } },
+        docs: { command: "npm run docs" },
+      },
+    });
+    const draft = configToDraft(base);
+    const dev = draft.launches.find((launch) => launch.name === "dev");
+    if (!dev) throw new Error("expected dev launch");
+    dev.commandText = "./bin/dev --watch";
+
+    const next = applyDraftToConfig({ draft, base });
+
+    expect(next.launches).toEqual({
+      dev: { command: "./bin/dev --watch", customLaunchField: { keep: true } },
+      docs: { command: "npm run docs" },
+    });
   });
 
   it("normalizes script command text into the original command kind", () => {
