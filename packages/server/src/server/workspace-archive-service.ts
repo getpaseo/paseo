@@ -104,13 +104,19 @@ export interface ArchiveResult {
   archivedWorkspaceIds: string[];
   blockedWorkspaceIds?: string[];
   failedWorkspaceIds?: string[];
+  failedDirectoryPaths?: string[];
   removedDirectory: boolean;
 }
 
 export class WorkspaceArchiveIncompleteError extends Error {
   constructor(public readonly result: ArchiveResult) {
     const failedWorkspaceIds = result.failedWorkspaceIds ?? [];
-    super(`Workspace archival incomplete for: ${failedWorkspaceIds.join(", ")}`);
+    const failedDirectoryPaths = result.failedDirectoryPaths ?? [];
+    const failures = [
+      ...failedWorkspaceIds.map((workspaceId) => `workspace ${workspaceId}`),
+      ...failedDirectoryPaths.map((path) => `directory ${path}`),
+    ];
+    super(`Workspace archival incomplete for: ${failures.join(", ")}`);
     this.name = "WorkspaceArchiveIncompleteError";
   }
 }
@@ -183,7 +189,10 @@ export async function archiveByScope(
   const result = await runWithGitCommandPriority("high", () =>
     archiveByScopeWithPriority(dependencies, request),
   );
-  if (request.failureMode !== "return" && (result.failedWorkspaceIds?.length ?? 0) > 0) {
+  if (
+    request.failureMode !== "return" &&
+    ((result.failedWorkspaceIds?.length ?? 0) > 0 || (result.failedDirectoryPaths?.length ?? 0) > 0)
+  ) {
     throw new WorkspaceArchiveIncompleteError(result);
   }
   return result;
@@ -274,12 +283,15 @@ async function archiveResolvedTarget(
         failedWorkspaceIds.add(workspaceId);
       }
     }
+    const failedDirectoryPaths =
+      directoryRemoval.directoryCleanupFailed && target.backing ? [target.backing.path] : [];
 
     return {
       archivedAgentIds: Array.from(prepared.archivedAgents),
       archivedWorkspaceIds: archived.archivedWorkspaceIds,
       blockedWorkspaceIds: prepared.blockedWorkspaceIds,
       failedWorkspaceIds: Array.from(failedWorkspaceIds),
+      failedDirectoryPaths,
       removedDirectory,
     };
   } finally {

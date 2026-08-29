@@ -1224,7 +1224,8 @@ export async function createPaseoDaemon(
     );
     return !(
       result.blockedWorkspaceIds?.includes(workspaceId) ||
-      result.failedWorkspaceIds?.includes(workspaceId)
+      result.failedWorkspaceIds?.includes(workspaceId) ||
+      (result.failedDirectoryPaths?.length ?? 0) > 0
     );
   };
   const hubAgentLifecycle = new CreateAgentLifecycleDispatch({

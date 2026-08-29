@@ -883,6 +883,60 @@ describe("archiveByScope", () => {
     expect(existsSync(worktree.worktreePath)).toBe(false);
   });
 
+  test("reports repeated worktree cleanup failure after all workspace records are archived", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "removal-repeat-failure");
+    const workspaceId = "ws-removal-repeat-failure";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    deps.removePaseoWorktree = vi.fn(async () => {
+      throw new Error("worktree removal keeps failing");
+    });
+
+    const firstResult = await archiveByScope(deps, {
+      scope: { kind: "worktree", targetPath: worktree.worktreePath },
+      requestId: "req-removal-repeat-failure-1",
+      failureMode: "return",
+    });
+
+    expect(firstResult).toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+      failedWorkspaceIds: [workspaceId],
+      failedDirectoryPaths: [worktree.worktreePath],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces).toEqual([]);
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: worktree.worktreePath },
+        requestId: "req-removal-repeat-failure-2",
+      }),
+    ).rejects.toMatchObject({
+      name: "WorkspaceArchiveIncompleteError",
+      result: {
+        archivedWorkspaceIds: [],
+        failedWorkspaceIds: [],
+        failedDirectoryPaths: [worktree.worktreePath],
+        removedDirectory: false,
+      },
+    });
+    expect(deps.removePaseoWorktree).toHaveBeenCalledTimes(2);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
   test("workspace scope with unknown workspace id is a clean no-op", async () => {
     const { tempDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
