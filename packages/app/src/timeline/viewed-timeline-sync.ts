@@ -50,7 +50,8 @@ async function prepareCachedTimeline(input: {
   if (!stored) return undefined;
   const session = useSessionStore.getState().sessions[input.serverId];
   const currentTimeline = selectAgentTimelineState(session, input.agentId);
-  if (session?.agentStreamHead.get(input.agentId) !== beforeHead) return undefined;
+  const currentHead = session?.agentStreamHead.get(input.agentId);
+  if (currentHead !== beforeHead && currentTimeline.status !== "cold") return undefined;
   if (beforeTimeline.status === "painted") {
     return currentTimeline.status === "painted" && currentTimeline.items === beforeTimeline.items
       ? stored
@@ -59,7 +60,7 @@ async function prepareCachedTimeline(input: {
   if (currentTimeline.status !== "cold") return undefined;
   useSessionStore.getState().applyAgentTimelineResponseState(input.serverId, input.agentId, {
     items: stored.items,
-    head: [],
+    head: currentHead ?? [],
     range: stored.range,
     older: stored.hasOlder ? "available" : "none",
     newer: false,

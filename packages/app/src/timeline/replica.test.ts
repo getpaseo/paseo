@@ -138,6 +138,37 @@ describe("viewed timeline persistence", () => {
     owner.dispose();
   });
 
+  it("paints cached rows without replacing a live head that arrives during preparation", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    let release!: (value: CachedTimeline) => void;
+    const read = new Promise<CachedTimeline>((resolve) => {
+      release = resolve;
+    });
+    const replica = createTimelineReplica({
+      serverId: SERVER_ID,
+      storage: {
+        readTimeline: () => read,
+        commitTimeline: () => undefined,
+      },
+      prepareAgent: async () => undefined,
+    });
+
+    const preparation = replica.prepare(AGENT_ID);
+    useSessionStore.getState().setAgentStreamState(SERVER_ID, AGENT_ID, {
+      head: [item("live", "live", 5)],
+    });
+    release(cachedTimeline());
+    await preparation;
+
+    expect(replica.readCursor(AGENT_ID)).toEqual({ epoch: "epoch-1", endSeq: 4 });
+    expect(
+      selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID),
+    ).toEqual({ status: "painted", items: cachedTimeline().items });
+    expect(useSessionStore.getState().sessions[SERVER_ID]?.agentStreamHead.get(AGENT_ID)).toEqual([
+      item("live", "live", 5),
+    ]);
+  });
+
   it("persists accepted live stream commits through the owner", () => {
     useSessionStore.getState().initializeSession(SERVER_ID, null);
     applySynced(AGENT_ID, 8);
