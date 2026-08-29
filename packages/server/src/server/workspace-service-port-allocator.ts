@@ -20,6 +20,8 @@ export interface AllocateWorkspaceServicePortOptions {
   workspaceId: string;
   branchName: string | null;
   reservedPorts?: ReadonlySet<number>;
+  /** Number of contiguous ports requested by a workspace-level caller. */
+  portCount?: number;
 }
 
 export async function allocateWorkspaceServicePort(
@@ -33,6 +35,7 @@ export async function allocateWorkspaceServicePort(
       workspaceId: options.workspaceId,
       branchName: options.branchName,
       reservedPorts: options.reservedPorts,
+      portCount: options.portCount,
     });
   }
   if (options.allocation?.range) {
@@ -51,6 +54,7 @@ async function allocatePortFromScript(options: {
   workspaceId: string;
   branchName: string | null;
   reservedPorts: ReadonlySet<number> | undefined;
+  portCount: number | undefined;
 }): Promise<number> {
   let result: { stdout: string; stderr: string };
   try {
@@ -64,6 +68,7 @@ async function allocatePortFromScript(options: {
           PASEO_WORKSPACE_ID: options.workspaceId,
           PASEO_BRANCH_NAME: options.branchName ?? "",
           PASEO_WORKTREE_PATH: options.cwd,
+          ...(options.portCount ? { PASEO_PORT_COUNT: String(options.portCount) } : {}),
         },
         timeout: PORT_SCRIPT_TIMEOUT_MS,
         maxBuffer: PORT_SCRIPT_MAX_OUTPUT_BYTES,
