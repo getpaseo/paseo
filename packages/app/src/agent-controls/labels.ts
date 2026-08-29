@@ -33,7 +33,7 @@ export function formatAgentModeLabel(mode: ControlLabelInput): string {
 }
 
 export function formatThinkingOptionLabel(option: ControlLabelInput): string {
-  const rawLabel = (option.label ?? option.id).trim();
+  const rawLabel = (option.label ?? option.id).trim().replace(/^thinking\s*:\s*/iu, "");
   const compactId = option.id.replace(/[\s_-]+/g, "").toLowerCase();
   const compactLabel = rawLabel.replace(/[\s_-]+/g, "").toLowerCase();
 
