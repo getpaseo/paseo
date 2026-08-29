@@ -2,32 +2,40 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Image as ExpoImage } from "expo-image";
 import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { isWeb } from "@/constants/platform";
 import { WindowChromeRootRegion, WindowChromeSafeArea } from "@/utils/desktop-window";
+import { ZoomableImage } from "@/components/zoomable-viewport/image";
+import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
+
+export type ImageLightboxSource =
+  | { type: "attachment"; metadata: AttachmentMetadata }
+  | { type: "uri"; uri: string; contentSize?: ViewportSize };
 
 interface AttachmentLightboxProps {
-  metadata: AttachmentMetadata | null;
+  source: ImageLightboxSource | null;
   onClose: () => void;
 }
 
-export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProps) {
+export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const url = useAttachmentPreviewUrl(metadata);
+  const metadata = source?.type === "attachment" ? source.metadata : null;
+  const attachmentUrl = useAttachmentPreviewUrl(metadata);
+  const url = source?.type === "uri" ? source.uri : attachmentUrl;
+  const contentSize = source?.type === "uri" ? source.contentSize : undefined;
   const [errored, setErrored] = useState(false);
 
   useEffect(() => {
     setErrored(false);
-  }, [metadata?.id]);
+  }, [metadata?.id, url]);
 
   useEffect(() => {
-    if (!isWeb || !metadata) return;
+    if (!isWeb || !source) return;
     function handleKeydown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         onClose();
@@ -37,7 +45,7 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [metadata, onClose]);
+  }, [onClose, source]);
 
   const closeButtonRowStyle = useMemo(
     () => [
@@ -54,10 +62,8 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
   );
 
   const handleImageError = useCallback(() => setErrored(true), []);
-  const noopPress = useCallback(() => {}, []);
-  const imageSource = useMemo(() => ({ uri: url ?? "" }), [url]);
 
-  if (!metadata) {
+  if (!source) {
     return null;
   }
 
@@ -74,20 +80,20 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
             onPress={onClose}
             style={styles.backdrop}
           />
-          <View style={styles.contentLayer}>
-            <View style={styles.imageArea}>
+          <View pointerEvents="box-none" style={styles.contentLayer}>
+            <View pointerEvents="box-none" style={styles.imageArea}>
               {hasError ? (
                 <Text style={styles.errorText}>{t("message.attachments.imageLoadFailed")}</Text>
               ) : (
-                <Pressable onPress={noopPress} style={styles.imagePressable}>
-                  <ExpoImage
-                    testID="attachment-lightbox-image"
-                    source={imageSource}
-                    contentFit="contain"
+                <View style={styles.imageViewport}>
+                  <ZoomableImage
+                    accessibilityLabel={t("composer.attachments.openImage")}
+                    contentSize={contentSize}
                     onError={handleImageError}
-                    style={imageFillStyle}
+                    testID="attachment-lightbox"
+                    uri={url}
                   />
-                </Pressable>
+                </View>
               )}
             </View>
             <WindowChromeSafeArea placement="inline" style={closeButtonRowStyle}>
@@ -109,14 +115,6 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
   );
 }
 
-const imageFillStyle = {
-  position: "absolute",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-} as const;
-
 const styles = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
@@ -135,23 +133,20 @@ const styles = StyleSheet.create((theme) => ({
     left: 0,
     right: 0,
     bottom: 0,
-    pointerEvents: "box-none",
   },
   closeButtonRow: {
     position: "absolute",
     left: 0,
     right: 0,
     alignItems: "flex-end",
-    pointerEvents: "box-none",
   },
   imageArea: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: theme.spacing[4],
-    pointerEvents: "box-none",
   },
-  imagePressable: {
+  imageViewport: {
     flex: 1,
     width: "100%",
     alignSelf: "center",
