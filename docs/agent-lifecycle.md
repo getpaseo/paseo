@@ -42,7 +42,16 @@ into that contract; lifecycle callers do not interpret provider-specific errors.
 
 After an acknowledged interrupt, the manager settles the captured run even when no terminal event
 arrives or the run was still waiting for its provider turn id. The captured run token prevents an
-older cancellation from settling a newer turn. If interruption is rejected or times out, the agent
+older cancellation from settling a newer turn. A forced settlement leaves the provider session
+suspect: it may still own the foreground turn it never ended, and real sessions guard that slot by
+refusing every later `startTurn`. The manager therefore swaps the session in place after a forced
+settlement — the same mechanism as reload: resume a replacement from the persistence handle, close
+the suspect runtime, and re-register under the same agent id with timeline and identity intact. The
+provider-side turn is never cleared without replacing the runtime that owns it. If no replacement
+can be built, the existing session stays registered: when the provider was actually idle it still
+works, and when it was wedged the agent is no worse off than before the swap attempt.
+
+If interruption is rejected or times out, the agent
 keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
 Accepting new work after an ambiguous interruption would create a split-brain session.
 
