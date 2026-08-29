@@ -1,4 +1,11 @@
-import { MAX_CONTENT_WIDTH } from "@/constants/layout";
+import {
+  ASSISTANT_IMAGE_GALLERY_MAX_HEIGHT,
+  ASSISTANT_IMAGE_GALLERY_MAX_WIDTH,
+  ASSISTANT_IMAGE_LOADING_HEIGHT,
+  ASSISTANT_IMAGE_STANDALONE_MAX_HEIGHT,
+  ASSISTANT_IMAGE_STANDALONE_MAX_WIDTH,
+  constrainAssistantImageSize,
+} from "@/assistant-image/layout";
 import { resolveAssistantImageSource } from "@/utils/assistant-image-source";
 import { createImageSourceCacheKey } from "@/attachments/utils";
 
@@ -14,8 +21,6 @@ const ASSISTANT_IMAGE_METADATA_CACHE_LIMIT = 500;
 const ASSISTANT_IMAGE_PARSE_CACHE_LIMIT = 500;
 
 const MARKDOWN_IMAGE_PATTERN = /!\[[^\]]*]\((<[^>]+>|[^)\n]+)\)/g;
-const ASSISTANT_IMAGE_ESTIMATE_WIDTH = MAX_CONTENT_WIDTH - 8;
-const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
 const ASSISTANT_IMAGE_BLOCK_GAP = 24;
 const ASSISTANT_MESSAGE_BASE_HEIGHT = 96;
 const ASSISTANT_MESSAGE_MIN_HEIGHT = 220;
@@ -126,6 +131,20 @@ export function getAssistantImageMetadata(input: {
   return null;
 }
 
+export function peekAssistantImageMetadata(input: {
+  source: string;
+  workspaceRoot?: string;
+  serverId?: string;
+}): AssistantImageMetadata | null {
+  for (const key of getAssistantImageMetadataKeys(input)) {
+    const metadata = assistantImageMetadataCache.get(key);
+    if (metadata) {
+      return metadata;
+    }
+  }
+  return null;
+}
+
 export function setAssistantImageMetadata(
   input: {
     source: string;
@@ -183,13 +202,35 @@ export function estimateAssistantMessageHeightFromCache(markdown: string): numbe
     return null;
   }
 
+  if (!parsed.hasNonImageText && parsed.sources.length > 1) {
+    const galleryHeights = parsed.sources.map((source) => {
+      const metadata = getAssistantImageMetadata({ source });
+      if (!metadata) {
+        return ASSISTANT_IMAGE_LOADING_HEIGHT;
+      }
+      return constrainAssistantImageSize({
+        intrinsic: metadata,
+        maxWidth: ASSISTANT_IMAGE_GALLERY_MAX_WIDTH,
+        maxHeight: ASSISTANT_IMAGE_GALLERY_MAX_HEIGHT,
+      }).height;
+    });
+    return (
+      ASSISTANT_MESSAGE_IMAGE_ONLY_BASE_HEIGHT +
+      Math.round(Math.max(...galleryHeights)) +
+      ASSISTANT_IMAGE_BLOCK_GAP
+    );
+  }
+
   const knownHeights = parsed.sources
     .map((source) => getAssistantImageMetadata({ source }))
     .filter((metadata): metadata is AssistantImageMetadata => metadata !== null)
     .map((metadata) =>
-      Math.max(
-        ASSISTANT_IMAGE_MIN_HEIGHT,
-        Math.round(ASSISTANT_IMAGE_ESTIMATE_WIDTH / metadata.aspectRatio),
+      Math.round(
+        constrainAssistantImageSize({
+          intrinsic: metadata,
+          maxWidth: ASSISTANT_IMAGE_STANDALONE_MAX_WIDTH,
+          maxHeight: ASSISTANT_IMAGE_STANDALONE_MAX_HEIGHT,
+        }).height,
       ),
     );
 

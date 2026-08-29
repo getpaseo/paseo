@@ -83,6 +83,7 @@ import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { setAssistantMarkdownBlockHeight } from "@/utils/assistant-message-height-estimate";
 import { isRenderProfileEnabled } from "@/utils/render-profiler";
+import { peekAssistantImageMetadata } from "@/utils/assistant-image-metadata";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
@@ -98,12 +99,23 @@ import {
 } from "@/assistant-file-links";
 import { getCompactionMarkerLabel } from "./message-compaction-label";
 import { useAssistantImage } from "@/assistant-image/use-assistant-image";
+import { AssistantImageGallery } from "@/assistant-image/gallery";
+import {
+  ASSISTANT_IMAGE_GALLERY_MAX_HEIGHT,
+  ASSISTANT_IMAGE_GALLERY_MAX_WIDTH,
+  ASSISTANT_IMAGE_LOADING_HEIGHT,
+  ASSISTANT_IMAGE_LOADING_WIDTH,
+  ASSISTANT_IMAGE_STANDALONE_MAX_HEIGHT,
+  ASSISTANT_IMAGE_STANDALONE_MAX_WIDTH,
+  constrainAssistantImageSize,
+  isAssistantImageGalleryParagraph,
+} from "@/assistant-image/layout";
 import {
   AttachmentFrame,
   AttachmentLabel,
   AttachmentThumbnail,
 } from "@/components/attachment-pill";
-import { AttachmentLightbox } from "@/components/attachment-lightbox";
+import { AttachmentLightbox, ImageLightbox } from "@/components/attachment-lightbox";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
@@ -762,8 +774,13 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
   imageFrame: {
     width: "100%",
-    minHeight: 160,
     marginHorizontal: -theme.spacing[1],
+  },
+  imageGalleryFrame: {
+    flexShrink: 0,
+  },
+  imageGallerySurface: {
+    position: "relative",
   },
   imageSurface: {
     width: "100%",
@@ -797,13 +814,15 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
 }));
 
-const ASSISTANT_IMAGE_MIN_HEIGHT = 160;
+type AssistantImagePresentation = "full" | "gallery";
 
 function AssistantMarkdownImage({
   source,
   occurrenceKey,
   alt,
   hasLeadingContent,
+  presentation,
+  onOpenPreview,
   client,
   workspaceRoot,
   serverId,
@@ -812,16 +831,19 @@ function AssistantMarkdownImage({
   occurrenceKey: string;
   alt?: string;
   hasLeadingContent: boolean;
+  presentation: AssistantImagePresentation;
+  onOpenPreview: (uri: string) => void;
   client?: DaemonClient | null;
   workspaceRoot?: string;
   serverId?: string;
 }) {
+  const { t } = useTranslation();
   const containerStyle = useMemo<StyleProp<ViewStyle>>(
     () => ({
-      marginTop: hasLeadingContent ? 16 : 0,
+      marginTop: presentation === "full" && hasLeadingContent ? 16 : 0,
       marginBottom: 0,
     }),
-    [hasLeadingContent],
+    [hasLeadingContent, presentation],
   );
   const image = useAssistantImage({
     source,
@@ -832,32 +854,87 @@ function AssistantMarkdownImage({
   });
   const binding = image.status === "failed" ? null : image.binding;
   const aspectRatio = image.status === "failed" ? null : image.aspectRatio;
+  const metadata = peekAssistantImageMetadata({ source, workspaceRoot, serverId });
+  const metadataWidth = metadata?.width ?? null;
+  const metadataHeight = metadata?.height ?? null;
+  const constrainedSize = useMemo(() => {
+    if (metadataWidth === null || metadataHeight === null) {
+      return null;
+    }
+    return constrainAssistantImageSize({
+      intrinsic: { width: metadataWidth, height: metadataHeight },
+      maxWidth:
+        presentation === "gallery"
+          ? ASSISTANT_IMAGE_GALLERY_MAX_WIDTH
+          : ASSISTANT_IMAGE_STANDALONE_MAX_WIDTH,
+      maxHeight:
+        presentation === "gallery"
+          ? ASSISTANT_IMAGE_GALLERY_MAX_HEIGHT
+          : ASSISTANT_IMAGE_STANDALONE_MAX_HEIGHT,
+    });
+  }, [metadataHeight, metadataWidth, presentation]);
   const imageUri = binding?.uri ?? "";
   const imageSource = useMemo(() => ({ uri: imageUri }), [imageUri]);
   const frameStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [assistantMessageStylesheet.imageFrame, containerStyle],
-    [containerStyle],
+    () =>
+      presentation === "gallery"
+        ? [
+            assistantMessageStylesheet.imageGalleryFrame,
+            constrainedSize ?? {
+              width: ASSISTANT_IMAGE_LOADING_WIDTH,
+              height: ASSISTANT_IMAGE_LOADING_HEIGHT,
+            },
+            containerStyle,
+          ]
+        : [assistantMessageStylesheet.imageFrame, containerStyle],
+    [constrainedSize, containerStyle, presentation],
   );
   const imageSizeStyle = useMemo<ViewStyle>(() => {
+    if (constrainedSize && aspectRatio) {
+      return presentation === "gallery"
+        ? constrainedSize
+        : { width: constrainedSize.width, maxWidth: "100%", aspectRatio };
+    }
     if (aspectRatio) {
       return { aspectRatio };
     }
-    return { height: ASSISTANT_IMAGE_MIN_HEIGHT };
-  }, [aspectRatio]);
+    return { height: ASSISTANT_IMAGE_LOADING_HEIGHT };
+  }, [aspectRatio, constrainedSize, presentation]);
   const surfaceStyle = useMemo<StyleProp<ViewStyle>>(
-    () => [assistantMessageStylesheet.imageSurface, imageSizeStyle],
-    [imageSizeStyle],
+    () => [
+      presentation === "gallery"
+        ? assistantMessageStylesheet.imageGallerySurface
+        : assistantMessageStylesheet.imageSurface,
+      imageSizeStyle,
+    ],
+    [imageSizeStyle, presentation],
   );
 
   const stateFrameStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
-      assistantMessageStylesheet.imageFrame,
+      presentation === "gallery"
+        ? assistantMessageStylesheet.imageGalleryFrame
+        : assistantMessageStylesheet.imageFrame,
       containerStyle,
-      { height: ASSISTANT_IMAGE_MIN_HEIGHT },
+      presentation === "gallery"
+        ? {
+            width: constrainedSize?.width ?? ASSISTANT_IMAGE_LOADING_WIDTH,
+            height: constrainedSize?.height ?? ASSISTANT_IMAGE_LOADING_HEIGHT,
+          }
+        : { height: ASSISTANT_IMAGE_LOADING_HEIGHT },
       assistantMessageStylesheet.imageState,
     ],
-    [containerStyle],
+    [constrainedSize, containerStyle, presentation],
   );
+
+  const handleOpenPreview = useCallback(() => {
+    if (binding?.uri) {
+      onOpenPreview(binding.uri);
+    }
+  }, [binding?.uri, onOpenPreview]);
+  const previewAccessibilityLabel = alt
+    ? `${t("composer.attachments.openImage")}: ${alt}`
+    : t("composer.attachments.openImage");
 
   if (image.status === "failed") {
     return (
@@ -877,7 +954,13 @@ function AssistantMarkdownImage({
 
   return (
     <View style={frameStyle}>
-      <View style={surfaceStyle} accessibilityRole="image" accessibilityLabel={alt}>
+      <Pressable
+        testID="assistant-image-preview"
+        onPress={handleOpenPreview}
+        accessibilityRole="button"
+        accessibilityLabel={previewAccessibilityLabel}
+        style={surfaceStyle}
+      >
         <Image
           ref={binding.onRef}
           source={imageSource}
@@ -891,7 +974,7 @@ function AssistantMarkdownImage({
             <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
           </View>
         ) : null}
-      </View>
+      </Pressable>
     </View>
   );
 }
@@ -1464,6 +1547,9 @@ export const AssistantMessage = memo(function AssistantMessage({
   // Paint a paced prefix while the turn is streaming so text arrives at a steady
   // rate instead of in whatever lumps the daemon's coalescing window produced.
   const revealedMessage = useRevealedText(message, phase);
+  const [lightboxUri, setLightboxUri] = useState<string | null>(null);
+  const openImagePreview = useStableEvent((uri: string) => setLightboxUri(uri));
+  const closeImagePreview = useCallback(() => setLightboxUri(null), []);
 
   const fileLinkActions = useAssistantFileLinkActions();
   const handleMarkdownLinkPress = useStableEvent((url: string) => {
@@ -1853,15 +1939,24 @@ export const AssistantMessage = memo(function AssistantMessage({
         children: ReactNode[],
         _parent: ASTNode[],
         styles: MarkdownStyles,
-      ) => (
-        <MarkdownParagraphView
-          key={node.key}
-          paragraphStyle={styles.paragraph}
-          containsImage={markdownNodeContainsType(node, "image")}
-        >
-          {children}
-        </MarkdownParagraphView>
-      ),
+      ) => {
+        if (isAssistantImageGalleryParagraph(node)) {
+          return (
+            <AssistantImageGallery key={node.key} paragraphStyle={styles.paragraph}>
+              {children}
+            </AssistantImageGallery>
+          );
+        }
+        return (
+          <MarkdownParagraphView
+            key={node.key}
+            paragraphStyle={styles.paragraph}
+            containsImage={markdownNodeContainsType(node, "image")}
+          >
+            {children}
+          </MarkdownParagraphView>
+        );
+      },
       link: (node: ASTNode, children: ReactNode[], _parent: ASTNode[], styles: MarkdownStyles) => (
         <AssistantMarkdownLink
           key={node.key}
@@ -1885,6 +1980,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           : [];
         const imageIndex = paragraphChildren.findIndex((child: ASTNode) => child?.key === node.key);
         const hasLeadingContent = imageIndex > 0;
+        const presentation = isAssistantImageGalleryParagraph(paragraphNode) ? "gallery" : "full";
 
         return (
           <AssistantMarkdownImage
@@ -1893,6 +1989,8 @@ export const AssistantMessage = memo(function AssistantMessage({
             occurrenceKey={`${occurrenceKey}:${node.key}`}
             alt={typeof node.attributes?.alt === "string" ? node.attributes.alt : undefined}
             hasLeadingContent={hasLeadingContent}
+            presentation={presentation}
+            onOpenPreview={openImagePreview}
             client={client}
             workspaceRoot={workspaceRoot}
             serverId={serverId}
@@ -1900,7 +1998,16 @@ export const AssistantMessage = memo(function AssistantMessage({
         );
       },
     };
-  }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
+  }, [
+    client,
+    fileLinkActions,
+    markdownParser,
+    occurrenceKey,
+    openImagePreview,
+    phase,
+    serverId,
+    workspaceRoot,
+  ]);
 
   const blocks = useMemo(() => splitMarkdownBlocks(revealedMessage), [revealedMessage]);
   const keyedBlocks = useMemo(
@@ -1927,22 +2034,25 @@ export const AssistantMessage = memo(function AssistantMessage({
   );
 
   return (
-    <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
-      {keyedBlocks.map(({ key, block }, index) => (
-        <AssistantMessageBlockContainer
-          key={key}
-          block={block}
-          marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
-        >
-          <MemoizedMarkdownBlock
-            text={block}
-            rules={markdownRules}
-            parser={markdownParser}
-            onLinkPress={handleMarkdownLinkPress}
-          />
-        </AssistantMessageBlockContainer>
-      ))}
-    </View>
+    <>
+      <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
+        {keyedBlocks.map(({ key, block }, index) => (
+          <AssistantMessageBlockContainer
+            key={key}
+            block={block}
+            marginBottom={index < keyedBlocks.length - 1 ? 12 : 0}
+          >
+            <MemoizedMarkdownBlock
+              text={block}
+              rules={markdownRules}
+              parser={markdownParser}
+              onLinkPress={handleMarkdownLinkPress}
+            />
+          </AssistantMessageBlockContainer>
+        ))}
+      </View>
+      <ImageLightbox visible={lightboxUri !== null} uri={lightboxUri} onClose={closeImagePreview} />
+    </>
   );
 });
 
