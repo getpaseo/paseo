@@ -75,6 +75,11 @@ vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
 }));
 
+vi.mock("react-native-gesture-handler", () => ({
+  GestureHandlerRootView: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement("div", { "data-testid": "gesture-handler-root" }, children),
+}));
+
 vi.mock("lucide-react-native", () => {
   const createIcon = (name: string) => (props: Record<string, unknown>) =>
     React.createElement("span", { ...props, "data-icon": name });
@@ -85,11 +90,32 @@ vi.mock("lucide-react-native", () => {
 
 vi.mock("@/components/zoomable-viewport/image", () => ({
   ZoomableImage: (props: Record<string, unknown>) => {
-    return React.createElement("div", {
-      "data-testid": `${String(props.testID)}-image`,
-      "data-source": props.uri,
-      role: "img",
-    });
+    const actions = props.actions as Array<{
+      label: string;
+      onPress: () => void;
+      testID?: string;
+    }>;
+    return React.createElement(
+      "div",
+      {
+        "data-testid": `${String(props.testID)}-image`,
+        "data-source": props.uri,
+        role: "img",
+      },
+      actions.map((action) =>
+        React.createElement(
+          "button",
+          {
+            "aria-label": action.label,
+            "data-testid": action.testID,
+            key: action.label,
+            onClick: action.onPress,
+            type: "button",
+          },
+          action.label,
+        ),
+      ),
+    );
   },
 }));
 

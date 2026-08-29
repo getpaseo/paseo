@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Image, View } from "react-native";
+import { Image, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { ViewportSize } from "./geometry";
 import { ZoomableViewport } from "./index";
@@ -13,6 +13,7 @@ interface ZoomableImageProps {
   maxScale?: number;
   minScale?: number;
   onError?: () => void;
+  style?: StyleProp<ViewStyle>;
   testID?: string;
   wheelActivation?: "always" | "modifier";
 }
@@ -25,6 +26,7 @@ export function ZoomableImage({
   maxScale,
   minScale = 1,
   onError,
+  style,
   testID = "zoomable-image",
   wheelActivation = "always",
 }: ZoomableImageProps) {
@@ -52,7 +54,7 @@ export function ZoomableImage({
 
   if (!resolvedSize) {
     return (
-      <View style={styles.root} testID={testID}>
+      <View style={[styles.root, style]} testID={testID}>
         <Image
           accessibilityLabel={accessibilityLabel}
           accessibilityRole="image"
@@ -73,6 +75,7 @@ export function ZoomableImage({
       contentSize={resolvedSize}
       maxScale={maxScale}
       minScale={minScale}
+      style={style}
       testID={testID}
       wheelActivation={wheelActivation}
     >

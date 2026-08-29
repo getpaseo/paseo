@@ -74,6 +74,9 @@ export function ZoomableViewport({
         })
         .onUpdate((event) => {
           if (!fittedContent || !viewport) return;
+          // Android emits one final pinch update after a finger lifts. Its focal point belongs to
+          // the remaining pointer, so applying it makes the content jump as the gesture ends.
+          if (event.numberOfPointers < 2) return;
           if (!pinchReady.value) {
             pinchFocalX.value = event.focalX;
             pinchFocalY.value = event.focalY;

@@ -3,6 +3,11 @@ import { Pressable, View } from "react-native";
 import { Scan, ZoomIn, ZoomOut } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import {
+  iconButtonChromeGlyphSize,
+  iconButtonChromeStyle,
+} from "@/components/ui/icon-button-chrome";
 import type { ZoomableViewportAction } from "./types";
 
 interface ViewportToolbarProps {
@@ -77,20 +82,31 @@ function ViewportToolbarButton({
   visible: boolean;
 }) {
   const Icon = action.icon;
-  const buttonStyle = visible ? styles.button : styles.buttonHidden;
-  const resolvedStyle = disabled ? [buttonStyle, styles.disabled] : buttonStyle;
+  const isCompact = useIsCompactFormFactor();
+  const iconSize = iconButtonChromeGlyphSize("small", isCompact);
+  const buttonStyle = React.useCallback(
+    ({ hovered, pressed }: { hovered?: boolean; pressed: boolean }) =>
+      iconButtonChromeStyle({
+        size: "small",
+        compact: isCompact,
+        state: { hovered, pressed },
+        disabled,
+        style: visible ? styles.button : styles.buttonHidden,
+      }),
+    [disabled, isCompact, visible],
+  );
   return (
     <Pressable
       accessibilityLabel={action.label}
       accessibilityRole="button"
       disabled={disabled}
-      hitSlop={4}
+      hitSlop={isCompact ? 6 : 4}
       onPress={action.onPress}
-      style={resolvedStyle}
+      style={buttonStyle}
       testID={action.testID}
     >
       {({ hovered }) => (
-        <Icon size={14} color={hovered ? styles.iconHovered.color : styles.icon.color} />
+        <Icon size={iconSize} color={hovered ? styles.iconHovered.color : styles.icon.color} />
       )}
     </Pressable>
   );
@@ -107,20 +123,15 @@ const styles = StyleSheet.create((theme) => ({
     pointerEvents: "box-none",
   },
   button: {
-    padding: theme.spacing[1],
-    borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface2,
     opacity: 1,
     pointerEvents: "auto",
   },
   buttonHidden: {
-    padding: theme.spacing[1],
-    borderRadius: theme.borderRadius.md,
     backgroundColor: theme.colors.surface2,
     opacity: 0,
     pointerEvents: "none",
   },
-  disabled: { opacity: theme.opacity[50] },
   icon: { color: theme.colors.foregroundMuted },
   iconHovered: { color: theme.colors.foreground },
 }));
