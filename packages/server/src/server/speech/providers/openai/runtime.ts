@@ -1,8 +1,11 @@
 import type { Logger } from "pino";
 
-import type { SpeechToTextProvider, TextToSpeechProvider } from "../../speech-provider.js";
+import type {
+  SpeechServices,
+  SpeechToTextProvider,
+  TextToSpeechProvider,
+} from "../../speech-provider.js";
 import type { RequestedSpeechProviders } from "../../speech-types.js";
-import type { TurnDetectionProvider } from "../../turn-detection-provider.js";
 import { DEFAULT_OPENAI_TTS_MODEL, type OpenAiSpeechProviderConfig } from "./config.js";
 import { OpenAISTT } from "./stt.js";
 import { OpenAITTS } from "./tts.js";
@@ -17,13 +20,6 @@ export interface OpenAiSpeechAvailability {
   stt: boolean;
   tts: boolean;
   dictationStt: boolean;
-}
-
-export interface SpeechServices {
-  turnDetectionService: TurnDetectionProvider | null;
-  sttService: SpeechToTextProvider | null;
-  ttsService: TextToSpeechProvider | null;
-  dictationSttService: SpeechToTextProvider | null;
 }
 
 function resolveOpenAiCredentials(

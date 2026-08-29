@@ -3,6 +3,11 @@ import { join } from "node:path";
 import type { Logger } from "pino";
 
 import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
+import type { GeminiSpeechProviderConfig } from "./providers/gemini/config.js";
+import {
+  initializeGeminiSpeechServices,
+  validateGeminiCredentialRequirements,
+} from "./providers/gemini/runtime.js";
 import type { LocalSpeechModelId } from "./providers/local/config.js";
 import {
   ensureLocalSpeechModels,
@@ -311,21 +316,12 @@ function describeRequestedProviders(providers: RequestedSpeechProviders): {
   };
 }
 
-function resolveVoiceTtsLabel(
-  ttsService: TextToSpeechProvider | null,
-  localVoiceTtsProvider: TextToSpeechProvider | null,
-): "unavailable" | "local" | "openai" {
-  if (!ttsService) return "unavailable";
-  if (ttsService === localVoiceTtsProvider) return "local";
-  return "openai";
-}
-
 function resolveEffectiveProviderIds(params: {
+  providers: RequestedSpeechProviders;
   turnDetectionService: TurnDetectionProvider | null;
   sttService: SpeechToTextProvider | null;
   ttsService: TextToSpeechProvider | null;
   dictationSttService: SpeechToTextProvider | null;
-  localVoiceTtsProvider: TextToSpeechProvider | null;
 }): {
   dictationStt: string;
   voiceTurnDetection: string;
@@ -336,7 +332,7 @@ function resolveEffectiveProviderIds(params: {
     dictationStt: params.dictationSttService?.id ?? "unavailable",
     voiceTurnDetection: params.turnDetectionService?.id ?? "unavailable",
     voiceStt: params.sttService?.id ?? "unavailable",
-    voiceTts: resolveVoiceTtsLabel(params.ttsService, params.localVoiceTtsProvider),
+    voiceTts: params.ttsService ? params.providers.voiceTts.provider : "unavailable",
   };
 }
 
@@ -356,11 +352,13 @@ export interface SpeechService {
 
 export function createSpeechService(params: {
   logger: Logger;
+  geminiConfig?: GeminiSpeechProviderConfig;
   openaiConfig?: PaseoOpenAIConfig;
   speechConfig?: PaseoSpeechConfig;
 }): SpeechService {
   const logger = params.logger.child({ module: "speech-runtime" });
   const speechConfig = params.speechConfig ?? null;
+  const geminiConfig = params.geminiConfig;
   const openaiConfig = params.openaiConfig;
   const providers = resolveRequestedSpeechProviders(speechConfig);
   const requestedProviders = describeRequestedProviders(providers);
@@ -370,11 +368,17 @@ export function createSpeechService(params: {
     openaiConfig,
     logger,
   });
+  validateGeminiCredentialRequirements({
+    providers,
+    config: geminiConfig,
+    logger,
+  });
 
   logger.info(
     {
       requestedProviders,
       availability: {
+        gemini: { configured: geminiConfig !== undefined },
         openai: getOpenAiSpeechAvailability(openaiConfig),
       },
     },
@@ -390,7 +394,6 @@ export function createSpeechService(params: {
     defaultModelIds: LocalSpeechModelId[];
   } | null = null;
   let localCleanup = () => {};
-  let localVoiceTtsProvider: TextToSpeechProvider | null = null;
 
   let missingLocalModelIds: LocalSpeechModelId[] = [];
   let backgroundDownloadInProgress = false;
@@ -516,25 +519,30 @@ export function createSpeechService(params: {
       },
       logger,
     });
+    const nextGeminiSpeech = initializeGeminiSpeechServices({
+      providers,
+      config: geminiConfig,
+      existing: nextOpenAiSpeech,
+      logger,
+    });
 
     const previousLocalCleanup = localCleanup;
-    turnDetectionService = nextOpenAiSpeech.turnDetectionService;
-    sttService = nextOpenAiSpeech.sttService;
-    ttsService = nextOpenAiSpeech.ttsService;
-    dictationSttService = nextOpenAiSpeech.dictationSttService;
+    turnDetectionService = nextGeminiSpeech.turnDetectionService;
+    sttService = nextGeminiSpeech.sttService;
+    ttsService = nextGeminiSpeech.ttsService;
+    dictationSttService = nextGeminiSpeech.dictationSttService;
     localModelConfig = nextLocalSpeech.localModelConfig;
-    localVoiceTtsProvider = nextLocalSpeech.localVoiceTtsProvider;
     localCleanup = nextLocalSpeech.cleanup;
     previousLocalCleanup();
 
     await refreshMissingLocalModels();
 
     const effectiveProviders = resolveEffectiveProviderIds({
+      providers,
       turnDetectionService,
       sttService,
       ttsService,
       dictationSttService,
-      localVoiceTtsProvider,
     });
     const unavailableFeatures = [
       providers.dictationStt.enabled !== false && !dictationSttService ? "dictation.stt" : null,

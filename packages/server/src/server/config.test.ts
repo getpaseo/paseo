@@ -112,6 +112,11 @@ describe("server config", () => {
       ],
     },
     {
+      name: "Gemini speech providers",
+      providers: { dictation: "gemini", voiceStt: "gemini", voiceTts: "gemini" },
+      expected: ["providers.gemini.apiKey"],
+    },
+    {
       name: "mixed local and OpenAI speech providers",
       providers: { dictation: "local", voiceStt: "openai", voiceTts: "local" },
       expected: [
@@ -137,6 +142,7 @@ describe("server config", () => {
       },
       {
         env: {
+          GEMINI_API_KEY: "test-gemini-api-key",
           OPENAI_API_KEY: "test-api-key",
           PASEO_DICTATION_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v2-int8",
           PASEO_VOICE_LOCAL_STT_MODEL: "parakeet-tdt-0.6b-v2-int8",
