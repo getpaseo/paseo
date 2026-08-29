@@ -9521,6 +9521,88 @@ test("checkout.rename_branch.request renames the branch without a denormalized b
   expect(persisted?.title).toBe("Refactor auth flow");
 });
 
+test("workspace.create.request serializes standalone provisioning with workspace expiry", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const leaseManager = new AgentManager({ clients: {}, logger: createTestLogger() });
+  const directoryLookupStarted = deferred<void>();
+  const finishDirectoryLookup = deferred<void>();
+  let directoryLookupCount = 0;
+  const session = createSessionForWorkspaceTests({
+    agentManager: {
+      runWithWorkspaceAgentRegistrationLease:
+        leaseManager.runWithWorkspaceAgentRegistrationLease.bind(leaseManager),
+    },
+    onMessage: (message) => {
+      if (isSessionOutboundMessage(message)) emitted.push(message);
+    },
+  });
+  session.filesystem.isDirectory = async () => {
+    directoryLookupCount += 1;
+    if (directoryLookupCount === 1) {
+      directoryLookupStarted.resolve(undefined);
+      await finishDirectoryLookup.promise;
+    }
+    return true;
+  };
+
+  const createBeforeArchive = session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-create-before-expiry",
+    source: { kind: "directory", path: REPO_CWD },
+  });
+  await directoryLookupStarted.promise;
+
+  let archiveEntered = false;
+  const archiveAfterCreate = leaseManager.runWithWorkspaceArchiveExclusion(
+    ["ws-affinity-expiry"],
+    async () => {
+      archiveEntered = true;
+    },
+  );
+  await waitForImmediate();
+  expect(archiveEntered).toBe(false);
+
+  finishDirectoryLookup.resolve(undefined);
+  await createBeforeArchive;
+  await archiveAfterCreate;
+  expect(archiveEntered).toBe(true);
+  expect(findByType(emitted, "workspace.create.response")?.payload).toMatchObject({
+    requestId: "req-create-before-expiry",
+    error: null,
+  });
+
+  const archiveStarted = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archiveBeforeCreate = leaseManager.runWithWorkspaceArchiveExclusion(
+    ["ws-affinity-expiry"],
+    async () => {
+      archiveStarted.resolve(undefined);
+      await finishArchive.promise;
+    },
+  );
+  await archiveStarted.promise;
+  try {
+    await session.handleMessage({
+      type: "workspace.create.request",
+      requestId: "req-create-during-expiry",
+      source: { kind: "directory", path: REPO_CWD },
+    });
+  } finally {
+    finishArchive.resolve(undefined);
+    await archiveBeforeCreate;
+  }
+
+  expect(directoryLookupCount).toBe(1);
+  expect(
+    filterByType(emitted, "workspace.create.response").find(
+      (message) => message.payload.requestId === "req-create-during-expiry",
+    )?.payload,
+  ).toMatchObject({
+    workspace: null,
+    error: "Workspace creation is blocked while archival is in progress",
+  });
+});
+
 test("workspace.create.response persists the first prompt as the initial title", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const workspaces = new Map<string, ReturnType<typeof createPersistedWorkspaceRecord>>();

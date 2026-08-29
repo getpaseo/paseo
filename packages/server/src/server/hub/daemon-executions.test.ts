@@ -27,6 +27,70 @@ test("sequential replay after reconstruction keeps one durable owned agent", asy
   expect(reconstructed.durableAgentCount).toBe(1);
 });
 
+test("concurrent execution retries reject conflicting affinity keys and targets", async () => {
+  const hub = await launchRelationship();
+  const affinity = {
+    key: "slack-thread-concurrent",
+    retainUntil: "2099-08-06T12:02:00.000Z",
+    autoArchive: true,
+  };
+  const extendedRetainUntil = "2099-08-06T12:03:00.000Z";
+  hub.holdAgentCreation();
+  try {
+    hub.beginOwnedCreate("affinity-pending", "affinity-concurrent-execution", {
+      workspaceAffinity: affinity,
+    });
+    await hub.agentCreationAttempts(1);
+
+    hub.beginOwnedCreate("different-affinity-key", "affinity-concurrent-execution", {
+      workspaceAffinity: { ...affinity, key: "discord-thread-concurrent" },
+    });
+    hub.beginOwnedCreate("different-affinity-target", "affinity-concurrent-execution", {
+      workspaceAffinity: affinity,
+      worktree: { mode: "branch-off", newBranch: "different-affinity-target" },
+    });
+    hub.beginOwnedCreate("matching-affinity-extension", "affinity-concurrent-execution", {
+      workspaceAffinity: { ...affinity, retainUntil: extendedRetainUntil },
+    });
+
+    await expect(hub.ownedCreateResult("different-affinity-key")).resolves.toMatchObject({
+      type: "hub.execution.agent.create.response",
+      payload: {
+        success: false,
+        error: { message: expect.stringContaining("different workspace affinity") },
+      },
+    });
+    await expect(hub.ownedCreateResult("different-affinity-target")).resolves.toMatchObject({
+      type: "hub.execution.agent.create.response",
+      payload: {
+        success: false,
+        error: { message: expect.stringContaining("different cwd, worktree") },
+      },
+    });
+  } finally {
+    hub.finishAgentCreation();
+  }
+
+  const first = await hub.ownedCreateResult("affinity-pending");
+  const extension = await hub.ownedCreateResult("matching-affinity-extension");
+  expect(first).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, workspaceAffinityApplied: true },
+  });
+  expect(extension).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: true,
+      agentId: first.payload.agentId,
+      workspaceAffinityApplied: true,
+    },
+  });
+  expect(hub.workspaceAffinityMapping(affinity.key)).toMatchObject({
+    retainUntil: extendedRetainUntil,
+  });
+  expect(hub.executionProviderCreations()).toBe(1);
+}, 20_000);
+
 test("matching workspace affinity reuses an active workspace and archives only the completed agent", async () => {
   const hub = await launchRelationship();
   const affinity = {

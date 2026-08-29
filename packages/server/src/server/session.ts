@@ -5939,11 +5939,16 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
   ): Promise<void> {
     try {
-      if (request.source.kind === "directory") {
-        await this.handleWorkspaceCreateLocal(request);
-        return;
-      }
-      await this.handleWorkspaceCreateWorktree(request);
+      // The new workspace identity is unknown until provisioning completes. Register before any
+      // source lookup so expiry cannot remove an affinity-owned worktree underneath the new
+      // workspace while it is being created.
+      await this.agentManager.runWithWorkspaceAgentRegistrationLease(undefined, async () => {
+        if (request.source.kind === "directory") {
+          await this.handleWorkspaceCreateLocal(request);
+          return;
+        }
+        await this.handleWorkspaceCreateWorktree(request);
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create workspace";
       this.sessionLogger.error(

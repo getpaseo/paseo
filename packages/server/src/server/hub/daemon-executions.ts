@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 import type {
   AgentSnapshotPayload,
   AgentStreamEventPayload,
@@ -55,6 +57,20 @@ export type OwnedAgentEvent =
       event: AgentStreamEventPayload;
     };
 
+interface PendingWorkspaceAffinityRequest {
+  affinityId: string;
+  target: {
+    cwd: string;
+    worktree?: CreateAgentWorktreeTarget;
+    autoArchive: boolean;
+  };
+}
+
+interface PendingExecutionCreate {
+  promise: Promise<OwnedAgentSnapshot>;
+  workspaceAffinity: PendingWorkspaceAffinityRequest | null;
+}
+
 interface DaemonExecutionsOptions {
   daemonId: string;
   agentManager: AgentManager;
@@ -82,7 +98,7 @@ export class DaemonExecutions implements HubExecutionAgents {
   private readonly agentManager: AgentManager;
   private readonly agentStorage: AgentStorage;
   private readonly createAgentCommand: BoundCreateAgentCommand;
-  private readonly pendingCreates = new Map<string, Promise<OwnedAgentSnapshot>>();
+  private readonly pendingCreates = new Map<string, PendingExecutionCreate>();
   private readonly pendingControlActions = new Map<string, Promise<void>>();
   private readonly controlTails = new Map<string, Promise<void>>();
   private authorityGeneration = 0;
@@ -103,28 +119,49 @@ export class DaemonExecutions implements HubExecutionAgents {
     if (!this.authorityActive) {
       return Promise.reject(new Error("Hub relationship authority is no longer active"));
     }
-    if (input.workspaceAffinity && !this.workspaceAffinities) {
-      return Promise.reject(new Error("This Paseo daemon does not support workspace affinity"));
+    let pendingWorkspaceAffinity: PendingWorkspaceAffinityRequest | null = null;
+    if (input.workspaceAffinity) {
+      const workspaceAffinities = this.workspaceAffinities;
+      if (!workspaceAffinities) {
+        return Promise.reject(new Error("This Paseo daemon does not support workspace affinity"));
+      }
+      pendingWorkspaceAffinity = pendingAffinityRequest(
+        workspaceAffinities,
+        input,
+        input.workspaceAffinity,
+      );
     }
-    const owner = this.owner(
-      input.executionId,
-      input.workspaceAffinity
-        ? this.workspaceAffinities!.affinityId(input.workspaceAffinity.key)
-        : undefined,
-    );
+    const owner = this.owner(input.executionId, pendingWorkspaceAffinity?.affinityId);
     const key = daemonExecutionKey(owner);
     const pending = this.pendingCreates.get(key);
     if (pending) {
-      return pending;
+      assertMatchingPendingCreate(pending.workspaceAffinity, pendingWorkspaceAffinity);
+      if (!pendingWorkspaceAffinity) {
+        return pending.promise;
+      }
+      const authorityGeneration = this.authorityGeneration;
+      const replay = pending.promise.then(() =>
+        this.createOrResolve(owner, input, authorityGeneration),
+      );
+      const queued = replay.finally(() => {
+        if (this.pendingCreates.get(key)?.promise === queued) {
+          this.pendingCreates.delete(key);
+        }
+      });
+      pending.promise = queued;
+      return queued;
     }
 
     const authorityGeneration = this.authorityGeneration;
     const create = this.createOrResolve(owner, input, authorityGeneration).finally(() => {
-      if (this.pendingCreates.get(key) === create) {
+      if (this.pendingCreates.get(key)?.promise === create) {
         this.pendingCreates.delete(key);
       }
     });
-    this.pendingCreates.set(key, create);
+    this.pendingCreates.set(key, {
+      promise: create,
+      workspaceAffinity: pendingWorkspaceAffinity,
+    });
     return create;
   }
 
@@ -140,7 +177,7 @@ export class DaemonExecutions implements HubExecutionAgents {
 
     const previous =
       this.controlTails.get(executionKey) ??
-      this.pendingCreates.get(executionKey)?.then(() => undefined) ??
+      this.pendingCreates.get(executionKey)?.promise.then(() => undefined) ??
       Promise.resolve();
     const authorityGeneration = this.authorityGeneration;
     const control = previous
@@ -164,7 +201,7 @@ export class DaemonExecutions implements HubExecutionAgents {
     this.authorityActive = false;
     this.authorityGeneration++;
     await Promise.allSettled([
-      ...this.pendingCreates.values(),
+      ...Array.from(this.pendingCreates.values(), ({ promise }) => promise),
       ...this.pendingControlActions.values(),
     ]);
   }
@@ -463,6 +500,41 @@ function ownedCreatedWorktree(
   worktree: CreatePaseoWorktreeWorkflowResult | null,
 ): CreatePaseoWorktreeWorkflowResult | null {
   return worktree?.created === true ? worktree : null;
+}
+
+function pendingAffinityRequest(
+  workspaceAffinities: WorkspaceAffinityManager,
+  input: HubExecutionAgentCreateInput,
+  affinity: HubExecutionWorkspaceAffinity,
+): PendingWorkspaceAffinityRequest {
+  return {
+    affinityId: workspaceAffinities.affinityId(affinity.key),
+    target: {
+      cwd: input.cwd,
+      ...(input.worktree === undefined ? {} : { worktree: structuredClone(input.worktree) }),
+      autoArchive: affinity.autoArchive,
+    },
+  };
+}
+
+function assertMatchingPendingCreate(
+  existing: PendingWorkspaceAffinityRequest | null,
+  requested: PendingWorkspaceAffinityRequest | null,
+): void {
+  if (!existing || !requested) {
+    if (existing !== requested) {
+      throw new Error("Concurrent Hub execution create requests disagree on workspace affinity");
+    }
+    return;
+  }
+  if (existing.affinityId !== requested.affinityId) {
+    throw new Error("The existing Hub execution belongs to a different workspace affinity");
+  }
+  if (!isDeepStrictEqual(existing.target, requested.target)) {
+    throw new Error(
+      `Workspace affinity ${requested.affinityId} is already bound to a different cwd, worktree, or auto-archive policy`,
+    );
+  }
 }
 
 function requireExecutionWorkspaceId(

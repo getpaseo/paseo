@@ -1267,69 +1267,70 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       branch,
       prNumber,
       forge,
-    }) => {
-      let workspace: PersistedWorkspaceRecord;
-      if (isolation === "local") {
-        const cwd = resolveScopedCwd(path, { required: true });
-        assertOptionsAbsent(
-          [
-            ["mode", mode],
-            ["worktreeSlug", worktreeSlug],
-            ["branchName", branchName],
-            ["baseBranch", baseBranch],
-            ["branch", branch],
-            ["prNumber", prNumber],
-            ["forge", forge],
-          ],
-          "Worktree options require isolation worktree",
-        );
-        if (!options.createDirectoryWorkspace) {
-          throw new Error("Workspace provisioning is not configured");
-        }
-        workspace = await options.createDirectoryWorkspace(cwd, title, projectId);
-      } else {
-        let cwd =
-          path !== undefined || !projectId ? resolveScopedCwd(path, { required: true }) : null;
-        if (!cwd) {
-          if (!options.projectRegistry) {
-            throw new Error("Project registry is not configured");
+    }) =>
+      options.agentManager.runWithWorkspaceAgentRegistrationLease(undefined, async () => {
+        let workspace: PersistedWorkspaceRecord;
+        if (isolation === "local") {
+          const cwd = resolveScopedCwd(path, { required: true });
+          assertOptionsAbsent(
+            [
+              ["mode", mode],
+              ["worktreeSlug", worktreeSlug],
+              ["branchName", branchName],
+              ["baseBranch", baseBranch],
+              ["branch", branch],
+              ["prNumber", prNumber],
+              ["forge", forge],
+            ],
+            "Worktree options require isolation worktree",
+          );
+          if (!options.createDirectoryWorkspace) {
+            throw new Error("Workspace provisioning is not configured");
           }
-          cwd = await resolveWorktreeSourceCwd({ projectId }, options.projectRegistry);
+          workspace = await options.createDirectoryWorkspace(cwd, title, projectId);
+        } else {
+          let cwd =
+            path !== undefined || !projectId ? resolveScopedCwd(path, { required: true }) : null;
+          if (!cwd) {
+            if (!options.projectRegistry) {
+              throw new Error("Project registry is not configured");
+            }
+            cwd = await resolveWorktreeSourceCwd({ projectId }, options.projectRegistry);
+          }
+          const worktreeTarget = resolveWorkspaceWorktreeTarget({
+            mode,
+            worktreeSlug,
+            branchName,
+            baseBranch,
+            branch,
+            prNumber,
+            forge,
+          });
+          const result = await createPaseoWorktreeCommand(
+            {
+              paseoHome: options.paseoHome,
+              worktreesRoot: options.worktreesRoot,
+              createPaseoWorktreeWorkflow: options.createPaseoWorktree,
+            },
+            {
+              cwd,
+              ...(projectId ? { projectId } : {}),
+              ...(worktreeSlug ? { worktreeSlug } : {}),
+              ...worktreeTarget,
+              ...(title ? { title } : {}),
+            },
+          );
+          if (!result.ok) {
+            throw result.cause;
+          }
+          workspace = result.createdWorktree.workspace;
         }
-        const worktreeTarget = resolveWorkspaceWorktreeTarget({
-          mode,
-          worktreeSlug,
-          branchName,
-          baseBranch,
-          branch,
-          prNumber,
-          forge,
-        });
-        const result = await createPaseoWorktreeCommand(
-          {
-            paseoHome: options.paseoHome,
-            worktreesRoot: options.worktreesRoot,
-            createPaseoWorktreeWorkflow: options.createPaseoWorktree,
-          },
-          {
-            cwd,
-            ...(projectId ? { projectId } : {}),
-            ...(worktreeSlug ? { worktreeSlug } : {}),
-            ...worktreeTarget,
-            ...(title ? { title } : {}),
-          },
-        );
-        if (!result.ok) {
-          throw result.cause;
-        }
-        workspace = result.createdWorktree.workspace;
-      }
 
-      return {
-        content: [],
-        structuredContent: ensureValidJson(toWorkspaceAutomationSummary(workspace)),
-      };
-    },
+        return {
+          content: [],
+          structuredContent: ensureValidJson(toWorkspaceAutomationSummary(workspace)),
+        };
+      }),
   );
 
   registerTool(
@@ -2200,37 +2201,41 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       },
     },
     async ({ workspaceId: requestedWorkspaceId, title }) => {
-      if (!options.workspaceRegistry) {
+      const workspaceRegistry = options.workspaceRegistry;
+      if (!workspaceRegistry) {
         throw new Error("Workspace registry is required to rename workspaces");
       }
-      if (!options.emitWorkspaceUpdatesForWorkspaceIds) {
+      const emitWorkspaceUpdatesForWorkspaceIds = options.emitWorkspaceUpdatesForWorkspaceIds;
+      if (!emitWorkspaceUpdatesForWorkspaceIds) {
         throw new Error("Workspace update emitter is required to rename workspaces");
       }
 
       const workspaceId = resolveWorkspaceIdForRename(requestedWorkspaceId);
-      const existing = await options.workspaceRegistry.get(workspaceId);
-      if (!existing) {
-        throw new Error(`Workspace ${workspaceId} not found`);
-      }
-      if (existing.archivedAt) {
-        throw new Error(`Workspace ${workspaceId} is archived`);
-      }
+      return options.agentManager.runWithWorkspaceAgentRegistrationLease(workspaceId, async () => {
+        const existing = await workspaceRegistry.get(workspaceId);
+        if (!existing) {
+          throw new Error(`Workspace ${workspaceId} not found`);
+        }
+        if (existing.archivedAt) {
+          throw new Error(`Workspace ${workspaceId} is archived`);
+        }
 
-      await options.workspaceRegistry.upsert({
-        ...existing,
-        title,
-        updatedAt: new Date().toISOString(),
-      });
-      await options.emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
-
-      return {
-        content: [],
-        structuredContent: ensureValidJson({
-          success: true,
-          workspaceId,
+        await workspaceRegistry.upsert({
+          ...existing,
           title,
-        }),
-      };
+          updatedAt: new Date().toISOString(),
+        });
+        await emitWorkspaceUpdatesForWorkspaceIds([workspaceId]);
+
+        return {
+          content: [],
+          structuredContent: ensureValidJson({
+            success: true,
+            workspaceId,
+            title,
+          }),
+        };
+      });
     },
   );
 
