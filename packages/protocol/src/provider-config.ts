@@ -28,6 +28,21 @@ export const ProviderRuntimeSettingsSchema = z.object({
   disallowedTools: z.array(z.string()).optional(),
 });
 
+const ProviderProfileThinkingOptionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  description: z.string().optional(),
+  isDefault: z.boolean().optional(),
+});
+
+export const ProviderProfileModelSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  description: z.string().optional(),
+  isDefault: z.boolean().optional(),
+  thinkingOptions: z.array(ProviderProfileThinkingOptionSchema).optional(),
+});
+
 const MAX_PROVIDER_ICON_LENGTH = 13 * 1024;
 
 function isProviderSvg(value: string): boolean {
@@ -63,21 +78,6 @@ export const ProviderModeOverrideSchema = z.strictObject({
 export const ProviderModeConfigSchema = z.strictObject({
   suppress: z.array(z.string().min(1)).optional(),
   overrides: z.record(z.string().min(1), ProviderModeOverrideSchema).optional(),
-});
-
-const ProviderProfileThinkingOptionSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-  isDefault: z.boolean().optional(),
-});
-
-export const ProviderProfileModelSchema = z.object({
-  id: z.string().min(1),
-  label: z.string().min(1),
-  description: z.string().optional(),
-  isDefault: z.boolean().optional(),
-  thinkingOptions: z.array(ProviderProfileThinkingOptionSchema).optional(),
 });
 
 export const ProviderOverrideSchema = z.object({
