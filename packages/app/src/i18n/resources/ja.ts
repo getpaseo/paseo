@@ -1924,6 +1924,39 @@ export const ja: TranslationResources = {
       hostLoadFailed: "ホスト{{hostName}}からプロジェクトを読み込めませんでした: {{message}}",
       editProject: "{{projectName}}を編集",
     },
+    projectLinks: {
+      banner: {
+        matchesTitle: "リンクできる可能性があるプロジェクト",
+        linkedTitle: "プロジェクトリンク",
+        description: "このデバイスに保存された、Git で確認済みのプロジェクトリンクを確認します。",
+        review: "リンクを確認",
+      },
+      sheet: {
+        title: "プロジェクトリンク",
+        deviceOnly:
+          "リンクはこのデバイスにのみ保存されます。ワークスペース、設定、ファイルは移動しません。",
+        matchesTitle: "確認済みの一致",
+        matchesDescription:
+          "これらのエントリは同じ Git リモートとプロジェクトサブディレクトリを持ちますが、まだ別々です。",
+        linkedTitle: "リンク済みプロジェクト",
+        noMatchesTitle: "確認するプロジェクトリンクはありません",
+        noMatchesDescription:
+          "各ホストでワークスペースを開くと、Paseo が Git リモートとプロジェクトサブディレクトリを確認できます。",
+        linkProjects: "{{count}} 個のプロジェクトをリンク",
+        remote: "Git リモート",
+        subdirectory: "プロジェクトサブディレクトリ",
+        path: "パス",
+        needsReviewTitle: "確認が必要",
+        needsReviewDescription:
+          "最新の Git 情報ではこのリンクを確認できないため、Paseo はこれらのプロジェクトを別々に保持します。",
+        projectUnavailable: "このプロジェクトは現在利用できません。",
+        unlink: "リンクを解除",
+      },
+      toasts: {
+        linked: "このデバイスでプロジェクトをリンクしました",
+        unlinked: "プロジェクトリンクを削除しました",
+      },
+    },
     groupInfo: "{{title}}について",
     sections: {
       general: "一般",

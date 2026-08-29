@@ -1938,6 +1938,40 @@ export const ptBR: TranslationResources = {
       hostLoadFailed: "Não foi possível carregar projetos do host {{hostName}}: {{message}}",
       editProject: "Editar {{projectName}}",
     },
+    projectLinks: {
+      banner: {
+        matchesTitle: "Possíveis vínculos de projetos",
+        linkedTitle: "Vínculos de projetos",
+        description:
+          "Revise vínculos de projetos verificados pelo Git e armazenados neste dispositivo.",
+        review: "Revisar vínculos",
+      },
+      sheet: {
+        title: "Vínculos de projetos",
+        deviceOnly:
+          "Os vínculos são armazenados somente neste dispositivo. Eles não movem espaços de trabalho, configurações nem arquivos.",
+        matchesTitle: "Correspondências verificadas",
+        matchesDescription:
+          "Estas entradas têm o mesmo remoto do Git e subdiretório do projeto, mas ainda estão separadas.",
+        linkedTitle: "Projetos vinculados",
+        noMatchesTitle: "Não há vínculos de projeto para revisar",
+        noMatchesDescription:
+          "Abra um espaço de trabalho em cada host para que o Paseo possa verificar o remoto do Git e o subdiretório do projeto.",
+        linkProjects: "Vincular {{count}} projetos",
+        remote: "Remoto do Git",
+        subdirectory: "Subdiretório do projeto",
+        path: "Caminho",
+        needsReviewTitle: "Precisa de revisão",
+        needsReviewDescription:
+          "Os dados mais recentes do Git não confirmam mais este vínculo, então o Paseo mantém estes projetos separados.",
+        projectUnavailable: "Este projeto não está disponível no momento.",
+        unlink: "Desvincular",
+      },
+      toasts: {
+        linked: "Projetos vinculados neste dispositivo",
+        unlinked: "Vínculo de projeto removido",
+      },
+    },
     groupInfo: "Sobre {{title}}",
     sections: {
       general: "Geral",

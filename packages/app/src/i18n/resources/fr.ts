@@ -1957,6 +1957,40 @@ export const fr: TranslationResources = {
       hostLoadFailed: "Impossible de charger les projets depuis l'hôte{{hostName}}:{{message}}",
       editProject: "Modifier{{projectName}}",
     },
+    projectLinks: {
+      banner: {
+        matchesTitle: "Liens de projets possibles",
+        linkedTitle: "Liens de projets",
+        description:
+          "Examinez les liens de projets vérifiés par Git et enregistrés sur cet appareil.",
+        review: "Examiner les liens",
+      },
+      sheet: {
+        title: "Liens de projets",
+        deviceOnly:
+          "Les liens sont enregistrés uniquement sur cet appareil. Ils ne déplacent ni espaces de travail, ni réglages, ni fichiers.",
+        matchesTitle: "Correspondances vérifiées",
+        matchesDescription:
+          "Ces entrées ont le même dépôt distant Git et le même sous-répertoire de projet, mais restent séparées.",
+        linkedTitle: "Projets liés",
+        noMatchesTitle: "Aucun lien de projet à examiner",
+        noMatchesDescription:
+          "Ouvrez un espace de travail sur chaque hôte afin que Paseo puisse vérifier le dépôt distant Git et le sous-répertoire du projet.",
+        linkProjects: "Lier {{count}} projets",
+        remote: "Dépôt distant Git",
+        subdirectory: "Sous-répertoire du projet",
+        path: "Chemin",
+        needsReviewTitle: "À examiner",
+        needsReviewDescription:
+          "Les dernières informations Git ne confirment plus ce lien ; Paseo garde donc ces projets séparés.",
+        projectUnavailable: "Ce projet n'est pas disponible actuellement.",
+        unlink: "Délier",
+      },
+      toasts: {
+        linked: "Projets liés sur cet appareil",
+        unlinked: "Lien de projet supprimé",
+      },
+    },
     groupInfo: "À propos de{{title}}",
     sections: {
       general: "Général",

@@ -1937,6 +1937,40 @@ export const ru: TranslationResources = {
       hostLoadFailed: "Не удалось загрузить проекты с хоста {{hostName}}: {{message}}",
       editProject: "Изменить {{projectName}}",
     },
+    projectLinks: {
+      banner: {
+        matchesTitle: "Возможные связи проектов",
+        linkedTitle: "Связи проектов",
+        description:
+          "Просмотрите подтверждённые Git связи проектов, сохранённые на этом устройстве.",
+        review: "Просмотреть связи",
+      },
+      sheet: {
+        title: "Связи проектов",
+        deviceOnly:
+          "Связи хранятся только на этом устройстве. Они не перемещают рабочие пространства, настройки или файлы.",
+        matchesTitle: "Подтверждённые совпадения",
+        matchesDescription:
+          "У этих записей один и тот же удалённый Git-репозиторий и подкаталог проекта, но они всё ещё разделены.",
+        linkedTitle: "Связанные проекты",
+        noMatchesTitle: "Нет связей проектов для проверки",
+        noMatchesDescription:
+          "Откройте рабочее пространство на каждом хосте, чтобы Paseo мог проверить удалённый Git-репозиторий и подкаталог проекта.",
+        linkProjects: "Связать {{count}} проекта",
+        remote: "Удалённый Git-репозиторий",
+        subdirectory: "Подкаталог проекта",
+        path: "Путь",
+        needsReviewTitle: "Требуется проверка",
+        needsReviewDescription:
+          "Последние данные Git больше не подтверждают эту связь, поэтому Paseo сохраняет эти проекты раздельно.",
+        projectUnavailable: "Этот проект сейчас недоступен.",
+        unlink: "Отвязать",
+      },
+      toasts: {
+        linked: "Проекты связаны на этом устройстве",
+        unlinked: "Связь проекта удалена",
+      },
+    },
     groupInfo: "О разделе «{{title}}»",
     sections: {
       general: "Основные",

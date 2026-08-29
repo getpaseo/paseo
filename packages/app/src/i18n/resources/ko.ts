@@ -1916,6 +1916,39 @@ export const ko: TranslationResources = {
       hostLoadFailed: "{{hostName}} 호스트에서 프로젝트를 불러올 수 없습니다: {{message}}",
       editProject: "{{projectName}} 편집",
     },
+    projectLinks: {
+      banner: {
+        matchesTitle: "연결할 수 있는 프로젝트",
+        linkedTitle: "프로젝트 연결",
+        description: "이 기기에 저장된 Git 확인 프로젝트 연결을 검토합니다.",
+        review: "연결 검토",
+      },
+      sheet: {
+        title: "프로젝트 연결",
+        deviceOnly:
+          "연결은 이 기기에만 저장됩니다. 워크스페이스, 설정 또는 파일은 이동하지 않습니다.",
+        matchesTitle: "확인된 일치 항목",
+        matchesDescription:
+          "이 항목들은 같은 Git 원격 저장소와 프로젝트 하위 디렉터리를 가지지만 아직 분리되어 있습니다.",
+        linkedTitle: "연결된 프로젝트",
+        noMatchesTitle: "검토할 프로젝트 연결이 없습니다",
+        noMatchesDescription:
+          "각 호스트에서 워크스페이스를 열면 Paseo가 Git 원격 저장소와 프로젝트 하위 디렉터리를 확인할 수 있습니다.",
+        linkProjects: "프로젝트 {{count}}개 연결",
+        remote: "Git 원격 저장소",
+        subdirectory: "프로젝트 하위 디렉터리",
+        path: "경로",
+        needsReviewTitle: "검토 필요",
+        needsReviewDescription:
+          "최신 Git 정보가 더 이상 이 연결을 확인하지 못하므로 Paseo는 이 프로젝트들을 분리된 상태로 유지합니다.",
+        projectUnavailable: "이 프로젝트는 현재 사용할 수 없습니다.",
+        unlink: "연결 해제",
+      },
+      toasts: {
+        linked: "이 기기에서 프로젝트를 연결했습니다",
+        unlinked: "프로젝트 연결을 제거했습니다",
+      },
+    },
     groupInfo: "{{title}} 정보",
     sections: {
       general: "일반",

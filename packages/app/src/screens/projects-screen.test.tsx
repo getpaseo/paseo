@@ -149,6 +149,27 @@ vi.mock("@/components/ui/loading-spinner", () => ({
     }),
 }));
 
+// This legacy DOM suite cannot load the native sheet implementation. Browser coverage exercises
+// the real dialog; the stub keeps these existing project-list assertions focused on list state.
+vi.mock("@/components/project-links-sheet", () => ({
+  ProjectLinksSheet: () => null,
+}));
+
+vi.mock("@/components/ui/alert", () => ({
+  Alert: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement("div", null, children),
+}));
+
+vi.mock("@/components/ui/button", () => ({
+  Button: ({ children }: { children?: React.ReactNode }) =>
+    React.createElement("button", { type: "button" }, children),
+}));
+
+vi.mock("@/projects/local-project-links-store", () => ({
+  useLocalProjectLinksStore: (selector: (state: { links: [] }) => unknown) =>
+    selector({ links: [] }),
+}));
+
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children?: React.ReactNode }) =>
     React.createElement("div", { "data-testid": "dropdown-menu" }, children),

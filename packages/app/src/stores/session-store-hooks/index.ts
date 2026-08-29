@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
+import { useLocalProjectLinksStore } from "@/projects/local-project-links-store";
 import {
   composeWorkspaceStructure,
   createWorkspaceStructureProjectsSelector,
@@ -100,9 +101,10 @@ export function useWorkspaceDirectory(
 }
 
 export function useWorkspaceStructure(serverIds: string[]): WorkspaceStructure {
+  const localProjectLinks = useLocalProjectLinksStore((state) => state.links);
   const selectProjects = useMemo(
-    () => createWorkspaceStructureProjectsSelector(serverIds),
-    [serverIds],
+    () => createWorkspaceStructureProjectsSelector(serverIds, localProjectLinks),
+    [localProjectLinks, serverIds],
   );
   const projects = useStoreWithEqualityFn(
     useSessionStore,
