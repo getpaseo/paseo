@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import type { AgentProvider, AgentSessionConfig } from "@getpaseo/protocol/agent-types";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { mergeProviderPreferences, useFormPreferences } from "./use-form-preferences";
 import {
   applyFeatureValues,
@@ -35,6 +36,15 @@ export function useDraftAgentFeatures(input: {
   const { preferences, updatePreferences } = useFormPreferences();
   const normalizedCwd = cwd?.trim() || "";
   const normalizedProvider = provider ?? null;
+  const { entries: providerSnapshotEntries } = useProvidersSnapshot(serverId ?? null, {
+    cwd: normalizedCwd || null,
+  });
+  const snapshotFeatures = useMemo(() => {
+    if (!normalizedProvider) return undefined;
+    return providerSnapshotEntries?.find((entry) => entry.provider === normalizedProvider)
+      ?.features;
+  }, [normalizedProvider, providerSnapshotEntries]);
+  const hasSnapshotFeatures = snapshotFeatures !== undefined;
   const previousProviderRef = useRef<AgentProvider | null>(normalizedProvider);
   const persistedFeatureValues = useMemo(
     () => (provider ? (preferences.providerPreferences?.[provider]?.featureValues ?? {}) : {}),
@@ -65,7 +75,7 @@ export function useDraftAgentFeatures(input: {
       modelId ?? null,
       thinkingOptionId ?? null,
     ],
-    enabled: Boolean(serverId && client && isConnected && draftConfig),
+    enabled: Boolean(serverId && client && isConnected && draftConfig && !hasSnapshotFeatures),
     staleTime: 5 * 60 * 1000,
     queryFn: async () => {
       if (!client || !draftConfig) {
@@ -78,7 +88,7 @@ export function useDraftAgentFeatures(input: {
       return payload.features ?? [];
     },
   });
-  const availableFeaturesRaw = featuresQuery.data;
+  const availableFeaturesRaw = hasSnapshotFeatures ? snapshotFeatures : featuresQuery.data;
   const availableFeatures = useMemo(() => availableFeaturesRaw ?? [], [availableFeaturesRaw]);
   const featureValues = useMemo(
     () =>

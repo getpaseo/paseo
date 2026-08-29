@@ -181,7 +181,7 @@ function ProviderRow({
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
-  const ProviderIcon = getProviderIcon(def.id);
+  const ProviderIcon = getProviderIcon(def.id, entry.icon);
   const providerError =
     enabled &&
     entry.status === "error" &&

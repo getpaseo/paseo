@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AgentProvider } from "./agent-types.js";
+import type { AgentProvider, AgentProviderIcon } from "./agent-types.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
 
 const ProviderCommandDefaultSchema = z.object({
@@ -28,6 +28,43 @@ export const ProviderRuntimeSettingsSchema = z.object({
   disallowedTools: z.array(z.string()).optional(),
 });
 
+const MAX_PROVIDER_ICON_LENGTH = 13 * 1024;
+
+function isProviderSvg(value: string): boolean {
+  const svg = value.trim();
+  return (
+    /^(?:<\?xml[^>]*>\s*)?<svg(?:\s[^>]*)?>[\s\S]*<\/svg>$/iu.test(svg) &&
+    !/<\s*(?:script|foreignObject|iframe|object|embed)\b/iu.test(svg) &&
+    !/(?:on[a-z]+|(?:xlink:)?href)\s*=/iu.test(svg)
+  );
+}
+
+const ProviderSvgIconSchema = z.strictObject({
+  svg: z.string().max(MAX_PROVIDER_ICON_LENGTH).refine(isProviderSvg, "Invalid provider SVG"),
+});
+
+const ProviderLucideIconSchema = z.strictObject({
+  lucide: z.string().min(1),
+});
+
+export const ProviderIconSchema: z.ZodType<AgentProviderIcon> = z.union([
+  ProviderSvgIconSchema,
+  ProviderLucideIconSchema,
+]);
+
+export const ProviderModeOverrideSchema = z.strictObject({
+  label: z.string().optional(),
+  description: z.string().optional(),
+  icon: z.string().optional(),
+  colorTier: z.string().optional(),
+  isUnattended: z.boolean().optional(),
+});
+
+export const ProviderModeConfigSchema = z.strictObject({
+  suppress: z.array(z.string().min(1)).optional(),
+  overrides: z.record(z.string().min(1), ProviderModeOverrideSchema).optional(),
+});
+
 const ProviderProfileThinkingOptionSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -47,6 +84,9 @@ export const ProviderOverrideSchema = z.object({
   extends: z.string().optional(),
   label: z.string().optional(),
   description: z.string().optional(),
+  icon: ProviderIconSchema.optional(),
+  modes: ProviderModeConfigSchema.optional(),
+  defaultModeId: z.string().nullable().optional(),
   command: z.array(z.string().min(1)).min(1).optional(),
   env: z.record(z.string(), z.string()).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
@@ -126,8 +166,11 @@ export const AgentProviderRuntimeSettingsMapSchema = z
   });
 
 export type ProviderCommand = z.infer<typeof ProviderCommandSchema>;
+export type ProviderIcon = z.infer<typeof ProviderIconSchema>;
 export type ProviderRuntimeSettings = z.infer<typeof ProviderRuntimeSettingsSchema>;
 export type ProviderProfileModel = z.infer<typeof ProviderProfileModelSchema>;
+export type ProviderModeOverride = z.infer<typeof ProviderModeOverrideSchema>;
+export type ProviderModeConfig = z.infer<typeof ProviderModeConfigSchema>;
 export type ProviderOverride = z.infer<typeof ProviderOverrideSchema>;
 export type ProviderOverrides = z.infer<typeof ProviderOverridesSchema>;
 export type AgentProviderRuntimeSettingsMap = Partial<

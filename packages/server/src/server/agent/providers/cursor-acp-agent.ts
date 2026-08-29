@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 
+import type { ProviderModeConfig } from "../provider-launch-config.js";
 import type { ACPConfigFeatureOption } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
@@ -10,6 +11,7 @@ interface CursorACPAgentClientOptions {
   providerId?: string;
   label?: string;
   providerParams?: unknown;
+  modeConfig?: ProviderModeConfig;
 }
 
 const CURSOR_INITIAL_COMMANDS_WAIT_TIMEOUT_MS = 10_000;
@@ -35,6 +37,7 @@ export class CursorACPAgentClient extends GenericACPAgentClient {
       providerId: options.providerId,
       label: options.label,
       providerParams: options.providerParams,
+      modeConfig: options.modeConfig,
       // cursor-agent publishes slash commands asynchronously via available_commands_update.
       waitForInitialCommands: true,
       initialCommandsWaitTimeoutMs: CURSOR_INITIAL_COMMANDS_WAIT_TIMEOUT_MS,

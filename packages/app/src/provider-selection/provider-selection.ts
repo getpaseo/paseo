@@ -2,6 +2,7 @@ import type {
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
+  AgentProviderIcon,
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
@@ -19,6 +20,7 @@ export interface ProviderSelectionModelRow {
   favoriteKey: string;
   provider: string;
   providerLabel: string;
+  providerIcon?: AgentProviderIcon;
   modelId: string;
   modelLabel: string;
   description?: string;
@@ -37,6 +39,7 @@ export type ProviderModelSelection =
 export interface ProviderSelectorProvider {
   id: string;
   label: string;
+  icon?: AgentProviderIcon;
   modelSelection: ProviderModelSelection;
 }
 
@@ -58,11 +61,13 @@ function buildModelRows(
   provider: string,
   providerLabel: string,
   models: AgentModelDefinition[],
+  providerIcon?: AgentProviderIcon,
 ): ProviderSelectionModelRow[] {
   return models.map((model) => ({
     favoriteKey: buildModelRowKey(provider, model.id),
     provider,
     providerLabel,
+    ...(providerIcon ? { providerIcon } : {}),
     modelId: model.id,
     modelLabel: model.label,
     description: model.description ?? model.id,
@@ -73,11 +78,13 @@ function buildModelRows(
 function buildSyntheticDefaultRow(
   provider: string,
   providerLabel: string,
+  providerIcon?: AgentProviderIcon,
 ): ProviderSelectionModelRow {
   return {
     favoriteKey: buildModelRowKey(provider, ""),
     provider,
     providerLabel,
+    ...(providerIcon ? { providerIcon } : {}),
     modelId: "",
     modelLabel: i18n.t("providerSelection.defaultModel"),
     description: undefined,
@@ -89,15 +96,22 @@ function buildModelSelection(
   provider: string,
   providerLabel: string,
   models: AgentModelDefinition[] | null,
+  providerIcon?: AgentProviderIcon,
 ): ProviderModelSelection {
   if (models === null) {
     return { kind: "loading" };
   }
   const selectableModels = filterSelectableModels(models) ?? [];
   if (selectableModels.length === 0) {
-    return { kind: "models", rows: [buildSyntheticDefaultRow(provider, providerLabel)] };
+    return {
+      kind: "models",
+      rows: [buildSyntheticDefaultRow(provider, providerLabel, providerIcon)],
+    };
   }
-  return { kind: "models", rows: buildModelRows(provider, providerLabel, selectableModels) };
+  return {
+    kind: "models",
+    rows: buildModelRows(provider, providerLabel, selectableModels, providerIcon),
+  };
 }
 
 function buildEntryModelSelection(
@@ -105,10 +119,10 @@ function buildEntryModelSelection(
   label: string,
 ): ProviderModelSelection {
   if ((entry.models?.length ?? 0) > 0) {
-    return buildModelSelection(entry.provider, label, entry.models ?? null);
+    return buildModelSelection(entry.provider, label, entry.models ?? null, entry.icon);
   }
   if (entry.status === "ready") {
-    return buildModelSelection(entry.provider, label, entry.models ?? null);
+    return buildModelSelection(entry.provider, label, entry.models ?? null, entry.icon);
   }
   if (entry.status === "loading") {
     return { kind: "loading" };
@@ -130,12 +144,14 @@ export function buildProviderSelectorProviders(input: {
   return input.providerDefinitions.map((definition) => ({
     id: definition.id,
     label: definition.label,
+    ...(definition.icon ? { icon: definition.icon } : {}),
     modelSelection: buildModelSelection(
       definition.id,
       definition.label,
       input.modelsByProvider.has(definition.id)
         ? (input.modelsByProvider.get(definition.id) ?? [])
         : null,
+      definition.icon,
     ),
   }));
 }

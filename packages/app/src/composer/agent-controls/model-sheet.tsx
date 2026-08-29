@@ -129,8 +129,13 @@ export function CompactModelSheet({
     profiles,
     serverId,
   });
+  const selectedProviderIcon = availableProviders.find(
+    (provider) => provider.id === selectedProvider,
+  )?.icon;
   const ProviderIcon =
-    selectedProvider.trim().length > 0 ? getProviderIcon(selectedProvider) : null;
+    selectedProvider.trim().length > 0
+      ? getProviderIcon(selectedProvider, selectedProviderIcon)
+      : null;
   const ModelIcon = ProviderIcon ?? Bot;
   const rootHeader = useMemo(
     () => ({

@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 
+import type { ProviderModeConfig } from "../provider-launch-config.js";
 import type { ACPExtensionCommandsParser } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import type { AgentSlashCommand, AgentSlashCommandKind } from "../agent-sdk-types.js";
@@ -11,6 +12,7 @@ interface KiroACPAgentClientOptions {
   providerId?: string;
   label?: string;
   providerParams?: unknown;
+  modeConfig?: ProviderModeConfig;
 }
 
 // Kiro CLI publishes its slash commands and skills asynchronously through the
@@ -93,6 +95,7 @@ export class KiroACPAgentClient extends GenericACPAgentClient {
       providerId: options.providerId,
       label: options.label,
       providerParams: options.providerParams,
+      modeConfig: options.modeConfig,
       waitForInitialCommands: true,
       initialCommandsWaitTimeoutMs: KIRO_INITIAL_COMMANDS_WAIT_TIMEOUT_MS,
       extensionCommandsParser: parseKiroExtensionCommands,

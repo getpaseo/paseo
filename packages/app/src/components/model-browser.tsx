@@ -209,14 +209,16 @@ type ProviderGlyphTone = "muted" | "foreground";
 
 export function ModelProviderGlyph({
   provider,
+  icon,
   size,
   tone = "muted",
 }: {
   provider: string;
+  icon?: ProviderSelectorProvider["icon"];
   size: number;
   tone?: ProviderGlyphTone;
 }) {
-  const Icon = getProviderIcon(provider);
+  const Icon = getProviderIcon(provider, icon);
   const color =
     tone === "foreground" ? styles.providerIconForeground.color : styles.providerIconMuted.color;
   return <Icon size={size} color={color} />;
@@ -311,6 +313,10 @@ export function useModelBrowser({
     setSearchQuery(value);
   }, []);
 
+  const viewProviderIcon =
+    view.kind === "provider"
+      ? providers.find((provider) => provider.id === view.providerId)?.icon
+      : undefined;
   const singleProviderView = providers.length === 1;
   const header = useMemo<SheetHeader>(() => {
     if (view.kind === "all") {
@@ -330,7 +336,12 @@ export function useModelBrowser({
     return {
       title: view.providerLabel,
       leading: (
-        <ModelProviderGlyph provider={view.providerId} size={ICON_SIZE.md} tone="foreground" />
+        <ModelProviderGlyph
+          provider={view.providerId}
+          icon={viewProviderIcon}
+          size={ICON_SIZE.md}
+          tone="foreground"
+        />
       ),
       back: singleProviderView ? undefined : { onPress: showAll },
       actions: (
@@ -363,6 +374,7 @@ export function useModelBrowser({
     showAll,
     t,
     view,
+    viewProviderIcon,
   ]);
 
   const selectedModelLabel = useMemo(
@@ -672,8 +684,10 @@ function ModelRow({
   const { t } = useTranslation();
   const [isHovered, setIsHovered] = useState(false);
   const leadingSlot = useMemo(
-    () => <ModelProviderGlyph provider={row.provider} size={ICON_SIZE.sm} />,
-    [row.provider],
+    () => (
+      <ModelProviderGlyph provider={row.provider} icon={row.providerIcon} size={ICON_SIZE.sm} />
+    ),
+    [row.provider, row.providerIcon],
   );
 
   const description = showProviderLabel ? buildProviderQualifiedDescription(row) : row.description;
@@ -988,8 +1002,8 @@ function GroupProviderButton({
     );
   }, [selection, t]);
   const leadingSlot = useMemo(
-    () => <ModelProviderGlyph provider={provider.id} size={ICON_SIZE.sm} />,
-    [provider.id],
+    () => <ModelProviderGlyph provider={provider.id} icon={provider.icon} size={ICON_SIZE.sm} />,
+    [provider.id, provider.icon],
   );
   const trailingSlot = useMemo(
     () => (

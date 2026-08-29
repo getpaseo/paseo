@@ -2,11 +2,16 @@ import type { Logger } from "pino";
 import { z } from "zod";
 
 import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
-import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
+import {
+  checkProviderLaunchAvailable,
+  resolveProviderLaunch,
+  type ProviderModeConfig,
+} from "../provider-launch-config.js";
 import {
   ACPAgentClient,
   type ACPCatalogModelResolver,
   type ACPClientCapabilityMeta,
+  type ACPConfigFeatureSettings,
   type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
@@ -18,9 +23,23 @@ import {
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 
+const GenericACPFeatureOverrideSchema = z.object({
+  label: z.string().optional(),
+  description: z.string().optional(),
+  tooltip: z.string().optional(),
+  icon: z.string().optional(),
+  emptyOptionLabel: z.string().optional(),
+});
+
+const GenericACPFeatureSettingsSchema = z.object({
+  suppress: z.array(z.string()).optional(),
+  overrides: z.record(z.string(), GenericACPFeatureOverrideSchema).optional(),
+});
+
 export const GenericACPProviderParamsSchema = z
   .object({
     supportsMcpServers: z.boolean().optional(),
+    features: GenericACPFeatureSettingsSchema.optional(),
     clientCapabilities: z
       .object({
         fs: z
@@ -48,6 +67,7 @@ interface GenericACPAgentClientOptions {
   initialCommandsWaitTimeoutMs?: number;
   diagnosticPhaseTimeoutMs?: number;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
+  modeConfig?: ProviderModeConfig;
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
@@ -74,6 +94,9 @@ export class GenericACPAgentClient extends ACPAgentClient {
       clientCapabilities: providerParams.clientCapabilities,
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
+      configFeatureSettings: providerParams.features as ACPConfigFeatureSettings | undefined,
+      autoSurfaceUnknownConfigOptions: true,
+      modeConfig: options.modeConfig,
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
     });

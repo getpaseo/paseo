@@ -1,4 +1,5 @@
 import type {
+  AgentProviderIcon,
   AgentProviderNotice,
   AgentTaskItem,
   ProviderOptions,
@@ -119,8 +120,10 @@ export interface ProviderSnapshotEntry {
   enabled: boolean;
   source?: "builtin" | "custom";
   error?: string;
+  icon?: AgentProviderIcon;
   models?: AgentModelDefinition[];
   modes?: AgentMode[];
+  features?: AgentFeature[];
   fetchedAt?: string;
   label?: string;
   description?: string;
@@ -701,6 +704,7 @@ export interface ProviderRefreshContext {
 export interface ProviderCatalog {
   models: AgentModelDefinition[];
   modes: AgentMode[];
+  features?: AgentFeature[];
   defaultModeId?: string | null;
 }
 

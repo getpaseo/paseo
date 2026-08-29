@@ -673,6 +673,7 @@ export class ProviderSnapshotManager {
         status: "error",
         enabled: definition.enabled,
         source: this.getProviderSource(provider),
+        ...(definition.icon ? { icon: definition.icon } : {}),
         label: definition.label,
         description: definition.description,
         defaultModeId: definition.defaultModeId,
@@ -720,6 +721,7 @@ export class ProviderSnapshotManager {
         status: "loading",
         enabled: definition?.enabled ?? true,
         source: this.getProviderSource(provider),
+        ...(definition?.icon ? { icon: definition.icon } : {}),
         label: definition?.label,
         description: definition?.description,
         defaultModeId: definition?.defaultModeId ?? null,
@@ -739,6 +741,7 @@ export class ProviderSnapshotManager {
         provider,
         enabled: definition?.enabled ?? true,
         source: this.getProviderSource(provider),
+        ...(definition?.icon ? { icon: definition.icon } : {}),
         label: definition?.label,
         description: definition?.description,
         defaultModeId: definition?.defaultModeId ?? null,
@@ -759,6 +762,7 @@ export class ProviderSnapshotManager {
         enabled: true,
         models: current?.models,
         modes: current?.modes,
+        ...(current?.features ? { features: current.features } : {}),
         fetchedAt: current?.fetchedAt,
       });
     }
@@ -907,6 +911,7 @@ export class ProviderSnapshotManager {
     const base = {
       provider,
       source: this.getProviderSource(provider),
+      ...(definition.icon ? { icon: definition.icon } : {}),
       label: definition.label,
       description: definition.description,
       defaultModeId: definition.defaultModeId,
@@ -955,6 +960,7 @@ export class ProviderSnapshotManager {
         enabled: true,
         models: catalog.models,
         modes: catalog.modes,
+        ...(catalog.features ? { features: catalog.features } : {}),
         fetchedAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -1043,6 +1049,7 @@ export class ProviderSnapshotManager {
           ? {
               models: existing?.models,
               modes: existing?.modes,
+              ...(existing?.features ? { features: existing.features } : {}),
               fetchedAt: existing?.fetchedAt,
             }
           : {}),
@@ -1129,6 +1136,15 @@ function cloneEntry(entry: ProviderSnapshotEntry): ProviderSnapshotEntry {
     ...entry,
     models: entry.models?.map((model) => ({ ...model })),
     modes: entry.modes?.map((mode) => ({ ...mode })),
+    ...(entry.features
+      ? {
+          features: entry.features.map((feature) =>
+            feature.type === "select"
+              ? { ...feature, options: feature.options.map((option) => ({ ...option })) }
+              : { ...feature },
+          ),
+        }
+      : {}),
   };
 }
 

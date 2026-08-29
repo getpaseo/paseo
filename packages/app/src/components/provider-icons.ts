@@ -1,5 +1,7 @@
-import { Bot, PackagePlus } from "lucide-react-native";
+import * as LucideIcons from "lucide-react-native";
+import { Bot, PackagePlus, type LucideIcon } from "lucide-react-native";
 import { createElement, type ComponentType } from "react";
+import type { AgentProviderIcon } from "@getpaseo/protocol/agent-types";
 import { SvgXml } from "react-native-svg";
 import { ClaudeIcon } from "@/components/icons/claude-icon";
 import { CodexIcon } from "@/components/icons/codex-icon";
@@ -34,6 +36,57 @@ const CATALOG_ICON_SVGS = new Map(
 );
 
 const catalogIconComponents = new Map<string, ProviderIconComponent>();
+const providerIconComponents = new Map<string, ProviderIconComponent>();
+const MAX_PROVIDER_ICON_LENGTH = 13 * 1024;
+
+function isRenderableProviderSvg(value: string): boolean {
+  const svg = value.trim();
+  return (
+    svg.length <= MAX_PROVIDER_ICON_LENGTH &&
+    /^(?:<\?xml[^>]*>\s*)?<svg(?:\s[^>]*)?>[\s\S]*<\/svg>$/iu.test(svg) &&
+    !/<\s*(?:script|foreignObject|iframe|object|embed)\b/iu.test(svg) &&
+    !/(?:on[a-z]+|(?:xlink:)?href)\s*=/iu.test(svg)
+  );
+}
+
+function findLucideIcon(name: string): LucideIcon | null {
+  const candidate = Reflect.get(LucideIcons, name);
+  if (candidate === LucideIcons.Icon || candidate === LucideIcons.createLucideIcon) {
+    return null;
+  }
+  const isComponent =
+    typeof candidate === "function" ||
+    (typeof candidate === "object" && candidate !== null && "$$typeof" in candidate);
+  return isComponent ? (candidate as LucideIcon) : null;
+}
+
+function getDeclaredProviderIcon(
+  provider: string,
+  icon: AgentProviderIcon,
+): ProviderIconComponent | null {
+  const kind = "svg" in icon ? "svg" : "lucide";
+  const value = "svg" in icon ? icon.svg : icon.lucide;
+  const cacheKey = `${provider}:${kind}:${value}`;
+  const cached = providerIconComponents.get(cacheKey);
+  if (cached) return cached;
+
+  if (kind === "svg") {
+    if (!isRenderableProviderSvg(value)) return null;
+    const DeclaredProviderIcon: ProviderIconComponent = ({ size, color }) =>
+      createElement(SvgXml, { xml: value, width: size, height: size, color });
+    DeclaredProviderIcon.displayName = `DeclaredProviderIcon(${provider})`;
+    providerIconComponents.set(cacheKey, DeclaredProviderIcon);
+    return DeclaredProviderIcon;
+  }
+
+  const LucideIcon = findLucideIcon(value);
+  if (!LucideIcon) return null;
+  const DeclaredProviderIcon: ProviderIconComponent = ({ size, color }) =>
+    createElement(LucideIcon, { size, color });
+  DeclaredProviderIcon.displayName = `DeclaredProviderIcon(${provider})`;
+  providerIconComponents.set(cacheKey, DeclaredProviderIcon);
+  return DeclaredProviderIcon;
+}
 
 function createCatalogIcon(provider: string, iconSvg: string): ProviderIconComponent {
   const CatalogProviderIcon: ProviderIconComponent = ({ size, color }) =>
@@ -61,7 +114,15 @@ function getCatalogProviderIcon(provider: string): ProviderIconComponent {
   return icon;
 }
 
-export function getProviderIcon(provider: string): ProviderIconComponent {
+export function getProviderIcon(
+  provider: string,
+  declaredIcon?: AgentProviderIcon,
+): ProviderIconComponent {
+  if (declaredIcon) {
+    const icon = getDeclaredProviderIcon(provider, declaredIcon);
+    if (icon) return icon;
+  }
+
   const name = resolveProviderIconName(provider);
   if (name.kind === "builtin") {
     return BUILTIN_PROVIDER_ICONS[name.id];

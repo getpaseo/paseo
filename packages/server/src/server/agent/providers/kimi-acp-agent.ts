@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 
+import type { ProviderModeConfig } from "../provider-launch-config.js";
 import type { AgentModelDefinition } from "../agent-sdk-types.js";
 import {
   type ACPCatalogModelResolverContext,
@@ -16,6 +17,7 @@ interface KimiACPAgentClientOptions {
   providerId?: string;
   label?: string;
   providerParams?: unknown;
+  modeConfig?: ProviderModeConfig;
 }
 
 /**
@@ -91,6 +93,7 @@ export class KimiACPAgentClient extends GenericACPAgentClient {
       providerId: options.providerId,
       label: options.label,
       providerParams: options.providerParams,
+      modeConfig: options.modeConfig,
       catalogModelResolver: resolveKimiCatalogModels,
     });
   }

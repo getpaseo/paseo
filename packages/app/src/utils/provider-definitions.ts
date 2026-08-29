@@ -28,6 +28,7 @@ export function buildProviderDefinitions(
     id: entry.provider,
     label: entry.label ?? entry.provider,
     description: entry.description ?? "",
+    ...(entry.icon ? { icon: entry.icon } : {}),
     defaultModeId: entry.defaultModeId ?? null,
     modes: buildProviderModes(entry),
   }));

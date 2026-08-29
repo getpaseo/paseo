@@ -110,6 +110,7 @@ import {
   checkProviderLaunchAvailable,
   createProviderEnvSpec,
   resolveProviderLaunch,
+  type ProviderModeConfig,
   type ProviderRuntimeSettings,
 } from "../provider-launch-config.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
@@ -421,6 +422,9 @@ interface ACPAgentClientOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  configFeatureSettings?: ACPConfigFeatureSettings;
+  autoSurfaceUnknownConfigOptions?: boolean;
+  modeConfig?: ProviderModeConfig;
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
@@ -451,6 +455,9 @@ interface ACPAgentSessionOptions {
   sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
   configOptionsTransformer?: (configOptions: SessionConfigOption[]) => SessionConfigOption[];
   configFeatureOptions?: ACPConfigFeatureOption[];
+  configFeatureSettings?: ACPConfigFeatureSettings;
+  autoSurfaceUnknownConfigOptions?: boolean;
+  modeConfig?: ProviderModeConfig;
   clientCapabilities?: ACPClientCapabilities;
   clientCapabilityMeta?: ACPClientCapabilityMeta;
   modeIdTransformer?: (modeId: string) => string | null;
@@ -553,6 +560,15 @@ export interface ACPConfigFeatureOption {
   tooltip?: string;
   icon?: string;
   emptyOptionLabel?: string;
+}
+
+export type ACPConfigFeatureOverride = Partial<
+  Pick<ACPConfigFeatureOption, "label" | "description" | "tooltip" | "icon" | "emptyOptionLabel">
+>;
+
+export interface ACPConfigFeatureSettings {
+  suppress?: readonly string[];
+  overrides?: Readonly<Record<string, ACPConfigFeatureOverride>>;
 }
 
 export type SelectConfigOption = Extract<SessionConfigOption, { type: "select" }>;
@@ -681,6 +697,19 @@ export function deriveModesFromACP(
   };
 }
 
+export function applyACPModeConfig(
+  modes: AgentMode[],
+  modeConfig: ProviderModeConfig | undefined,
+): AgentMode[] {
+  const suppressed = new Set(modeConfig?.suppress ?? []);
+  return modes
+    .filter((mode) => !suppressed.has(mode.id))
+    .map((mode) => {
+      const override = modeConfig?.overrides?.[mode.id];
+      return override ? Object.assign({}, mode, override) : mode;
+    });
+}
+
 export function deriveModelDefinitionsFromACP(
   provider: string,
   models: SessionModelState | null | undefined,
@@ -714,29 +743,114 @@ export function deriveModelDefinitionsFromACP(
   }));
 }
 
+const ACP_STANDARD_CONFIG_OPTION_CATEGORIES = new Set(["mode", "model", "thought_level"]);
+
+type ACPConfigFeatureOptionValue = Extract<SessionConfigOption, { type: "select" | "boolean" }>;
+
+function isACPConfigFeatureOption(
+  option: SessionConfigOption,
+): option is ACPConfigFeatureOptionValue {
+  return option.type === "select" || option.type === "boolean";
+}
+
+function applyACPConfigFeatureOverride(
+  featureOption: ACPConfigFeatureOption,
+  settings: ACPConfigFeatureSettings | undefined,
+): ACPConfigFeatureOption {
+  const override =
+    settings?.overrides?.[featureOption.configId] ?? settings?.overrides?.[featureOption.id];
+  return override ? { ...featureOption, ...override } : featureOption;
+}
+
+export function resolveACPConfigFeatureOptions(input: {
+  configOptions: SessionConfigOption[] | null | undefined;
+  declaredFeatureOptions?: ACPConfigFeatureOption[];
+  autoSurfaceUnknownConfigOptions?: boolean;
+  settings?: ACPConfigFeatureSettings;
+}): ACPConfigFeatureOption[] {
+  const suppressed = new Set(input.settings?.suppress ?? []);
+  const options: ACPConfigFeatureOption[] = [];
+  const seen = new Set<string>();
+
+  const add = (featureOption: ACPConfigFeatureOption): void => {
+    if (
+      suppressed.has(featureOption.id) ||
+      suppressed.has(featureOption.configId) ||
+      suppressed.has(featureOption.label) ||
+      seen.has(featureOption.id) ||
+      seen.has(featureOption.configId)
+    ) {
+      return;
+    }
+    const resolved = applyACPConfigFeatureOverride(featureOption, input.settings);
+    options.push(resolved);
+    seen.add(resolved.id);
+    seen.add(resolved.configId);
+  };
+
+  for (const featureOption of input.declaredFeatureOptions ?? []) {
+    add(featureOption);
+  }
+
+  if (input.autoSurfaceUnknownConfigOptions) {
+    for (const option of input.configOptions ?? []) {
+      if (
+        !isACPConfigFeatureOption(option) ||
+        option.id === ACP_AUTO_ACCEPT_FEATURE_ID ||
+        (typeof option.category === "string" &&
+          ACP_STANDARD_CONFIG_OPTION_CATEGORIES.has(option.category))
+      ) {
+        continue;
+      }
+      add({
+        id: option.id,
+        configId: option.id,
+        category: typeof option.category === "string" ? option.category : undefined,
+        label: option.name,
+        description: option.description ?? undefined,
+      });
+    }
+  }
+
+  return options;
+}
+
 export function deriveFeaturesFromACP(
   configOptions: SessionConfigOption[] | null | undefined,
   featureOptions: ACPConfigFeatureOption[],
 ): AgentFeature[] {
-  return featureOptions.flatMap((featureOption) => {
-    const option = findSelectConfigFeatureOption(configOptions, featureOption);
+  const features: AgentFeature[] = [];
+  for (const featureOption of featureOptions) {
+    const option = findConfigFeatureOption(configOptions, featureOption);
     if (!option) {
-      return [];
+      continue;
     }
 
-    return [
-      {
-        type: "select",
+    if (option.type === "boolean") {
+      features.push({
+        type: "toggle",
         id: featureOption.id,
         label: featureOption.label,
         description: featureOption.description,
         tooltip: featureOption.tooltip,
         icon: featureOption.icon,
-        value: option.currentValue ?? null,
-        options: deriveConfigFeatureSelectOptions(option, featureOption),
-      },
-    ];
-  });
+        value: option.currentValue,
+      });
+      continue;
+    }
+
+    features.push({
+      type: "select",
+      id: featureOption.id,
+      label: featureOption.label,
+      description: featureOption.description,
+      tooltip: featureOption.tooltip,
+      icon: featureOption.icon,
+      value: option.currentValue ?? null,
+      options: deriveConfigFeatureSelectOptions(option, featureOption),
+    });
+  }
+  return features;
 }
 
 function isACPAutoAcceptEnabled(config: AgentSessionConfig): boolean {
@@ -808,6 +922,9 @@ export class ACPAgentClient implements AgentClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly configFeatureSettings?: ACPConfigFeatureSettings;
+  private readonly autoSurfaceUnknownConfigOptions: boolean;
+  private readonly modeConfig?: ProviderModeConfig;
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
@@ -844,6 +961,9 @@ export class ACPAgentClient implements AgentClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.configFeatureSettings = options.configFeatureSettings;
+    this.autoSurfaceUnknownConfigOptions = options.autoSurfaceUnknownConfigOptions ?? false;
+    this.modeConfig = options.modeConfig;
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
@@ -873,6 +993,9 @@ export class ACPAgentClient implements AgentClient {
         sessionResponseTransformer: this.sessionResponseTransformer,
         configOptionsTransformer: this.configOptionsTransformer,
         configFeatureOptions: this.configFeatureOptions,
+        configFeatureSettings: this.configFeatureSettings,
+        autoSurfaceUnknownConfigOptions: this.autoSurfaceUnknownConfigOptions,
+        modeConfig: this.modeConfig,
         clientCapabilities: this.clientCapabilities,
         clientCapabilityMeta: this.clientCapabilityMeta,
         modeIdTransformer: this.modeIdTransformer,
@@ -923,6 +1046,9 @@ export class ACPAgentClient implements AgentClient {
       sessionResponseTransformer: this.sessionResponseTransformer,
       configOptionsTransformer: this.configOptionsTransformer,
       configFeatureOptions: this.configFeatureOptions,
+      configFeatureSettings: this.configFeatureSettings,
+      autoSurfaceUnknownConfigOptions: this.autoSurfaceUnknownConfigOptions,
+      modeConfig: this.modeConfig,
       clientCapabilities: this.clientCapabilities,
       clientCapabilityMeta: this.clientCapabilityMeta,
       modeIdTransformer: this.modeIdTransformer,
@@ -1012,9 +1138,24 @@ export class ACPAgentClient implements AgentClient {
         transformed.modes,
         transformed.configOptions,
       );
+      const features = [
+        buildACPAutoAcceptFeature({ provider: this.provider, cwd }),
+        ...deriveFeaturesFromACP(
+          transformed.configOptions,
+          resolveACPConfigFeatureOptions({
+            configOptions: transformed.configOptions,
+            declaredFeatureOptions: this.configFeatureOptions,
+            autoSurfaceUnknownConfigOptions: this.autoSurfaceUnknownConfigOptions,
+            settings: this.configFeatureSettings,
+          }),
+        ),
+      ];
       return {
         models: this.modelTransformer ? this.modelTransformer(models) : models,
-        modes: modeInfo.modes,
+        modes: applyACPModeConfig(modeInfo.modes, this.modeConfig),
+        ...(this.autoSurfaceUnknownConfigOptions || this.configFeatureOptions.length > 0
+          ? { features }
+          : {}),
       };
     } finally {
       context?.signal.removeEventListener("abort", handleAbort);
@@ -1024,7 +1165,7 @@ export class ACPAgentClient implements AgentClient {
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
     const autoAcceptFeature = buildACPAutoAcceptFeature(config);
-    if (this.configFeatureOptions.length === 0) {
+    if (!this.autoSurfaceUnknownConfigOptions && this.configFeatureOptions.length === 0) {
       return [autoAcceptFeature];
     }
 
@@ -1040,7 +1181,15 @@ export class ACPAgentClient implements AgentClient {
       const transformed = this.transformSessionResponse(response);
       return [
         autoAcceptFeature,
-        ...deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions),
+        ...deriveFeaturesFromACP(
+          transformed.configOptions,
+          resolveACPConfigFeatureOptions({
+            configOptions: transformed.configOptions,
+            declaredFeatureOptions: this.configFeatureOptions,
+            autoSurfaceUnknownConfigOptions: this.autoSurfaceUnknownConfigOptions,
+            settings: this.configFeatureSettings,
+          }),
+        ),
       ];
     } finally {
       await this.closeProbe(probe);
@@ -1407,6 +1556,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     configOptions: SessionConfigOption[],
   ) => SessionConfigOption[];
   private readonly configFeatureOptions: ACPConfigFeatureOption[];
+  private readonly configFeatureSettings?: ACPConfigFeatureSettings;
+  private readonly autoSurfaceUnknownConfigOptions: boolean;
+  private readonly modeConfig?: ProviderModeConfig;
   private readonly clientCapabilities?: ACPClientCapabilities;
   private readonly clientCapabilityMeta?: ACPClientCapabilityMeta;
   private readonly modeIdTransformer?: (modeId: string) => string | null;
@@ -1473,6 +1625,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.sessionResponseTransformer = options.sessionResponseTransformer;
     this.configOptionsTransformer = options.configOptionsTransformer;
     this.configFeatureOptions = options.configFeatureOptions ?? [];
+    this.configFeatureSettings = options.configFeatureSettings;
+    this.autoSurfaceUnknownConfigOptions = options.autoSurfaceUnknownConfigOptions ?? false;
+    this.modeConfig = options.modeConfig;
     this.clientCapabilities = options.clientCapabilities;
     this.clientCapabilityMeta = options.clientCapabilityMeta;
     this.modeIdTransformer = options.modeIdTransformer;
@@ -1693,7 +1848,15 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   get features(): AgentFeature[] {
     return [
       buildACPAutoAcceptFeature(this.config),
-      ...deriveFeaturesFromACP(this.configOptions, this.configFeatureOptions),
+      ...deriveFeaturesFromACP(
+        this.configOptions,
+        resolveACPConfigFeatureOptions({
+          configOptions: this.configOptions,
+          declaredFeatureOptions: this.configFeatureOptions,
+          autoSurfaceUnknownConfigOptions: this.autoSurfaceUnknownConfigOptions,
+          settings: this.configFeatureSettings,
+        }),
+      ),
     ];
   }
 
@@ -1787,7 +1950,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       if (providerResult.configOptions) {
         this.configOptions = this.transformConfigOptions(providerResult.configOptions);
       }
-      this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
+      this.availableModes = applyACPModeConfig(
+        deriveModesFromACP(this.defaultModes, null, this.configOptions).modes,
+        this.modeConfig,
+      );
       this.pushEvent({
         type: "mode_changed",
         provider: this.provider,
@@ -1861,7 +2027,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       requestedValue: modeId,
       label: "mode",
     });
-    this.availableModes = deriveModesFromACP(this.defaultModes, null, this.configOptions).modes;
+    this.availableModes = applyACPModeConfig(
+      deriveModesFromACP(this.defaultModes, null, this.configOptions).modes,
+      this.modeConfig,
+    );
     this.pushEvent({
       type: "mode_changed",
       provider: this.provider,
@@ -2042,14 +2211,37 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       return;
     }
 
-    const featureOption = this.configFeatureOptions.find((option) => option.id === featureId);
+    const featureOption = resolveACPConfigFeatureOptions({
+      configOptions: this.configOptions,
+      declaredFeatureOptions: this.configFeatureOptions,
+      autoSurfaceUnknownConfigOptions: this.autoSurfaceUnknownConfigOptions,
+      settings: this.configFeatureSettings,
+    }).find((option) => option.id === featureId);
     if (!featureOption) {
       throw new Error(`Unknown ${this.provider} feature: ${featureId}`);
     }
 
-    const option = findSelectConfigFeatureOption(this.configOptions, featureOption);
+    const option = findConfigFeatureOption(this.configOptions, featureOption);
     if (!option) {
       throw new Error(`${this.provider} does not expose ACP feature '${featureId}'`);
+    }
+
+    if (option.type === "boolean") {
+      const requestedValue = normalizeConfigFeatureBooleanValue(value);
+      const response = await this.connection.setSessionConfigOption({
+        sessionId: this.sessionId,
+        configId: option.id,
+        type: "boolean",
+        value: requestedValue,
+      });
+      this.configOptions = this.transformConfigOptions(response.configOptions);
+      const responseOption = findConfigFeatureOption(this.configOptions, featureOption);
+      this.config.featureValues = {
+        ...this.config.featureValues,
+        [featureId]:
+          responseOption?.type === "boolean" ? responseOption.currentValue : requestedValue,
+      };
+      return;
     }
 
     const requestedValue = normalizeConfigFeatureValue(value);
@@ -2555,7 +2747,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.configOptions = this.transformConfigOptions(transformed.configOptions ?? []);
 
     const modeInfo = deriveModesFromACP(this.defaultModes, transformed.modes, this.configOptions);
-    this.availableModes = modeInfo.modes;
+    this.availableModes = applyACPModeConfig(modeInfo.modes, this.modeConfig);
     this.currentMode = modeInfo.currentModeId ?? this.currentMode;
 
     this.availableModels = transformed.models?.availableModels ?? null;
@@ -2608,7 +2800,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       await this.setThinkingOption(this.config.thinkingOptionId);
     }
     const configuredFeatureValues = this.config.featureValues ?? {};
-    for (const featureOption of this.configFeatureOptions) {
+    const featureOptions = resolveACPConfigFeatureOptions({
+      configOptions: this.configOptions,
+      declaredFeatureOptions: this.configFeatureOptions,
+      autoSurfaceUnknownConfigOptions: this.autoSurfaceUnknownConfigOptions,
+      settings: this.configFeatureSettings,
+    });
+    for (const featureOption of featureOptions) {
       if (!Object.prototype.hasOwnProperty.call(configuredFeatureValues, featureOption.id)) {
         continue;
       }
@@ -2800,7 +2998,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     const nextModel = deriveCurrentConfigValue(this.configOptions, "model");
     const nextThinkingOptionId = deriveCurrentConfigValue(this.configOptions, "thought_level");
 
-    this.availableModes = modeInfo.modes;
+    this.availableModes = applyACPModeConfig(modeInfo.modes, this.modeConfig);
     this.currentMode = nextMode ?? this.currentMode;
     this.currentModel = nextModel ?? this.currentModel;
     this.thinkingOptionId = nextThinkingOptionId ?? this.thinkingOptionId;
@@ -3023,13 +3221,13 @@ function findSelectConfigOptionById({
   return option ?? null;
 }
 
-function findSelectConfigFeatureOption(
+function findConfigFeatureOption(
   configOptions: SessionConfigOption[] | null | undefined,
   featureOption: ACPConfigFeatureOption,
-): SelectConfigOption | null {
+): ACPConfigFeatureOptionValue | null {
   const option = configOptions?.find(
-    (entry): entry is SelectConfigOption =>
-      entry.type === "select" &&
+    (entry): entry is ACPConfigFeatureOptionValue =>
+      isACPConfigFeatureOption(entry) &&
       entry.id === featureOption.configId &&
       (featureOption.category === undefined || entry.category === featureOption.category),
   );
@@ -3098,6 +3296,13 @@ function normalizeConfigFeatureValue(value: unknown): string {
     return "";
   }
   throw new Error(`ACP feature value must be a string`);
+}
+
+function normalizeConfigFeatureBooleanValue(value: unknown): boolean {
+  if (typeof value === "boolean") {
+    return value;
+  }
+  throw new Error(`ACP boolean feature value must be a boolean`);
 }
 
 export function deriveSelectorOptions(

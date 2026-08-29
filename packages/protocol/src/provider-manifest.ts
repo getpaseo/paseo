@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AgentMode } from "./agent-types.js";
+import type { AgentMode, AgentProviderIcon } from "./agent-types.js";
 
 export type AgentModeColorTier = "safe" | "moderate" | "dangerous" | "planning" | `#${string}`;
 // Open string by design: the client looks icons up in a registry and falls back
@@ -25,6 +25,7 @@ export interface AgentProviderDefinition {
   id: string;
   label: string;
   description: string;
+  icon?: AgentProviderIcon;
   enabledByDefault?: boolean;
   defaultModeId: string | null;
   modes: AgentProviderModeDefinition[];

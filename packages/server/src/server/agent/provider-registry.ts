@@ -30,6 +30,7 @@ import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
 import type {
   AgentProviderRuntimeSettingsMap,
+  ProviderModeConfig,
   ProviderOverride,
   ProviderProfileModel,
   ProviderRuntimeSettings,
@@ -115,6 +116,7 @@ interface ProviderClientFactoryOptions extends Pick<
   "workspaceGitService" | "managedProcesses" | "ompRuntime"
 > {
   providerParams?: unknown;
+  modeConfig?: ProviderModeConfig;
   customProvider?: {
     id: string;
     label: string;
@@ -137,6 +139,7 @@ interface ResolvedProvider {
   enabled: boolean;
   derivedFromProviderId: string | null;
   providerParams?: unknown;
+  modeConfig?: ProviderModeConfig;
   createBaseClient: (logger: Logger) => AgentClient;
   contract: ProviderContract;
 }
@@ -304,6 +307,8 @@ function applyOverrideToDefinition(
     ...definition,
     label: override.label ?? definition.label,
     description: override.description ?? definition.description,
+    ...(override.icon !== undefined ? { icon: override.icon } : {}),
+    ...(override.defaultModeId !== undefined ? { defaultModeId: override.defaultModeId } : {}),
   };
 }
 
@@ -321,6 +326,8 @@ function createDerivedDefinition(
     id: providerId,
     label: override.label,
     description: override.description ?? baseDefinition.description,
+    ...(override.icon !== undefined ? { icon: override.icon } : {}),
+    ...(override.defaultModeId !== undefined ? { defaultModeId: override.defaultModeId } : {}),
   };
 }
 
@@ -591,14 +598,18 @@ function createRegistryEntry(
     : [];
 
   const decorateModes = (modes: AgentMode[]): AgentMode[] =>
-    modes.map((mode) => {
-      if (mode.icon && mode.colorTier) return mode;
+    modes.flatMap((mode) => {
+      if (resolved.modeConfig?.suppress?.includes(mode.id)) return [];
       const definitionMode = resolved.definition.modes.find((d) => d.id === mode.id);
-      if (!definitionMode) return mode;
-      return Object.assign({}, mode, {
-        icon: mode.icon ?? definitionMode.icon,
-        colorTier: mode.colorTier ?? definitionMode.colorTier,
-      });
+      const modeOverride = resolved.modeConfig?.overrides?.[mode.id];
+      const decorated = definitionMode
+        ? Object.assign({}, mode, {
+            icon: mode.icon ?? definitionMode.icon,
+            colorTier: mode.colorTier ?? definitionMode.colorTier,
+            isUnattended: mode.isUnattended ?? definitionMode.isUnattended,
+          })
+        : mode;
+      return [modeOverride ? Object.assign(decorated, modeOverride) : decorated];
     });
 
   const hasStaticModes = resolved.definition.modes.length > 0;
@@ -727,12 +738,14 @@ function buildResolvedBuiltinProviders(
       enabled: override?.enabled ?? definition.enabledByDefault ?? true,
       derivedFromProviderId: null,
       providerParams: override?.params,
+      modeConfig: override?.modes,
       createBaseClient: (logger) =>
         factory(logger, mergedRuntimeSettings, {
           workspaceGitService: options.workspaceGitService,
           managedProcesses: options.managedProcesses,
           ompRuntime: options.ompRuntime,
           providerParams: override?.params,
+          modeConfig: override?.modes,
         }),
       contract: PROVIDER_CONTRACTS[definition.id] ?? UNSUPPORTED_PROVIDER_CONTRACT,
     });
@@ -781,6 +794,7 @@ function addDerivedProviders(
         enabled: override.enabled !== false,
         derivedFromProviderId: null,
         providerParams: override.params,
+        modeConfig: override.modes,
         createBaseClient: (logger) => {
           const acpOptions = {
             logger,
@@ -789,6 +803,7 @@ function addDerivedProviders(
             providerId,
             label: override.label ?? providerId,
             providerParams: override.params,
+            modeConfig: override.modes,
           };
           if (providerId === "cursor") {
             return new CursorACPAgentClient(acpOptions);
@@ -837,10 +852,12 @@ function addDerivedProviders(
       enabled: override.enabled !== false,
       derivedFromProviderId: baseProviderId,
       providerParams,
+      modeConfig: override.modes,
       createBaseClient: (logger) =>
         baseFactory(logger, mergedRuntimeSettings, {
           managedProcesses: options.managedProcesses,
           providerParams,
+          modeConfig: override.modes,
           customProvider: {
             id: providerId,
             label: override.label ?? providerId,

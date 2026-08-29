@@ -67,7 +67,10 @@ export interface AgentMode {
   description?: string;
   icon?: string;
   colorTier?: string;
+  isUnattended?: boolean;
 }
+
+export type AgentProviderIcon = { svg: string } | { lucide: string };
 
 export type ProviderStatus = "ready" | "loading" | "error" | "unavailable";
 
@@ -108,8 +111,10 @@ export interface ProviderSnapshotEntry {
   enabled: boolean;
   source?: "builtin" | "custom";
   error?: string;
+  icon?: AgentProviderIcon;
   models?: AgentModelDefinition[];
   modes?: AgentMode[];
+  features?: AgentFeature[];
   fetchedAt?: string;
   label?: string;
   description?: string;

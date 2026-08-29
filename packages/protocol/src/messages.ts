@@ -4,6 +4,7 @@ import { CLIENT_CAPS } from "./client-capabilities.js";
 import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
+import { ProviderIconSchema } from "./provider-config.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
 import {
@@ -262,6 +263,7 @@ import type {
   AgentCapabilityFlags,
   AgentModelDefinition,
   AgentMode,
+  AgentProviderIcon,
   AgentPermissionRequest,
   AgentPermissionResponse,
   AgentPersistenceHandle,
@@ -282,7 +284,10 @@ const AgentModeSchema: z.ZodType<AgentMode> = z.object({
   description: z.string().optional(),
   icon: z.string().optional(),
   colorTier: z.string().optional(),
+  isUnattended: z.boolean().optional(),
 });
+
+const AgentProviderIconSchema: z.ZodType<AgentProviderIcon> = ProviderIconSchema;
 
 const ProviderStatusSchema: z.ZodType<ProviderStatus> = z.enum([
   "ready",
@@ -351,8 +356,10 @@ export const ProviderSnapshotEntrySchema = z.object({
   enabled: z.boolean().optional().default(true),
   source: z.enum(["builtin", "custom"]).optional(),
   error: z.string().optional(),
+  icon: AgentProviderIconSchema.optional(),
   models: z.array(AgentModelDefinitionSchema).optional(),
   modes: z.array(AgentModeSchema).optional(),
+  features: z.array(AgentFeatureSchema).optional(),
   fetchedAt: z.string().optional(),
   label: z.string().optional(),
   description: z.string().optional(),
