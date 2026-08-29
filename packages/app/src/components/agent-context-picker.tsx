@@ -224,9 +224,13 @@ export function AgentContextPicker({
 }: AgentContextPickerProps) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const history = useAgentHistory({ serverId, enabled: visible && supported && isConnected });
   const [query, setQuery] = useState("");
-  const [selection, setSelection] = useState<readonly string[]>([]);
+  const [selection, setSelection] = useState<readonly AggregatedAgent[]>([]);
+  const history = useAgentHistory({
+    serverId,
+    enabled: visible && supported && isConnected,
+    search: query,
+  });
 
   useEffect(() => {
     if (!visible) {
@@ -252,30 +256,24 @@ export function AgentContextPicker({
         workspaceId,
         projectKey,
         currentAgentId,
-        query,
+        // The daemon searches every retained source, including branch names and
+        // fuzzy matches. Re-filtering its ranked response locally would drop
+        // valid matches outside the initially loaded page.
+        query: history.isSearchSupported ? "" : query,
       }),
-    [currentAgentId, history.agents, projectKey, query, serverId, workspaceId],
+    [
+      currentAgentId,
+      history.agents,
+      history.isSearchSupported,
+      projectKey,
+      query,
+      serverId,
+      workspaceId,
+    ],
   );
-  const allGroups = useMemo(
-    () =>
-      buildAgentContextSourceGroups({
-        agents: history.agents,
-        serverId,
-        workspaceId,
-        projectKey,
-        currentAgentId,
-        query: "",
-      }),
-    [currentAgentId, history.agents, projectKey, serverId, workspaceId],
-  );
-  const sourcesByKey = useMemo(
-    () =>
-      new Map(
-        allGroups
-          .flatMap((group) => group.agents)
-          .map((agent) => [getAgentContextSourceKey(agent), agent]),
-      ),
-    [allGroups],
+  const selectionKeys = useMemo(
+    () => new Set(selection.map((source) => getAgentContextSourceKey(source))),
+    [selection],
   );
   const existingCount = existingKeys.size;
   const remainingSlots = Math.max(0, MAX_AGENT_CONTEXT_ATTACHMENTS - existingCount);
@@ -289,26 +287,23 @@ export function AgentContextPicker({
         return;
       }
       setSelection((current) => {
-        if (current.includes(key)) {
-          return current.filter((entry) => entry !== key);
+        if (current.some((entry) => getAgentContextSourceKey(entry) === key)) {
+          return current.filter((entry) => getAgentContextSourceKey(entry) !== key);
         }
         if (current.length >= remainingSlots) {
           return current;
         }
-        return [...current, key];
+        return [...current, source];
       });
     },
     [existingKeys, remainingSlots],
   );
   const handleAdd = useCallback(() => {
-    for (const key of selection) {
-      const source = sourcesByKey.get(key);
-      if (source) {
-        onAdd(source);
-      }
+    for (const source of selection) {
+      onAdd(source);
     }
     onClose();
-  }, [onAdd, onClose, selection, sourcesByKey]);
+  }, [onAdd, onClose, selection]);
   const { refreshAll } = history;
   const handleRetry = useCallback(() => {
     void refreshAll();
@@ -376,7 +371,7 @@ export function AgentContextPicker({
               {group.agents.map((source) => {
                 const key = getAgentContextSourceKey(source);
                 const attached = existingKeys.has(key);
-                const selected = selection.includes(key);
+                const selected = selectionKeys.has(key);
                 return (
                   <AgentContextSourceRow
                     key={key}

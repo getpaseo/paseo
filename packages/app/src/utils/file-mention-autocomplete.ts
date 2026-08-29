@@ -1,4 +1,5 @@
 import { isDelegatedAgent } from "@getpaseo/protocol/agent-labels";
+import type { ProjectPlacementPayload } from "@getpaseo/protocol/messages";
 import {
   compareMatchScores,
   scoreTextFields,
@@ -18,6 +19,7 @@ export interface AgentMentionCandidate {
   provider: string;
   archivedAt?: Date | null;
   labels: Record<string, string>;
+  projectPlacement?: ProjectPlacementPayload | null;
 }
 
 interface FindActiveFileMentionInput {
@@ -94,7 +96,14 @@ function scoreAgentMentionCandidate(
   candidate: AgentMentionCandidate,
   query: string,
 ): MatchScore | null {
-  return scoreTextFields(query, [candidate.title ?? "", candidate.cwd, candidate.id]);
+  return scoreTextFields(query, [
+    candidate.projectPlacement?.workspaceName ?? "",
+    candidate.title ?? "",
+    candidate.projectPlacement?.checkout.currentBranch ?? "",
+    candidate.projectPlacement?.projectName ?? "",
+    candidate.cwd,
+    candidate.id,
+  ]);
 }
 
 export function filterAndRankAgentMentionCandidates<TEntry extends AgentMentionCandidate>(

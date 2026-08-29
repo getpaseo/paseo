@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
+import type { ProjectPlacementPayload } from "@getpaseo/protocol/messages";
 import {
   applyAgentMentionReplacement,
   applyFileMentionReplacement,
@@ -19,6 +20,28 @@ function agentCandidate(
     provider: input.provider ?? "codex",
     archivedAt: input.archivedAt ?? null,
     labels: input.labels ?? {},
+    projectPlacement: input.projectPlacement ?? null,
+  };
+}
+
+function projectPlacement(input: {
+  workspaceName?: string | null;
+  projectName?: string;
+  currentBranch?: string | null;
+}): ProjectPlacementPayload {
+  return {
+    projectKey: "project-key",
+    projectName: input.projectName ?? "Paseo",
+    workspaceName: input.workspaceName ?? "Paseo workspace",
+    checkout: {
+      cwd: "/repo/paseo",
+      isGit: true,
+      currentBranch: input.currentBranch ?? "main",
+      remoteUrl: "https://github.com/getpaseo/paseo.git",
+      worktreeRoot: "/repo/paseo",
+      isPaseoOwnedWorktree: false,
+      mainRepoRoot: "/repo/paseo",
+    },
   };
 }
 
@@ -152,5 +175,40 @@ describe("filterAndRankAgentMentionCandidates", () => {
     expect(
       filterAndRankAgentMentionCandidates(candidates, "auth", "current").map((agent) => agent.id),
     ).toEqual(["fix-auth", "fix-auth-later", "agent-123"]);
+  });
+
+  it("retains daemon history matches found through workspace, project, and branch", () => {
+    const candidates = [
+      agentCandidate({
+        id: "agent-a",
+        title: "Alpha",
+        cwd: "/repo/alpha",
+        projectPlacement: projectPlacement({ workspaceName: "Wombat workspace" }),
+      }),
+      agentCandidate({
+        id: "agent-b",
+        title: "Beta",
+        cwd: "/repo/beta",
+        projectPlacement: projectPlacement({ projectName: "Peregrine project" }),
+      }),
+      agentCandidate({
+        id: "agent-c",
+        title: "Gamma",
+        cwd: "/repo/gamma",
+        projectPlacement: projectPlacement({ currentBranch: "feature/otter-search" }),
+      }),
+    ];
+
+    expect(
+      filterAndRankAgentMentionCandidates(candidates, "wombat", "current").map((agent) => agent.id),
+    ).toEqual(["agent-a"]);
+    expect(
+      filterAndRankAgentMentionCandidates(candidates, "peregrine", "current").map(
+        (agent) => agent.id,
+      ),
+    ).toEqual(["agent-b"]);
+    expect(
+      filterAndRankAgentMentionCandidates(candidates, "otter", "current").map((agent) => agent.id),
+    ).toEqual(["agent-c"]);
   });
 });
