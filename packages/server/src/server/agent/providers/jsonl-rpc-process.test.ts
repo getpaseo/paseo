@@ -222,6 +222,47 @@ describe("JsonlRpcProcess", () => {
     await rejection;
   });
 
+  test("treats a synchronous stdin write EPIPE as a closed process", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+
+    child.stdin.write = () => {
+      throw Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+    };
+
+    await expect(transport.request({ type: "hang" })).rejects.toThrow("write EPIPE");
+    await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
+      "JSONL RPC process is closed",
+    );
+  });
+
+  test("stdin error events close the transport instead of becoming uncaught exceptions", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+    const request = transport.request({ type: "hang" });
+    const err = Object.assign(new Error("write EPIPE"), { code: "EPIPE" });
+
+    child.stdin.emit("error", err);
+
+    await expect(request).rejects.toThrow("write EPIPE");
+    await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
+      "JSONL RPC process is closed",
+    );
+  });
+
+  test("a non-writable stdin closes the transport instead of hanging the request", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child });
+    child.stdin.end();
+
+    await expect(transport.request({ type: "hang" })).rejects.toThrow(
+      "JSONL RPC stdin is not writable",
+    );
+    await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
+      "JSONL RPC process is closed",
+    );
+  });
+
   test("reassembles protocol v2 chunked responses into the logical frame", async () => {
     const child = createInMemoryChildProcess();
     const transport = startProcess({ child });
