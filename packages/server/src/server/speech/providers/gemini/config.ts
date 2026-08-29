@@ -3,14 +3,14 @@ import { z } from "zod";
 import type { PersistedConfig } from "../../../persisted-config.js";
 import type { RequestedSpeechProvider, RequestedSpeechProviders } from "../../speech-types.js";
 
-export const DEFAULT_GEMINI_TRANSCRIPTION_MODEL = "gemini-3.5-transcribe-live";
+export const DEFAULT_GEMINI_STT_MODEL = "gemini-3.5-transcribe-live";
 export const DEFAULT_GEMINI_TTS_MODEL = "gemini-3.1-flash-tts-preview";
 export const DEFAULT_GEMINI_TTS_VOICE = "Kore";
 
 const NonEmptyStringSchema = z.string().trim().min(1);
 
 const GeminiSttConfigSchema = z.object({
-  model: NonEmptyStringSchema.default(DEFAULT_GEMINI_TRANSCRIPTION_MODEL),
+  model: NonEmptyStringSchema.default(DEFAULT_GEMINI_STT_MODEL),
   language: NonEmptyStringSchema.optional(),
   mode: z.enum(["smart", "verbatim"]).default("smart"),
 });

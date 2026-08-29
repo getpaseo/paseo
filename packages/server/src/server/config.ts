@@ -21,7 +21,7 @@ import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import { hashDaemonPassword } from "./auth.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
-import type { RequestedSpeechProviders } from "./speech/speech-types.js";
+import type { RequestedSpeechProviders, SpeechProviderId } from "./speech/speech-types.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
 
@@ -786,7 +786,7 @@ function resolveLogOverrideControlledPaths(env: NodeJS.ProcessEnv): string[] {
 
 function isEnabledSpeechProvider(
   provider: RequestedSpeechProviders[keyof RequestedSpeechProviders],
-  expected: "local" | "openai" | "gemini",
+  expected: SpeechProviderId,
 ): boolean {
   return provider.enabled !== false && provider.provider === expected;
 }
