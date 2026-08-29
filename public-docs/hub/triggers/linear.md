@@ -10,20 +10,20 @@ category: Hub
 
 Connect a workspace through [Linear for Hub](/docs/hub/self-hosting/linear-app), then use its
 stable Linear IDs to scope each workflow. Display names are not accepted for projects, states,
-labels, assignees, or users.
+teams, labels, assignees, or users.
 
 ## Choose the event
 
-| `on`                         | Fires when                                                                 |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| `linear.issue_entered_scope` | An issue is created in, or transitions into, the configured project scope. |
-| `linear.issue_assigned`      | An issue's assignee changes to a user.                                     |
-| `linear.comment_created`     | A comment is created on an issue.                                          |
-| `linear.agent_session`       | A native agent session is created or receives another prompt.              |
+| `on`                         | Fires when                                                                         |
+| ---------------------------- | ---------------------------------------------------------------------------------- |
+| `linear.issue_entered_scope` | An issue is created in, or transitions into, the configured project or team scope. |
+| `linear.issue_assigned`      | An issue's assignee changes to a user.                                             |
+| `linear.comment_created`     | A comment is created on an issue.                                                  |
+| `linear.agent_session`       | A native agent session is created or receives another prompt.                      |
 
 `linear.issue_entered_scope` is the intentionally autonomous event. It requires `filters.project`
-and fires only on the edge into the complete configured scope. Editing the title or description of
-an issue already in scope does not start another run.
+or `filters.team` and fires only on the edge into the complete configured scope. Editing the title
+or description of an issue already in scope does not start another run.
 
 `linear.issue_assigned`, `linear.comment_created`, and `linear.agent_session` are reactive. They
 require a non-empty `filters.from_users` list containing the Linear IDs of actors allowed to start
@@ -33,17 +33,19 @@ the workflow.
 
 All supplied filters compose with AND.
 
-| Filter           | Meaning                                                                    |
-| ---------------- | -------------------------------------------------------------------------- |
-| `connection`     | Linear connection slug.                                                    |
-| `project`        | Linear project ID; required for `linear.issue_entered_scope`.              |
-| `states`         | The issue's current workflow-state ID must be in the list.                 |
-| `labels`         | The issue must currently have every listed Linear label ID.                |
-| `exclude_labels` | The issue must have none of the listed Linear label IDs.                   |
-| `assignees`      | The issue's resulting assignee ID must be in the list.                     |
-| `from_users`     | Actor IDs allowed to assign, comment, or prompt a session.                 |
-| `pattern`        | For comments or sessions, text that must start the direct user message.    |
-| `contains`       | For comments or sessions, text that must occur in the direct user message. |
+| Filter           | Meaning                                                                                |
+| ---------------- | -------------------------------------------------------------------------------------- |
+| `connection`     | Linear connection slug.                                                                |
+| `project`        | Linear project ID; either this or `team` is required for `linear.issue_entered_scope`. |
+| `team`           | Linear team ID; useful when issues are not assigned to Linear projects.                |
+| `states`         | The issue's current workflow-state ID must be in the list.                             |
+| `labels`         | The issue must currently have every listed Linear label ID.                            |
+| `exclude_labels` | The issue must have none of the listed Linear label IDs.                               |
+| `assignees`      | The issue's resulting assignee ID must be in the list.                                 |
+| `from_users`     | Actor IDs allowed to assign, comment, or prompt a session.                             |
+| `pattern`        | For comments or sessions, text that must start the direct user message.                |
+| `contains`       | For comments or sessions, text that must occur in the direct user message.             |
+| `replies_only`   | For comments, `true` restricts the trigger to replies.                                 |
 
 `from_users` identifies the person who performed the assignment, wrote the comment, or prompted
 the agent session.
@@ -139,9 +141,13 @@ For a Linear comment, `${{ paseo.prompt }}` preserves the complete original comm
 prompt. `linear.reply` posts to the triggering issue through the connected Linear application.
 
 Authoring `${{ paseo.context }}` opts the step into Linear context. It includes the organization,
-actor, issue, triggering comment, and a bounded chronological thread: the issue title and
-description followed by up to 49 comments strictly before the trigger. If optional history cannot
-be loaded, the context marks the thread unavailable and still includes the issue root.
+actor, structured issue project and team, triggering comment, and a bounded chronological thread:
+the issue title and description followed by up to 49 comments strictly before the trigger. A reply
+also exposes its parent as `linear.comment.parent_id`. If optional history cannot be loaded, the
+context marks the thread unavailable and still includes the issue root.
+
+Use a second `linear.comment_created` trigger with `replies_only: true` and no text marker when an
+allowlisted user should be able to continue by replying without mentioning the app again.
 
 ## Start a first-draft PR when an issue enters scope
 
@@ -222,6 +228,8 @@ steps:
       - { type: linear.reply, max: 1, required: true }
 ```
 
-The project filter is the autonomous trust boundary; narrow it further with states, labels,
-excluded labels, and assignees. The trigger grants no repository credential. Only the `github`
-block on `implement` authorizes GitHub access, and only that step can emit `linear.reply`.
+The project filter is the autonomous trust boundary in this example. Use `team` instead when a
+team maps to the repository and issues may have no Linear project. Narrow either route further with
+states, labels, excluded labels, and assignees. The trigger grants no repository credential. Only
+the `github` block on `implement` authorizes GitHub access, and only that step can emit
+`linear.reply`.
