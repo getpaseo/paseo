@@ -21,7 +21,6 @@ export function validateDraftSubmission(input: {
     isModelLoading: boolean;
     effectiveModelId: string | null;
     availableModels: unknown[];
-    ownsDefaultModelSelection?: boolean;
   };
   autoSubmitConfig: WorkspaceDraftAutoSubmitConfig | null;
   workspaceDirectory: string | null;
@@ -44,7 +43,6 @@ export function validateDraftSubmission(input: {
       modelId: composerState.effectiveModelId ?? "",
       availableModels: composerState.availableModels,
       isModelLoading: composerState.isModelLoading,
-      ownsDefaultModelSelection: composerState.ownsDefaultModelSelection,
     },
     autoSubmitConfig,
     workspaceDirectory,

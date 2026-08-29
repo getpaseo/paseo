@@ -7,8 +7,7 @@ import type {
   AgentStreamEvent,
   AgentRuntimeInfo,
 } from "./agent-sdk-types.js";
-import { buildProviderRegistry, wrapSessionProvider } from "./provider-registry.js";
-import { createTestLogger } from "../../test-utils/test-logger.js";
+import { wrapSessionProvider } from "./provider-registry.js";
 
 type OptionalAgentSessionMethodName = {
   [K in keyof AgentSession]-?: undefined extends AgentSession[K]
@@ -195,16 +194,4 @@ describe("wrapSessionProvider", () => {
       "tryHandleOutOfBand.run",
     ]);
   });
-});
-
-test("wrapped OpenCode client retains ownership of default-model selection", () => {
-  const registry = buildProviderRegistry(createTestLogger(), {
-    providerOverrides: {
-      opencode: {
-        additionalModels: [{ id: "custom-model", label: "Custom model" }],
-      },
-    },
-  });
-
-  expect(registry.opencode.createClient(createTestLogger()).ownsDefaultModelSelection).toBe(true);
 });

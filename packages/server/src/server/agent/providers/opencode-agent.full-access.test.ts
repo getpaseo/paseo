@@ -108,7 +108,7 @@ describe("OpenCode auto_accept feature", () => {
     expect(modes).toEqual([]);
   });
 
-  test("lists auto accept as a provider feature", async () => {
+  test("lists OpenCode provider features", async () => {
     const { runtime } = mockOpenCodeClient();
 
     const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
@@ -118,7 +118,7 @@ describe("OpenCode auto_accept feature", () => {
     const enabledFeatures = await client.listFeatures({
       provider: "opencode",
       cwd: "/tmp/project",
-      featureValues: { auto_accept: true },
+      featureValues: { auto_accept: true, agent_model: true },
     });
     const legacyFeatures = await client.listFeatures({
       provider: "opencode",
@@ -126,15 +126,49 @@ describe("OpenCode auto_accept feature", () => {
       modeId: "full-access",
     });
 
-    expect(enabledFeatures).toEqual([
-      expect.objectContaining({
-        type: "toggle",
-        id: "auto_accept",
-        label: "Auto Accept",
-        value: true,
-      }),
-    ]);
-    expect(legacyFeatures).toEqual([expect.objectContaining({ id: "auto_accept", value: true })]);
+    expect(enabledFeatures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "toggle",
+          id: "auto_accept",
+          label: "Auto Accept",
+          value: true,
+        }),
+        expect.objectContaining({
+          type: "toggle",
+          id: "agent_model",
+          label: "Use agent's model",
+          value: true,
+        }),
+      ]),
+    );
+    expect(legacyFeatures).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "auto_accept", value: true })]),
+    );
+  });
+
+  test("omits the model while preserving the selected agent when agent model is enabled", async () => {
+    const { openCodeClient, runtime } = mockOpenCodeClient();
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      model: "openai/gpt-5.4",
+      modeId: "build",
+    });
+
+    await session.setFeature("agent_model", true);
+    await session.run("Implement the change");
+
+    expect(openCodeClient.calls.sessionPromptAsync[0]).toEqual(
+      expect.objectContaining({ agent: "build" }),
+    );
+    expect(openCodeClient.calls.sessionPromptAsync[0]).not.toHaveProperty("model");
+
+    await session.close();
   });
 
   test("keeps legacy full-access as an alias for build plus auto accept", async () => {
@@ -151,7 +185,9 @@ describe("OpenCode auto_accept feature", () => {
     });
 
     expect(await session.getCurrentMode()).toBe("build");
-    expect(session.features).toEqual([expect.objectContaining({ id: "auto_accept", value: true })]);
+    expect(session.features).toEqual(
+      expect.arrayContaining([expect.objectContaining({ id: "auto_accept", value: true })]),
+    );
 
     await session.run("Implement the change");
 

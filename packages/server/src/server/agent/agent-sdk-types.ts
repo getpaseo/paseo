@@ -126,7 +126,6 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   defaultModeId?: string | null;
-  ownsDefaultModelSelection?: boolean;
 }
 
 export interface AgentCreateConfigParent {
@@ -757,8 +756,6 @@ export interface AgentClient {
   ): Promise<ProviderCatalog>;
   /** Apply provider-owned defaults to a model supplied through provider configuration. */
   resolveConfiguredModel?(model: AgentModelDefinition): AgentModelDefinition;
-  /** Provider selects its own default when no model is requested. */
-  readonly ownsDefaultModelSelection?: boolean;
   resolveDefaultModeId?(input: ResolveAgentDefaultModeInput): Promise<string | undefined>;
   resolveCreateConfig?(input: ResolveAgentCreateConfigInput): ResolveAgentCreateConfigResult;
   isCreateConfigUnattended?(input: AgentCreateConfigUnattendedInput): boolean;

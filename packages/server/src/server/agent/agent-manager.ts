@@ -4781,9 +4781,6 @@ export class AgentManager {
     if (config.model || !(options.resolveDefaultModel ?? true)) return config.model;
 
     const resolved = await this.resolveDefaultModelId(config);
-    if (this.clients.get(config.provider)?.ownsDefaultModelSelection && !resolved?.isConfigured) {
-      return undefined;
-    }
     return resolved?.id;
   }
 

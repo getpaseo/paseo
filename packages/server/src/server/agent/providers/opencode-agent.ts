@@ -165,6 +165,7 @@ function createOpenCodeMessageId(
   return `msg_${ascending}${random(14)}`;
 }
 const OPENCODE_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
+const OPENCODE_AGENT_MODEL_FEATURE_ID = "agent_model";
 const OPENCODE_PERSISTED_SESSION_LIMIT = 200;
 const OPENCODE_PENDING_ABORT_START_TIMEOUT_MS = 10_000;
 const OPENCODE_CHILD_SESSION_HYDRATION_LIMIT = 100;
@@ -232,6 +233,10 @@ const DEFAULT_MODES: AgentMode[] = [
 
 function isOpenCodeAutoAcceptEnabled(config: AgentSessionConfig): boolean {
   return config.featureValues?.[OPENCODE_AUTO_ACCEPT_FEATURE_ID] === true;
+}
+
+function isOpenCodeAgentModelEnabled(config: AgentSessionConfig): boolean {
+  return config.featureValues?.[OPENCODE_AGENT_MODEL_FEATURE_ID] === true;
 }
 
 function withOpenCodeAutoAcceptFeature(
@@ -302,6 +307,17 @@ function buildOpenCodeAutoAcceptFeature(config: AgentSessionConfig): AgentFeatur
     tooltip: "Auto accept permission prompts",
     icon: "shield-check",
     value: isOpenCodeAutoAcceptEnabled(config),
+  };
+}
+
+function buildOpenCodeAgentModelFeature(config: AgentSessionConfig): AgentFeature {
+  return {
+    type: "toggle",
+    id: OPENCODE_AGENT_MODEL_FEATURE_ID,
+    label: "Use agent's model",
+    description: "Let the selected OpenCode agent choose the model",
+    icon: "sparkles",
+    value: isOpenCodeAgentModelEnabled(config),
   };
 }
 
@@ -1395,7 +1411,6 @@ export class OpenCodeAgentClient implements AgentClient {
   readonly capabilities: AgentCapabilityFlags;
   readonly resolveCreateConfig = resolveOpenCodeCreateConfig;
   readonly isCreateConfigUnattended = isOpenCodeCreateConfigUnattended;
-  readonly ownsDefaultModelSelection = true;
 
   private readonly serverManager: OpenCodeServerManagerLike;
   private readonly createOpenCodeClient: OpenCodeClientFactory;
@@ -1625,7 +1640,11 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    return [buildOpenCodeAutoAcceptFeature(this.assertConfig(config))];
+    const openCodeConfig = this.assertConfig(config);
+    return [
+      buildOpenCodeAutoAcceptFeature(openCodeConfig),
+      buildOpenCodeAgentModelFeature(openCodeConfig),
+    ];
   }
 
   async listImportableSessions(
@@ -3414,7 +3433,10 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   get features(): AgentFeature[] {
-    return [buildOpenCodeAutoAcceptFeature(this.config)];
+    return [
+      buildOpenCodeAutoAcceptFeature(this.config),
+      buildOpenCodeAgentModelFeature(this.config),
+    ];
   }
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
@@ -4801,15 +4823,20 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   async setFeature(featureId: string, value: unknown): Promise<void> {
-    if (featureId !== OPENCODE_AUTO_ACCEPT_FEATURE_ID) {
+    if (
+      featureId !== OPENCODE_AUTO_ACCEPT_FEATURE_ID &&
+      featureId !== OPENCODE_AGENT_MODEL_FEATURE_ID
+    ) {
       throw new Error(`Unsupported OpenCode feature '${featureId}'`);
     }
 
     const enabled = value === true;
-    this.autoAcceptEnabled = enabled;
+    if (featureId === OPENCODE_AUTO_ACCEPT_FEATURE_ID) {
+      this.autoAcceptEnabled = enabled;
+    }
     this.config.featureValues = {
       ...this.config.featureValues,
-      [OPENCODE_AUTO_ACCEPT_FEATURE_ID]: enabled,
+      [featureId]: enabled,
     };
   }
 
@@ -4968,7 +4995,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private parseModel(model?: string): { providerID: string; modelID: string } | undefined {
-    if (!model) {
+    if (!model || isOpenCodeAgentModelEnabled(this.config)) {
       return undefined;
     }
     const parts = model.split("/");

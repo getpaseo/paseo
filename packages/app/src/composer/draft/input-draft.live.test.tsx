@@ -51,7 +51,6 @@ vi.mock("@/hooks/use-agent-form-state", () => ({
     providerDefinitionMap: new Map(),
     agentDefinition: undefined,
     modeOptions: [{ id: "auto", label: "Auto" }],
-    ownsDefaultModelSelection: false,
     availableModels: [
       {
         provider: "codex",

@@ -114,7 +114,6 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   defaultModeId?: string | null;
-  ownsDefaultModelSelection?: boolean;
 }
 
 export interface AgentFeatureToggle {

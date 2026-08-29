@@ -1568,7 +1568,6 @@ export const ko: TranslationResources = {
   },
   providerSelection: {
     defaultModel: "기본값",
-    providerDefaultModel: "공급자 기본값",
     selectModel: "모델 선택",
     loading: "불러오는 중...",
     error: "오류",

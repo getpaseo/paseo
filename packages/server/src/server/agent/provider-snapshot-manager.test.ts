@@ -364,34 +364,6 @@ describe("ProviderSnapshotManager public surface", () => {
     }
   });
 
-  test("snapshots expose when the provider owns default model selection", async () => {
-    const manager = new ProviderSnapshotManager({
-      logger: createTestLogger(),
-      extraClients: {
-        opencode: createExtraClient("opencode", {
-          ownsDefaultModelSelection: true,
-          isAvailable: async () => true,
-        }),
-      },
-    });
-
-    try {
-      const entry = await manager.getProvider({
-        cwd: "/tmp/project",
-        provider: "opencode",
-        wait: true,
-      });
-
-      expect(entry).toMatchObject({
-        provider: "opencode",
-        status: "ready",
-        ownsDefaultModelSelection: true,
-      });
-    } finally {
-      manager.destroy();
-    }
-  });
-
   test("explicit refresh re-probes only the requested warm provider", async () => {
     const cwd = "/tmp/project";
     const isAvailableCodex = vi.fn(async () => true);

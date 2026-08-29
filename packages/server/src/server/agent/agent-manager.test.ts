@@ -1708,60 +1708,9 @@ test("normalizeConfig injects the provider default model while leaving mode omit
   expect(snapshot.config.modeId).toBeUndefined();
 });
 
-test("normalizeConfig leaves model selection to providers that own their default", async () => {
-  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-default-test-"));
-  class ProviderDefaultClient extends TestAgentClient {
-    readonly ownsDefaultModelSelection = true;
-    fetchCatalogCalls = 0;
-
-    override async fetchCatalog() {
-      this.fetchCatalogCalls += 1;
-      return {
-        models: [
-          { provider: this.provider, id: "provider-model", label: "Provider model" },
-          { provider: this.provider, id: "other-model", label: "Other model" },
-        ],
-        modes: [],
-      };
-    }
-  }
-  const client = new ProviderDefaultClient();
-  const manager = new AgentManager({ clients: { codex: client }, logger });
-
-  try {
-    const omitted = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
-      workspaceId: undefined,
-    });
-    const explicit = await manager.createAgent(
-      { provider: "codex", cwd: workdir, model: "gpt-5.4-mini" },
-      undefined,
-      { workspaceId: undefined },
-    );
-
-    expect({
-      omittedModel: omitted.config.model,
-      omittedCreateModel: client.createdConfigs[0]?.model,
-      fetchCatalogCalls: client.fetchCatalogCalls,
-      explicitModel: explicit.config.model,
-      explicitCreateModel: client.createdConfigs[1]?.model,
-    }).toEqual({
-      omittedModel: undefined,
-      omittedCreateModel: undefined,
-      fetchCatalogCalls: 1,
-      explicitModel: "gpt-5.4-mini",
-      explicitCreateModel: "gpt-5.4-mini",
-    });
-  } finally {
-    await manager.flushForShutdown();
-    rmSync(workdir, { recursive: true, force: true });
-  }
-});
-
-test("normalizeConfig honors configured default models over provider-owned defaults", async () => {
+test("normalizeConfig honors configured default models", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-configured-default-test-"));
   class ProviderDefaultClient extends TestAgentClient {
-    readonly ownsDefaultModelSelection = true;
-
     override async fetchCatalog() {
       return {
         models: [

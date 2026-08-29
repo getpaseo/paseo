@@ -233,11 +233,9 @@ export function useAgentInputDraft(input: UseAgentInputDraftInput): AgentInputDr
       thinkingOptionId: formState.selectedThinkingOptionId,
       availableModels: formState.availableModels,
       modeOptions: formState.modeOptions,
-      ownsDefaultModelSelection: formState.ownsDefaultModelSelection ?? false,
     }),
     [
       formState.availableModels,
-      formState.ownsDefaultModelSelection,
       formState.modeOptions,
       formState.selectedMode,
       formState.selectedModel,

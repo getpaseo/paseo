@@ -40,10 +40,6 @@ export interface ProviderSelectorProvider {
   modelSelection: ProviderModelSelection;
 }
 
-export interface ProviderSelectorBuildOptions {
-  includeProviderDefault?: boolean;
-}
-
 export interface ProviderSelectionState {
   provider: AgentProvider | null;
   modelId: string;
@@ -51,7 +47,6 @@ export interface ProviderSelectionState {
   thinkingOptionId: string;
   availableModels: AgentModelDefinition[];
   modeOptions: AgentMode[];
-  ownsDefaultModelSelection?: boolean;
 }
 
 export interface ProviderSelectionReadiness {
@@ -78,18 +73,13 @@ function buildModelRows(
 function buildSyntheticDefaultRow(
   provider: string,
   providerLabel: string,
-  ownsDefaultModelSelection = false,
 ): ProviderSelectionModelRow {
   return {
     favoriteKey: buildModelRowKey(provider, ""),
     provider,
     providerLabel,
     modelId: "",
-    modelLabel: i18n.t(
-      ownsDefaultModelSelection
-        ? "providerSelection.providerDefaultModel"
-        : "providerSelection.defaultModel",
-    ),
+    modelLabel: i18n.t("providerSelection.defaultModel"),
     description: undefined,
     isDefault: true,
   };
@@ -99,7 +89,6 @@ function buildModelSelection(
   provider: string,
   providerLabel: string,
   models: AgentModelDefinition[] | null,
-  ownsDefaultModelSelection = false,
 ): ProviderModelSelection {
   if (models === null) {
     return { kind: "loading" };
@@ -108,40 +97,24 @@ function buildModelSelection(
   if (selectableModels.length === 0) {
     return {
       kind: "models",
-      rows: [buildSyntheticDefaultRow(provider, providerLabel, ownsDefaultModelSelection)],
+      rows: [buildSyntheticDefaultRow(provider, providerLabel)],
     };
   }
   return {
     kind: "models",
-    rows: [
-      ...(ownsDefaultModelSelection
-        ? [buildSyntheticDefaultRow(provider, providerLabel, true)]
-        : []),
-      ...buildModelRows(provider, providerLabel, selectableModels),
-    ],
+    rows: buildModelRows(provider, providerLabel, selectableModels),
   };
 }
 
 function buildEntryModelSelection(
   entry: ProviderSnapshotEntry,
   label: string,
-  includeProviderDefault: boolean,
 ): ProviderModelSelection {
   if ((entry.models?.length ?? 0) > 0) {
-    return buildModelSelection(
-      entry.provider,
-      label,
-      entry.models ?? null,
-      includeProviderDefault && entry.ownsDefaultModelSelection,
-    );
+    return buildModelSelection(entry.provider, label, entry.models ?? null);
   }
   if (entry.status === "ready") {
-    return buildModelSelection(
-      entry.provider,
-      label,
-      entry.models ?? null,
-      includeProviderDefault && entry.ownsDefaultModelSelection,
-    );
+    return buildModelSelection(entry.provider, label, entry.models ?? null);
   }
   if (entry.status === "loading") {
     return { kind: "loading" };
@@ -175,7 +148,6 @@ export function buildProviderSelectorProviders(input: {
 
 export function buildSelectableProviderSelectorProviders(
   entries: ProviderSnapshotEntry[] | undefined,
-  options: ProviderSelectorBuildOptions = {},
 ): ProviderSelectorProvider[] {
   return (entries ?? [])
     .filter((entry) => entry.enabled)
@@ -184,11 +156,7 @@ export function buildSelectableProviderSelectorProviders(
       return {
         id: entry.provider,
         label,
-        modelSelection: buildEntryModelSelection(
-          entry,
-          label,
-          options.includeProviderDefault ?? false,
-        ),
+        modelSelection: buildEntryModelSelection(entry, label),
       };
     });
 }
@@ -303,9 +271,6 @@ export function resolveEffectiveComposerModelId(selection: ProviderSelectionStat
   if (selectedModelId) {
     return selectedModelId;
   }
-  if (selection.ownsDefaultModelSelection) {
-    return "";
-  }
   return (
     selection.availableModels.find((model) => model.isDefault)?.id ??
     selection.availableModels[0]?.id ??
@@ -362,7 +327,6 @@ export function resolveSubmissionReadiness(input: {
     modelId: string;
     availableModels: readonly unknown[];
     isModelLoading: boolean;
-    ownsDefaultModelSelection?: boolean;
   };
   autoSubmitConfig: { provider: string; model: string | null } | null;
   workspaceDirectory: string | null;
@@ -381,11 +345,7 @@ export function resolveSubmissionReadiness(input: {
     return { ok: false, reason: i18n.t("providerSelection.readiness.modelDefaultsLoading") };
   }
   const hasSelectedModel = Boolean(input.autoSubmitConfig?.model ?? input.selection.modelId);
-  if (
-    !hasSelectedModel &&
-    input.selection.availableModels.length > 0 &&
-    !input.selection.ownsDefaultModelSelection
-  ) {
+  if (!hasSelectedModel && input.selection.availableModels.length > 0) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.noModelAvailable") };
   }
   if (!input.workspaceDirectory) {
