@@ -1,6 +1,6 @@
 ---
 title: Plugin quickstart
-description: Build, install, and reload a trusted local Paseo plugin with a workspace panel.
+description: Build, install, share, and update a trusted Paseo plugin.
 nav: Quickstart
 order: 45
 category: Plugins
@@ -8,14 +8,13 @@ category: Plugins
 
 # Plugin quickstart
 
-> **Experimental:** Plugins are intended for personal, local use and are not designed for
-> distribution yet. The plugin API is still evolving, so expect breaking changes and updates to
+> **Experimental:** The plugin API is still evolving, so expect breaking changes and updates to
 > your plugins as Paseo evolves.
 
 See the [plugin roadmap](https://github.com/getpaseo/paseo/labels/plugins) for planned contribution
 surfaces and their current status.
 
-Paseo plugins add native workspace panels, Command Center items, global surfaces, app themes, daemon behavior, and composer attachment sources. They run on every Paseo client connected to the host, including mobile.
+Paseo plugins add native workspace panels, composer pills, Command Center items, global surfaces, app themes, daemon behavior, and composer attachment sources. They run on every Paseo client connected to the host, including mobile.
 
 Plugins are trusted local code. Install only code you trust: backend code runs unsandboxed with access to the daemon machine, and client contributions run inside the Paseo app.
 
@@ -119,6 +118,28 @@ paseo plugin ls
 ```
 
 Open a workspace, press **⌘K** on macOS or **Ctrl+K** on Windows and Linux, and choose **Open workspace overview**. It opens as a normal workspace tab. If the item does not appear, confirm that **Enable plugins** is on, the plugin status is `running` in `paseo plugin ls`, and the client is viewing the host where you installed it.
+
+To install a plugin published through GitHub or another Git host:
+
+```bash
+paseo plugin add owner/repository
+paseo plugin add https://git.example.com/owner/repository.git
+paseo plugin add owner/monorepo --path plugins/workspace
+paseo plugin add owner/repository --ref main
+```
+
+An omitted `--ref` tracks the default branch. Explicit branches track updates; tags and commits are
+pinned. Check and apply updates with:
+
+```bash
+paseo plugin status
+paseo plugin update workspace-plugin
+paseo plugin update --all
+```
+
+Paseo validates and compiles the new commit before replacing a running version. If startup fails,
+the previous version is restored. Git installation runs no package manager or install scripts, so
+published plugins must use Paseo's host-provided modules or include the source they bundle.
 
 ## Edit and reload
 

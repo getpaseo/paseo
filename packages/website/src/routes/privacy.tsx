@@ -40,9 +40,8 @@ function Privacy() {
             <li>Session IDs</li>
           </ul>
           <p>
-            All messages between your phone and daemon are end-to-end encrypted with
-            XSalsa20-Poly1305. The relay cannot read your messages, see your code, or decrypt your
-            traffic.
+            Your phone and daemon encrypt relay payloads end-to-end with NaCl box encryption
+            (Curve25519 plus XSalsa20-Poly1305). The relay only carries the ciphertext.
           </p>
         </section>
 

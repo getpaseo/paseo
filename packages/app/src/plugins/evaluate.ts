@@ -10,9 +10,12 @@ import {
   defineRpc,
   type PluginAttachmentSourceContribution,
   type PluginCommandCenterItemContribution,
+  type PluginClientContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
   type PluginThemeContribution,
+  type PluginTimelineRendererContribution,
+  type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
   usePaseo,
   useAgent,
@@ -22,11 +25,21 @@ import {
 import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo/plugin/host";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
-import { resolvePluginIcon } from "./icons";
+import { Icon, resolvePluginIcon } from "./icons";
+import { pluginReactNativeRuntime } from "./react-native/runtime";
 import { parsePluginThemeContribution } from "./themes";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
 const PANEL_LOCATIONS = ["workspace", "explorer"] as const;
+const TIMELINE_ITEM_TYPES = new Set([
+  "user_message",
+  "assistant_message",
+  "reasoning",
+  "tool_call",
+  "todo",
+  "error",
+  "compaction",
+]);
 
 function normalizePanelLocations(
   panelId: string,
@@ -60,8 +73,11 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
+    clientSide: null,
     attachmentSources: [],
     themes: [],
+    timelineTransformers: [],
+    timelineRenderers: [],
   };
   const surfaceIds = new Set<string>();
   const sidebarItemIds = new Set<string>();
@@ -69,6 +85,8 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
   const commandCenterItemIds = new Set<string>();
   const attachmentSourceIds = new Set<string>();
   const themeIds = new Set<string>();
+  const timelineTransformerIds = new Set<string>();
+  const timelineRendererIds = new Set<string>();
   const pluginContext = createPluginContext({
     addSurface(surfaceId: string, Component: ComponentType<PluginSurfaceProps>) {
       const normalizedId = requireId(surfaceId, "surface id");
@@ -148,6 +166,13 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         keywords: contribution.keywords?.map((keyword) => keyword.trim()).filter(Boolean),
       });
     },
+    addClientSide(contribution: PluginClientContribution) {
+      if (collector.clientSide) throw new Error("Plugin has more than one client-side entrypoint");
+      if (typeof contribution !== "function") {
+        throw new Error("Plugin client-side entrypoint is not a function");
+      }
+      collector.clientSide = contribution;
+    },
     addAttachmentSource(contribution: PluginAttachmentSourceContribution) {
       const normalizedId = requireId(contribution.id, "attachment source id");
       if (attachmentSourceIds.has(normalizedId)) {
@@ -183,6 +208,46 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
       themeIds.add(normalizedId);
       collector.themes.push(theme);
     },
+    addTimelineTransformer(contribution: PluginTimelineTransformerContribution) {
+      const normalizedId = requireId(contribution.id, "timeline transformer id");
+      if (timelineTransformerIds.has(normalizedId)) {
+        throw new Error(`Duplicate timeline transformer: ${normalizedId}`);
+      }
+      if (!contribution.query || typeof contribution.query.itemType !== "string") {
+        throw new Error(`Timeline transformer ${normalizedId} has no item type`);
+      }
+      if (!TIMELINE_ITEM_TYPES.has(contribution.query.itemType)) {
+        throw new Error(
+          `Timeline transformer ${normalizedId} has invalid item type: ${contribution.query.itemType}`,
+        );
+      }
+      if (typeof contribution.transform !== "function") {
+        throw new Error(`Timeline transformer ${normalizedId} has no transform`);
+      }
+      if (contribution.id !== normalizedId) {
+        throw new Error(`Invalid timeline transformer id: ${contribution.id}`);
+      }
+      timelineTransformerIds.add(normalizedId);
+      collector.timelineTransformers.push(contribution);
+    },
+    addTimelineRenderer(contribution: PluginTimelineRendererContribution) {
+      const kind = requireId(contribution.kind, "timeline renderer kind");
+      if (!Number.isInteger(contribution.version) || contribution.version < 1) {
+        throw new Error(`Timeline renderer ${kind} has invalid version`);
+      }
+      const rendererId = `${kind}/${contribution.version}`;
+      if (timelineRendererIds.has(rendererId)) {
+        throw new Error(`Duplicate timeline renderer: ${rendererId}`);
+      }
+      if (!contribution.schema || typeof contribution.schema.safeParse !== "function") {
+        throw new Error(`Timeline renderer ${rendererId} has no schema`);
+      }
+      if (typeof contribution.Component !== "function") {
+        throw new Error(`Timeline renderer ${rendererId} is not a component`);
+      }
+      timelineRendererIds.add(rendererId);
+      collector.timelineRenderers.push({ ...contribution, kind });
+    },
   });
   const runtimeRequire = (name: string): unknown => {
     if (name === "react") return React;
@@ -192,11 +257,15 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
       return {
         defineAttachmentSource,
         defineRpc,
+        Icon,
         usePaseo,
         useAgent,
         useWorkspace,
         useRpc,
       };
+    }
+    if (name === "@getpaseo/plugin/react-native" || name === "@paseo/plugin/react-native") {
+      return pluginReactNativeRuntime;
     }
     if (name === "@getpaseo/plugin/server") {
       return { defineAttachmentSource, defineRpc };
@@ -243,7 +312,10 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     sidebarItems: collector.sidebarItems,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
+    clientSide: collector.clientSide,
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,
+    timelineTransformers: collector.timelineTransformers,
+    timelineRenderers: collector.timelineRenderers,
   };
 }

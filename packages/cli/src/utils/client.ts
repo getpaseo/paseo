@@ -11,11 +11,13 @@ import {
   parseConnectionOfferFromUrl,
   type ConnectionOffer,
 } from "@getpaseo/protocol/connection-offer";
+import { parseSshTransportUri } from "@getpaseo/protocol/ssh-transport";
 import { DaemonClient, type WebSocketLike } from "@getpaseo/client/internal/daemon-client";
 import path from "node:path";
 import { WebSocket } from "ws";
 import { getOrCreateCliClientId } from "./client-id.js";
 import { resolveCliVersion } from "../version.js";
+import { createSshTunnel } from "../ssh/ssh-tunnel.js";
 
 export interface ConnectOptions {
   host?: string;
@@ -59,7 +61,9 @@ export function buildDaemonConnectionCommandError(options: {
   return {
     code: "DAEMON_NOT_RUNNING",
     message: `Cannot connect to daemon at ${host}: ${message}`,
-    details: "Start the daemon with: paseo daemon start",
+    details: host.trim().startsWith("ssh://")
+      ? "Start the Paseo daemon on the SSH host; SSH transport does not install or start it."
+      : "Start the daemon with: paseo daemon start",
   };
 }
 
@@ -357,6 +361,24 @@ export async function connectToDaemon(options?: ConnectOptions): Promise<DaemonC
   const nodeWebSocketFactory = createNodeWebSocketFactory();
 
   const explicitHost = options?.host ?? process.env.PASEO_HOST;
+  if (explicitHost?.trim().startsWith("ssh://")) {
+    const target = parseSshTransportUri(explicitHost.trim());
+    const tunnel = await createSshTunnel(target);
+    const password = resolveDaemonPassword(explicitHost);
+    const result = await tryConnectHost(
+      tunnel.endpoint,
+      password,
+      clientId,
+      timeout,
+      nodeWebSocketFactory,
+    );
+    if ("client" in result) return result.client;
+
+    const failure = tunnel.failureDetail();
+    tunnel.close();
+    if (failure) throw new Error(`SSH connection failed: ${failure}`, { cause: result.error });
+    throw result.error;
+  }
   const offer = parseHostOfferOrNull(explicitHost);
   if (offer) {
     return connectViaRelayOffer(offer, clientId, timeout, nodeWebSocketFactory);

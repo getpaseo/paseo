@@ -52,7 +52,7 @@ test.describe("New tab keyboard launcher", () => {
       await page.keyboard.press("ArrowDown");
       await expectLauncherSelection(launcher, "Terminal");
       await page.keyboard.press("ArrowDown");
-      await expectLauncherSelection(launcher, "Changes");
+      await expectLauncherSelection(launcher, "Diff");
       await page.keyboard.press("Enter");
 
       await expect(

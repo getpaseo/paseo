@@ -1054,9 +1054,7 @@ async function collectOpenCodeImportableSessionsFromSdk(
     throw new Error(`Failed to list OpenCode sessions: ${JSON.stringify(response.error)}`);
   }
 
-  const matchesCwd = options?.cwd ? createPathEquivalenceMatcher(options.cwd) : null;
-  return (response.data ?? [])
-    .filter((session) => !matchesCwd || matchesCwd(session.directory))
+  return selectOpenCodeSessionsForWorkspace(response.data ?? [], options?.cwd)
     .sort((left, right) => getOpenCodeSessionTimestamp(right) - getOpenCodeSessionTimestamp(left))
     .slice(0, limit)
     .map((session) => ({
@@ -1067,6 +1065,25 @@ async function collectOpenCodeImportableSessionsFromSdk(
       lastPromptPreview: null,
       lastActivityAt: new Date(getOpenCodeSessionTimestamp(session)),
     }));
+}
+
+function selectOpenCodeSessionsForWorkspace(
+  sessions: OpenCodePersistedSession[],
+  cwd: string | undefined,
+): OpenCodePersistedSession[] {
+  if (!cwd) return sessions;
+  const belongsToWorkspace = createPathEquivalenceMatcher(cwd);
+  return sessions.filter((session) => belongsToWorkspace(session.directory));
+}
+
+function openCodeCatalogDirectory(
+  options: FetchCatalogOptions,
+  resolveHomeDir: () => string,
+): { directory: string; needsDirectory: boolean } {
+  if (options.scope === "workspace") {
+    return { directory: options.cwd, needsDirectory: false };
+  }
+  return { directory: resolveHomeDir(), needsDirectory: true };
 }
 
 function normalizeOpenCodeSessionTitle(title: string | null | undefined): string | null {
@@ -1519,13 +1536,10 @@ export class OpenCodeAgentClient implements AgentClient {
       if (!acquisition) throw new Error("OpenCode server acquisition did not complete");
       context?.signal.throwIfAborted();
       const { url } = acquisition.server;
-      const isGlobalCatalog = options.scope === "global";
+      const catalogDirectory = openCodeCatalogDirectory(options, this.resolveHomeDir);
+      const { directory } = catalogDirectory;
 
-      // OpenCode treats the catalog directory as a workspace. The global catalog
-      // is not a project, so use the neutral OpenCode home instead of user home.
-      const directory = isGlobalCatalog ? this.resolveHomeDir() : options.cwd;
-
-      if (isGlobalCatalog) {
+      if (catalogDirectory.needsDirectory) {
         await fs.mkdir(directory, { recursive: true });
         this.logger.debug(
           { directory },
@@ -3853,11 +3867,11 @@ class OpenCodeAgentSession implements AgentSession {
       await withTimeout(
         this.events.ready(),
         OPENCODE_EVENT_STREAM_READY_TIMEOUT_MS,
-        "OpenCode event stream first record",
+        "OpenCode server.connected event",
       );
     } catch (error) {
       if (this.abortController === turnAbortController) this.abortController = null;
-      if (!(error instanceof Error) || error.message !== "OpenCode event stream first record") {
+      if (!(error instanceof Error) || error.message !== "OpenCode server.connected event") {
         throw error;
       }
       const diagnostics = this.events.diagnostics?.();
@@ -4162,11 +4176,7 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async consumeEventSourceInput(input: OpenCodeEventSourceInput): Promise<void> {
-    if ("type" in input && input.type === "reconnected") {
-      await this.reconcileAfterGap(++this.gapRepairRevision);
-      return;
-    }
-    if ("type" in input && input.type === "server-exited") {
+    if (!("payload" in input)) {
       if (this.turnState.status === "stopping") return this.finishStoppingTurn(this.turnState.stop);
       const turnId = this.activeForegroundTurnId;
       if (turnId) {
@@ -4175,6 +4185,10 @@ class OpenCodeAgentSession implements AgentSession {
           turnId,
         );
       }
+      return;
+    }
+    if (input.payload.type === "server.connected") {
+      await this.reconcileAfterGap(++this.gapRepairRevision);
       return;
     }
     await this.consumeOpenCodeStreamEvent({ rawEvent: input, eventCount: 0 });

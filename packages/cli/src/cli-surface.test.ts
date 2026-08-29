@@ -77,6 +77,8 @@ describe("canonical CLI surface", () => {
       "ls",
       "logs",
       "install",
+      "status",
+      "update",
       "reload",
       "enable",
       "disable",

@@ -103,9 +103,9 @@ host's client; plugin subprocesses use the same facade over a host-owned IPC tra
 Cross-platform React Native app that connects to one or more daemons.
 
 - Expo Router navigation (`/h/[serverId]/workspace/[workspaceId]`, `/h/[serverId]/agent/[agentId]`, etc.). The `workspaceId` URL segment is an opaque workspace id, not a directly meaningful filesystem path.
-- `HostRuntimeController` manages saved host connections, reconnection, and per-host runtime state
-- `runtime/replica-cache` keeps the complete project, workspace, and active-agent directory plus one short focused timeline tail in AsyncStorage. It restores before navigation becomes ready and leaves remote hydration flags false.
-- `runtime/directory-sync` owns directory reconciliation. On reconnect it passes the persisted per-entity cursor through `project.list`, `fetch_workspaces`, and `fetch_agents`; the daemon returns each entity's latest projection when its sequence is newer, plus tombstones.
+- `HostRuntimeController` manages saved host connections, reconnection, and per-host runtime state. Direct TCP and relay connections use the ordinary client transport; desktop socket, pipe, and SSH connections cross one Electron-owned transport boundary. SSH only tunnels to an already-running daemon.
+- `runtime/replica-cache` is typed storage behind the directory and timeline owners. It never observes or mutates `SessionStore`.
+- `runtime/directory-sync` owns directory cache selection and network reconciliation. On demand it paints accepted rows for one host, then passes the persisted per-entity cursor through `project.list`, `fetch_workspaces`, and `fetch_agents`; the daemon returns each entity's latest projection when its sequence is newer, plus tombstones.
 - `workspace-labels` owns one sequenced catalog replica per connected host, the deterministic cross-host projection that surfaces spanning hosts use (the filter page, the manager), and the per-host resolution a workspace row's chips use. Two hosts may give one name different colors, so a row resolves against its own host's catalog and a merged answer would be wrong there. Catalogs never synchronize between hosts; assignment creates a missing definition only on the target host. On the daemon, catalog and assignment rewrites share a journaled commit boundary. Startup recovery completes that commit before workspace or catalog publication.
 - `SessionContext` wraps the daemon client for the active session
 - Composer UI and submit/draft behavior live in `packages/app/src/composer/`; screens and panels should integrate it from there instead of dropping composer internals into `components/`, `hooks/`, or `screens/workspace/`
@@ -113,14 +113,21 @@ Cross-platform React Native app that connects to one or more daemons.
 - Timeline sync correctness is documented in [docs/timeline-sync.md](timeline-sync.md): live streams are for immediacy, `fetch_agent_timeline_request` is authoritative, and catch-up is paged but complete.
 - Voice features: dictation (STT) and voice agent (realtime)
 
-The replica cache paints stale data immediately while the host connects. Directory cursors are
-reconciliation checkpoints; cached entities remain non-authoritative until the daemon answers.
-Pending permission requests are not restored from it. AsyncStorage is not encrypted, so the cached
-timeline tail may contain source code, prompts, and tool output; encrypted-at-rest storage is a
-separate product/security decision. Its serialized payload has a 32 MiB byte budget and evicts whole
-host snapshots in least-recently-written order; a single oversized host is omitted rather than
-partially restored. Browser and Electron builds store it in IndexedDB. Native builds use
-AsyncStorage, and Android reserves 64 MiB for that database.
+Consumers request directory or timeline data without choosing memory, cache, or network. The owner
+publishes an accepted cache hit and then reconciles it over the existing network path. A miss or an
+invalid row uses that same path. Offline demand still publishes an accepted cache hit and defers
+network reconciliation. Cache loading is demand-driven: opening a chat reads its agent row and
+focused timeline row, plus the workspace and project rows needed by the route; opening a directory
+reads directory rows for that host and establishes its live subscription when connected. Accepted
+cached rows satisfy the same consumer-readiness projection as network rows. Host registry startup and
+host connection do not create directory demand or install replicas. The directory owner retains
+declared surface demand and re-establishes network reconciliation after reconnect; React does not
+track connection generations. Late cache reads cannot replace state already advanced by live or
+authoritative network data. Owners explicitly persist accepted commits; directory rows and their
+checkpoint share one storage transaction. See
+[data-model.md](data-model.md#replica-row-store)
+for the storage shape and [timeline-sync.md](timeline-sync.md#client-replica-lifetime) for timeline
+resume behavior.
 
 The three directory entity types have independent monotonic sequences and share one daemon
 generation. The daemon retains only the latest projection per entity and bounded tombstones, not an
@@ -155,7 +162,7 @@ Communicates with the daemon via the same WebSocket protocol as the app.
 
 Enables remote access when the daemon is behind a firewall.
 
-- Curve25519 ECDH key exchange + XSalsa20-Poly1305 (NaCl `box`) encryption
+- Curve25519 establishes the relay-session secret; NaCl `box` protects each payload with XSalsa20-Poly1305
 - The relay is zero-knowledge — it routes encrypted bytes and cannot read content
 - Client and daemon channels with identical API (`createClientChannel`, `createDaemonChannel`)
 - Pairing via QR code transfers the daemon's public key to the client
