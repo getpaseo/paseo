@@ -26,6 +26,7 @@ describe("Hub commands", () => {
       "status",
       "disconnect",
       "projects",
+      "export",
       "deploy",
       "logout",
     ]);
@@ -92,7 +93,7 @@ describe("Hub commands", () => {
     assert.equal(result.data.origin, "https://hub.paseo.sh");
   });
 
-  it("interactive login continues through the injected guided setup coordinator without invoking a CLI command", async () => {
+  it("interactive login continues through the injected daemon and Hub guidance coordinator", async () => {
     const credentials = new MemoryCredentials();
     const events: string[] = [];
 
@@ -111,8 +112,7 @@ describe("Hub commands", () => {
         isInteractive: () => true,
         continueGuidedSetup: async (origin) => {
           events.push(`connect:${origin}`);
-          events.push("init");
-          events.push("deploy");
+          events.push("show-guidance");
         },
         reporter: { progress: (message) => events.push(`progress:${message}`) },
       },
@@ -123,8 +123,7 @@ describe("Hub commands", () => {
       "login",
       "progress:Logged in",
       "connect:https://hub.test",
-      "init",
-      "deploy",
+      "show-guidance",
     ]);
   });
 

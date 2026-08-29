@@ -191,35 +191,18 @@ export async function continueHubGuidedSetup(
   origin: string,
   environment: HubGuidedSetupEnvironment,
 ): Promise<void> {
-  if (!(await requiredConfirm(environment, "Connect this daemon to this Hub?", true))) {
+  if (await requiredConfirm(environment, "Connect this daemon to this Hub?", true)) {
+    await ensureDaemonConnection(origin, environment, true);
+  } else {
     reportMessage(
       environment,
-      `Skipped daemon connection. Run: ${hubLoginResumeCommand("connect", origin)}; then paseo hub init`,
+      `Skipped daemon connection. Connect later with: ${hubLoginResumeCommand("connect", origin)}`,
     );
-    return;
   }
-  const daemonId = await ensureDaemonConnection(origin, environment, true);
-  if (!(await requiredConfirm(environment, "Initialize and deploy a starter workflow?", true))) {
-    reportMessage(
-      environment,
-      `Skipped starter workflow. Run: ${hubLoginResumeCommand("init", origin)}`,
-    );
-    return;
-  }
-  try {
-    await runHubGuidedSetup(environment, { origin, daemonId, deploy: true });
-  } catch (error) {
-    if (error instanceof HubInitCancelledError) {
-      if (environment.prompts === undefined) {
-        log.message(error.message);
-        outro("Connect an app to continue");
-      } else {
-        environment.prompts.message(error.message);
-      }
-      return;
-    }
-    throw error;
-  }
+  reportMessage(
+    environment,
+    `Configure triggers in Hub: ${new URL("/triggers", origin).toString()}\nOr scaffold triggers as code: ${hubLoginResumeCommand("init", origin)}`,
+  );
 }
 
 async function ensureLogin(
