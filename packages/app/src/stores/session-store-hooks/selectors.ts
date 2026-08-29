@@ -5,6 +5,7 @@ import {
   type WorkspaceStructure,
   type WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
+import type { LocalProjectLink } from "@/projects/local-project-links";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import type { ProjectDescriptor, WorkspaceDescriptor } from "../session-store";
 
@@ -153,6 +154,7 @@ export function selectWorkspaceStructureProjects(
   state: SessionsSnapshot,
   serverIds: readonly string[],
   workspaceSort?: WorkspaceSort,
+  localProjectLinks: Iterable<LocalProjectLink> = [],
 ): WorkspaceStructureProject[] {
   const sessions: Array<{
     serverId: string;
@@ -178,12 +180,13 @@ export function selectWorkspaceStructureProjects(
     return EMPTY_WORKSPACE_STRUCTURE.projects;
   }
 
-  return buildWorkspaceStructureProjects({ sessions, workspaceSort });
+  return buildWorkspaceStructureProjects({ sessions, workspaceSort, localProjectLinks });
 }
 
 export function createWorkspaceStructureProjectsSelector(
   serverIds: readonly string[],
   workspaceSort?: WorkspaceSort,
+  localProjectLinks: readonly LocalProjectLink[] = [],
 ): (state: SessionsSnapshot) => WorkspaceStructureProject[] {
   let previousInputs: Array<{
     workspaces: Map<string, WorkspaceDescriptor> | undefined;
@@ -209,7 +212,12 @@ export function createWorkspaceStructureProjectsSelector(
     }
 
     previousInputs = inputs;
-    const next = selectWorkspaceStructureProjects(state, serverIds, workspaceSort);
+    const next = selectWorkspaceStructureProjects(
+      state,
+      serverIds,
+      workspaceSort,
+      localProjectLinks,
+    );
     const previousByKey = new Map(previousProjects?.map((project) => [project.viewKey, project]));
     previousProjects = next.map((project) => {
       const previous = previousByKey.get(project.viewKey);
