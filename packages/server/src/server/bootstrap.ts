@@ -811,8 +811,18 @@ export async function createPaseoDaemon(
       }
 
       const safeFileName = entry.fileName.replace(/["\r\n]/g, "_");
+      // Node rejects non-Latin-1 characters in header values (ERR_INVALID_CHAR),
+      // so a raw UTF-8 basename in Content-Disposition makes every download of a
+      // file whose name contains non-ASCII characters fail. Emit an ASCII-safe
+      // filename= fallback plus the RFC 5987 filename*=UTF-8'' form for clients
+      // that support it (browsers, Electron, WebView2).
+      const hasNonAscii = /[^\x20-\x7E]/.test(safeFileName);
+      const fallbackFileName = safeFileName.replace(/[^\x20-\x7E]/g, "_");
+      const disposition = hasNonAscii
+        ? `attachment; filename="${fallbackFileName}"; filename*=UTF-8''${encodeURIComponent(safeFileName)}`
+        : `attachment; filename="${safeFileName}"`;
       res.setHeader("Content-Type", entry.mimeType);
-      res.setHeader("Content-Disposition", `attachment; filename="${safeFileName}"`);
+      res.setHeader("Content-Disposition", disposition);
       res.setHeader("Content-Length", fileStats.size.toString());
 
       const stream = fileHandle.createReadStream();
