@@ -1532,6 +1532,7 @@ export const zhCN: TranslationResources = {
       noModelAvailable: "所选 provider 没有可用模型",
       workspaceDirectoryNotFound: "Workspace 目录未找到",
       hostDisconnected: "Host 未连接",
+      providerNotSelected: "请选择 provider",
     },
   },
   pairing: {

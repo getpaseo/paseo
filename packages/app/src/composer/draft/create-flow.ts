@@ -93,7 +93,7 @@ interface UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult> {
   onBeforeSubmit?: (ctx: CreateRequestContext) => Promise<void> | void;
   onCreateStart?: () => void;
   createRequest: (ctx: CreateRequestContext) => Promise<CreateRequestResult<TCreateResult>>;
-  buildDraftAgent: (attempt: CreateAttempt) => TDraftAgent;
+  buildDraftAgent: (attempt: CreateAttempt) => TDraftAgent | null;
   onCreateSuccess: (ctx: { result: TCreateResult; attempt: CreateAttempt }) => Promise<void> | void;
   onCreateError?: (error: Error) => void;
 }

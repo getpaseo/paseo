@@ -1549,6 +1549,7 @@ export const ar: TranslationResources = {
       noModelAvailable: "لا يوجد نموذج متاح للموفر المحدد",
       workspaceDirectoryNotFound: "لم يتم العثور على دليل Workspace",
       hostDisconnected: "Host غير متصل",
+      providerNotSelected: "اختر موفراً",
     },
   },
   pairing: {

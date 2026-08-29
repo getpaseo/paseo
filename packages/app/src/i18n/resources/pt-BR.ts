@@ -1579,6 +1579,7 @@ export const ptBR: TranslationResources = {
       noModelAvailable: "Nenhum modelo disponível para o provedor selecionado",
       workspaceDirectoryNotFound: "Diretório do workspace não encontrado",
       hostDisconnected: "Host não está conectado",
+      providerNotSelected: "Selecione um provedor",
     },
   },
   pairing: {

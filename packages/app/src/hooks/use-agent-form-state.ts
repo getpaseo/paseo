@@ -33,7 +33,6 @@ import {
   INITIAL_AGENT_FORM_RESOLUTION,
   INITIAL_USER_MODIFIED,
   RESOLVABLE_PROVIDER_STATUSES,
-  SELECTABLE_PROVIDER_STATUSES,
   type FormInitialValues,
   type FormState,
   type ProviderModelsByProvider,
@@ -289,13 +288,6 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       }),
     [snapshotEntries, snapshotProviderDefinitions],
   );
-  const snapshotSelectableProviderDefinitionMap = useMemo(() => {
-    return buildProviderDefinitionMapForStatuses({
-      snapshotEntries,
-      providerDefinitions: snapshotProviderDefinitions,
-      statuses: SELECTABLE_PROVIDER_STATUSES,
-    });
-  }, [snapshotEntries, snapshotProviderDefinitions]);
   const snapshotAllProviderModels = useMemo(
     () => buildAllProviderModels(snapshotEntries),
     [snapshotEntries],
@@ -326,7 +318,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   });
   const providerDefinitions = snapshotProviderDefinitions;
   const providerDefinitionMap = snapshotProviderDefinitionMap;
-  const selectableProviderDefinitionMap = snapshotSelectableProviderDefinitionMap;
+  const committableProviderDefinitionMap = snapshotResolvableProviderDefinitionMap;
   const allProviderModels = snapshotAllProviderModels;
   const modelSelectorProviders = snapshotModelSelectorProviders;
   const availableModels = snapshotSelectedProviderModels;
@@ -388,6 +380,24 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     snapshotResolvableProviderDefinitionMap,
   ]);
 
+  // COMPLETE_RESOLUTION is one-shot, so backfill the model when a provider
+  // committed while loading later reaches ready.
+  useEffect(() => {
+    const provider = formState.provider;
+    if (!provider) return;
+    if (normalizeSelectedModelId(formState.model) !== "") return;
+    if (snapshotSelectedEntry?.status !== "ready") return;
+    const providerModels = filterSelectableModels(snapshotSelectedEntry.models ?? null);
+    if (!providerModels || providerModels.length === 0) return;
+    const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
+    dispatch({
+      type: "RECONCILE_RESOLVED_PROVIDER",
+      provider,
+      providerModels,
+      providerPrefs,
+    });
+  }, [formState.provider, formState.model, snapshotSelectedEntry]);
+
   const onlineServerIdsKey = onlineServerIds.join("|");
   useEffect(() => {
     const canAutoSelectServerId = shouldAutoSelectServerId({
@@ -422,10 +432,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
 
   const setProviderAndModelFromUser = useCallback(
     (provider: AgentProvider, modelId: string) => {
-      if (!selectableProviderDefinitionMap.has(provider)) {
+      if (!committableProviderDefinitionMap.has(provider)) {
         return;
       }
-      const providerDef = selectableProviderDefinitionMap.get(provider);
+      const providerDef = committableProviderDefinitionMap.get(provider);
       const providerModels = allProviderModels.get(provider) ?? null;
       const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
       const normalizedModelId = normalizeSelectedModelId(modelId);
@@ -449,7 +459,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         }),
       );
     },
-    [allProviderModels, selectableProviderDefinitionMap, updateCurrentPreferences],
+    [allProviderModels, committableProviderDefinitionMap, updateCurrentPreferences],
   );
 
   const clearProviderSelectionFromUser = useCallback(() => {
@@ -459,12 +469,12 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   const applyProfileFromUser = useCallback(
     (profile: MaterializedAgentProfile) => {
       const provider = profile.provider as AgentProvider;
-      if (!selectableProviderDefinitionMap.has(provider)) {
+      if (!committableProviderDefinitionMap.has(provider)) {
         return;
       }
 
       const previousProvider = formState.provider;
-      const providerDef = selectableProviderDefinitionMap.get(provider);
+      const providerDef = committableProviderDefinitionMap.get(provider);
       const providerModels = allProviderModels.get(provider) ?? null;
       const providerPrefs = preferenceOverlayRef.current.current().providerPreferences?.[provider];
       const action = {
@@ -504,7 +514,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       formState,
       providerDefinitionMap,
       resolution,
-      selectableProviderDefinitionMap,
+      committableProviderDefinitionMap,
       updateCurrentPreferences,
       userModified,
     ],

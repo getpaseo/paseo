@@ -333,7 +333,7 @@ export function resolveSubmissionReadiness(input: {
     return { ok: false, reason: i18n.t("providerSelection.readiness.noProviders") };
   }
   if (!(input.autoSubmitConfig?.provider ?? input.selection.provider)) {
-    return { ok: false, reason: i18n.t("providerSelection.selectModel") };
+    return { ok: false, reason: i18n.t("providerSelection.readiness.providerNotSelected") };
   }
   if (input.selection.isModelLoading) {
     return { ok: false, reason: i18n.t("providerSelection.readiness.modelDefaultsLoading") };

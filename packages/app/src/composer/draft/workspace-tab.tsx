@@ -156,7 +156,7 @@ async function submitDraftCreateRequest(input: {
     featureValues: Record<string, unknown> | undefined;
   };
   hostDisconnectedMessage: string;
-  selectModelMessage: string;
+  providerNotSelectedMessage: string;
 }): Promise<{ agentId: string | null; result: AgentSnapshotPayload }> {
   const {
     attempt,
@@ -179,7 +179,7 @@ async function submitDraftCreateRequest(input: {
 
   const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
   if (!provider) {
-    throw new Error(input.selectModelMessage);
+    throw new Error(input.providerNotSelectedMessage);
   }
   const modeIdOverride = resolveDraftModeIdOverride({
     autoSubmitConfig,
@@ -227,8 +227,7 @@ function buildDraftAgentSnapshot(input: {
     selectedProvider: string | null;
     agentControls: { features?: Agent["features"] };
   };
-  selectModelMessage: string;
-}): Agent {
+}): Agent | null {
   const { attempt, serverId, tabId, workspaceDirectory, autoSubmitConfig, composerState } = input;
   invariant(workspaceDirectory, "Workspace directory is required");
   const now = attempt.timestamp;
@@ -241,8 +240,9 @@ function buildDraftAgentSnapshot(input: {
     selectedMode: composerState.selectedMode,
   });
   const provider = autoSubmitConfig?.provider ?? composerState.selectedProvider;
+  // Gated at submit, not asserted during render — null keeps the tab off the error boundary.
   if (!provider) {
-    throw new Error(input.selectModelMessage);
+    return null;
   }
   return {
     serverId,
@@ -505,7 +505,6 @@ export function WorkspaceDraftAgentTab({
         workspaceDirectory: draftWorkingDirectory,
         autoSubmitConfig,
         composerState,
-        selectModelMessage: t("workspaceSetup.errors.selectModel"),
       }),
     createRequest: async ({ attempt, text, images, attachments, cwd }) =>
       submitDraftCreateRequest({
@@ -520,7 +519,7 @@ export function WorkspaceDraftAgentTab({
         autoSubmitConfig,
         composerState,
         hostDisconnectedMessage: t("workspace.terminal.hostDisconnected"),
-        selectModelMessage: t("workspaceSetup.errors.selectModel"),
+        providerNotSelectedMessage: t("providerSelection.readiness.providerNotSelected"),
       }),
     onCreateSuccess: ({ result }) => {
       clearDraftInput("sent");

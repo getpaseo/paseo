@@ -66,7 +66,6 @@ export const RESOLVABLE_PROVIDER_STATUSES = new Set<ProviderSnapshotEntry["statu
   "ready",
   "loading",
 ]);
-export const SELECTABLE_PROVIDER_STATUSES = new Set<ProviderSnapshotEntry["status"]>(["ready"]);
 
 export type AgentFormAction =
   | { type: "REQUEST_RESOLUTION" }
@@ -97,6 +96,12 @@ export type AgentFormAction =
       providerModels: AgentModelDefinition[] | null;
       providerPrefs?: ProviderPrefs | undefined;
     }
+  | {
+      type: "RECONCILE_RESOLVED_PROVIDER";
+      provider: AgentProvider;
+      providerModels: AgentModelDefinition[] | null;
+      providerPrefs?: ProviderPrefs | undefined;
+    }
   | { type: "SET_MODE_FROM_USER"; modeId: string }
   | {
       type: "SET_MODEL_FROM_USER";
@@ -113,6 +118,10 @@ export type AgentFormAction =
 
 type CompleteResolutionAction = Extract<AgentFormAction, { type: "COMPLETE_RESOLUTION" }>;
 type ApplyProfileAction = Extract<AgentFormAction, { type: "APPLY_PROFILE_FROM_USER" }>;
+type ReconcileResolvedProviderAction = Extract<
+  AgentFormAction,
+  { type: "RECONCILE_RESOLVED_PROVIDER" }
+>;
 
 export function normalizeSelectedModelId(modelId: string | null | undefined): string {
   return typeof modelId === "string" ? modelId.trim() : "";
@@ -615,6 +624,39 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
   };
 }
 
+// Keyed on an empty model slot (not userModified.model) so a pick-while-probing
+// that resolved to "" is still backfilled once the catalog arrives.
+function reconcileResolvedProvider(
+  state: AgentFormReducerState,
+  action: ReconcileResolvedProviderAction,
+): AgentFormReducerState {
+  if (
+    state.form.provider !== action.provider ||
+    normalizeSelectedModelId(state.form.model) !== ""
+  ) {
+    return state;
+  }
+  const nextModelId = resolveDefaultModelId(action.providerModels);
+  if (!nextModelId) {
+    return state;
+  }
+  const nextThinkingOptionId = state.userModified.thinkingOptionId
+    ? state.form.thinkingOptionId
+    : pickNextThinkingOptionForProvider({
+        providerModels: action.providerModels,
+        providerPrefs: action.providerPrefs,
+        modelId: nextModelId,
+      });
+  return {
+    ...state,
+    form: {
+      ...state.form,
+      model: nextModelId,
+      thinkingOptionId: nextThinkingOptionId,
+    },
+  };
+}
+
 export function resolveAgentForm(
   state: AgentFormReducerState,
   action: AgentFormAction,
@@ -674,6 +716,9 @@ export function resolveAgentForm(
     case "APPLY_PROFILE_FROM_USER": {
       return applyProfile(state, action);
     }
+
+    case "RECONCILE_RESOLVED_PROVIDER":
+      return reconcileResolvedProvider(state, action);
 
     case "SET_MODE_FROM_USER":
       return {
