@@ -39,7 +39,7 @@ The configuration lives in `.paseo/hub.yml` plus convention-discovered `.paseo/w
 
 1. A provider sends an event to Hub. GitHub, Linear, and Slack Webhooks use HTTPS callbacks; Discord uses its gateway connection; Slack Socket Mode connects out from Hub; manual runs use the Hub API.
 2. Hub verifies the provider event and identifies its project resource, such as a repository, Linear project, workspace, or guild.
-3. Hub evaluates triggers and their filters. Reactive external events require `from_users`; the autonomous `linear.issue_entered_scope` event instead requires a project scope.
+3. Hub evaluates triggers and their filters. Reactive external events require `from_users`; the autonomous `linear.issue_entered_scope` event instead requires a project or team scope.
 4. A matching trigger creates a workflow run from the active configuration revision.
 5. The workflow evaluates its next step. A false `if` condition skips that step; a true condition starts it on the configured daemon.
 6. The daemon starts the agent and Hub records its replies, structured output, status, and completion.
