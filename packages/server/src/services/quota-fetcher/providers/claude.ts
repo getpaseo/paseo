@@ -305,6 +305,8 @@ async function runSecurityCommand(args: string[]): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("security", args, {
       timeout: CLAUDE_KEYCHAIN_TIMEOUT_MS,
+      windowsHide: true,
+      encoding: "utf8",
     });
     return stdout.trim() || null;
   } catch {

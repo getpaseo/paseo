@@ -52,6 +52,7 @@ describe("editor target runtime", () => {
           env: { PATH: "C:/Program Files/Editors & Tools/bin" },
           shell: true,
           stdio: "ignore",
+          windowsHide: true,
         },
         unrefed: true,
       },
