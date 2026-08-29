@@ -58,6 +58,7 @@ describe("allocateWorkspaceServicePort", () => {
         scriptName: "app-server",
         workspaceId: "wks_port_allocator",
         branchName: "feature/allocator-context",
+        portCount: 100,
       }),
     ).resolves.toBe(port);
     expect(readFileSync(join(tempDir, "cwd"), "utf8")).toBe(tempDir);
@@ -67,6 +68,7 @@ describe("allocateWorkspaceServicePort", () => {
     expect(readFileSync(join(tempDir, "env"), "utf8")).toBe(
       `app-server|wks_port_allocator|feature/allocator-context|${tempDir}`,
     );
+    expect(readFileSync(join(tempDir, "count"), "utf8")).toBe("100");
   });
 
   it("accepts a valid portScript result that is already occupied", async () => {
@@ -114,8 +116,8 @@ describe("allocateWorkspaceServicePort", () => {
   function createContextPortScript(tempDir: string, port: number): string {
     const contents =
       process.platform === "win32"
-        ? `@echo off\r\n<nul set /p "=%CD%" > cwd\r\n<nul set /p "=%~1|%~2|%~3|%~4" > argv\r\n<nul set /p "=%PASEO_SCRIPTNAME%|%PASEO_WORKSPACE_ID%|%PASEO_BRANCH_NAME%|%PASEO_WORKTREE_PATH%" > env\r\necho ${port}\r\n`
-        : `#!/bin/sh\nprintf '%s' "$PWD" > cwd\nprintf '%s|%s|%s|%s' "$1" "$2" "$3" "$4" > argv\nprintf '%s|%s|%s|%s' "$PASEO_SCRIPTNAME" "$PASEO_WORKSPACE_ID" "$PASEO_BRANCH_NAME" "$PASEO_WORKTREE_PATH" > env\nprintf '${port}\\n'\n`;
+        ? `@echo off\r\n<nul set /p "=%CD%" > cwd\r\n<nul set /p "=%~1|%~2|%~3|%~4" > argv\r\n<nul set /p "=%PASEO_SCRIPTNAME%|%PASEO_WORKSPACE_ID%|%PASEO_BRANCH_NAME%|%PASEO_WORKTREE_PATH%" > env\r\n<nul set /p "=%PASEO_PORT_COUNT%" > count\r\necho ${port}\r\n`
+        : `#!/bin/sh\nprintf '%s' "$PWD" > cwd\nprintf '%s|%s|%s|%s' "$1" "$2" "$3" "$4" > argv\nprintf '%s|%s|%s|%s' "$PASEO_SCRIPTNAME" "$PASEO_WORKSPACE_ID" "$PASEO_BRANCH_NAME" "$PASEO_WORKTREE_PATH" > env\nprintf '%s' "$PASEO_PORT_COUNT" > count\nprintf '${port}\\n'\n`;
     return writePortScript(tempDir, contents);
   }
 

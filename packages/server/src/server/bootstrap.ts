@@ -189,6 +189,8 @@ import { releaseWorkspaceServicePortPlan } from "./workspace-service-port-regist
 import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
+import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
+import { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
 import { createWorkspaceScriptsService } from "./session/workspace-scripts/workspace-scripts-service.js";
 import { assertWorkspaceAutomationAllowedForWorkspace } from "./workspace-automation-gate.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
@@ -658,6 +660,8 @@ export async function createPaseoDaemon(
     publicBaseUrl: serviceProxyPublicBaseUrl,
   });
   const scriptRuntimeStore = new WorkspaceScriptRuntimeStore();
+  const workspaceRuntimeEnvironment = new WorkspaceRuntimeEnvironmentService();
+  let workspaceLaunchManager: WorkspaceLaunchManager | null = null;
   const workspaceSetupRuntime = new WorkspaceSetupRuntime();
   let configuredHostnames = config.hostnames ?? config.allowedHosts;
   let appBaseUrl = config.appBaseUrl ?? "https://app.paseo.sh";
@@ -950,6 +954,15 @@ export async function createPaseoDaemon(
   logger.info({ elapsed: elapsed() }, "Workspace registries bootstrapped");
   const teardownArchivedWorkspaceRuntime = (workspaceId: string): void => {
     scriptRuntimeStore.removeForWorkspace(workspaceId);
+    if (workspaceLaunchManager) {
+      void workspaceLaunchManager
+        .disposeWorkspace(workspaceId)
+        .catch((error) =>
+          logger.warn({ err: error, workspaceId }, "Failed to stop workspace launch"),
+        );
+    } else {
+      workspaceRuntimeEnvironment.release(workspaceId);
+    }
     releaseWorkspaceServicePortPlan(workspaceId);
   };
   const workspaceReconciliation = new WorkspaceReconciliationService({
@@ -1044,6 +1057,17 @@ export async function createPaseoDaemon(
       ),
     );
   };
+  workspaceLaunchManager = new WorkspaceLaunchManager({
+    terminalManager,
+    serviceProxy,
+    workspaceRuntimeEnvironment,
+    getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
+    serviceProxyPublicBaseUrl,
+    globalServicePorts: loadPersistedConfig(config.paseoHome).worktrees?.servicePorts,
+    resolveScriptHealth: (hostname) => scriptHealthMonitor.getHealthForHostname(hostname),
+    emitWorkspaceUpdates: emitWorkspaceUpdatesExternal,
+    logger,
+  });
   const ensureWorkspaceForCreateAndBroadcastExternal = async (
     cwd: string,
     firstAgentContext?: FirstAgentContext,
@@ -1394,6 +1418,7 @@ export async function createPaseoDaemon(
       assertAutomationAllowed: (workspaceId) =>
         assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, workspaceId),
       globalServicePorts: loadPersistedConfig(config.paseoHome).worktrees?.servicePorts,
+      workspaceRuntimeEnvironment,
     }),
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
     clearWorkspaceArchiving: clearWorkspaceArchivingExternal,
@@ -1707,6 +1732,10 @@ export async function createPaseoDaemon(
               orchestrationSkills,
               workspaceLabelService,
             );
+            wsServer.setWorkspaceLaunchServices({
+              workspaceRuntimeEnvironment,
+              workspaceLaunchManager,
+            });
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
             wsServer.beginAcceptingConnections();

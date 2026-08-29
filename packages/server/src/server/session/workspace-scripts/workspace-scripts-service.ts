@@ -26,6 +26,7 @@ import {
 } from "../../script-status-projection.js";
 import { deriveProjectServiceSlug, deriveProjectSlug } from "../../workspace-git-metadata.js";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import type { WorkspaceRuntimeEnvironmentService } from "../../workspace-runtime-environment.js";
 
 type WorkspaceScriptsPayload = WorkspaceDescriptorPayload["scripts"];
 
@@ -64,6 +65,7 @@ export function createWorkspaceScriptsService(deps: {
   serviceProxyPublicBaseUrl: string | null;
   resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
   globalServicePorts?: PaseoServicePortAllocation;
+  workspaceRuntimeEnvironment?: Pick<WorkspaceRuntimeEnvironmentService, "ensure"> | null;
   logger: pino.Logger;
   emit: (message: SessionOutboundMessage) => void;
   spawnWorkspaceScript: (options: SpawnWorkspaceScriptOptions) => Promise<WorktreeScriptResult>;
@@ -81,6 +83,7 @@ export function createWorkspaceScriptsService(deps: {
     serviceProxyPublicBaseUrl,
     resolveScriptHealth,
     globalServicePorts,
+    workspaceRuntimeEnvironment,
     logger,
     emit,
     spawnWorkspaceScript,
@@ -187,6 +190,7 @@ export function createWorkspaceScriptsService(deps: {
       runtimeStore: available.runtimeStore,
       terminalManager: available.terminalManager,
       globalServicePorts,
+      workspaceRuntimeEnvironment: workspaceRuntimeEnvironment ?? undefined,
       logger,
       onLifecycleChanged: () => {
         void emitStatusUpdate(workspace.workspaceId, workspace.cwd);

@@ -1,0 +1,464 @@
+import http from "node:http";
+import type { Logger } from "pino";
+import type { TerminalManager } from "../terminal/terminal-manager.js";
+import type {
+  WorkspaceLaunchEndpointPayload,
+  WorkspaceLaunchPayload,
+} from "@getpaseo/protocol/messages";
+import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import {
+  getExplicitWorkspaceServicePorts,
+  getWorkspaceLaunchConfigs,
+  paseoConfigParseError,
+  readPaseoConfig,
+} from "../utils/worktree.js";
+import type { ScriptHealthState } from "./script-health-monitor.js";
+import type { ServiceProxySubsystem } from "./service-proxy.js";
+import { waitForTerminalBootstrapReadiness } from "./worktree-bootstrap.js";
+import type {
+  WorkspaceRuntimeEnvironment,
+  WorkspaceRuntimeEnvironmentService,
+} from "./workspace-runtime-environment.js";
+
+const LAUNCH_ENDPOINT_SCAN_INTERVAL_MS = 2_000;
+const LAUNCH_ENDPOINT_PROBE_TIMEOUT_MS = 300;
+
+export interface WorkspaceLaunchContext {
+  workspaceId: string;
+  workspaceDirectory: string;
+  projectSlug: string;
+  branchName: string | null;
+}
+
+interface WorkspaceLaunchRuntime {
+  launchName: string;
+  lifecycle: "running" | "stopped";
+  terminalId: string | null;
+  exitCode: number | null;
+  environment: WorkspaceRuntimeEnvironment;
+  context: WorkspaceLaunchContext;
+  endpoints: Map<number, LaunchEndpointRuntime>;
+  stopListener: (() => void) | null;
+  monitor: ReturnType<typeof setInterval> | null;
+  scanInFlight: boolean;
+}
+
+interface LaunchEndpointRuntime {
+  scriptName: string;
+}
+
+export interface WorkspaceLaunchManagerDependencies {
+  terminalManager: TerminalManager | null;
+  serviceProxy: ServiceProxySubsystem | null;
+  workspaceRuntimeEnvironment: WorkspaceRuntimeEnvironmentService;
+  getDaemonTcpPort: (() => number | null) | null;
+  serviceProxyPublicBaseUrl: string | null;
+  globalServicePorts?: PaseoServicePortAllocation;
+  resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
+  emitWorkspaceUpdates?: (workspaceIds: Iterable<string>) => Promise<void>;
+  logger: Logger;
+}
+
+/**
+ * Runs one selected workspace runtime at a time. It deliberately owns only the
+ * launch terminal and proxy registration; Docker Compose and child processes
+ * stay under the user's entrypoint rather than becoming a second process
+ * supervisor inside Paseo.
+ */
+export class WorkspaceLaunchManager {
+  private readonly runtimes = new Map<string, Map<string, WorkspaceLaunchRuntime>>();
+  private readonly activeLaunches = new Map<string, string>();
+  private readonly operationChains = new Map<string, Promise<unknown>>();
+
+  constructor(private readonly deps: WorkspaceLaunchManagerDependencies) {}
+
+  buildSnapshot(context: WorkspaceLaunchContext): WorkspaceLaunchPayload[] {
+    const configuredNames = new Set(this.readLaunchConfigNames(context.workspaceDirectory));
+    const runtimeNames = this.runtimes.get(context.workspaceId);
+    for (const name of runtimeNames?.keys() ?? []) {
+      configuredNames.add(name);
+    }
+
+    return Array.from(configuredNames)
+      .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }))
+      .map((launchName) => this.toPayload(context, launchName));
+  }
+
+  async start(
+    context: WorkspaceLaunchContext,
+    launchName: string,
+  ): Promise<WorkspaceLaunchPayload> {
+    return await this.runExclusive(context.workspaceId, () =>
+      this.startInternal(context, launchName),
+    );
+  }
+
+  private async startInternal(
+    context: WorkspaceLaunchContext,
+    launchName: string,
+  ): Promise<WorkspaceLaunchPayload> {
+    const configResult = readPaseoConfig(context.workspaceDirectory);
+    if (!configResult.ok) {
+      throw paseoConfigParseError(configResult);
+    }
+    const config = getWorkspaceLaunchConfigs(configResult.config).get(launchName);
+    if (!config) {
+      throw new Error(`Launch '${launchName}' is not configured in paseo.json`);
+    }
+    if (!this.deps.terminalManager || !this.deps.serviceProxy) {
+      throw new Error("Workspace launches are not available on this daemon");
+    }
+
+    const activeLaunchName = this.activeLaunches.get(context.workspaceId);
+    const activeRuntime = activeLaunchName
+      ? this.runtimes.get(context.workspaceId)?.get(activeLaunchName)
+      : null;
+    if (activeLaunchName === launchName && activeRuntime?.lifecycle === "running") {
+      return this.toPayload(context, launchName);
+    }
+    if (activeLaunchName && activeRuntime?.lifecycle === "running") {
+      await this.stopRuntime(activeRuntime);
+    }
+
+    const environment = await this.deps.workspaceRuntimeEnvironment.ensure({
+      workspaceId: context.workspaceId,
+      cwd: context.workspaceDirectory,
+      branchName: context.branchName,
+      allocation: configResult.config?.worktree?.servicePorts ?? this.deps.globalServicePorts,
+      excludedPorts: getExplicitWorkspaceServicePorts(configResult.config),
+    });
+    const terminal = await this.deps.terminalManager.createTerminal({
+      cwd: context.workspaceDirectory,
+      workspaceId: context.workspaceId,
+      name: `launch:${launchName}`,
+      title: `launch:${launchName}`,
+      env: { ...environment.env, PASEO_LAUNCH_NAME: launchName },
+    });
+    const runtime: WorkspaceLaunchRuntime = {
+      launchName,
+      lifecycle: "running",
+      terminalId: terminal.id,
+      exitCode: null,
+      environment,
+      context,
+      endpoints: new Map(),
+      stopListener: null,
+      monitor: null,
+      scanInFlight: false,
+    };
+    const workspaceRuntimes = this.runtimes.get(context.workspaceId) ?? new Map();
+    workspaceRuntimes.set(launchName, runtime);
+    this.runtimes.set(context.workspaceId, workspaceRuntimes);
+    this.activeLaunches.set(context.workspaceId, launchName);
+
+    runtime.stopListener = terminal.onExit((info) => {
+      this.markStopped(runtime, info.exitCode);
+      void this.emitWorkspaceUpdate(context.workspaceId);
+    });
+
+    try {
+      await waitForTerminalBootstrapReadiness(terminal);
+      terminal.send({ type: "input", data: `${config.command}\r` });
+      this.startEndpointMonitor(runtime);
+      void this.scanEndpoints(runtime);
+      await this.emitWorkspaceUpdate(context.workspaceId);
+      return this.toPayload(context, launchName);
+    } catch (error) {
+      this.markStopped(runtime, null);
+      await this.emitWorkspaceUpdate(context.workspaceId);
+      throw error;
+    }
+  }
+
+  async stop(context: WorkspaceLaunchContext, launchName: string): Promise<WorkspaceLaunchPayload> {
+    return await this.runExclusive(context.workspaceId, () =>
+      this.stopInternal(context, launchName),
+    );
+  }
+
+  private async stopInternal(
+    context: WorkspaceLaunchContext,
+    launchName: string,
+  ): Promise<WorkspaceLaunchPayload> {
+    const runtime = this.runtimes.get(context.workspaceId)?.get(launchName);
+    if (!runtime || runtime.lifecycle !== "running") {
+      throw new Error(`Launch '${launchName}' is not running`);
+    }
+    await this.stopRuntime(runtime);
+    await this.emitWorkspaceUpdate(context.workspaceId);
+    return this.toPayload(context, launchName);
+  }
+
+  async disposeWorkspace(workspaceId: string): Promise<void> {
+    await this.runExclusive(workspaceId, async () => {
+      await this.disposeWorkspaceInternal(workspaceId);
+    });
+  }
+
+  private async disposeWorkspaceInternal(workspaceId: string): Promise<void> {
+    const runtimes = this.runtimes.get(workspaceId);
+    if (runtimes) {
+      await Promise.all(
+        Array.from(runtimes.values(), async (runtime) => {
+          if (runtime.lifecycle === "running") {
+            await this.stopRuntime(runtime);
+          }
+        }),
+      );
+    }
+    this.runtimes.delete(workspaceId);
+    this.activeLaunches.delete(workspaceId);
+    this.deps.workspaceRuntimeEnvironment.release(workspaceId);
+  }
+
+  private async runExclusive<T>(workspaceId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.operationChains.get(workspaceId) ?? Promise.resolve();
+    const current = previous.catch(() => {}).then(operation);
+    this.operationChains.set(workspaceId, current);
+    try {
+      return await current;
+    } finally {
+      if (this.operationChains.get(workspaceId) === current) {
+        this.operationChains.delete(workspaceId);
+      }
+    }
+  }
+
+  private async stopRuntime(runtime: WorkspaceLaunchRuntime): Promise<void> {
+    const terminalId = runtime.terminalId;
+    const terminal = terminalId ? this.deps.terminalManager?.getTerminal(terminalId) : null;
+    if (terminalId && terminal && this.deps.terminalManager) {
+      await this.deps.terminalManager.killTerminalAndWait(terminalId);
+    }
+    if (runtime.lifecycle === "running") {
+      this.markStopped(runtime, null);
+    }
+  }
+
+  private markStopped(runtime: WorkspaceLaunchRuntime, exitCode: number | null): void {
+    if (runtime.lifecycle === "stopped") {
+      return;
+    }
+    runtime.lifecycle = "stopped";
+    runtime.exitCode = exitCode;
+    runtime.stopListener?.();
+    runtime.stopListener = null;
+    if (runtime.monitor) {
+      clearInterval(runtime.monitor);
+      runtime.monitor = null;
+    }
+    for (const endpoint of runtime.endpoints.values()) {
+      this.deps.serviceProxy?.removeWorkspaceService({
+        workspaceId: runtime.context.workspaceId,
+        scriptName: endpoint.scriptName,
+      });
+    }
+    runtime.endpoints.clear();
+    if (this.activeLaunches.get(runtime.context.workspaceId) === runtime.launchName) {
+      this.activeLaunches.delete(runtime.context.workspaceId);
+    }
+  }
+
+  private startEndpointMonitor(runtime: WorkspaceLaunchRuntime): void {
+    const monitor = setInterval(() => {
+      void this.scanEndpoints(runtime);
+    }, LAUNCH_ENDPOINT_SCAN_INTERVAL_MS);
+    monitor.unref?.();
+    runtime.monitor = monitor;
+  }
+
+  private async scanEndpoints(runtime: WorkspaceLaunchRuntime): Promise<void> {
+    if (
+      runtime.lifecycle !== "running" ||
+      runtime.scanInFlight ||
+      !this.deps.serviceProxy ||
+      this.runtimes.get(runtime.context.workspaceId)?.get(runtime.launchName) !== runtime
+    ) {
+      return;
+    }
+    runtime.scanInFlight = true;
+    try {
+      const ports = Array.from(
+        { length: runtime.environment.portCount },
+        (_, offset) => runtime.environment.portBase + offset,
+      );
+      const listeningPorts = new Set(
+        (
+          await Promise.all(ports.map(async (port) => ((await probeHttp(port)) ? port : null)))
+        ).filter((port): port is number => port !== null),
+      );
+      let changed = false;
+
+      for (const port of listeningPorts) {
+        if (runtime.endpoints.has(port)) {
+          continue;
+        }
+        const offset = port - runtime.environment.portBase;
+        const scriptName = `launch-${runtime.launchName}-p${offset}`;
+        try {
+          this.deps.serviceProxy.registerWorkspaceService({
+            workspaceId: runtime.context.workspaceId,
+            projectSlug: runtime.context.projectSlug,
+            branchName: runtime.context.branchName,
+            scriptName,
+            port,
+            publicBaseUrl: this.deps.serviceProxyPublicBaseUrl,
+          });
+          runtime.endpoints.set(port, { scriptName });
+          changed = true;
+        } catch (error) {
+          this.deps.logger.warn(
+            {
+              err: error,
+              workspaceId: runtime.context.workspaceId,
+              launchName: runtime.launchName,
+              port,
+            },
+            "Failed to register discovered workspace launch endpoint",
+          );
+        }
+      }
+
+      for (const [port, endpoint] of Array.from(runtime.endpoints)) {
+        if (listeningPorts.has(port)) {
+          continue;
+        }
+        this.deps.serviceProxy.removeWorkspaceService({
+          workspaceId: runtime.context.workspaceId,
+          scriptName: endpoint.scriptName,
+        });
+        runtime.endpoints.delete(port);
+        changed = true;
+      }
+
+      if (changed) {
+        await this.emitWorkspaceUpdate(runtime.context.workspaceId);
+      }
+    } finally {
+      runtime.scanInFlight = false;
+    }
+  }
+
+  private toPayload(context: WorkspaceLaunchContext, launchName: string): WorkspaceLaunchPayload {
+    const runtime = this.getRuntime(context.workspaceId, launchName);
+    const environment = this.getRuntimeEnvironment(context.workspaceId, runtime);
+    return {
+      launchName,
+      lifecycle: runtime ? runtime.lifecycle : "stopped",
+      active: this.isActiveLaunch(context.workspaceId, launchName, runtime),
+      portBase: environment?.portBase ?? null,
+      portEnd: environment?.portEnd ?? null,
+      portCount: environment?.portCount ?? null,
+      composeProjectName: environment?.composeProjectName ?? null,
+      endpoints: this.getEndpointPayloads(runtime),
+      exitCode: runtime ? runtime.exitCode : null,
+      terminalId: runtime ? runtime.terminalId : null,
+    };
+  }
+
+  private getRuntime(workspaceId: string, launchName: string): WorkspaceLaunchRuntime | null {
+    return this.runtimes.get(workspaceId)?.get(launchName) ?? null;
+  }
+
+  private getRuntimeEnvironment(
+    workspaceId: string,
+    runtime: WorkspaceLaunchRuntime | null,
+  ): WorkspaceRuntimeEnvironment | null {
+    return runtime?.environment ?? this.deps.workspaceRuntimeEnvironment.get(workspaceId);
+  }
+
+  private isActiveLaunch(
+    workspaceId: string,
+    launchName: string,
+    runtime: WorkspaceLaunchRuntime | null,
+  ): boolean {
+    return runtime?.lifecycle === "running" && this.activeLaunches.get(workspaceId) === launchName;
+  }
+
+  private getEndpointPayloads(
+    runtime: WorkspaceLaunchRuntime | null,
+  ): WorkspaceLaunchEndpointPayload[] {
+    if (!runtime) {
+      return [];
+    }
+    return Array.from(runtime.endpoints.entries())
+      .sort(([left], [right]) => left - right)
+      .map(([port, endpoint]) => this.toEndpointPayload(runtime, port, endpoint));
+  }
+
+  private toEndpointPayload(
+    runtime: WorkspaceLaunchRuntime,
+    port: number,
+    endpoint: LaunchEndpointRuntime,
+  ): WorkspaceLaunchEndpointPayload {
+    const projection = this.deps.serviceProxy?.projectWorkspaceServiceState({
+      workspaceId: runtime.context.workspaceId,
+      projectSlug: runtime.context.projectSlug,
+      branchName: runtime.context.branchName,
+      scriptName: endpoint.scriptName,
+      daemonPort: this.deps.getDaemonTcpPort?.() ?? null,
+      publicBaseUrl: this.deps.serviceProxyPublicBaseUrl,
+    });
+    const health = this.deps.resolveScriptHealth?.(projection?.hostname ?? "") ?? null;
+    return {
+      id: `${runtime.launchName}:p${port - runtime.environment.portBase}`,
+      port,
+      hostname: projection?.hostname ?? endpoint.scriptName,
+      localProxyUrl: projection?.localProxyUrl ?? null,
+      publicProxyUrl: projection?.publicProxyUrl ?? null,
+      proxyUrl: projection?.proxyUrl ?? null,
+      health: health === "pending" ? null : health,
+    };
+  }
+
+  private readLaunchConfigNames(workspaceDirectory: string): string[] {
+    const configResult = readPaseoConfig(workspaceDirectory);
+    if (!configResult.ok) {
+      this.deps.logger.warn(
+        { err: configResult.error, configPath: configResult.configPath },
+        "Failed to read workspace launch configuration",
+      );
+      return [];
+    }
+    return Array.from(getWorkspaceLaunchConfigs(configResult.config).keys());
+  }
+
+  private async emitWorkspaceUpdate(workspaceId: string): Promise<void> {
+    try {
+      await this.deps.emitWorkspaceUpdates?.([workspaceId]);
+    } catch (error) {
+      this.deps.logger.warn({ err: error, workspaceId }, "Failed to emit workspace launch update");
+    }
+  }
+}
+
+async function probeHttp(port: number): Promise<boolean> {
+  return await new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: boolean) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+    const request = http.request(
+      {
+        host: "127.0.0.1",
+        port,
+        method: "HEAD",
+        path: "/",
+        timeout: LAUNCH_ENDPOINT_PROBE_TIMEOUT_MS,
+        agent: false,
+      },
+      (response) => {
+        response.resume();
+        finish(true);
+      },
+    );
+    request.once("timeout", () => {
+      request.destroy();
+      finish(false);
+    });
+    request.once("error", () => finish(false));
+    request.end();
+  });
+}

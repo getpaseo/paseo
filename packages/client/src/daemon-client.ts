@@ -2364,6 +2364,47 @@ export class DaemonClient {
     });
   }
 
+  async listWorkspaceLaunches(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<
+    Extract<SessionOutboundMessage, { type: "workspace.launch.list.response" }>["payload"]
+  > {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.launch.list.request", workspaceId },
+      responseType: "workspace.launch.list.response",
+    });
+  }
+
+  async startWorkspaceLaunch(
+    workspaceId: string,
+    launchName: string,
+    requestId?: string,
+  ): Promise<
+    Extract<SessionOutboundMessage, { type: "workspace.launch.start.response" }>["payload"]
+  > {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.launch.start.request", workspaceId, launchName },
+      responseType: "workspace.launch.start.response",
+    });
+  }
+
+  async stopWorkspaceLaunch(
+    workspaceId: string,
+    launchName: string,
+    requestId?: string,
+  ): Promise<
+    Extract<SessionOutboundMessage, { type: "workspace.launch.stop.response" }>["payload"]
+  > {
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "workspace.launch.stop.request", workspaceId, launchName },
+      responseType: "workspace.launch.stop.response",
+    });
+  }
+
   async archiveWorkspace(
     workspaceId: string,
     requestId?: string,

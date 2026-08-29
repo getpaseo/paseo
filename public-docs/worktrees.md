@@ -176,6 +176,22 @@ By default, Paseo asks the OS for an available ephemeral port. Configure a range
 The range is inclusive. A project `servicePorts` block replaces the global block. An explicit
 service `port` always wins over either setting.
 
+Set `blockSize` to reserve a contiguous workspace-wide port block. It defaults to `100`. Paseo
+passes that block to configured scripts and launches, so an existing Compose wrapper or host dev
+script can choose its own ports without defining every process as a Paseo service.
+
+```json
+{
+  "worktree": {
+    "servicePorts": { "range": "20000-50000", "blockSize": 100 }
+  }
+}
+```
+
+The lease lasts for the daemon lifetime and is reused by every command in the same workspace.
+Paseo keeps existing `$PASEO_PORT` allocation for individually declared services.
+Declared explicit service ports stay outside the workspace block.
+
 For an external allocator, configure `portScript` instead:
 
 ```json
@@ -192,6 +208,40 @@ are available as `PASEO_SCRIPTNAME`, `PASEO_WORKSPACE_ID`, `PASEO_BRANCH_NAME`, 
 `PASEO_WORKTREE_PATH`. It must print one valid TCP port to stdout. `portScript` wins over `range` in
 the same block. Paseo trusts the external allocator, so the returned port may already be in use, for
 example by a service Paseo will attach to.
+
+For a workspace block, Paseo invokes the same allocator once with the service name `@workspace`
+and sets `PASEO_PORT_COUNT` to the requested block size. Print the block's first port.
+
+### Workspace launches
+
+Use `launches` for an existing command that starts a whole development configuration, such as a
+Docker Compose wrapper plus host processes. A launch is a selected workspace runtime, not a list
+of child services:
+
+```json
+{
+  "worktree": {
+    "servicePorts": { "range": "20000-50000", "blockSize": 100 }
+  },
+  "launches": {
+    "dev": { "command": "./bin/dev" },
+    "full": { "command": "./bin/dev --full" }
+  }
+}
+```
+
+Only one launch runs per workspace. Starting another launch stops the active one. Paseo owns the
+launch terminal, then probes the leased block for HTTP listeners and exposes discovered endpoints
+through the existing reverse proxy. This works for host listeners and Docker-published ports.
+
+Your command owns Docker, dependencies, and restart policy. Keep it in the foreground so Paseo can
+stop it; a bare `docker compose up -d` exits immediately and is not a useful launch command.
+
+```bash
+paseo launch ls
+paseo launch start dev
+paseo launch stop dev
+```
 
 ### Reverse proxy
 
@@ -244,6 +294,15 @@ Setup, teardown, scripts, and services all see:
 - `$PASEO_WORKTREE_PATH`, the worktree directory
 - `$PASEO_BRANCH_NAME`, the worktree's branch
 - `$PASEO_WORKTREE_PORT`, legacy per-worktree port (prefer `$PASEO_PORT` inside services)
+
+Configured scripts and launches additionally see one shared workspace runtime environment:
+
+- `$PASEO_WORKSPACE_ID`
+- `$PASEO_PORT_BASE`, `$PASEO_PORT_END` (inclusive), and `$PASEO_PORT_COUNT`
+- `$PASEO_COMPOSE_PROJECT_NAME` and `$COMPOSE_PROJECT_NAME`, a stable name derived from the
+  workspace ID
+
+Launches also receive `$PASEO_LAUNCH_NAME`.
 
 Services additionally get:
 
