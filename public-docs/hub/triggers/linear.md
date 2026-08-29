@@ -57,6 +57,9 @@ Enable **Agent session events** when you [create the Linear app](/docs/hub/self-
 Mentioning the app or delegating an issue creates a session; another message on that session sends
 a `prompted` event and starts another workflow run.
 
+The examples below assume `.paseo/hub.yml` defines an environment named `dev` and an agent named
+`codex`.
+
 `.paseo/workflows/linear-agent.yml`:
 
 ```yaml
@@ -101,8 +104,6 @@ activity. The example marks `linear.reply` as required so a successful run canno
 completing the session.
 
 ## Respond to a command comment
-
-Assume `.paseo/hub.yml` defines an environment named `dev` and an agent named `codex`.
 
 `.paseo/workflows/linear-comment.yml`:
 
@@ -231,5 +232,6 @@ steps:
 The project filter is the autonomous trust boundary in this example. Use `team` instead when a
 team maps to the repository and issues may have no Linear project. Narrow either route further with
 states, labels, excluded labels, and assignees. The trigger grants no repository credential. Only
-the `github` block on `implement` authorizes GitHub access, and only that step can emit
-`linear.reply`.
+the `github` block on `implement` grants Hub-issued GitHub authority; ambient daemon credentials
+remain subject to the daemon and provider's environment and permission policy. Only `implement`
+can emit `linear.reply`.

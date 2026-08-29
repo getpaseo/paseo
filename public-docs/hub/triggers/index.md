@@ -34,21 +34,21 @@ Field-by-field detail is in the [configuration reference](/docs/hub/configuratio
 
 ## Events
 
-| `on`                                  | Fires when                                           |
-| ------------------------------------- | ---------------------------------------------------- |
-| `github.issue_created`                | An issue is opened.                                  |
-| `github.pull_request_created`         | A pull request is opened.                            |
-| `github.issue_comment_created`        | A comment is created on an issue.                    |
-| `github.pull_request_comment_created` | A conversation comment is created on a pull request. |
-| `github.issue_label_added`            | A label is added to an issue.                        |
-| `github.pull_request_label_added`     | A label is added to a pull request.                  |
-| `linear.issue_entered_scope`          | An issue is created in, or enters, a project scope.  |
-| `linear.issue_assigned`               | An issue is assigned to a user.                      |
-| `linear.comment_created`              | A comment is created on an issue.                    |
-| `linear.agent_session`                | A native agent session starts or is prompted.        |
-| `slack.mention`                       | The bot is mentioned in a channel.                   |
-| `discord.mention`                     | The bot is mentioned in a guild.                     |
-| `manual.run`                          | A run started from the API.                          |
+| `on`                                  | Fires when                                                               |
+| ------------------------------------- | ------------------------------------------------------------------------ |
+| `github.issue_created`                | An issue is opened.                                                      |
+| `github.pull_request_created`         | A pull request is opened.                                                |
+| `github.issue_comment_created`        | A comment is created on an issue.                                        |
+| `github.pull_request_comment_created` | A conversation comment is created on a pull request.                     |
+| `github.issue_label_added`            | A label is added to an issue.                                            |
+| `github.pull_request_label_added`     | A label is added to a pull request.                                      |
+| `linear.issue_entered_scope`          | An issue is created in, or enters, the complete configured filter scope. |
+| `linear.issue_assigned`               | An issue is assigned to a user.                                          |
+| `linear.comment_created`              | A comment is created on an issue.                                        |
+| `linear.agent_session`                | A native agent session starts or is prompted.                            |
+| `slack.mention`                       | The bot is mentioned in a channel.                                       |
+| `discord.mention`                     | The bot is mentioned in a guild.                                         |
+| `manual.run`                          | A run started from the API.                                              |
 
 New GitHub workflows should use a semantic event. The five legacy events remain compatible: `github.issues`, `github.issue_comment`, `github.pull_request_review`, `github.pull_request_review_comment`, and `github.push`. See [GitHub triggers](/docs/hub/triggers/github) for complete workflows and when to use each event.
 
@@ -64,7 +64,7 @@ Each provider page documents its events and the data they expose:
 `filters` is required. `manual.run` and reactive external triggers require a non-empty `from_users`
 allowlist. For `manual.run`, it matches the `actor` supplied by the dispatch request.
 `linear.issue_entered_scope` is the deliberate exception: it is an autonomous policy, requires a
-Linear project, and fires only when an issue enters the complete configured scope.
+Linear project or team, and fires only when an issue enters the complete configured scope.
 
 The allowlist is what keeps a stranger's comment on a public issue from starting an agent on your machine. There is no default, because a safe default differs per repository.
 

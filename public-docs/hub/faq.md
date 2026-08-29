@@ -42,7 +42,7 @@ Yes, with a manual source. A project using a GitHub source is read-only in the d
 
 Reactive external triggers start only for users listed in `from_users`; it is required and cannot
 be empty. `linear.issue_entered_scope` is the explicit autonomous exception. It requires a Linear
-project and runs only when an issue enters the complete configured scope.
+project or team and runs only when an issue enters the complete configured scope.
 
 ## What happens if the daemon is offline?
 
