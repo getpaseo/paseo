@@ -1636,12 +1636,13 @@ export class OpenCodeAgentClient implements AgentClient {
   }
 
   async unarchiveNativeSession(handle: AgentPersistenceHandle): Promise<void> {
-    await this.setNativeSessionArchived(handle, null);
+    // OpenCode's numeric archive field uses zero as the active-session sentinel.
+    await this.setNativeSessionArchived(handle, 0);
   }
 
   private async setNativeSessionArchived(
     handle: AgentPersistenceHandle,
-    archivedAt: number | null,
+    archivedAt: number,
   ): Promise<void> {
     const metadata = (handle.metadata ?? {}) as Partial<AgentSessionConfig>;
     if (!metadata.cwd) {
@@ -1657,15 +1658,8 @@ export class OpenCodeAgentClient implements AgentClient {
       directory: metadata.cwd,
     });
     try {
-      // OpenCode accepts null to clear the archive timestamp, but this SDK
-      // release's generated request type still exposes only number.
-      const updateSession = client.session.update.bind(client.session) as (parameters: {
-        sessionID: string;
-        directory?: string;
-        time?: { archived?: number | null };
-      }) => ReturnType<typeof client.session.update>;
       const response = readOpenCodeRecord(
-        await updateSession({
+        await client.session.update({
           sessionID: handle.sessionId,
           directory: metadata.cwd,
           time: { archived: archivedAt },
@@ -1673,7 +1667,7 @@ export class OpenCodeAgentClient implements AgentClient {
       );
       if (response?.error) {
         throw new Error(
-          `Failed to ${archivedAt === null ? "unarchive" : "archive"} OpenCode session: ${toDiagnosticErrorMessage(response.error)}`,
+          `Failed to ${archivedAt === 0 ? "unarchive" : "archive"} OpenCode session: ${toDiagnosticErrorMessage(response.error)}`,
         );
       }
     } finally {
