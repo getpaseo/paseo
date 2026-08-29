@@ -1768,6 +1768,9 @@ export const ko: TranslationResources = {
       tooLargeToDisplay: "이 파일은 너무 커서 표시할 수 없습니다",
       failedToLoad: "파일을 불러오지 못했습니다",
       failedToLoadPreview: "파일 미리보기를 불러오지 못했습니다",
+      zoomIn: "확대",
+      zoomOut: "축소",
+      fitToView: "화면에 맞추기",
       editor: {
         fileSize: "파일 크기 {{size}}",
         lines: "{{count}} 라인",

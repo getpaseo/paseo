@@ -1775,6 +1775,9 @@ export const ja: TranslationResources = {
       tooLargeToDisplay: "このファイルは大きすぎて表示できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
+      zoomIn: "拡大",
+      zoomOut: "縮小",
+      fitToView: "表示領域に合わせる",
       editor: {
         fileSize: "ファイルサイズ {{size}}",
         lines: "{{count}} 行",

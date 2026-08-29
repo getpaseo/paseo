@@ -65,7 +65,7 @@ export const createTempGitRepo = async (
     withRemote?: boolean;
     originUrl?: string;
     paseoConfig?: Record<string, unknown>;
-    files?: Array<{ path: string; content: string }>;
+    files?: Array<{ path: string; content: string | Uint8Array }>;
     branches?: string[];
   },
 ): Promise<TempRepo> => {

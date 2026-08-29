@@ -1808,6 +1808,9 @@ export const fr: TranslationResources = {
       tooLargeToDisplay: "Ce fichier est trop volumineux pour être affiché",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
+      zoomIn: "Zoom avant",
+      zoomOut: "Zoom arrière",
+      fitToView: "Ajuster à la vue",
       editor: {
         fileSize: "Taille {{size}}",
         lines: "{{count}} lignes",
