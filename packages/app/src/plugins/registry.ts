@@ -31,7 +31,10 @@ class PluginRegistry {
   installCatalog(
     serverId: string,
     catalog: CatalogPlugin[],
-    options: { replacePluginId?: string; client?: DaemonClient } = {},
+    options: {
+      replacePluginId?: string;
+      client?: DaemonClient;
+    } = {},
   ): boolean {
     const previous = this.byHost.get(serverId) ?? [];
     const previousTimelineBundles = previous

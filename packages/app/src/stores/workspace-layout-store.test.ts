@@ -3391,6 +3391,99 @@ describe("workspace-layout-store actions", () => {
     expect(findPaneById(layout.root, "main")?.focusedTabId).toBe(mainTab?.tabId);
   });
 
+  it("reconcileTabs stays stable when startup removes a duplicate agent kept in Explorer", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+    workspaceLayoutStore.setState((state) => ({
+      layoutByWorkspace: {
+        ...state.layoutByWorkspace,
+        [workspaceKey]: {
+          root: {
+            kind: "group",
+            group: {
+              id: "root",
+              direction: "horizontal",
+              sizes: [0.78, 0.22],
+              children: [
+                createPane({
+                  id: "main",
+                  tabIds: ["new", "draft-origin-agent"],
+                  focusedTabId: "draft-origin-agent",
+                  targetsByTabId: {
+                    new: { kind: "new_tab" },
+                    "draft-origin-agent": { kind: "agent", agentId: "agent-1" },
+                  },
+                }),
+                createPane({
+                  id: "explorer",
+                  tabIds: ["files", "changes_tree", "agent_agent-1"],
+                  focusedTabId: "agent_agent-1",
+                  targetsByTabId: {
+                    files: { kind: "files" },
+                    changes_tree: { kind: "changes_tree" },
+                    "agent_agent-1": { kind: "agent", agentId: "agent-1" },
+                  },
+                }),
+              ],
+            },
+          },
+          focusedPaneId: "main",
+        },
+      },
+      explorerSidebarPaneIdByWorkspace: {
+        ...state.explorerSidebarPaneIdByWorkspace,
+        [workspaceKey]: "explorer",
+      },
+    }));
+
+    store.reconcileTabs(workspaceKey, {
+      agentsHydrated: false,
+      terminalsHydrated: false,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      knownTerminalIds: [],
+      standaloneTerminalIds: [],
+    });
+    expect(workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey].focusedPaneId).toBe(
+      "main",
+    );
+
+    workspaceLayoutStore.setState((state) => ({
+      layoutByWorkspace: {
+        ...state.layoutByWorkspace,
+        [workspaceKey]: {
+          ...state.layoutByWorkspace[workspaceKey],
+          focusedPaneId: "explorer",
+        },
+      },
+    }));
+
+    const emptySnapshot = {
+      agentsHydrated: true,
+      terminalsHydrated: true,
+      activeAgentIds: [],
+      autoOpenAgentIds: [],
+      knownAgentIds: [],
+      knownTerminalIds: [],
+      standaloneTerminalIds: [],
+      hasActivePendingDraftCreate: false,
+    };
+    store.reconcileTabs(workspaceKey, emptySnapshot);
+    store.reconcileTabs(workspaceKey, emptySnapshot);
+    const afterSecondReconcile = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    store.reconcileTabs(workspaceKey, emptySnapshot);
+    const afterThirdReconcile = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+
+    expect(afterThirdReconcile).toBe(afterSecondReconcile);
+    const mainTabs = collectAllTabs(afterThirdReconcile.root).filter(
+      (tab) => findPaneContainingTab(afterThirdReconcile.root, tab.tabId)?.id === "main",
+    );
+    expect(mainTabs).toEqual([
+      expect.objectContaining({ target: expect.objectContaining({ kind: "draft" }) }),
+    ]);
+  });
+
   it("reconcileTabs does not auto-open subagents omitted from autoOpenAgentIds", () => {
     const workspaceKey = createWorkspaceKey();
 

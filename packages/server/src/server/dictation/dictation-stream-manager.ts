@@ -87,6 +87,7 @@ interface DictationStreamState {
   committedSegmentIds: string[];
   transcriptsBySegmentId: Map<string, string>;
   finalTranscriptSegmentIds: Set<string>;
+  inFlightCommitCount: number;
   awaitingFinalCommit: boolean;
   finishRequested: boolean;
   finishSealed: boolean;
@@ -193,9 +194,10 @@ export class DictationStreamManager {
       if (!state) {
         return;
       }
+      if (state.inFlightCommitCount > 0) {
+        state.inFlightCommitCount -= 1;
+      }
       state.committedSegmentIds.push(segmentId);
-      state.bytesSinceCommit = 0;
-      state.peakSinceCommit = 0;
 
       if (state.finishRequested && state.awaitingFinalCommit) {
         state.awaitingFinalCommit = false;
@@ -235,6 +237,9 @@ export class DictationStreamManager {
       const message = err instanceof Error ? err.message : String(err);
       const state = this.streams.get(dictationId);
       if (state && state.finishRequested && isBufferTooSmallError(message)) {
+        if (state.inFlightCommitCount > 0) {
+          state.inFlightCommitCount -= 1;
+        }
         if (state.awaitingFinalCommit) {
           state.awaitingFinalCommit = false;
         }
@@ -309,6 +314,7 @@ export class DictationStreamManager {
       committedSegmentIds: [],
       transcriptsBySegmentId: new Map(),
       finalTranscriptSegmentIds: new Set(),
+      inFlightCommitCount: 0,
       awaitingFinalCommit: false,
       finishRequested: false,
       finishSealed: false,
@@ -583,9 +589,7 @@ export class DictationStreamManager {
       return state.finalTranscriptSegmentIds.has(segmentId) ? count : count + 1;
     }, 0);
     const pendingSegments =
-      pendingCommittedSegments +
-      pendingUncommittedTranscriptSegments +
-      (state.awaitingFinalCommit ? 1 : 0);
+      pendingCommittedSegments + pendingUncommittedTranscriptSegments + state.inFlightCommitCount;
     const pendingAudioSeconds = Math.ceil(Math.max(0, state.bytesSinceCommit) / bytesPerSecond);
     const missingSeqCount =
       state.finalSeq === null ? 0 : Math.max(0, state.finalSeq - state.ackSeq);
@@ -622,9 +626,19 @@ export class DictationStreamManager {
       return;
     }
 
+    this.requestDictationCommit(state);
+  }
+
+  private requestDictationCommit(state: DictationStreamState): void {
     state.bytesSinceCommit = 0;
     state.peakSinceCommit = 0;
-    state.stt.commit();
+    state.inFlightCommitCount += 1;
+    try {
+      state.stt.commit();
+    } catch (error) {
+      state.inFlightCommitCount -= 1;
+      throw error;
+    }
   }
 
   private maybeSealDictationStreamFinish(dictationId: string): void {
@@ -669,7 +683,7 @@ export class DictationStreamManager {
       } else {
         state.awaitingFinalCommit = true;
         try {
-          state.stt.commit();
+          this.requestDictationCommit(state);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           void this.failAndCleanupDictationStream(dictationId, message, true);
@@ -712,6 +726,9 @@ export class DictationStreamManager {
       return;
     }
     if (state.awaitingFinalCommit) {
+      return;
+    }
+    if (state.inFlightCommitCount > 0) {
       return;
     }
 

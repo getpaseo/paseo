@@ -23,6 +23,7 @@ import Animated, { useAnimatedStyle } from "react-native-reanimated";
 import { ArrowLeft, Search, X } from "lucide-react-native";
 import {
   IsolatedBottomSheetModal,
+  type ContextBridge,
   useIsolatedBottomSheetVisibility,
 } from "@/components/ui/isolated-bottom-sheet-modal";
 import {
@@ -450,6 +451,8 @@ export interface AdaptiveModalSheetProps {
   contentStyle?: StyleProp<ViewStyle>;
   /** Size compact sheet content to the live snap height instead of its largest snap point. */
   sizeContentToCurrentSnapPoint?: boolean;
+  /** Re-establishes caller-owned contexts inside the compact bottom-sheet portal. */
+  contextBridge?: ContextBridge | null;
 }
 
 export function AdaptiveModalSheet({
@@ -467,6 +470,7 @@ export function AdaptiveModalSheet({
   presentation,
   contentStyle,
   sizeContentToCurrentSnapPoint = false,
+  contextBridge = null,
 }: AdaptiveModalSheetProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -634,7 +638,7 @@ export function AdaptiveModalSheet({
     return (
       <IsolatedBottomSheetModal
         ref={sheetRef}
-        contextBridge={null}
+        contextBridge={contextBridge}
         snapPoints={resolvedSnapPoints}
         index={0}
         enableDynamicSizing={false}

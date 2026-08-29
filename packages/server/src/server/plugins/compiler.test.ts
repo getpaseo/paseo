@@ -83,7 +83,8 @@ describe("plugin author module externals", () => {
       const entryPath = path.join(directory, "index.ts");
       await writeFile(
         entryPath,
-        `import { Icon, type PluginContext } from "${sdk}";
+        `import type { PluginContext } from "${sdk}";
+import { Icon } from "${sdk}/react-native";
 import { defineRpc } from "${sdk}/server";
 import { z } from "zod";
 
@@ -106,8 +107,10 @@ export default function contribute(plugin: PluginContext) {
       );
 
       const { clientBundle, serverBundle } = await compilePlugin(entryPath);
+      expect(clientBundle).toContain(`${sdk}/react-native`);
       expect(clientBundle).toContain(`${sdk}/server`);
       expect(serverBundle).toContain(`${sdk}/server`);
+      expect(serverBundle).not.toContain(`${sdk}/react-native`);
       expect(clientBundle).toContain("Settings");
       expect(serverBundle).not.toContain("Settings");
       expect(clientBundle).not.toContain("Invalid plugin RPC method");

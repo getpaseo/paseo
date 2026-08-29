@@ -34,12 +34,13 @@ function createPiChild(): PiChild {
 function createRuntime(
   child: PiChild,
   launches: PiRuntimeLaunch[] = [],
-  options?: { commandsRpcName?: string },
+  options?: { commandsRpcName?: string; requestTimeoutMs?: number },
 ): PiCliRuntime {
   return new PiCliRuntime({
     logger: pino({ level: "silent" }),
     command: ["pi"],
     commandsRpcName: options?.commandsRpcName,
+    requestTimeoutMs: options?.requestTimeoutMs,
     spawnProcess: (launch) => {
       launches.push(launch);
       return child;
@@ -291,6 +292,26 @@ describe("PiCliRuntime", () => {
     await session.close();
 
     await rejection;
+  });
+
+  test("uses the configured RPC timeout and attributes the pending phase", async () => {
+    vi.useFakeTimers();
+    const child = createPiChild();
+    const session = await createRuntime(child, [], { requestTimeoutMs: 100 }).startSession({
+      cwd: "/workspace/project",
+    });
+
+    try {
+      const state = session.getState();
+      const rejection = expect(state).rejects.toThrow(
+        "Pi RPC request timed out phase=get_state elapsedMs=100 timeoutMs=100",
+      );
+      await vi.advanceTimersByTimeAsync(100);
+      await rejection;
+    } finally {
+      vi.useRealTimers();
+      await session.close();
+    }
   });
 
   test("compact waits beyond the default control-plane timeout for a late response", async () => {

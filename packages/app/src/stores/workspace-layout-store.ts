@@ -1182,9 +1182,15 @@ export function createWorkspaceLayoutStore(
           }
 
           set((state) => {
-            const currentLayout = getWorkspaceLayout(
-              state.layoutByWorkspace,
-              normalizedWorkspaceKey,
+            const rawLayout = getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey);
+            const explorerSidebarPaneId = resolveExplorerSidebarPaneId(
+              rawLayout,
+              state.explorerSidebarPaneIdByWorkspace[normalizedWorkspaceKey],
+            );
+            const currentLayout = keepWorkspaceFocusOutOfExplorerSidebar(
+              rawLayout,
+              explorerSidebarPaneId,
+              rawLayout.focusedPaneId,
             );
             const nextState = reconcileWorkspaceTabs(
               {
@@ -1192,21 +1198,23 @@ export function createWorkspaceLayoutStore(
                 pinnedAgentIds: state.pinnedAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 pendingAgentIds: state.pendingAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
                 hiddenAgentIds: state.hiddenAgentIdsByWorkspace[normalizedWorkspaceKey] ?? null,
-                explorerSidebarPaneId: resolveExplorerSidebarPaneId(
-                  currentLayout,
-                  state.explorerSidebarPaneIdByWorkspace[normalizedWorkspaceKey],
-                ),
+                explorerSidebarPaneId,
               },
               snapshot,
             );
-            if (nextState.layout === currentLayout) {
+            const nextLayout = keepWorkspaceFocusOutOfExplorerSidebar(
+              nextState.layout,
+              explorerSidebarPaneId,
+              currentLayout.focusedPaneId,
+            );
+            if (nextLayout === rawLayout) {
               return state;
             }
 
             return {
               layoutByWorkspace: {
                 ...state.layoutByWorkspace,
-                [normalizedWorkspaceKey]: nextState.layout,
+                [normalizedWorkspaceKey]: nextLayout,
               },
             };
           });
