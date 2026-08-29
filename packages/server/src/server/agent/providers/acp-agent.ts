@@ -128,6 +128,7 @@ import {
 import { withTimeout } from "../../../utils/promise-timeout.js";
 
 const ACP_AUTO_ACCEPT_FEATURE_ID = "auto_accept";
+const ACP_AUTO_ACCEPT_FEATURE_LABEL = "Auto Accept";
 
 function assertChildWithPipes(
   child: ChildProcess,
@@ -861,12 +862,26 @@ function buildACPAutoAcceptFeature(config: AgentSessionConfig): AgentFeature {
   return {
     type: "toggle",
     id: ACP_AUTO_ACCEPT_FEATURE_ID,
-    label: "Auto Accept",
+    label: ACP_AUTO_ACCEPT_FEATURE_LABEL,
     description: "Automatically approves ACP permission prompts.",
     tooltip: "Auto accept permission prompts",
     icon: "shield-check",
     value: isACPAutoAcceptEnabled(config),
   };
+}
+
+function buildACPAutoAcceptFeatures(
+  config: AgentSessionConfig,
+  settings: ACPConfigFeatureSettings | undefined,
+): AgentFeature[] {
+  const suppressed = settings?.suppress ?? [];
+  if (
+    suppressed.includes(ACP_AUTO_ACCEPT_FEATURE_ID) ||
+    suppressed.includes(ACP_AUTO_ACCEPT_FEATURE_LABEL)
+  ) {
+    return [];
+  }
+  return [buildACPAutoAcceptFeature(config)];
 }
 
 function resolveACPCreateConfig(
@@ -1139,7 +1154,7 @@ export class ACPAgentClient implements AgentClient {
         transformed.configOptions,
       );
       const features = [
-        buildACPAutoAcceptFeature({ provider: this.provider, cwd }),
+        ...buildACPAutoAcceptFeatures({ provider: this.provider, cwd }, this.configFeatureSettings),
         ...deriveFeaturesFromACP(
           transformed.configOptions,
           resolveACPConfigFeatureOptions({
@@ -1164,9 +1179,9 @@ export class ACPAgentClient implements AgentClient {
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
-    const autoAcceptFeature = buildACPAutoAcceptFeature(config);
+    const autoAcceptFeatures = buildACPAutoAcceptFeatures(config, this.configFeatureSettings);
     if (!this.autoSurfaceUnknownConfigOptions && this.configFeatureOptions.length === 0) {
-      return [autoAcceptFeature];
+      return autoAcceptFeatures;
     }
 
     this.assertProvider(config);
@@ -1180,7 +1195,7 @@ export class ACPAgentClient implements AgentClient {
       );
       const transformed = this.transformSessionResponse(response);
       return [
-        autoAcceptFeature,
+        ...autoAcceptFeatures,
         ...deriveFeaturesFromACP(
           transformed.configOptions,
           resolveACPConfigFeatureOptions({
@@ -1847,7 +1862,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   get features(): AgentFeature[] {
     return [
-      buildACPAutoAcceptFeature(this.config),
+      ...buildACPAutoAcceptFeatures(this.config, this.configFeatureSettings),
       ...deriveFeaturesFromACP(
         this.configOptions,
         resolveACPConfigFeatureOptions({
