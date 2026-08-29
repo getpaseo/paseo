@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { execFileSync } from "child_process";
 import { mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
@@ -539,6 +539,62 @@ describe("runAsyncWorktreeBootstrap", () => {
       lifecycle: "running",
       exitCode: null,
       terminalId: "term-1",
+    });
+  });
+
+  it("injects the shared workspace runtime environment into plain scripts", async () => {
+    commitPaseoScripts({
+      compose: {
+        command: "docker compose ps",
+      },
+    });
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const terminalRecords: StubTerminalRecord[] = [];
+    const ensure = vi.fn().mockResolvedValue({
+      portBase: 21000,
+      portEnd: 21099,
+      portCount: 100,
+      composeProjectName: "paseo_workspace",
+      env: {
+        PASEO_WORKSPACE_ID: "workspace-runtime-env",
+        PASEO_PORT_BASE: "21000",
+        PASEO_PORT_END: "21099",
+        PASEO_PORT_COUNT: "100",
+        PASEO_COMPOSE_PROJECT_NAME: "paseo_workspace",
+        COMPOSE_PROJECT_NAME: "paseo_workspace",
+      },
+      reservedPorts: new Set([21000]),
+    });
+
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: "workspace-runtime-env",
+      projectSlug: "repo",
+      branchName: "feature-runtime-env",
+      scriptName: "compose",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager: createStubTerminalManager(createTerminalCalls, terminalRecords),
+      workspaceRuntimeEnvironment: { ensure },
+    });
+
+    expect(ensure).toHaveBeenCalledWith({
+      workspaceId: "workspace-runtime-env",
+      cwd: repoDir,
+      branchName: "feature-runtime-env",
+      allocation: undefined,
+      excludedPorts: new Set(),
+    });
+    expect(createTerminalCalls[0]?.env).toMatchObject({
+      PASEO_PORT_BASE: "21000",
+      PASEO_PORT_END: "21099",
+      PASEO_PORT_COUNT: "100",
+      PASEO_COMPOSE_PROJECT_NAME: "paseo_workspace",
+      COMPOSE_PROJECT_NAME: "paseo_workspace",
     });
   });
 
