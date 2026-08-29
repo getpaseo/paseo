@@ -492,9 +492,13 @@ function prepareZshShellIntegrationRuntimeDir(sourceDir = resolveZshShellIntegra
 export function buildTerminalEnvironment(
   input: BuildTerminalEnvironmentInput,
 ): Record<string, string> {
+  // Do not set TERM_PROGRAM=kitty. TerminalInputModeTracker answers CSI ? u queries so apps
+  // can detect Kitty keyboard progressive-enhancement, but the Kitty graphics protocol and
+  // Unicode placeholders are not implemented. Apps that trust TERM_PROGRAM enable image
+  // features that get silently swallowed by the xterm.js parser and render as garbage
+  // (issue #3850).
   const baseEnv: Record<string, string> = createExternalProcessEnv(process.env, input.env, {
     TERM: "xterm-256color",
-    TERM_PROGRAM: "kitty",
   });
   const envWithAgentHooks = prependPaseoCliToPath(
     baseEnv,

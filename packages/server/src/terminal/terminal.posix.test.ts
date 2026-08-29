@@ -270,7 +270,7 @@ describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
     });
 
     expect(resolvedEnv.TERM).toBe("xterm-256color");
-    expect(resolvedEnv.TERM_PROGRAM).toBe("kitty");
+    expect(resolvedEnv.TERM_PROGRAM).not.toBe("kitty");
     expect(resolvedEnv.PASEO_ZSH_ZDOTDIR).toBe("/tmp/paseo-zdotdir");
     expect(resolvedEnv.ZDOTDIR).toBe(
       join(tmpdir(), `${userInfo().username || "unknown"}-paseo-zsh-${process.pid}`),
