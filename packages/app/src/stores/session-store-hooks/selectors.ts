@@ -4,6 +4,7 @@ import {
   type WorkspaceStructure,
   type WorkspaceStructureProject,
 } from "@/projects/workspace-structure";
+import type { LocalProjectLink } from "@/projects/local-project-links";
 import type { DesktopBadgeWorkspaceStatus } from "@/utils/desktop-badge-state";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import type { ProjectDescriptor, WorkspaceDescriptor } from "../session-store";
@@ -154,6 +155,7 @@ export function selectWorkspaceDirectoryServerIds(
 export function selectWorkspaceStructureProjects(
   state: SessionsSnapshot,
   serverIds: readonly string[],
+  localProjectLinks: Iterable<LocalProjectLink> = [],
 ): WorkspaceStructureProject[] {
   const sessions: Array<{
     serverId: string;
@@ -179,11 +181,12 @@ export function selectWorkspaceStructureProjects(
     return EMPTY_WORKSPACE_STRUCTURE.projects;
   }
 
-  return buildWorkspaceStructureProjects({ sessions });
+  return buildWorkspaceStructureProjects({ sessions, localProjectLinks });
 }
 
 export function createWorkspaceStructureProjectsSelector(
   serverIds: readonly string[],
+  localProjectLinks: readonly LocalProjectLink[] = [],
 ): (state: SessionsSnapshot) => WorkspaceStructureProject[] {
   let previousInputs: Array<{
     workspaces: Map<string, WorkspaceDescriptor> | undefined;
@@ -209,7 +212,7 @@ export function createWorkspaceStructureProjectsSelector(
     }
 
     previousInputs = inputs;
-    previousProjects = selectWorkspaceStructureProjects(state, serverIds);
+    previousProjects = selectWorkspaceStructureProjects(state, serverIds, localProjectLinks);
     return previousProjects;
   };
 }
