@@ -350,6 +350,7 @@ export class AgentMessageQueueSync {
     void this.runInitialSync(client, source).catch((error) => {
       if (this.isCurrent(client, source)) {
         console.error("[AgentMessageQueue] Failed to sync queued messages:", error);
+        this.hasStartedInitialSync = false;
       }
     });
   }

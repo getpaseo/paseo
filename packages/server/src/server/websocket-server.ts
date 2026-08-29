@@ -1053,6 +1053,7 @@ export class VoiceAssistantWebSocketServer {
 
   public prepareForShutdown(): void {
     this.connectionLifecycle = "stopping";
+    this.agentMessageQueue.stop();
   }
 
   public beginAcceptingConnections(): void {
@@ -1063,7 +1064,6 @@ export class VoiceAssistantWebSocketServer {
 
   public async close(): Promise<void> {
     this.prepareForShutdown();
-    this.agentMessageQueue.stop();
     this.unsubscribeSpeechReadiness?.();
     this.unsubscribeSpeechReadiness = null;
     this.unsubscribeDaemonConfigChange?.();

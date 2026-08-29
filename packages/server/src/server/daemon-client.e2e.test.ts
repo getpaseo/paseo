@@ -557,6 +557,12 @@ test("queued agent messages replay after a daemon restart loads the persisted ag
       paseoHomeRoot,
       staticDir,
       cleanup: false,
+      agentClients: {
+        codex: new StubAgentClient({
+          sessionId: "queue-restart-blocked-session",
+          supportsStreaming: true,
+        }),
+      },
     });
     firstClient = new DaemonClient({
       url: `ws://127.0.0.1:${firstDaemon.port}/ws`,
@@ -571,7 +577,7 @@ test("queued agent messages replay after a daemon restart loads the persisted ag
       title: "Restart queued replay agent",
       modeId: "full-access",
       model: "gpt-5.4-mini",
-      initialPrompt: "Run exactly: sleep 30",
+      initialPrompt: "Keep this run active until the daemon restarts",
     });
     expect(agent.status).toBe("running");
 

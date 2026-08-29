@@ -257,6 +257,27 @@ describe("AgentMessageQueueSync", () => {
     sync.dispose();
   });
 
+  it("retries a failed initial sync on the next directory commit", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const harness = createClientHarness();
+    harness.listQueuedAgentMessages
+      .mockRejectedValueOnce(new Error("temporary list failure"))
+      .mockResolvedValueOnce([queuePayload("agent-a", 1, ["recovered-message"])]);
+    const sync = new AgentMessageQueueSync(SERVER_ID);
+
+    connect(sync, harness.client, FIRST_SOURCE, ["agent-a"]);
+    await vi.waitFor(() => expect(errorSpy).toHaveBeenCalledTimes(1));
+
+    sync.directoryCommitted(new Set(["agent-a"]), FIRST_SOURCE);
+    await vi.waitFor(() =>
+      expect(useSessionStore.getState().sessions[SERVER_ID]?.queuedMessages.get("agent-a")).toEqual(
+        [expect.objectContaining({ id: "recovered-message" })],
+      ),
+    );
+    expect(harness.listQueuedAgentMessages).toHaveBeenCalledTimes(2);
+    sync.dispose();
+  });
+
   it("hydrates omitted image and attachment payloads from a queue update", async () => {
     __setAttachmentStoreForTests(
       createLocalFileAttachmentStore({
