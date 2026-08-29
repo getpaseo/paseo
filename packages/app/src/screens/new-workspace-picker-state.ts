@@ -115,3 +115,38 @@ export function clearAttachmentsForWorkspaceHostChange(input: {
   }
   return filterAgentContextAttachmentsForServer(afterPickerClear, input.nextServerId);
 }
+
+/**
+ * Draft attachment cleanup must follow the effective host, rather than only
+ * explicit picker selections. Defer it until draft hydration has completed so
+ * an automatic host change cannot overwrite an in-flight persisted draft.
+ */
+export function reconcileNewWorkspaceHostAttachments(input: {
+  attachments: UserComposerAttachment[];
+  isHydrated: boolean;
+  previousServerId: string;
+  selectedServerId: string;
+}): {
+  attachments: UserComposerAttachment[];
+  didChangeHost: boolean;
+  previousServerId: string;
+} {
+  if (!input.isHydrated || input.previousServerId === input.selectedServerId) {
+    return {
+      attachments: input.attachments,
+      didChangeHost: false,
+      previousServerId: input.previousServerId,
+    };
+  }
+
+  return {
+    attachments: clearAttachmentsForWorkspaceHostChange({
+      attachments: input.attachments,
+      currentTargetId: input.previousServerId,
+      nextTargetId: input.selectedServerId,
+      nextServerId: input.selectedServerId,
+    }),
+    didChangeHost: true,
+    previousServerId: input.selectedServerId,
+  };
+}

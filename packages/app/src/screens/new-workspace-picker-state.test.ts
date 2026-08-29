@@ -4,6 +4,7 @@ import {
   clearAttachmentsForWorkspaceHostChange,
   clearPickerPrAttachmentForTargetChange,
   initialPickerSelectionState,
+  reconcileNewWorkspaceHostAttachments,
   reducePickerSelection,
   syncPickerPrAttachment,
 } from "./new-workspace-picker-state";
@@ -189,6 +190,58 @@ describe("clearAttachmentsForWorkspaceHostChange", () => {
         nextServerId: "server-b",
       }),
     ).toEqual([issue, currentHostAgent]);
+  });
+});
+
+describe("reconcileNewWorkspaceHostAttachments", () => {
+  it("defers an automatic host cleanup until the persisted draft is hydrated", () => {
+    const pickerPr = prAttachment(makePrItem(202, "Picker PR"), "new-workspace-picker");
+    const currentHostAgent = agentContextAttachment("server-b", "source-b");
+    const foreignHostAgent = agentContextAttachment("server-a", "source-a");
+    const issue = issueAttachment(44);
+    const attachments = [issue, pickerPr, currentHostAgent, foreignHostAgent];
+
+    const beforeHydration = reconcileNewWorkspaceHostAttachments({
+      attachments,
+      isHydrated: false,
+      previousServerId: "server-a",
+      selectedServerId: "server-b",
+    });
+
+    expect(beforeHydration).toEqual({
+      attachments,
+      didChangeHost: false,
+      previousServerId: "server-a",
+    });
+
+    expect(
+      reconcileNewWorkspaceHostAttachments({
+        ...beforeHydration,
+        isHydrated: true,
+        selectedServerId: "server-b",
+      }),
+    ).toEqual({
+      attachments: [issue, currentHostAgent],
+      didChangeHost: true,
+      previousServerId: "server-b",
+    });
+  });
+
+  it("does not rewrite attachments when the effective host is unchanged", () => {
+    const attachments = [issueAttachment(44), agentContextAttachment("server-b", "source-b")];
+
+    expect(
+      reconcileNewWorkspaceHostAttachments({
+        attachments,
+        isHydrated: true,
+        previousServerId: "server-b",
+        selectedServerId: "server-b",
+      }),
+    ).toEqual({
+      attachments,
+      didChangeHost: false,
+      previousServerId: "server-b",
+    });
   });
 });
 
