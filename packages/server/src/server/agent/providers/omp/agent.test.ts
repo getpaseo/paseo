@@ -652,4 +652,131 @@ describe("OMP agent client and session", () => {
       { type: "user_message", text: "hello OMP", messageId: "user-1" },
     ]);
   });
+  test("publishes the model selected by a successful fallback", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "openai-codex/gpt-5.4/mini",
+      role: "primary",
+    });
+
+    expect(omp.modelChanges()).toEqual([
+      expect.objectContaining({ model: "openai-codex/gpt-5.4/mini" }),
+    ]);
+    expect(omp.persistence()?.metadata).toMatchObject({
+      model: "openai-codex/gpt-5.4/mini",
+    });
+  });
+
+  test("keeps the fallback model when OMP state still reports the previous model", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().state = {
+      ...omp.runtime().state,
+      model: { provider: "zai", id: "glm-4.7" },
+    };
+    await omp.runtimeInfo();
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "opencode-go/gpt-5.4/mini",
+      role: "primary",
+    });
+
+    await expect(omp.runtimeInfo()).resolves.toMatchObject({
+      model: "opencode-go/gpt-5.4/mini",
+    });
+  });
+
+  test("clears the fallback model when OMP confirms a different model", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().state = {
+      ...omp.runtime().state,
+      model: { provider: "zai", id: "glm-4.7" },
+    };
+    await omp.runtimeInfo();
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "opencode-go/gpt-5.4/mini",
+      role: "primary",
+    });
+    omp.runtime().state = {
+      ...omp.runtime().state,
+      model: { provider: "openai-codex", id: "gpt-5.4" },
+    };
+
+    await expect(omp.runtimeInfo()).resolves.toMatchObject({
+      model: "openai-codex/gpt-5.4",
+    });
+  });
+
+  test("strips the thinking suffix from a fallback model reference", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "opencode-go/deepseek-v4-flash:low",
+      role: "primary",
+    });
+
+    expect(omp.modelChanges()).toEqual([
+      expect.objectContaining({ model: "opencode-go/deepseek-v4-flash" }),
+    ]);
+    expect(omp.persistence()?.metadata).toMatchObject({
+      model: "opencode-go/deepseek-v4-flash",
+    });
+  });
+
+  test("normalizes a fallback reference with api gateway and unknown thinking suffixes", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "openai-codex/gpt-5.6-luna@my-gateway:ultra",
+      role: "primary",
+    });
+
+    expect(omp.modelChanges()).toEqual([
+      expect.objectContaining({ model: "openai-codex/gpt-5.6-luna" }),
+    ]);
+    expect(omp.persistence()?.metadata).toMatchObject({
+      model: "openai-codex/gpt-5.6-luna",
+    });
+  });
+
+  test("keeps the second fallback live when OMP state returns the first suffix-free model", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().state = {
+      ...omp.runtime().state,
+      model: { provider: "opencode-go", id: "deepseek-v4-flash" },
+    };
+    await omp.runtimeInfo();
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "zai/glm-4.7:low",
+      role: "primary",
+    });
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "openai-codex/gpt-5.6-luna:low",
+      role: "primary",
+    });
+    // OMP's get_state never carries the suffix recorded from fallback events.
+    omp.runtime().state = {
+      ...omp.runtime().state,
+      model: { provider: "zai", id: "glm-4.7" },
+    };
+
+    await expect(omp.runtimeInfo()).resolves.toMatchObject({
+      model: "openai-codex/gpt-5.6-luna",
+    });
+  });
 });

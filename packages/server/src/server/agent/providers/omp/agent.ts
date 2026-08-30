@@ -487,6 +487,15 @@ function modelToId(model: OmpModel | null | undefined): string | null {
   return model?.provider && model.id ? `${model.provider}/${model.id}` : null;
 }
 
+function parseOmpModelReference(model: string): OmpModel | null {
+  // OMP renders fallback targets as `provider/id[@gateway]:<thinking level>`;
+  // catalog ids carry neither decoration, so normalize both away.
+  const reference = model.replace(/:[^:/@]+$/, "").replace(/@[^:/@]+$/, "");
+  const providerEnd = reference.indexOf("/");
+  if (providerEnd <= 0 || providerEnd === reference.length - 1) return null;
+  return { provider: reference.slice(0, providerEnd), id: reference.slice(providerEnd + 1) };
+}
+
 function ompAssistantText(message: Extract<OmpAgentMessage, { role: "assistant" }>): string | null {
   const text = message.content
     .flatMap((part) => {
@@ -869,6 +878,8 @@ export class OmpAgentSession implements AgentSession {
   private readonly subagentCardTracker: OmpSubagentCardTracker;
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
   private state: OmpSessionState;
+  private fallbackModel: { model: OmpModel; previousModelId: string | null } | null = null;
+
   private readonly currentModeId: string | null;
   private readonly providerIdleScheduler: OmpProviderIdleScheduler;
   private readonly noTurnScheduler: OmpNoTurnScheduler;
@@ -1044,10 +1055,14 @@ export class OmpAgentSession implements AgentSession {
 
   async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
     await this.refreshState();
+    return this.runtimeInfoFromState();
+  }
+
+  private runtimeInfoFromState(): AgentRuntimeInfo {
     return {
       provider: this.provider,
       sessionId: this.state.sessionId,
-      model: modelToId(this.state.model),
+      model: modelToId(this.fallbackModel?.model ?? this.state.model),
       thinkingOptionId: resolveThinkingOptionId(
         this.lastKnownThinkingOptionId,
         this.state.thinkingLevel,
@@ -1262,6 +1277,8 @@ export class OmpAgentSession implements AgentSession {
       ...this.state,
       model,
     };
+    this.fallbackModel = null;
+
     this.config.model = `${model.provider}/${model.id}`;
   }
 
@@ -1622,6 +1639,24 @@ export class OmpAgentSession implements AgentSession {
       item: { type: "assistant_message", text },
     });
   }
+  private handleRetryFallbackSucceeded(
+    event: Extract<OmpRuntimeEvent, { type: "retry_fallback_succeeded" }>,
+  ): void {
+    const model = parseOmpModelReference(event.model);
+    if (!model) return;
+
+    this.fallbackModel = {
+      model,
+      previousModelId: modelToId(this.state.model),
+    };
+    this.state = { ...this.state, model };
+    this.config.model = modelToId(model) ?? undefined;
+    this.emit({
+      type: "model_changed",
+      provider: this.provider,
+      runtimeInfo: this.runtimeInfoFromState(),
+    });
+  }
 
   private handleExtraRuntimeEvent(event: OmpRuntimeEvent): boolean {
     if (
@@ -1682,6 +1717,10 @@ export class OmpAgentSession implements AgentSession {
       }
       return true;
     }
+    if (event.type === "retry_fallback_succeeded") {
+      this.handleRetryFallbackSucceeded(event);
+    }
+
     const mappedEvent = mapOmpRuntimeEventToTimelineItem(event);
     if (!mappedEvent.handled) {
       return false;
@@ -2159,7 +2198,7 @@ export class OmpAgentSession implements AgentSession {
     while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
       try {
         const state = await this.runtimeSession.getState();
-        this.state = state;
+        this.applyFreshState(state);
         if (!state.isStreaming && !state.isCompacting) {
           this.completeTurn(turnId, messages);
           return;
@@ -2172,7 +2211,13 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private async refreshState(): Promise<void> {
-    this.state = await this.runtimeSession.getState();
+    this.applyFreshState(await this.runtimeSession.getState());
+  }
+  private applyFreshState(state: OmpSessionState): void {
+    this.state = state;
+    if (this.fallbackModel && modelToId(state.model) !== this.fallbackModel.previousModelId) {
+      this.fallbackModel = null;
+    }
   }
 
   private async refreshAfterTurn(finalUsage: Promise<void>): Promise<void> {
