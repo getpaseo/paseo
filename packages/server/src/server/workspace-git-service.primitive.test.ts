@@ -1082,6 +1082,8 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
         stderr: "",
       })),
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => null,
       now: () => nowMs,
     });
     const getCurrentPullRequestStatus = github.getCurrentPullRequestStatus.bind(github);
@@ -1187,6 +1189,8 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
       ttlMs: 0,
       runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => null,
       now: () => nowMs,
     });
     const getCurrentPullRequestStatus = github.getCurrentPullRequestStatus.bind(github);
@@ -1208,7 +1212,10 @@ describe("WorkspaceGitServiceImpl primitive refresh entrypoint", () => {
     await flushPromises();
     await vi.advanceTimersByTimeAsync(0);
     await vi.waitFor(() => {
-      expect(runner).toHaveBeenCalledTimes(1);
+      expect(githubReadCalls).toContainEqual({
+        reason: "self-heal-github",
+        tickMs: 0,
+      });
     });
     await flushPromises();
     const gitReadsAfterInitialSnapshot = getCheckoutStatus.mock.calls.length;

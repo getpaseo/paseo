@@ -42,7 +42,9 @@ The required root manifest is `paseo-plugin.json`. It contains the default plugi
 
 The entry point is `index.ts` at the plugin root. Plugin, surface, sidebar-item, workspace-panel, Command Center item, and attachment-source IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
 
-The generated declaration file supplies `@getpaseo/plugin` and `@getpaseo/plugin/server` types for local typechecking. Paseo supplies the runtime modules. Regenerate a fresh project with the matching CLI when the plugin contract changes.
+The generated declaration file supplies `@getpaseo/plugin`, `@getpaseo/plugin/react-native`, and
+`@getpaseo/plugin/server` types for local typechecking. Paseo supplies the runtime modules.
+Regenerate a fresh project with the matching CLI when the plugin contract changes.
 
 Add runtime-specific files as the plugin grows:
 
@@ -67,15 +69,16 @@ Paseo builds separate client and server bundles from `index.ts`. It rejects impo
 
 Paseo provides these modules to client code:
 
-| Module                    | Use it for                              |
-| ------------------------- | --------------------------------------- |
-| `@getpaseo/plugin`        | Host UI components, hooks, and UI types |
-| `@getpaseo/plugin/server` | Shared RPC and attachment contracts     |
-| `@tanstack/react-query`   | Request state and caching               |
-| `react`                   | Components and hooks                    |
-| `react/jsx-runtime`       | Compiled JSX                            |
-| `react-native`            | Cross-platform UI                       |
-| `zod`                     | Shared schemas                          |
+| Module                          | Use it for                            |
+| ------------------------------- | ------------------------------------- |
+| `@getpaseo/plugin`              | Contribution contracts and data hooks |
+| `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks      |
+| `@getpaseo/plugin/server`       | Shared RPC and attachment contracts   |
+| `@tanstack/react-query`         | Request state and caching             |
+| `react`                         | Components and hooks                  |
+| `react/jsx-runtime`             | Compiled JSX                          |
+| `react-native`                  | Cross-platform UI                     |
+| `zod`                           | Shared schemas                        |
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
@@ -158,23 +161,114 @@ export default function contribute(plugin: PluginContext) {
 
 `PluginSurfaceProps` contains:
 
-| Field    | Meaning                                                      |
-| -------- | ------------------------------------------------------------ |
-| `theme`  | Typed `PluginTheme` color tokens for the active Paseo theme. |
-| `host`   | Selected host `id` and display `label`.                      |
-| `layout` | `compact` and the `ios`, `android`, or `web` platform.       |
+| Field        | Meaning                                                                                                                      |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                 |
+| `host`       | Selected host `id` and display `label`.                                                                                      |
+| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                       |
+| `navigation` | Optional client navigation. `openAgent({ agentId })` and `openWorkspace({ workspaceId })` open targets on the selected host. |
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
 
-Use the host-provided `Icon` component for Lucide icons inside client surfaces. It renders the icon from Paseo's installed Lucide version, so plugin bundles do not import `lucide-react-native` or `react-native-svg`. An unknown name renders nothing instead of failing the plugin surface.
+## Host UI
+
+Import Paseo-owned UI from `@getpaseo/plugin/react-native` in `*.client.tsx` files. This example
+opens a controlled modal, renders a host icon, and confirms the action with a toast:
 
 ```tsx
-import { Icon } from "@getpaseo/plugin";
+import type { PluginSurfaceProps } from "@getpaseo/plugin";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
+import { useState } from "react";
+import { Pressable, Text, View } from "react-native";
 
-<Icon name="Settings" size={18} color={theme.colors.foreground} />;
+export function IssueActions({ theme }: PluginSurfaceProps) {
+  const [open, setOpen] = useState(false);
+  const toast = useToast();
+
+  function saveIssue() {
+    toast.show("Issue saved", { variant: "success" });
+    setOpen(false);
+  }
+
+  return (
+    <View>
+      <Pressable accessibilityRole="button" onPress={() => setOpen(true)}>
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <Icon name="Pencil" size={18} color={theme.colors.foreground} />
+          <Text style={{ color: theme.colors.foreground }}>Edit issue</Text>
+        </View>
+      </Pressable>
+
+      <Modal
+        title="Edit issue"
+        icon={<Icon name="Pencil" size={18} color={theme.colors.foreground} />}
+        open={open}
+        onOpenChange={setOpen}
+      >
+        <Modal.Content>
+          <Pressable accessibilityRole="button" onPress={saveIssue}>
+            <Text style={{ color: theme.colors.foreground }}>Save</Text>
+          </Pressable>
+        </Modal.Content>
+      </Modal>
+    </View>
+  );
+}
 ```
 
-Keep `Icon` in a `*.client.tsx` module.
+### Modal
+
+`Modal` uses a bottom sheet on compact layouts and a centered dialog otherwise. The plugin owns
+the `open` state.
+
+| Prop           | Type                      | Required | Behavior                                     |
+| -------------- | ------------------------- | -------- | -------------------------------------------- |
+| `title`        | `string`                  | Yes      | Labels the modal and its visible header.     |
+| `icon`         | `ReactNode`               | No       | Renders before the title in the header.      |
+| `open`         | `boolean`                 | Yes      | Shows the modal content when `true`.         |
+| `onOpenChange` | `(open: boolean) => void` | Yes      | Receives `false` when the user dismisses it. |
+| `children`     | `ReactNode`               | Yes      | Contains `Modal.Content`.                    |
+
+`Modal.Content` owns the body below the host-rendered header:
+
+| Prop       | Type        | Required | Behavior                                      |
+| ---------- | ----------- | -------- | --------------------------------------------- |
+| `children` | `ReactNode` | Yes      | Renders the plugin's React Native UI content. |
+
+The close button, backdrop, platform back action, web Escape key, and compact sheet gesture dismiss
+the modal. Dismissal calls `onOpenChange(false)`; the plugin must update `open` to close it.
+
+Modal children keep the plugin runtime context. `usePaseo`, `useRpc`, `useWorkspace`, and
+`useAgent` work inside them.
+
+### Toasts
+
+`useToast()` returns two methods:
+
+| Method                    | Behavior                                                    |
+| ------------------------- | ----------------------------------------------------------- |
+| `show(message, options?)` | Shows a toast for 2,200 ms unless `durationMs` is supplied. |
+| `error(message)`          | Shows an error toast for 3,200 ms.                          |
+
+`show` accepts these options:
+
+| Option       | Type                                                       | Default     |
+| ------------ | ---------------------------------------------------------- | ----------- |
+| `variant`    | `"default" \| "info" \| "success" \| "warning" \| "error"` | `"default"` |
+| `durationMs` | `number`                                                   | `2200`      |
+
+Showing another toast replaces the currently visible toast. An empty message is ignored.
+
+### Icons
+
+`Icon` renders a [Lucide icon](https://lucide.dev/icons/) from Paseo's installed icon set. Plugin bundles do not import
+`lucide-react-native` or `react-native-svg`.
+
+| Prop    | Type     | Required | Behavior                                        |
+| ------- | -------- | -------- | ----------------------------------------------- |
+| `name`  | `string` | Yes      | Lucide icon name. Unknown names render nothing. |
+| `size`  | `number` | No       | Icon width and height.                          |
+| `color` | `string` | No       | Icon color. Use a plugin theme token.           |
 
 ## Timeline items
 
@@ -229,6 +323,10 @@ Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, and `layout`.
 `item.data` with the registered schema before rendering. Keep transformers synchronous and
 deterministic because Paseo reruns them while reconciling projected history.
 
+Check `navigation` before showing an action that depends on it. Older Paseo clients leave the
+capability undefined. Let Paseo own route construction so the action works without reloading on
+desktop, browser, iOS, and Android.
+
 ## Theme and layout
 
 Plugin UI runs on desktop, browser, iOS, and Android, across every Paseo theme. `theme` is a typed `PluginTheme` mapped from the active host theme. Color and spacing must come from those props. Hardcoded colors and unstyled `Text` break when the host theme changes.
@@ -253,7 +351,7 @@ Recreate styles when `theme` or `layout.compact` changes.
 
 Do not hardcode `#000`, `#fff`, or React Native's default text color. Primary copy uses `foreground`. Labels use `foregroundMuted`. Tighten padding when `layout.compact` is true.
 
-Workspace and agent panels receive the same `theme` and `layout` fields.
+Workspace and agent panels receive the same `theme`, `layout`, and optional `navigation` fields.
 
 ## Contribute a theme
 

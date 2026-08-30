@@ -1,5 +1,9 @@
 import { PluginAttachmentSearchPayloadSchema } from "./attachments.js";
 export { PluginClientStateProvider, type PluginClientStateSource } from "./client-state.js";
+export {
+  usePluginRuntimeContextBridge,
+  type PluginRuntimeContextBridge,
+} from "./runtime-context-bridge.js";
 import type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,

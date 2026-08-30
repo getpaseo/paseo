@@ -78,24 +78,28 @@ export async function inspectConfig(
         path.join(directory, "main.client.tsx"),
         `import React from "react";
 import { Text } from "react-native";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
 import {
-  Icon,
   type PluginAgentPanelProps,
   type PluginClientContext,
   type PluginComposerPillProps,
+  type PluginSurfaceProps,
   useAgent,
   usePaseo,
   useWorkspace,
 } from "@getpaseo/plugin";
 import { inspect } from "./inspect.shared";
 
-export function Surface() {
+export function Surface({ navigation }: PluginSurfaceProps) {
   const paseo = usePaseo();
+  const toast = useToast();
   const createWorkspace = () => paseo.workspaces.create({
     source: { kind: "directory", path: "/repo" },
   });
+  navigation?.openAgent({ agentId: "agent-1" });
+  navigation?.openWorkspace({ workspaceId: "workspace-1" });
   void createWorkspace;
-  return <><Icon name="Settings" size={18} color="#123456" /><Text>Paseo API</Text></>;
+  return <><Icon name="Settings" size={18} color="#123456" /><Text onPress={() => toast.show("Ready")}>Paseo API</Text><Modal title="Example" icon={<Icon name="Settings" />} open={false} onOpenChange={() => {}}><Modal.Content><Text>Modal</Text></Modal.Content></Modal></>;
 }
 
 export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {

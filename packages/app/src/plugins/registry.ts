@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { startPluginClientSide } from "./composer-pills/lifecycle";
@@ -31,7 +31,10 @@ class PluginRegistry {
   installCatalog(
     serverId: string,
     catalog: CatalogPlugin[],
-    options: { replacePluginId?: string; client?: DaemonClient } = {},
+    options: {
+      replacePluginId?: string;
+      client?: DaemonClient;
+    } = {},
   ): boolean {
     const previous = this.byHost.get(serverId) ?? [];
     const previousTimelineBundles = previous
@@ -163,5 +166,6 @@ export function useInstalledPlugin(serverId: string, pluginId: string): Installe
 }
 
 export function usePluginInstallations(pluginId: string): InstalledPlugin[] {
-  return useInstalledPlugins().filter((plugin) => plugin.id === pluginId);
+  const installed = useInstalledPlugins();
+  return useMemo(() => installed.filter((plugin) => plugin.id === pluginId), [installed, pluginId]);
 }

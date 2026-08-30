@@ -121,17 +121,20 @@ code lives behind filename boundaries:
 | `*.server.ts`  | Node APIs, filesystem and process access, credentials, and handlers. |
 | `*.shared.ts`  | Zod RPC contracts and plain values used by both runtimes.            |
 
-Shared files import contracts from `@getpaseo/plugin/server`. Client files import hooks and the
-host-provided `Icon` component from `@getpaseo/plugin`. `Icon` resolves a Lucide name using the
-client's installed icon set; an unknown name renders nothing so it cannot break the plugin surface.
+Shared files import contracts from `@getpaseo/plugin/server`. Client files import Paseo UI from
+`@getpaseo/plugin/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
+set; an unknown name renders nothing so it cannot break the plugin surface.
+Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
+`<Modal.Content>`.
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
 See `public-docs/plugins/reference.md`.
 
-| Module                    | Use it for                                               |
-| ------------------------- | -------------------------------------------------------- |
-| `@getpaseo/plugin`        | host UI components, hooks, and UI types                  |
-| `@getpaseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, and handler types |
+| Module                          | Use it for                                               |
+| ------------------------------- | -------------------------------------------------------- |
+| `@getpaseo/plugin`              | contribution contracts and client data hooks             |
+| `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks               |
+| `@getpaseo/plugin/server`       | `defineRpc`, `defineAttachmentSource`, and handler types |
 
 The compiler removes client registrations and imports from the server entry point, and server
 registrations and imports from the client entry point. Importing a `*.server` module from a client
@@ -198,9 +201,10 @@ when moved between hosts. Explorer configuration can create workspace-context pa
 existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
 
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
-They use typed plugin RPC only for plugin-specific backend work. Navigation is limited to the
-plugin's registered global surfaces and workspace panels; plugins do not receive Expo Router or
-workspace-layout store access.
+They use typed plugin RPC only for plugin-specific backend work. Surface and panel props expose
+optional client-owned agent and workspace navigation; its absence is the compatibility gate for
+older clients. Other navigation remains limited to registered global surfaces and workspace panels.
+Plugins do not receive Expo Router or workspace-layout store access.
 
 ## Contribute composer pills
 

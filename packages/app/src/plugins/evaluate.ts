@@ -26,6 +26,7 @@ import { createPluginContext, type PluginRegistrationCollector } from "@getpaseo
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
 import { Icon, resolvePluginIcon } from "./icons";
+import { pluginReactNativeRuntime } from "./react-native/runtime";
 import { parsePluginThemeContribution } from "./themes";
 
 const CONTRIBUTION_ID = /^[a-z][a-z0-9-]*$/;
@@ -262,6 +263,9 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         useWorkspace,
         useRpc,
       };
+    }
+    if (name === "@getpaseo/plugin/react-native" || name === "@paseo/plugin/react-native") {
+      return pluginReactNativeRuntime;
     }
     if (name === "@getpaseo/plugin/server") {
       return { defineAttachmentSource, defineRpc };
