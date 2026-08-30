@@ -1060,6 +1060,7 @@ function WorkspaceHeaderTitleBar({
             workspaceId={normalizedWorkspaceId}
             launches={workspaceLaunches}
             liveTerminalIds={liveTerminalIds}
+            onLaunchTerminalStarted={onScriptTerminalStarted}
             onViewTerminal={onViewScriptTerminal}
             onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
             hideLabels
@@ -3774,6 +3775,7 @@ function WorkspaceScreenContent({
             workspaceId={normalizedWorkspaceId}
             launches={workspaceLaunches}
             liveTerminalIds={liveTerminalIds}
+            onLaunchTerminalStarted={handleScriptTerminalStarted}
             onViewTerminal={handleViewScriptTerminal}
             onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
             hideLabels

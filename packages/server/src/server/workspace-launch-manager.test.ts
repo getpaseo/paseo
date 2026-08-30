@@ -102,10 +102,10 @@ describe("WorkspaceLaunchManager", () => {
     await manager.disposeWorkspace(context.workspaceId);
   });
 
-  it("discovers HTTP listeners in the leased block and registers a proxy endpoint", async () => {
+  it("discovers each HTTP listener in the leased block without listing unused ports", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-proxy-"));
     tempDirs.push(directory);
-    const port = await getFreePort();
+    const port = await getFreePortBlock(3);
     const context = {
       workspaceId: "workspace-launch-proxy-test",
       workspaceDirectory: directory,
@@ -115,7 +115,7 @@ describe("WorkspaceLaunchManager", () => {
     writeFileSync(
       join(directory, "paseo.json"),
       JSON.stringify({
-        worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+        worktree: { servicePorts: { range: `${port}-${port + 2}`, blockSize: 3 } },
         launches: { dev: { command: "./bin/dev" } },
       }),
     );
@@ -125,10 +125,12 @@ describe("WorkspaceLaunchManager", () => {
       workspaceId: context.workspaceId,
       cwd: context.workspaceDirectory,
       branchName: context.branchName,
-      allocation: { range: `${port}-${port}`, blockSize: 1 },
+      allocation: { range: `${port}-${port + 2}`, blockSize: 3 },
     });
-    const server = http.createServer((_request, response) => response.end("ok"));
-    await listen(server, port);
+    const firstServer = http.createServer((_request, response) => response.end("ok"));
+    const thirdServer = http.createServer((_request, response) => response.end("ok"));
+    await listen(firstServer, port);
+    await listen(thirdServer, port + 2);
     const manager = new WorkspaceLaunchManager({
       terminalManager: createTerminalManager().manager,
       serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
@@ -149,11 +151,17 @@ describe("WorkspaceLaunchManager", () => {
             port,
             proxyUrl: expect.stringContaining("launch-dev-p0"),
           }),
+          expect.objectContaining({
+            id: "dev:p2",
+            port: port + 2,
+            proxyUrl: expect.stringContaining("launch-dev-p2"),
+          }),
         ]);
       });
     } finally {
       await manager.disposeWorkspace(context.workspaceId);
-      await close(server);
+      await close(firstServer);
+      await close(thirdServer);
     }
   });
 });
@@ -228,6 +236,25 @@ async function getFreePort(): Promise<number> {
   return address.port;
 }
 
+async function getFreePortBlock(count: number): Promise<number> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    const base = await getFreePort();
+    if (base + count - 1 > 65_535) {
+      continue;
+    }
+    const reservations = Array.from({ length: count }, () => net.createServer());
+    try {
+      await Promise.all(reservations.map((server, offset) => listen(server, base + offset)));
+      return base;
+    } catch {
+      // A neighboring port became busy while choosing the block. Try again.
+    } finally {
+      await Promise.all(reservations.map((server) => close(server)));
+    }
+  }
+  throw new Error(`Failed to find ${count} adjacent free ports`);
+}
+
 async function listen(server: net.Server, port: number): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -236,6 +263,7 @@ async function listen(server: net.Server, port: number): Promise<void> {
 }
 
 async function close(server: net.Server): Promise<void> {
+  if (!server.listening) return;
   await new Promise<void>((resolve, reject) => {
     server.close((error) => {
       if (error) {

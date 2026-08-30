@@ -26,6 +26,7 @@ interface WorkspaceLaunchesButtonProps {
   workspaceId: string;
   launches: WorkspaceLaunches;
   liveTerminalIds?: readonly string[];
+  onLaunchTerminalStarted?: (terminalId: string) => void;
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
   hideLabels?: boolean;
@@ -76,6 +77,7 @@ function LaunchActionButton({
   accessibilityLabel,
   disabled,
   icon,
+  label,
   onPress,
   testID,
   tooltipLabel,
@@ -83,17 +85,11 @@ function LaunchActionButton({
   accessibilityLabel: string;
   disabled?: boolean;
   icon: LaunchActionIcon;
+  label?: string;
   onPress: () => void;
   testID: string;
   tooltipLabel: string;
 }): ReactElement {
-  const renderChildren = useCallback(
-    ({ hovered }: { hovered?: boolean }) => (
-      <LaunchActionIconElement hovered={hovered} icon={icon} />
-    ),
-    [icon],
-  );
-
   return (
     <Tooltip delayDuration={250} enabledOnDesktop enabledOnMobile={false}>
       <TooltipTrigger asChild triggerRefProp="ref">
@@ -104,9 +100,14 @@ function LaunchActionButton({
           hitSlop={6}
           disabled={disabled}
           onPress={onPress}
-          style={styles.iconActionButton}
+          style={label ? styles.labeledActionButton : styles.iconActionButton}
         >
-          {renderChildren}
+          {({ hovered }) => (
+            <>
+              <LaunchActionIconElement hovered={hovered} icon={icon} />
+              {label ? <Text style={styles.actionLabel}>{label}</Text> : null}
+            </>
+          )}
         </Pressable>
       </TooltipTrigger>
       <TooltipContent testID={`${testID}-tooltip`} side="top" align="center" offset={8}>
@@ -137,6 +138,7 @@ function LaunchEndpointRow({
 
   return (
     <View style={styles.endpointRow}>
+      <Text style={styles.endpointPort}>{endpoint.port}</Text>
       <Text style={styles.endpointName} numberOfLines={1}>
         {endpoint.hostname}
       </Text>
@@ -224,6 +226,7 @@ function LaunchRow({
             })}
             testID={`workspace-launches-view-${launch.launchName}`}
             icon="terminal"
+            label={t("workspace.launches.actions.view")}
             onPress={handleViewTerminal}
             tooltipLabel={t("workspace.launches.actions.view")}
           />
@@ -273,6 +276,7 @@ export function WorkspaceLaunchesButton({
   workspaceId,
   launches,
   liveTerminalIds = [],
+  onLaunchTerminalStarted,
   onViewTerminal,
   onOpenUrlInBrowserTab,
   hideLabels,
@@ -301,6 +305,11 @@ export function WorkspaceLaunchesButton({
           : t("workspace.launches.states.startFailed", { launchName }),
         { variant: "error" },
       );
+    },
+    onSuccess: (result) => {
+      if (result.launch?.terminalId) {
+        onLaunchTerminalStarted?.(result.launch.terminalId);
+      }
     },
   });
   const stopMutation = useMutation({
@@ -378,6 +387,8 @@ export function WorkspaceLaunchesButton({
             align="end"
             minWidth={220}
             maxWidth={320}
+            maxHeight={460}
+            scrollable
             testID="workspace-launches-menu"
           >
             {launches.map((launch) => (
@@ -498,6 +509,19 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     borderRadius: theme.borderRadius.sm,
   },
+  labeledActionButton: {
+    height: 22,
+    paddingHorizontal: theme.spacing[1],
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+    borderRadius: theme.borderRadius.sm,
+  },
+  actionLabel: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 14,
+  },
   endpointList: {
     marginTop: -theme.spacing[1],
     marginBottom: theme.spacing[2],
@@ -509,6 +533,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: "center",
     gap: theme.spacing[2],
     paddingLeft: 22,
+  },
+  endpointPort: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 14,
   },
   endpointName: {
     flex: 1,

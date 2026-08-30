@@ -12,53 +12,58 @@ import { WorkspaceLaunchesButton } from "@/screens/workspace/workspace-launches-
 
 void testI18n;
 
-const { theme, startWorkspaceLaunchMock, stopWorkspaceLaunchMock, viewTerminalMock } = vi.hoisted(
-  () => {
-    const hoistedTheme = {
-      spacing: { 1: 4, 1.5: 6, 2: 8, 3: 12, 8: 32 },
-      borderWidth: { 1: 1 },
-      borderRadius: { sm: 4, md: 6, lg: 8 },
-      fontSize: { sm: 13, base: 15 },
-      fontWeight: { normal: "400" },
-      colors: {
-        foreground: "#fff",
-        foregroundMuted: "#aaa",
-        surface2: "#222",
-        borderAccent: "#444",
-        palette: { blue: { 500: "#0a84ff" } },
+const {
+  theme,
+  startWorkspaceLaunchMock,
+  stopWorkspaceLaunchMock,
+  launchTerminalStartedMock,
+  viewTerminalMock,
+} = vi.hoisted(() => {
+  const hoistedTheme = {
+    spacing: { 1: 4, 1.5: 6, 2: 8, 3: 12, 8: 32 },
+    borderWidth: { 1: 1 },
+    borderRadius: { sm: 4, md: 6, lg: 8 },
+    fontSize: { sm: 13, base: 15 },
+    fontWeight: { normal: "400" },
+    colors: {
+      foreground: "#fff",
+      foregroundMuted: "#aaa",
+      surface2: "#222",
+      borderAccent: "#444",
+      palette: { blue: { 500: "#0a84ff" } },
+    },
+  };
+  return {
+    theme: hoistedTheme,
+    startWorkspaceLaunchMock: vi.fn(async () => ({
+      requestId: "request-1",
+      workspaceId: "workspace-1",
+      launchName: "dev",
+      launch: {
+        launchName: "dev",
+        lifecycle: "running",
+        active: true,
+        portBase: null,
+        portEnd: null,
+        portCount: null,
+        composeProjectName: null,
+        endpoints: [],
+        exitCode: null,
+        terminalId: "terminal-dev",
       },
-    };
-    return {
-      theme: hoistedTheme,
-      startWorkspaceLaunchMock: vi.fn(async () => ({
-        requestId: "request-1",
-        workspaceId: "workspace-1",
-        launchName: "dev",
-        launch: {
-          launchName: "dev",
-          lifecycle: "running",
-          active: true,
-          portBase: null,
-          portEnd: null,
-          portCount: null,
-          composeProjectName: null,
-          endpoints: [],
-          exitCode: null,
-          terminalId: null,
-        },
-        error: null,
-      })),
-      stopWorkspaceLaunchMock: vi.fn(async () => ({
-        requestId: "request-2",
-        workspaceId: "workspace-1",
-        launchName: "dev",
-        launch: null,
-        error: null,
-      })),
-      viewTerminalMock: vi.fn(),
-    };
-  },
-);
+      error: null,
+    })),
+    stopWorkspaceLaunchMock: vi.fn(async () => ({
+      requestId: "request-2",
+      workspaceId: "workspace-1",
+      launchName: "dev",
+      launch: null,
+      error: null,
+    })),
+    launchTerminalStartedMock: vi.fn(),
+    viewTerminalMock: vi.fn(),
+  };
+});
 
 vi.mock("react-native-unistyles", () => ({
   StyleSheet: {
@@ -177,6 +182,7 @@ function renderLaunches(launches: WorkspaceLaunchPayload[]) {
           workspaceId="workspace-1"
           launches={launches}
           liveTerminalIds={["terminal-dev"]}
+          onLaunchTerminalStarted={launchTerminalStartedMock}
           onViewTerminal={viewTerminalMock}
         />
       </QueryClientProvider>,
@@ -197,6 +203,7 @@ describe("WorkspaceLaunchesButton", () => {
     document.body.innerHTML = "";
     startWorkspaceLaunchMock.mockClear();
     stopWorkspaceLaunchMock.mockClear();
+    launchTerminalStartedMock.mockClear();
     viewTerminalMock.mockClear();
   });
 
@@ -215,6 +222,7 @@ describe("WorkspaceLaunchesButton", () => {
     await act(async () => {});
 
     expect(startWorkspaceLaunchMock).toHaveBeenCalledWith("workspace-1", "dev");
+    expect(launchTerminalStartedMock).toHaveBeenCalledWith("terminal-dev");
     expect(document.body.textContent).toContain("ports 4100–4199");
   });
 
@@ -238,5 +246,45 @@ describe("WorkspaceLaunchesButton", () => {
 
     expect(stopWorkspaceLaunchMock).toHaveBeenCalledWith("workspace-1", "dev");
     expect(viewTerminalMock).toHaveBeenCalledWith("terminal-dev");
+    expect(document.body.textContent).toContain("View terminal");
+  });
+
+  it("shows every detected launch endpoint, with its port", () => {
+    unmount = renderLaunches([
+      launch({
+        launchName: "dev",
+        lifecycle: "running",
+        active: true,
+        endpoints: [
+          {
+            id: "dev:p0",
+            port: 4100,
+            hostname: "launch-dev-p0--project.localhost",
+            localProxyUrl: "http://launch-dev-p0--project.localhost:6767",
+            publicProxyUrl: null,
+            proxyUrl: "http://launch-dev-p0--project.localhost:6767",
+            health: null,
+          },
+          {
+            id: "dev:p2",
+            port: 4102,
+            hostname: "launch-dev-p2--project.localhost",
+            localProxyUrl: "http://launch-dev-p2--project.localhost:6767",
+            publicProxyUrl: null,
+            proxyUrl: "http://launch-dev-p2--project.localhost:6767",
+            health: null,
+          },
+        ],
+      }),
+    ]);
+
+    expect(document.body.textContent).toContain("4100");
+    expect(document.body.textContent).toContain("4102");
+    expect(
+      document.querySelector('[data-testid="workspace-launches-open-dev-dev:p0"]'),
+    ).not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="workspace-launches-open-dev-dev:p2"]'),
+    ).not.toBeNull();
   });
 });
