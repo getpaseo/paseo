@@ -84,7 +84,7 @@ import {
   type WebSocketRuntimeDiagnosticSnapshot,
 } from "./websocket/runtime-metrics.js";
 import { ProviderUsageService } from "../services/quota-fetcher/service.js";
-import { buildProfileUsageFetchers } from "../services/quota-fetcher/profile-fetchers.js";
+import { createProfileUsageFetcherSource } from "../services/quota-fetcher/profile-fetchers.js";
 import { getProcessMemoryDiagnostics, getProcessUptimeSeconds } from "./process-diagnostics.js";
 import {
   CLIENT_SHUTDOWN_RPC_REASON,
@@ -745,13 +745,14 @@ export class VoiceAssistantWebSocketServer {
 
     this.providerUsageService = new ProviderUsageService({
       logger: this.logger,
-      // Profiles pin accounts via env tokens; derive their usage fetchers from
-      // the live config on every refresh so `paseo daemon reload` applies them.
-      dynamicFetchers: () =>
-        buildProfileUsageFetchers({
-          providers: this.daemonConfigStore.get().providers,
-          logger: this.logger,
-        }),
+      // Profiles pin accounts via env tokens; the source re-reads the live
+      // config on every refresh so `paseo daemon reload` applies them, while
+      // keeping each unchanged profile's fetcher instance (and its memory of a
+      // scope-refused token) across refreshes.
+      dynamicFetchers: createProfileUsageFetcherSource({
+        getProviders: () => this.daemonConfigStore.get().providers,
+        logger: this.logger,
+      }),
     });
 
     this.wss = this.createWebSocketServer(server, wsConfig, auth);

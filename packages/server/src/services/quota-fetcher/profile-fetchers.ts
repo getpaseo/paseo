@@ -43,24 +43,63 @@ export interface BuildProfileUsageFetchersOptions {
 export function buildProfileUsageFetchers(
   options: BuildProfileUsageFetchersOptions,
 ): ProviderUsageFetcher[] {
-  const fetchers: ProviderUsageFetcher[] = [];
-  for (const [providerId, entry] of Object.entries(options.providers ?? {})) {
-    const parsed = ProfileProviderConfigSchema.safeParse(entry);
-    if (!parsed.success) continue;
-    const override = parsed.data;
-    if (override.enabled === false) continue;
-    if (override.extends !== "claude") continue;
-    const token = override.env?.[CLAUDE_OAUTH_TOKEN_ENV]?.trim();
-    if (!token) continue;
-    fetchers.push(
-      new ClaudeQuotaProvider({
-        logger: options.logger,
-        fetch: options.fetch,
-        providerId,
-        displayName: override.label ?? providerId,
-        accessToken: token,
-      }),
-    );
-  }
-  return fetchers;
+  return createProfileUsageFetcherSource({
+    ...options,
+    getProviders: () => options.providers,
+  })();
+}
+
+export interface ProfileUsageFetcherSourceOptions {
+  getProviders: () => Record<string, unknown> | undefined;
+  logger: Logger;
+  fetch?: ProviderApiFetch;
+}
+
+/**
+ * A `dynamicFetchers` source that keeps fetcher instances across refreshes.
+ *
+ * The source re-reads the live config on every call so `paseo daemon reload`
+ * applies profile changes, but a qualifying profile keeps its fetcher instance
+ * for as long as its identity (id, token, label) is unchanged. The instance
+ * carries state worth keeping: the resolved ping model, and whether the usage
+ * endpoint already refused the token's scope — rebuilding it every refresh
+ * would re-knock on a permanently closed door each time. A changed token or
+ * label makes a fresh instance; profiles gone from the config drop theirs.
+ */
+export function createProfileUsageFetcherSource(
+  options: ProfileUsageFetcherSourceOptions,
+): () => ProviderUsageFetcher[] {
+  const instances = new Map<string, ClaudeQuotaProvider>();
+  return () => {
+    const fetchers: ProviderUsageFetcher[] = [];
+    const seen = new Set<string>();
+    for (const [providerId, entry] of Object.entries(options.getProviders() ?? {})) {
+      const parsed = ProfileProviderConfigSchema.safeParse(entry);
+      if (!parsed.success) continue;
+      const override = parsed.data;
+      if (override.enabled === false) continue;
+      if (override.extends !== "claude") continue;
+      const token = override.env?.[CLAUDE_OAUTH_TOKEN_ENV]?.trim();
+      if (!token) continue;
+      const displayName = override.label ?? providerId;
+      const key = `${providerId}\u0000${token}\u0000${displayName}`;
+      seen.add(key);
+      let fetcher = instances.get(key);
+      if (!fetcher) {
+        fetcher = new ClaudeQuotaProvider({
+          logger: options.logger,
+          fetch: options.fetch,
+          providerId,
+          displayName,
+          accessToken: token,
+        });
+        instances.set(key, fetcher);
+      }
+      fetchers.push(fetcher);
+    }
+    for (const key of instances.keys()) {
+      if (!seen.has(key)) instances.delete(key);
+    }
+    return fetchers;
+  };
 }

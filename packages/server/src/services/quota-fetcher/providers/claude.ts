@@ -22,6 +22,7 @@ import {
 const execFileAsync = promisify(execFile);
 const CLAUDE_KEYCHAIN_TIMEOUT_MS = 2_000;
 const CLAUDE_OAUTH_BETA = "oauth-2025-04-20";
+const CLAUDE_ANTHROPIC_VERSION = "2023-06-01";
 const CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials";
 
 const ClaudeCredentialsSchema = z.object({
@@ -33,6 +34,10 @@ const ClaudeCredentialsSchema = z.object({
       rateLimitTier: z.string().optional(),
     })
     .optional(),
+});
+
+const ClaudeModelsResponseSchema = z.object({
+  data: z.array(z.object({ id: z.string() }).loose()),
 });
 
 const ClaudeUsageWindowSchema = z.object({
@@ -358,6 +363,15 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   private readonly platform: typeof process.platform;
   private readonly fetchApi: ProviderApiFetch;
   private readonly staticAccessToken: string | null;
+  /** Model id used by the header-ping fallback, resolved once per instance. */
+  private pingModelId: string | null = null;
+  /**
+   * Set once the usage endpoint has refused this instance's pinned token and
+   * the header fallback worked. A scope refusal is permanent for a token, and
+   * retrying it anyway is what attracts 429 throttling, so later refreshes go
+   * straight to the fallback.
+   */
+  private usageEndpointRefused = false;
 
   constructor(options: ClaudeQuotaProviderOptions) {
     this.providerId = options.providerId ?? "claude";
@@ -379,9 +393,32 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
 
     const { oauth } = credentials;
     const plan = buildClaudePlan(oauth.subscriptionType, oauth.rateLimitTier);
-    const resp = await this.callClaudeApi(oauth.accessToken);
+    let resp: ClaudeUsageResponse | "NEEDS_AUTH";
+    if (this.usageEndpointRefused) {
+      resp = "NEEDS_AUTH";
+    } else if (this.staticAccessToken) {
+      try {
+        resp = await this.callClaudeApi(oauth.accessToken);
+      } catch (error) {
+        // A throttled or failing usage endpoint (429/5xx) is transient, so the
+        // endpoint stays first choice on the next refresh — but this refresh
+        // can still answer from the headers instead of surfacing an error row.
+        const pinged = await this.usageFromResponseHeaders(this.staticAccessToken);
+        if (pinged) return pinged;
+        throw error;
+      }
+    } else {
+      resp = await this.callClaudeApi(oauth.accessToken);
+    }
 
     if (resp === "NEEDS_AUTH") {
+      if (this.staticAccessToken) {
+        const pinged = await this.usageFromResponseHeaders(this.staticAccessToken);
+        if (pinged) {
+          this.usageEndpointRefused = true;
+          return pinged;
+        }
+      }
       // Read-only on credentials; the Claude CLI owns refresh. See docs/providers.md.
       return unavailableUsage(this);
     }
@@ -490,6 +527,106 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   ): ClaudeCredentialRecord | null {
     const oauth = credentials.claudeAiOauth;
     return oauth?.accessToken ? { oauth: { ...oauth, accessToken: oauth.accessToken } } : null;
+  }
+
+  /**
+   * Usage derived from the rate-limit headers of a minimal `/v1/messages` call.
+   *
+   * `claude setup-token` mints inference-only tokens, and the usage endpoint
+   * requires the `user:profile` scope, so pinned profiles cannot read usage the
+   * normal way. Inference responses carry the same session and weekly windows
+   * in `anthropic-ratelimit-unified-*` headers (utilization as a 0..1
+   * fraction, verified against the usage endpoint's percentages on a token
+   * that holds both scopes), so the fallback spends one output token of the
+   * pinned account's own quota per cache refresh. The plan label and
+   * per-model weekly windows are not in the headers, so those stay absent.
+   */
+  private async usageFromResponseHeaders(token: string): Promise<ProviderUsage | null> {
+    const model = await this.resolvePingModel(token);
+    if (!model) return null;
+    let res: Response;
+    try {
+      res = await fetchProviderApi(this.fetchApi, "https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "anthropic-beta": CLAUDE_OAUTH_BETA,
+          "anthropic-version": CLAUDE_ANTHROPIC_VERSION,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          max_tokens: 1,
+          messages: [{ role: "user", content: "." }],
+        }),
+      });
+    } catch {
+      return null;
+    }
+
+    // Parsed regardless of status: a rate-limited response still carries the
+    // headers, and an exhausted account is exactly when they matter.
+    const windows: ProviderUsageWindow[] = [];
+    for (const spec of [
+      { prefix: "5h", id: "five_hour", label: "Session" },
+      { prefix: "7d", id: "weekly", label: "Weekly" },
+    ]) {
+      const utilization = Number.parseFloat(
+        res.headers.get(`anthropic-ratelimit-unified-${spec.prefix}-utilization`) ?? "",
+      );
+      if (!Number.isFinite(utilization)) continue;
+      const usedPct = Math.max(0, Math.round(utilization * 100));
+      const resetEpochSeconds = Number.parseFloat(
+        res.headers.get(`anthropic-ratelimit-unified-${spec.prefix}-reset`) ?? "",
+      );
+      windows.push(
+        windowFromUsedPct({
+          id: spec.id,
+          label: spec.label,
+          utilizationPct: usedPct,
+          resetsAt: Number.isFinite(resetEpochSeconds)
+            ? new Date(resetEpochSeconds * 1000).toISOString()
+            : null,
+          tone: toneFromUsedPct(usedPct),
+        }),
+      );
+    }
+    if (windows.length === 0) return null;
+
+    return {
+      providerId: this.providerId,
+      displayName: this.displayName,
+      status: "available",
+      planLabel: null,
+      windows,
+      balances: [],
+      details: [],
+      error: null,
+    };
+  }
+
+  /** Cheapest listed model for the header ping, resolved once per instance. */
+  private async resolvePingModel(token: string): Promise<string | null> {
+    if (this.pingModelId) return this.pingModelId;
+    try {
+      const res = await fetchProviderApi(this.fetchApi, "https://api.anthropic.com/v1/models", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json",
+          "anthropic-beta": CLAUDE_OAUTH_BETA,
+          "anthropic-version": CLAUDE_ANTHROPIC_VERSION,
+        },
+      });
+      if (!res.ok) return null;
+      const parsed = ClaudeModelsResponseSchema.safeParse(await res.json());
+      if (!parsed.success) return null;
+      const models = parsed.data.data;
+      const pick = models.find((m) => m.id.includes("haiku")) ?? models[0];
+      this.pingModelId = pick?.id ?? null;
+      return this.pingModelId;
+    } catch {
+      return null;
+    }
   }
 
   private async callClaudeApi(token: string): Promise<ClaudeUsageResponse | "NEEDS_AUTH"> {
