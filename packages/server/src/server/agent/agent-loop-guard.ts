@@ -35,6 +35,8 @@ export type LoopGuardOutcome =
   | { tripped: false }
   | { tripped: true; signature: string; count: number };
 
+const NO_LOOP_GUARD_TRIP: LoopGuardOutcome = { tripped: false };
+
 export function createLoopGuardState(): LoopGuardState {
   return {
     turnId: undefined,
@@ -92,12 +94,10 @@ export function observeToolCall(
   turnId: string | undefined,
   threshold: number = DEFAULT_LOOP_GUARD_THRESHOLD,
 ): LoopGuardOutcome {
-  // Only terminal outcomes carry signal. Ignore "running" / "canceled".
   if (item.status !== "completed" && item.status !== "failed") {
-    return { tripped: false };
+    return NO_LOOP_GUARD_TRIP;
   }
 
-  // A new turn resets the streak entirely.
   if (turnId !== state.turnId) {
     state.turnId = turnId;
     state.signature = null;
@@ -106,35 +106,32 @@ export function observeToolCall(
     state.countedCallIds.clear();
   }
 
-  // Already tripped this turn — don't fire repeatedly.
-  if (state.tripped) {
-    return { tripped: false };
-  }
-
-  const unproductive = isUnproductive(item);
-  const signature = toolCallSignature(item);
-
-  // A productive call, or a different action, breaks the streak.
-  if (!unproductive || signature !== state.signature) {
-    state.signature = unproductive ? signature : null;
-    state.unproductiveCount = unproductive ? 1 : 0;
+  if (!isUnproductive(item)) {
+    state.signature = null;
+    state.unproductiveCount = 0;
+    state.tripped = false;
     state.countedCallIds.clear();
-    if (unproductive) {
-      state.countedCallIds.add(item.callId);
+    return NO_LOOP_GUARD_TRIP;
+  }
+
+  const signature = toolCallSignature(item);
+  if (signature !== state.signature) {
+    state.signature = signature;
+    state.unproductiveCount = 1;
+    state.tripped = false;
+    state.countedCallIds.clear();
+    state.countedCallIds.add(item.callId);
+  } else {
+    if (state.tripped || state.countedCallIds.has(item.callId)) {
+      return NO_LOOP_GUARD_TRIP;
     }
-    return { tripped: false };
+    state.countedCallIds.add(item.callId);
+    state.unproductiveCount += 1;
   }
 
-  // Same unproductive action again. Dedupe status transitions of one call.
-  if (state.countedCallIds.has(item.callId)) {
-    return { tripped: false };
+  if (state.unproductiveCount < threshold) {
+    return NO_LOOP_GUARD_TRIP;
   }
-  state.countedCallIds.add(item.callId);
-  state.unproductiveCount += 1;
-
-  if (state.unproductiveCount >= threshold) {
-    state.tripped = true;
-    return { tripped: true, signature, count: state.unproductiveCount };
-  }
-  return { tripped: false };
+  state.tripped = true;
+  return { tripped: true, signature, count: state.unproductiveCount };
 }

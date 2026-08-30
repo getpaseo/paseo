@@ -78,6 +78,36 @@ describe("agent-loop-guard", () => {
     expect(trips).toBe(1);
   });
 
+  it("trips on the first unproductive call when configured with a threshold of one", () => {
+    const state = createLoopGuardState();
+
+    expect(observeToolCall(state, shellCall("rtk lint", { exitCode: 1 }), "turn-1", 1)).toEqual({
+      tripped: true,
+      signature: "shell:rtk lint",
+      count: 1,
+    });
+  });
+
+  it("can trip again after a productive call starts a new streak in the same turn", () => {
+    const state = createLoopGuardState();
+
+    expect(
+      observeToolCall(state, shellCall("rtk lint", { exitCode: 1 }), "turn-1", 2).tripped,
+    ).toBe(false);
+    expect(
+      observeToolCall(state, shellCall("rtk lint", { exitCode: 1 }), "turn-1", 2).tripped,
+    ).toBe(true);
+    expect(
+      observeToolCall(state, shellCall("npm test", { exitCode: 0 }), "turn-1", 2).tripped,
+    ).toBe(false);
+    expect(
+      observeToolCall(state, shellCall("rtk lint", { exitCode: 1 }), "turn-1", 2).tripped,
+    ).toBe(false);
+    expect(
+      observeToolCall(state, shellCall("rtk lint", { exitCode: 1 }), "turn-1", 2).tripped,
+    ).toBe(true);
+  });
+
   it("resets the streak when a different action runs in between", () => {
     const state = createLoopGuardState();
     for (let i = 0; i < DEFAULT_LOOP_GUARD_THRESHOLD - 1; i++) {
