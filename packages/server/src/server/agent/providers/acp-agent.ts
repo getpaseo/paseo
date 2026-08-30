@@ -1575,15 +1575,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private async closeAfterInitializationFailure(error: unknown): Promise<never> {
+    const initializationError = toACPRequestError(error);
     try {
       await this.close();
     } catch (closeError) {
       this.logger.warn(
-        { err: closeError, initializationError: error },
+        { err: closeError, initializationError },
         "Failed to close ACP process after session initialization failure",
       );
     }
-    throw error;
+    throw initializationError;
   }
 
   async run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult> {
