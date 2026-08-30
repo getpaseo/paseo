@@ -86,6 +86,17 @@ interface ClaudeQuotaProviderOptions {
   claudeKeychainReader?: () => Promise<unknown | null>;
   platform?: typeof process.platform;
   fetch?: ProviderApiFetch;
+  /** Report usage under this id instead of "claude" (provider profiles). */
+  providerId?: string;
+  /** Display name matching the profile's label. */
+  displayName?: string;
+  /**
+   * Use this OAuth token instead of reading the shared credential stores.
+   * Provider profiles pin accounts with CLAUDE_CODE_OAUTH_TOKEN; their usage
+   * must come from that token, not from whatever account the shared stores
+   * currently hold.
+   */
+  accessToken?: string;
 }
 
 function buildClaudePlan(
@@ -338,22 +349,26 @@ export async function readClaudeKeychainCredentials(
 }
 
 export class ClaudeQuotaProvider implements ProviderUsageFetcher {
-  readonly providerId = "claude";
-  readonly displayName = "Claude";
+  readonly providerId: string;
+  readonly displayName: string;
 
   private readonly logger: Logger;
   private readonly claudeHome: string;
   private readonly readKeychainCredentials: () => Promise<unknown | null>;
   private readonly platform: typeof process.platform;
   private readonly fetchApi: ProviderApiFetch;
+  private readonly staticAccessToken: string | null;
 
   constructor(options: ClaudeQuotaProviderOptions) {
+    this.providerId = options.providerId ?? "claude";
+    this.displayName = options.displayName ?? "Claude";
     this.logger = options.logger.child({ module: "claude-quota-provider" });
     this.claudeHome =
       options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
     this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;
+    this.staticAccessToken = options.accessToken?.trim() || null;
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
@@ -435,6 +450,13 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   }
 
   private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
+    // A profile-pinned token bypasses the shared stores entirely: it identifies
+    // one account regardless of what the CLI or third-party switchers are on.
+    // subscriptionType/rateLimitTier are unknown for raw tokens, so planLabel
+    // stays null for profile entries.
+    if (this.staticAccessToken) {
+      return { oauth: { accessToken: this.staticAccessToken } };
+    }
     // On macOS the Keychain is Claude Code's canonical credential store; a
     // `.credentials.json` there is written by third-party tools (account
     // switchers, backups) and goes stale when they swap accounts, so the

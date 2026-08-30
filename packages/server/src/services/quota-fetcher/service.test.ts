@@ -15,6 +15,7 @@ import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
 import { ProviderUsageService } from "./service.js";
+import { buildProfileUsageFetchers } from "./profile-fetchers.js";
 
 function writeClaudeCredentials(
   dir: string,
@@ -298,6 +299,37 @@ describe("ProviderUsageService", () => {
     expect(withinFloor).toBe(first);
     expect(beyondFloor.providers[0]?.windows[0]?.usedPct).toBe(2);
     expect(calls).toBe(2);
+  });
+
+  it("re-evaluates dynamic fetchers on every refresh so config reloads apply", async () => {
+    const makeFetcher = (providerId: string) => ({
+      providerId,
+      displayName: providerId,
+      fetchUsage: async () => ({
+        providerId,
+        displayName: providerId,
+        status: "available" as const,
+        planLabel: null,
+        windows: [],
+      }),
+    });
+    let dynamic = [makeFetcher("claude-work")];
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      cacheTtlMs: 0,
+      fetchers: [makeFetcher("claude")],
+      dynamicFetchers: () => dynamic,
+    });
+
+    const first = await service.listUsage();
+    expect(first.providers.map((p) => p.providerId)).toEqual(["claude", "claude-work"]);
+
+    // Simulate `paseo daemon reload` adding a profile and removing the old one.
+    // Plain listUsage: cacheTtlMs 0 means the next read refetches, proving a
+    // reload needs no force flag (and no service lifecycle hooks) to apply.
+    dynamic = [makeFetcher("claude-personal")];
+    const second = await service.listUsage();
+    expect(second.providers.map((p) => p.providerId)).toEqual(["claude", "claude-personal"]);
   });
 
   it("deduplicates concurrent cache misses", async () => {
@@ -651,6 +683,53 @@ describe("real provider usage fetchers", () => {
       "https://api.anthropic.com/api/oauth/usage",
       expect.objectContaining({
         headers: expect.objectContaining({ Authorization: "Bearer at_file_only" }),
+      }),
+    );
+  });
+
+  it("fetches profile usage with the profile's pinned token, ignoring shared stores", async () => {
+    // Shared stores describe a DIFFERENT account than the profile's token.
+    writeClaudeCredentials(claudeHome, "at_shared_store");
+    fetchApi = mockFetch(
+      new Map([
+        ["https://api.anthropic.com/api/oauth/usage", () => jsonResponse(makeClaudeResponse())],
+      ]),
+    );
+    const logger = createLogger();
+    const fetchThroughTestDouble = ((url: RequestInfo | URL, init?: RequestInit) =>
+      fetchApi(url, init)) as typeof fetch;
+    const usageService = new ProviderUsageService({
+      logger,
+      cacheTtlMs: 0,
+      fetchers: [],
+      dynamicFetchers: () =>
+        buildProfileUsageFetchers({
+          logger,
+          fetch: fetchThroughTestDouble,
+          providers: {
+            "claude-work": {
+              extends: "claude",
+              label: "Claude (Work)",
+              env: { CLAUDE_CODE_OAUTH_TOKEN: "sk-ant-oat01-work" },
+            },
+          },
+        }),
+    });
+
+    const result = await usageService.listUsage();
+    const profile = findProvider(result, "claude-work");
+
+    expect(profile).toMatchObject({
+      providerId: "claude-work",
+      displayName: "Claude (Work)",
+      status: "available",
+      planLabel: null,
+    });
+    expect(profile.windows.length).toBeGreaterThan(0);
+    expect(fetchApi).toHaveBeenCalledWith(
+      "https://api.anthropic.com/api/oauth/usage",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Authorization: "Bearer sk-ant-oat01-work" }),
       }),
     );
   });

@@ -11,6 +11,12 @@ export interface ProviderUsageServiceOptions {
   cacheTtlMs?: number;
   /** Floor a forced refresh still respects, so UI-driven refreshes cannot hammer provider APIs. */
   forceRefreshMinIntervalMs?: number;
+  /**
+   * Fetchers derived from mutable state (provider profiles in config.json),
+   * re-evaluated on every refresh so a config reload is picked up without any
+   * service lifecycle plumbing. Static fetchers come first in the result.
+   */
+  dynamicFetchers?: () => ProviderUsageFetcher[];
   now?: () => number;
 }
 
@@ -25,6 +31,7 @@ const DEFAULT_FORCE_REFRESH_MIN_INTERVAL_MS = 15 * 1000;
 export class ProviderUsageService {
   private readonly logger: Logger;
   private readonly fetchers: ProviderUsageFetcher[];
+  private readonly dynamicFetchers: (() => ProviderUsageFetcher[]) | null;
   private readonly cacheTtlMs: number;
   private readonly forceRefreshMinIntervalMs: number;
   private readonly now: () => number;
@@ -39,6 +46,7 @@ export class ProviderUsageService {
         logger: this.logger,
         fetch: options.fetch,
       });
+    this.dynamicFetchers = options.dynamicFetchers ?? null;
     this.cacheTtlMs = options.cacheTtlMs ?? DEFAULT_PROVIDER_USAGE_CACHE_TTL_MS;
     this.forceRefreshMinIntervalMs =
       options.forceRefreshMinIntervalMs ?? DEFAULT_FORCE_REFRESH_MIN_INTERVAL_MS;
@@ -71,9 +79,10 @@ export class ProviderUsageService {
   }
 
   private async fetchFreshUsage(nowMs: number): Promise<ProviderUsageListResult> {
-    const settled = await Promise.allSettled(this.fetchers.map((fetcher) => fetcher.fetchUsage()));
+    const fetchers = [...this.fetchers, ...(this.dynamicFetchers?.() ?? [])];
+    const settled = await Promise.allSettled(fetchers.map((fetcher) => fetcher.fetchUsage()));
     const providers = settled.map((result, index) => {
-      const fetcher = this.fetchers[index];
+      const fetcher = fetchers[index];
       if (result.status === "fulfilled") {
         return result.value;
       }
