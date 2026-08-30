@@ -17,12 +17,22 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
-import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
+import {
+  PiProviderParamsSchema,
+  PiRpcAgentClient,
+  PiRpcAgentSession,
+  transformPiModels,
+} from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import type { PiUsagePollScheduler } from "./usage-poller.js";
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+
+test("Pi RPC timeout defaults to 60 seconds and accepts an override", () => {
+  expect(PiProviderParamsSchema.parse({}).rpcTimeoutMs).toBe(60_000);
+  expect(PiProviderParamsSchema.parse({ rpcTimeoutMs: 90_000 }).rpcTimeoutMs).toBe(90_000);
+});
 
 function createClient(
   pi = new FakePi(),

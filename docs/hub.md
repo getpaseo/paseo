@@ -24,10 +24,10 @@ receive only `hub.execution.*` authority, so execution credentials cannot manage
 ## Session grants and execution ownership
 
 Trusted clients and the Hub use the same `Session` implementation. The connection boundary supplies
-grants: trusted clients receive `*`, while an enrolled Hub connection receives its persisted
-`hub.execution.*` grant. One matcher handles exact RPC names and trailing namespace wildcards for
-both inbound requests and outbound messages. A denied request returns the ordinary `rpc_error`
-shape.
+semantic permissions: trusted clients receive the owner permission set, while an enrolled Hub
+connection receives `hub.execute`. The current enrollment and persistence format still carries
+`hub.execution.*`; one compatibility boundary translates it before the session is created. A denied
+request returns the ordinary `rpc_error` shape. See [permissions.md](permissions.md).
 
 The Hub connection still has a narrow lifecycle boundary: it has no trusted-client hello/resume,
 browser, binary, retained-session, or broadcast state. Its outbound execution events include only

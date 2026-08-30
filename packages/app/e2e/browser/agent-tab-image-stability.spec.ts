@@ -45,6 +45,37 @@ test("switching between settled agent tabs keeps a real assistant PNG rendered",
   await switchAwayAndBackWithoutImageInstability(page, { image, imageAgent, otherAgent });
 });
 
+test("opens a timeline image in a zoomable lightbox", async ({
+  imageWorkspace: workspace,
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const image = await createSmallAssistantPng(workspace, {
+    alt: "Zoomable timeline image",
+    fileName: "zoomable-timeline-image.png",
+  });
+  const imageAgent = await createSettledMockAgent(workspace, "Zoomable image timeline");
+  await emitSettledAssistantImage(workspace.client, imageAgent, image);
+  await openAssistantImageTimeline(page, imageAgent);
+  await expectAssistantImageRendered(page, image);
+
+  await page.getByRole("button", { name: "Open image attachment" }).click();
+  const lightboxImage = page.getByTestId("attachment-lightbox-image");
+  const canvas = page.getByTestId("attachment-lightbox-canvas");
+  await expect(lightboxImage).toBeVisible();
+  await canvas.hover();
+  const transformedContent = canvas.locator(":scope > div").first();
+  const initialBox = await transformedContent.boundingBox();
+  expect(initialBox).not.toBeNull();
+  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  await expect
+    .poll(async () => (await transformedContent.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(initialBox!.width * 1.2);
+
+  await page.getByTestId("attachment-lightbox-backdrop").click({ position: { x: 4, y: 4 } });
+  await expect(lightboxImage).toHaveCount(0);
+});
+
 test("reloading a timeline anchors near-tail assistant image growth", async ({
   imageWorkspace: workspace,
   page,

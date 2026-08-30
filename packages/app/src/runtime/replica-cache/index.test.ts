@@ -508,6 +508,21 @@ describe("ReplicaCache", () => {
     ]);
   });
 
+  it("retries a timeline read invalidated by a concurrent directory commit", async () => {
+    const storage = new MemoryStorage();
+    const cache = createCache(storage);
+    cache.commitTimeline(SERVER_ID, "agent-1", timeline("Persisted timeline"));
+    await cache.flush();
+    storage.onRead = () => {
+      storage.onRead = null;
+      cache.commitDirectory(SERVER_ID, directory());
+    };
+
+    expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([
+      timelineItem("Persisted timeline"),
+    ]);
+  });
+
   it("rebuilds every directory row before restoring its checkpoint after eviction", async () => {
     const storage = new MemoryStorage();
     const cache = new ReplicaCache(storage, { ...noLegacyCleanup, maxBytes: 2_500 });

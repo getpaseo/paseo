@@ -127,7 +127,7 @@ import { getFileTypeLabel } from "@/attachments/file-types";
 import { getAgentContextAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
-import { AttachmentLightbox } from "@/components/attachment-lightbox";
+import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { useIsDictationReady } from "@/hooks/use-is-dictation-ready";
 import { useForgeSearchQuery } from "@/git/use-forge-search-query";
@@ -2273,6 +2273,10 @@ function ComposerContentImpl({
   const handleLightboxClose = useCallback(() => {
     setLightboxMetadata(null);
   }, []);
+  const lightboxSource = useMemo<ImageLightboxSource | null>(
+    () => (lightboxMetadata ? { type: "attachment", metadata: lightboxMetadata } : null),
+    [lightboxMetadata],
+  );
 
   const handleGithubPickerOpenChange = useCallback(
     (open: boolean) => {
@@ -2396,7 +2400,7 @@ function ComposerContentImpl({
         isMessageInputFocused={isMessageInputFocused}
       />
       <Animated.View style={composerContainerStyle}>
-        <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
+        <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
         {!onOpenAgentContextPicker ? (
           <AgentContextPicker
             visible={isAgentContextPickerOpen}
