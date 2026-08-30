@@ -92,6 +92,10 @@ export class OmpUsageRunner {
         { timeout: OMP_USAGE_TIMEOUT_MS, maxBuffer: OMP_USAGE_MAX_BUFFER },
       );
       const parsed = OmpUsageOutputSchema.parse(JSON.parse(stdout));
+      // `omp usage --json` currently reports one aggregated record per
+      // provider even with several authenticated accounts. If OMP starts
+      // emitting per-account reports, this must resolve the active
+      // credential instead of the first match.
       return parsed.reports?.find((report) => report.provider === providerId) ?? null;
     } catch (error) {
       this.logger.debug({ err: error, providerId }, "OMP usage fetch failed");

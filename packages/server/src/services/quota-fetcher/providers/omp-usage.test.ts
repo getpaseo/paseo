@@ -221,36 +221,44 @@ describe("ZaiQuotaProvider", () => {
 
 describe("CodexQuotaProvider", () => {
   it("prefers OpenAI plan usage reported by OMP", async () => {
-    const provider = new CodexQuotaProvider({
-      logger: createTestLogger(),
-      fetch: (() => {
-        throw new Error("must not hit the Codex API");
-      }) as typeof fetch,
-      exec: execReturning(
-        ompOutput([
-          {
-            provider: "openai-codex",
-            fetchedAt: 1_788_033_538_807,
-            limits: [
-              {
-                id: "primary",
-                label: "5 hours",
-                amount: { usedFraction: 0.12 },
-                window: { resetsAt: 1_788_042_238_807 },
-              },
-            ],
-            metadata: { planType: "ChatGPT Plus" },
-          },
-        ]),
-      ),
-    });
+    // Isolated CODEX_HOME: the OMP path must be reachable without any
+    // native Codex credentials on the machine.
+    const codexHome = await mkdtemp(join(tmpdir(), "paseo-codex-"));
+    try {
+      const provider = new CodexQuotaProvider({
+        logger: createTestLogger(),
+        codexHome,
+        fetch: (() => {
+          throw new Error("must not hit the Codex API");
+        }) as typeof fetch,
+        exec: execReturning(
+          ompOutput([
+            {
+              provider: "openai-codex",
+              fetchedAt: 1_788_033_538_807,
+              limits: [
+                {
+                  id: "primary",
+                  label: "5 hours",
+                  amount: { usedFraction: 0.12 },
+                  window: { resetsAt: 1_788_042_238_807 },
+                },
+              ],
+              metadata: { planType: "ChatGPT Plus" },
+            },
+          ]),
+        ),
+      });
 
-    await expect(provider.fetchUsage()).resolves.toMatchObject({
-      providerId: "codex",
-      displayName: "Codex",
-      sourceLabel: "Oh My Pi",
-      planLabel: "ChatGPT Plus",
-    });
+      await expect(provider.fetchUsage()).resolves.toMatchObject({
+        providerId: "codex",
+        displayName: "Codex",
+        sourceLabel: "Oh My Pi",
+        planLabel: "ChatGPT Plus",
+      });
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
   });
 
   it("prefers native Codex usage over an available OMP report", async () => {
@@ -290,8 +298,64 @@ describe("CodexQuotaProvider", () => {
       await rm(codexHome, { recursive: true, force: true });
     }
   });
-});
+  it("keeps the native fetch error instead of substituting an OMP quota", async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), "paseo-codex-"));
+    try {
+      await writeFile(
+        join(codexHome, "auth.json"),
+        JSON.stringify({ tokens: { access_token: "codex_test_token" } }),
+      );
+      const provider = new CodexQuotaProvider({
+        logger: createTestLogger(),
+        codexHome,
+        fetch: (() => {
+          throw new Error("network down");
+        }) as typeof fetch,
+        exec: () => {
+          throw new Error("must not run OMP after a native failure");
+        },
+      });
 
+      const usage = await provider.fetchUsage();
+      expect(usage.status).toBe("error");
+      expect(usage.error).toContain("network down");
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to OMP when the native token needs re-auth", async () => {
+    const codexHome = await mkdtemp(join(tmpdir(), "paseo-codex-"));
+    try {
+      await writeFile(
+        join(codexHome, "auth.json"),
+        JSON.stringify({ tokens: { access_token: "codex_test_token" } }),
+      );
+      const provider = new CodexQuotaProvider({
+        logger: createTestLogger(),
+        codexHome,
+        fetch: (async () => new Response("unauthorized", { status: 401 })) as typeof fetch,
+        exec: execReturning(
+          ompOutput([
+            {
+              provider: "openai-codex",
+              limits: [{ id: "primary", amount: { usedFraction: 0.42 } }],
+              metadata: { planType: "ChatGPT Plus" },
+            },
+          ]),
+        ),
+      });
+
+      await expect(provider.fetchUsage()).resolves.toMatchObject({
+        status: "available",
+        sourceLabel: "Oh My Pi",
+        planLabel: "ChatGPT Plus",
+      });
+    } finally {
+      await rm(codexHome, { recursive: true, force: true });
+    }
+  });
+});
 describe("OpencodeGoQuotaProvider", () => {
   it("maps the OMP report with 5h, weekly, and monthly windows", async () => {
     const provider = new OpencodeGoQuotaProvider({

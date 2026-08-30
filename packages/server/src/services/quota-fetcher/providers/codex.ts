@@ -101,9 +101,35 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   }
 
   async fetchUsage(): Promise<ProviderUsage> {
-    const fromCodex = await this.fetchCodexUsage();
-    if (fromCodex) return fromCodex;
+    const auth = await this.readCodexAuth();
+    const accessToken = auth?.tokens?.access_token;
+    if (!auth || !accessToken) {
+      // No native credentials: OMP may still carry the active account.
+      return this.fetchOmpUsage();
+    }
 
+    try {
+      const { account_id } = auth.tokens ?? {};
+      const resp = await this.callCodexApi(accessToken, account_id);
+      if (resp === "NEEDS_AUTH") {
+        // Read-only on credentials; the Codex CLI owns refresh. OMP may hold
+        // a different, valid account.
+        return this.fetchOmpUsage();
+      }
+      return this.toUsage(resp);
+    } catch (error) {
+      // Native credentials exist but the fetch itself failed: surface the
+      // error instead of silently substituting another account's quota.
+      this.logger.debug({ err: error }, "Codex usage fetch failed");
+      return unavailableUsage({
+        providerId: this.providerId,
+        displayName: this.displayName,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async fetchOmpUsage(): Promise<ProviderUsage> {
     const report = await this.omp.fetchReport("openai-codex");
     const fromOmp = report
       ? providerUsageFromOmpReport({
@@ -113,21 +139,6 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
         })
       : null;
     return fromOmp ?? unavailableUsage(this);
-  }
-
-  private async fetchCodexUsage(): Promise<ProviderUsage | null> {
-    const auth = await this.readCodexAuth();
-    const accessToken = auth?.tokens?.access_token;
-    if (!auth || !accessToken) return null;
-
-    try {
-      const { account_id } = auth.tokens ?? {};
-      const resp = await this.callCodexApi(accessToken, account_id);
-      return resp === "NEEDS_AUTH" ? null : this.toUsage(resp);
-    } catch (error) {
-      this.logger.debug({ err: error }, "Codex usage fetch failed");
-      return null;
-    }
   }
 
   private toUsage(resp: CodexUsageResponse): ProviderUsage {
