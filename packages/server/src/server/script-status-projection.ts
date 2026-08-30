@@ -233,17 +233,19 @@ export function buildWorkspaceScriptPayloads(
     resolveHealth: options.resolveHealth,
   };
 
-  const payloads: WorkspaceScriptPayload[] = [];
+  const configuredPayloads: WorkspaceScriptPayload[] = [];
 
   for (const [scriptName, config] of scriptConfigs.entries()) {
     const runtimeEntry = runtimeEntries.get(scriptName) ?? null;
     const serviceState = isServiceScript(config)
       ? projectWorkspaceServiceState({ workspaceId, scriptName, ctx })
       : null;
-    payloads.push(
+    configuredPayloads.push(
       buildConfiguredScriptPayload(scriptName, config, runtimeEntry, serviceState, ctx),
     );
   }
+
+  const orphanPayloads: WorkspaceScriptPayload[] = [];
 
   for (const runtimeEntry of runtimeEntries.values()) {
     if (scriptConfigs.has(runtimeEntry.scriptName) || runtimeEntry.lifecycle !== "running") {
@@ -253,10 +255,10 @@ export function buildWorkspaceScriptPayloads(
       runtimeEntry.type === "service"
         ? projectWorkspaceServiceState({ workspaceId, scriptName: runtimeEntry.scriptName, ctx })
         : null;
-    payloads.push(buildOrphanRuntimePayload(runtimeEntry, serviceState, ctx));
+    orphanPayloads.push(buildOrphanRuntimePayload(runtimeEntry, serviceState, ctx));
   }
 
-  return sortPayloads(payloads);
+  return [...configuredPayloads, ...sortPayloads(orphanPayloads)];
 }
 
 function buildScriptStatusUpdateMessage(params: {

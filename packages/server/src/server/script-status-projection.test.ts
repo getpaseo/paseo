@@ -449,6 +449,58 @@ describe("script-status-projection", () => {
     }
   });
 
+  it("keeps configured scripts in paseo.json order and trails orphans alphabetically", () => {
+    const workspaceId = "workspace-script-order";
+    // File order is deliberately non-alphabetical so a re-sort would be observable.
+    const workspace = createWorkspaceRepo({
+      paseoConfig: {
+        scripts: {
+          dev: { command: "npm run dev" },
+          build: { command: "npm run build" },
+          api: { command: "npm run api" },
+        },
+      },
+    });
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    // Two running-but-unconfigured ("orphan") scripts, registered out of alphabetical order.
+    runtimeStore.set({
+      workspaceId,
+      scriptName: "ztask",
+      type: "script",
+      lifecycle: "running",
+      terminalId: "term-z",
+      exitCode: null,
+    });
+    runtimeStore.set({
+      workspaceId,
+      scriptName: "mtask",
+      type: "script",
+      lifecycle: "running",
+      terminalId: "term-m",
+      exitCode: null,
+    });
+
+    try {
+      const payloads = buildPayloads({
+        workspaceId,
+        workspaceDirectory: workspace.repoDir,
+        routeStore,
+        runtimeStore,
+        daemonPort: 6767,
+      });
+      expect(payloads.map((payload) => payload.scriptName)).toEqual([
+        "dev",
+        "build",
+        "api",
+        "mtask",
+        "ztask",
+      ]);
+    } finally {
+      workspace.cleanup();
+    }
+  });
+
   it("readPaseoConfig fails with configPath and error when paseo.json is malformed", () => {
     const workspace = createWorkspaceRepo();
     const configPath = path.join(workspace.repoDir, "paseo.json");
