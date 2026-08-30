@@ -732,13 +732,13 @@ describe("OMP agent client and session", () => {
     });
   });
 
-  test("normalizes a fallback reference with api gateway and unknown thinking suffixes", async () => {
+  test("normalizes a fallback reference with api gateway and thinking suffix", async () => {
     const omp = new OmpHarness();
     await omp.start();
 
     omp.runtime().emit({
       type: "retry_fallback_succeeded",
-      model: "openai-codex/gpt-5.6-luna@my-gateway:ultra",
+      model: "openai-codex/gpt-5.6-luna@my-gateway:high",
       role: "primary",
     });
 
@@ -770,6 +770,86 @@ describe("OMP agent client and session", () => {
       role: "primary",
     });
     // OMP's get_state never carries the suffix recorded from fallback events.
+    omp.runtime().state = {
+      ...omp.runtime().state,
+      model: { provider: "zai", id: "glm-4.7" },
+    };
+
+    await expect(omp.runtimeInfo()).resolves.toMatchObject({
+      model: "openai-codex/gpt-5.6-luna",
+    });
+  });
+
+  test("keeps literal :free routing suffixes in a fallback model reference", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "openrouter/meta-llama/llama-3:free",
+      role: "primary",
+    });
+
+    expect(omp.modelChanges()).toEqual([
+      expect.objectContaining({ model: "openrouter/meta-llama/llama-3:free" }),
+    ]);
+  });
+
+  test("resolves a restored primary only through the explicit model_changed signal", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().state = {
+      ...omp.runtime().state,
+      model: { provider: "zai", id: "glm-4.7" },
+    };
+    await omp.runtimeInfo();
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "opencode-go/deepseek-v4-flash",
+      role: "primary",
+    });
+    // Cooldown expiry restored the primary, but a lagging get_state still
+    // reports the pre-fallback model — indistinguishable from stale state.
+    omp.runtime().state = {
+      ...omp.runtime().state,
+      model: { provider: "zai", id: "glm-4.7" },
+    };
+    await expect(omp.runtimeInfo()).resolves.toMatchObject({
+      model: "opencode-go/deepseek-v4-flash",
+    });
+
+    // OMP emits model_changed for the restore; the state fetched after it
+    // is the first fresh read of the restored primary.
+    omp.runtime().emit({ type: "model_changed" });
+    await waitForImmediate();
+    await waitForImmediate();
+    await expect(omp.runtimeInfo()).resolves.toMatchObject({
+      model: "zai/glm-4.7",
+    });
+    expect(omp.modelChanges().at(-1)).toMatchObject({ model: "zai/glm-4.7" });
+  });
+
+  test("keeps the latest fallback when a delayed state reports an older pre-fallback model", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().state = {
+      ...omp.runtime().state,
+      model: { provider: "zai", id: "glm-4.7" },
+    };
+    await omp.runtimeInfo();
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "opencode-go/deepseek-v4-flash",
+      role: "primary",
+    });
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "openai-codex/gpt-5.6-luna",
+      role: "primary",
+    });
+    // A get_state dispatched before both fallbacks finally lands.
     omp.runtime().state = {
       ...omp.runtime().state,
       model: { provider: "zai", id: "glm-4.7" },
