@@ -10,6 +10,7 @@ import {
   OWNER_PERMISSIONS,
   SessionAuthorization,
   permissionsForLegacyHubScopes,
+  parseDaemonPermissions,
 } from "./index.js";
 
 function inboundOperationTypes(): SessionInboundMessage["type"][] {
@@ -70,5 +71,10 @@ describe("SessionAuthorization", () => {
         (permission) => !permission.includes("*") && !permission.includes("request"),
       ),
     ).toBe(true);
+  });
+
+  test("permission parsing validates against the shared registry and removes duplicates", () => {
+    expect(parseDaemonPermissions(["hub.execute", "hub.execute"])).toEqual(["hub.execute"]);
+    expect(() => parseDaemonPermissions(["hub.execution.*"])).toThrow("Invalid daemon permission");
   });
 });
