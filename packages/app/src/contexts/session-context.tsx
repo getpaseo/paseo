@@ -20,7 +20,10 @@ import {
   type ViewedTimelineOwner,
 } from "@/timeline/viewed-timeline-sync";
 import type { AgentAttachment, SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import { parseServerInfoStatusPayload } from "@getpaseo/protocol/messages";
+import {
+  HostBatteryStatusPayloadSchema,
+  parseServerInfoStatusPayload,
+} from "@getpaseo/protocol/messages";
 import {
   buildAgentAttentionNotificationPayload,
   type AgentAttentionReason,
@@ -248,6 +251,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const flushAgentLastActivity = useSessionStore((state) => state.flushAgentLastActivity);
   const setPendingPermissions = useSessionStore((state) => state.setPendingPermissions);
   const updateSessionServerInfo = useSessionStore((state) => state.updateSessionServerInfo);
+  const setHostBattery = useSessionStore((state) => state.setHostBattery);
   const setViewedTimelineSync = useSessionStore((state) => state.setViewedTimelineSync);
   const upsertWorkspaceSetupProgress = useWorkspaceSetupStore((state) => state.upsertProgress);
 
@@ -372,7 +376,10 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
       ...(serverInfo.capabilities ? { capabilities: serverInfo.capabilities } : {}),
       ...(serverInfo.features ? { features: serverInfo.features } : {}),
     });
-  }, [client, serverId, updateSessionServerInfo]);
+    if (serverInfo.hostBattery !== undefined) {
+      setHostBattery(serverId, serverInfo.hostBattery);
+    }
+  }, [client, serverId, setHostBattery, updateSessionServerInfo]);
 
   useEffect(() => {
     const unregister = voiceRuntime?.registerSession({
@@ -619,6 +626,13 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
 
     const unsubStatus = client.on("status", (message) => {
       if (message.type !== "status") return;
+      if (message.payload.status === "host_battery") {
+        const parsed = HostBatteryStatusPayloadSchema.safeParse(message.payload);
+        if (parsed.success) {
+          setHostBattery(serverId, parsed.data.battery);
+        }
+        return;
+      }
       const serverInfo = parseServerInfoStatusPayload(message.payload);
       if (serverInfo) {
         viewedTimelineSyncRef.current?.setDeliveryMode(
@@ -814,6 +828,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     applyWorkspaceSetupProgress,
     applyTimelineResponse,
     updateSessionServerInfo,
+    setHostBattery,
     toast,
     voiceRuntime,
     voiceAudioEngine,

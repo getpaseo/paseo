@@ -1,7 +1,9 @@
+import React from "react";
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Server } from "lucide-react-native";
 import { HOST_COLORS, type HostBadgeModel, type HostColor } from "@/hosts/appearance";
+import { formatHostBatteryPercent, useHostBattery } from "@/hosts/host-battery";
 import { identityForeground } from "@/styles/identity-colors";
 import type { Theme } from "@/styles/theme";
 
@@ -34,23 +36,39 @@ const HOST_ICON_MAPPINGS: Record<HostColor, (theme: Theme) => { color: string }>
 
 /**
  * Which machine something lives on, drawn the same way everywhere it appears: a server glyph
- * and, when the host is configured to show one, its name — both in the host's identity color.
+ * and, when the host is configured to show one, its name — both in the host's identity color —
+ * followed by that machine's battery charge when it reports one.
  *
  * A hostname is the least interesting thing on any line that carries it and the only one whose
  * length nobody chose, so the badge yields space before its neighbours rather than alongside
  * them — see `flexShrink` below.
+ *
+ * The charge is read here rather than passed in so that every surface showing a badge gets it
+ * without threading live data through the row models; `HostBadgeModel` stays a pure function of
+ * the host registry and the user's appearance settings.
  */
 export function HostBadge({ badge }: { badge: HostBadgeModel }) {
+  const battery = useHostBattery(badge.serverId);
+  const percent = battery ? formatHostBatteryPercent(battery.percent) : "";
   return (
     <View
       style={styles.badge}
       testID={`host-badge-${badge.serverId}`}
-      accessibilityLabel={badge.label}
+      accessibilityLabel={percent ? `${badge.label} ${percent}` : badge.label}
     >
       <ThemedServer size={HOST_BADGE_ICON_SIZE} uniProps={HOST_ICON_MAPPINGS[badge.color]} />
       {badge.showLabel ? (
         <Text style={[styles.label, labelColorStyle(badge.color)]} numberOfLines={1}>
           {badge.label}
+        </Text>
+      ) : null}
+      {percent ? (
+        // Never truncated: it is the shorter and the more volatile of the two, and a clipped
+        // charge is worse than no charge. The hostname beside it keeps `flexShrink: 1` and
+        // gives up space first. Muted rather than tinted with the host color, because this is
+        // state the machine reports, not part of which machine it is.
+        <Text style={styles.battery} numberOfLines={1}>
+          {badge.showLabel ? `- ${percent}` : percent}
         </Text>
       ) : null}
     </View>
@@ -105,6 +123,12 @@ const styles = StyleSheet.create((theme) => ({
     lineHeight: 16,
     flexShrink: 1,
     minWidth: 0,
+  },
+  battery: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 16,
+    flexShrink: 0,
   },
   labelViolet: { color: identityForeground("violet", theme.colorScheme) },
   labelSky: { color: identityForeground("sky", theme.colorScheme) },

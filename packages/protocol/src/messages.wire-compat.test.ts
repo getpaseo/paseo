@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
+  HostBatteryStatusPayloadSchema,
   ServerInfoStatusPayloadSchema,
   SessionOutboundMessageSchema,
   WSHelloMessageSchema,
@@ -114,6 +115,57 @@ describe("wire schema compatibility", () => {
       hostname: null,
       version: null,
       features: { agentTurnIdentity: true },
+    });
+  });
+
+  test("server info parses with and without a host battery reading", () => {
+    // An older daemon sends no `hostBattery` at all. The field must stay absent rather than
+    // becoming null, so the client can tell "not reported" from "this host has no battery".
+    const legacy = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "legacy-server",
+    });
+    expect(legacy.hostBattery).toBeUndefined();
+
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "battery-server",
+        hostBattery: { percent: 37 },
+      }).hostBattery,
+    ).toEqual({ percent: 37 });
+
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "desktop-server",
+        hostBattery: null,
+      }).hostBattery,
+    ).toBeNull();
+  });
+
+  test("host battery accepts readings an older client would have rejected", () => {
+    // `percent` is deliberately unconstrained on the wire: a daemon that reports a fraction, or
+    // a value outside 0-100, must not take down the whole message. Clamping is the UI's job.
+    for (const percent of [0, 37.4, 100, 128.5, -1]) {
+      expect(
+        HostBatteryStatusPayloadSchema.parse({ status: "host_battery", battery: { percent } })
+          .battery,
+      ).toEqual({ percent });
+    }
+  });
+
+  test("an old client tolerates a host battery status it does not know", () => {
+    // Status payloads are open by design, so a daemon broadcasting `host_battery` to a client
+    // built before the feature parses as an ordinary status rather than failing the socket.
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "status",
+        payload: { status: "host_battery", battery: { percent: 37 } },
+      }),
+    ).toMatchObject({
+      type: "status",
+      payload: { status: "host_battery", battery: { percent: 37 } },
     });
   });
 

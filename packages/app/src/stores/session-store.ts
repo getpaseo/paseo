@@ -34,6 +34,7 @@ import type {
   AgentPersistenceHandle,
 } from "@getpaseo/protocol/agent-types";
 import type {
+  HostBattery,
   ServerInfoStatusPayload,
   ProjectPlacementPayload,
   ServerCapabilities,
@@ -278,6 +279,20 @@ export interface AgentFileExplorerState {
   selectedEntryPath: string | null;
 }
 
+/**
+ * Compared at display precision. The daemon already suppresses repeats, but a reconnect
+ * replays the handshake, and an unchanged charge should not wake the badge.
+ */
+function sameHostBattery(
+  a: HostBattery | null | undefined,
+  b: HostBattery | null | undefined,
+): boolean {
+  if (a === null || b === null || a === undefined || b === undefined) {
+    return a === b;
+  }
+  return Math.round(a.percent) === Math.round(b.percent);
+}
+
 export interface DaemonServerInfo {
   serverId: string;
   hostname: string | null;
@@ -371,6 +386,12 @@ export interface SessionState {
   // Server metadata (from server_info handshake)
   serverInfo: DaemonServerInfo | null;
 
+  // Charge of the machine the daemon runs on. Seeded by the handshake and kept current by
+  // `host_battery` pushes. Held apart from `serverInfo` because it changes on its own clock:
+  // folding it in would rewrite that object every few minutes and wake every reader of it.
+  // `null` means the host has no battery; `undefined` means it has not reported one yet.
+  hostBattery: HostBattery | null | undefined;
+
   // Hydration status
   hasHydratedAgents: boolean;
   hasHydratedWorkspaces: boolean;
@@ -445,6 +466,7 @@ interface SessionStoreActions {
   updateSessionClient: (serverId: string, client: DaemonClient, clientGeneration?: number) => void;
   setViewedTimelineSync: (serverId: string, sync: ViewedTimelineUiBridge | null) => void;
   updateSessionServerInfo: (serverId: string, info: DaemonServerInfo) => void;
+  setHostBattery: (serverId: string, battery: HostBattery | null) => void;
 
   // Audio state
   setIsPlayingAudio: (serverId: string, playing: boolean) => void;
@@ -635,6 +657,7 @@ function createInitialSessionState(
     clientGeneration,
     viewedTimelineSync: null,
     serverInfo: null,
+    hostBattery: undefined,
     hasHydratedAgents: false,
     hasHydratedWorkspaces: false,
     hasWorkspaceDirectorySnapshot: false,
@@ -827,6 +850,22 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, viewedTimelineSync },
+            },
+          };
+        });
+      },
+
+      setHostBattery: (serverId, battery) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session || sameHostBattery(session.hostBattery, battery)) {
+            return prev;
+          }
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, hostBattery: battery },
             },
           };
         });

@@ -3319,6 +3319,20 @@ const ServerCapabilitiesFromUnknownSchema = z
     return parsed.data;
   });
 
+/**
+ * The charge of the machine the daemon runs on. `percent` is deliberately an unconstrained
+ * number: a range or integer check here would reject the whole enclosing message on a daemon
+ * that one day reports a fraction, and the protocol never narrows. Callers clamp at render.
+ *
+ * A host with no battery — a desktop, a server, a container — reports `null` rather than a
+ * zero, so "unpowered" and "no such hardware" stay distinguishable.
+ */
+export const HostBatterySchema = z
+  .object({
+    percent: z.number(),
+  })
+  .passthrough();
+
 export const ServerInfoStatusPayloadSchema = z
   .object({
     status: z.literal("server_info"),
@@ -3328,6 +3342,10 @@ export const ServerInfoStatusPayloadSchema = z
     // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
     desktopManaged: z.boolean().optional(),
     capabilities: ServerCapabilitiesFromUnknownSchema.optional(),
+    // COMPAT(hostBattery): added in v0.5.1, remove optional parsing after 2027-09-01.
+    // Seeds the badge on connect so a client paints a charge immediately instead of
+    // waiting out the first sampler tick; `host_battery` carries every later change.
+    hostBattery: HostBatterySchema.nullable().optional(),
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({
@@ -3472,6 +3490,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(hostBattery): added in v0.5.1, remove gate after 2027-09-01.
+        hostBattery: z.boolean().optional(),
       })
       .optional(),
   })
@@ -3572,6 +3592,13 @@ export const PluginCatalogChangedStatusPayloadSchema = z.object({
   pluginId: PluginIdSchema,
 });
 
+export const HostBatteryStatusPayloadSchema = z
+  .object({
+    status: z.literal("host_battery"),
+    battery: HostBatterySchema.nullable(),
+  })
+  .passthrough();
+
 export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   AgentCreatedStatusPayloadSchema,
   AgentCreateFailedStatusPayloadSchema,
@@ -3581,6 +3608,7 @@ export const KnownStatusPayloadSchema = z.discriminatedUnion("status", [
   RestartRequestedStatusPayloadSchema,
   DaemonConfigChangedStatusPayloadSchema,
   PluginCatalogChangedStatusPayloadSchema,
+  HostBatteryStatusPayloadSchema,
 ]);
 
 export type KnownStatusPayload = z.infer<typeof KnownStatusPayloadSchema>;
@@ -6491,6 +6519,8 @@ export type ServerCapabilityState = z.infer<typeof ServerCapabilityStateSchema>;
 export type ServerVoiceCapabilities = z.infer<typeof ServerVoiceCapabilitiesSchema>;
 export type ServerCapabilities = z.infer<typeof ServerCapabilitiesSchema>;
 export type ServerInfoStatusPayload = z.infer<typeof ServerInfoStatusPayloadSchema>;
+export type HostBattery = z.infer<typeof HostBatterySchema>;
+export type HostBatteryStatusPayload = z.infer<typeof HostBatteryStatusPayloadSchema>;
 export type RpcErrorMessage = z.infer<typeof RpcErrorMessageSchema>;
 export type ArtifactMessage = z.infer<typeof ArtifactMessageSchema>;
 export type AgentUpdateMessage = z.infer<typeof AgentUpdateMessageSchema>;

@@ -235,7 +235,8 @@ Client → Server:  WSHelloMessage {
                     capabilities?: { voice?, pushNotifications?, ... },
                   }
 Server → Client:  status message with payload { status: "server_info",
-                    serverId, hostname, version, capabilities?, features }
+                    serverId, hostname, version, capabilities?, features,
+                    hostBattery? }
 ```
 
 There is no dedicated welcome message; the server emits a `status` session message after accepting the hello, then begins streaming. The session stores client capabilities from the hello and rehydrates them on reconnect, so the wire boundary can ask one question: `session.supports(...)`.
@@ -258,6 +259,16 @@ New session RPCs use dotted names with `.request` and `.response` suffixes, such
 - `agent_permission_request` / `agent_permission_resolved` — Tool-call permission flow
 - `agent_deleted`, `agent_archived`, `agent_status`, `agent_list`
 - `checkout_status_update`, `checkout_diff_update`, and the full `checkout_*` request/response set for git operations
+- `host_battery` — The charge of the machine the daemon runs on changed
+
+**Host battery.** The daemon samples the charge of its own machine and broadcasts `host_battery`
+when the whole-number percent changes; `server_info` carries the last reading so a connecting
+client paints a charge immediately instead of waiting out a sample interval. Three states are
+distinct on the wire and have to stay that way: an absent `hostBattery` means the daemon has not
+measured yet, `null` means the machine has no battery, and a value means it does. Collapse the
+first two and every laptop looks like a desktop for the first seconds after connect. `percent` is
+an unconstrained number on purpose — clients clamp and round at render — so a daemon that one day
+reports a fraction or an out-of-range value cannot fail the message carrying it.
 
 Agent snapshots optionally carry the daemon-owned active turn identity, and turn lifecycle stream events
 optionally carry the same `turnId`. New clients use these fields when present and normalize an old daemon's
