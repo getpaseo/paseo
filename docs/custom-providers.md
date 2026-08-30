@@ -290,7 +290,7 @@ Example: two different Anthropic accounts as separate profiles:
 
 Each profile appears as a separate provider in the Paseo app. You can select which one to use when launching an agent.
 
-Claude profiles that pin an account with `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) also get their own plan-usage entry: the context-meter tooltip and the host Usage page show that account's session/weekly limits under the profile's label, fetched with the pinned token. Profiles without a pinned token share the base `claude` entry, which reads the machine's active Claude login.
+Claude profiles that pin an account with `CLAUDE_CODE_OAUTH_TOKEN` (from `claude setup-token`) also get their own plan-usage entry in the context-meter tooltip and the host Usage page, under the profile's label. Anthropic's usage API requires the `user:profile` scope and setup-tokens carry only inference scope, so a setup-token profile's entry reports unavailable rather than another account's numbers. A profile whose token has `user:profile` shows live limits. Profiles without a pinned token share the base `claude` entry, which reads the machine's active Claude login.
 
 You can also combine profiles with model overrides to pin specific models per profile:
 
