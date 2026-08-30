@@ -182,10 +182,6 @@ function LaunchRow({
   const isRunning = launch.lifecycle === "running";
   const liveTerminalId =
     launch.terminalId && liveTerminalIdSet.has(launch.terminalId) ? launch.terminalId : null;
-  const portRange =
-    launch.portBase !== null && launch.portEnd !== null
-      ? t("workspace.launches.states.portRange", { base: launch.portBase, end: launch.portEnd })
-      : null;
   const handleStart = useCallback(() => onStart(launch.launchName), [launch.launchName, onStart]);
   const handleStop = useCallback(() => onStop(launch.launchName), [launch.launchName, onStop]);
   const handleViewTerminal = useCallback(() => {
@@ -212,11 +208,6 @@ function LaunchRow({
           >
             {launch.launchName}
           </Text>
-          {portRange ? (
-            <Text style={styles.launchHint} numberOfLines={1}>
-              {portRange}
-            </Text>
-          ) : null}
         </View>
         <View style={styles.spacer} />
         {liveTerminalId ? (
@@ -286,6 +277,17 @@ export function WorkspaceLaunchesButton({
   const toast = useToast();
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
+  const portRangeLaunch =
+    launches.find(
+      (launch) => launch.active && launch.portBase !== null && launch.portEnd !== null,
+    ) ?? launches.find((launch) => launch.portBase !== null && launch.portEnd !== null);
+  const portRange =
+    portRangeLaunch && portRangeLaunch.portBase !== null && portRangeLaunch.portEnd !== null
+      ? t("workspace.launches.states.portRange", {
+          base: portRangeLaunch.portBase,
+          end: portRangeLaunch.portEnd,
+        })
+      : null;
 
   const startMutation = useMutation({
     mutationFn: async (launchName: string) => {
@@ -391,6 +393,13 @@ export function WorkspaceLaunchesButton({
             scrollable
             testID="workspace-launches-menu"
           >
+            {portRange ? (
+              <View style={styles.portRangeHeader}>
+                <Text testID="workspace-launches-port-range" style={styles.portRangeText}>
+                  {portRange}
+                </Text>
+              </View>
+            ) : null}
             {launches.map((launch) => (
               <LaunchRow
                 key={launch.launchName}
@@ -493,7 +502,12 @@ const styles = StyleSheet.create((theme) => ({
   launchNameActive: {
     color: theme.colors.foreground,
   },
-  launchHint: {
+  portRangeHeader: {
+    paddingHorizontal: theme.spacing[3],
+    paddingTop: theme.spacing[2],
+    paddingBottom: theme.spacing[1],
+  },
+  portRangeText: {
     fontSize: theme.fontSize.sm,
     lineHeight: 14,
     color: theme.colors.foregroundMuted,

@@ -214,7 +214,10 @@ describe("WorkspaceLaunchesButton", () => {
   });
 
   it("starts a stopped launch through the launch RPC", async () => {
-    unmount = renderLaunches([launch({ launchName: "dev", portBase: 4100, portEnd: 4199 })]);
+    unmount = renderLaunches([
+      launch({ launchName: "dev", portBase: 4100, portEnd: 4199 }),
+      launch({ launchName: "full-stack", portBase: 4100, portEnd: 4199 }),
+    ]);
 
     const startButton = document.querySelector('[data-testid="workspace-launches-start-dev"]');
     expect(startButton).not.toBeNull();
@@ -224,6 +227,9 @@ describe("WorkspaceLaunchesButton", () => {
     expect(startWorkspaceLaunchMock).toHaveBeenCalledWith("workspace-1", "dev");
     expect(launchTerminalStartedMock).toHaveBeenCalledWith("terminal-dev");
     expect(document.body.textContent).toContain("ports 4100–4199");
+    expect(document.querySelectorAll('[data-testid="workspace-launches-port-range"]')).toHaveLength(
+      1,
+    );
   });
 
   it("stops a running launch and exposes its live terminal", async () => {
