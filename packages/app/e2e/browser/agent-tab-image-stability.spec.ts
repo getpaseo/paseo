@@ -66,13 +66,25 @@ test("opens a timeline image in a zoomable lightbox", async ({
   await canvas.hover();
   const transformedContent = canvas.locator(":scope > div").first();
   const initialBox = await transformedContent.boundingBox();
+  const canvasBox = await canvas.boundingBox();
   expect(initialBox).not.toBeNull();
-  await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+  expect(canvasBox).not.toBeNull();
+  expect(initialBox!.width).toBeLessThan(canvasBox!.width);
+  const zoomIn = page.getByRole("button", { name: "Zoom in", exact: true });
+  await zoomIn.click();
+  await zoomIn.click();
+  await zoomIn.click();
+  await zoomIn.click();
   await expect
     .poll(async () => (await transformedContent.boundingBox())?.width ?? 0)
-    .toBeGreaterThan(initialBox!.width * 1.2);
+    .toBeGreaterThan(canvasBox!.width);
 
-  await page.getByTestId("attachment-lightbox-backdrop").click({ position: { x: 4, y: 4 } });
+  await canvas.dblclick({ position: { x: canvasBox!.width / 2, y: canvasBox!.height / 2 } });
+  await expect
+    .poll(async () => Math.round((await transformedContent.boundingBox())?.width ?? 0))
+    .toBe(Math.round(initialBox!.width));
+
+  await canvas.click({ position: { x: 4, y: 4 } });
   await expect(lightboxImage).toHaveCount(0);
 });
 
