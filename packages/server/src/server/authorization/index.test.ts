@@ -53,6 +53,36 @@ describe("SessionAuthorization", () => {
     ).toBe(false);
   });
 
+  test("classifies encrypted agent context transfer as workspace read authority", () => {
+    const authorization = new SessionAuthorization(["workspace.read"]);
+
+    expect(
+      authorization.allowsInbound(inboundMessage("agent.context.get_transfer_recipient.request")),
+    ).toBe(true);
+    expect(
+      authorization.allowsInbound(inboundMessage("agent.context.export_transfer.request")),
+    ).toBe(true);
+    expect(
+      authorization.allowsOutbound(
+        outboundMessage("agent.context.get_transfer_recipient.response"),
+      ),
+    ).toBe(true);
+    expect(
+      authorization.allowsOutbound(outboundMessage("agent.context.export_transfer.response")),
+    ).toBe(true);
+  });
+
+  test("classifies native session continuation as workspace write authority", () => {
+    const authorization = new SessionAuthorization(["workspace.write"]);
+
+    expect(authorization.allowsInbound(inboundMessage("provider.session.continue.request"))).toBe(
+      true,
+    );
+    expect(
+      authorization.allowsOutbound(outboundMessage("provider.session.continue.response")),
+    ).toBe(true);
+  });
+
   test("correlated authorization errors can always be emitted", () => {
     const authorization = new SessionAuthorization([]);
 
