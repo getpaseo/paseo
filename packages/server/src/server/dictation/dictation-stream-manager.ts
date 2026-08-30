@@ -579,17 +579,7 @@ export class DictationStreamManager {
     const pendingCommittedSegments = state.committedSegmentIds.reduce((count, segmentId) => {
       return state.finalTranscriptSegmentIds.has(segmentId) ? count : count + 1;
     }, 0);
-    const committedSet = new Set(state.committedSegmentIds);
-    const pendingUncommittedTranscriptSegments = Array.from(
-      state.transcriptsBySegmentId.keys(),
-    ).reduce((count, segmentId) => {
-      if (committedSet.has(segmentId)) {
-        return count;
-      }
-      return state.finalTranscriptSegmentIds.has(segmentId) ? count : count + 1;
-    }, 0);
-    const pendingSegments =
-      pendingCommittedSegments + pendingUncommittedTranscriptSegments + state.inFlightCommitCount;
+    const pendingSegments = pendingCommittedSegments + state.inFlightCommitCount;
     const pendingAudioSeconds = Math.ceil(Math.max(0, state.bytesSinceCommit) / bytesPerSecond);
     const missingSeqCount =
       state.finalSeq === null ? 0 : Math.max(0, state.finalSeq - state.ackSeq);
@@ -670,16 +660,6 @@ export class DictationStreamManager {
         state.bytesSinceCommit = 0;
         state.peakSinceCommit = 0;
         state.awaitingFinalCommit = false;
-        const droppedSegments = this.dropUncommittedNonFinalTranscripts(state);
-        if (droppedSegments > 0) {
-          this.logger.debug(
-            {
-              dictationId,
-              droppedSegments,
-            },
-            "Dictation finish: dropped uncommitted non-final transcript segments after silence clear",
-          );
-        }
       } else {
         state.awaitingFinalCommit = true;
         try {
@@ -730,6 +710,14 @@ export class DictationStreamManager {
     }
     if (state.inFlightCommitCount > 0) {
       return;
+    }
+
+    const droppedSegments = this.dropUncommittedNonFinalTranscripts(state);
+    if (droppedSegments > 0) {
+      this.logger.debug(
+        { dictationId, droppedSegments },
+        "Dropped abandoned non-final dictation transcript segments before finalization",
+      );
     }
 
     const committedSet = new Set(state.committedSegmentIds);

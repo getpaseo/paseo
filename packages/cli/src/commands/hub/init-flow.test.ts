@@ -21,11 +21,11 @@ afterEach(async () => {
 });
 
 describe("Hub guided setup continuation", () => {
-  it("uses the login origin and connected daemon to validate, write, and deploy without replaying setup prompts", async () => {
+  it("offers daemon connection after login, then points to Hub without scaffolding files", async () => {
     const cwd = await temporaryDirectory();
     const credentials = new MemoryCredentials();
     const daemon = new SetupDaemon();
-    const prompts = new PromptAnswers([true, true], ["codex", "gpt-5", "full-access"], ["U123"]);
+    const prompts = new PromptAnswers([true], [], []);
     const calls: Array<{ operation: string; origin: string; files?: readonly string[] }> = [];
     const environment = setupEnvironment(cwd, credentials, daemon, prompts, calls);
 
@@ -42,45 +42,15 @@ describe("Hub guided setup continuation", () => {
       },
     );
 
-    assert.deepEqual(prompts.confirmations, [
-      "Connect this daemon to this Hub?",
-      "Initialize and deploy a starter workflow?",
-    ]);
-    assert.deepEqual(prompts.selections, [
-      "Starter agent provider",
-      "Starter agent model",
-      "Starter agent mode",
-    ]);
-    assert.deepEqual(prompts.selectionOptions, [
-      ["Codex"],
-      ["GPT-5 (suggested)", "GPT-5 mini"],
-      ["Read only", "Full access (suggested)"],
-    ]);
+    assert.deepEqual(prompts.confirmations, ["Connect this daemon to this Hub?"]);
+    assert.deepEqual(prompts.selections, []);
     assert.deepEqual(prompts.messages, [
-      "Hub app connections ready for this workflow:\nSlack — Paseo\n\nOnly configured connections are shown. To add another, open Hub → Apps, then run `paseo hub init` again.",
-      "Using Slack — Paseo",
+      "Configure triggers in Hub: https://hub.test/triggers\nOr scaffold triggers as code: paseo hub init",
     ]);
-    assert.deepEqual(calls, [
-      { operation: "token", origin: "https://hub.test" },
-      { operation: "projects", origin: "https://hub.test" },
-      { operation: "setup", origin: "https://hub.test" },
-      { operation: "resources", origin: "https://hub.test" },
-      {
-        operation: "validate",
-        origin: "https://hub.test",
-        files: [".paseo/hub.yml", ".paseo/workflows/slack-help.yml"],
-      },
-      {
-        operation: "install",
-        origin: "https://hub.test",
-        files: [".paseo/hub.yml", ".paseo/workflows/slack-help.yml"],
-      },
-    ]);
+    assert.deepEqual(calls, [{ operation: "token", origin: "https://hub.test" }]);
     assert.equal(daemon.connections, 1);
-    assert.deepEqual(daemon.snapshotCwds, [cwd]);
-    const hub = await readFile(path.join(cwd, ".paseo", "hub.yml"), "utf8");
-    assert.match(hub, /daemon: macbook/u);
-    assert.match(hub, /provider: codex\n    model: gpt-5\n    mode: full-access/u);
+    assert.deepEqual(daemon.snapshotCwds, []);
+    await assert.rejects(readFile(path.join(cwd, ".paseo", "hub.yml")), { code: "ENOENT" });
   });
 
   it("prints exact actionable resume commands for login continuation declines", async () => {
@@ -95,22 +65,16 @@ describe("Hub guided setup continuation", () => {
       setupEnvironment(cwd, credentials, daemon, connectDeclined, []),
     );
     assert.deepEqual(connectDeclined.messages, [
-      "Skipped daemon connection. Run: paseo hub connect https://hub.test; then paseo hub init",
+      "Skipped daemon connection. Connect later with: paseo hub connect https://hub.test",
+      "Configure triggers in Hub: https://hub.test/triggers\nOr scaffold triggers as code: paseo hub init",
     ]);
-
-    const initDeclined = new PromptAnswers([true, false], [], []);
-    await continueHubGuidedSetup(
-      "https://hub.test",
-      setupEnvironment(cwd, credentials, daemon, initDeclined, []),
-    );
-    assert.deepEqual(initDeclined.messages, ["Skipped starter workflow. Run: paseo hub init"]);
   });
 
-  it("keeps login successful when no Hub app connection can initialize a workflow", async () => {
+  it("does not require a Hub app connection during login", async () => {
     const cwd = await temporaryDirectory();
     const credentials = new MemoryCredentials();
     const daemon = new SetupDaemon();
-    const prompts = new PromptAnswers([true, true], [], []);
+    const prompts = new PromptAnswers([false], [], []);
 
     await runHubLogin(
       "https://hub.test",
@@ -132,7 +96,8 @@ describe("Hub guided setup continuation", () => {
     );
 
     assert.deepEqual(prompts.messages, [
-      "No Hub app connection is ready for this workflow.\nConnect GitHub, Slack, or Discord in Hub → Apps, then run `paseo hub init` again.",
+      "Skipped daemon connection. Connect later with: paseo hub connect https://hub.test",
+      "Configure triggers in Hub: https://hub.test/triggers\nOr scaffold triggers as code: paseo hub init",
     ]);
   });
 

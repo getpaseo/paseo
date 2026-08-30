@@ -4,6 +4,7 @@ import { StyleSheet } from "react-native-unistyles";
 import {
   FIT_TRANSFORM,
   fitContentSize,
+  isPointInsideTransformedContent,
   panContent,
   zoomContentAtPoint,
   type ViewportPoint,
@@ -47,8 +48,10 @@ export function ZoomableViewport({
   children,
   actions = [],
   accessibilityLabel,
+  fit,
   maxScale = DEFAULT_MAX_SCALE,
   minScale = DEFAULT_MIN_SCALE,
+  onPressOutsideContent,
   style,
   testID,
   wheelActivation = "modifier",
@@ -56,6 +59,7 @@ export function ZoomableViewport({
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const pointersRef = useRef(new Map<number, ViewportPoint>());
   const gestureRef = useRef<ActiveGesture | null>(null);
+  const suppressClickRef = useRef(false);
   const transformRef = useRef<ViewportTransform>(FIT_TRANSFORM);
   const [viewport, setViewport] = useState<ViewportSize | null>(null);
   const [transform, setTransform] = useState<ViewportTransform>(FIT_TRANSFORM);
@@ -64,8 +68,8 @@ export function ZoomableViewport({
   const [isFocusWithin, setIsFocusWithin] = useState(false);
   const [hasTouchInput, setHasTouchInput] = useState(false);
   const fittedContent = useMemo(
-    () => (viewport ? fitContentSize(contentSize, viewport) : null),
-    [contentSize, viewport],
+    () => (viewport ? fitContentSize(contentSize, viewport, fit) : null),
+    [contentSize, fit, viewport],
   );
   const limits = useMemo(() => ({ minScale, maxScale }), [maxScale, minScale]);
 
@@ -139,6 +143,7 @@ export function ZoomableViewport({
   const beginPointer = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     if (event.pointerType !== "mouse") setHasTouchInput(true);
+    if (pointersRef.current.size === 0) suppressClickRef.current = false;
     event.currentTarget.setPointerCapture(event.pointerId);
     pointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     const points = Array.from(pointersRef.current.values());
@@ -167,6 +172,7 @@ export function ZoomableViewport({
       const gesture = gestureRef.current;
       const points = Array.from(pointersRef.current.values());
       if (gesture?.type === "pinch" && points.length >= 2) {
+        suppressClickRef.current = true;
         const nextMidpoint = midpoint(points);
         const nextDistance = distance(points);
         const panned = panContent({
@@ -192,6 +198,11 @@ export function ZoomableViewport({
         return;
       }
       if (gesture?.type !== "drag" || gesture.pointerId !== event.pointerId) return;
+      if (
+        Math.hypot(event.clientX - gesture.startPoint.x, event.clientY - gesture.startPoint.y) > 3
+      ) {
+        suppressClickRef.current = true;
+      }
       commitTransform(
         panContent({
           transform: gesture.startTransform,
@@ -229,6 +240,25 @@ export function ZoomableViewport({
     setIsDragging(false);
   }, []);
 
+  const handleCanvasClick = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false;
+        return;
+      }
+      if (!fittedContent || !viewport || !onPressOutsideContent) return;
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const isInside = isPointInsideTransformedContent({
+        point: { x: event.clientX - bounds.left, y: event.clientY - bounds.top },
+        transform: transformRef.current,
+        fittedContent,
+        viewport,
+      });
+      if (!isInside) onPressOutsideContent();
+    },
+    [fittedContent, onPressOutsideContent, viewport],
+  );
+
   const renderedCanvasStyle = useMemo<React.CSSProperties>(() => {
     let cursor: React.CSSProperties["cursor"] = "default";
     if (transform.scale > 1) cursor = isDragging ? "grabbing" : "grab";
@@ -254,6 +284,7 @@ export function ZoomableViewport({
       <div
         aria-label={accessibilityLabel}
         data-testid={testID ? `${testID}-canvas` : undefined}
+        onClick={handleCanvasClick}
         onDoubleClick={reset}
         onFocusCapture={handleFocus}
         onBlurCapture={handleBlur}

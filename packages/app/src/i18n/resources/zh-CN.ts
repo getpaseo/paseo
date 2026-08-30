@@ -345,7 +345,6 @@ export const zhCN: TranslationResources = {
         added: "已添加",
         started: "已开始",
         completed: "已完成",
-        reopened: "已重新打开",
       },
     },
     compaction: {

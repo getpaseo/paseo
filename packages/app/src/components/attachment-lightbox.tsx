@@ -8,6 +8,7 @@ import { useTranslation } from "react-i18next";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { isNative, isWeb } from "@/constants/platform";
+import { SPACING } from "@/styles/theme";
 import { WindowChromeRootRegion } from "@/utils/desktop-window";
 import { ZoomableImage } from "@/components/zoomable-viewport/image";
 import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
@@ -22,6 +23,7 @@ interface AttachmentLightboxProps {
 }
 
 const ModalRoot = isNative ? GestureHandlerRootView : View;
+const LIGHTBOX_FIT = { padding: SPACING[4], maxWidth: 960, maxHeight: 640 };
 
 export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps) {
   const { t } = useTranslation();
@@ -102,7 +104,9 @@ export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps)
                     accessibilityLabel={t("composer.attachments.openImage")}
                     actions={actions}
                     contentSize={contentSize}
+                    fit={LIGHTBOX_FIT}
                     onError={handleImageError}
+                    onPressOutsideContent={onClose}
                     style={styles.imageViewport}
                     testID="attachment-lightbox"
                     uri={url}
@@ -142,14 +146,11 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: theme.spacing[4],
   },
   imageViewport: {
     flex: 1,
     width: "100%",
     alignSelf: "center",
-    maxWidth: 960,
-    maxHeight: 640,
   },
   errorText: {
     color: theme.colors.foregroundMuted,

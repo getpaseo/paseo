@@ -15,6 +15,7 @@ import { createCliLoginFlow, type CliLoginFlow } from "./login-flow.js";
 import { addHubLoginCommand } from "./login.js";
 import { addHubLogoutCommand, productionLogoutPrompt } from "./logout.js";
 import { addHubProjectsCommand } from "./projects.js";
+import { addHubExportCommand } from "./export.js";
 import { processHubReporter, type HubReporter } from "./reporter.js";
 import { hubStatusResult } from "./status-output.js";
 import { addHubResolutionHelp } from "./help.js";
@@ -84,6 +85,13 @@ export function createHubCommand(overrides: Partial<HubCommandEnvironment> = {})
     credentials: environment.credentials,
     hub: environment.hub,
     reporter: environment.reporter,
+  });
+  addHubExportCommand(hub, {
+    env: environment.env,
+    credentials: environment.credentials,
+    hub: environment.hub,
+    reporter: environment.reporter,
+    cwd: environment.cwd,
   });
   addHubDeployCommand(hub, {
     env: environment.env,

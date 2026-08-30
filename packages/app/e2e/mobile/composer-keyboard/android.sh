@@ -2,9 +2,9 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"
-STATE_DIR="${REPO_ROOT}/.dev/agent-device-composer-keyboard"
+STATE_DIR="${PASEO_COMPOSER_KEYBOARD_STATE_DIR:-${REPO_ROOT}/.dev/agent-device-composer-keyboard}"
 ARTIFACTS_DIR="${REPO_ROOT}/.dev/agent-device-artifacts/composer-keyboard-android"
-SESSION="composer-keyboard-android"
+SESSION="${PASEO_COMPOSER_KEYBOARD_SESSION:-composer-keyboard-android}"
 APP_ID="${PASEO_COMPOSER_KEYBOARD_APP_ID:-sh.paseo.debug}"
 DEVICE="${PASEO_COMPOSER_KEYBOARD_DEVICE:-paseo-api35}"
 HELPER_IME="com.callstack.agentdevice.imehelper/.TestInputMethodService"
@@ -16,6 +16,7 @@ DAEMON_HOST="${PASEO_COMPOSER_KEYBOARD_DAEMON_HOST:-127.0.0.1:6770}"
 DAEMON_HOME="${PASEO_COMPOSER_KEYBOARD_DAEMON_HOME:-${REPO_ROOT}/.dev/composer-e2e-home}"
 SERVER_ID="${PASEO_COMPOSER_KEYBOARD_SERVER_ID:-}"
 MESSAGE=$'keyboard invariant line one\nline two\nline three\nline four'
+LONG_MESSAGE="$(node -e 'process.stdout.write(Array.from({ length: 180 }, (_, index) => `line${index + 1}`).join(" "))')"
 AGENT_TITLE="Keyboard dismiss QA $(date +%s)"
 
 if [[ -z "${SERVER_ID}" ]]; then
@@ -38,6 +39,18 @@ capture_screen() {
 snapshot_json() {
   local output_path="$1"
   ad snapshot -i --json >"${output_path}"
+}
+
+capture_ui_xml() {
+  local output_path="$1"
+  local device_path="/sdcard/paseo-composer-keyboard-window.xml"
+  # Android exposes one UI Automation connection at a time. Release the
+  # persistent agent-device snapshot helper before asking uiautomator for the
+  # app and IME windows; agent-device reconnects it on the next interaction.
+  adb shell am force-stop com.callstack.agentdevice.snapshothelper
+  sleep 0.2
+  adb shell uiautomator dump "${device_path}" >/dev/null
+  adb pull "${device_path}" "${output_path}" >/dev/null
 }
 
 clear_input() {
@@ -106,6 +119,11 @@ read_keyboard_shift() {
   ime_top="$(adb shell dumpsys window | sed -n 's/.*type=ime frame=\[0,\([0-9][0-9]*\)\].*visible=true.*/\1/p' | head -1)"
   navigation_top="$(adb shell dumpsys window | sed -n 's/.*type=navigationBars frame=\[0,\([0-9][0-9]*\)\].*/\1/p' | head -1)"
   printf '%s\n' "$((navigation_top - ime_top))"
+}
+
+read_ime_top() {
+  adb shell dumpsys window | sed -n \
+    's/.*type=ime frame=\[0,\([0-9][0-9]*\)\].*visible=true.*/\1/p' | head -1
 }
 
 cleanup() {
@@ -247,6 +265,20 @@ node "${ASSERT}" same-header \
   "${ARTIFACTS_DIR}/baseline.png" \
   "${ARTIFACTS_DIR}/keyboard-open.png" \
   "$((header_y + 48))"
+
+adb shell ime set "${HELPER_IME}" >/dev/null
+ad fill 'editable=true focused=true' "${LONG_MESSAGE}" --settle
+open_gboard "${input_x}" "${input_y}"
+capture_ui_xml "${ARTIFACTS_DIR}/long-draft-keyboard-open.xml"
+capture_screen "${ARTIFACTS_DIR}/long-draft-keyboard-open.png"
+node "${ASSERT}" xml-above-y \
+  "${ARTIFACTS_DIR}/long-draft-keyboard-open.xml" \
+  "Add attachment" \
+  "$(read_ime_top)"
+adb shell ime set "${HELPER_IME}" >/dev/null
+ad fill 'editable=true' "${MESSAGE}" --settle
+open_gboard "${input_x}" "${input_y}"
+keyboard_shift="$(read_keyboard_shift)"
 
 read -r changes_x changes_y _ < <(
   node "${ASSERT}" rect "${ARTIFACTS_DIR}/multiline-second.json" "Open Changes tab"
