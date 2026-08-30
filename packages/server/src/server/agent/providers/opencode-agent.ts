@@ -2811,7 +2811,7 @@ function appendOpenCodeTextPart(
   events: AgentStreamEvent[],
 ): void {
   if (messageRole === "user") {
-    if (!part.time?.end || !part.text || state.emittedUserMessageIds?.has(part.messageID)) {
+    if (!part.text || state.emittedUserMessageIds?.has(part.messageID)) {
       return;
     }
     state.emittedUserMessageIds?.add(part.messageID);
