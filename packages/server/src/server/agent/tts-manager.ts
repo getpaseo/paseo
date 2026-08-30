@@ -19,7 +19,7 @@ interface TtsSegment {
 
 type PreparedTtsSegment = TtsSegment & {
   format: string;
-  stream: Readable;
+  audio: Buffer;
 };
 
 type PreparedSegmentResult =
@@ -264,24 +264,46 @@ export class TTSManager {
 
     const synthStart = Date.now();
     const { stream, format } = await tts.synthesizeSpeech(segment.text);
+
+    // Drain the provider stream immediately instead of holding it until this
+    // segment's turn to play: an HTTP response body left unread while other
+    // segments stream and play has been observed to drain empty later, which
+    // silently swallowed the tail of spoken replies.
+    const buffers: Buffer[] = [];
+    try {
+      for await (const chunk of stream) {
+        if (abortSignal.aborted) {
+          break;
+        }
+        buffers.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+    } finally {
+      this.destroySpeechStream(stream);
+    }
+
+    if (abortSignal.aborted) {
+      throw new Error("TTS synthesis aborted");
+    }
+
+    const audio = Buffer.concat(buffers);
     this.logger.info(
       {
         segmentIndex: segment.index,
         resolveMs,
         synthMs: Date.now() - synthStart,
         chars: segment.text.length,
+        audioBytes: audio.length,
       },
-      `TTS segment ${segment.index} synthesized (resolve=${resolveMs}ms, synth=${Date.now() - synthStart}ms, ${segment.text.length} chars)`,
+      `TTS segment ${segment.index} synthesized (resolve=${resolveMs}ms, synth=${Date.now() - synthStart}ms, ${segment.text.length} chars, ${audio.length} bytes)`,
     );
 
-    if (abortSignal.aborted) {
-      this.destroySpeechStream(stream);
-      throw new Error("TTS synthesis aborted");
+    if (audio.length === 0) {
+      throw new Error(`TTS produced no audio for segment ${segment.index}`);
     }
 
     return {
       ...segment,
-      stream,
+      audio,
       format,
     };
   }
@@ -293,7 +315,6 @@ export class TTSManager {
     return this.synthesizeSegment(segment, abortSignal).then(
       (prepared) => {
         if (abortSignal.aborted) {
-          this.destroySpeechStream(prepared.stream);
           return { kind: "aborted" };
         }
         return { kind: "prepared", prepared };
@@ -308,17 +329,10 @@ export class TTSManager {
   }
 
   private cleanupPrefetchedSegments(inflight: Map<number, Promise<PreparedSegmentResult>>): void {
-    if (inflight.size === 0) {
-      return;
-    }
-
+    // Prefetched segments carry fully drained buffers, so there is nothing to
+    // release; swallow their settlement to avoid unhandled rejections.
     for (const pending of inflight.values()) {
-      void pending.then((result) => {
-        if (result.kind === "prepared") {
-          this.destroySpeechStream(result.prepared.stream);
-        }
-        return;
-      });
+      void pending.catch(() => undefined);
     }
   }
 
@@ -349,7 +363,7 @@ export class TTSManager {
     isVoiceMode: boolean;
   }): Promise<void> {
     const { prepared, emitMessage, abortSignal, isVoiceMode } = params;
-    const { stream, format, text } = prepared;
+    const { audio, format, text } = prepared;
 
     const audioId = uuidv4();
     let playbackResolve!: () => void;
@@ -378,23 +392,12 @@ export class TTSManager {
       this.pendingPlaybacks.delete(audioId);
       this.rememberClosedAudioId(audioId);
       playbackResolve();
-      this.destroySpeechStream(stream);
     };
 
     abortSignal.addEventListener("abort", onAbort, { once: true });
 
     try {
-      const buffers: Buffer[] = [];
-      for await (const chunk of stream) {
-        if (abortSignal.aborted) {
-          this.logger.debug("Aborted during stream collection");
-          break;
-        }
-        buffers.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      }
-
-      if (!abortSignal.aborted && buffers.length > 0) {
-        const fullBuffer = Buffer.concat(buffers);
+      if (!abortSignal.aborted && audio.length > 0) {
         const chunkId = `${audioId}:0`;
         pendingPlayback.pendingChunks = 1;
 
@@ -405,7 +408,7 @@ export class TTSManager {
             groupId: audioId,
             chunkIndex: 0,
             isLastChunk: true,
-            audio: fullBuffer.toString("base64"),
+            audio: audio.toString("base64"),
             format,
             isVoiceMode,
           },
@@ -423,9 +426,9 @@ export class TTSManager {
       await playbackPromise;
     } catch (error) {
       if (abortSignal.aborted) {
-        this.logger.debug("Audio stream closed after abort");
+        this.logger.debug("Playback wait ended after abort");
       } else {
-        this.logger.error({ err: error }, "Error streaming audio");
+        this.logger.error({ err: error }, "Error emitting audio");
         this.pendingPlaybacks.delete(audioId);
         throw error;
       }
@@ -433,7 +436,6 @@ export class TTSManager {
       if (onAbort) {
         abortSignal.removeEventListener("abort", onAbort);
       }
-      this.destroySpeechStream(stream);
     }
 
     if (abortSignal.aborted) {
