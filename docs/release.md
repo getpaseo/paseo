@@ -176,7 +176,7 @@ Use the beta path when you need to:
 
 Stable desktop releases go out via a linear time-based rollout for automatic update checks: 0% admitted when the updater manifests appear, 100% admitted 36 hours later, linear ramp in between. Manual checks bypass the rollout so a user can install immediately when they click **Check**. Beta releases bypass the rollout entirely — beta users always receive updates immediately.
 
-The rollout is driven by a `rolloutHours` field stamped into the GitHub Release manifests (`latest-mac.yml`, `latest-linux.yml`, `latest.yml`) by the `finalize-rollout` job in `desktop-release.yml`.
+The rollout is driven by a `rolloutHours` field stamped into the GitHub Release manifests (`latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml`, `latest.yml`) by the `finalize-rollout` job in `desktop-release.yml`.
 
 Desktop release builds now publish in two phases:
 
@@ -337,8 +337,9 @@ release branch and tag, npm dist-tags, the GitHub Release body and assets,
 desktop updater manifests, the published Docker image, and the applicable EAS
 workflow. Inspect the GitHub Release itself and confirm that the macOS, Linux,
 Windows, and Android APK assets are present along with the channel manifests
-(`latest-mac.yml`, `latest-linux.yml`, and `latest.yml` for stable;
-`beta-mac.yml`, `beta-linux.yml`, and `beta.yml` for beta).
+(`latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml`, and `latest.yml`
+for stable; `beta-mac.yml`, `beta-linux.yml`, `beta-linux-arm64.yml`, and `beta.yml`
+for beta).
 
 For stable releases, also confirm every required mobile build, upload, store
 submission, and review-submission job for the release commit. For betas, confirm
@@ -587,7 +588,7 @@ Each beta entry records what its testers receive. Promotion produces the single 
 - [ ] npm shows the version under the `beta` dist-tag, not `latest`
 - [ ] The GitHub prerelease exists with the changelog body and every expected macOS, Linux, Windows, and Android APK asset
 - [ ] GitHub `Desktop Release` workflow for the `v*-beta.N` tag is green
-- [ ] The GitHub prerelease contains `beta-mac.yml`, `beta-linux.yml`, and `beta.yml`
+- [ ] The GitHub prerelease contains `beta-mac.yml`, `beta-linux.yml`, `beta-linux-arm64.yml`, and `beta.yml`
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] GitHub `Docker` workflow is green and the versioned beta image is published without moving `latest`
 - [ ] GitHub `Release Notes Sync` mirrored the beta entry into the prerelease body
@@ -610,7 +611,7 @@ Each beta entry records what its testers receive. Promotion produces the single 
 - [ ] Move npm's `beta` dist-tag to the new stable version for every published package and verify both `latest` and `beta` resolve to it
 - [ ] The published GitHub Release exists with the changelog body and every expected macOS, Linux, Windows, and Android APK asset
 - [ ] GitHub `Desktop Release` workflow for the `v*` tag is green
-- [ ] The GitHub Release contains `latest-mac.yml`, `latest-linux.yml`, and `latest.yml`
+- [ ] The GitHub Release contains `latest-mac.yml`, `latest-linux.yml`, `latest-linux-arm64.yml`, and `latest.yml`
 - [ ] GitHub `Android APK Release` workflow for the same tag is green
 - [ ] GitHub `Docker` workflow is green and both the versioned and `latest` images are published
 - [ ] GitHub `Release Notes Sync` is green and the release body matches the stable changelog entry
