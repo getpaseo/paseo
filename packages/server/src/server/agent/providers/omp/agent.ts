@@ -1650,6 +1650,31 @@ export class OmpAgentSession implements AgentSession {
     const model = parseOmpModelReference(event.model);
     if (!model) return;
 
+    this.applyFallbackModel(model);
+    // `:max` is ambiguous: a thinking level and a real model-id suffix
+    // (e.g. `glm-4.7:max`). Confirm against OMP's model catalog in the
+    // background and correct the reference when the literal id exists.
+    if (event.model.endsWith(":max") && modelToId(model) !== event.model.replace(/@[^:/@]+$/, "")) {
+      void this.runtimeSession
+        .getAvailableModels(null)
+        .then((models) => {
+          const literal = models.find(
+            (candidate) =>
+              candidate.provider === model.provider && candidate.id === `${model.id}:max`,
+          );
+          if (!literal) return;
+          return this.applyFallbackModel(literal);
+        })
+        .catch((error: unknown) => {
+          this.logger.debug(
+            { err: error },
+            "OMP model catalog unavailable for :max disambiguation",
+          );
+        });
+    }
+  }
+
+  private applyFallbackModel(model: OmpModel): void {
     // Every getState result produced before this event is stale: it can only
     // report one of the models the session already served, never a fresh one.
     const staleModelIds = this.fallbackModel
@@ -1747,6 +1772,7 @@ export class OmpAgentSession implements AgentSession {
     }
     if (event.type === "model_changed") {
       this.handleModelChangedRuntimeEvent();
+      return true;
     }
     if (event.type === "retry_fallback_succeeded") {
       this.handleRetryFallbackSucceeded(event);

@@ -795,6 +795,38 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
+  test("keeps a literal :max model id when the catalog confirms it", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    omp.runtime().models = [{ provider: "zai", id: "glm-4.7:max" }];
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "zai/glm-4.7:max",
+      role: "primary",
+    });
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(omp.modelChanges().at(-1)).toMatchObject({ model: "zai/glm-4.7:max" });
+    expect(omp.persistence()?.metadata).toMatchObject({ model: "zai/glm-4.7:max" });
+  });
+
+  test("treats :max as a thinking level when no literal catalog id exists", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "zai/glm-4.7:max",
+      role: "primary",
+    });
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(omp.modelChanges().at(-1)).toMatchObject({ model: "zai/glm-4.7" });
+  });
+
   test("resolves a restored primary only through the explicit model_changed signal", async () => {
     const omp = new OmpHarness();
     await omp.start();
