@@ -65,6 +65,7 @@ import {
   PaseoLifecycleCommandRawSchema,
   PaseoMetadataGenerationEntrySchema,
   PaseoMetadataGenerationSchema,
+  PaseoServiceLinkSchema,
   PaseoScriptEntryRawSchema,
   PaseoWorktreeConfigRawSchema,
   PaseoConfigRevisionSchema,
@@ -73,6 +74,7 @@ import {
   type PaseoConfigRevision,
   type PaseoMetadataGeneration,
   type PaseoMetadataGenerationEntry,
+  type PaseoServiceLink,
   type PaseoScriptEntryRaw,
   type ProjectConfigRpcError,
 } from "./paseo-config-schema.js";
@@ -81,12 +83,14 @@ export {
   PaseoLifecycleCommandRawSchema,
   PaseoMetadataGenerationEntrySchema,
   PaseoMetadataGenerationSchema,
+  PaseoServiceLinkSchema,
   PaseoScriptEntryRawSchema,
   PaseoWorktreeConfigRawSchema,
   type PaseoConfigRaw,
   type PaseoConfigRevision,
   type PaseoMetadataGeneration,
   type PaseoMetadataGenerationEntry,
+  type PaseoServiceLink,
   type PaseoScriptEntryRaw,
   type ProjectConfigRpcError,
 };
@@ -3741,6 +3745,7 @@ export const WorkspaceScriptPayloadSchema = z.object({
   health: WorkspaceScriptHealthSchema.nullable(),
   exitCode: z.number().nullable().optional().default(null),
   terminalId: z.string().nullable().optional().default(null),
+  links: z.array(PaseoServiceLinkSchema).optional(),
 });
 
 const WorkspaceGitRuntimePayloadSchema = z

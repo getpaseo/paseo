@@ -32,6 +32,7 @@ const {
       foreground: "#fff",
       foregroundMuted: "#aaa",
       surface2: "#222",
+      interactionHighlight: "rgba(255, 255, 255, 0.08)",
       borderAccent: "#444",
       palette: {
         blue: { 500: "#0a84ff" },
@@ -148,17 +149,23 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuItem: ({
     children,
     description,
+    leading,
     onSelect,
     testID,
+    trailing,
   }: {
     children: React.ReactNode;
     description?: string;
+    leading?: React.ReactNode;
     onSelect?: () => void;
     testID?: string;
+    trailing?: React.ReactNode;
   }) => (
     <button type="button" data-testid={testID} onClick={onSelect}>
+      {leading}
       {children}
       {description}
+      {trailing}
     </button>
   ),
   DropdownMenuTrigger: ({
@@ -228,6 +235,7 @@ function script(
     health: input.health ?? null,
     exitCode: input.exitCode ?? null,
     terminalId: input.terminalId ?? null,
+    links: input.links,
   };
 }
 
@@ -500,6 +508,40 @@ describe("WorkspaceScriptsButton", () => {
     ]);
 
     expect(requireRow("dev").textContent).toContain("dev--proj--repo.services.example.com");
+  });
+
+  it("lists the root service URL before configured quick links", () => {
+    current = renderScripts([
+      script({
+        scriptName: "dev",
+        type: "service",
+        lifecycle: "running",
+        port: 57483,
+        proxyUrl: "http://dev--proj--repo.localhost:6767",
+        terminalId: "terminal-script-1",
+        links: [
+          { label: "Admin", path: "/admin" },
+          { label: "GraphQL", path: "/api/graphql" },
+        ],
+      }),
+    ]);
+
+    const row = requireRow("dev");
+    expect(row.querySelector('[data-testid="workspace-scripts-open-dev"]')).toBeNull();
+    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-0"]')?.textContent).toBe(
+      "View service /",
+    );
+    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-1"]')?.textContent).toBe(
+      "Admin /admin",
+    );
+    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-2"]')?.textContent).toBe(
+      "GraphQL /api/graphql",
+    );
+    for (let index = 0; index < 3; index += 1) {
+      const link = row.querySelector(`[data-testid="workspace-scripts-link-dev-${index}"]`);
+      expect(link?.querySelector('[data-icon="Eye"]')).not.toBeNull();
+      expect(link?.querySelector('[data-icon="ExternalLink"]')).not.toBeNull();
+    }
   });
 
   it("stops a running script through its terminal", async () => {

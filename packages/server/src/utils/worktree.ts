@@ -27,7 +27,11 @@ export {
   type PaseoConfig,
   type PaseoConfigRaw,
 } from "@getpaseo/protocol/paseo-config-schema";
-import { PaseoConfigSchema, type PaseoConfig } from "@getpaseo/protocol/paseo-config-schema";
+import {
+  PaseoConfigSchema,
+  type PaseoConfig,
+  type PaseoServiceLink,
+} from "@getpaseo/protocol/paseo-config-schema";
 import {
   createPaseoWorktreeChangeRequestHint,
   normalizeBaseRefName,
@@ -119,6 +123,7 @@ export interface ServiceScriptConfig {
   type: "service";
   command: string;
   port?: number; // explicit port override, otherwise auto-assigned
+  links: PaseoServiceLink[];
 }
 
 export type ScriptConfig = PlainScriptConfig | ServiceScriptConfig;
@@ -345,6 +350,10 @@ export function getScriptConfigs(config: PaseoConfig | null): Map<string, Script
         ? {
             type: "service",
             command,
+            links: (entry.links ?? []).map((link) => ({
+              label: link.label.trim(),
+              path: link.path.trim(),
+            })),
           }
         : { command };
 

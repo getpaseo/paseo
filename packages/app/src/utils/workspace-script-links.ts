@@ -1,5 +1,5 @@
 import { parseHostPort } from "@getpaseo/protocol/daemon-endpoints";
-import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
+import type { PaseoServiceLink, WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import type { ActiveConnection } from "@/runtime/host-runtime";
 
 export type WorkspaceScriptLinkKind = "public" | "paseo" | "direct";
@@ -13,6 +13,10 @@ export interface WorkspaceScriptLinkTarget {
 export interface ResolvedWorkspaceScriptLink {
   primary: WorkspaceScriptLinkTarget | null;
   targets: WorkspaceScriptLinkTarget[];
+}
+
+export interface WorkspaceScriptQuickLinkTarget extends PaseoServiceLink {
+  url: string;
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -89,4 +93,22 @@ export function resolveWorkspaceScriptLink(input: {
   addTarget(targets, "direct", buildDirectServiceUrl(activeConnection, script.port));
 
   return { primary: targets[0] ?? null, targets };
+}
+
+export function resolveWorkspaceScriptQuickLinks(input: {
+  baseUrl: string;
+  defaultLabel: string;
+  links: WorkspaceScriptPayload["links"];
+}): WorkspaceScriptQuickLinkTarget[] {
+  const configuredRoot = input.links?.find((link) => link.path === "/");
+  const root = configuredRoot ?? { label: input.defaultLabel, path: "/" };
+  const linksByPath = new Map<string, PaseoServiceLink>([[root.path, root]]);
+  for (const link of input.links ?? []) {
+    if (!linksByPath.has(link.path)) linksByPath.set(link.path, link);
+  }
+  return Array.from(linksByPath.values(), (link) => ({
+    label: link.label,
+    path: link.path,
+    url: new URL(link.path, input.baseUrl).toString(),
+  }));
 }

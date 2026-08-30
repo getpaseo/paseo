@@ -33,6 +33,27 @@ describe("paseo config schema", () => {
     });
   });
 
+  it("preserves valid service links when a sibling entry is malformed", () => {
+    const parsed = PaseoConfigSchema.parse({
+      scripts: {
+        dev: {
+          type: "service",
+          command: "npm run dev",
+          links: [
+            { label: "Admin", path: "/admin" },
+            { label: "External", path: "//example.com" },
+            { label: "GraphQL", path: "/api/graphql" },
+          ],
+        },
+      },
+    });
+
+    expect(parsed.scripts?.dev.links).toEqual([
+      { label: "Admin", path: "/admin" },
+      { label: "GraphQL", path: "/api/graphql" },
+    ]);
+  });
+
   it("parses service port allocation", () => {
     expect(
       PaseoConfigSchema.parse({

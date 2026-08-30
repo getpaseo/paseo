@@ -855,11 +855,34 @@ describe("workspace message schemas", () => {
       proxyUrl: "https://web--repo.services.example.com",
       lifecycle: "running",
       health: "healthy",
+      links: [
+        { label: "Site", path: "/" },
+        { label: "Admin", path: "/admin" },
+      ],
     });
 
     expect(parsed.localProxyUrl).toBe("http://web--repo.localhost:6767");
     expect(parsed.publicProxyUrl).toBe("https://web--repo.services.example.com");
     expect(parsed.proxyUrl).toBe("https://web--repo.services.example.com");
+    expect(parsed.links).toEqual([
+      { label: "Site", path: "/" },
+      { label: "Admin", path: "/admin" },
+    ]);
+  });
+
+  test("rejects service link paths that can escape the selected service origin", () => {
+    const parsed = WorkspaceScriptPayloadSchema.safeParse({
+      scriptName: "web",
+      type: "service",
+      hostname: "web--repo.localhost",
+      port: 3000,
+      proxyUrl: "http://web--repo.localhost:6767",
+      lifecycle: "running",
+      health: "healthy",
+      links: [{ label: "Other host", path: "//example.com" }],
+    });
+
+    expect(parsed.success).toBe(false);
   });
 
   test("defaults omitted workspace script proxyUrl to null", () => {

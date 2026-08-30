@@ -35,11 +35,31 @@ export function normalizeLifecycleCommands(commands: unknown): string[] {
 
 export const PaseoLifecycleCommandRawSchema = z.union([z.string(), z.array(z.string())]);
 
+export const PaseoServiceLinkSchema = z.object({
+  label: z.string().regex(/\S/, "Expected a non-empty label"),
+  path: z
+    .string()
+    .regex(/^\/(?!\/)[^\r\n\\]*$/, "Expected an absolute service path starting with one slash"),
+});
+export type PaseoServiceLink = z.infer<typeof PaseoServiceLinkSchema>;
+
+function normalizeServiceLinks(links: unknown): PaseoServiceLink[] {
+  if (!Array.isArray(links)) return [];
+
+  const validLinks: PaseoServiceLink[] = [];
+  for (const link of links) {
+    const parsed = PaseoServiceLinkSchema.safeParse(link);
+    if (parsed.success) validLinks.push(parsed.data);
+  }
+  return validLinks;
+}
+
 export const PaseoScriptEntryRawSchema = z
   .object({
     type: z.unknown().optional(),
     command: z.unknown().optional(),
     port: z.unknown().optional(),
+    links: z.unknown().optional(),
   })
   .passthrough();
 
@@ -86,7 +106,9 @@ export const WorktreeConfigSchema = PaseoWorktreeConfigRawSchema.extend({
   .passthrough()
   .catch({ setup: [], teardown: [] });
 
-export const ScriptEntrySchema = PaseoScriptEntryRawSchema.catch({});
+export const ScriptEntrySchema = PaseoScriptEntryRawSchema.extend({
+  links: z.unknown().transform(normalizeServiceLinks).optional(),
+}).catch({});
 
 export const PaseoConfigSchema = PaseoConfigRawSchema.extend({
   worktree: WorktreeConfigSchema.optional(),

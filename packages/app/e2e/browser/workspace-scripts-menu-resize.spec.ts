@@ -12,7 +12,7 @@ import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { getServerId } from "../support/helpers/server-id";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
-test("scripts menu resizes when a service row grows after launch", async ({ page }) => {
+test("scripts menu resizes and shows quick links after a service launches", async ({ page }) => {
   const client = await connectWorkspaceSetupClient();
   const repo = await createTempGitRepo("script-menu-resize-", {
     paseoConfig: {
@@ -23,7 +23,11 @@ test("scripts menu resizes when a service row grows after launch", async ({ page
         web: {
           type: "service",
           command:
-            "node -e \"const http = require('http'); const s = http.createServer((q,r) => r.end('ok')); s.listen(process.env.PORT || 3000, () => console.log('listening on ' + s.address().port))\"",
+            "node -e \"const http = require('http'); const s = http.createServer((q,r) => r.end('ok')); s.listen(process.env.PASEO_PORT, () => console.log('listening on ' + s.address().port))\"",
+          links: [
+            { label: "Admin", path: "/admin" },
+            { label: "GraphQL", path: "/api/graphql" },
+          ],
         },
       },
     },
@@ -57,6 +61,12 @@ test("scripts menu resizes when a service row grows after launch", async ({ page
 
     await startWorkspaceScriptFromMenu(page, "web");
     await expect(menu).toContainText("localhost:", { timeout: 15_000 });
+    await expect(page.getByTestId("workspace-scripts-link-web-0")).toContainText("View service");
+    await expect(page.getByTestId("workspace-scripts-link-web-0")).toContainText("/");
+    await expect(page.getByTestId("workspace-scripts-link-web-1")).toContainText("Admin");
+    await expect(page.getByTestId("workspace-scripts-link-web-1")).toContainText("/admin");
+    await expect(page.getByTestId("workspace-scripts-link-web-2")).toContainText("GraphQL");
+    await expect(page.getByTestId("workspace-scripts-link-web-2")).toContainText("/api/graphql");
 
     const after = await menu.evaluate((element) => {
       const rect = element.getBoundingClientRect();
@@ -73,6 +83,15 @@ test("scripts menu resizes when a service row grows after launch", async ({ page
     expect(after.height).toBeGreaterThan(before.height);
     expect(after.scrollHeight).toBeLessThanOrEqual(after.clientHeight + 1);
     expect(after.childHeight).toBeGreaterThan(before.height);
+
+    const selectedHost = (await page.getByTestId("workspace-scripts-route-web").innerText()).trim();
+    const popupPromise = page.waitForEvent("popup");
+    await page.getByTestId("workspace-scripts-link-web-1").click();
+    const popup = await popupPromise;
+
+    await expect(menu).toBeHidden();
+    await expect.poll(() => popup.url()).toBe(`http://${selectedHost}/admin`);
+    await popup.close();
   } finally {
     await client.close();
     await repo.cleanup();

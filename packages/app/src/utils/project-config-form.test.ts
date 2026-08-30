@@ -172,6 +172,29 @@ describe("applyDraftToConfig", () => {
     expect(lintEntry.type).toBe("task");
   });
 
+  it("preserves service quick links on round-trip", () => {
+    const base = PaseoConfigRawSchema.parse({
+      scripts: {
+        web: {
+          type: "service",
+          command: "npm run dev",
+          links: [
+            { label: "Admin", path: "/admin" },
+            { label: "GraphQL", path: "/api/graphql" },
+          ],
+        },
+      },
+    });
+
+    const next = applyDraftToConfig({ draft: configToDraft(base), base });
+    const web = next.scripts?.web;
+    if (!web) throw new Error("expected web script after round-trip");
+    expect((web as Record<string, unknown>).links).toEqual([
+      { label: "Admin", path: "/admin" },
+      { label: "GraphQL", path: "/api/graphql" },
+    ]);
+  });
+
   it("normalizes script command text into the original command kind", () => {
     const base = PaseoConfigRawSchema.parse({
       scripts: {

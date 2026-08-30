@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import type { ActiveConnection } from "@/runtime/host-runtime";
-import { resolveWorkspaceScriptLink } from "./workspace-script-links";
+import {
+  resolveWorkspaceScriptLink,
+  resolveWorkspaceScriptQuickLinks,
+} from "./workspace-script-links";
 
 const runningService: WorkspaceScriptPayload = {
   scriptName: "web",
@@ -200,5 +203,68 @@ describe("resolveWorkspaceScriptLink", () => {
       primary: null,
       targets: [],
     });
+  });
+});
+
+describe("resolveWorkspaceScriptQuickLinks", () => {
+  it("keeps the root service URL when no links are configured", () => {
+    expect(
+      resolveWorkspaceScriptQuickLinks({
+        baseUrl: "http://web--feature--paseo.localhost:6767",
+        defaultLabel: "View service",
+        links: undefined,
+      }),
+    ).toEqual([
+      {
+        label: "View service",
+        path: "/",
+        url: "http://web--feature--paseo.localhost:6767/",
+      },
+    ]);
+  });
+
+  it("adds configured paths after the root URL", () => {
+    expect(
+      resolveWorkspaceScriptQuickLinks({
+        baseUrl: "https://web--feature--paseo.services.example.com",
+        defaultLabel: "View service",
+        links: [
+          { label: "Admin", path: "/admin" },
+          { label: "GraphQL", path: "/api/graphql?studio=1" },
+        ],
+      }),
+    ).toEqual([
+      {
+        label: "View service",
+        path: "/",
+        url: "https://web--feature--paseo.services.example.com/",
+      },
+      {
+        label: "Admin",
+        path: "/admin",
+        url: "https://web--feature--paseo.services.example.com/admin",
+      },
+      {
+        label: "GraphQL",
+        path: "/api/graphql?studio=1",
+        url: "https://web--feature--paseo.services.example.com/api/graphql?studio=1",
+      },
+    ]);
+  });
+
+  it("uses a configured root label without duplicating the root URL", () => {
+    expect(
+      resolveWorkspaceScriptQuickLinks({
+        baseUrl: "http://localhost:3000",
+        defaultLabel: "View service",
+        links: [
+          { label: "Admin", path: "/admin" },
+          { label: "Site", path: "/" },
+        ],
+      }),
+    ).toEqual([
+      { label: "Site", path: "/", url: "http://localhost:3000/" },
+      { label: "Admin", path: "/admin", url: "http://localhost:3000/admin" },
+    ]);
   });
 });

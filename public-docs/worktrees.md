@@ -150,6 +150,27 @@ Run them from the app, or manage them from automation with [`paseo script`](/doc
 
 Omit `port` to let Paseo auto-assign one. Bind your process to `$PASEO_PORT` rather than hard-coding, each worktree gets a distinct port so multiple copies of the same service coexist.
 
+Add quick links for pages you open often:
+
+```json
+{
+  "scripts": {
+    "web": {
+      "type": "service",
+      "command": "npm run dev -- --port $PASEO_PORT",
+      "links": [
+        { "label": "Admin", "path": "/admin" },
+        { "label": "GraphQL", "path": "/api/graphql" }
+      ]
+    }
+  }
+}
+```
+
+The Scripts menu always includes the service root `/`. Add a `/` entry to rename that root link.
+Every path opens under the route selected for the service, so paths must start with one `/`; they
+cannot be absolute URLs.
+
 ### Dynamic port allocation
 
 By default, Paseo asks the OS for an available ephemeral port. Configure a range globally in
