@@ -39,4 +39,43 @@ describe("OpenAITTS", () => {
       baseURL: "https://speech.example.com/v1",
     });
   });
+
+  test("sends custom model, voice, and instructions on instruction-capable models", async () => {
+    const { Readable } = await import("node:stream");
+    speechCreateMock.mockResolvedValue({ body: Readable.from([Buffer.from("x")]) });
+    const provider = new OpenAITTS(
+      {
+        apiKey: "sk-test",
+        model: "gpt-4o-mini-tts",
+        voice: "marin",
+        instructions: "Speak calmly.",
+      },
+      pino({ level: "silent" }),
+    );
+
+    await provider.synthesizeSpeech("Hello there.");
+
+    expect(speechCreateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "gpt-4o-mini-tts",
+        voice: "marin",
+        instructions: "Speak calmly.",
+      }),
+    );
+  });
+
+  test("omits instructions for the tts-1 generation, which rejects the parameter", async () => {
+    const { Readable } = await import("node:stream");
+    speechCreateMock.mockResolvedValue({ body: Readable.from([Buffer.from("x")]) });
+    const provider = new OpenAITTS(
+      { apiKey: "sk-test", model: "tts-1", instructions: "Speak calmly." },
+      pino({ level: "silent" }),
+    );
+
+    await provider.synthesizeSpeech("Hello there.");
+
+    const args = speechCreateMock.mock.calls[0][0] as Record<string, unknown>;
+    expect(args.model).toBe("tts-1");
+    expect("instructions" in args).toBe(false);
+  });
 });

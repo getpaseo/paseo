@@ -8,9 +8,15 @@ export type { SpeechStreamResult };
 export interface TTSConfig {
   apiKey: string;
   baseUrl?: string;
-  model?: "tts-1" | "tts-1-hd";
-  voice?: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer";
+  model?: "tts-1" | "tts-1-hd" | "gpt-4o-mini-tts" | (string & {});
+  voice?: "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer" | (string & {});
+  /** Delivery steering (tone, pace, accent). Ignored by tts-1/tts-1-hd. */
+  instructions?: string;
   responseFormat?: "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm";
+}
+
+function modelSupportsInstructions(model: string): boolean {
+  return model !== "tts-1" && model !== "tts-1-hd";
 }
 
 export class OpenAITTS implements TextToSpeechProvider {
@@ -54,10 +60,15 @@ export class OpenAITTS implements TextToSpeechProvider {
         "Synthesizing speech",
       );
 
+      const model = this.config.model!;
       const response = await this.openaiClient.audio.speech.create({
-        model: this.config.model!,
+        model,
         voice: this.config.voice!,
         input: text,
+        // The tts-1 generation rejects the instructions parameter outright.
+        ...(this.config.instructions && modelSupportsInstructions(model)
+          ? { instructions: this.config.instructions }
+          : {}),
         response_format: this.config.responseFormat as
           | "mp3"
           | "opus"
