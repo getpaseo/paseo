@@ -4,6 +4,7 @@ import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import type { AgentPlanUsageWindow } from "@getpaseo/protocol/agent-types";
 import { ProviderUsageTooltipSection } from "@/provider-usage/tooltip-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { formatTokenCount } from "./context-window-meter.utils";
@@ -18,6 +19,9 @@ interface ContextWindowMeterProps {
   provider?: string | null;
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
   pending?: boolean;
+  /** Plan windows the agent observed from its own traffic (per account, per model). */
+  planWindows?: AgentPlanUsageWindow[] | null;
+  planWindowsObservedAt?: string | null;
   /** Optional glyph envelope for icon-toolbar alignment. */
   glyphSize?: number;
 }
@@ -103,6 +107,8 @@ export function ContextWindowMeter({
   showPercentage = false,
   serverId,
   provider,
+  planWindows = null,
+  planWindowsObservedAt = null,
   pending = false,
   glyphSize,
 }: ContextWindowMeterProps) {
@@ -174,7 +180,12 @@ export function ContextWindowMeter({
           <View style={styles.tooltipContent}>
             <Text style={styles.tooltipTitle}>{t("contextWindow.title")}</Text>
             <Text style={styles.tooltipDetail}>{t("contextWindow.pending")}</Text>
-            <ProviderUsageTooltipSection view={providerUsageView} activeProviderId={provider} />
+            <ProviderUsageTooltipSection
+              view={providerUsageView}
+              activeProviderId={provider}
+              agentPlanWindows={planWindows}
+              agentPlanWindowsObservedAt={planWindowsObservedAt}
+            />
           </View>
         </TooltipContent>
       </Tooltip>
@@ -256,7 +267,12 @@ export function ContextWindowMeter({
               {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
             </Text>
           ) : null}
-          <ProviderUsageTooltipSection view={providerUsageView} activeProviderId={provider} />
+          <ProviderUsageTooltipSection
+            view={providerUsageView}
+            activeProviderId={provider}
+            agentPlanWindows={planWindows}
+            agentPlanWindowsObservedAt={planWindowsObservedAt}
+          />
         </View>
       </TooltipContent>
     </Tooltip>

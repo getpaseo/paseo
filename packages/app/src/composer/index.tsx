@@ -41,6 +41,7 @@ import {
   DraftAgentControls,
   type DraftAgentControlsProps,
 } from "@/composer/agent-controls";
+import type { AgentPlanUsageWindow, AgentUsage } from "@getpaseo/protocol/agent-types";
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
 import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
@@ -250,14 +251,22 @@ function buildRealtimeVoiceButtonStyle(
   );
 }
 
+function selectUsageFields(lastUsage: AgentUsage | undefined) {
+  return {
+    contextWindowMaxTokens: lastUsage?.contextWindowMaxTokens ?? null,
+    contextWindowUsedTokens: lastUsage?.contextWindowUsedTokens ?? null,
+    totalCostUsd: lastUsage?.totalCostUsd ?? null,
+    planWindows: lastUsage?.planWindows ?? null,
+    planWindowsObservedAt: lastUsage?.planWindowsObservedAt ?? null,
+  };
+}
+
 function buildAgentStateSelector(serverId: string, agentId: string) {
   return (state: ReturnType<typeof useSessionStore.getState>) => {
     const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
     return {
       status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
+      ...selectUsageFields(agent?.lastUsage),
       model: agent?.model ?? null,
       provider: agent?.provider ?? null,
     };
@@ -273,6 +282,8 @@ function renderContextWindowMeter(
   provider: string | null,
   pending: boolean,
   glyphSize: number,
+  planWindows: AgentPlanUsageWindow[] | null,
+  planWindowsObservedAt: string | null,
 ): ReactElement | null {
   const hasData = contextWindowMaxTokens !== null && contextWindowUsedTokens !== null;
   if (!hasData && !pending) {
@@ -288,6 +299,8 @@ function renderContextWindowMeter(
       provider={provider}
       pending={pending}
       glyphSize={glyphSize}
+      planWindows={planWindows}
+      planWindowsObservedAt={planWindowsObservedAt}
     />
   );
 }
@@ -1963,6 +1976,8 @@ function ComposerContentImpl({
         agentState.provider,
         contextWindowPending,
         contextWindowMeterGlyphSize,
+        agentState.planWindows,
+        agentState.planWindowsObservedAt,
       ),
     [
       contextWindowMaxTokens,
@@ -1972,6 +1987,8 @@ function ComposerContentImpl({
       agentState.provider,
       contextWindowPending,
       contextWindowMeterGlyphSize,
+      agentState.planWindows,
+      agentState.planWindowsObservedAt,
     ],
   );
   const beforeVoiceContent = useMemo(

@@ -225,6 +225,17 @@ export interface SteerActiveTurnOptions extends AgentSteerOptions {
   expectedTurnId: string;
 }
 
+export type AgentPlanUsageTone = "default" | "ok" | "warning" | "danger";
+
+/** One plan rate-limit window observed from the agent's own provider traffic. */
+export interface AgentPlanUsageWindow {
+  id: string;
+  label: string;
+  usedPct: number;
+  resetsAt?: string | null;
+  tone?: AgentPlanUsageTone;
+}
+
 export interface AgentUsage {
   inputTokens?: number;
   cachedInputTokens?: number;
@@ -232,6 +243,8 @@ export interface AgentUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+  planWindows?: AgentPlanUsageWindow[];
+  planWindowsObservedAt?: string;
 }
 
 export const TOOL_CALL_ICON_NAMES = [

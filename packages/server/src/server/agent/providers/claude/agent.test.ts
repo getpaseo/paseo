@@ -2296,6 +2296,60 @@ describe("ClaudeAgentSession context window usage", () => {
     }
   });
 
+  test("carries plan windows from rate_limit_event through the turn's usage", async () => {
+    const session = await createSessionForTurns(
+      [
+        [
+          createInitMessage(),
+          {
+            type: "rate_limit_event",
+            rate_limit_info: {
+              status: "allowed_warning",
+              rateLimitType: "seven_day_overage_included",
+              utilization: 0.93,
+              resetsAt: 1788199200,
+              unifiedWindows: {
+                five_hour: { utilization: 0, resetsAt: 1788143400 },
+                seven_day: { utilization: 0.46, resetsAt: 1788199200 },
+                seven_day_overage_included: { utilization: 0.93, resetsAt: 1788199200 },
+              },
+            },
+            uuid: "rate-limit-1",
+            session_id: "session-1",
+          },
+          createMessageStartEvent(),
+          createMessageDeltaEvent(25),
+          createSuccessResult(),
+        ],
+      ],
+      { model: "claude-fable-5" },
+    );
+
+    try {
+      const result = await session.run("turn");
+
+      expect(result.usage?.planWindows).toEqual([
+        expect.objectContaining({ id: "five_hour", label: "Session", usedPct: 0 }),
+        expect.objectContaining({ id: "seven_day", label: "Weekly", usedPct: 46 }),
+        expect.objectContaining({
+          id: "seven_day_overage_included",
+          label: "Weekly \u00b7 Fable",
+          usedPct: 93,
+          resetsAt: "2026-08-31T18:00:00.000Z",
+        }),
+      ]);
+      expect(typeof result.usage?.planWindowsObservedAt).toBe("string");
+      // The context accounting is untouched by the extra fields.
+      expect(result.usage).toMatchObject({
+        inputTokens: 10,
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 175,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
   test("uses parent request usage after a real subagent tool result", async () => {
     const getContextUsage = vi.fn(async () => {
       throw new Error("getContextUsage should not be called during result handling");

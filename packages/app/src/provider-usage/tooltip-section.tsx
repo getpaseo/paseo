@@ -1,5 +1,7 @@
+import type { AgentPlanUsageWindow } from "@getpaseo/protocol/agent-types";
 import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import { buildAgentPlanUsage } from "./agent-plan-usage";
 import { ProviderUsageCard } from "./card";
 import { providerUsageCopy } from "./copy";
 import type { ProviderUsage, ProviderUsageView } from "./types";
@@ -14,15 +16,38 @@ function matchProvider(
 }
 
 // Renders the active agent's provider usage inside the context-meter tooltip.
-// Returns nothing when the active provider has no usage entry, so the meter's
-// own context section stays the whole tooltip.
+// Windows the agent observed from its own traffic take precedence over the
+// provider-level fetch (see buildAgentPlanUsage). Returns nothing when neither
+// source describes the active provider, so the meter's own context section
+// stays the whole tooltip.
 export function ProviderUsageTooltipSection({
   view,
   activeProviderId,
+  agentPlanWindows,
+  agentPlanWindowsObservedAt,
 }: {
   view: ProviderUsageView;
   activeProviderId: string | null | undefined;
+  agentPlanWindows?: AgentPlanUsageWindow[] | null;
+  agentPlanWindowsObservedAt?: string | null;
 }) {
+  const providerEntry =
+    view.kind === "ready" ? matchProvider(view.payload.providers, activeProviderId) : null;
+  const observed = buildAgentPlanUsage({
+    providerId: activeProviderId,
+    providerUsage: providerEntry,
+    planWindows: agentPlanWindows,
+    observedAt: agentPlanWindowsObservedAt,
+  });
+  if (observed) {
+    return (
+      <>
+        <View style={styles.divider} />
+        <ProviderUsageCard usage={observed} compact />
+      </>
+    );
+  }
+
   if (view.kind === "loading") {
     return (
       <>
@@ -41,7 +66,7 @@ export function ProviderUsageTooltipSection({
     );
   }
 
-  const usage = matchProvider(view.payload.providers, activeProviderId);
+  const usage = providerEntry;
   if (!usage) return null;
 
   return (

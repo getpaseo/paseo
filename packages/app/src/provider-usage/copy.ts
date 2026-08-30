@@ -15,4 +15,5 @@ export const providerUsageCopy = {
   clientUnavailable: "Host connection is not ready",
   retry: "Try again",
   tooltipLoading: "Loading plan usage…",
+  observedFromAgent: "Live from this agent",
 } as const;

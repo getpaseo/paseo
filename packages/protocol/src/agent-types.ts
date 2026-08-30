@@ -174,6 +174,23 @@ export interface AgentRunOptions {
   maxThinkingTokens?: number;
 }
 
+export type AgentPlanUsageTone = "default" | "ok" | "warning" | "danger";
+
+/**
+ * One plan rate-limit window as observed from the agent's own provider traffic
+ * (e.g. Claude Code's `rate_limit_event`), so per-account and per-model limits
+ * are known for exactly the account the agent bills to.
+ */
+export interface AgentPlanUsageWindow {
+  id: string;
+  label: string;
+  /** Percentage of the window used, 0-100 (may exceed 100 when over the limit). */
+  usedPct: number;
+  /** ISO 8601 timestamp when the window resets. */
+  resetsAt?: string | null;
+  tone?: AgentPlanUsageTone;
+}
+
 export interface AgentUsage {
   inputTokens?: number;
   cachedInputTokens?: number;
@@ -181,6 +198,10 @@ export interface AgentUsage {
   totalCostUsd?: number;
   contextWindowMaxTokens?: number;
   contextWindowUsedTokens?: number;
+  /** Latest plan windows observed from the agent's own traffic, if the provider reports them. */
+  planWindows?: AgentPlanUsageWindow[];
+  /** ISO 8601 timestamp of the observation behind `planWindows`. */
+  planWindowsObservedAt?: string;
 }
 
 export const TOOL_CALL_ICON_NAMES = [

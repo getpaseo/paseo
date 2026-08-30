@@ -431,6 +431,73 @@ describe("toAgentPayload", () => {
     });
   });
 
+  it("preserves plan usage windows and drops malformed entries", () => {
+    const agent = createManagedAgent({
+      lastUsage: {
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 42_000,
+        planWindows: [
+          {
+            id: "five_hour",
+            label: "Session",
+            usedPct: 12,
+            resetsAt: "2026-08-31T02:30:00.000Z",
+            tone: "ok",
+          },
+          {
+            id: "seven_day_overage_included",
+            label: "Weekly \u00b7 Fable",
+            usedPct: 93,
+            tone: "danger",
+          },
+          { id: "broken", label: "Broken", usedPct: Number.NaN },
+          { id: "odd-tone", label: "Odd", usedPct: 5, tone: "purple" as unknown as "ok" },
+        ],
+        planWindowsObservedAt: "2026-08-31T01:00:00.000Z",
+      },
+    });
+
+    const payload = toAgentPayload(agent);
+
+    expect(payload.lastUsage).toEqual({
+      contextWindowMaxTokens: 200_000,
+      contextWindowUsedTokens: 42_000,
+      planWindows: [
+        {
+          id: "five_hour",
+          label: "Session",
+          usedPct: 12,
+          resetsAt: "2026-08-31T02:30:00.000Z",
+          tone: "ok",
+        },
+        {
+          id: "seven_day_overage_included",
+          label: "Weekly \u00b7 Fable",
+          usedPct: 93,
+          tone: "danger",
+        },
+        { id: "odd-tone", label: "Odd", usedPct: 5 },
+      ],
+      planWindowsObservedAt: "2026-08-31T01:00:00.000Z",
+    });
+  });
+
+  it("drops the observation timestamp when no plan window survives", () => {
+    const agent = createManagedAgent({
+      lastUsage: {
+        contextWindowMaxTokens: 200_000,
+        contextWindowUsedTokens: 42_000,
+        planWindows: [{ id: "broken", label: "Broken", usedPct: Number.NaN }],
+        planWindowsObservedAt: "2026-08-31T01:00:00.000Z",
+      },
+    });
+
+    expect(toAgentPayload(agent).lastUsage).toEqual({
+      contextWindowMaxTokens: 200_000,
+      contextWindowUsedTokens: 42_000,
+    });
+  });
+
   it("omits lastUsage when context window usage fields are invalid", () => {
     const agent = createManagedAgent({
       lastUsage: {
