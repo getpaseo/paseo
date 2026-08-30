@@ -7,9 +7,21 @@ export function findModelByReference(
   if (!models || models.length === 0) return null;
   const normalizedModelId = modelId.trim();
   if (!normalizedModelId) return null;
+  const exact = findExactModel(models, normalizedModelId);
+  if (exact) return exact;
+
+  const bracketIndex = normalizedModelId.indexOf("[");
+  if (bracketIndex <= 0) return null;
+  return findExactModel(models, normalizedModelId.slice(0, bracketIndex));
+}
+
+function findExactModel(
+  models: AgentModelDefinition[],
+  modelId: string,
+): AgentModelDefinition | null {
   return (
-    models.find((model) => model.id === normalizedModelId) ??
-    models.find((model) => model.aliases?.includes(normalizedModelId)) ??
+    models.find((model) => model.id === modelId) ??
+    models.find((model) => model.aliases?.includes(modelId)) ??
     null
   );
 }

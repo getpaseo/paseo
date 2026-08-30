@@ -20,4 +20,16 @@ describe("findModelByReference", () => {
 
     expect(findModelByReference(models, "gateway-model")?.label).toBe("Exact gateway model");
   });
+
+  it("matches a parameterized Cursor model id to the base catalog id", () => {
+    const models: AgentModelDefinition[] = [
+      {
+        provider: "cursor",
+        id: "grok-4.6",
+        label: "Cursor Grok 4.6",
+      },
+    ];
+
+    expect(findModelByReference(models, "grok-4.6[effort=xhigh,fast=false]")?.id).toBe("grok-4.6");
+  });
 });

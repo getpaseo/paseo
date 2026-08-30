@@ -24,6 +24,7 @@ import {
   createLoggedNdJsonStream,
   deriveModelDefinitionsFromACP,
   deriveModesFromACP,
+  deriveThinkingSelectorOptions,
   mapACPUsage,
   resolveACPModeSelection,
   resolveACPModelSelection,
@@ -178,6 +179,7 @@ function createSessionWithConfig(
     provider?: string;
     modeId?: string | null;
     model?: string | null;
+    thinkingOptionId?: string | null;
     featureValues?: Record<string, unknown>;
   } = {},
   logger: ReturnType<typeof createTestLogger> = createTestLogger(),
@@ -188,6 +190,7 @@ function createSessionWithConfig(
       cwd: "/tmp/paseo-acp-test",
       modeId: config.modeId ?? undefined,
       model: config.model ?? undefined,
+      thinkingOptionId: config.thinkingOptionId ?? undefined,
       featureValues: config.featureValues,
     },
     {
@@ -1120,6 +1123,168 @@ describe("ACPAgentSession Zed parity", () => {
     });
   });
 
+  test("writes thinking to the thought_level option that contains the requested value", async () => {
+    const session = createSession();
+    const internals = asInternals<ACPModelSelectionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.configOptions = [
+      {
+        id: "thinking",
+        name: "Thinking",
+        category: "thought_level",
+        type: "select",
+        currentValue: "true",
+        options: [
+          { value: "false", name: "Off" },
+          { value: "true", name: "On" },
+        ],
+      },
+      {
+        id: "effort",
+        name: "Effort",
+        category: "thought_level",
+        type: "select",
+        currentValue: "high",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "high", name: "High" },
+          { value: "xhigh", name: "Extra High" },
+        ],
+      },
+    ];
+    function withEffortValue(value: string): SessionConfigOption[] {
+      return internals.configOptions.map((option) =>
+        option.id === "effort" ? { ...option, currentValue: value } : option,
+      );
+    }
+    const setSessionConfigOption = vi.fn(async ({ value }: { value: string }) => ({
+      configOptions: withEffortValue(value),
+    }));
+    internals.connection = { setSessionConfigOption };
+
+    await session.setThinkingOption("xhigh");
+
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "effort",
+      value: "xhigh",
+    });
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: "xhigh" });
+  });
+
+  test("skips thinking when the ACP session has no thought-level picker", async () => {
+    const logger = createTestLogger();
+    const childLogger = { trace: vi.fn(), warn: vi.fn() };
+    vi.spyOn(logger, "child").mockReturnValue(asInternals<typeof logger>(childLogger));
+    const session = createSessionWithConfig({ thinkingOptionId: "max" }, logger);
+    const internals = asInternals<ACPModelSelectionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.configOptions = [selectConfigOption("model", ["composer-2.5"], "composer-2.5")];
+    const setSessionConfigOption = vi.fn();
+    internals.connection = { setSessionConfigOption };
+
+    await expect(session.setThinkingOption("max")).resolves.toBeUndefined();
+    expect(setSessionConfigOption).not.toHaveBeenCalled();
+    expect(childLogger.warn).toHaveBeenCalledWith(
+      { value: "max" },
+      "claude-acp does not expose ACP thought-level selection",
+    );
+  });
+
+  test("sets the model through config options so parameterized pickers refresh thinking", async () => {
+    const session = createSessionWithConfig({ model: "grok-4.6" });
+    const setSessionConfigOption = vi.fn(async () => ({
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          category: "model",
+          type: "select",
+          currentValue: "grok-4.6",
+          options: [
+            { value: "kimi-k3", name: "Kimi K3" },
+            { value: "grok-4.6", name: "Cursor Grok 4.6" },
+          ],
+        },
+        {
+          id: "effort",
+          name: "Effort",
+          category: "thought_level",
+          type: "select",
+          currentValue: "high",
+          options: [
+            { value: "low", name: "Low" },
+            { value: "high", name: "High" },
+            { value: "xhigh", name: "Extra High" },
+          ],
+        },
+      ],
+    }));
+    const unstableSetSessionModel = vi.fn();
+    const internals = asInternals<ACPConfiguredOverrideInternals>(session);
+    internals.sessionId = "session-1";
+    internals.availableModels = [
+      { modelId: "kimi-k3", name: "Kimi K3", description: null },
+      { modelId: "grok-4.6", name: "Cursor Grok 4.6", description: null },
+    ];
+    internals.currentModel = "kimi-k3";
+    internals.configOptions = [
+      {
+        id: "model",
+        name: "Model",
+        category: "model",
+        type: "select",
+        currentValue: "kimi-k3",
+        options: [
+          { value: "kimi-k3", name: "Kimi K3" },
+          { value: "grok-4.6", name: "Cursor Grok 4.6" },
+        ],
+      },
+      {
+        id: "reasoning",
+        name: "Reasoning",
+        category: "thought_level",
+        type: "select",
+        currentValue: "max",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "high", name: "High" },
+          { value: "max", name: "Max" },
+        ],
+      },
+    ];
+    internals.connection = {
+      setSessionMode: vi.fn(),
+      setSessionConfigOption,
+      unstable_setSessionModel: unstableSetSessionModel,
+    };
+
+    const events: AgentStreamEvent[] = [];
+    const unsubscribe = session.subscribe((event) => events.push(event));
+    await session.setModel("grok-4.6");
+    unsubscribe();
+
+    expect(unstableSetSessionModel).not.toHaveBeenCalled();
+    expect(setSessionConfigOption).toHaveBeenCalledWith({
+      sessionId: "session-1",
+      configId: "model",
+      value: "grok-4.6",
+    });
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "grok-4.6",
+      thinkingOptionId: "high",
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "thinking_option_changed", thinkingOptionId: "high" }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "model_changed",
+        runtimeInfo: expect.objectContaining({ model: "grok-4.6" }),
+      }),
+    );
+  });
+
   test("passes generic ACP permission requests through to the user", async () => {
     const session = createSessionWithConfig({
       provider: "cursor-acp",
@@ -1731,6 +1896,80 @@ describe("deriveModelDefinitionsFromACP", () => {
         defaultThinkingOptionId: "medium",
       },
     ]);
+  });
+
+  test("prefers effort over a boolean thinking toggle when both are thought_level options", () => {
+    const thinkingOptions = deriveThinkingSelectorOptions([
+      {
+        id: "thinking",
+        name: "Thinking",
+        category: "thought_level",
+        type: "select",
+        currentValue: "true",
+        options: [
+          { value: "false", name: "Off" },
+          { value: "true", name: "On" },
+        ],
+      },
+      {
+        id: "effort",
+        name: "Effort",
+        category: "thought_level",
+        type: "select",
+        currentValue: "high",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "medium", name: "Medium" },
+          { value: "high", name: "High" },
+          { value: "xhigh", name: "Extra High" },
+          { value: "max", name: "Max" },
+        ],
+      },
+    ]);
+
+    expect(thinkingOptions.map((option) => option.id)).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(thinkingOptions.find((option) => option.isDefault)?.id).toBe("high");
+
+    const result = deriveModelDefinitionsFromACP(
+      "acp",
+      {
+        availableModels: [{ modelId: "claude-fable-5", name: "Claude Fable 5", description: null }],
+        currentModelId: "claude-fable-5",
+      },
+      [
+        {
+          id: "thinking",
+          name: "Thinking",
+          category: "thought_level",
+          type: "select",
+          currentValue: "true",
+          options: [
+            { value: "false", name: "Off" },
+            { value: "true", name: "On" },
+          ],
+        },
+        {
+          id: "effort",
+          name: "Effort",
+          category: "thought_level",
+          type: "select",
+          currentValue: "high",
+          options: [
+            { value: "low", name: "Low" },
+            { value: "high", name: "High" },
+          ],
+        },
+      ],
+    );
+
+    expect(result[0]?.thinkingOptions?.map((option) => option.id)).toEqual(["low", "high"]);
+    expect(result[0]?.defaultThinkingOptionId).toBe("high");
   });
 });
 

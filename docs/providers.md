@@ -43,7 +43,16 @@ and tool identity without approving native tools.
 
 Extend `ACPAgentClient` from `packages/server/src/server/agent/providers/acp-agent.ts`. The base class handles process spawning, stdio transport, session lifecycle, streaming, permissions, and model discovery. You provide configuration (command, modes, capabilities) and optionally override `isAvailable()` for auth checks.
 
-The only built-in ACP provider today is `copilot` (`copilot-acp-agent.ts`). `GenericACPAgentClient` (`generic-acp-agent.ts`) is also ACP-based but is used for user-defined custom providers configured via `extends: "acp"` overrides — see [docs/custom-providers.md](custom-providers.md).
+Built-in ACP providers include `copilot` (`copilot-acp-agent.ts`) and `cursor` (`cursor-acp-agent.ts`). `GenericACPAgentClient` (`generic-acp-agent.ts`) is also ACP-based but is used for user-defined custom providers configured via `extends: "acp"` overrides — see [docs/custom-providers.md](custom-providers.md).
+
+Cursor's Thinking chip is the current model's `effort` or `reasoning` picker. `cursor-agent acp` only exposes effort, reasoning, Fast, and context when the client declares `_meta.parameterizedModelPicker`. Without that flag, Cursor returns one frozen default variant per model (`grok-4.6[effort=high,fast=true]`, `kimi-k3[reasoning=max]`, …) and rejects both CLI slugs and other bracketed IDs.
+
+With the flag, models are base IDs (`grok-4.6`, `claude-fable-5`, `kimi-k3`). After the current model is selected, Cursor publishes:
+
+- `effort` or `reasoning` as `thought_level` — this is the Thinking chip, per model
+- `fast` and `context` as `model_config` — provider features, only when that model has them
+
+Do not send `cursor-grok-4.6-xhigh` or `grok-4.6[effort=xhigh]` as the ACP model ID in this mode. Persist the base ID plus `thinkingOptionId` / `featureValues`. A persisted frozen variant ID is split back into those fields on create/resume.
 
 Copilot custom agents are exposed through ACP session config, not the slash-command list. When custom agents are available, Copilot returns a select config option with `id: "agent"` and `category: "_agent"`; Paseo maps that to the `agent` provider feature. Copilot uses the agent display name as the option value, and the blank value means the default Copilot agent.
 
