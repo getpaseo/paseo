@@ -70,6 +70,7 @@ import {
   AgentRunState,
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
+  type TrackedAgentRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
@@ -97,6 +98,11 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
 };
 
 type TimeoutResult = "completed" | "timed_out";
+
+interface ReloadAgentSessionOptions {
+  rehydrateFromDisk?: boolean;
+  skipCancellation?: boolean;
+}
 
 function submittedPromptText(prompt: AgentPromptInput): string {
   if (typeof prompt === "string") {
@@ -1347,11 +1353,11 @@ export class AgentManager {
   private async reloadAgentSessionInternal(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options?: ReloadAgentSessionOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
-    if (this.hasInFlightRun(agentId)) {
+    if (this.hasInFlightRun(agentId) && !options?.skipCancellation) {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
     }
@@ -2731,42 +2737,15 @@ export class AgentManager {
     });
 
     if (!interruptAcknowledged) {
-      return { status: settlement === "completed" ? "settled" : "refused" };
+      if (settlement === "completed") {
+        return { status: "settled" };
+      }
+      await this.recoverAfterInterruptedCancel(agent, run);
+      return { status: "settled" };
     }
 
-    if (settlement === "timed_out" && run.turnId) {
-      this.logger.warn(
-        { agentId, turnId: run.turnId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-        turnId: run.turnId,
-      });
-      await run.settledPromise;
-    } else if (settlement === "timed_out" && run.kind === "foreground") {
-      this.logger.warn(
-        { agentId, kind: run.kind },
-        "cancelAgentRun: acknowledged pending turn still active after timeout, clearing it",
-      );
-      this.runs.settleForegroundRun(agentId, run.token);
-      if (!agent.pendingReplacement) {
-        agent.lifecycle = "idle";
-        this.touchUpdatedAt(agent);
-        this.emitState(agent);
-      }
-    } else if (settlement === "timed_out" && run.kind === "autonomous") {
-      this.logger.warn(
-        { agentId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      await this.dispatchSessionEvent(agent, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-      });
+    if (settlement === "timed_out") {
+      await this.forceCancelTrackedRun(agent, run);
     }
 
     if (agent.pendingPermissions.size > 0) {
@@ -2775,6 +2754,81 @@ export class AgentManager {
       this.emitState(agent);
     }
     return { status: "settled" };
+  }
+
+  private async forceCancelTrackedRun(
+    agent: ActiveManagedAgent,
+    run: TrackedAgentRun,
+  ): Promise<void> {
+    if (run.turnId) {
+      this.logger.warn(
+        { agentId: agent.id, turnId: run.turnId, kind: run.kind },
+        "cancelAgentRun: turn still active after interrupt timeout, force-canceling",
+      );
+      await this.dispatchSessionEvent(agent, {
+        type: "turn_canceled",
+        provider: agent.provider,
+        reason: "interrupted",
+        turnId: run.turnId,
+      });
+      this.runs.clearAgentRun(agent.id);
+      await run.settledPromise;
+    } else if (run.kind === "foreground") {
+      this.logger.warn(
+        { agentId: agent.id, kind: run.kind },
+        "cancelAgentRun: pending turn still active after interrupt timeout, clearing it",
+      );
+      this.runs.settleForegroundRun(agent.id, run.token);
+      if (!agent.pendingReplacement) {
+        agent.lifecycle = "idle";
+        this.touchUpdatedAt(agent);
+        this.emitState(agent);
+      }
+    } else if (run.kind === "autonomous") {
+      this.logger.warn(
+        { agentId: agent.id, kind: run.kind },
+        "cancelAgentRun: turn still active after interrupt timeout, force-canceling",
+      );
+      await this.dispatchSessionEvent(agent, {
+        type: "turn_canceled",
+        provider: agent.provider,
+        reason: "interrupted",
+      });
+      this.runs.clearAgentRun(agent.id);
+      await run.settledPromise;
+    }
+  }
+
+  private async recoverAfterInterruptedCancel(
+    agent: ActiveManagedAgent,
+    run: TrackedAgentRun,
+  ): Promise<void> {
+    await this.forceInterruptSession(agent.session, agent.id);
+    await this.forceCancelTrackedRun(agent, run);
+    await this.closeReloadedSession(agent.session, agent.id);
+    try {
+      await this.reloadAgentSessionInternal(agent.id, undefined, { skipCancellation: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const current = this.agents.get(agent.id);
+      if (!current || current.session === null) {
+        this.logger.error(
+          { err: error, agentId: agent.id },
+          "Forced session recovery failed after the existing agent closed",
+        );
+        return;
+      }
+      current.pendingReplacement = false;
+      current.lifecycle = "error";
+      current.lastError = `Paseo stopped the unresponsive runtime but could not restore its session: ${message}`;
+      current.attention = {
+        requiresAttention: true,
+        attentionReason: "error",
+        attentionTimestamp: new Date(),
+      };
+      this.touchUpdatedAt(current);
+      this.emitState(current);
+    }
   }
 
   private async cancelAgentRunBefore(
@@ -2811,6 +2865,33 @@ export class AgentManager {
     } catch (error) {
       this.logger.error({ err: error, agentId }, "Failed to interrupt session");
       return false;
+    }
+  }
+
+  private async forceInterruptSession(session: AgentSession, agentId: string): Promise<void> {
+    if (!session.forceInterrupt) {
+      return;
+    }
+
+    try {
+      const result = await this.waitWithTimeout({
+        operation: session.forceInterrupt(),
+        timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+        onLateError: (error) => {
+          this.logger.warn(
+            { err: error, agentId },
+            "Forced session interrupt failed after timeout during cancel",
+          );
+        },
+      });
+      if (result === "timed_out") {
+        this.logger.warn(
+          { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
+          "Timed out force-interrupting session during cancel",
+        );
+      }
+    } catch (error) {
+      this.logger.warn({ err: error, agentId }, "Failed to force-interrupt session during cancel");
     }
   }
 

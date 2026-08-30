@@ -659,6 +659,11 @@ export interface AgentSession {
    * still uncertain.
    */
   interrupt(): Promise<void>;
+  /**
+   * Best-effort process escalation after the normal provider interrupt stops
+   * responding. Implementations must leave the durable provider session intact.
+   */
+  forceInterrupt?(): Promise<void>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;

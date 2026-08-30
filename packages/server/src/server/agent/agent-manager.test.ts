@@ -1194,6 +1194,8 @@ class McpCapableTestAgentClient extends TestAgentClient {
 
 class ControlledInterruptSession extends TestAgentSession {
   interruptCalled = false;
+  forceInterruptCalled = false;
+  closeCalled = false;
 
   constructor(
     config: AgentSessionConfig,
@@ -1214,6 +1216,14 @@ class ControlledInterruptSession extends TestAgentSession {
     this.interruptCalled = true;
     await this.interruptBehavior(this);
   }
+
+  override async forceInterrupt(): Promise<void> {
+    this.forceInterruptCalled = true;
+  }
+
+  override async close(): Promise<void> {
+    this.closeCalled = true;
+  }
 }
 
 interface ControlledInterruptFixture {
@@ -1229,6 +1239,7 @@ async function createControlledInterruptFixture(options: {
   agentId: string;
   turnId: string;
   interrupt: (session: ControlledInterruptSession) => Promise<void>;
+  resumeSession?: () => Promise<AgentSession>;
 }): Promise<ControlledInterruptFixture> {
   const workdir = mkdtempSync(join(tmpdir(), `agent-manager-${options.name}-`));
   const session = new ControlledInterruptSession(
@@ -1239,6 +1250,17 @@ async function createControlledInterruptFixture(options: {
   const client = new (class extends TestAgentClient {
     override async createSession(): Promise<AgentSession> {
       return session;
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      if (options.resumeSession) {
+        return options.resumeSession();
+      }
+      return super.resumeSession(handle, config, launchContext);
     }
   })();
   const manager = new AgentManager({
@@ -2312,7 +2334,7 @@ test("reloadAgentSession completes when the previous session close hangs", async
   }
 });
 
-test("cancelAgentRun preserves running state when the provider interrupt hangs", async () => {
+test("cancelAgentRun force-recovers an unresponsive provider session", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-timeout",
     agentId: "00000000-0000-4000-8000-000000000303",
@@ -2330,16 +2352,31 @@ test("cancelAgentRun preserves running state when the provider interrupt hangs",
     await running;
 
     await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
-      status: "refused",
+      status: "settled",
     });
     expect(fixture.session.interruptCalled).toBe(true);
-    expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("running");
+    expect(fixture.session.forceInterruptCalled).toBe(true);
+    expect(fixture.session.closeCalled).toBe(true);
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+    expect(fixture.manager.getAgent(fixture.agentId)?.session).not.toBe(fixture.session);
+
+    const followUp = fixture.manager.streamAgent(fixture.agentId, "follow-up after forced stop");
+    const events: AgentStreamEvent[] = [];
+    for await (const event of followUp) {
+      events.push(event);
+    }
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn_completed", provider: "codex" }),
+    );
   } finally {
     await fixture.cleanup();
   }
 });
 
-test("cancelAgentRun preserves the active turn when the provider rejects the interrupt", async () => {
+test("cancelAgentRun force-recovers when the provider rejects the interrupt", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-rejected",
     agentId: "00000000-0000-4000-8000-000000000304",
@@ -2353,17 +2390,46 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
     await fixture.startForegroundRun();
 
     await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
-      status: "refused",
+      status: "settled",
     });
     expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
-      lifecycle: "running",
-      activeForegroundTurnId: "provider-still-active-turn",
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
     });
+    expect(fixture.session.forceInterruptCalled).toBe(true);
+    expect(fixture.session.closeCalled).toBe(true);
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
-    fixture.session.pushEvent({
-      type: "turn_completed",
-      provider: "codex",
-      turnId: "provider-still-active-turn",
+test("cancelAgentRun exposes recovery failure instead of a permanent running state", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-recovery-failure",
+    agentId: "00000000-0000-4000-8000-000000000307",
+    turnId: "unrecoverable-turn",
+    interrupt: async () => await new Promise(() => {}),
+    resumeSession: async () => {
+      throw new Error("provider session cannot be resumed");
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "error",
+      activeForegroundTurnId: null,
+      pendingReplacement: false,
+      attention: expect.objectContaining({
+        requiresAttention: true,
+        attentionReason: "error",
+      }),
+      lastError:
+        "Paseo stopped the unresponsive runtime but could not restore its session: provider session cannot be resumed",
     });
   } finally {
     await fixture.cleanup();
@@ -6169,7 +6235,7 @@ test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", 
   expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
 });
 
-test("failed replacement cancellation preserves an autonomous running state", async () => {
+test("failed replacement cancellation force-recovers an autonomous running state", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-replace-rejected-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
 
@@ -6212,11 +6278,17 @@ test("failed replacement cancellation preserves an autonomous running state", as
     });
     await running;
 
-    await expect(manager.replaceAgentRun(agent.id, "replacement prompt")).rejects.toThrow(
-      `Cannot replace agent ${agent.id} because its active run cancellation was not acknowledged`,
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement prompt");
+    const events: AgentStreamEvent[] = [];
+    for await (const event of replacement) {
+      events.push(event);
+    }
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn_completed", provider: "codex" }),
     );
     expect(manager.getAgent(agent.id)).toMatchObject({
-      lifecycle: "running",
+      lifecycle: "idle",
       activeForegroundTurnId: null,
     });
   } finally {

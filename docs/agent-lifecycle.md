@@ -42,9 +42,10 @@ into that contract; lifecycle callers do not interpret provider-specific errors.
 
 After an acknowledged interrupt, the manager settles the captured run even when no terminal event
 arrives or the run was still waiting for its provider turn id. The captured run token prevents an
-older cancellation from settling a newer turn. If interruption is rejected or times out, the agent
-keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
-Accepting new work after an ambiguous interruption would create a split-brain session.
+older cancellation from settling a newer turn. If the normal interrupt rejects or times out, Paseo
+escalates the provider runtime when it supports direct process interruption, then closes and reloads
+the session. A successful recovery leaves the agent idle and ready for the next prompt. If the
+session cannot be restored, the agent becomes an attention error instead of remaining `running`.
 
 ## Relationships
 

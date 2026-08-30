@@ -2179,6 +2179,28 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
   }
 
+  async forceInterrupt(): Promise<void> {
+    if (!this.child) {
+      return;
+    }
+
+    const firstPass = await this.terminateProcess(this.child, {
+      gracefulSignal: "SIGINT",
+      forceSignal: "SIGTERM",
+      gracefulTimeoutMs: 2_000,
+      forceTimeoutMs: 2_000,
+    });
+    if (firstPass !== "kill-timeout") {
+      return;
+    }
+
+    await this.terminateProcess(this.child, {
+      gracefulSignal: "SIGKILL",
+      forceSignal: "SIGKILL",
+      gracefulTimeoutMs: 0,
+    });
+  }
+
   async close(): Promise<void> {
     if (this.closed) {
       return;

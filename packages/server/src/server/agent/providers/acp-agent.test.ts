@@ -29,7 +29,11 @@ import {
   resolveACPModelSelection,
   summarizeACPRequestError,
 } from "./acp-agent.js";
-import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
+import type {
+  ProcessTerminator,
+  TerminateWithTreeKillOptions,
+  TreeKillTarget,
+} from "../../../utils/tree-kill.js";
 import {
   COPILOT_AGENT_FEATURE_OPTION,
   COPILOT_ALLOW_ALL_MODE_ID,
@@ -91,6 +95,10 @@ interface ACPSessionInternals {
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
   acpMcpServers(): unknown[];
+}
+
+interface ACPForceInterruptInternals {
+  child: ChildProcessWithoutNullStreams | null;
 }
 
 interface ACPModelSelectionInternals {
@@ -262,6 +270,34 @@ function createProbeChildStub(): ChildProcessWithoutNullStreams {
   child.kill = vi.fn(() => true) as ChildProcessWithoutNullStreams["kill"];
   return child;
 }
+
+describe("ACPAgentSession forced interruption", () => {
+  test("escalates an unresponsive process from SIGINT to SIGTERM and SIGKILL", async () => {
+    const calls: TerminateWithTreeKillOptions[] = [];
+    const terminate: ProcessTerminator = async (_child, options) => {
+      calls.push(options);
+      return calls.length === 1 ? "kill-timeout" : "terminated";
+    };
+    const session = createSession(terminate);
+    asInternals<ACPForceInterruptInternals>(session).child = createProbeChildStub();
+
+    await session.forceInterrupt();
+
+    expect(calls).toEqual([
+      {
+        gracefulSignal: "SIGINT",
+        forceSignal: "SIGTERM",
+        gracefulTimeoutMs: 2_000,
+        forceTimeoutMs: 2_000,
+      },
+      {
+        gracefulSignal: "SIGKILL",
+        forceSignal: "SIGKILL",
+        gracefulTimeoutMs: 0,
+      },
+    ]);
+  });
+});
 
 function selectConfigOption(
   category: "mode" | "model" | "thought_level",
