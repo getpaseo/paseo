@@ -883,6 +883,7 @@ export class OmpAgentSession implements AgentSession {
   private readonly subagentCardTracker: OmpSubagentCardTracker;
   private lastTodoItem: Extract<AgentTimelineItem, { type: "todo" }> | null = null;
   private state: OmpSessionState;
+  private fallbackGeneration = 0;
   private fallbackModel: { model: OmpModel; staleModelIds: Set<string> } | null = null;
 
   private readonly currentModeId: string | null;
@@ -1282,6 +1283,7 @@ export class OmpAgentSession implements AgentSession {
       ...this.state,
       model,
     };
+    this.fallbackGeneration += 1;
     this.fallbackModel = null;
 
     this.config.model = `${model.provider}/${model.id}`;
@@ -1655,9 +1657,13 @@ export class OmpAgentSession implements AgentSession {
     // (e.g. `glm-4.7:max`). Confirm against OMP's model catalog in the
     // background and correct the reference when the literal id exists.
     if (event.model.endsWith(":max") && modelToId(model) !== event.model.replace(/@[^:/@]+$/, "")) {
+      const generation = this.fallbackGeneration;
       void this.runtimeSession
         .getAvailableModels(null)
         .then((models) => {
+          // A newer fallback, restore, or manual model switch supersedes
+          // this lookup; never resurrect an older fallback target.
+          if (generation !== this.fallbackGeneration) return;
           const literal = models.find(
             (candidate) =>
               candidate.provider === model.provider && candidate.id === `${model.id}:max`,
@@ -1675,6 +1681,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private applyFallbackModel(model: OmpModel): void {
+    this.fallbackGeneration += 1;
     // Every getState result produced before this event is stale: it can only
     // report one of the models the session already served, never a fresh one.
     const staleModelIds = this.fallbackModel
@@ -1697,6 +1704,7 @@ export class OmpAgentSession implements AgentSession {
    * the signal is the first one that can be trusted without model-id
    * heuristics. */
   private handleModelChangedRuntimeEvent(): void {
+    this.fallbackGeneration += 1;
     this.fallbackModel = null;
     void this.refreshState()
       .then(() =>

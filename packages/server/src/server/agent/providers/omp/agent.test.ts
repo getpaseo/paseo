@@ -827,6 +827,38 @@ describe("OMP agent client and session", () => {
     expect(omp.modelChanges().at(-1)).toMatchObject({ model: "zai/glm-4.7" });
   });
 
+  test("ignores a stale :max catalog lookup after a newer fallback", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    let resolveCatalog: ((models: { provider: string; id: string }[]) => void) | null = null;
+    omp.runtime().getAvailableModels = () => {
+      const { promise, resolve } = Promise.withResolvers<{ provider: string; id: string }[]>();
+      resolveCatalog = resolve;
+      return promise;
+    };
+
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "zai/glm-4.7:max",
+      role: "primary",
+    });
+    await waitForImmediate();
+    // A newer fallback wins before the pending :max lookup for A resolves.
+    omp.runtime().emit({
+      type: "retry_fallback_succeeded",
+      model: "opencode-go/deepseek-v4-flash",
+      role: "primary",
+    });
+    await waitForImmediate();
+
+    resolveCatalog?.([{ provider: "zai", id: "glm-4.7:max" }]);
+    await waitForImmediate();
+    await waitForImmediate();
+
+    expect(omp.modelChanges().at(-1)).toMatchObject({ model: "opencode-go/deepseek-v4-flash" });
+    expect(omp.persistence()?.metadata).toMatchObject({ model: "opencode-go/deepseek-v4-flash" });
+  });
+
   test("resolves a restored primary only through the explicit model_changed signal", async () => {
     const omp = new OmpHarness();
     await omp.start();
