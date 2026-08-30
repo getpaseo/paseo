@@ -4,9 +4,25 @@ import {
   computeStampGeometry,
   resolveAppIconPath,
   resolveMonospaceFont,
+  shouldApplyDockIconOverride,
 } from "./stamped-icon";
 
 describe("stamped-icon", () => {
+  describe("shouldApplyDockIconOverride", () => {
+    it("leaves the packaged macOS Dock icon to the app bundle", () => {
+      expect(shouldApplyDockIconOverride({ platform: "darwin", isPackaged: true })).toBe(false);
+    });
+
+    it("keeps the runtime Dock icon for macOS development builds", () => {
+      expect(shouldApplyDockIconOverride({ platform: "darwin", isPackaged: false })).toBe(true);
+    });
+
+    it("does not apply a Dock icon on non-macOS platforms", () => {
+      expect(shouldApplyDockIconOverride({ platform: "win32", isPackaged: false })).toBe(false);
+      expect(shouldApplyDockIconOverride({ platform: "linux", isPackaged: false })).toBe(false);
+    });
+  });
+
   describe("resolveMonospaceFont", () => {
     it("selects Menlo-Bold on macOS when present", () => {
       const mockList = `

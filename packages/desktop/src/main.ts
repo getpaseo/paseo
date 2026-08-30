@@ -51,7 +51,7 @@ import {
 import { createExternalUrlOpener } from "./features/opener.js";
 import { createBrowserCaptureService } from "./features/browser-capture.js";
 import { registerEditorTargetHandlers } from "./features/editor-targets/ipc.js";
-import { resolveAppIconPath } from "./features/stamped-icon.js";
+import { resolveAppIconPath, shouldApplyDockIconOverride } from "./features/stamped-icon.js";
 import { setupApplicationMenu } from "./features/menu.js";
 import {
   BROWSER_NEW_TAB_REQUEST_EVENT,
@@ -615,7 +615,12 @@ async function getEffectiveAppIconPath(): Promise<string | null> {
 }
 
 async function applyAppIcon(): Promise<void> {
-  if (process.platform !== "darwin") {
+  if (
+    !shouldApplyDockIconOverride({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+    })
+  ) {
     return;
   }
 

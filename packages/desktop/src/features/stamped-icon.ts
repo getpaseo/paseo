@@ -6,6 +6,13 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const STAMP_CACHE_VERSION = "v2";
 
+export function shouldApplyDockIconOverride(options: {
+  platform: NodeJS.Platform;
+  isPackaged: boolean;
+}): boolean {
+  return options.platform === "darwin" && !options.isPackaged;
+}
+
 export const MONOSPACE_FONT_CANDIDATES = [
   "Menlo-Bold",
   "SFMono-Bold",
