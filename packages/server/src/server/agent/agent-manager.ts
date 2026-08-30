@@ -241,6 +241,18 @@ export interface ProviderAvailability {
 interface AgentManagerRescueTimeouts {
   reloadSessionCloseMs?: number;
   interruptSessionMs?: number;
+  acknowledgedInterruptSettleMs?: number;
+}
+
+function resolveRescueTimeouts(
+  overrides: AgentManagerRescueTimeouts | undefined,
+): Required<AgentManagerRescueTimeouts> {
+  return {
+    reloadSessionCloseMs: overrides?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
+    interruptSessionMs: overrides?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
+    acknowledgedInterruptSettleMs:
+      overrides?.acknowledgedInterruptSettleMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
+  };
 }
 
 interface ProviderEnabledFlag {
@@ -714,12 +726,7 @@ export class AgentManager {
     this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
-    this.rescueTimeouts = {
-      reloadSessionCloseMs:
-        options.rescueTimeouts?.reloadSessionCloseMs ?? RELOAD_SESSION_CLOSE_TIMEOUT_MS,
-      interruptSessionMs:
-        options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
-    };
+    this.rescueTimeouts = resolveRescueTimeouts(options.rescueTimeouts);
     this.beforeSteerUnavailableFallback = options.beforeSteerUnavailableFallback;
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
@@ -1350,11 +1357,23 @@ export class AgentManager {
     options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
-    let existing = this.requireSessionAgent(agentId);
     if (this.hasInFlightRun(agentId)) {
       await this.cancelAgentRunBefore(agentId, "reload");
-      existing = this.requireSessionAgent(agentId);
     }
+    return this.swapRegisteredSessionRuntime(agentId, overrides, options);
+  }
+
+  // Replaces a registered agent's provider session in place: builds the
+  // replacement session, closes the previous one, and re-registers under the
+  // same agent id while preserving labels, timeline, and durable identity.
+  // Callers are responsible for making sure no run is in flight.
+  private async swapRegisteredSessionRuntime(
+    agentId: string,
+    overrides?: Partial<AgentSessionConfig>,
+    options?: { rehydrateFromDisk?: boolean },
+  ): Promise<ManagedAgent> {
+    this.assertAcceptingAgentRegistrations();
+    const existing = this.requireSessionAgent(agentId);
     const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
@@ -2726,7 +2745,7 @@ export class AgentManager {
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
       timeoutMs: interruptAcknowledged
-        ? INTERRUPT_SESSION_TIMEOUT_MS
+        ? this.rescueTimeouts.acknowledgedInterruptSettleMs
         : this.rescueTimeouts.interruptSessionMs,
     });
 
@@ -2734,6 +2753,7 @@ export class AgentManager {
       return { status: settlement === "completed" ? "settled" : "refused" };
     }
 
+    let providerRuntimeSuspect = false;
     if (settlement === "timed_out" && run.turnId) {
       this.logger.warn(
         { agentId, turnId: run.turnId, kind: run.kind },
@@ -2746,6 +2766,7 @@ export class AgentManager {
         turnId: run.turnId,
       });
       await run.settledPromise;
+      providerRuntimeSuspect = run.kind === "foreground";
     } else if (settlement === "timed_out" && run.kind === "foreground") {
       this.logger.warn(
         { agentId, kind: run.kind },
@@ -2757,6 +2778,7 @@ export class AgentManager {
         this.touchUpdatedAt(agent);
         this.emitState(agent);
       }
+      providerRuntimeSuspect = true;
     } else if (settlement === "timed_out" && run.kind === "autonomous") {
       this.logger.warn(
         { agentId, kind: run.kind },
@@ -2774,7 +2796,47 @@ export class AgentManager {
       this.touchUpdatedAt(agent);
       this.emitState(agent);
     }
+    if (providerRuntimeSuspect) {
+      await this.reconcileProviderRuntimeAfterForcedCancel(agentId);
+    }
     return { status: "settled" };
+  }
+
+  /**
+   * A forced cancellation settles the daemon's run state, but the provider
+   * session may still own its foreground turn: the interrupt was acknowledged,
+   * yet no terminal event arrived inside the settle window. Leaving that
+   * session registered can strand the agent — real provider sessions guard
+   * their single foreground-turn slot, so every later startTurn is refused
+   * with "A foreground turn is already active" until the runtime is replaced
+   * (#349, #3256). Reload the session in place so provider turn ownership
+   * matches the settled daemon state. Clearing provider turn state without
+   * replacing the runtime is not an option here: a genuinely running turn
+   * must keep refusing concurrent prompts. If no replacement session can be
+   * built, keep the existing runtime registered — when the provider side was
+   * actually idle (rather than wedged) the old session still works, and when
+   * it was wedged the agent is no worse off than before the swap attempt.
+   */
+  private async reconcileProviderRuntimeAfterForcedCancel(agentId: string): Promise<void> {
+    if (this.runs.hasRun(agentId)) {
+      // A new run raced in behind the settlement; its owner drives the session now.
+      return;
+    }
+    if (!this.agents.get(agentId)?.session) {
+      return;
+    }
+    try {
+      await this.trackAgentRegistrationOperation(this.swapRegisteredSessionRuntime(agentId));
+      this.logger.info(
+        { agentId },
+        "cancelAgentRun: reloaded provider session after forced cancellation",
+      );
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId },
+        "cancelAgentRun: failed to swap provider session after forced cancellation",
+      );
+    }
   }
 
   private async cancelAgentRunBefore(

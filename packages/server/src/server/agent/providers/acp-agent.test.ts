@@ -3151,6 +3151,43 @@ describe("ACPAgentSession", () => {
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
   });
 
+  // The wedge behind #349/#3256: session/cancel is a notification, so
+  // interrupt() resolves without provider confirmation. If the agent process
+  // never answers the outstanding session/prompt, the foreground turn stays
+  // active — the split-brain guard must keep refusing new turns on this
+  // session, and only close() may release the slot. The AgentManager relies
+  // on exactly this contract when it swaps the session after a forced
+  // cancellation.
+  test("interrupt without a terminal event keeps the foreground turn until close", async () => {
+    const terminated: Array<number | undefined> = [];
+    const session = createSession(async (pid) => {
+      terminated.push(pid);
+    });
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+    const cancel = vi.fn(async () => {});
+
+    asInternals<ACPSessionInternals>(session).sessionId = "session-1";
+    asInternals<{ connection: unknown }>(session).connection = { prompt, cancel };
+
+    const { turnId } = await session.startTurn("hello");
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBe(turnId);
+
+    // The cancel notification is sent and interrupt() resolves, but the
+    // provider never emits a terminal event for the turn.
+    await session.interrupt();
+    expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBe(turnId);
+
+    // Split-brain guard: the session refuses another foreground turn.
+    await expect(session.startTurn("follow-up")).rejects.toThrow(
+      "A foreground turn is already active",
+    );
+
+    // Closing the session is the reconciliation path: it releases the slot.
+    await session.close();
+    expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
   test("flushes an image-only provider echo before a rejected turn finishes", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];
