@@ -10,6 +10,21 @@ export const DEFAULT_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD = 100;
 export const DEFAULT_WEB_MOUNTED_RECENT_STREAM_ITEMS = DEFAULT_MOUNTED_RECENT_STREAM_ITEMS;
 const COLLAPSED_TOOL_SEQUENCE_ROW_HEIGHT_ESTIMATE = 40;
 
+export function shouldAdjustScrollForVirtualRowResize(input: {
+  isHistoryStartPrependActive: boolean;
+  rowStart: number;
+  scrollOffset: number;
+  remainingDistanceFromBottom: number;
+  bottomThreshold: number;
+}): boolean {
+  if (input.isHistoryStartPrependActive) {
+    return false;
+  }
+  return (
+    input.remainingDistanceFromBottom > input.bottomThreshold && input.rowStart < input.scrollOffset
+  );
+}
+
 type BottomAnchorE2ETestGlobals = typeof globalThis & {
   __PASEO_E2E_WEB_PARTIAL_VIRTUALIZATION_THRESHOLD?: unknown;
 };

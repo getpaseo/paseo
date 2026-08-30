@@ -254,8 +254,9 @@ export function buildLightSemanticColors(tint: LightThemeConfig) {
     surfaceDiffEmpty: tint.surfaceDiffEmpty,
     surfaceSidebar: tint.surfaceSidebar,
     surfaceSidebarHover: tint.surface1,
-    surfaceSidebarSelected: tint.surface2,
+    surfaceSidebarSelected: tint.surface3,
     surfaceWorkspace: tint.surface0,
+    interactionHighlight: "rgba(0, 0, 0, 0.06)",
 
     foreground: tint.foreground,
     foregroundMuted: tint.foregroundMuted,
@@ -385,6 +386,7 @@ export function buildDarkSemanticColors(tint: DarkThemeConfig) {
     surfaceSidebarHover: tint.surface1,
     surfaceSidebarSelected: tint.surface2,
     surfaceWorkspace: tint.surface1,
+    interactionHighlight: "rgba(255, 255, 255, 0.08)",
 
     foreground,
     foregroundMuted: tint.foregroundMuted,
@@ -558,6 +560,7 @@ export const SPACING = {
 
 export const FONT_SIZE = {
   code: 12,
+  content: 15,
   sm: 12,
   base: 14,
   lg: 16,

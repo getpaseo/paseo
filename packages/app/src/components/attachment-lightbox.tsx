@@ -1,33 +1,45 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Modal, Pressable, Text, View } from "react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+import { StyleSheet } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { Image as ExpoImage } from "expo-image";
 import { X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
-import { isWeb } from "@/constants/platform";
-import { WindowChromeRootRegion, WindowChromeSafeArea } from "@/utils/desktop-window";
+import { isNative, isWeb } from "@/constants/platform";
+import { SPACING } from "@/styles/theme";
+import { WindowChromeRootRegion } from "@/utils/desktop-window";
+import { ZoomableImage } from "@/components/zoomable-viewport/image";
+import type { ViewportSize } from "@/components/zoomable-viewport/geometry";
+
+export type ImageLightboxSource =
+  | { type: "attachment"; metadata: AttachmentMetadata }
+  | { type: "uri"; uri: string; contentSize?: ViewportSize };
 
 interface AttachmentLightboxProps {
-  metadata: AttachmentMetadata | null;
+  source: ImageLightboxSource | null;
   onClose: () => void;
 }
 
-export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProps) {
-  const { theme } = useUnistyles();
+const ModalRoot = isNative ? GestureHandlerRootView : View;
+const LIGHTBOX_FIT = { padding: SPACING[4], maxWidth: 960, maxHeight: 640 };
+
+export function AttachmentLightbox({ source, onClose }: AttachmentLightboxProps) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const url = useAttachmentPreviewUrl(metadata);
+  const metadata = source?.type === "attachment" ? source.metadata : null;
+  const attachmentUrl = useAttachmentPreviewUrl(metadata);
+  const url = source?.type === "uri" ? source.uri : attachmentUrl;
+  const contentSize = source?.type === "uri" ? source.contentSize : undefined;
   const [errored, setErrored] = useState(false);
 
   useEffect(() => {
     setErrored(false);
-  }, [metadata?.id]);
+  }, [metadata?.id, url]);
 
   useEffect(() => {
-    if (!isWeb || !metadata) return;
+    if (!isWeb || !source) return;
     function handleKeydown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         onClose();
@@ -37,27 +49,35 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
     return () => {
       window.removeEventListener("keydown", handleKeydown);
     };
-  }, [metadata, onClose]);
+  }, [onClose, source]);
 
-  const closeButtonRowStyle = useMemo(
+  const contentLayerStyle = useMemo(
     () => [
-      styles.closeButtonRow,
+      styles.contentLayer,
       {
-        top: insets.top + theme.spacing[3],
+        paddingTop: insets.top,
+        paddingRight: insets.right,
+        paddingBottom: insets.bottom,
+        paddingLeft: insets.left,
       },
     ],
-    [insets.top, theme.spacing],
+    [insets.bottom, insets.left, insets.right, insets.top],
   );
-  const closeButtonStyle = useMemo(
-    () => [styles.closeButton, { marginRight: insets.right + theme.spacing[3] }],
-    [insets.right, theme.spacing],
+  const actions = useMemo(
+    () => [
+      {
+        icon: X,
+        label: t("message.attachments.closeImage"),
+        onPress: onClose,
+        testID: "attachment-lightbox-close",
+      },
+    ],
+    [onClose, t],
   );
 
   const handleImageError = useCallback(() => setErrored(true), []);
-  const noopPress = useCallback(() => {}, []);
-  const imageSource = useMemo(() => ({ uri: url ?? "" }), [url]);
 
-  if (!metadata) {
+  if (!source) {
     return null;
   }
 
@@ -65,61 +85,47 @@ export function AttachmentLightbox({ metadata, onClose }: AttachmentLightboxProp
 
   return (
     <Modal transparent animationType="fade" statusBarTranslucent visible onRequestClose={onClose}>
-      <WindowChromeRootRegion corners="both">
-        <View style={styles.root}>
-          <Pressable
-            testID="attachment-lightbox-backdrop"
-            accessibilityRole="button"
-            accessibilityLabel={t("message.attachments.dismissImage")}
-            onPress={onClose}
-            style={styles.backdrop}
-          />
-          <View style={styles.contentLayer}>
-            <View style={styles.imageArea}>
-              {hasError ? (
-                <Text style={styles.errorText}>{t("message.attachments.imageLoadFailed")}</Text>
-              ) : (
-                <Pressable onPress={noopPress} style={styles.imagePressable}>
-                  <ExpoImage
-                    testID="attachment-lightbox-image"
-                    source={imageSource}
-                    contentFit="contain"
+      <ModalRoot style={styles.root}>
+        <WindowChromeRootRegion corners="both">
+          <View style={styles.root}>
+            <Pressable
+              testID="attachment-lightbox-backdrop"
+              accessibilityRole="button"
+              accessibilityLabel={t("message.attachments.dismissImage")}
+              onPress={onClose}
+              style={styles.backdrop}
+            />
+            <View pointerEvents="box-none" style={contentLayerStyle}>
+              <View pointerEvents="box-none" style={styles.imageArea}>
+                {hasError ? (
+                  <Text style={styles.errorText}>{t("message.attachments.imageLoadFailed")}</Text>
+                ) : (
+                  <ZoomableImage
+                    accessibilityLabel={t("composer.attachments.openImage")}
+                    actions={actions}
+                    contentSize={contentSize}
+                    fit={LIGHTBOX_FIT}
                     onError={handleImageError}
-                    style={imageFillStyle}
+                    onPressOutsideContent={onClose}
+                    style={styles.imageViewport}
+                    testID="attachment-lightbox"
+                    uri={url}
                   />
-                </Pressable>
-              )}
+                )}
+              </View>
             </View>
-            <WindowChromeSafeArea placement="inline" style={closeButtonRowStyle}>
-              <Pressable
-                testID="attachment-lightbox-close"
-                accessibilityRole="button"
-                accessibilityLabel={t("message.attachments.closeImage")}
-                hitSlop={8}
-                onPress={onClose}
-                style={closeButtonStyle}
-              >
-                <X size={16} color={theme.colors.foregroundMuted} />
-              </Pressable>
-            </WindowChromeSafeArea>
           </View>
-        </View>
-      </WindowChromeRootRegion>
+        </WindowChromeRootRegion>
+      </ModalRoot>
     </Modal>
   );
 }
 
-const imageFillStyle = {
-  position: "absolute",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-} as const;
-
 const styles = StyleSheet.create((theme) => ({
   root: {
     flex: 1,
+    minHeight: 0,
+    minWidth: 0,
   },
   backdrop: {
     position: "absolute",
@@ -135,42 +141,19 @@ const styles = StyleSheet.create((theme) => ({
     left: 0,
     right: 0,
     bottom: 0,
-    pointerEvents: "box-none",
-  },
-  closeButtonRow: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    alignItems: "flex-end",
-    pointerEvents: "box-none",
   },
   imageArea: {
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    padding: theme.spacing[4],
-    pointerEvents: "box-none",
   },
-  imagePressable: {
+  imageViewport: {
     flex: 1,
     width: "100%",
     alignSelf: "center",
-    maxWidth: 960,
-    maxHeight: 640,
   },
   errorText: {
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
-  },
-  closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: theme.colors.surface2,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.border,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1,
   },
 }));

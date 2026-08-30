@@ -26,6 +26,7 @@ describe("Hub commands", () => {
       "status",
       "disconnect",
       "projects",
+      "export",
       "deploy",
       "logout",
     ]);
@@ -87,8 +88,64 @@ describe("Hub commands", () => {
     assert.deepEqual(events, [
       "progress:Logging in to https://hub.paseo.sh",
       "authorize:https://hub.paseo.sh",
+      "progress:Logged in",
     ]);
     assert.equal(result.data.origin, "https://hub.paseo.sh");
+  });
+
+  it("interactive login continues through the injected daemon and Hub guidance coordinator", async () => {
+    const credentials = new MemoryCredentials();
+    const events: string[] = [];
+
+    await runHubLogin(
+      "https://hub.test",
+      {},
+      {
+        env: {},
+        credentials,
+        flow: {
+          authorize: async () => {
+            events.push("login");
+            return "paseo_cli_prefix_durable-secret";
+          },
+        },
+        isInteractive: () => true,
+        continueGuidedSetup: async (origin) => {
+          events.push(`connect:${origin}`);
+          events.push("show-guidance");
+        },
+        reporter: { progress: (message) => events.push(`progress:${message}`) },
+      },
+    );
+
+    assert.deepEqual(events, [
+      "progress:Logging in to https://hub.test",
+      "login",
+      "progress:Logged in",
+      "connect:https://hub.test",
+      "show-guidance",
+    ]);
+  });
+
+  it("JSON and noninteractive login remain login-only", async () => {
+    for (const [options, interactive] of [
+      [{ json: true }, true],
+      [{}, false],
+    ] as const) {
+      const credentials = new MemoryCredentials();
+      let continuationCount = 0;
+      await runHubLogin(undefined, options, {
+        env: {},
+        credentials,
+        flow: { authorize: async () => "paseo_cli_prefix_durable-secret" },
+        isInteractive: () => interactive,
+        continueGuidedSetup: async () => {
+          continuationCount += 1;
+        },
+        reporter: quietReporter,
+      });
+      assert.equal(continuationCount, 0);
+    }
   });
 
   it("connect exchanges authority once and gives only the enrollment token to the daemon", async () => {
@@ -482,6 +539,10 @@ class FakeDaemon implements HubDaemonClient {
 
   async getHubStatus() {
     return { status: hubStatus("connected", this.origin) };
+  }
+
+  async getProvidersSnapshot() {
+    return { entries: [] };
   }
 
   async disconnectHub(force: boolean) {

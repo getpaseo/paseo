@@ -38,7 +38,6 @@ export interface AppUpdateRuntimeConfiguration {
   shouldAdmitUpdate(info: RuntimeUpdateInfo): boolean | Promise<boolean>;
   onUpdateAvailable(info: RuntimeUpdateInfo): void;
   onUpdateDownloaded(info: RuntimeUpdateInfo): void;
-  onUpdateNotAvailable(): void;
   onError(error: unknown): void;
 }
 
@@ -147,6 +146,24 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     preparingUpdateVersion = null;
   }
 
+  function buildPreviouslyAdmittedUpdateResult(
+    currentVersion: string,
+    checkedInfo: RuntimeUpdateInfo,
+  ): AppUpdateCheckResult | null {
+    const info = cachedUpdateInfo;
+    if (!info || info.version === currentVersion || info.version !== checkedInfo.version) {
+      return null;
+    }
+
+    return buildCheckResult({
+      currentVersion,
+      hasUpdate: true,
+      readyToInstall: isReadyToInstallVersion(info.version),
+      info,
+      errorMessage: preparationError?.version === info.version ? preparationError.message : null,
+    });
+  }
+
   function configureRuntime(releaseChannel: AppReleaseChannel, intent: AppUpdateCheckIntent): void {
     if (configuredReleaseChannel !== releaseChannel) {
       clearUpdateState();
@@ -185,9 +202,6 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
         if (preparationError?.version === info.version) {
           preparationError = null;
         }
-      },
-      onUpdateNotAvailable() {
-        clearUpdateState();
       },
       onError(error) {
         if (preparingUpdateVersion) {
@@ -233,7 +247,24 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
 
       try {
         const result = await deps.runtime.checkForUpdates();
-        if (!result || !result.updateInfo || !result.isUpdateAvailable) {
+        if (!result || !result.updateInfo) {
+          clearUpdateState();
+          return buildCheckResult({
+            currentVersion,
+            hasUpdate: false,
+            readyToInstall: false,
+          });
+        }
+
+        if (!result.isUpdateAvailable) {
+          const admittedUpdate = buildPreviouslyAdmittedUpdateResult(
+            currentVersion,
+            result.updateInfo,
+          );
+          if (admittedUpdate) {
+            return admittedUpdate;
+          }
+
           clearUpdateState();
           return buildCheckResult({
             currentVersion,

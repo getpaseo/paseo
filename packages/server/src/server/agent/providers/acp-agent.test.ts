@@ -54,13 +54,13 @@ import { asInternals } from "../../test-utils/class-mocks.js";
 import * as spawnUtils from "../../../utils/spawn.js";
 
 describe("buildACPClientCapabilities", () => {
-  test("keeps filesystem and terminal execution with the agent by default", () => {
+  test("enables terminal execution on the host while keeping filesystem operations with the agent by default", () => {
     expect(buildACPClientCapabilities()).toEqual({
       fs: {
         readTextFile: false,
         writeTextFile: false,
       },
-      terminal: false,
+      terminal: true,
     });
   });
 
@@ -72,7 +72,7 @@ describe("buildACPClientCapabilities", () => {
           fs: {
             readTextFile: true,
           },
-          terminal: true,
+          terminal: false,
         },
       ),
     ).toEqual({
@@ -80,7 +80,7 @@ describe("buildACPClientCapabilities", () => {
         readTextFile: true,
         writeTextFile: false,
       },
-      terminal: true,
+      terminal: false,
       _meta: { source: "provider" },
     });
   });
@@ -2894,6 +2894,22 @@ describe("ACPAgentClient listImportableSessions", () => {
     await client.listImportableSessions({ limit: 20 });
 
     expect(listSessions).toHaveBeenCalledWith({});
+  });
+
+  test("stops at the requested session limit after a source-scoped page", async () => {
+    const listSessions = vi.fn().mockResolvedValue({
+      sessions: [
+        { sessionId: "s1", cwd: "/Users/moonshot", title: null, updatedAt: null },
+        { sessionId: "s2", cwd: "/Users/moonshot", title: null, updatedAt: null },
+      ],
+      nextCursor: "later",
+    });
+    const client = makeClient({ listSessions });
+
+    await expect(
+      client.listImportableSessions({ cwd: "/Users/moonshot", limit: 1 }),
+    ).resolves.toHaveLength(1);
+    expect(listSessions).toHaveBeenCalledTimes(1);
   });
 
   test("forwards cwd alongside the pagination cursor across pages", async () => {

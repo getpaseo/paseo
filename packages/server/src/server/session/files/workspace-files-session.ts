@@ -263,6 +263,12 @@ export class WorkspaceFilesSession {
           source,
         );
       } else {
+        if (request.maxBytes) {
+          const file = await getDownloadableFileInfo({ root: cwd, relativePath: requestedPath });
+          if (file.size > request.maxBytes) {
+            throw new Error("File is too large to display");
+          }
+        }
         if (request.acceptBinary && this.host.hasBinaryChannel()) {
           await streamExplorerFile({ root: cwd, relativePath: requestedPath }, async (file) => {
             await this.host.emitBinary(

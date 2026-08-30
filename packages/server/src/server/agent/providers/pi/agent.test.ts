@@ -17,12 +17,22 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
-import { PiRpcAgentClient, PiRpcAgentSession, transformPiModels } from "./agent.js";
+import {
+  PiProviderParamsSchema,
+  PiRpcAgentClient,
+  PiRpcAgentSession,
+  transformPiModels,
+} from "./agent.js";
 import { FakePi } from "./test-utils/fake-pi.js";
 import type { PiUsagePollScheduler } from "./usage-poller.js";
 
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=";
+
+test("Pi RPC timeout defaults to 60 seconds and accepts an override", () => {
+  expect(PiProviderParamsSchema.parse({}).rpcTimeoutMs).toBe(60_000);
+  expect(PiProviderParamsSchema.parse({ rpcTimeoutMs: 90_000 }).rpcTimeoutMs).toBe(90_000);
+});
 
 function createClient(
   pi = new FakePi(),
@@ -213,6 +223,20 @@ class SessionEvents {
 
   eventTypes(): AgentStreamEvent["type"][] {
     return this.events.map((event) => event.type);
+  }
+
+  turnLifecycleEvents() {
+    return this.events.flatMap((event) => {
+      if (
+        event.type === "turn_started" ||
+        event.type === "turn_completed" ||
+        event.type === "turn_failed" ||
+        event.type === "turn_canceled"
+      ) {
+        return [{ type: event.type, turnId: event.turnId }];
+      }
+      return [];
+    });
   }
 
   turnCompletedEvents() {
@@ -942,6 +966,132 @@ describe("PiRpcAgentSession", () => {
         'Provider finish_reason: error (stopReason=error, model=openrouter/google/gemini-2.5-flash-lite, responseId=gen-test, partial="I will use the write tool for qa.txt.")',
       ),
     });
+  });
+
+  test("shows retry activity while keeping the original Pi turn active through recovery", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("hello");
+
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.finishAgentRun({
+      message: {
+        role: "assistant",
+        provider: "test-provider",
+        model: "test-model",
+        stopReason: "error",
+        errorMessage: "Request timed out.",
+        content: [],
+      },
+      willRetry: true,
+    });
+    fakeSession.emit({
+      type: "auto_retry_start",
+      attempt: 1,
+      maxAttempts: 3,
+      delayMs: 2000,
+      errorMessage: "Request timed out.",
+    });
+
+    expect(events.timelineItems()).toContainEqual({
+      type: "error",
+      message: "Provider retry (attempt 1): Request timed out.",
+    });
+    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId }]);
+
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.finishAgentRun({
+      message: {
+        role: "assistant",
+        provider: "test-provider",
+        model: "test-model",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Recovered response" }],
+      },
+      willRetry: false,
+    });
+    fakeSession.emit({ type: "auto_retry_end", success: true, attempt: 1 });
+    fakeSession.settleTurn();
+
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId },
+      { type: "turn_completed", turnId },
+    ]);
+  });
+
+  test("fails an exhausted Pi recovery only after settlement", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("hello");
+
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.finishAgentRun({
+      message: {
+        role: "assistant",
+        provider: "test-provider",
+        model: "test-model",
+        stopReason: "error",
+        errorMessage: "Request timed out.",
+        content: [],
+      },
+      willRetry: true,
+    });
+    fakeSession.emit({
+      type: "auto_retry_start",
+      attempt: 1,
+      maxAttempts: 1,
+      delayMs: 2000,
+      errorMessage: "Request timed out.",
+    });
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.finishAgentRun({
+      message: {
+        role: "assistant",
+        provider: "test-provider",
+        model: "test-model",
+        stopReason: "error",
+        errorMessage: "Insufficient quota.",
+        content: [],
+      },
+      willRetry: false,
+    });
+    fakeSession.emit({
+      type: "auto_retry_end",
+      success: false,
+      attempt: 1,
+      finalError: "Insufficient quota.",
+    });
+
+    expect(events.turnLifecycleEvents()).toEqual([{ type: "turn_started", turnId }]);
+    expect(events.timelineItems()).toContainEqual({
+      type: "error",
+      message: "Provider retry (attempt 1): Request timed out.",
+    });
+
+    fakeSession.settleTurn();
+
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId },
+      { type: "turn_failed", turnId },
+    ]);
+  });
+
+  test("completes legacy Pi turns that have no settlement metadata", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("hello");
+
+    fakeSession.emit({ type: "turn_start" });
+    fakeSession.finishLegacyTurn({
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "Legacy response" }],
+    });
+
+    expect(events.turnLifecycleEvents()).toEqual([
+      { type: "turn_started", turnId },
+      { type: "turn_completed", turnId },
+    ]);
   });
 
   test("resumes by launching Pi with the persisted session file and cwd metadata", async () => {

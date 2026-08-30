@@ -31,7 +31,14 @@ export class TestOpenCodeHarness implements OpenCodeServerManagerLike {
 
   enqueueClient(client: TestOpenCodeClient): void {
     client.observeEvents((event) => {
-      for (const listener of this.eventListeners) listener(event as OpenCodeEventSourceInput);
+      const input =
+        typeof event === "object" &&
+        event !== null &&
+        "type" in event &&
+        event.type === "server-exited"
+          ? (event as OpenCodeEventSourceInput)
+          : ({ directory: "/workspace/repo", payload: event } as OpenCodeEventSourceInput);
+      for (const listener of this.eventListeners) listener(input);
     });
     this.clients.push(client);
   }
@@ -145,6 +152,7 @@ export class TestOpenCodeClient {
   sessionCommandEvents: unknown[] = [idleEvent()];
   sessionCommandResponse: OpenCodeResponse = {};
   sessionCreateResponse: OpenCodeResponse = { data: { id: "session-1" } };
+  sessionCreateImplementation: ((parameters: unknown) => Promise<OpenCodeResponse>) | null = null;
   sessionDeleteResponse: OpenCodeResponse = {};
   sessionChildrenResponses: OpenCodeResponse[] = [];
   sessionChildrenImplementation:
@@ -294,6 +302,9 @@ export class TestOpenCodeClient {
         },
         create: async (parameters: unknown) => {
           this.calls.sessionCreate.push(parameters);
+          if (this.sessionCreateImplementation) {
+            return await this.sessionCreateImplementation(parameters);
+          }
           return this.sessionCreateResponse;
         },
         delete: async (parameters: unknown) => {

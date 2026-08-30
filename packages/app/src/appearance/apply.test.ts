@@ -27,6 +27,7 @@ interface FakeTheme {
   fontFamily: { ui: string; mono: string };
   fontSize: {
     code: number;
+    content: number;
     sm: number;
     base: number;
     lg: number;
@@ -45,6 +46,7 @@ function makeFakeTheme(): FakeTheme {
     fontFamily: { ui: "seed-ui-stack", mono: "seed-mono-stack" },
     fontSize: {
       code: 12,
+      content: 15,
       sm: 12,
       base: 14,
       lg: 16,
@@ -63,6 +65,7 @@ function makeInput(overrides: Partial<AppearanceInput> = {}): AppearanceInput {
     uiFontFamily: "",
     monoFontFamily: "",
     uiBaseFontSize: 14,
+    contentFontSize: 15,
     codeFontSize: 12,
     syntaxTheme: "one",
     ...overrides,
@@ -131,6 +134,7 @@ describe("applyAppearance", () => {
     const alreadyScaled = makeFakeTheme();
     alreadyScaled.fontSize = {
       code: 4,
+      content: 4,
       sm: 4,
       base: 4,
       lg: 4,
@@ -152,6 +156,15 @@ describe("applyAppearance", () => {
     expect(fontSize.base).toBe(14);
     expect(fontSize.lg).toBe(16);
     expect(fontSize.sm).toBe(12);
+    expect(fontSize.code).toBe(10);
+  });
+
+  it("sets content size independently of the interface and code sizes", () => {
+    applyAppearance(makeInput({ uiBaseFontSize: 14, contentFontSize: 19, codeFontSize: 10 }));
+
+    const { fontSize } = runCapturedUpdater();
+    expect(fontSize.base).toBe(14);
+    expect(fontSize.content).toBe(19);
     expect(fontSize.code).toBe(10);
   });
 

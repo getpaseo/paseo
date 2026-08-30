@@ -107,6 +107,10 @@ function getTopWebOverlay(): WebOverlayEntry | undefined {
   }, undefined);
 }
 
+export function hasActiveWebOverlay(): boolean {
+  return getTopWebOverlay() !== undefined;
+}
+
 function getFocusableElements(scope: HTMLElement): HTMLElement[] {
   const selector = [
     "a[href]",
@@ -156,6 +160,11 @@ function handleWebOverlayFocus(event: FocusEvent): void {
  * The window listener below is the fallback for keys nobody routes through the shortcut engine.
  */
 export function dispatchTopWebOverlayKeyDown(event: KeyboardEvent): boolean {
+  // Composition keys belong to the active text field. A modal must not turn an
+  // IME candidate confirmation into an overlay shortcut before the browser has
+  // committed the composed text.
+  if (event.isComposing || event.key === "Process") return false;
+
   const top = getTopWebOverlay();
   const scope = top?.getScope();
   if (!top || !scope) return false;

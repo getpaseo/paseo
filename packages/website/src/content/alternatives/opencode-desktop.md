@@ -9,7 +9,7 @@ order: 56
 
 OpenCode Desktop is the desktop app for OpenCode. It is available in beta for macOS, Windows, and Linux.
 
-Paseo is an app for orchestrating coding agents, with native clients on desktop, mobile, web, and the CLI. Open source (AGPL-3.0).
+Paseo is an app for orchestrating coding agents, with native clients on desktop, mobile, web, and the CLI. Open source (Apache-2.0).
 
 ![Paseo desktop and mobile app](/hero-mockup.png)
 
@@ -87,7 +87,7 @@ OpenCode supports multi-session work on the same project. If you want worktree i
 
 Both tools are open source.
 
-Paseo is AGPL-3.0 and runs your agents through a daemon you control. OpenCode is open source and says it does not store your code or context data by default. OpenCode share links are public when you create them.
+Paseo is Apache-2.0 and runs your agents through a daemon you control. OpenCode is open source and says it does not store your code or context data by default. OpenCode share links are public when you create them.
 
 ## Voice
 
@@ -97,7 +97,7 @@ Paseo supports dictation and realtime voice mode. Speech-to-text and text-to-spe
 
 |                              | Paseo                                                           | OpenCode Desktop                |
 | ---------------------------- | --------------------------------------------------------------- | ------------------------------- |
-| License                      | Open source (AGPL-3.0)                                          | Open source                     |
+| License                      | Open source (Apache-2.0)                                        | Open source                     |
 | Desktop platforms            | macOS, Linux, Windows                                           | macOS, Linux, Windows           |
 | Native mobile                | iOS, Android                                                    | No                              |
 | Agent harnesses              | Claude Code, Codex, OpenCode, Pi + 30+ via ACP catalog + custom | OpenCode                        |

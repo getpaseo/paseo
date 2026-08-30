@@ -5,6 +5,7 @@ import type { TestInfo } from "@playwright/test";
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import { openCommandCenter } from "../support/helpers/command-center";
+import { submitMessage } from "../support/helpers/composer";
 import { addConnectedHostAndReload } from "../support/helpers/hosts";
 import { startIsolatedHostDaemon } from "../support/helpers/isolated-host-daemon";
 import { buildAgentRoute } from "../support/helpers/mock-agent";
@@ -28,10 +29,18 @@ function isSettledWorkspaceUrl(url: URL): boolean {
   return url.pathname.includes("/workspace/") && !url.searchParams.has("open");
 }
 
-function pluginSource(): string {
+function pluginSource(input: { workspaceId: string; agentId: string }): string {
   return `import React, { useRef } from "react";
-import { Text, View } from "react-native";
-import { useAgent, useWorkspace } from "@getpaseo/plugin";
+import { Pressable, Text, View } from "react-native";
+import { Icon, useAgent, useWorkspace } from "@getpaseo/plugin";
+import { defineRpc } from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+const recordComposerOpen = defineRpc({
+  name: "composer.open",
+  input: z.object({ workspaceId: z.string() }),
+  output: z.object({ opened: z.boolean() }),
+});
 
 function WorkspacePanel({ workspaceId, host, layout }) {
   const workspace = useWorkspace(workspaceId, (value) => ({ id: value.id }));
@@ -46,15 +55,70 @@ function AgentPanel({ workspaceId, agentId, host, layout }) {
   return <View><Text>Agent bridge {agent?.id}</Text><Text>Workspace {workspace?.id}</Text><Text>Host {host.id}</Text><Text>Layout {layout.compact ? "compact" : "wide"}</Text></View>;
 }
 
-function DirectCollisionSurface() {
-  return <View><Text>Direct collision surface</Text></View>;
+function DirectCollisionSurface({ navigation }) {
+  return <View>
+    <Text>Direct collision surface</Text>
+    {navigation ? <>
+      <Pressable accessibilityRole="button" onPress={() => navigation.openWorkspace({ workspaceId: ${JSON.stringify(input.workspaceId)} })}><Text>Open workspace from plugin</Text></Pressable>
+      <Pressable accessibilityRole="button" onPress={() => navigation.openAgent({ agentId: ${JSON.stringify(input.agentId)} })}><Text>Open agent from plugin</Text></Pressable>
+    </> : null}
+  </View>;
 }
 
 function SidebarCollisionSurface() {
   return <View><Text>Sidebar collision surface</Text></View>;
 }
 
+function ComposerPill({ theme, workspaceId, agentId }) {
+  const workspace = useWorkspace(workspaceId, (value) => ({ title: value.title }));
+  const agent = useAgent(agentId, (value) => ({ title: value.title }));
+  return <><Icon name="Scan" size={14} color={theme.colors.foregroundMuted} /><Text numberOfLines={1} style={{ color: theme.colors.foregroundMuted, flexShrink: 1 }}>Review {workspace?.title}:{agent?.title}</Text></>;
+}
+
+function contributeClient(client) {
+  const pills = new Map();
+  const remove = (agentId) => {
+    pills.get(agentId)?.();
+    pills.delete(agentId);
+  };
+  const unsubscribe = client.paseo.agents.subscribe((update) => {
+    if (update.kind === "remove") {
+      remove(update.agentId);
+      return;
+    }
+    const agent = update.agent;
+    if (agent.title !== "Plugin panel context agent" || !agent.workspaceId) return;
+    remove(agent.id);
+    let removePill = () => {};
+    removePill = client.addComposerPill({
+      id: "review",
+      title: "Open composer review",
+      workspaceId: agent.workspaceId,
+      agentId: agent.id,
+      Component: ComposerPill,
+      async onPress() {
+        await client.rpc(recordComposerOpen, { workspaceId: agent.workspaceId });
+        removePill();
+        client.openPanel("agent", {
+          workspaceId: agent.workspaceId,
+          agentId: agent.id,
+        });
+      },
+    });
+    pills.set(agent.id, removePill);
+  });
+  return () => {
+    unsubscribe();
+    for (const removePill of pills.values()) removePill();
+    pills.clear();
+  };
+}
+
 export default function contribute(plugin) {
+  plugin.handle(recordComposerOpen, async ({ workspaceId }, { paseo }) => {
+    await paseo.workspaces.ref(workspaceId).setTitle("Opened from composer pill");
+    return { opened: true };
+  });
   plugin.addSurface("collision", DirectCollisionSurface);
   plugin.addSurface("sidebar-destination", SidebarCollisionSurface);
   plugin.addSidebarItem({ id: "collision", title: "Collision sidebar", icon: "Blocks", surface: "sidebar-destination" });
@@ -64,6 +128,7 @@ export default function contribute(plugin) {
   plugin.addCommandCenterItem({ id: "surface", title: "Open direct collision surface", icon: "Blocks", context: "workspace", onSelect({ openSurface }) { openSurface("collision"); } });
   plugin.addCommandCenterItem({ id: "workspace", title: "Open plugin workspace", icon: "PanelsTopLeft", context: "workspace", onSelect({ openPanel }) { openPanel("workspace"); } });
   plugin.addCommandCenterItem({ id: "agent", title: "Open plugin agent", icon: "PanelTop", context: "agent", onSelect({ openPanel }) { openPanel("agent"); } });
+  plugin.addClientSide(contributeClient);
   return () => {};
 }`;
 }
@@ -119,7 +184,10 @@ test.describe("plugin workspace panels and Command Center", () => {
       port: secondaryDaemon.port,
     });
     await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: PLUGIN_ID }));
-    await writeFile(path.join(directory, "index.tsx"), pluginSource());
+    await writeFile(
+      path.join(directory, "index.tsx"),
+      pluginSource({ workspaceId: primary.workspaceId, agentId: "missing-agent" }),
+    );
 
     try {
       await primaryClient.patchDaemonConfig({ pluginsEnabled: true });
@@ -180,6 +248,38 @@ test.describe("plugin workspace panels and Command Center", () => {
         await page.getByTestId("plugin-surface-close").click();
       });
 
+      await test.step("surface navigation opens host-owned workspace and agent routes", async () => {
+        await runCommand(page, "Open direct collision surface");
+        await page.getByRole("button", { name: "Open workspace from plugin", exact: true }).click();
+        await page.waitForURL(isSettledWorkspaceUrl);
+        await expect(page.getByTestId("workspace-header-title")).toBeVisible();
+
+        const agent = await primary.client.createAgent({
+          provider: "mock",
+          cwd: primary.repoPath,
+          workspaceId: primary.workspaceId,
+          title: "Plugin navigation agent",
+          model: "ten-second-stream",
+          modeId: "load-test",
+        });
+        const navigationAgentId = agent.id;
+        await writeFile(
+          path.join(directory, "index.tsx"),
+          pluginSource({ workspaceId: primary.workspaceId, agentId: navigationAgentId }),
+        );
+        await primaryClient.reloadPlugin(PLUGIN_ID);
+
+        await runCommand(page, "Open direct collision surface");
+        await page.getByRole("button", { name: "Open agent from plugin", exact: true }).click();
+        await page.waitForURL(isSettledWorkspaceUrl);
+        await expect(
+          page
+            .getByTestId(`workspace-tab-agent_${navigationAgentId}`)
+            .filter({ visible: true })
+            .first(),
+        ).toBeVisible();
+      });
+
       await test.step("switching hosts removes commands from an uninstalled host", async () => {
         await switchWorkspaceViaSidebar({
           page,
@@ -207,7 +307,29 @@ test.describe("plugin workspace panels and Command Center", () => {
         });
         await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
+        await submitMessage(page, "emit 1 agent stream updates");
+        await expect(page.getByRole("button", { name: "1/1 tasks" })).toBeVisible({
+          timeout: 30_000,
+        });
+        const composerPill = page.getByRole("button", { name: "Open composer review" });
+        await expect(composerPill).toContainText(
+          "Review Unrelated title update:Plugin panel context agent",
+        );
+        await capture(page, testInfo, "plugin-composer-pill-wide");
         await page.setViewportSize(COMPACT_VIEWPORT);
+        await expect(page.getByRole("button", { name: "Open composer review" })).toBeVisible();
+        await capture(page, testInfo, "plugin-composer-pill-compact");
+        await page.getByRole("button", { name: "Open composer review" }).click();
+        await expect(page.getByTestId("workspace-header-title")).toHaveText(
+          "Opened from composer pill",
+        );
+        await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();
+        await expect(page.getByText("Layout compact", { exact: true })).toBeVisible();
+        await capture(page, testInfo, "plugin-agent-panel-compact");
+
+        await page.goto(buildAgentRoute(primary.workspaceId, agent.id));
+        await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
+        await expect(page.getByRole("button", { name: "Open composer review" })).toHaveCount(0);
         await openCompactSidebar(page);
         await runCommand(page, "Open plugin agent");
         await closeMobileAgentSidebar(page);
@@ -218,7 +340,6 @@ test.describe("plugin workspace panels and Command Center", () => {
         ).toBeVisible();
         await expect(page.getByText(`Host ${getServerId()}`, { exact: true })).toBeVisible();
         await expect(page.getByText("Layout compact", { exact: true })).toBeVisible();
-        await capture(page, testInfo, "plugin-agent-panel-compact");
       });
 
       await test.step("removing the active plugin renders the panel unavailable", async () => {

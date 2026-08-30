@@ -15,6 +15,7 @@ export interface AppearanceInput {
   uiFontFamily: string; // "" -> default stack
   monoFontFamily: string; // "" -> default stack
   uiBaseFontSize: number; // already clamped
+  contentFontSize: number; // already clamped
   codeFontSize: number; // already clamped
   syntaxTheme: SyntaxThemeId;
 }
@@ -28,7 +29,11 @@ export interface AppearanceInput {
  * `code` is set absolutely to `codeSize`, never scaled by the UI factor — a separate
  * control on a separate semantic axis (mono/diff text).
  */
-function scaleFontSize(uiBaseSize: number, codeSize: number): Theme["fontSize"] {
+function scaleFontSize(
+  uiBaseSize: number,
+  contentSize: number,
+  codeSize: number,
+): Theme["fontSize"] {
   const r = uiBaseSize / FONT_SIZE.base;
   return {
     sm: Math.round(FONT_SIZE.sm * r),
@@ -38,6 +43,7 @@ function scaleFontSize(uiBaseSize: number, codeSize: number): Theme["fontSize"] 
     "2xl": Math.round(FONT_SIZE["2xl"] * r),
     "3xl": Math.round(FONT_SIZE["3xl"] * r),
     "4xl": Math.round(FONT_SIZE["4xl"] * r),
+    content: contentSize, // absolute, NOT scaled
     code: codeSize, // absolute, NOT scaled
   };
 }
@@ -68,7 +74,11 @@ export function applyAppearance(input: AppearanceInput): void {
   for (const key of themeKeys) {
     UnistylesRuntime.updateTheme(key, (t) => {
       const fontFamily = { ui, mono };
-      const fontSize = scaleFontSize(input.uiBaseFontSize, input.codeFontSize);
+      const fontSize = scaleFontSize(
+        input.uiBaseFontSize,
+        input.contentFontSize,
+        input.codeFontSize,
+      );
       const lineHeight = { ...t.lineHeight, diff: diffLineHeight };
       if (t.colorScheme === "light") {
         return {

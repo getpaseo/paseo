@@ -7,7 +7,7 @@ import { AgentStreamView } from "@/agent-stream/view";
 import { getProviderIcon } from "@/components/provider-icons";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { usePaneContext } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { useSessionStore } from "@/stores/session-store";
 import {
   providerSubagentKey,
@@ -228,9 +228,7 @@ const styles = StyleSheet.create((theme) => ({
   unsupportedText: { color: theme.colors.foregroundMuted, textAlign: "center" },
 }));
 
-export const providerSubagentPanelRegistration: PanelRegistration<"provider_subagent"> = {
-  kind: "provider_subagent",
-  resourceKey: (target) => `${target.parentAgentId}:${target.subagentId}`,
+export const providerSubagentPanelRegistration = definePanel("provider_subagent", {
   component: ProviderSubagentPanel,
   useDescriptor: useProviderSubagentDescriptor,
-};
+});

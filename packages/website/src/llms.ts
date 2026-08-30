@@ -14,7 +14,7 @@ A self-hosted daemon manages agent lifecycle, exposes a WebSocket API, and ships
 
 Paseo supports every major coding agent: Claude Code, Codex, GitHub Copilot, OpenCode, Cursor, Gemini, Cline, Goose, Amp, Aider, and 30+ others. Each agent runs as its own process; Paseo handles I/O, persistence, git worktree isolation, schedules, and skills.
 
-Distribution: native apps for Mac, Windows, Linux, iOS, and Android; web app; Homebrew; npm. Source: AGPL-3.0 at https://github.com/getpaseo/paseo. Marketing site: https://paseo.sh.
+Distribution: native apps for Mac, Windows, Linux, iOS, and Android; web app; Homebrew; npm. Source: Apache-2.0 at https://github.com/getpaseo/paseo. Marketing site: https://paseo.sh.
 `;
 
 function docLine(doc: Doc): string {
@@ -60,9 +60,10 @@ ${agents}
 
 - [Changelog](${SITE_URL}/changelog): Release notes for the Paseo daemon, CLI, desktop, and mobile apps.
 - [Download](${SITE_URL}/download): Install Paseo on Mac, Windows, Linux, iOS, Android, or run the web app.
-- [Paseo Hub](${SITE_URL}/hub): Self-hosted service above your daemons that adds GitHub, Slack, and Discord triggers. A hosted version is planned.
+- [Paseo Hub](${SITE_URL}/hub): Connect daemons and run GitHub, Slack, Discord, and Linear workflows through the hosted service or your own deployment.
 - [Blog](${SITE_URL}/blog): Updates and technical posts from the Paseo team.
 - [Privacy](${SITE_URL}/privacy): Privacy policy.
+- [Terms](${SITE_URL}/terms): Terms for the official relay and hosted Hub.
 - [GitHub](https://github.com/getpaseo/paseo): Source code, issues, and releases.
 `;
 }

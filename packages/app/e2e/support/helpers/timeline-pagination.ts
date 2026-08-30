@@ -293,9 +293,9 @@ export async function reloadAgentTimelineFromPersistedReplica(
   await expect
     .poll(async () => {
       const cache = await readReplicaCache(page);
-      const timeline = cache?.hosts?.find(
-        (host) => host.timeline?.agentId === agent.agentId,
-      )?.timeline;
+      const timeline = cache?.hosts
+        ?.flatMap((host) => host.timelines)
+        .find((candidate) => candidate.agentId === agent.agentId);
       return timeline?.items?.length === 50;
     })
     .toBe(true);
@@ -311,7 +311,9 @@ export async function waitForPersistedCanonicalTimelineRange(
   const readRange = async () => {
     const cache = await readReplicaCache(page);
     if (cache?.version !== 6) return null;
-    const range = cache.hosts?.find((host) => host.timeline?.agentId === agentId)?.timeline?.range;
+    const range = cache.hosts
+      ?.flatMap((host) => host.timelines)
+      .find((timeline) => timeline.agentId === agentId)?.range;
     if (
       typeof range?.epoch !== "string" ||
       typeof range.startSeq !== "number" ||
@@ -545,15 +547,22 @@ async function returnTimelineToSettledHistoryStart(
   page: Page,
   moveUp: () => Promise<unknown>,
 ): Promise<void> {
+  const loadingSpinner = page.getByTestId("load-older-history-spinner");
+  // A caller may only start a new history traversal after its prior page has settled.
+  await expect(loadingSpinner).toBeHidden();
   let previous = await readTimelineViewport(page);
   while (true) {
     await moveUp();
     await waitForTimelineGeometryToSettle(page);
     let viewport = await readTimelineViewport(page);
+    // Tests that hold the response need to observe the requested page before releasing it.
+    if (await loadingSpinner.isVisible()) {
+      return;
+    }
     if (viewport.scrollTop <= HISTORY_START_THRESHOLD_PX) {
       return;
     }
-    await expect(page.getByTestId("load-older-history-spinner")).toBeHidden();
+    await expect(loadingSpinner).toBeHidden();
     await waitForTimelineGeometryToSettle(page);
     viewport = await readTimelineViewport(page);
     expect(

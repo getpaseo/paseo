@@ -52,15 +52,32 @@ describe("routeKeyboardShortcut — dispatch passthroughs", () => {
     ["workspace.pane.move-tab.up", { id: "workspace.pane.move-tab.up", scope: "workspace" }],
     ["workspace.pane.move-tab.down", { id: "workspace.pane.move-tab.down", scope: "workspace" }],
     ["workspace.pane.close", { id: "workspace.pane.close", scope: "workspace" }],
-    [
-      "workspace.explorer.maximize.toggle",
-      { id: "workspace.explorer.maximize.toggle", scope: "workspace" },
-    ],
     ["view.toggle.focus", { id: "workspace.focus.toggle", scope: "workspace" }],
   ])("%s → dispatch %j", (action, expected) => {
     expect(routeKeyboardShortcut({ action, payload: null }, makeCtx())).toEqual({
       kind: "dispatch",
       action: expected,
+    });
+  });
+
+  it("closes desktop settings when Escape routes through agent interrupt", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "agent.interrupt", payload: null },
+        makeCtx({ pathname: "/settings/general" }),
+      ),
+    ).toEqual<ShortcutAction>({ kind: "navigate-last-workspace" });
+  });
+
+  it("keeps agent interrupt behavior on compact settings layouts", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "agent.interrupt", payload: null },
+        makeCtx({ pathname: "/settings/general", isMobile: true }),
+      ),
+    ).toEqual<ShortcutAction>({
+      kind: "dispatch",
+      action: { id: "agent.interrupt", scope: "global" },
     });
   });
 });

@@ -12,6 +12,8 @@ import { ensurePanelsRegistered } from "@/panels/register-panels";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 import { RenderProfile } from "@/utils/render-profiler";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
+import type { OpenInSidePaneSource } from "@/workspace-tabs/open-beside";
+import type { PaneHost } from "@/panels/panel-manifest";
 
 export interface WorkspacePaneContentModel {
   key: string;
@@ -23,8 +25,14 @@ export interface BuildWorkspacePaneContentModelInput {
   tab: WorkspaceTabDescriptor;
   normalizedServerId: string;
   normalizedWorkspaceId: string;
+  host: PaneHost;
   fileNavigationRevision?: number;
   onOpenTab: (target: WorkspaceTabDescriptor["target"]) => void;
+  onOpenPreferredTarget: (
+    target: WorkspaceTabDescriptor["target"],
+    source: OpenInSidePaneSource,
+  ) => void;
+  onOpenTargetToSide?: (target: WorkspaceTabDescriptor["target"]) => void;
   onCloseCurrentTab: () => void;
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
   onSetCurrentTabState: (state: WorkspaceTabDescriptor["state"]) => void;
@@ -36,8 +44,11 @@ export function buildWorkspacePaneContentModel({
   tab,
   normalizedServerId,
   normalizedWorkspaceId,
+  host,
   fileNavigationRevision,
   onOpenTab,
+  onOpenPreferredTarget,
+  onOpenTargetToSide,
   onCloseCurrentTab,
   onRetargetCurrentTab,
   onSetCurrentTabState,
@@ -53,11 +64,14 @@ export function buildWorkspacePaneContentModel({
     paneContextValue: {
       serverId: normalizedServerId,
       workspaceId: normalizedWorkspaceId,
+      host,
       tabId: tab.tabId,
       target: tab.target,
       state: tab.state,
       fileNavigationRevision,
       openTab: onOpenTab,
+      openPreferredTarget: onOpenPreferredTarget,
+      openTargetToSide: onOpenTargetToSide,
       closeCurrentTab: onCloseCurrentTab,
       retargetCurrentTab: onRetargetCurrentTab,
       setCurrentTabState: onSetCurrentTabState,
@@ -82,6 +96,8 @@ export function WorkspacePaneContent({
 }: WorkspacePaneContentProps) {
   const { Component, key, paneContextValue } = content;
   const openTab = useStableEvent(paneContextValue.openTab);
+  const openPreferredTarget = useStableEvent(paneContextValue.openPreferredTarget);
+  const openTargetToSide = useStableEvent(paneContextValue.openTargetToSide ?? (() => undefined));
   const closeCurrentTab = useStableEvent(paneContextValue.closeCurrentTab);
   const retargetCurrentTab = useStableEvent(paneContextValue.retargetCurrentTab);
   const setCurrentTabState = useStableEvent(paneContextValue.setCurrentTabState);
@@ -91,11 +107,14 @@ export function WorkspacePaneContent({
     () => ({
       serverId: paneContextValue.serverId,
       workspaceId: paneContextValue.workspaceId,
+      host: paneContextValue.host,
       tabId: paneContextValue.tabId,
       target: paneContextValue.target,
       state: paneContextValue.state,
       fileNavigationRevision: paneContextValue.fileNavigationRevision,
       openTab,
+      openPreferredTarget,
+      openTargetToSide: paneContextValue.openTargetToSide ? openTargetToSide : undefined,
       closeCurrentTab,
       retargetCurrentTab,
       setCurrentTabState,
@@ -107,12 +126,16 @@ export function WorkspacePaneContent({
       openFileInWorkspace,
       openImportSheet,
       openTab,
+      openPreferredTarget,
+      openTargetToSide,
       paneContextValue.serverId,
       paneContextValue.fileNavigationRevision,
       paneContextValue.tabId,
       paneContextValue.target,
       paneContextValue.state,
       paneContextValue.workspaceId,
+      paneContextValue.host,
+      paneContextValue.openTargetToSide,
       retargetCurrentTab,
       setCurrentTabState,
     ],
