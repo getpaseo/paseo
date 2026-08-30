@@ -924,7 +924,7 @@ describe("stream reducer canonical tool calls", () => {
       detail: tool.payload.data.detail,
     });
     assert.strictEqual(display.summary, undefined);
-    assert.strictEqual(display.displayName, "Exec Command");
+    assert.strictEqual(display.displayName, "Exec command");
   });
 
   it("preserves early input when later updates contain null input", () => {
