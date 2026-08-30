@@ -140,6 +140,7 @@ A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `cu
 | `listModes(provider, options?)`  | Modes result                  | Discovers permission or operating modes.                                                                                                                 |
 | `listFeatures(draftConfig)`      | Features result               | Discovers features for the current draft provider configuration.                                                                                         |
 | `diagnostic(provider)`           | Diagnostic result             | Returns human-readable setup diagnostics.                                                                                                                |
+| `listUsage(options?)`            | `PaseoProviderUsageResult`    | Returns normalized subscription windows, balances, and provider details. Options: `requestId`.                                                           |
 | `subscribe(handler)`             | Unsubscribe function          | Listens for catalog updates.                                                                                                                             |
 
 ## `client.config`

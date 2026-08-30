@@ -1147,6 +1147,62 @@ test("provider actions delegate to existing provider RPCs and local snapshot upd
     provider: "codex",
     diagnostic: "Codex is ready.",
   });
+  const usagePromise = client.providers.listUsage({
+    requestId: "provider-usage-request",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "provider.usage.list.request",
+    requestId: "provider-usage-request",
+  });
+  ws.message(
+    sessionMessage({
+      type: "provider.usage.list.response",
+      payload: {
+        requestId: "provider-usage-request",
+        fetchedAt: "2026-05-16T00:10:00.000Z",
+        providers: [
+          {
+            providerId: "codex",
+            displayName: "Codex",
+            status: "available",
+            planLabel: "pro",
+            windows: [
+              {
+                id: "weekly",
+                label: "Weekly limit",
+                usedPct: 25,
+                remainingPct: 75,
+                resetsAt: "2026-05-20T00:00:00.000Z",
+                tone: "ok",
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  await expect(usagePromise).resolves.toEqual({
+    requestId: "provider-usage-request",
+    fetchedAt: "2026-05-16T00:10:00.000Z",
+    providers: [
+      {
+        providerId: "codex",
+        displayName: "Codex",
+        status: "available",
+        planLabel: "pro",
+        windows: [
+          {
+            id: "weekly",
+            label: "Weekly limit",
+            usedPct: 25,
+            remainingPct: 75,
+            resetsAt: "2026-05-20T00:00:00.000Z",
+            tone: "ok",
+          },
+        ],
+      },
+    ],
+  });
 
   const snapshotUpdates: string[] = [];
   const snapshotModelDefaults: Array<string | undefined> = [];

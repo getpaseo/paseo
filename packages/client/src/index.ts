@@ -15,6 +15,7 @@ import type {
   MutableDaemonConfig,
   MutableDaemonConfigPatch,
   ProviderDiagnosticResponseMessage,
+  ProviderUsageListResponseMessage,
   ProjectPlacementPayload,
   WorkspaceProjectDescriptorPayload,
   RefreshProvidersSnapshotResponseMessage,
@@ -336,6 +337,10 @@ export type PaseoProviderSnapshotUpdate = Extract<
 >["payload"];
 export type PaseoProviderRefreshResult = RefreshProvidersSnapshotResponseMessage["payload"];
 export type PaseoProviderDiagnosticResult = ProviderDiagnosticResponseMessage["payload"];
+export type PaseoProviderUsageResult = ProviderUsageListResponseMessage["payload"];
+export interface PaseoProviderUsageOptions {
+  requestId?: string;
+}
 
 export interface PaseoProviderListOptions {
   cwd?: string;
@@ -374,6 +379,7 @@ export interface PaseoProviderActions {
     provider: PaseoAgentProvider,
     options?: { requestId?: string },
   ): Promise<PaseoProviderDiagnosticResult>;
+  listUsage(options?: PaseoProviderUsageOptions): Promise<PaseoProviderUsageResult>;
   subscribe(handler: (update: PaseoProviderSnapshotUpdate) => void): () => void;
 }
 
@@ -499,6 +505,7 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
       waitForReady: (options) => waitForProvidersReady(daemonClient, options),
       refresh: (options) => daemonClient.refreshProvidersSnapshot(options),
       diagnostic: (provider, options) => daemonClient.getProviderDiagnostic(provider, options),
+      listUsage: (options) => daemonClient.listProviderUsage(options),
       subscribe: (handler) =>
         daemonClient.on("providers_snapshot_update", (message) => {
           handler(message.payload);
