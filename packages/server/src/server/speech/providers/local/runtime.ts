@@ -36,7 +36,6 @@ export interface InitializedLocalSpeech {
   sttService: SpeechToTextProvider | null;
   ttsService: TextToSpeechProvider | null;
   dictationSttService: SpeechToTextProvider | null;
-  localVoiceTtsProvider: TextToSpeechProvider | null;
   localModelConfig: {
     modelsDir: string;
     defaultModelIds: LocalSpeechModelId[];
@@ -147,7 +146,6 @@ export async function initializeLocalSpeechServices(params: {
   let ttsService: TextToSpeechProvider | null = null;
   let dictationSttService: SpeechToTextProvider | null = null;
   let turnDetectionService: TurnDetectionProvider | null = null;
-  let localVoiceTtsProvider: TextToSpeechProvider | null = null;
 
   const requiredLocalModelIds = computeRequiredLocalModelIds({
     providers,
@@ -194,12 +192,9 @@ export async function initializeLocalSpeechServices(params: {
 
   if (isLocalProviderEnabled(providers.voiceTts)) {
     if (workerClient) {
-      localVoiceTtsProvider = initializeLocalVoiceTts({ client: workerClient });
+      ttsService = initializeLocalVoiceTts({ client: workerClient });
     } else {
       warnLocalConfigMissing(logger, "voice TTS");
-    }
-    if (localVoiceTtsProvider) {
-      ttsService = localVoiceTtsProvider;
     }
   }
 
@@ -212,7 +207,6 @@ export async function initializeLocalSpeechServices(params: {
     sttService,
     ttsService,
     dictationSttService,
-    localVoiceTtsProvider,
     localModelConfig: localConfig
       ? {
           modelsDir: localConfig.modelsDir,

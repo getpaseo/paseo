@@ -21,7 +21,7 @@ import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
 import { AgentProviderSchema } from "@getpaseo/protocol/provider-manifest";
 import { hashDaemonPassword } from "./auth.js";
 import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
-import type { RequestedSpeechProviders } from "./speech/speech-types.js";
+import type { RequestedSpeechProviders, SpeechProviderId } from "./speech/speech-types.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
 
@@ -583,7 +583,7 @@ export function resolveConfigFromPersisted(
   const serviceProxy = resolveServiceProxyConfig(env, persisted);
   const webUi = resolveWebUiConfig(paseoHome, env, cli, persisted);
 
-  const { openai, speech } = resolveSpeechConfig({
+  const { gemini, openai, speech } = resolveSpeechConfig({
     paseoHome,
     env,
     persisted,
@@ -632,6 +632,7 @@ export function resolveConfigFromPersisted(
     appBaseUrl,
     auth: resolveAuthConfig(env, persisted),
     openai,
+    gemini,
     speech,
     voiceLlmProvider: voiceLlm.provider,
     voiceLlmProviderExplicit: voiceLlm.providerExplicit,
@@ -785,7 +786,7 @@ function resolveLogOverrideControlledPaths(env: NodeJS.ProcessEnv): string[] {
 
 function isEnabledSpeechProvider(
   provider: RequestedSpeechProviders[keyof RequestedSpeechProviders],
-  expected: "local" | "openai",
+  expected: SpeechProviderId,
 ): boolean {
   return provider.enabled !== false && provider.provider === expected;
 }
@@ -829,6 +830,15 @@ function resolveSpeechOverrideControlledPaths(
   add("PASEO_VOICE_LOCAL_TTS_SPEAKER_ID", "features.voiceMode.tts.speakerId");
   add("PASEO_VOICE_LOCAL_TTS_SPEED", "features.voiceMode.tts.speed");
   add("PASEO_LOCAL_MODELS_DIR", "providers.local.modelsDir");
+  const geminiDictationStt = isEnabledSpeechProvider(providers.dictationStt, "gemini");
+  const geminiVoiceStt = isEnabledSpeechProvider(providers.voiceStt, "gemini");
+  const geminiVoiceTts = isEnabledSpeechProvider(providers.voiceTts, "gemini");
+  if (
+    env.GEMINI_API_KEY !== undefined &&
+    (geminiDictationStt || geminiVoiceStt || geminiVoiceTts)
+  ) {
+    paths.push("providers.gemini.apiKey");
+  }
   const openAiDictationStt = isEnabledSpeechProvider(providers.dictationStt, "openai");
   const openAiVoiceStt = isEnabledSpeechProvider(providers.voiceStt, "openai");
   if (env.STT_CONFIDENCE_THRESHOLD !== undefined && (openAiDictationStt || openAiVoiceStt)) {

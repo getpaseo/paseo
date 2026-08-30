@@ -247,8 +247,9 @@ Set the persisted value in `config.json`:
 - `OPENAI_API_KEY`, override OpenAI provider key
 - `OPENAI_STT_API_KEY`, `OPENAI_STT_BASE_URL`, OpenAI speech-to-text endpoint (dictation + voice mode STT)
 - `OPENAI_TTS_API_KEY`, `OPENAI_TTS_BASE_URL`, OpenAI text-to-speech endpoint (voice mode TTS)
+- `GEMINI_API_KEY`, Gemini speech-to-text and text-to-speech credential
 - `PASEO_VOICE_LLM_PROVIDER`, override voice LLM provider (`claude`, `codex`, `opencode`)
-- `PASEO_DICTATION_STT_PROVIDER`, `PASEO_VOICE_STT_PROVIDER`, `PASEO_VOICE_TTS_PROVIDER`, override voice provider selection (`local` or `openai`)
+- `PASEO_DICTATION_STT_PROVIDER`, `PASEO_VOICE_STT_PROVIDER`, `PASEO_VOICE_TTS_PROVIDER`, override voice provider selection (`local`, `openai`, or `gemini`)
 - `PASEO_LOCAL_MODELS_DIR`, control local model directory
 - `PASEO_DICTATION_LOCAL_STT_MODEL`, override local dictation STT model
 - `PASEO_VOICE_LOCAL_STT_MODEL`, `PASEO_VOICE_LOCAL_TTS_MODEL`, override local voice STT/TTS models

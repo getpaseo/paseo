@@ -241,8 +241,8 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
   pluginsEnabled: boolean,
   plugins: Record<pluginId, { source: "directory", path: string, enabled?: boolean }>,
   features: {
-    dictation: { enabled, stt: { provider, model, language, confidenceThreshold } },
-    voiceMode: { enabled, llm, stt: { provider, model, language }, turnDetection, tts: { provider, model, voice, speakerId, speed } }
+    dictation: { enabled, stt: { provider, model, language, confidenceThreshold, mode } },
+    voiceMode: { enabled, llm, stt: { provider, model, language, mode }, turnDetection, tts: { provider, model, voice, speakerId, speed } }
   },
   log: {
     level, format,
@@ -313,7 +313,7 @@ remains authoritative during reload.
 
 Local speech model ids are intentionally narrow: STT uses `parakeet-tdt-0.6b-v2-int8`, TTS uses `kokoro-en-v0_19`, and turn detection uses the bundled Silero VAD model.
 
-Set these to select OpenAI instead of local speech:
+Set these to select a cloud provider instead of local speech. STT and TTS accept `openai` or `gemini`:
 
 | Env var                        | Applies to                      |
 | ------------------------------ | ------------------------------- |
@@ -347,6 +347,8 @@ Paseo uses these paths under the configured OpenAI base URL:
 - dictation STT: `/v1/audio/transcriptions`
 - voice mode STT: `/v1/audio/transcriptions`
 - voice mode TTS: `/v1/audio/speech`
+
+Gemini speech uses `providers.gemini.apiKey` or `GEMINI_API_KEY`. Set `features.dictation.stt.provider`, `features.voiceMode.stt.provider`, or `features.voiceMode.tts.provider` to `gemini`. STT defaults to `gemini-3.5-transcribe-live`; `mode` accepts `smart` or `verbatim`, and an omitted language enables automatic detection. TTS defaults to `gemini-3.1-flash-tts-preview` with the `Kore` voice. Model and voice fields accept provider identifiers without a Paseo allowlist. Gemini CLI authentication is unrelated to this speech provider.
 
 ---
 

@@ -3,6 +3,12 @@ import path from "node:path";
 import { z } from "zod";
 
 import {
+  SttProviderIdSchema,
+  TtsProviderIdSchema,
+  TurnDetectionProviderIdSchema,
+} from "./speech/speech-types.js";
+
+import {
   AgentProviderRuntimeSettingsMapSchema,
   migrateProviderSettings,
   ProviderOverridesSchema,
@@ -74,10 +80,17 @@ const LocalSpeechProviderSchema = z
   })
   .strict();
 
+const GeminiSpeechProviderSchema = z
+  .object({
+    apiKey: z.string().trim().min(1).optional(),
+  })
+  .strict();
+
 const ProvidersSchema = z
   .object({
     openai: OpenAiProviderSchema.optional(),
     local: LocalSpeechProviderSchema.optional(),
+    gemini: GeminiSpeechProviderSchema.optional(),
   })
   .strict();
 
@@ -98,21 +111,17 @@ const DaemonAuthSchema = z
   })
   .strict();
 
-const SpeechProviderIdSchema = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .pipe(z.enum(["openai", "local"]));
-
+const TranscriptionModeSchema = z.enum(["smart", "verbatim"]);
 const FeatureDictationSchema = z
   .object({
     enabled: z.boolean().optional(),
     stt: z
       .object({
-        provider: SpeechProviderIdSchema.optional(),
+        provider: SttProviderIdSchema.optional(),
         model: z.string().min(1).optional(),
         language: z.string().trim().min(1).optional(),
         confidenceThreshold: z.number().optional(),
+        mode: TranscriptionModeSchema.optional(),
       })
       .strict()
       .optional(),
@@ -131,23 +140,24 @@ const FeatureVoiceModeSchema = z
       .optional(),
     stt: z
       .object({
-        provider: SpeechProviderIdSchema.optional(),
+        provider: SttProviderIdSchema.optional(),
         model: z.string().min(1).optional(),
         language: z.string().trim().min(1).optional(),
+        mode: TranscriptionModeSchema.optional(),
       })
       .strict()
       .optional(),
     turnDetection: z
       .object({
-        provider: SpeechProviderIdSchema.optional(),
+        provider: TurnDetectionProviderIdSchema.optional(),
       })
       .strict()
       .optional(),
     tts: z
       .object({
-        provider: SpeechProviderIdSchema.optional(),
+        provider: TtsProviderIdSchema.optional(),
         model: z.string().min(1).optional(),
-        voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).optional(),
+        voice: z.string().trim().min(1).optional(),
         speakerId: z.number().int().optional(),
         speed: z.number().optional(),
       })

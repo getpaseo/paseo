@@ -18,6 +18,7 @@ describe("resolveSpeechConfig", () => {
     });
 
     expect(result.openai).toBeUndefined();
+    expect(result.gemini).toBeUndefined();
     expect(result.speech.providers.dictationStt).toEqual({
       provider: "local",
       explicit: false,
@@ -55,6 +56,136 @@ describe("resolveSpeechConfig", () => {
       dictation: "en",
       voice: "en",
     });
+  });
+
+  test("resolves Gemini transcription settings without forcing a default language", () => {
+    const persisted = PersistedConfigSchema.parse({
+      providers: {
+        gemini: { apiKey: "persisted-gemini-key" },
+      },
+      features: {
+        dictation: {
+          stt: {
+            provider: "gemini",
+            model: "gemini-3.5-transcribe-live",
+            language: "zh-CN",
+            mode: "smart",
+          },
+        },
+        voiceMode: {
+          stt: {
+            provider: "gemini",
+            mode: "verbatim",
+          },
+          tts: {
+            provider: "gemini",
+            model: "gemini-2.5-flash-preview-tts",
+            voice: "Aoede",
+          },
+        },
+      },
+    });
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {} as NodeJS.ProcessEnv,
+      persisted,
+    });
+
+    expect(result.gemini).toEqual({
+      apiKey: "persisted-gemini-key",
+      dictationStt: {
+        model: "gemini-3.5-transcribe-live",
+        language: "zh-CN",
+        mode: "smart",
+      },
+      voiceStt: {
+        model: "gemini-3.5-transcribe-live",
+        language: "zh-CN",
+        mode: "verbatim",
+      },
+      tts: {
+        model: "gemini-2.5-flash-preview-tts",
+        voice: "Aoede",
+      },
+    });
+    expect(result.speech.providers.dictationStt.provider).toBe("gemini");
+    expect(result.speech.providers.voiceStt.provider).toBe("gemini");
+    expect(result.speech.providers.voiceTts.provider).toBe("gemini");
+  });
+
+  test("uses Gemini automatic language detection when no language is configured", () => {
+    const persisted = PersistedConfigSchema.parse({
+      features: {
+        dictation: { stt: { provider: "gemini" } },
+      },
+    });
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: { GEMINI_API_KEY: "env-gemini-key" } as NodeJS.ProcessEnv,
+      persisted,
+    });
+
+    expect(result.gemini?.dictationStt).toEqual({
+      model: "gemini-3.5-transcribe-live",
+      mode: "smart",
+    });
+  });
+
+  test("inherits the dictation language when only voice STT uses Gemini", () => {
+    const persisted = PersistedConfigSchema.parse({
+      providers: {
+        gemini: { apiKey: "persisted-gemini-key" },
+      },
+      features: {
+        dictation: {
+          stt: { provider: "openai", language: "zh-CN" },
+        },
+        voiceMode: {
+          stt: { provider: "gemini" },
+        },
+      },
+    });
+
+    const result = resolveSpeechConfig({
+      paseoHome: "/tmp/paseo-home",
+      env: {},
+      persisted,
+    });
+
+    expect(result.gemini?.voiceStt.language).toBe("zh-CN");
+  });
+
+  test("rejects Gemini turn detection", () => {
+    expect(() =>
+      resolveSpeechConfig({
+        paseoHome: "/tmp/paseo-home",
+        env: { PASEO_VOICE_TURN_DETECTION_PROVIDER: "gemini" },
+        persisted: PersistedConfigSchema.parse({}),
+      }),
+    ).toThrow();
+  });
+
+  test("passes configured Gemini model IDs and voices through", () => {
+    const persisted = PersistedConfigSchema.parse({
+      providers: { gemini: { apiKey: "persisted-gemini-key" } },
+      features: {
+        dictation: { stt: { provider: "gemini", model: "future-transcribe-model" } },
+        voiceMode: {
+          tts: {
+            provider: "gemini",
+            model: "future-tts-model",
+            voice: "FutureVoice",
+          },
+        },
+      },
+    });
+
+    const result = resolveSpeechConfig({ paseoHome: "/tmp/paseo-home", env: {}, persisted });
+
+    expect(result.gemini?.dictationStt.model).toBe("future-transcribe-model");
+    expect(result.gemini?.tts).toEqual({ model: "future-tts-model", voice: "FutureVoice" });
   });
 
   test("resolves feature-scoped local speech settings", () => {

@@ -2,20 +2,20 @@ import { z } from "zod";
 
 import type { PersistedConfig } from "../persisted-config.js";
 import type { PaseoOpenAIConfig, PaseoSpeechConfig } from "../bootstrap.js";
+import {
+  type GeminiSpeechProviderConfig,
+  resolveGeminiSpeechConfig,
+} from "./providers/gemini/config.js";
 import { resolveLocalSpeechConfig } from "./providers/local/config.js";
 import { resolveOpenAiSpeechConfig } from "./providers/openai/config.js";
 import {
-  SpeechProviderIdSchema,
+  SttProviderIdSchema,
+  TtsProviderIdSchema,
+  TurnDetectionProviderIdSchema,
+  type SpeechProviderId,
   type RequestedSpeechProvider,
   type RequestedSpeechProviders,
 } from "./speech-types.js";
-
-const OptionalSpeechProviderSchema = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .pipe(SpeechProviderIdSchema)
-  .optional();
 
 const OptionalBooleanFlagSchema = z
   .union([z.boolean(), z.string().trim().toLowerCase()])
@@ -37,10 +37,10 @@ const OptionalBooleanFlagSchema = z
   });
 
 const RequestedSpeechProvidersSchema = z.object({
-  dictationStt: OptionalSpeechProviderSchema.default("local"),
-  voiceTurnDetection: OptionalSpeechProviderSchema.default("local"),
-  voiceStt: OptionalSpeechProviderSchema.default("local"),
-  voiceTts: OptionalSpeechProviderSchema.default("local"),
+  dictationStt: SttProviderIdSchema.optional().default("local"),
+  voiceTurnDetection: TurnDetectionProviderIdSchema.optional().default("local"),
+  voiceStt: SttProviderIdSchema.optional().default("local"),
+  voiceTts: TtsProviderIdSchema.optional().default("local"),
 });
 
 function resolveOptionalBooleanFlag(value: unknown): boolean {
@@ -108,10 +108,10 @@ function buildFeatureProviderInputs(params: {
   };
 }
 
-function buildRequestedFeatureProvider(
+function buildRequestedFeatureProvider<TProvider extends SpeechProviderId>(
   inputs: FeatureProviderInputs,
-  parsedValue: z.infer<typeof SpeechProviderIdSchema>,
-): RequestedSpeechProvider {
+  parsedValue: TProvider,
+): RequestedSpeechProvider<TProvider> {
   return {
     provider: parsedValue,
     explicit: inputs.configuredValue !== undefined,
@@ -148,6 +148,7 @@ export function resolveSpeechConfig(params: {
   env: NodeJS.ProcessEnv;
   persisted: PersistedConfig;
 }): {
+  gemini: GeminiSpeechProviderConfig | undefined;
   openai: PaseoOpenAIConfig | undefined;
   speech: PaseoSpeechConfig;
 } {
@@ -169,7 +170,14 @@ export function resolveSpeechConfig(params: {
     providers,
   });
 
+  const gemini = resolveGeminiSpeechConfig({
+    env: params.env,
+    persisted: params.persisted,
+    providers,
+  });
+
   return {
+    gemini,
     openai,
     speech: {
       providers,

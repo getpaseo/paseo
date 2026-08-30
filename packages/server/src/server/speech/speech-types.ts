@@ -1,18 +1,33 @@
 import { z } from "zod";
 
-export const SpeechProviderIdSchema = z.enum(["openai", "local"]);
-export type SpeechProviderId = z.infer<typeof SpeechProviderIdSchema>;
+const NormalizedProviderIdSchema = z.string().trim().toLowerCase();
 
-export const RequestedSpeechProviderSchema = z.object({
-  provider: SpeechProviderIdSchema,
-  explicit: z.boolean(),
-  enabled: z.boolean().optional(),
-});
-export type RequestedSpeechProvider = z.infer<typeof RequestedSpeechProviderSchema>;
+export const SttProviderIdSchema = NormalizedProviderIdSchema.pipe(
+  z.enum(["openai", "local", "gemini"]),
+);
+export type SttProviderId = z.infer<typeof SttProviderIdSchema>;
+
+export const TurnDetectionProviderIdSchema = NormalizedProviderIdSchema.pipe(
+  z.enum(["openai", "local"]),
+);
+export type TurnDetectionProviderId = z.infer<typeof TurnDetectionProviderIdSchema>;
+
+export const TtsProviderIdSchema = NormalizedProviderIdSchema.pipe(
+  z.enum(["openai", "local", "gemini"]),
+);
+export type TtsProviderId = z.infer<typeof TtsProviderIdSchema>;
+
+export type SpeechProviderId = SttProviderId | TurnDetectionProviderId | TtsProviderId;
+
+export interface RequestedSpeechProvider<TProvider extends SpeechProviderId = SpeechProviderId> {
+  provider: TProvider;
+  explicit: boolean;
+  enabled?: boolean;
+}
 
 export interface RequestedSpeechProviders {
-  dictationStt: RequestedSpeechProvider;
-  voiceTurnDetection: RequestedSpeechProvider;
-  voiceStt: RequestedSpeechProvider;
-  voiceTts: RequestedSpeechProvider;
+  dictationStt: RequestedSpeechProvider<SttProviderId>;
+  voiceTurnDetection: RequestedSpeechProvider<TurnDetectionProviderId>;
+  voiceStt: RequestedSpeechProvider<SttProviderId>;
+  voiceTts: RequestedSpeechProvider<TtsProviderId>;
 }

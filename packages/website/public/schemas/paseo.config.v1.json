@@ -233,6 +233,16 @@
                 }
               },
               "additionalProperties": false
+            },
+            "gemini": {
+              "type": "object",
+              "properties": {
+                "apiKey": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
@@ -363,7 +373,7 @@
                         },
                         {
                           "type": "string",
-                          "enum": ["openai", "local"]
+                          "enum": ["openai", "local", "gemini"]
                         }
                       ]
                     },
@@ -377,6 +387,10 @@
                     },
                     "confidenceThreshold": {
                       "type": "number"
+                    },
+                    "mode": {
+                      "type": "string",
+                      "enum": ["smart", "verbatim"]
                     }
                   },
                   "additionalProperties": false
@@ -416,6 +430,9 @@
                     "language": {
                       "type": "string",
                       "minLength": 1
+                    },
+                    "mode": {
+                      "$ref": "#/definitions/PaseoConfigV1/properties/features/properties/dictation/properties/stt/properties/mode"
                     }
                   },
                   "additionalProperties": false
@@ -424,7 +441,15 @@
                   "type": "object",
                   "properties": {
                     "provider": {
-                      "$ref": "#/definitions/PaseoConfigV1/properties/features/properties/dictation/properties/stt/properties/provider"
+                      "allOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "string",
+                          "enum": ["openai", "local"]
+                        }
+                      ]
                     }
                   },
                   "additionalProperties": false
@@ -433,7 +458,15 @@
                   "type": "object",
                   "properties": {
                     "provider": {
-                      "$ref": "#/definitions/PaseoConfigV1/properties/features/properties/dictation/properties/stt/properties/provider"
+                      "allOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "string",
+                          "enum": ["openai", "local", "gemini"]
+                        }
+                      ]
                     },
                     "model": {
                       "type": "string",
@@ -441,7 +474,7 @@
                     },
                     "voice": {
                       "type": "string",
-                      "enum": ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+                      "minLength": 1
                     },
                     "speakerId": {
                       "type": "integer"

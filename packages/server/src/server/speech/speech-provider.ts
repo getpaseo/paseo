@@ -1,5 +1,6 @@
 import type pino from "pino";
 import type { Readable } from "node:stream";
+import type { TurnDetectionProvider } from "./turn-detection-provider.js";
 
 export interface LogprobToken {
   token: string;
@@ -65,4 +66,11 @@ export interface SpeechStreamResult {
 
 export interface TextToSpeechProvider {
   synthesizeSpeech(text: string): Promise<SpeechStreamResult>;
+}
+
+export interface SpeechServices {
+  turnDetectionService: TurnDetectionProvider | null;
+  sttService: SpeechToTextProvider | null;
+  ttsService: TextToSpeechProvider | null;
+  dictationSttService: SpeechToTextProvider | null;
 }

@@ -126,6 +126,7 @@ import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
+import type { GeminiSpeechProviderConfig } from "./speech/providers/gemini/config.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
 import { AgentManager } from "./agent/agent-manager.js";
@@ -427,6 +428,7 @@ export interface PaseoDaemonConfig {
   appBaseUrl?: string;
   auth?: DaemonAuthConfig;
   openai?: PaseoOpenAIConfig;
+  gemini?: GeminiSpeechProviderConfig;
   speech?: PaseoSpeechConfig;
   voiceLlmProvider?: AgentProvider | null;
   voiceLlmProviderExplicit?: boolean;
@@ -1525,6 +1527,7 @@ export async function createPaseoDaemon(
 
   const speechService = createSpeechService({
     logger,
+    geminiConfig: config.gemini,
     openaiConfig: config.openai,
     speechConfig: config.speech,
   });

@@ -98,7 +98,6 @@ describe("createSpeechService readiness", () => {
       sttService: null,
       ttsService: null,
       dictationSttService: dictationStt,
-      localVoiceTtsProvider: null,
       localModelConfig: null,
       availability: {
         configured: false,
@@ -138,7 +137,6 @@ describe("createSpeechService readiness", () => {
       sttService: voiceStt,
       ttsService: voiceTts,
       dictationSttService: null,
-      localVoiceTtsProvider: voiceTts,
       localModelConfig: null,
       availability: {
         configured: false,
@@ -179,7 +177,6 @@ describe("createSpeechService readiness", () => {
       sttService: null,
       ttsService: null,
       dictationSttService: null,
-      localVoiceTtsProvider: null,
       localModelConfig: {
         modelsDir: "/tmp/missing-local-speech-models",
         defaultModelIds: ["parakeet-tdt-0.6b-v2-int8"],
