@@ -1682,6 +1682,9 @@ export const ProviderDiagnosticRequestMessageSchema = z.object({
 export const ProviderUsageListRequestMessageSchema = z.object({
   type: z.literal("provider.usage.list.request"),
   requestId: z.string(),
+  // Bypass the daemon-side usage cache (still subject to a short server-side
+  // floor). Optional and additive: old daemons strip it and serve the cache.
+  forceRefresh: z.boolean().optional(),
 });
 
 export const ResumeAgentRequestMessageSchema = z.object({

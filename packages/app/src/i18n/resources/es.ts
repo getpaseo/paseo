@@ -1896,6 +1896,7 @@ export const es: TranslationResources = {
     used: "{{percentage}}% utilizado",
     tokens: "Fichas{{used}}/{{max}}",
     sessionCost: "Costo de la sesión{{cost}}",
+    pending: "Aún no se ha informado el uso",
     accessibility: "Ventana de contexto{{percentage}}% utilizada",
   },
   review: {

@@ -1901,6 +1901,7 @@ export const fr: TranslationResources = {
     used: "{{percentage}}% utilisé",
     tokens: "Jetons{{used}}/{{max}}",
     sessionCost: "Coût de la séance{{cost}}",
+    pending: "Aucune utilisation signalée pour le moment",
     accessibility: "Fenêtre contextuelle{{percentage}}% utilisé",
   },
   review: {

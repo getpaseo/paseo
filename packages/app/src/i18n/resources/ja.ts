@@ -1868,6 +1868,7 @@ export const ja: TranslationResources = {
     used: "{{percentage}}%使用",
     tokens: "{{used}} / {{max}}トークン",
     sessionCost: "セッションコスト: {{cost}}",
+    pending: "使用状況はまだ報告されていません",
     accessibility: "コンテキストウィンドウ{{percentage}}%使用",
   },
   review: {

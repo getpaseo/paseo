@@ -435,11 +435,16 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
   }
 
   private async readCredentials(): Promise<ClaudeCredentialRecord | null> {
-    const credPath = join(this.claudeHome, ".credentials.json");
-    const fileCredentials = await this.readCredentialFile(credPath);
-    return (
-      fileCredentials ?? (this.platform === "darwin" ? await this.readKeychainCredential() : null)
-    );
+    // On macOS the Keychain is Claude Code's canonical credential store; a
+    // `.credentials.json` there is written by third-party tools (account
+    // switchers, backups) and goes stale when they swap accounts, so the
+    // Keychain wins and the file is only a fallback. On Linux and Windows the
+    // file is the only store.
+    if (this.platform === "darwin") {
+      const keychainCredentials = await this.readKeychainCredential();
+      if (keychainCredentials) return keychainCredentials;
+    }
+    return this.readCredentialFile(join(this.claudeHome, ".credentials.json"));
   }
 
   private async readCredentialFile(path: string): Promise<ClaudeCredentialRecord | null> {
