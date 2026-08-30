@@ -28,17 +28,28 @@ index 73466dd..8440ac9 100644
  
    auto textSize = textLayoutManager_
 diff --git a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
-index 9e429b8..1d10014 100644
+index 1794b53..eca5e57 100644
 --- a/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
 +++ b/node_modules/@mattermost/react-native-paste-input/android/src/main/java/com/mattermost/pasteinputtext/PasteInputEditText.kt
-@@ -36,2 +36,2 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+@@ -33,8 +33,8 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+     return mOnPasteListener
+   }
+ 
 -  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
 -    val ic = super.onCreateInputConnection(outAttrs)
 +  override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
 +    val ic = super.onCreateInputConnection(outAttrs) ?: return null
-@@ -58 +58 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+ 
+     EditorInfoCompat.setContentMimeTypes(outAttrs, arrayOf("*/*"))
+ 
+@@ -55,6 +55,6 @@ class PasteInputEditText(context: ThemedReactContext) : ReactEditText(context) {
+       true
+     }
+ 
 -    return InputConnectionCompat.createWrapper(ic!!, outAttrs, callback)
 +    return InputConnectionCompat.createWrapper(ic, outAttrs, callback)
+   }
+ }
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
 index 51b9dfa..501badf 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteInput.js
@@ -108,7 +119,7 @@ index 51b9dfa..501badf 100644
    // For Android, PasteTextInput already handles everything internally
    // Just need to adapt the onPaste callback format
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteTextInput.js b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteTextInput.js
-index 5119e65..287216a 100644
+index 5119e65..d7100c8 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteTextInput.js
 +++ b/node_modules/@mattermost/react-native-paste-input/lib/commonjs/PasteTextInput.js
 @@ -52,6 +52,7 @@ function InternalTextInput(props) {
@@ -119,7 +130,7 @@ index 5119e65..287216a 100644
    const [lastNativeText, setLastNativeText] = React.useState(props.value);
    const [lastNativeSelectionState, setLastNativeSelection] = React.useState({
      selection: {
-@@ -103,7 +104,12 @@ function InternalTextInput(props) {
+@@ -103,7 +104,15 @@ function InternalTextInput(props) {
        Object.assign(instance, {
          clear() {
            if (inputRef.current != null) {
@@ -129,11 +140,14 @@ index 5119e65..287216a 100644
 +        },
 +        replaceText(text, selection) {
 +          if (inputRef.current != null) {
-+            _PasteTextInputNativeComponent.Commands.setTextAndSelection(inputRef.current, mostRecentEventCountRef.current, text, selection?.start ?? -1, selection?.end ?? -1);
++            // Android's EditText silently drops text commands whose event count is
++            // behind the native counter; see the comment in src/PasteTextInput.tsx.
++            const eventCount = _reactNative.Platform.OS === 'android' ? 2147483647 : mostRecentEventCountRef.current;
++            _PasteTextInputNativeComponent.Commands.setTextAndSelection(inputRef.current, eventCount, text, selection?.start ?? -1, selection?.end ?? -1);
            }
          },
          isFocused() {
-@@ -114,12 +120,12 @@ function InternalTextInput(props) {
+@@ -114,12 +123,12 @@ function InternalTextInput(props) {
          },
          setSelection(start, end) {
            if (inputRef.current != null) {
@@ -148,7 +162,7 @@ index 5119e65..287216a 100644
    const ref = useMergeRefs(setLocalRef, props.forwardedRef);
    const _onChange = event => {
      const currentText = event.nativeEvent.text;
-@@ -128,6 +134,7 @@ function InternalTextInput(props) {
+@@ -128,6 +137,7 @@ function InternalTextInput(props) {
      if (inputRef.current == null) {
        return;
      }
@@ -225,7 +239,7 @@ index 75fe015..1d3cd64 100644
    // For Android, PasteTextInput already handles everything internally
    // Just need to adapt the onPaste callback format
 diff --git a/node_modules/@mattermost/react-native-paste-input/lib/module/PasteTextInput.js b/node_modules/@mattermost/react-native-paste-input/lib/module/PasteTextInput.js
-index 39bd607..f2b1d2f 100644
+index 39bd607..08246a7 100644
 --- a/node_modules/@mattermost/react-native-paste-input/lib/module/PasteTextInput.js
 +++ b/node_modules/@mattermost/react-native-paste-input/lib/module/PasteTextInput.js
 @@ -46,6 +46,7 @@ function InternalTextInput(props) {
@@ -236,7 +250,7 @@ index 39bd607..f2b1d2f 100644
    const [lastNativeText, setLastNativeText] = React.useState(props.value);
    const [lastNativeSelectionState, setLastNativeSelection] = React.useState({
      selection: {
-@@ -97,7 +98,12 @@ function InternalTextInput(props) {
+@@ -97,7 +98,15 @@ function InternalTextInput(props) {
        Object.assign(instance, {
          clear() {
            if (inputRef.current != null) {
@@ -246,11 +260,14 @@ index 39bd607..f2b1d2f 100644
 +        },
 +        replaceText(text, selection) {
 +          if (inputRef.current != null) {
-+            Commands.setTextAndSelection(inputRef.current, mostRecentEventCountRef.current, text, selection?.start ?? -1, selection?.end ?? -1);
++            // Android's EditText silently drops text commands whose event count is
++            // behind the native counter; see the comment in src/PasteTextInput.tsx.
++            const eventCount = Platform.OS === 'android' ? 2147483647 : mostRecentEventCountRef.current;
++            Commands.setTextAndSelection(inputRef.current, eventCount, text, selection?.start ?? -1, selection?.end ?? -1);
            }
          },
          isFocused() {
-@@ -108,12 +114,12 @@ function InternalTextInput(props) {
+@@ -108,12 +117,12 @@ function InternalTextInput(props) {
          },
          setSelection(start, end) {
            if (inputRef.current != null) {
@@ -265,7 +282,7 @@ index 39bd607..f2b1d2f 100644
    const ref = useMergeRefs(setLocalRef, props.forwardedRef);
    const _onChange = event => {
      const currentText = event.nativeEvent.text;
-@@ -122,6 +128,7 @@ function InternalTextInput(props) {
+@@ -122,6 +131,7 @@ function InternalTextInput(props) {
      if (inputRef.current == null) {
        return;
      }
@@ -342,7 +359,7 @@ index 12befab..0d23ca5 100644
      // For Android, PasteTextInput already handles everything internally
      // Just need to adapt the onPaste callback format
 diff --git a/node_modules/@mattermost/react-native-paste-input/src/PasteTextInput.tsx b/node_modules/@mattermost/react-native-paste-input/src/PasteTextInput.tsx
-index dcc4a2b..1156458 100644
+index dcc4a2b..7b04e60 100644
 --- a/node_modules/@mattermost/react-native-paste-input/src/PasteTextInput.tsx
 +++ b/node_modules/@mattermost/react-native-paste-input/src/PasteTextInput.tsx
 @@ -84,6 +84,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
@@ -353,7 +370,7 @@ index dcc4a2b..1156458 100644
      const [lastNativeText, setLastNativeText] = React.useState<
          string | undefined
      >(props.value);
-@@ -181,13 +182,24 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
+@@ -181,13 +182,35 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
                          if (inputRef.current != null) {
                              Commands.setTextAndSelection(
                                  inputRef.current,
@@ -367,9 +384,20 @@ index dcc4a2b..1156458 100644
                      },
 +                    replaceText(text: string, selection?: { start: number; end: number }): void {
 +                        if (inputRef.current != null) {
++                            // Android's EditText silently drops text commands whose event count is
++                            // behind the native counter, and JS only learns about native counter
++                            // bumps asynchronously via onChange. A programmatic replace that races
++                            // an IME transition (e.g. confirming dictation) can therefore carry a
++                            // stale count and be dropped, leaving the native text stale.
++                            // ReactEditText only compares the count and never adopts the passed
++                            // value, so the maximum count makes the write unconditional.
++                            const eventCount =
++                                Platform.OS === 'android'
++                                    ? 2147483647
++                                    : mostRecentEventCountRef.current;
 +                            Commands.setTextAndSelection(
 +                                inputRef.current,
-+                                mostRecentEventCountRef.current,
++                                eventCount,
 +                                text,
 +                                selection?.start ?? -1,
 +                                selection?.end ?? -1
@@ -379,7 +407,7 @@ index dcc4a2b..1156458 100644
                      isFocused(): boolean {
                          return (
                              TextInputState.currentlyFocusedInput() ===
-@@ -203,7 +215,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
+@@ -203,7 +226,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
                          if (inputRef.current != null) {
                              Commands.setTextAndSelection(
                                  inputRef.current,
@@ -388,7 +416,7 @@ index dcc4a2b..1156458 100644
                                  null,
                                  start,
                                  end
-@@ -213,7 +225,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
+@@ -213,7 +236,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
                  });
              }
          },
@@ -397,7 +425,7 @@ index dcc4a2b..1156458 100644
      );
  
      const ref = useMergeRefs<PasteTextInputInstance>(
-@@ -232,6 +244,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
+@@ -232,6 +255,7 @@ function InternalTextInput(props: PasteInputProps): React.ReactNode {
              return;
          }
  
