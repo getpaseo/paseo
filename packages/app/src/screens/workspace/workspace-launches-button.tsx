@@ -131,6 +131,9 @@ function LaunchEndpointRow({
   onOpenUrlInBrowserTab?: (url: string) => void;
 }): ReactElement {
   const { t } = useTranslation();
+  // COMPAT(workspaceLaunchTcpListeners): added in v0.7.0, remove after 2027-02-28 once the
+  // supported daemon floor is >= v0.7.0. Older daemons omit the protocol for HTTP endpoints.
+  const protocol = endpoint.protocol ?? "http";
   const url = endpointUrl(endpoint);
   const handleOpen = useCallback(() => {
     if (url) void openServiceUrl(url, { openInApp: onOpenUrlInBrowserTab });
@@ -140,7 +143,7 @@ function LaunchEndpointRow({
     <View style={styles.endpointRow}>
       <Text style={styles.endpointPort}>{endpoint.port}</Text>
       <Text style={styles.endpointName} numberOfLines={1}>
-        {endpoint.hostname}
+        {protocol === "tcp" ? "TCP" : endpoint.hostname}
       </Text>
       {url ? (
         <LaunchActionButton

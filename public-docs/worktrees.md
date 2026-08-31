@@ -80,7 +80,10 @@ Add `--forge <name>` when Paseo cannot infer the forge from the source checkout.
 
 ## paseo.json
 
-Drop a `paseo.json` in your repo root. Paseo reads it from the committed version of the base branch you picked, so uncommitted changes in other branches don't apply.
+Drop a `paseo.json` in your repo root. Worktree setup, scripts, and services use the version
+checked out in each worktree, initially the committed base branch version. Launches are
+project-scoped runtime definitions: Paseo reads them from the source checkout, the same file the
+Project Settings screen edits, so they are available from every workspace.
 
 ```json
 {
@@ -230,9 +233,15 @@ of child services:
 }
 ```
 
+The command runs with the selected workspace as its working directory. Do not model this command
+as a `scripts` service: services receive one `$PASEO_PORT`, while launches receive the shared
+`$PASEO_PORT_BASE` through `$PASEO_PORT_END` block. A project launch takes precedence over a
+same-named worktree script; Paseo hides the legacy script and stops it before starting the launch.
+
 Only one launch runs per workspace. Starting another launch stops the active one. Paseo owns the
-launch terminal, then probes the leased block for HTTP listeners and exposes discovered endpoints
-through the existing reverse proxy. This works for host listeners and Docker-published ports.
+launch terminal, then probes the leased block for live TCP listeners. HTTP listeners get a route
+through the existing reverse proxy; raw TCP listeners remain direct local ports. This works for
+host listeners and Docker-published ports.
 
 Your command owns Docker, dependencies, and restart policy. Keep it in the foreground so Paseo can
 stop it; a bare `docker compose up -d` exits immediately and is not a useful launch command.

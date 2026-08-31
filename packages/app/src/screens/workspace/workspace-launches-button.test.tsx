@@ -280,17 +280,30 @@ describe("WorkspaceLaunchesButton", () => {
             proxyUrl: "http://launch-dev-p2--project.localhost:6767",
             health: null,
           },
+          {
+            id: "dev:p3",
+            port: 4103,
+            hostname: "127.0.0.1",
+            protocol: "tcp",
+            localProxyUrl: null,
+            publicProxyUrl: null,
+            proxyUrl: null,
+            health: null,
+          },
         ],
       }),
     ]);
 
     expect(document.body.textContent).toContain("4100");
     expect(document.body.textContent).toContain("4102");
+    expect(document.body.textContent).toContain("4103");
+    expect(document.body.textContent).toContain("TCP");
     expect(
       document.querySelector('[data-testid="workspace-launches-open-dev-dev:p0"]'),
     ).not.toBeNull();
     expect(
       document.querySelector('[data-testid="workspace-launches-open-dev-dev:p2"]'),
     ).not.toBeNull();
+    expect(document.querySelector('[data-testid="workspace-launches-open-dev-dev:p3"]')).toBeNull();
   });
 });
