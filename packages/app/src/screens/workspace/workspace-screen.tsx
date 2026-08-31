@@ -55,6 +55,7 @@ import {
   openPreferredWorkspacePreview,
   openPreferredWorkspaceTarget,
   openWorkspaceTargetBeside,
+  type OpenInSidePaneSource,
 } from "@/workspace-tabs/open-beside";
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
@@ -76,6 +77,7 @@ import {
 import {
   buildWorkspaceTabPersistenceKey,
   type WorkspaceTab,
+  type WorkspaceTabOpenMode,
   type WorkspaceTabTarget,
 } from "@/workspace-tabs/model";
 import { useSettings } from "@/hooks/use-settings";
@@ -828,6 +830,7 @@ function useStableTabDescriptorMap(tabDescriptors: WorkspaceTabDescriptor[]) {
         cachedDescriptor.key === tabDescriptor.key &&
         cachedDescriptor.kind === tabDescriptor.kind &&
         cachedDescriptor.state === tabDescriptor.state &&
+        cachedDescriptor.preview === tabDescriptor.preview &&
         workspaceTabTargetsEqual(cachedDescriptor.target, tabDescriptor.target)
       ) {
         next.set(tabDescriptor.tabId, cachedDescriptor);
@@ -2294,6 +2297,7 @@ function WorkspaceScreenContent({
         tabId: tab.tabId,
         kind: tab.target.kind,
         target: tab.target,
+        preview: tab.preview,
       });
     }
     return map;
@@ -3477,6 +3481,41 @@ function WorkspaceScreenContent({
     }
     document.title = "Workspace";
   }, [activeTabDescriptor, isRouteFocused]);
+  const openPreferredTargetFromPane = useCallback(
+    (
+      target: WorkspaceTabDescriptor["target"],
+      source: OpenInSidePaneSource,
+      mode: WorkspaceTabOpenMode,
+    ) => {
+      if (!persistenceKey) return;
+      const tabId = openPreferredWorkspacePreview({
+        isCompact: isMobile,
+        workspaceKey: persistenceKey,
+        serverId: normalizedServerId,
+        workspaceId: normalizedWorkspaceId,
+        explorerSidebarPaneId,
+        lastMainPaneId,
+        target,
+        source,
+        preferences: openInSidePane,
+        mode,
+        previewEnabled: true,
+      });
+      if (tabId && target.kind === "file") requestFileNavigation(tabId);
+      if (tabId) navigateToTabId(tabId);
+    },
+    [
+      explorerSidebarPaneId,
+      isMobile,
+      lastMainPaneId,
+      navigateToTabId,
+      normalizedServerId,
+      normalizedWorkspaceId,
+      openInSidePane,
+      persistenceKey,
+      requestFileNavigation,
+    ],
+  );
   const buildPaneContentModel = useCallback(
     (input: {
       tab: WorkspaceTabDescriptor;
@@ -3509,20 +3548,10 @@ function WorkspaceScreenContent({
           }
         },
         onOpenPreferredTarget: (target, source) => {
-          if (!persistenceKey) return;
-          const tabId = openPreferredWorkspacePreview({
-            isCompact: isMobile,
-            workspaceKey: persistenceKey,
-            serverId: normalizedServerId,
-            workspaceId: normalizedWorkspaceId,
-            explorerSidebarPaneId,
-            lastMainPaneId,
-            target,
-            source,
-            preferences: openInSidePane,
-          });
-          if (tabId && target.kind === "file") requestFileNavigation(tabId);
-          if (tabId) navigateToTabId(tabId);
+          openPreferredTargetFromPane(target, source, "preview");
+        },
+        onOpenPreferredTargetAsNormalTab: (target, source) => {
+          openPreferredTargetFromPane(target, source, "normal");
         },
         onOpenTargetToSide:
           canRenderDesktopPaneSplits &&
@@ -3572,15 +3601,13 @@ function WorkspaceScreenContent({
       normalizedWorkspaceId,
       canRenderDesktopPaneSplits,
       openImportSheet,
-      openInSidePane,
-      isMobile,
+      openPreferredTargetFromPane,
       requestFileNavigation,
       revealWorkspaceChildTab,
       persistenceKey,
       replaceWorkspaceTabTarget,
       setWorkspaceTabState,
       explorerSidebarPaneId,
-      lastMainPaneId,
     ],
   );
   const focusedPaneId = useMemo(

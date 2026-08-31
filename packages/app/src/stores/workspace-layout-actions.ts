@@ -132,6 +132,8 @@ interface OpenTabInLayoutInput {
   placement: WorkspaceTabPlacement;
   /** Required so a new caller cannot silently opt out of Explorer placement rules. */
   explorerSidebarPaneId: string | null;
+  /** Opens into the destination pane's reusable preview slot instead of a tab of its own. */
+  preview?: boolean;
 }
 
 interface CreateTabInLayoutInput extends OpenTabInLayoutInput {
@@ -382,6 +384,7 @@ function normalizeWorkspaceTab(value: unknown): WorkspaceTab | null {
     target,
     createdAt: typeof tab.createdAt === "number" ? tab.createdAt : Date.now(),
     ...(tab.state !== undefined ? { state: tab.state } : {}),
+    ...(tab.preview === true ? { preview: true } : {}),
   };
 }
 
@@ -882,6 +885,8 @@ function replaceTabInTree(
     nextTabId: string;
     target: WorkspaceTabTarget;
     state?: JsonValue;
+    /** The replacement's preview flag. This rebuilds the tab, so omitting it clears the flag. */
+    preview?: boolean;
   },
 ): SplitNodeInternal {
   const panePath = findPanePathContainingTab(root, input.tabId);
@@ -899,6 +904,7 @@ function replaceTabInTree(
             target: input.target,
             createdAt: tab.createdAt,
             ...(input.state !== undefined ? { state: input.state } : {}),
+            ...(input.preview === true ? { preview: true } : {}),
           };
         }),
         focusedTabId:
@@ -1093,7 +1099,9 @@ export function collectAllPanes(root: SplitNode): SplitPane[] {
 }
 
 function isEphemeralTab(tab: WorkspaceTab): boolean {
-  return tab.target.kind === "commit_diff" || tab.target.kind === "new_tab";
+  // A preview is a transient view of a file, the same way a commit diff is a transient view of a
+  // SHA: restoring one would resurrect a tab the user never chose to keep.
+  return tab.target.kind === "commit_diff" || tab.target.kind === "new_tab" || tab.preview === true;
 }
 
 function stripEphemeralTabsFromNode(node: SplitNodeInternal): SplitNodeInternal {
@@ -1311,6 +1319,7 @@ function insertNewTabIntoPane(
     target: input.target,
     createdAt: input.now,
     ...(input.state !== undefined ? { state: input.state } : {}),
+    ...(input.preview === true ? { preview: true } : {}),
   };
 
   const currentTab = isSoleNewTabPane(targetPane) ? targetPane.tabs[0] : null;
@@ -1323,6 +1332,7 @@ function insertNewTabIntoPane(
           nextTabId: tabId,
           target: input.target,
           state: input.state,
+          preview: input.preview,
         }),
         focusedPaneId: input.focus ? targetPane.id : layout.focusedPaneId,
         parentTabIdByTabId: input.layout.parentTabIdByTabId,
@@ -1371,6 +1381,7 @@ function updateExistingTabTarget(
       nextTabId: tab.tabId,
       target,
       state: tab.state,
+      preview: tab.preview,
     }),
   });
 }
@@ -1672,6 +1683,7 @@ export function retargetTabInLayout(
         tabId: input.tabId,
         nextTabId,
         target: input.target,
+        preview: currentTab?.preview,
       }),
       focusedPaneId: layout.focusedPaneId,
       parentTabIdByTabId: input.layout.parentTabIdByTabId,
@@ -1698,6 +1710,7 @@ export function replaceTabTargetInLayout(
           nextTabId: input.tabId,
           target: input.target,
           state: input.state,
+          preview: currentTab?.preview,
         }),
         focusedPaneId: layout.focusedPaneId,
         parentTabIdByTabId: input.layout.parentTabIdByTabId,
@@ -1735,6 +1748,9 @@ export function replaceTabTargetInLayout(
         nextTabId: tabId,
         target: input.target,
         state,
+        // Reusing the preview slot for another file leaves it a preview. Promotion to an
+        // ordinary tab goes through setTabPreview, never through a target swap.
+        preview: currentTab?.preview,
       }),
       focusedPaneId: layout.focusedPaneId,
       parentTabIdByTabId,
@@ -1780,6 +1796,32 @@ export function setTabStateInLayout(input: {
       nextTabId: tab.tabId,
       target: tab.target,
       state: input.state,
+      preview: tab.preview,
+    }),
+    focusedPaneId: layout.focusedPaneId,
+    parentTabIdByTabId: input.layout.parentTabIdByTabId,
+  });
+}
+
+/**
+ * Flips the pane's preview slot on or off without touching the panel-owned `state` slot, which
+ * `setTabStateInLayout` would overwrite wholesale.
+ */
+export function setTabPreviewInLayout(input: {
+  layout: WorkspaceLayout;
+  tabId: string;
+  preview: boolean;
+}): WorkspaceLayout | null {
+  const layout = asInternalLayout(input.layout);
+  const tab = collectAllTabs(layout.root).find((candidate) => candidate.tabId === input.tabId);
+  if (!tab || (tab.preview === true) === input.preview) return null;
+  return withNormalizedParentTabMap({
+    root: replaceTabInTree(layout.root, {
+      tabId: tab.tabId,
+      nextTabId: tab.tabId,
+      target: tab.target,
+      state: tab.state,
+      preview: input.preview,
     }),
     focusedPaneId: layout.focusedPaneId,
     parentTabIdByTabId: input.layout.parentTabIdByTabId,
@@ -1826,6 +1868,7 @@ export function convertDraftToAgentInLayout(
         tabId: input.tabId,
         nextTabId: canonicalTabId,
         target,
+        preview: currentTab.preview,
       }),
       focusedPaneId: layout.focusedPaneId,
       parentTabIdByTabId: input.layout.parentTabIdByTabId,
@@ -2460,6 +2503,7 @@ export function reconcileWorkspaceTabs(
           tabId: keeper.tabId,
           nextTabId: keeper.tabId,
           target: group.target,
+          preview: keeper.preview,
         }),
         focusedPaneId: nextLayout.focusedPaneId,
         parentTabIdByTabId: nextLayout.parentTabIdByTabId,

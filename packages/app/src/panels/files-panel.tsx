@@ -9,6 +9,7 @@ import { usePaneContext } from "@/panels/pane-context";
 import { definePanel, type PanelPresentation } from "@/panels/panel-registry";
 import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
+import type { WorkspaceTabOpenMode } from "@/workspace-tabs/model";
 
 const ThemedFiles = withUnistyles(Files);
 const filesPanelPresentation = {
@@ -20,13 +21,23 @@ const filesPanelPresentation = {
 
 function FilesPanel() {
   const { t } = useTranslation();
-  const { serverId, workspaceId, target, openPreferredTarget, openTargetToSide } = usePaneContext();
+  const {
+    serverId,
+    workspaceId,
+    target,
+    openPreferredTarget,
+    openPreferredTargetAsNormalTab,
+    openTargetToSide,
+  } = usePaneContext();
   const workspaceRoot = useWorkspaceDirectory(serverId, workspaceId);
   const { addFile, canAddToChat } = useAddFileToChat({ serverId, workspaceId });
   invariant(target.kind === "files", "FilesPanel requires files target");
   const onOpenFile = useCallback(
-    (path: string) => openPreferredTarget({ kind: "file", path }, "explorerFiles"),
-    [openPreferredTarget],
+    (path: string, mode: WorkspaceTabOpenMode) => {
+      const open = mode === "normal" ? openPreferredTargetAsNormalTab : openPreferredTarget;
+      open({ kind: "file", path }, "explorerFiles");
+    },
+    [openPreferredTarget, openPreferredTargetAsNormalTab],
   );
   const onOpenFileToSide = useCallback(
     (path: string) => openTargetToSide?.({ kind: "file", path }),

@@ -43,6 +43,7 @@ import {
   reorderFocusedPaneTabsInLayout,
   reorderPaneTabsInLayout,
   setPaneHiddenInLayout,
+  setTabPreviewInLayout,
   setTabStateInLayout,
   selectTabInPaneInLayout,
   splitPaneEmptyInLayout,
@@ -100,6 +101,12 @@ export interface OpenWorkspaceTabInput {
   placement?: WorkspaceTabPlacement;
   parentTabId?: string;
   state?: JsonValue;
+  /**
+   * Opens into the destination pane's reusable preview slot instead of a tab of its own.
+   * A tab carrying this is stripped before persisting, so it does not survive a reload.
+   * Only an Explorer single click should set it; see `openPreferredWorkspacePreview`.
+   */
+  preview?: boolean;
 }
 
 interface WorkspaceLayoutStore {
@@ -128,6 +135,8 @@ interface WorkspaceLayoutStore {
     state?: JsonValue,
   ) => string | null;
   setTabState: (workspaceKey: string, tabId: string, state: JsonValue | undefined) => void;
+  /** Claims the pane's preview slot for this tab, or promotes it to an ordinary tab. */
+  setTabPreview: (workspaceKey: string, tabId: string, preview: boolean) => void;
   convertDraftToAgent: (workspaceKey: string, tabId: string, agentId: string) => string | null;
   reconcileTabs: (workspaceKey: string, snapshot: WorkspaceTabSnapshot) => void;
   resolvePendingAgent: (workspaceKey: string, agentId: string) => void;
@@ -240,6 +249,11 @@ const WorkspaceTabStorageSchema = z.strictObject({
   target: WorkspaceTabTargetStorageSchema,
   createdAt: z.number(),
   state: z.json().optional(),
+  // COMPAT(previewTabs): added in v0.7.0, remove after 2027-02-28. Preview tabs are stripped
+  // before persisting, so this only has to parse a blob some build wrote before that stripping
+  // landed. The object is strict and a failed parse discards the whole layout, so the key stays
+  // registered even so.
+  preview: z.boolean().optional(),
 });
 const SplitNodeStorageSchema: z.ZodType<SplitNode> = z.lazy(() =>
   z.discriminatedUnion("kind", [
@@ -789,12 +803,14 @@ export function createWorkspaceLayoutStore(
               now: Date.now(),
               createTabId: createWorkspaceTabInstanceId,
               state: input.state,
+              preview: input.preview,
             });
           } else if (input.intent === "background") {
             result = openTabInLayoutBackground({
               ...placement,
               target: normalizedTarget,
               now: Date.now(),
+              preview: input.preview,
             });
           } else {
             result = revealTargetInLayout({
@@ -802,6 +818,7 @@ export function createWorkspaceLayoutStore(
               target: normalizedTarget,
               now: Date.now(),
               createTabId: createWorkspaceTabInstanceId,
+              preview: input.preview,
             });
           }
           if (!result) {
@@ -1147,6 +1164,25 @@ export function createWorkspaceLayoutStore(
               layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
               tabId: normalizedTabId,
               state: tabState,
+            });
+            if (!layout) return state;
+            return {
+              layoutByWorkspace: {
+                ...state.layoutByWorkspace,
+                [normalizedWorkspaceKey]: layout,
+              },
+            };
+          });
+        },
+        setTabPreview: (workspaceKey, tabId, preview) => {
+          const normalizedWorkspaceKey = trimNonEmpty(workspaceKey);
+          const normalizedTabId = trimNonEmpty(tabId);
+          if (!normalizedWorkspaceKey || !normalizedTabId) return;
+          set((state) => {
+            const layout = setTabPreviewInLayout({
+              layout: getWorkspaceLayout(state.layoutByWorkspace, normalizedWorkspaceKey),
+              tabId: normalizedTabId,
+              preview,
             });
             if (!layout) return state;
             return {
@@ -1809,8 +1845,8 @@ export function createWorkspaceLayoutStore(
         partialize: (state) => {
           const layoutByWorkspace: Record<string, WorkspaceLayout> = {};
           for (const key in state.layoutByWorkspace) {
-            // Strip ephemeral (commit diff) tabs before persisting so they are
-            // dropped on reload rather than restored pointing at a rebased SHA.
+            // Strip ephemeral tabs before persisting: a commit diff would come back pointing at a
+            // rebased SHA, and a preview is a transient view the user never chose to keep.
             layoutByWorkspace[key] = stripEphemeralTabsFromLayout(
               normalizeLayout(state.layoutByWorkspace[key]),
             );

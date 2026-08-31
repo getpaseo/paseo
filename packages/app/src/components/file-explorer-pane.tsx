@@ -73,6 +73,7 @@ import {
   showHiddenFilesAndRestoreExpandedDirectories,
   type ExplorerTreeRow,
 } from "@/file-explorer/tree";
+import type { WorkspaceTabOpenMode } from "@/workspace-tabs/model";
 import { useWorkspaceFileDragSource } from "@/attachments/use-workspace-file-drag-source";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { useToast } from "@/contexts/toast-context";
@@ -89,6 +90,25 @@ const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
+
+/**
+ * Reads the browser's own consecutive-click counter off the press event.
+ *
+ * react-native-web does not forward `onDoubleClick` — it is absent from the `forwardedProps`
+ * allow-list, so the prop is dropped silently — but `PressResponder` calls `onPress` from the DOM
+ * `click` handler and hands over the React mouse event. A double click dispatches `detail: 1` and
+ * then `detail: 2`, which is what lets the first click preview immediately and the second promote:
+ * a timer would have to hold every single click back to wait for a click that usually never comes.
+ *
+ * Native has no double click and no `detail`, so it always previews.
+ */
+function resolveFileOpenMode(event: unknown): WorkspaceTabOpenMode {
+  if (typeof event !== "object" || event === null) return "preview";
+  const nativeEvent = Reflect.get(event, "nativeEvent");
+  if (typeof nativeEvent !== "object" || nativeEvent === null) return "preview";
+  const detail = Reflect.get(nativeEvent, "detail");
+  return typeof detail === "number" && detail >= 2 ? "normal" : "preview";
+}
 
 function DirectoryChevronIcon({ loading, expanded }: { loading: boolean; expanded: boolean }) {
   if (loading) {
@@ -110,7 +130,7 @@ interface TreeRowItemProps {
   isExpanded: boolean;
   isSelected: boolean;
   loading: boolean;
-  onEntryPress: (entry: ExplorerEntry) => void;
+  onEntryPress: (entry: ExplorerEntry, mode: WorkspaceTabOpenMode) => void;
   onSelectEntry: (entry: ExplorerEntry) => void;
   onCopyPath: (path: string) => void;
   onCopyRelativePath: (path: string) => void;
@@ -265,13 +285,16 @@ function TreeRowItem({
     path: entry.path,
   });
 
-  const handlePress = useCallback(() => {
-    const selection = isWeb ? window.getSelection() : null;
-    if (selection && !selection.isCollapsed && selection.toString().length > 0) {
-      return;
-    }
-    onEntryPress(entry);
-  }, [onEntryPress, entry]);
+  const handlePress = useCallback(
+    (event: unknown) => {
+      const selection = isWeb ? window.getSelection() : null;
+      if (selection && !selection.isCollapsed && selection.toString().length > 0) {
+        return;
+      }
+      onEntryPress(entry, resolveFileOpenMode(event));
+    },
+    [onEntryPress, entry],
+  );
 
   const handleSelect = useCallback(() => {
     onSelectEntry(entry);
@@ -400,7 +423,7 @@ interface FileExplorerPaneProps {
   serverId: string;
   workspaceId?: string | null;
   workspaceRoot: string;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile?: (filePath: string, mode: WorkspaceTabOpenMode) => void;
   onOpenFileToSide?: (filePath: string) => void;
   onAddToChat?: (path: string) => void;
 }
@@ -551,23 +574,25 @@ export function FileExplorerPane({
   );
 
   const handleOpenFile = useCallback(
-    (entry: ExplorerEntry) => {
+    (entry: ExplorerEntry, mode: WorkspaceTabOpenMode) => {
       if (!hasWorkspaceScope) {
         return;
       }
-      onOpenFile?.(entry.path);
+      onOpenFile?.(entry.path, mode);
     },
     [hasWorkspaceScope, onOpenFile],
   );
 
   const handleEntryPress = useCallback(
-    (entry: ExplorerEntry) => {
+    (entry: ExplorerEntry, mode: WorkspaceTabOpenMode) => {
       handleSelectEntry(entry);
+      // Directories return before the mode is used. Expanding and collapsing a folder is two
+      // clicks on the same row, and the second one arrives as a double click.
       if (entry.kind === "directory") {
         handleToggleDirectory(entry);
         return;
       }
-      handleOpenFile(entry);
+      handleOpenFile(entry, mode);
     },
     [handleOpenFile, handleSelectEntry, handleToggleDirectory],
   );
@@ -693,7 +718,9 @@ export function FileExplorerPane({
         }
         if (edit.kind === "file" && payload.path) {
           selectExplorerEntry(payload.path);
-          onOpenFile?.(payload.path);
+          // A file the user just created is theirs to keep — the next single click must not
+          // replace it.
+          onOpenFile?.(payload.path, "normal");
         }
       } catch (cause) {
         toast.error(cause instanceof Error ? cause.message : String(cause));
@@ -754,7 +781,7 @@ export function FileExplorerPane({
           );
           selectExplorerEntry(renamedSelection);
           if (entry.kind === "file") {
-            onOpenFile?.(renamedSelection);
+            onOpenFile?.(renamedSelection, "normal");
           }
         }
       } catch (cause) {
@@ -1468,7 +1495,7 @@ function TreeRowDispatcher({
   expandedPaths: Set<string>;
   selectedEntryPath: string | null;
   isDirectoryLoading: (path: string) => boolean;
-  onEntryPress: (entry: ExplorerEntry) => void;
+  onEntryPress: (entry: ExplorerEntry, mode: WorkspaceTabOpenMode) => void;
   onSelectEntry: (entry: ExplorerEntry) => void;
   onCopyPath: (path: string) => void | Promise<void>;
   onCopyRelativePath: (path: string) => void | Promise<void>;
