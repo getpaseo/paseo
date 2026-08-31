@@ -229,7 +229,7 @@ describe("daemon E2E (real codex) - rewind", () => {
     }
   }, 420_000);
 
-  test("rewinds a real Codex conversation to a forked thread while leaving file edits on disk", async () => {
+  test("rewinds a real Codex conversation to the first message in place while leaving file edits on disk", async () => {
     const session = await launchCodexRewindSession(harness, "codex-rewind-conversation-real");
 
     try {
@@ -254,11 +254,52 @@ describe("daemon E2E (real codex) - rewind", () => {
       const rewoundTimeline = await fetchTimelineItems(harness.client, session.agentId);
       const fileText = await readScratchFile(session);
 
-      expect(newThreadId).not.toBe(oldThreadId);
-      expectThreadId(newThreadId);
+      // thread/revert rewinds the thread in place, so the thread identity does
+      // not change even though every turn is gone.
+      expect(newThreadId).toBe(oldThreadId);
       expectTimeline(rewoundTimeline, { userTexts: [], assistantCount: 0 });
       await expectCreatedFiles(session, ["rewind-scratch.txt"]);
       expect(fileText).toBe("BASE\nCODEX_FIRST_MARKER\nCODEX_SECOND_MARKER\n");
+    } finally {
+      await closeCodexRewindSession(session);
+    }
+  }, 420_000);
+
+  test("keeps a real Codex conversation usable after rewinding it to the first message", async () => {
+    const session = await launchCodexRewindSession(harness, "codex-rewind-empty-thread-real");
+
+    try {
+      await askCodexToEditFile(harness, session, {
+        promptToken: "FIRST",
+        content: "BASE\nCODEX_FIRST_MARKER\n",
+        doneToken: "CODEX_FIRST_DONE",
+      });
+      const firstTimeline = await fetchTimelineItems(harness.client, session.agentId);
+      const firstMessageId = userMessageIdForToken(firstTimeline, "CODEX_REWIND_PROMPT_FIRST");
+
+      await askCodexToEditFile(harness, session, {
+        promptToken: "SECOND",
+        content: "BASE\nCODEX_FIRST_MARKER\nCODEX_SECOND_MARKER\n",
+        doneToken: "CODEX_SECOND_DONE",
+      });
+
+      await harness.client.rewindAgent(session.agentId, firstMessageId, "conversation");
+      const rewoundTimeline = await fetchTimelineItems(harness.client, session.agentId);
+      expectTimeline(rewoundTimeline, { userTexts: [], assistantCount: 0 });
+
+      // An emptied thread is the state Codex is least likely to accept, so the
+      // follow-up turn is the real assertion here.
+      const followUp = "Reply with exactly: CODEX_AFTER_REWIND_DONE";
+      await harness.client.sendMessage(session.agentId, followUp);
+      const finish = await harness.client.waitForFinish(session.agentId, TURN_TIMEOUT_MS);
+      expect(finish.status).toBe("idle");
+      expect(finish.final?.lastError).toBeUndefined();
+
+      const afterTimeline = await fetchTimelineItems(harness.client, session.agentId);
+      expect(roleItems(afterTimeline, "user_message").map((message) => message.text)).toEqual([
+        followUp,
+      ]);
+      expect(roleItems(afterTimeline, "assistant_message").length).toBeGreaterThan(0);
     } finally {
       await closeCodexRewindSession(session);
     }

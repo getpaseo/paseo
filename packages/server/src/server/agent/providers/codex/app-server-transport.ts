@@ -48,86 +48,9 @@ type RequestHandler = (params: unknown, requestId: number) => unknown;
 type NotificationHandler = (method: string, params: unknown) => void;
 type UnexpectedTerminationHandler = (error: Error) => void;
 
-export interface CodexThreadForkParams {
-  threadId: string;
-  lastTurnId?: string | null;
-  beforeTurnId?: string | null;
-  path?: string | null;
-  model?: string | null;
-  modelProvider?: string | null;
-  serviceTier?: string | null;
-  cwd?: string | null;
-  runtimeWorkspaceRoots?: string[] | null;
-  approvalPolicy?: unknown;
-  approvalsReviewer?: unknown;
-  sandbox?: unknown;
-  permissions?: string | null;
-  config?: Record<string, unknown> | null;
-  baseInstructions?: string | null;
-  developerInstructions?: string | null;
-  ephemeral?: boolean;
-  threadSource?: unknown;
-  excludeTurns?: boolean;
-  persistExtendedHistory?: boolean;
-}
-
-const CodexThreadForkResponseSchema = z
-  .object({
-    thread: z
-      .object({
-        id: z.string(),
-        sessionId: z.string().optional(),
-        forkedFromId: z.string().nullable().optional(),
-        turns: z.array(z.unknown()).optional(),
-      })
-      .passthrough(),
-    model: z.string(),
-    modelProvider: z.string(),
-    serviceTier: z.string().nullable(),
-    cwd: z.string(),
-    runtimeWorkspaceRoots: z.array(z.string()).optional().default([]),
-    instructionSources: z.array(z.string()).optional().default([]),
-    approvalPolicy: z.unknown(),
-    approvalsReviewer: z.unknown(),
-    sandbox: z.unknown(),
-    activePermissionProfile: z.unknown().optional(),
-    reasoningEffort: z.string().nullable().optional(),
-  })
-  .passthrough();
-
-export type CodexThreadForkResponse = z.infer<typeof CodexThreadForkResponseSchema>;
-
-export function parseCodexThreadForkResponse(response: unknown): CodexThreadForkResponse {
-  return CodexThreadForkResponseSchema.parse(response);
-}
-
-export interface CodexThreadRollbackParams {
-  threadId: string;
-  numTurns: number;
-}
-
 export interface CodexThreadRevertParams {
   threadId: string;
   beforeTurnId: string;
-}
-
-const CodexThreadRollbackResponseSchema = z
-  .object({
-    thread: z
-      .object({
-        id: z.string(),
-        sessionId: z.string().optional(),
-        forkedFromId: z.string().nullable().optional(),
-        turns: z.array(z.unknown()).optional(),
-      })
-      .passthrough(),
-  })
-  .passthrough();
-
-export type CodexThreadRollbackResponse = z.infer<typeof CodexThreadRollbackResponseSchema>;
-
-export function parseCodexThreadRollbackResponse(response: unknown): CodexThreadRollbackResponse {
-  return CodexThreadRollbackResponseSchema.parse(response);
 }
 
 const CodexThreadRevertResponseSchema = z
@@ -265,14 +188,6 @@ export class CodexAppServerClient {
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
     });
-  }
-
-  async forkThread(params: CodexThreadForkParams): Promise<CodexThreadForkResponse> {
-    return parseCodexThreadForkResponse(await this.request("thread/fork", params));
-  }
-
-  async rollbackThread(params: CodexThreadRollbackParams): Promise<CodexThreadRollbackResponse> {
-    return parseCodexThreadRollbackResponse(await this.request("thread/rollback", params));
   }
 
   async revertThread(params: CodexThreadRevertParams): Promise<CodexThreadRevertResponse> {

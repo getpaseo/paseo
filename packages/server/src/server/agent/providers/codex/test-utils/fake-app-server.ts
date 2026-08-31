@@ -46,7 +46,6 @@ type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
 
 export interface FakeCodexAppServer {
   readonly child: CodexAppServerChildProcess;
-  readonly recordedRollbacks: JsonObject[];
   readonly recordedReverts: JsonObject[];
   requests(): readonly JsonObject[];
   assertNoErrors(): void;
@@ -136,7 +135,6 @@ export function createFakeCodexAppServer(
   handlers: Record<string, FakeCodexAppServerHandler> = {},
 ): FakeCodexAppServer {
   const child = createCodexAppServerChildProcess();
-  const recordedRollbacks: JsonObject[] = [];
   const recordedReverts: JsonObject[] = [];
   const responseHandlers: Record<string, FakeCodexAppServerHandler> = {
     initialize: () => ({}),
@@ -157,37 +155,6 @@ export function createFakeCodexAppServer(
     "thread/loaded/list": () => ({ data: [] }),
     "thread/resume": () => ({}),
     "turn/start": () => ({}),
-    "thread/fork": (params) => ({
-      thread: {
-        id: "forked-thread",
-        sessionId: "forked-session",
-        forkedFromId: toJsonObject(params).threadId,
-        turns: [],
-      },
-      model: "gpt-5.4",
-      modelProvider: "openai",
-      serviceTier: null,
-      cwd: "/workspace/project",
-      runtimeWorkspaceRoots: [],
-      instructionSources: [],
-      approvalPolicy: "on-request",
-      approvalsReviewer: null,
-      sandbox: { type: "workspaceWrite", networkAccess: false },
-      activePermissionProfile: null,
-      reasoningEffort: null,
-    }),
-    "thread/rollback": (params) => {
-      const rollback = toJsonObject(params);
-      recordedRollbacks.push(rollback);
-      return {
-        thread: {
-          id: typeof rollback.threadId === "string" ? rollback.threadId : "forked-thread",
-          sessionId: "forked-session",
-          forkedFromId: "thread-1",
-          turns: [],
-        },
-      };
-    },
     "thread/revert": (params) => {
       const revert = toJsonObject(params);
       recordedReverts.push(revert);
@@ -332,7 +299,6 @@ export function createFakeCodexAppServer(
 
   return {
     child,
-    recordedRollbacks,
     recordedReverts,
     requests() {
       return messages;

@@ -76,13 +76,7 @@ import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-
 import {
   CodexAppServerClient,
   CodexAppServerRpcError,
-  parseCodexThreadForkResponse,
-  parseCodexThreadRollbackResponse,
   parseCodexThreadRevertResponse,
-  type CodexThreadForkParams,
-  type CodexThreadForkResponse,
-  type CodexThreadRollbackParams,
-  type CodexThreadRollbackResponse,
   type CodexThreadRevertParams,
   type CodexThreadRevertResponse,
   type CodexAppServerTraceContext,
@@ -171,6 +165,11 @@ const CODEX_PLAN_IMPLEMENTATION_PROMPT_PREFIX =
 // (and the /goal slash command) when the binary is too old.
 const CODEX_GOALS_MIN_VERSION: readonly [number, number, number] = [0, 128, 0];
 const CODEX_AUTO_REVIEW_MIN_VERSION: readonly [number, number, number] = [0, 115, 0];
+// `thread/revert` (openai/codex#38440) is the only rewind primitive that still
+// works: every thread a modern Codex creates is paginated, and `thread/rollback`
+// answers "paginated threads do not support thread/rollback" there. It first
+// shipped in 0.148.0-alpha.13, so 0.148.0 is the floor.
+const CODEX_THREAD_REVERT_MIN_VERSION: readonly [number, number, number] = [0, 148, 0];
 
 function parseCodexVersion(versionOutput: string): [number, number, number] | null {
   const match = versionOutput.match(/(\d+)\.(\d+)\.(\d+)/);
@@ -248,8 +247,6 @@ const DEFAULT_CODEX_MODE_ID = "auto";
 
 interface CodexAppServerClientLike {
   request(method: string, params?: unknown): Promise<unknown>;
-  forkThread?(params: CodexThreadForkParams): Promise<CodexThreadForkResponse>;
-  rollbackThread?(params: CodexThreadRollbackParams): Promise<CodexThreadRollbackResponse>;
   revertThread?(params: CodexThreadRevertParams): Promise<CodexThreadRevertResponse>;
   notify(method: string, params?: unknown): void;
   dispose(): Promise<void>;
@@ -1967,7 +1964,11 @@ const CodexThreadTurnsListResponseSchema = z
   .passthrough();
 
 type CodexThreadTurnsListResponse = z.infer<typeof CodexThreadTurnsListResponseSchema>;
-type CodexThreadTurnsListRequest = (threadId: string, cursor: string) => Promise<unknown>;
+type CodexThreadTurnsListRequest = (threadId: string, cursor: string | null) => Promise<unknown>;
+interface CodexThreadTurn {
+  id?: string;
+  items: unknown[];
+}
 
 async function requestCodexThreadHistory(
   requestThread: CodexThreadReadRequest,
@@ -1980,26 +1981,20 @@ async function requestCodexThreadHistory(
 async function requestCodexThreadTurnsPage(
   requestThreadTurnsPage: CodexThreadTurnsListRequest,
   threadId: string,
-  cursor: string,
+  cursor: string | null,
 ): Promise<CodexThreadTurnsListResponse> {
   const response = await requestThreadTurnsPage(threadId, cursor);
   return CodexThreadTurnsListResponseSchema.parse(response);
 }
 
-async function loadCodexHistoryTurns(params: {
+async function loadCodexTurnsBackwards(params: {
   threadId: string;
-  requestThread: CodexThreadReadRequest;
   requestThreadTurnsPage: CodexThreadTurnsListRequest;
-  turnsBackwardsCursor?: string | null;
-}): Promise<Array<{ id?: string; items: unknown[] }>> {
-  if (!params.turnsBackwardsCursor) {
-    const response = await requestCodexThreadHistory(params.requestThread, params.threadId);
-    return response.thread.turns;
-  }
-
-  const turnsDescending: Array<{ id?: string; items: unknown[] }> = [];
-  let cursor: string | null = params.turnsBackwardsCursor;
-  for (let page = 0; cursor && page < 100; page += 1) {
+  cursor: string | null;
+}): Promise<CodexThreadTurn[]> {
+  const turnsDescending: CodexThreadTurn[] = [];
+  let cursor: string | null = params.cursor;
+  for (let page = 0; page < 100; page += 1) {
     const response = await requestCodexThreadTurnsPage(
       params.requestThreadTurnsPage,
       params.threadId,
@@ -2007,8 +2002,57 @@ async function loadCodexHistoryTurns(params: {
     );
     turnsDescending.push(...response.data);
     cursor = response.nextCursor ?? null;
+    if (!cursor) break;
   }
   return turnsDescending.toReversed();
+}
+
+async function loadCodexHistoryTurns(params: {
+  threadId: string;
+  requestThread: CodexThreadReadRequest;
+  requestThreadTurnsPage: CodexThreadTurnsListRequest;
+  turnsBackwardsCursor?: string | null;
+}): Promise<CodexThreadTurn[]> {
+  if (!params.turnsBackwardsCursor) {
+    const response = await requestCodexThreadHistory(params.requestThread, params.threadId);
+    return response.thread.turns;
+  }
+  return loadCodexTurnsBackwards({
+    threadId: params.threadId,
+    requestThreadTurnsPage: params.requestThreadTurnsPage,
+    cursor: params.turnsBackwardsCursor,
+  });
+}
+
+function readCodexUserMessageItemId(item: unknown): string | null {
+  if (typeof item !== "object" || item === null) return null;
+  const record = item as { type?: unknown; id?: unknown };
+  if (
+    normalizeCodexThreadItemType(typeof record.type === "string" ? record.type : undefined) !==
+    "userMessage"
+  ) {
+    return null;
+  }
+  return typeof record.id === "string" ? record.id : null;
+}
+
+// Turns read straight from the thread are the only place turn ids come from: the
+// timeline we persisted may predate turn ids, and `thread/read` returns no turns
+// at all once a thread is paginated.
+async function loadCodexUserMessageTurnIds(params: {
+  threadId: string;
+  requestThreadTurnsPage: CodexThreadTurnsListRequest;
+}): Promise<Map<string, string>> {
+  const turns = await loadCodexTurnsBackwards({ ...params, cursor: null });
+  const turnIdsByMessageId = new Map<string, string>();
+  for (const turn of turns) {
+    if (!turn.id) continue;
+    for (const item of turn.items) {
+      const messageId = readCodexUserMessageItemId(item);
+      if (messageId) turnIdsByMessageId.set(messageId, turn.id);
+    }
+  }
+  return turnIdsByMessageId;
 }
 
 async function loadCodexThreadHistoryTimeline(params: {
@@ -2077,10 +2121,13 @@ function readCodexThread(client: CodexAppServerClientLike, threadId: string): Pr
   });
 }
 
+// A null cursor is not a missing cursor: Codex answers with the newest page and a
+// `nextCursor` to walk backwards with, which is how a thread's turns are read
+// without already holding a cursor.
 function readCodexThreadTurnsPage(
   client: CodexAppServerClientLike,
   threadId: string,
-  cursor: string,
+  cursor: string | null,
 ): Promise<unknown> {
   return client.request("thread/turns/list", {
     threadId,
@@ -2088,26 +2135,6 @@ function readCodexThreadTurnsPage(
     sortDirection: "desc",
     limit: 100,
   });
-}
-
-export async function forkCodexThread(
-  client: CodexAppServerClientLike,
-  params: CodexThreadForkParams,
-): Promise<CodexThreadForkResponse> {
-  if (client.forkThread) {
-    return client.forkThread(params);
-  }
-  return parseCodexThreadForkResponse(await client.request("thread/fork", params));
-}
-
-export async function rollbackCodexThread(
-  client: CodexAppServerClientLike,
-  params: CodexThreadRollbackParams,
-): Promise<CodexThreadRollbackResponse> {
-  if (client.rollbackThread) {
-    return client.rollbackThread(params);
-  }
-  return parseCodexThreadRollbackResponse(await client.request("thread/rollback", params));
 }
 
 export async function revertCodexThread(
@@ -3347,7 +3374,6 @@ interface ConsumedRootCompaction {
 
 export class CodexAppServerAgentSession implements AgentSession {
   readonly provider = CODEX_PROVIDER;
-  readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
 
   private readonly logger: Logger;
   private readonly config: AgentSessionConfig;
@@ -3411,10 +3437,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   private warnedIncompleteEditToolCallIds = new Set<string>();
   private latestUsage: AgentUsage | undefined;
   private latestPlanResult: { callId: string; text: string; turnId: string | null } | null = null;
-  private readonly userMessageTurnIndexes = new Map<
-    string,
-    { index: number; turnId: string | null }
-  >();
+  private readonly userMessageTurnIdsByMessageId = new Map<string, string | null>();
   private readonly userMessageTurnIds: string[] = [];
   private pendingManualCompactionStarts = 0;
   private compactionTriggerByItemId = new Map<string, "auto" | "manual">();
@@ -3450,6 +3473,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     private readonly ephemeral: boolean = false,
     private readonly goalsEnabled: boolean = false,
     private readonly autoReviewEnabled: boolean = false,
+    private readonly revertEnabled: boolean = false,
     private readonly agentId?: string,
     private readonly initialResumePurpose: "interactive" | "history" = "interactive",
   ) {
@@ -3481,6 +3505,15 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   get id(): string | null {
     return this.currentThreadId;
+  }
+
+  // Rewind is the one capability that depends on the binary rather than the
+  // session: `thread/revert` is the only rewind primitive Codex still supports,
+  // and it only exists from 0.148.0.
+  get capabilities(): AgentCapabilityFlags {
+    return this.revertEnabled
+      ? CODEX_APP_SERVER_CAPABILITIES
+      : { ...CODEX_APP_SERVER_CAPABILITIES, supportsRewindConversation: false };
   }
 
   get features(): AgentFeature[] {
@@ -4364,19 +4397,16 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (typeof messageId !== "string" || messageId.length === 0) {
       return false;
     }
-    if (this.userMessageTurnIndexes.has(messageId)) {
+    if (this.userMessageTurnIdsByMessageId.has(messageId)) {
       return false;
     }
-    this.userMessageTurnIndexes.set(messageId, {
-      index: this.userMessageTurnIds.length,
-      turnId,
-    });
+    this.userMessageTurnIdsByMessageId.set(messageId, turnId);
     this.userMessageTurnIds.push(messageId);
     return true;
   }
 
   private resetCodexUserMessageTurns(): void {
-    this.userMessageTurnIndexes.clear();
+    this.userMessageTurnIdsByMessageId.clear();
     this.userMessageTurnIds.length = 0;
   }
 
@@ -4384,19 +4414,43 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (numTurns <= 0) {
       return;
     }
-    this.userMessageTurnIds.length = Math.max(0, this.userMessageTurnIds.length - numTurns);
-    const previousEntries = new Map(this.userMessageTurnIndexes);
-    this.userMessageTurnIndexes.clear();
-    this.userMessageTurnIds.forEach((messageId, index) => {
-      const previous = previousEntries.get(messageId);
-      this.userMessageTurnIndexes.set(messageId, { index, turnId: previous?.turnId ?? null });
+    for (const messageId of this.userMessageTurnIds.splice(
+      Math.max(0, this.userMessageTurnIds.length - numTurns),
+    )) {
+      this.userMessageTurnIdsByMessageId.delete(messageId);
+    }
+  }
+
+  // A turn id is only known while its turn is live; a message that reached us
+  // through persisted history has none until we ask the thread for its turns.
+  private async backfillCodexUserMessageTurnIds(): Promise<void> {
+    const missing = this.userMessageTurnIds.filter(
+      (messageId) => !this.userMessageTurnIdsByMessageId.get(messageId),
+    );
+    if (missing.length === 0) return;
+    const client = this.client;
+    const threadId = this.currentThreadId;
+    if (!client || !threadId) return;
+
+    const turnIdsByMessageId = await loadCodexUserMessageTurnIds({
+      threadId,
+      requestThreadTurnsPage: (threadIdToRead, cursor) =>
+        readCodexThreadTurnsPage(client, threadIdToRead, cursor),
     });
+    for (const messageId of missing) {
+      const turnId = turnIdsByMessageId.get(messageId);
+      if (turnId) {
+        this.userMessageTurnIdsByMessageId.set(messageId, turnId);
+      }
+    }
   }
 
   private codexUserMessageTurns(): CodexUserMessageTurnIndex {
     return {
-      resolve: (messageId) => this.userMessageTurnIndexes.get(messageId) ?? null,
-      count: () => this.userMessageTurnIds.length,
+      resolve: (messageId) => {
+        if (!this.userMessageTurnIdsByMessageId.has(messageId)) return null;
+        return { turnId: this.userMessageTurnIdsByMessageId.get(messageId) ?? null };
+      },
     };
   }
 
@@ -4757,19 +4811,23 @@ export class CodexAppServerAgentSession implements AgentSession {
     if (!this.client) {
       throw new Error("Codex client is not initialized");
     }
+    if (!this.revertEnabled) {
+      throw new Error(
+        "Rewinding a Codex conversation needs `codex` 0.148.0 or newer, which is where thread/revert landed",
+      );
+    }
     if (this.currentThreadId) {
       await this.ensureThreadLoaded();
     } else {
       await this.ensureThread();
     }
 
+    await this.backfillCodexUserMessageTurnIds();
+
     await revertCodexConversation({
       client: this.client,
       threadId: this.currentThreadId,
       messageId: input.messageId,
-      cwd: this.config.cwd ?? null,
-      model: this.config.model ?? null,
-      serviceTier: this.serviceTier,
       userMessageTurns: this.codexUserMessageTurns(),
       setThreadId: async (threadId, options) => {
         this.currentThreadId = threadId;
@@ -6900,6 +6958,7 @@ export class CodexAppServerAgentClient implements AgentClient {
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
   private goalsEnabledPromise: Promise<boolean> | null = null;
   private autoReviewEnabledPromise: Promise<boolean> | null = null;
+  private revertEnabledPromise: Promise<boolean> | null = null;
 
   constructor(
     private readonly logger: Logger,
@@ -6969,6 +7028,27 @@ export class CodexAppServerAgentClient implements AgentClient {
     }
   }
 
+  private resolveRevertEnabled(): Promise<boolean> {
+    if (!this.revertEnabledPromise) {
+      this.revertEnabledPromise = (async () => {
+        try {
+          const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
+          const versionOutput = await resolveBinaryVersion(launchPrefix.command);
+          const enabled = codexVersionAtLeast(versionOutput, CODEX_THREAD_REVERT_MIN_VERSION);
+          this.logger.trace(
+            { provider: CODEX_PROVIDER, versionOutput, enabled },
+            "provider.codex.config.revert_resolved",
+          );
+          return enabled;
+        } catch (error) {
+          this.logger.warn({ err: error }, "Failed to probe codex version for revert gate");
+          return false;
+        }
+      })();
+    }
+    return this.revertEnabledPromise;
+  }
+
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
     options?: { goalsEnabled?: boolean; agentId?: string },
@@ -7014,6 +7094,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     const sessionConfig: AgentSessionConfig = { ...config, provider: CODEX_PROVIDER };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const revertEnabled = await this.resolveRevertEnabled();
     const session = new CodexAppServerAgentSession(
       sessionConfig,
       null,
@@ -7024,6 +7105,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       options?.persistSession === false,
       goalsEnabled,
       autoReviewEnabled,
+      revertEnabled,
       launchContext?.agentId,
     );
     await session.connect();
@@ -7045,6 +7127,7 @@ export class CodexAppServerAgentClient implements AgentClient {
     };
     const goalsEnabled = await this.resolveGoalsEnabled();
     const autoReviewEnabled = await this.resolveAutoReviewEnabled();
+    const revertEnabled = await this.resolveRevertEnabled();
     const session = new CodexAppServerAgentSession(
       merged,
       handle,
@@ -7055,6 +7138,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       false,
       goalsEnabled,
       autoReviewEnabled,
+      revertEnabled,
       launchContext?.agentId,
       options?.purpose ?? "interactive",
     );

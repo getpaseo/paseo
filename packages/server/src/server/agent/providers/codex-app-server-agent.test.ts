@@ -517,6 +517,25 @@ function emitCodexUserMessage(
   );
 }
 
+// `revertEnabled` is what the client resolves from the binary version, so tests
+// that exercise rewind have to opt in the way a 0.148.0+ install would.
+function createRewindSession(
+  appServer: FakeCodexAppServer,
+  options: { revertEnabled?: boolean } = {},
+): CodexAppServerAgentSession {
+  return new CodexAppServerAgentSession(
+    createConfig({ cwd: "/workspace/project" }),
+    null,
+    createTestLogger(),
+    async () => appServer.child,
+    undefined,
+    false,
+    false,
+    false,
+    options.revertEnabled ?? true,
+  );
+}
+
 type CapturedFakeCodexRecord = Record<string, unknown>;
 
 async function runCustomCodexProviderTurn(
@@ -1646,12 +1665,7 @@ describe("Codex app-server provider", () => {
 
   test("rewinds the conversation to a freshly emitted Codex user message id", async () => {
     const appServer = createFakeCodexAppServer();
-    const session = new CodexAppServerAgentSession(
-      createConfig({ cwd: "/workspace/project" }),
-      null,
-      createTestLogger(),
-      async () => appServer.child,
-    );
+    const session = createRewindSession(appServer);
 
     await session.startTurn("remember first");
     emitCodexUserMessage(appServer, {
@@ -1673,10 +1687,86 @@ describe("Codex app-server provider", () => {
     expect(appServer.recordedReverts).toEqual([
       { threadId: "thread-1", beforeTurnId: "turn-first" },
     ]);
-    expect(appServer.recordedRollbacks).toEqual([]);
     await expect(session.getRuntimeInfo()).resolves.toMatchObject({
       sessionId: "thread-1",
     });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("backfills turn ids from the thread so a history-loaded message can be rewound", async () => {
+    const turnListRequests: unknown[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/turns/list": (params) => {
+        turnListRequests.push(params);
+        return {
+          data: [
+            {
+              id: "turn-second",
+              items: [
+                {
+                  type: "userMessage",
+                  id: "codex-second",
+                  content: [{ type: "text", text: "remember second" }],
+                },
+              ],
+            },
+            {
+              id: "turn-first",
+              items: [
+                {
+                  type: "userMessage",
+                  id: "codex-first",
+                  content: [{ type: "text", text: "remember first" }],
+                },
+              ],
+            },
+          ],
+          nextCursor: null,
+          backwardsCursor: null,
+        };
+      },
+    });
+    const session = createRewindSession(appServer);
+
+    // Neither user message carries a turn id, which is what persisted history
+    // looks like: the turn id was unknown when the entry was written.
+    await session.startTurn("remember first");
+    emitCodexUserMessage(appServer, { id: "codex-first", text: "remember first" });
+    appServer.completeTurn();
+    await session.startTurn("remember second");
+    emitCodexUserMessage(appServer, { id: "codex-second", text: "remember second" });
+    appServer.completeTurn();
+
+    await session.revertConversation({ messageId: "codex-first" });
+
+    expect(turnListRequests).toEqual([
+      { threadId: "thread-1", cursor: null, sortDirection: "desc", limit: 100 },
+    ]);
+    expect(appServer.recordedReverts).toEqual([
+      { threadId: "thread-1", beforeTurnId: "turn-first" },
+    ]);
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("declines to rewind and hides the capability when the binary predates thread/revert", async () => {
+    const appServer = createFakeCodexAppServer();
+    const session = createRewindSession(appServer, { revertEnabled: false });
+
+    await session.startTurn("remember first");
+    emitCodexUserMessage(appServer, {
+      id: "codex-first",
+      text: "remember first",
+      turnId: "turn-first",
+    });
+    appServer.completeTurn();
+
+    expect(session.capabilities.supportsRewindConversation).toBe(false);
+    await expect(session.revertConversation({ messageId: "codex-first" })).rejects.toThrow(
+      "codex` 0.148.0 or newer",
+    );
+    expect(appServer.recordedReverts).toEqual([]);
     appServer.assertNoErrors();
     await session.close();
   });
@@ -1717,12 +1807,7 @@ describe("Codex app-server provider", () => {
         };
       },
     });
-    const session = new CodexAppServerAgentSession(
-      createConfig({ cwd: "/workspace/project" }),
-      null,
-      createTestLogger(),
-      async () => appServer.child,
-    );
+    const session = createRewindSession(appServer);
 
     await session.startTurn("remember first");
     emitCodexUserMessage(appServer, {
@@ -1758,7 +1843,6 @@ describe("Codex app-server provider", () => {
       { item: { type: "user_message", messageId: "codex-first", text: "remember first" } },
       { item: { type: "assistant_message", messageId: "assistant-first", text: "First reply." } },
     ]);
-    expect(appServer.recordedRollbacks).toEqual([]);
     appServer.assertNoErrors();
     await session.close();
   });
