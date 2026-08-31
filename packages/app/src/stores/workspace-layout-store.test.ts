@@ -2958,6 +2958,40 @@ describe("workspace-layout-store actions", () => {
     ]);
   });
 
+  // WorkspaceTabStorageSchema is strict and a failed parse removes the whole key, so a preview
+  // written by a newer build would wipe every saved layout on an older one. Stripping is the only
+  // thing standing between the two.
+  it("strips preview tabs before persisting", () => {
+    const workspaceKey = createWorkspaceKey();
+    const store = workspaceLayoutStore.getState();
+
+    store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "src/kept.ts" },
+      intent: "reveal",
+    });
+    store.openTab({
+      workspaceKey,
+      target: { kind: "file", path: "src/previewed.ts" },
+      intent: "reveal",
+      preview: true,
+    });
+
+    const layout = workspaceLayoutStore.getState().layoutByWorkspace[workspaceKey];
+    const fileTargets = (candidate: typeof layout) =>
+      collectAllTabs(candidate.root)
+        .filter((tab) => tab.target.kind === "file")
+        .map((tab) => tab.target);
+
+    expect(fileTargets(layout)).toEqual([
+      { kind: "file", path: "src/kept.ts" },
+      { kind: "file", path: "src/previewed.ts" },
+    ]);
+    expect(fileTargets(stripEphemeralTabsFromLayout(layout))).toEqual([
+      { kind: "file", path: "src/kept.ts" },
+    ]);
+  });
+
   it("hydrates duplicate Changes and Pull request instances without collapsing their ids or state", () => {
     const tabs = [
       {
