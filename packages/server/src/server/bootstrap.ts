@@ -683,8 +683,17 @@ export async function createPaseoDaemon(
       serviceProxy,
       runtimeStore: scriptRuntimeStore,
       daemonPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
-      resolveWorkspaceDirectory: async (workspaceId) =>
-        (await workspaceRegistry?.get(workspaceId))?.cwd ?? null,
+      resolveWorkspaceConfig: async (workspaceId) => {
+        const workspace = await workspaceRegistry?.get(workspaceId);
+        if (!workspace) {
+          return null;
+        }
+        const project = await projectRegistry.get(workspace.projectId);
+        return {
+          workspaceDirectory: workspace.cwd,
+          projectConfigDirectory: project?.rootPath ?? workspace.cwd,
+        };
+      },
       logger,
       serviceProxyPublicBaseUrl,
     }),
@@ -1061,6 +1070,7 @@ export async function createPaseoDaemon(
     terminalManager,
     serviceProxy,
     workspaceRuntimeEnvironment,
+    scriptRuntimeStore,
     getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
     serviceProxyPublicBaseUrl,
     globalServicePorts: loadPersistedConfig(config.paseoHome).worktrees?.servicePorts,

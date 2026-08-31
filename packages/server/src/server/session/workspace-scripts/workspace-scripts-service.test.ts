@@ -212,6 +212,38 @@ describe("buildSnapshot", () => {
     await service.start({ ...request, workspaceId: workspace.workspaceId });
     expect(spawnCalls[0]?.branchName).toBe(workspace.branch);
   });
+
+  test("hides a worktree script when the project defines a same-named launch", () => {
+    const projectDirectory = mkdtempSync(join(tmpdir(), "project-launch-config-"));
+    const workspaceDirectory = mkdtempSync(join(tmpdir(), "workspace-legacy-script-"));
+    tempDirs.push(projectDirectory, workspaceDirectory);
+    writeFileSync(
+      join(projectDirectory, "paseo.json"),
+      JSON.stringify({ launches: { dev: { command: "./bin/project-dev" } } }),
+    );
+    writeFileSync(
+      join(workspaceDirectory, "paseo.json"),
+      JSON.stringify({ scripts: { dev: { type: "service", command: "./bin/legacy-dev" } } }),
+    );
+    const project = {
+      projectId: "prj-launches",
+      rootPath: projectDirectory,
+      kind: "git",
+      displayName: "app",
+      customName: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    } as PersistedProjectRecord;
+    const workspace = {
+      workspaceId: "ws-launches",
+      projectId: project.projectId,
+      cwd: workspaceDirectory,
+    } as PersistedWorkspaceRecord;
+    const { service } = buildService({ workspace, project });
+
+    expect(service.buildSnapshot(workspace, project)).toEqual([]);
+  });
 });
 
 describe("emitStatusUpdate", () => {
@@ -270,6 +302,73 @@ describe("stop", () => {
       terminalId: "terminal-1",
     });
   });
+
+  test("can stop a running legacy service after a project launch supersedes it", async () => {
+    const projectDirectory = mkdtempSync(join(tmpdir(), "project-launch-config-"));
+    const workspaceDirectory = mkdtempSync(join(tmpdir(), "workspace-legacy-script-"));
+    tempDirs.push(projectDirectory, workspaceDirectory);
+    writeFileSync(
+      join(projectDirectory, "paseo.json"),
+      JSON.stringify({ launches: { dev: { command: "./bin/project-dev" } } }),
+    );
+    writeFileSync(
+      join(workspaceDirectory, "paseo.json"),
+      JSON.stringify({ scripts: { dev: { type: "service", command: "./bin/legacy-dev" } } }),
+    );
+    const project = {
+      projectId: "prj-launches",
+      rootPath: projectDirectory,
+      kind: "git",
+      displayName: "app",
+      customName: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    } as PersistedProjectRecord;
+    const workspace = {
+      workspaceId: "ws-launches",
+      projectId: project.projectId,
+      cwd: workspaceDirectory,
+    } as PersistedWorkspaceRecord;
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    runtimeStore.set({
+      workspaceId: workspace.workspaceId,
+      scriptName: "dev",
+      type: "service",
+      lifecycle: "running",
+      terminalId: "terminal-dev",
+      exitCode: null,
+    });
+    const terminalManager = {
+      getTerminal: (terminalId: string) => (terminalId === "terminal-dev" ? {} : undefined),
+      async killTerminalAndWait(terminalId: string) {
+        runtimeStore.set({
+          workspaceId: workspace.workspaceId,
+          scriptName: "dev",
+          type: "service",
+          lifecycle: "stopped",
+          terminalId,
+          exitCode: 143,
+        });
+      },
+    } as unknown as TerminalManager;
+    const { service } = buildService({
+      workspace,
+      project,
+      scriptRuntimeStore: runtimeStore,
+      terminalManager,
+    });
+
+    await expect(
+      service.stop({ workspaceId: workspace.workspaceId, scriptName: "dev" }),
+    ).resolves.toMatchObject({
+      scriptName: "dev",
+      type: "service",
+      lifecycle: "stopped",
+      exitCode: 143,
+      terminalId: "terminal-dev",
+    });
+  });
 });
 
 describe("start", () => {
@@ -326,6 +425,53 @@ describe("start", () => {
           scriptName: "app",
           terminalId: null,
           error: "Workspace not found: ws-1",
+        },
+      },
+    ]);
+  });
+
+  test("directs a same-named legacy service to the project launch instead", async () => {
+    const projectDirectory = mkdtempSync(join(tmpdir(), "project-launch-config-"));
+    const workspaceDirectory = mkdtempSync(join(tmpdir(), "workspace-legacy-script-"));
+    tempDirs.push(projectDirectory, workspaceDirectory);
+    writeFileSync(
+      join(projectDirectory, "paseo.json"),
+      JSON.stringify({ launches: { dev: { command: "./bin/project-dev" } } }),
+    );
+    writeFileSync(
+      join(workspaceDirectory, "paseo.json"),
+      JSON.stringify({ scripts: { dev: { type: "service", command: "./bin/legacy-dev" } } }),
+    );
+    const project = {
+      projectId: "prj-launches",
+      rootPath: projectDirectory,
+      kind: "git",
+      displayName: "app",
+      customName: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      archivedAt: null,
+    } as PersistedProjectRecord;
+    const workspace = {
+      workspaceId: "ws-launches",
+      projectId: project.projectId,
+      cwd: workspaceDirectory,
+    } as PersistedWorkspaceRecord;
+    const { service, emitted, spawnCalls } = buildService({ workspace, project });
+
+    await service.start({ ...request, workspaceId: workspace.workspaceId, scriptName: "dev" });
+
+    expect(spawnCalls).toEqual([]);
+    expect(emitted).toEqual([
+      {
+        type: "start_workspace_script_response",
+        payload: {
+          requestId: request.requestId,
+          workspaceId: workspace.workspaceId,
+          scriptName: "dev",
+          terminalId: null,
+          error:
+            "Script 'dev' is configured as a project launch; use 'paseo launch start dev' instead",
         },
       },
     ]);

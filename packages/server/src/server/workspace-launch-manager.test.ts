@@ -9,6 +9,7 @@ import type { TerminalSession } from "../terminal/terminal.js";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createServiceProxySubsystem } from "./service-proxy.js";
 import { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
+import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
 
 describe("WorkspaceLaunchManager", () => {
@@ -102,21 +103,105 @@ describe("WorkspaceLaunchManager", () => {
     await manager.disposeWorkspace(context.workspaceId);
   });
 
-  it("discovers each HTTP listener in the leased block without listing unused ports", async () => {
-    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-proxy-"));
-    tempDirs.push(directory);
+  it("uses the project launch definition and replaces a same-named legacy service", async () => {
+    const projectDirectory = mkdtempSync(join(tmpdir(), "paseo-project-launch-"));
+    const workspaceDirectory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-"));
+    tempDirs.push(projectDirectory, workspaceDirectory);
+    const port = await getFreePort();
+    writeFileSync(
+      join(projectDirectory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+        launches: { dev: { command: "./bin/project-dev" } },
+      }),
+    );
+    writeFileSync(
+      join(workspaceDirectory, "paseo.json"),
+      JSON.stringify({
+        scripts: { dev: { type: "service", command: "./bin/legacy-dev" } },
+      }),
+    );
+
+    const terminalManager = createTerminalManager();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const legacyTerminal = await terminalManager.manager.createTerminal({
+      cwd: workspaceDirectory,
+      workspaceId: "workspace-project-launch-test",
+    });
+    runtimeStore.set({
+      workspaceId: "workspace-project-launch-test",
+      scriptName: "dev",
+      type: "service",
+      lifecycle: "running",
+      terminalId: legacyTerminal.id,
+      exitCode: null,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminalManager.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      scriptRuntimeStore: runtimeStore,
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      emitWorkspaceUpdates: async () => {},
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "workspace-project-launch-test",
+      workspaceDirectory,
+      projectConfigDirectory: projectDirectory,
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+    };
+
+    try {
+      expect(manager.buildSnapshot(context)).toEqual([
+        expect.objectContaining({ launchName: "dev", lifecycle: "stopped" }),
+      ]);
+
+      await manager.start(context, "dev");
+
+      expect(terminalManager.killed).toEqual([legacyTerminal.id]);
+      expect(
+        runtimeStore.get({ workspaceId: context.workspaceId, scriptName: "dev" }),
+      ).toMatchObject({
+        lifecycle: "stopped",
+      });
+      expect(terminalManager.created[1]?.env).toMatchObject({
+        PASEO_PORT_BASE: String(port),
+        PASEO_PORT_END: String(port),
+        PASEO_LAUNCH_NAME: "dev",
+      });
+      expect(terminalManager.created[1]?.env).not.toHaveProperty("PASEO_PORT");
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
+
+  it("discovers live TCP listeners and proxies only HTTP endpoints from a project launch", async () => {
+    const projectDirectory = mkdtempSync(join(tmpdir(), "paseo-project-launch-proxy-"));
+    const workspaceDirectory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-proxy-"));
+    tempDirs.push(projectDirectory, workspaceDirectory);
     const port = await getFreePortBlock(3);
     const context = {
       workspaceId: "workspace-launch-proxy-test",
-      workspaceDirectory: directory,
+      workspaceDirectory,
+      projectConfigDirectory: projectDirectory,
       projectSlug: "example-project",
       branchName: "feature/launch",
     };
     writeFileSync(
-      join(directory, "paseo.json"),
+      join(projectDirectory, "paseo.json"),
       JSON.stringify({
         worktree: { servicePorts: { range: `${port}-${port + 2}`, blockSize: 3 } },
         launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+    writeFileSync(
+      join(workspaceDirectory, "paseo.json"),
+      JSON.stringify({
+        scripts: { dev: { type: "service", command: "./bin/legacy-dev" } },
       }),
     );
 
@@ -128,8 +213,10 @@ describe("WorkspaceLaunchManager", () => {
       allocation: { range: `${port}-${port + 2}`, blockSize: 3 },
     });
     const firstServer = http.createServer((_request, response) => response.end("ok"));
+    const secondServer = net.createServer((socket) => socket.destroy());
     const thirdServer = http.createServer((_request, response) => response.end("ok"));
     await listen(firstServer, port);
+    await listen(secondServer, port + 1);
     await listen(thirdServer, port + 2);
     const manager = new WorkspaceLaunchManager({
       terminalManager: createTerminalManager().manager,
@@ -151,6 +238,16 @@ describe("WorkspaceLaunchManager", () => {
             port,
             proxyUrl: expect.stringContaining("launch-dev-p0"),
           }),
+          {
+            id: "dev:p1",
+            port: port + 1,
+            hostname: "127.0.0.1",
+            protocol: "tcp",
+            localProxyUrl: null,
+            publicProxyUrl: null,
+            proxyUrl: null,
+            health: null,
+          },
           expect.objectContaining({
             id: "dev:p2",
             port: port + 2,
@@ -161,6 +258,7 @@ describe("WorkspaceLaunchManager", () => {
     } finally {
       await manager.disposeWorkspace(context.workspaceId);
       await close(firstServer);
+      await close(secondServer);
       await close(thirdServer);
     }
   });

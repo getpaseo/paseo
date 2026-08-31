@@ -3777,6 +3777,10 @@ export const WorkspaceLaunchEndpointPayloadSchema = z.object({
   id: z.string(),
   port: z.number().int().positive(),
   hostname: z.string(),
+  // COMPAT(workspaceLaunchTcpListeners): added in v0.7.0, remove after 2027-02-28 once the
+  // supported app floor is >= v0.7.0. An omitted protocol is an HTTP endpoint from the initial
+  // launch support.
+  protocol: z.enum(["http", "tcp"]).optional(),
   localProxyUrl: z.string().nullable().optional(),
   publicProxyUrl: z.string().nullable().optional(),
   proxyUrl: z.string().nullable().optional().default(null),

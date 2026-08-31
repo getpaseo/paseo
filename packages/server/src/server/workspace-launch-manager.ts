@@ -1,11 +1,15 @@
 import http from "node:http";
+import net from "node:net";
 import type { Logger } from "pino";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
 import type {
   WorkspaceLaunchEndpointPayload,
   WorkspaceLaunchPayload,
 } from "@getpaseo/protocol/messages";
-import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
+import type {
+  PaseoConfig,
+  PaseoServicePortAllocation,
+} from "@getpaseo/protocol/paseo-config-schema";
 import {
   getExplicitWorkspaceServicePorts,
   getWorkspaceLaunchConfigs,
@@ -15,6 +19,7 @@ import {
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
 import { waitForTerminalBootstrapReadiness } from "./worktree-bootstrap.js";
+import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type {
   WorkspaceRuntimeEnvironment,
   WorkspaceRuntimeEnvironmentService,
@@ -26,6 +31,12 @@ const LAUNCH_ENDPOINT_PROBE_TIMEOUT_MS = 300;
 export interface WorkspaceLaunchContext {
   workspaceId: string;
   workspaceDirectory: string;
+  /**
+   * Launches are project runtime definitions: Project Settings writes them at
+   * the source checkout and they are available from every workspace. Scripts
+   * remain worktree-scoped, so this is intentionally separate from cwd.
+   */
+  projectConfigDirectory?: string;
   projectSlug: string;
   branchName: string | null;
 }
@@ -44,13 +55,15 @@ interface WorkspaceLaunchRuntime {
 }
 
 interface LaunchEndpointRuntime {
-  scriptName: string;
+  protocol: "http" | "tcp";
+  scriptName: string | null;
 }
 
 export interface WorkspaceLaunchManagerDependencies {
   terminalManager: TerminalManager | null;
   serviceProxy: ServiceProxySubsystem | null;
   workspaceRuntimeEnvironment: WorkspaceRuntimeEnvironmentService;
+  scriptRuntimeStore?: WorkspaceScriptRuntimeStore | null;
   getDaemonTcpPort: (() => number | null) | null;
   serviceProxyPublicBaseUrl: string | null;
   globalServicePorts?: PaseoServicePortAllocation;
@@ -73,7 +86,7 @@ export class WorkspaceLaunchManager {
   constructor(private readonly deps: WorkspaceLaunchManagerDependencies) {}
 
   buildSnapshot(context: WorkspaceLaunchContext): WorkspaceLaunchPayload[] {
-    const configuredNames = new Set(this.readLaunchConfigNames(context.workspaceDirectory));
+    const configuredNames = new Set(this.readLaunchConfigNames(this.getConfigDirectory(context)));
     const runtimeNames = this.runtimes.get(context.workspaceId);
     for (const name of runtimeNames?.keys() ?? []) {
       configuredNames.add(name);
@@ -97,7 +110,7 @@ export class WorkspaceLaunchManager {
     context: WorkspaceLaunchContext,
     launchName: string,
   ): Promise<WorkspaceLaunchPayload> {
-    const configResult = readPaseoConfig(context.workspaceDirectory);
+    const configResult = readPaseoConfig(this.getConfigDirectory(context));
     if (!configResult.ok) {
       throw paseoConfigParseError(configResult);
     }
@@ -120,12 +133,14 @@ export class WorkspaceLaunchManager {
       await this.stopRuntime(activeRuntime);
     }
 
+    await this.stopSupersededScript(context, launchName);
+
     const environment = await this.deps.workspaceRuntimeEnvironment.ensure({
       workspaceId: context.workspaceId,
       cwd: context.workspaceDirectory,
       branchName: context.branchName,
       allocation: configResult.config?.worktree?.servicePorts ?? this.deps.globalServicePorts,
-      excludedPorts: getExplicitWorkspaceServicePorts(configResult.config),
+      excludedPorts: this.getExcludedServicePorts(context, configResult.config),
     });
     const terminal = await this.deps.terminalManager.createTerminal({
       cwd: context.workspaceDirectory,
@@ -248,10 +263,12 @@ export class WorkspaceLaunchManager {
       runtime.monitor = null;
     }
     for (const endpoint of runtime.endpoints.values()) {
-      this.deps.serviceProxy?.removeWorkspaceService({
-        workspaceId: runtime.context.workspaceId,
-        scriptName: endpoint.scriptName,
-      });
+      if (endpoint.scriptName) {
+        this.deps.serviceProxy?.removeWorkspaceService({
+          workspaceId: runtime.context.workspaceId,
+          scriptName: endpoint.scriptName,
+        });
+      }
     }
     runtime.endpoints.clear();
     if (this.activeLaunches.get(runtime.context.workspaceId) === runtime.launchName) {
@@ -282,17 +299,40 @@ export class WorkspaceLaunchManager {
         { length: runtime.environment.portCount },
         (_, offset) => runtime.environment.portBase + offset,
       );
+      const listeningPortCandidates = await Promise.all(
+        ports.map(async (port) => ((await probeTcp(port)) ? port : null)),
+      );
       const listeningPorts = new Set(
+        listeningPortCandidates.filter((port): port is number => port !== null),
+      );
+      const httpPorts = new Set(
         (
-          await Promise.all(ports.map(async (port) => ((await probeHttp(port)) ? port : null)))
+          await Promise.all(
+            Array.from(listeningPorts, async (port) => ((await probeHttp(port)) ? port : null)),
+          )
         ).filter((port): port is number => port !== null),
       );
       let changed = false;
 
       for (const port of listeningPorts) {
-        if (runtime.endpoints.has(port)) {
+        const protocol = httpPorts.has(port) ? "http" : "tcp";
+        const existing = runtime.endpoints.get(port);
+        if (existing?.protocol === protocol && (protocol === "tcp" || existing.scriptName)) {
           continue;
         }
+        if (existing?.scriptName) {
+          this.deps.serviceProxy.removeWorkspaceService({
+            workspaceId: runtime.context.workspaceId,
+            scriptName: existing.scriptName,
+          });
+        }
+
+        if (protocol === "tcp") {
+          runtime.endpoints.set(port, { protocol, scriptName: null });
+          changed = true;
+          continue;
+        }
+
         const offset = port - runtime.environment.portBase;
         const scriptName = `launch-${runtime.launchName}-p${offset}`;
         try {
@@ -304,7 +344,7 @@ export class WorkspaceLaunchManager {
             port,
             publicBaseUrl: this.deps.serviceProxyPublicBaseUrl,
           });
-          runtime.endpoints.set(port, { scriptName });
+          runtime.endpoints.set(port, { protocol, scriptName });
           changed = true;
         } catch (error) {
           this.deps.logger.warn(
@@ -316,6 +356,8 @@ export class WorkspaceLaunchManager {
             },
             "Failed to register discovered workspace launch endpoint",
           );
+          runtime.endpoints.set(port, { protocol, scriptName: null });
+          changed = true;
         }
       }
 
@@ -323,10 +365,12 @@ export class WorkspaceLaunchManager {
         if (listeningPorts.has(port)) {
           continue;
         }
-        this.deps.serviceProxy.removeWorkspaceService({
-          workspaceId: runtime.context.workspaceId,
-          scriptName: endpoint.scriptName,
-        });
+        if (endpoint.scriptName) {
+          this.deps.serviceProxy.removeWorkspaceService({
+            workspaceId: runtime.context.workspaceId,
+            scriptName: endpoint.scriptName,
+          });
+        }
         runtime.endpoints.delete(port);
         changed = true;
       }
@@ -367,6 +411,60 @@ export class WorkspaceLaunchManager {
     return runtime?.environment ?? this.deps.workspaceRuntimeEnvironment.get(workspaceId);
   }
 
+  private getConfigDirectory(context: WorkspaceLaunchContext): string {
+    return context.projectConfigDirectory ?? context.workspaceDirectory;
+  }
+
+  private getExcludedServicePorts(
+    context: WorkspaceLaunchContext,
+    projectConfig: PaseoConfig | null,
+  ): Set<number> {
+    const ports = getExplicitWorkspaceServicePorts(projectConfig);
+    if (this.getConfigDirectory(context) === context.workspaceDirectory) {
+      return ports;
+    }
+
+    const workspaceConfig = readPaseoConfig(context.workspaceDirectory);
+    if (!workspaceConfig.ok) {
+      return ports;
+    }
+    for (const port of getExplicitWorkspaceServicePorts(workspaceConfig.config)) {
+      ports.add(port);
+    }
+    return ports;
+  }
+
+  private async stopSupersededScript(
+    context: WorkspaceLaunchContext,
+    launchName: string,
+  ): Promise<void> {
+    const runtimeStore = this.deps.scriptRuntimeStore;
+    const runtime = runtimeStore?.get({ workspaceId: context.workspaceId, scriptName: launchName });
+    if (!runtime || runtime.lifecycle !== "running") {
+      return;
+    }
+
+    const terminal = this.deps.terminalManager?.getTerminal(runtime.terminalId) ?? null;
+    if (terminal && this.deps.terminalManager) {
+      await this.deps.terminalManager.killTerminalAndWait(runtime.terminalId);
+    }
+
+    this.markSupersededScriptStopped(context, runtime);
+  }
+
+  private markSupersededScriptStopped(
+    context: WorkspaceLaunchContext,
+    runtime: NonNullable<ReturnType<WorkspaceScriptRuntimeStore["get"]>>,
+  ): void {
+    if (runtime.type === "service") {
+      this.deps.serviceProxy?.removeWorkspaceService({
+        workspaceId: context.workspaceId,
+        scriptName: runtime.scriptName,
+      });
+    }
+    this.deps.scriptRuntimeStore?.set({ ...runtime, lifecycle: "stopped", exitCode: null });
+  }
+
   private isActiveLaunch(
     workspaceId: string,
     launchName: string,
@@ -391,6 +489,19 @@ export class WorkspaceLaunchManager {
     port: number,
     endpoint: LaunchEndpointRuntime,
   ): WorkspaceLaunchEndpointPayload {
+    if (!endpoint.scriptName) {
+      return {
+        id: `${runtime.launchName}:p${port - runtime.environment.portBase}`,
+        port,
+        hostname: "127.0.0.1",
+        protocol: endpoint.protocol,
+        localProxyUrl: null,
+        publicProxyUrl: null,
+        proxyUrl: null,
+        health: null,
+      };
+    }
+
     const projection = this.deps.serviceProxy?.projectWorkspaceServiceState({
       workspaceId: runtime.context.workspaceId,
       projectSlug: runtime.context.projectSlug,
@@ -404,6 +515,7 @@ export class WorkspaceLaunchManager {
       id: `${runtime.launchName}:p${port - runtime.environment.portBase}`,
       port,
       hostname: projection?.hostname ?? endpoint.scriptName,
+      protocol: "http",
       localProxyUrl: projection?.localProxyUrl ?? null,
       publicProxyUrl: projection?.publicProxyUrl ?? null,
       proxyUrl: projection?.proxyUrl ?? null,
@@ -460,5 +572,22 @@ async function probeHttp(port: number): Promise<boolean> {
     });
     request.once("error", () => finish(false));
     request.end();
+  });
+}
+
+async function probeTcp(port: number): Promise<boolean> {
+  return await new Promise((resolve) => {
+    let settled = false;
+    const socket = net.createConnection({ host: "127.0.0.1", port });
+    const finish = (result: boolean) => {
+      if (settled) return;
+      settled = true;
+      socket.destroy();
+      resolve(result);
+    };
+    socket.once("connect", () => finish(true));
+    socket.once("timeout", () => finish(false));
+    socket.once("error", () => finish(false));
+    socket.setTimeout(LAUNCH_ENDPOINT_PROBE_TIMEOUT_MS);
   });
 }
