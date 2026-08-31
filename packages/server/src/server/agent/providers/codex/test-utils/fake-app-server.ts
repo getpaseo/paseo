@@ -47,6 +47,7 @@ type CodexAppServerChildProcess = ChildProcessWithoutNullStreams & {
 export interface FakeCodexAppServer {
   readonly child: CodexAppServerChildProcess;
   readonly recordedRollbacks: JsonObject[];
+  readonly recordedReverts: JsonObject[];
   requests(): readonly JsonObject[];
   assertNoErrors(): void;
   waitForTurnStart(): Promise<JsonObject>;
@@ -136,6 +137,7 @@ export function createFakeCodexAppServer(
 ): FakeCodexAppServer {
   const child = createCodexAppServerChildProcess();
   const recordedRollbacks: JsonObject[] = [];
+  const recordedReverts: JsonObject[] = [];
   const responseHandlers: Record<string, FakeCodexAppServerHandler> = {
     initialize: () => ({}),
     "collaborationMode/list": () => ({ data: [] }),
@@ -184,6 +186,19 @@ export function createFakeCodexAppServer(
           forkedFromId: "thread-1",
           turns: [],
         },
+      };
+    },
+    "thread/revert": (params) => {
+      const revert = toJsonObject(params);
+      recordedReverts.push(revert);
+      return {
+        thread: {
+          id: typeof revert.threadId === "string" ? revert.threadId : "thread-1",
+          sessionId: "thread-session",
+          turns: [],
+        },
+        turnsBackwardsCursor: null,
+        itemsBackwardsCursor: null,
       };
     },
     "thread/read": () => ({ thread: { turns: [] } }),
@@ -318,6 +333,7 @@ export function createFakeCodexAppServer(
   return {
     child,
     recordedRollbacks,
+    recordedReverts,
     requests() {
       return messages;
     },

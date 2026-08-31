@@ -5,8 +5,12 @@ import type {
   CodexThreadForkResponse,
   CodexThreadRollbackParams,
   CodexThreadRollbackResponse,
+  CodexThreadRevertParams,
+  CodexThreadRevertResponse,
 } from "./app-server-transport.js";
+import { CodexAppServerRpcError } from "./app-server-transport.js";
 import {
+  type CodexUserMessageTurn,
   type CodexUserMessageTurnIndex,
   type CodexRewindClient,
   revertCodexConversation,
@@ -15,6 +19,9 @@ import {
 class FakeCodex implements CodexRewindClient {
   readonly recordedForks: CodexThreadForkParams[] = [];
   readonly recordedRollbacks: CodexThreadRollbackParams[] = [];
+  readonly recordedReverts: CodexThreadRevertParams[] = [];
+
+  constructor(private readonly revertMode: "supported" | "unsupported" = "unsupported") {}
 
   async forkThread(params: CodexThreadForkParams): Promise<CodexThreadForkResponse> {
     this.recordedForks.push(params);
@@ -51,20 +58,36 @@ class FakeCodex implements CodexRewindClient {
     };
   }
 
+  async revertThread(params: CodexThreadRevertParams): Promise<CodexThreadRevertResponse> {
+    this.recordedReverts.push(params);
+    if (this.revertMode === "unsupported") {
+      throw new CodexAppServerRpcError("Method not found: thread/revert", -32601, null);
+    }
+    return {
+      thread: {
+        id: params.threadId,
+        sessionId: "source-session",
+        turns: [],
+      },
+      turnsBackwardsCursor: null,
+      itemsBackwardsCursor: null,
+    };
+  }
+
   request(): Promise<unknown> {
     throw new Error("FakeCodex uses typed thread methods");
   }
 }
 
 class CodexMessageTurns implements CodexUserMessageTurnIndex {
-  constructor(private readonly indexesByMessageId: Map<string, number>) {}
+  constructor(private readonly turnsByMessageId: Map<string, CodexUserMessageTurn>) {}
 
-  resolve(messageId: string): number | null {
-    return this.indexesByMessageId.get(messageId) ?? null;
+  resolve(messageId: string): CodexUserMessageTurn | null {
+    return this.turnsByMessageId.get(messageId) ?? null;
   }
 
   count(): number {
-    return this.indexesByMessageId.size;
+    return this.turnsByMessageId.size;
   }
 }
 
@@ -73,8 +96,8 @@ describe("Codex Rewind", () => {
     const codex = new FakeCodex();
     const userMessageTurns = new CodexMessageTurns(
       new Map([
-        ["codex-first", 0],
-        ["codex-second", 1],
+        ["codex-first", { index: 0, turnId: null }],
+        ["codex-second", { index: 1, turnId: null }],
       ]),
     );
     let reboundThreadId: string | null = null;
@@ -110,9 +133,9 @@ describe("Codex Rewind", () => {
     const codex = new FakeCodex();
     const userMessageTurns = new CodexMessageTurns(
       new Map([
-        ["codex-first", 0],
-        ["codex-second", 1],
-        ["codex-third", 2],
+        ["codex-first", { index: 0, turnId: null }],
+        ["codex-second", { index: 1, turnId: null }],
+        ["codex-third", { index: 2, turnId: null }],
       ]),
     );
     let reboundThreadId: string | null = null;
@@ -131,9 +154,72 @@ describe("Codex Rewind", () => {
     expect(reboundThreadId).toBe("forked-thread");
   });
 
+  test("rewinds a paginated conversation with thread/revert before the target turn", async () => {
+    const codex = new FakeCodex("supported");
+    const userMessageTurns = new CodexMessageTurns(
+      new Map([
+        ["codex-first", { index: 0, turnId: "turn-first" }],
+        ["codex-second", { index: 1, turnId: "turn-second" }],
+      ]),
+    );
+    let reboundThreadId: string | null = null;
+
+    await revertCodexConversation({
+      client: codex,
+      threadId: "source-thread",
+      messageId: "codex-first",
+      userMessageTurns,
+      setThreadId: (threadId) => {
+        reboundThreadId = threadId;
+      },
+    });
+
+    expect(codex.recordedReverts).toEqual([
+      { threadId: "source-thread", beforeTurnId: "turn-first" },
+    ]);
+    expect(codex.recordedForks).toEqual([]);
+    expect(codex.recordedRollbacks).toEqual([]);
+    expect(reboundThreadId).toBe("source-thread");
+  });
+
+  test("falls back to fork and rollback when thread/revert is unavailable", async () => {
+    const codex = new FakeCodex("unsupported");
+    const userMessageTurns = new CodexMessageTurns(
+      new Map([
+        ["codex-first", { index: 0, turnId: "turn-first" }],
+        ["codex-second", { index: 1, turnId: "turn-second" }],
+      ]),
+    );
+
+    await revertCodexConversation({
+      client: codex,
+      threadId: "source-thread",
+      messageId: "codex-first",
+      userMessageTurns,
+      setThreadId: () => undefined,
+    });
+
+    expect(codex.recordedReverts).toEqual([
+      { threadId: "source-thread", beforeTurnId: "turn-first" },
+    ]);
+    expect(codex.recordedForks).toEqual([
+      {
+        threadId: "source-thread",
+        cwd: null,
+        model: null,
+        serviceTier: null,
+        excludeTurns: false,
+        persistExtendedHistory: true,
+      },
+    ]);
+    expect(codex.recordedRollbacks).toEqual([{ threadId: "forked-thread", numTurns: 2 }]);
+  });
+
   test("declines to rewind when the user message is not in the Codex thread", async () => {
     const codex = new FakeCodex();
-    const userMessageTurns = new CodexMessageTurns(new Map([["codex-first", 0]]));
+    const userMessageTurns = new CodexMessageTurns(
+      new Map([["codex-first", { index: 0, turnId: null }]]),
+    );
 
     await expect(
       revertCodexConversation({

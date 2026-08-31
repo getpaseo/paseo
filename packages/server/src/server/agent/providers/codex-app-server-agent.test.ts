@@ -107,7 +107,7 @@ interface CodexSessionTestAccess {
   ensureThreadLoaded(): Promise<void>;
   handleToolApprovalRequest(params: unknown): Promise<unknown>;
   handleNotification(method: string, params: unknown): void;
-  loadPersistedHistory(): Promise<void>;
+  loadPersistedHistory(options?: { turnsBackwardsCursor?: string | null }): Promise<void>;
   refreshResolvedCollaborationMode(): void;
   serviceTier: "fast" | null;
   planModeEnabled: boolean;
@@ -499,13 +499,14 @@ function markdownImageSource(markdown: string): string {
 
 function emitCodexUserMessage(
   appServer: FakeCodexAppServer,
-  input: { id: string; text: string; threadId?: string },
+  input: { id: string; text: string; threadId?: string; turnId?: string },
 ): void {
   appServer.child.stdout.write(
     `${JSON.stringify({
       method: "item/started",
       params: {
         threadId: input.threadId ?? "thread-1",
+        ...(input.turnId ? { turnId: input.turnId } : {}),
         item: {
           type: "userMessage",
           id: input.id,
@@ -1653,18 +1654,111 @@ describe("Codex app-server provider", () => {
     );
 
     await session.startTurn("remember first");
-    emitCodexUserMessage(appServer, { id: "codex-first", text: "remember first" });
+    emitCodexUserMessage(appServer, {
+      id: "codex-first",
+      text: "remember first",
+      turnId: "turn-first",
+    });
     appServer.completeTurn();
     await session.startTurn("remember second");
-    emitCodexUserMessage(appServer, { id: "codex-second", text: "remember second" });
+    emitCodexUserMessage(appServer, {
+      id: "codex-second",
+      text: "remember second",
+      turnId: "turn-second",
+    });
     appServer.completeTurn();
 
     await session.revertConversation({ messageId: "codex-first" });
 
-    expect(appServer.recordedRollbacks).toEqual([{ threadId: "forked-thread", numTurns: 2 }]);
+    expect(appServer.recordedReverts).toEqual([
+      { threadId: "thread-1", beforeTurnId: "turn-first" },
+    ]);
+    expect(appServer.recordedRollbacks).toEqual([]);
     await expect(session.getRuntimeInfo()).resolves.toMatchObject({
-      sessionId: "forked-thread",
+      sessionId: "thread-1",
     });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("hydrates retained history from the thread/revert backwards cursor", async () => {
+    const turnListRequests: unknown[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/revert": (params) => {
+        expect(params).toEqual({ threadId: "thread-1", beforeTurnId: "turn-second" });
+        return {
+          thread: { id: "thread-1", sessionId: "thread-session", turns: [] },
+          turnsBackwardsCursor: "retained-turn-cursor",
+          itemsBackwardsCursor: null,
+        };
+      },
+      "thread/turns/list": (params) => {
+        turnListRequests.push(params);
+        return {
+          data: [
+            {
+              id: "turn-first",
+              items: [
+                {
+                  type: "userMessage",
+                  id: "codex-first",
+                  content: [{ type: "text", text: "remember first" }],
+                },
+                {
+                  type: "agentMessage",
+                  id: "assistant-first",
+                  text: "First reply.",
+                },
+              ],
+            },
+          ],
+          nextCursor: null,
+          backwardsCursor: null,
+        };
+      },
+    });
+    const session = new CodexAppServerAgentSession(
+      createConfig({ cwd: "/workspace/project" }),
+      null,
+      createTestLogger(),
+      async () => appServer.child,
+    );
+
+    await session.startTurn("remember first");
+    emitCodexUserMessage(appServer, {
+      id: "codex-first",
+      text: "remember first",
+      turnId: "turn-first",
+    });
+    appServer.completeTurn();
+    await session.startTurn("remember second");
+    emitCodexUserMessage(appServer, {
+      id: "codex-second",
+      text: "remember second",
+      turnId: "turn-second",
+    });
+    appServer.completeTurn();
+
+    await session.revertConversation({ messageId: "codex-second" });
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(turnListRequests).toEqual([
+      {
+        threadId: "thread-1",
+        cursor: "retained-turn-cursor",
+        sortDirection: "desc",
+        limit: 100,
+      },
+    ]);
+    expect(history).toMatchObject([
+      { item: { type: "user_message", messageId: "codex-first", text: "remember first" } },
+      { item: { type: "assistant_message", messageId: "assistant-first", text: "First reply." } },
+    ]);
+    expect(appServer.recordedRollbacks).toEqual([]);
     appServer.assertNoErrors();
     await session.close();
   });

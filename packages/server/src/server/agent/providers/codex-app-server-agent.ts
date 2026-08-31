@@ -78,10 +78,13 @@ import {
   CodexAppServerRpcError,
   parseCodexThreadForkResponse,
   parseCodexThreadRollbackResponse,
+  parseCodexThreadRevertResponse,
   type CodexThreadForkParams,
   type CodexThreadForkResponse,
   type CodexThreadRollbackParams,
   type CodexThreadRollbackResponse,
+  type CodexThreadRevertParams,
+  type CodexThreadRevertResponse,
   type CodexAppServerTraceContext,
 } from "./codex/app-server-transport.js";
 import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
@@ -247,6 +250,7 @@ interface CodexAppServerClientLike {
   request(method: string, params?: unknown): Promise<unknown>;
   forkThread?(params: CodexThreadForkParams): Promise<CodexThreadForkResponse>;
   rollbackThread?(params: CodexThreadRollbackParams): Promise<CodexThreadRollbackResponse>;
+  revertThread?(params: CodexThreadRevertParams): Promise<CodexThreadRevertResponse>;
   notify(method: string, params?: unknown): void;
   dispose(): Promise<void>;
 }
@@ -429,6 +433,7 @@ interface CodexConfiguredDefaults {
 interface PersistedTimelineEntry {
   item: AgentTimelineItem;
   timestamp?: string;
+  turnId?: string;
 }
 
 interface PersistedSubAgentRoute {
@@ -1929,6 +1934,7 @@ const CodexThreadReadResponseSchema = z
           .array(
             z
               .object({
+                id: z.string().optional(),
                 items: z.array(z.unknown()).default([]),
               })
               .passthrough(),
@@ -1943,6 +1949,26 @@ const CodexThreadReadResponseSchema = z
 type CodexThreadReadResponse = z.infer<typeof CodexThreadReadResponseSchema>;
 type CodexThreadReadRequest = (threadId: string) => Promise<unknown>;
 
+const CodexThreadTurnsListResponseSchema = z
+  .object({
+    data: z
+      .array(
+        z
+          .object({
+            id: z.string().optional(),
+            items: z.array(z.unknown()).default([]),
+          })
+          .passthrough(),
+      )
+      .default([]),
+    nextCursor: z.string().nullable().optional(),
+    backwardsCursor: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+type CodexThreadTurnsListResponse = z.infer<typeof CodexThreadTurnsListResponseSchema>;
+type CodexThreadTurnsListRequest = (threadId: string, cursor: string) => Promise<unknown>;
+
 async function requestCodexThreadHistory(
   requestThread: CodexThreadReadRequest,
   threadId: string,
@@ -1951,15 +1977,51 @@ async function requestCodexThreadHistory(
   return CodexThreadReadResponseSchema.parse(response);
 }
 
+async function requestCodexThreadTurnsPage(
+  requestThreadTurnsPage: CodexThreadTurnsListRequest,
+  threadId: string,
+  cursor: string,
+): Promise<CodexThreadTurnsListResponse> {
+  const response = await requestThreadTurnsPage(threadId, cursor);
+  return CodexThreadTurnsListResponseSchema.parse(response);
+}
+
+async function loadCodexHistoryTurns(params: {
+  threadId: string;
+  requestThread: CodexThreadReadRequest;
+  requestThreadTurnsPage: CodexThreadTurnsListRequest;
+  turnsBackwardsCursor?: string | null;
+}): Promise<Array<{ id?: string; items: unknown[] }>> {
+  if (!params.turnsBackwardsCursor) {
+    const response = await requestCodexThreadHistory(params.requestThread, params.threadId);
+    return response.thread.turns;
+  }
+
+  const turnsDescending: Array<{ id?: string; items: unknown[] }> = [];
+  let cursor: string | null = params.turnsBackwardsCursor;
+  for (let page = 0; cursor && page < 100; page += 1) {
+    const response = await requestCodexThreadTurnsPage(
+      params.requestThreadTurnsPage,
+      params.threadId,
+      cursor,
+    );
+    turnsDescending.push(...response.data);
+    cursor = response.nextCursor ?? null;
+  }
+  return turnsDescending.toReversed();
+}
+
 async function loadCodexThreadHistoryTimeline(params: {
   threadId: string;
   cwd: string | null;
   requestThread: CodexThreadReadRequest;
+  requestThreadTurnsPage: CodexThreadTurnsListRequest;
+  turnsBackwardsCursor?: string | null;
 }): Promise<CodexThreadHistoryProjection> {
-  const response = await requestCodexThreadHistory(params.requestThread, params.threadId);
+  const turns = await loadCodexHistoryTurns(params);
   const timeline: PersistedTimelineEntry[] = [];
   const subAgentTimelineIndexByThreadId = new Map<string, number>();
-  for (const turn of response.thread.turns) {
+  for (const turn of turns) {
     for (const item of turn.items) {
       const historicalSubAgentActivity = readCodexSubAgentActivity(item);
       if (historicalSubAgentActivity) {
@@ -2015,6 +2077,19 @@ function readCodexThread(client: CodexAppServerClientLike, threadId: string): Pr
   });
 }
 
+function readCodexThreadTurnsPage(
+  client: CodexAppServerClientLike,
+  threadId: string,
+  cursor: string,
+): Promise<unknown> {
+  return client.request("thread/turns/list", {
+    threadId,
+    cursor,
+    sortDirection: "desc",
+    limit: 100,
+  });
+}
+
 export async function forkCodexThread(
   client: CodexAppServerClientLike,
   params: CodexThreadForkParams,
@@ -2033,6 +2108,16 @@ export async function rollbackCodexThread(
     return client.rollbackThread(params);
   }
   return parseCodexThreadRollbackResponse(await client.request("thread/rollback", params));
+}
+
+export async function revertCodexThread(
+  client: CodexAppServerClientLike,
+  params: CodexThreadRevertParams,
+): Promise<CodexThreadRevertResponse> {
+  if (client.revertThread) {
+    return client.revertThread(params);
+  }
+  return parseCodexThreadRevertResponse(await client.request("thread/revert", params));
 }
 
 function toSandboxPolicy(
@@ -2162,6 +2247,7 @@ const ItemTextDeltaNotificationSchema = z
 const ItemLifecycleNotificationSchema = z
   .object({
     threadId: z.string().optional(),
+    turnId: z.string().optional(),
     item: z
       .object({
         id: z.string().optional(),
@@ -2219,9 +2305,13 @@ const CodexEventTaskCompleteNotificationSchema = z
 const CodexEventItemLifecycleNotificationSchema = z
   .object({
     ...CodexEventThreadIdFields,
+    turnId: z.string().optional(),
+    turn_id: z.string().optional(),
     msg: z
       .object({
         ...CodexEventThreadIdFields,
+        turnId: z.string().optional(),
+        turn_id: z.string().optional(),
         type: z.enum(["item_started", "item_completed"]),
         item: z
           .object({
@@ -2402,12 +2492,14 @@ type ParsedCodexNotification =
       kind: "item_completed";
       source: "item" | "codex_event";
       threadId: string | null;
+      turnId: string | null;
       item: { id?: string; type?: string; [key: string]: unknown };
     }
   | {
       kind: "item_started";
       source: "item" | "codex_event";
       threadId: string | null;
+      turnId: string | null;
       item: { id?: string; type?: string; [key: string]: unknown };
     }
   | {
@@ -2664,6 +2756,7 @@ const CodexNotificationSchema = z.union([
         kind: "item_completed",
         source: "item",
         threadId: params.threadId ?? null,
+        turnId: params.turnId ?? null,
         item: params.item,
       }),
     ),
@@ -2681,6 +2774,7 @@ const CodexNotificationSchema = z.union([
         kind: "item_started",
         source: "item",
         threadId: params.threadId ?? null,
+        turnId: params.turnId ?? null,
         item: params.item,
       }),
     ),
@@ -2701,6 +2795,7 @@ const CodexNotificationSchema = z.union([
         kind: "item_started",
         source: "codex_event",
         threadId: getCodexEventThreadId(params),
+        turnId: params.turnId ?? params.turn_id ?? params.msg.turnId ?? params.msg.turn_id ?? null,
         item: params.msg.item,
       }),
     ),
@@ -2721,6 +2816,7 @@ const CodexNotificationSchema = z.union([
         kind: "item_completed",
         source: "codex_event",
         threadId: getCodexEventThreadId(params),
+        turnId: params.turnId ?? params.turn_id ?? params.msg.turnId ?? params.msg.turn_id ?? null,
         item: params.msg.item,
       }),
     ),
@@ -3315,7 +3411,10 @@ export class CodexAppServerAgentSession implements AgentSession {
   private warnedIncompleteEditToolCallIds = new Set<string>();
   private latestUsage: AgentUsage | undefined;
   private latestPlanResult: { callId: string; text: string; turnId: string | null } | null = null;
-  private readonly userMessageTurnIndexes = new Map<string, number>();
+  private readonly userMessageTurnIndexes = new Map<
+    string,
+    { index: number; turnId: string | null }
+  >();
   private readonly userMessageTurnIds: string[] = [];
   private pendingManualCompactionStarts = 0;
   private compactionTriggerByItemId = new Map<string, "auto" | "manual">();
@@ -3735,7 +3834,9 @@ export class CodexAppServerAgentSession implements AgentSession {
     );
   }
 
-  private async loadPersistedHistory(): Promise<void> {
+  private async loadPersistedHistory(
+    options: { turnsBackwardsCursor?: string | null } = {},
+  ): Promise<void> {
     if (!this.client || !this.currentThreadId) return;
     const client = this.client;
     const threadId = this.currentThreadId;
@@ -3746,6 +3847,10 @@ export class CodexAppServerAgentSession implements AgentSession {
       requestThread: (threadIdToRead) => {
         return readCodexThread(client, threadIdToRead);
       },
+      requestThreadTurnsPage: (threadIdToRead, cursor) => {
+        return readCodexThreadTurnsPage(client, threadIdToRead, cursor);
+      },
+      turnsBackwardsCursor: options.turnsBackwardsCursor ?? null,
     });
     const { timeline, subAgentRoutes } = history;
     this.subAgentCallsByCallId.clear();
@@ -3761,7 +3866,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     this.resetCodexUserMessageTurns();
     for (const entry of timeline) {
       if (entry.item.type === "user_message") {
-        this.rememberCodexUserMessageTurn(entry.item.messageId);
+        this.rememberCodexUserMessageTurn(entry.item.messageId, entry.turnId ?? null);
       }
     }
     this.persistedHistory = timeline;
@@ -3790,6 +3895,8 @@ export class CodexAppServerAgentSession implements AgentSession {
           threadId: next.route.childThreadId,
           cwd: this.config.cwd ?? null,
           requestThread: (childThreadId) => readCodexThread(client, childThreadId),
+          requestThreadTurnsPage: (childThreadId, cursor) =>
+            readCodexThreadTurnsPage(client, childThreadId, cursor),
         });
         for (const entry of childHistory.timeline) {
           this.emitProviderSubagentTimeline(next.route.childThreadId, entry.item, entry.timestamp);
@@ -4250,14 +4357,20 @@ export class CodexAppServerAgentSession implements AgentSession {
     );
   }
 
-  private rememberCodexUserMessageTurn(messageId: string | null | undefined): boolean {
+  private rememberCodexUserMessageTurn(
+    messageId: string | null | undefined,
+    turnId: string | null = null,
+  ): boolean {
     if (typeof messageId !== "string" || messageId.length === 0) {
       return false;
     }
     if (this.userMessageTurnIndexes.has(messageId)) {
       return false;
     }
-    this.userMessageTurnIndexes.set(messageId, this.userMessageTurnIds.length);
+    this.userMessageTurnIndexes.set(messageId, {
+      index: this.userMessageTurnIds.length,
+      turnId,
+    });
     this.userMessageTurnIds.push(messageId);
     return true;
   }
@@ -4272,9 +4385,11 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.userMessageTurnIds.length = Math.max(0, this.userMessageTurnIds.length - numTurns);
+    const previousEntries = new Map(this.userMessageTurnIndexes);
     this.userMessageTurnIndexes.clear();
     this.userMessageTurnIds.forEach((messageId, index) => {
-      this.userMessageTurnIndexes.set(messageId, index);
+      const previous = previousEntries.get(messageId);
+      this.userMessageTurnIndexes.set(messageId, { index, turnId: previous?.turnId ?? null });
     });
   }
 
@@ -4656,12 +4771,12 @@ export class CodexAppServerAgentSession implements AgentSession {
       model: this.config.model ?? null,
       serviceTier: this.serviceTier,
       userMessageTurns: this.codexUserMessageTurns(),
-      setThreadId: async (threadId) => {
+      setThreadId: async (threadId, options) => {
         this.currentThreadId = threadId;
         this.cachedRuntimeInfo = null;
         this.persistedHistory = [];
         this.historyPending = false;
-        await this.loadPersistedHistory();
+        await this.loadPersistedHistory(options);
       },
     });
   }
@@ -6442,7 +6557,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(childSubAgentCallId, "running");
       return;
     }
-    if (!this.rememberCodexUserMessageTurn(timelineItem.messageId)) {
+    if (!this.rememberCodexUserMessageTurn(timelineItem.messageId, parsed.turnId ?? null)) {
       return;
     }
     const clientMessageId = timelineItem.clientMessageId ?? this.activeClientMessageId;

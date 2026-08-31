@@ -50,6 +50,8 @@ type UnexpectedTerminationHandler = (error: Error) => void;
 
 export interface CodexThreadForkParams {
   threadId: string;
+  lastTurnId?: string | null;
+  beforeTurnId?: string | null;
   path?: string | null;
   model?: string | null;
   modelProvider?: string | null;
@@ -104,6 +106,11 @@ export interface CodexThreadRollbackParams {
   numTurns: number;
 }
 
+export interface CodexThreadRevertParams {
+  threadId: string;
+  beforeTurnId: string;
+}
+
 const CodexThreadRollbackResponseSchema = z
   .object({
     thread: z
@@ -121,6 +128,27 @@ export type CodexThreadRollbackResponse = z.infer<typeof CodexThreadRollbackResp
 
 export function parseCodexThreadRollbackResponse(response: unknown): CodexThreadRollbackResponse {
   return CodexThreadRollbackResponseSchema.parse(response);
+}
+
+const CodexThreadRevertResponseSchema = z
+  .object({
+    thread: z
+      .object({
+        id: z.string(),
+        sessionId: z.string().optional(),
+        forkedFromId: z.string().nullable().optional(),
+        turns: z.array(z.unknown()).optional(),
+      })
+      .passthrough(),
+    turnsBackwardsCursor: z.string().nullable().optional(),
+    itemsBackwardsCursor: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+export type CodexThreadRevertResponse = z.infer<typeof CodexThreadRevertResponseSchema>;
+
+export function parseCodexThreadRevertResponse(response: unknown): CodexThreadRevertResponse {
+  return CodexThreadRevertResponseSchema.parse(response);
 }
 
 export interface CodexAppServerTraceContext {
@@ -245,6 +273,10 @@ export class CodexAppServerClient {
 
   async rollbackThread(params: CodexThreadRollbackParams): Promise<CodexThreadRollbackResponse> {
     return parseCodexThreadRollbackResponse(await this.request("thread/rollback", params));
+  }
+
+  async revertThread(params: CodexThreadRevertParams): Promise<CodexThreadRevertResponse> {
+    return parseCodexThreadRevertResponse(await this.request("thread/revert", params));
   }
 
   notify(method: string, params?: unknown): void {
