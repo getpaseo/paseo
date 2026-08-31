@@ -367,6 +367,49 @@ describe("WorkspaceReconciliationService", () => {
     expect(workspaces.get("w1")?.archivedAt).toEqual(expect.any(String));
   });
 
+  test("startup reconciliation keeps a temporarily unavailable workspace active", async () => {
+    const projectRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-startup-volume-")));
+    const externalWorkspace = path.join(projectRoot, "external-workspace");
+    tempDirs.push(projectRoot);
+    const { projects, workspaces, projectRegistry, workspaceRegistry } = createTestRegistries();
+
+    projects.set(
+      "p1",
+      createPersistedProjectRecord({
+        projectId: "p1",
+        rootPath: projectRoot,
+        kind: "non_git",
+        displayName: "external-project",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    workspaces.set(
+      "w1",
+      createPersistedWorkspaceRecord({
+        workspaceId: "w1",
+        projectId: "p1",
+        cwd: externalWorkspace,
+        kind: "directory",
+        displayName: "external-workspace",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      }),
+    );
+    const service = new WorkspaceReconciliationService({
+      projectRegistry,
+      workspaceRegistry,
+      logger: createTestLogger(),
+    });
+
+    await service.reconcileNow();
+
+    expect(workspaces.get("w1")?.archivedAt).toBeNull();
+    mkdirSync(externalWorkspace);
+    await service.runOnce();
+    expect(workspaces.get("w1")?.archivedAt).toBeNull();
+  });
+
   test("reads fresh checkout facts on every metadata pass", async () => {
     const projectRoot = realpathSync(mkdtempSync(path.join(tmpdir(), "reconcile-fresh-git-")));
     tempDirs.push(projectRoot);
