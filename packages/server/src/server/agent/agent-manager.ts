@@ -693,6 +693,14 @@ export class AgentManager {
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
+  private readonly providerSubagentHistoryLoads = new Map<
+    string,
+    { session: AgentSession; promise: Promise<void>; abortController: AbortController }
+  >();
+  private readonly providerSubagentHistoryReloadBarriers = new Map<
+    string,
+    { promise: Promise<void>; release: () => void }
+  >();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
@@ -1165,11 +1173,52 @@ export class AgentManager {
     return this.providerSubagents.get(parentAgentId, subagentId);
   }
 
-  fetchProviderSubagentTimeline(
+  async fetchProviderSubagentTimeline(
     parentAgentId: string,
     subagentId: string,
     options?: AgentTimelineFetchOptions,
-  ): AgentTimelineFetchResult {
+  ): Promise<AgentTimelineFetchResult> {
+    for (;;) {
+      const reloadBarrier = this.providerSubagentHistoryReloadBarriers.get(parentAgentId);
+      if (!reloadBarrier) {
+        break;
+      }
+      await reloadBarrier.promise;
+    }
+    const agent = this.requirePublicAgent(parentAgentId);
+    const session = agent.session;
+    if (session?.loadProviderSubagentHistory) {
+      const key = `${parentAgentId}\0${subagentId}`;
+      const existingLoad = this.providerSubagentHistoryLoads.get(key);
+      if (existingLoad?.session === session) {
+        await existingLoad.promise;
+      } else {
+        const abortController = new AbortController();
+        const load = (async () => {
+          const events = await this.loadProviderSubagentHistoryWithAbort(
+            session,
+            subagentId,
+            abortController.signal,
+          );
+          const current = this.agents.get(parentAgentId);
+          if (!current || current.internal || current.session !== session) {
+            throw new Error("Agent session changed while loading provider subagent history");
+          }
+          for (const event of events) {
+            this.dispatchProviderSubagentEvent(current.id, event);
+          }
+        })();
+        const loadState = { session, promise: load, abortController };
+        this.providerSubagentHistoryLoads.set(key, loadState);
+        try {
+          await load;
+        } finally {
+          if (this.providerSubagentHistoryLoads.get(key) === loadState) {
+            this.providerSubagentHistoryLoads.delete(key);
+          }
+        }
+      }
+    }
     this.requirePublicAgent(parentAgentId);
     return this.providerSubagents.fetchTimeline(parentAgentId, subagentId, options);
   }
@@ -1398,8 +1447,143 @@ export class AgentManager {
     options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
-      this.reloadAgentSessionInternal(agentId, overrides, options),
+      this.withProviderSubagentHistoryReloadBarrier(agentId, () =>
+        this.reloadAgentSessionInternal(agentId, overrides, options),
+      ),
     );
+  }
+
+  private async withProviderSubagentHistoryReloadBarrier<T>(
+    agentId: string,
+    operation: () => Promise<T>,
+    options?: { abortReason?: string },
+  ): Promise<T> {
+    let barrier: { promise: Promise<void>; release: () => void };
+    for (;;) {
+      const existing = this.providerSubagentHistoryReloadBarriers.get(agentId);
+      if (existing) {
+        await existing.promise;
+        continue;
+      }
+      let release!: () => void;
+      const promise = new Promise<void>((resolveBarrier) => {
+        release = resolveBarrier;
+      });
+      barrier = { promise, release };
+      this.providerSubagentHistoryReloadBarriers.set(agentId, barrier);
+      break;
+    }
+    try {
+      if (options?.abortReason) {
+        await this.abortProviderSubagentHistoryLoads(agentId, options.abortReason);
+      } else {
+        await this.drainProviderSubagentHistoryLoads(agentId);
+      }
+      return await operation();
+    } finally {
+      if (this.providerSubagentHistoryReloadBarriers.get(agentId) === barrier) {
+        this.providerSubagentHistoryReloadBarriers.delete(agentId);
+      }
+      barrier.release();
+    }
+  }
+
+  private async drainProviderSubagentHistoryLoads(agentId: string): Promise<void> {
+    const keyPrefix = `${agentId}\0`;
+    for (;;) {
+      const loads = [...this.providerSubagentHistoryLoads.entries()]
+        .filter(([key]) => key.startsWith(keyPrefix))
+        .map(([, load]) => load);
+      if (loads.length === 0) {
+        return;
+      }
+      const settlement = Promise.allSettled(loads.map((load) => load.promise)).then(
+        () => undefined,
+      );
+      const promptSettlement = await this.waitWithTimeout({
+        operation: settlement,
+        timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+      });
+      if (promptSettlement === "completed") {
+        continue;
+      }
+      for (const load of loads) {
+        load.abortController.abort(new Error("Provider subagent history load aborted for reload"));
+      }
+      const abortedSettlement = await this.waitWithTimeout({
+        operation: settlement,
+        timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+      });
+      if (abortedSettlement === "timed_out") {
+        this.logger.warn(
+          { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
+          "Timed out aborting provider subagent history loads during refresh",
+        );
+        return;
+      }
+    }
+  }
+
+  private async abortProviderSubagentHistoryLoads(agentId: string, reason: string): Promise<void> {
+    const keyPrefix = `${agentId}\0`;
+    const loads = [...this.providerSubagentHistoryLoads.entries()].filter(([key]) =>
+      key.startsWith(keyPrefix),
+    );
+    if (loads.length === 0) {
+      return;
+    }
+    for (const [, load] of loads) {
+      load.abortController.abort(new Error(reason));
+    }
+    const settlement = Promise.allSettled(loads.map(([, load]) => load.promise)).then(
+      () => undefined,
+    );
+    const result = await this.waitWithTimeout({
+      operation: settlement,
+      timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+    });
+    if (result === "completed") {
+      return;
+    }
+    for (const [key, load] of loads) {
+      if (this.providerSubagentHistoryLoads.get(key) === load) {
+        this.providerSubagentHistoryLoads.delete(key);
+      }
+    }
+    this.logger.warn(
+      { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
+      "Timed out aborting provider subagent history loads while closing agent",
+    );
+  }
+
+  private async loadProviderSubagentHistoryWithAbort(
+    session: AgentSession,
+    subagentId: string,
+    signal: AbortSignal,
+  ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>[]> {
+    if (signal.aborted) {
+      throw createAbortError(signal, "Provider subagent history load aborted");
+    }
+    const operation = session.loadProviderSubagentHistory!(subagentId, { signal });
+    return await new Promise((resolveLoad, rejectLoad) => {
+      const onAbort = () => {
+        signal.removeEventListener("abort", onAbort);
+        rejectLoad(createAbortError(signal, "Provider subagent history load aborted"));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      void operation.then(
+        (events) => {
+          signal.removeEventListener("abort", onAbort);
+          resolveLoad(events);
+          return undefined;
+        },
+        (error: unknown) => {
+          signal.removeEventListener("abort", onAbort);
+          rejectLoad(error);
+          return undefined;
+        },
+      );
+    });
   }
 
   private async reloadAgentSessionInternal(
@@ -1418,6 +1602,11 @@ export class AgentManager {
     const preservedLastUsage = existing.lastUsage;
     const preservedLastError = existing.lastError;
     const preservedAttention = existing.attention;
+    const preservedLoadedProviderSubagentHistoryIds = rehydrateFromDisk
+      ? []
+      : (existing.session.getLoadedProviderSubagentHistoryIds?.() ?? []).filter((subagentId) =>
+          Boolean(this.providerSubagents.get(agentId, subagentId)),
+        );
     const handle = existing.persistence;
     const provider = handle?.provider ?? existing.provider;
     const client = this.requireClient(provider);
@@ -1449,6 +1638,9 @@ export class AgentManager {
         ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
         : await client.createSession(providerLaunchConfig, launchContext);
       await this.requireExternalMcpSupport(session, storedConfig);
+      if (preservedLoadedProviderSubagentHistoryIds.length > 0) {
+        session.seedLoadedProviderSubagentHistoryIds?.(preservedLoadedProviderSubagentHistoryIds);
+      }
 
       this.assertAcceptingAgentRegistrations();
 
@@ -1558,7 +1750,11 @@ export class AgentManager {
       return existing;
     }
 
-    const close = this.closeAgentRuntime(agentId);
+    const close = this.withProviderSubagentHistoryReloadBarrier(
+      agentId,
+      () => this.closeAgentRuntime(agentId),
+      { abortReason: "Provider subagent history load aborted because agent closed" },
+    );
     this.inFlightAgentCloses.set(agentId, close);
     const clearClose = () => {
       if (this.inFlightAgentCloses.get(agentId) === close) {
@@ -3589,8 +3785,7 @@ export class AgentManager {
     event: AgentStreamEvent,
   ): Promise<void> {
     if (event.type === "provider_subagent") {
-      const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
-      this.dispatch({ type: "provider_subagent", event: update });
+      this.dispatchProviderSubagentEvent(agent.id, event);
       return;
     }
     const turnId = getAgentStreamEventTurnId(event);
@@ -3628,6 +3823,14 @@ export class AgentManager {
       },
       "agent.manager.notify_waiters",
     );
+  }
+
+  private dispatchProviderSubagentEvent(
+    parentAgentId: string,
+    event: Extract<AgentStreamEvent, { type: "provider_subagent" }>,
+  ): void {
+    const update = this.providerSubagents.apply(parentAgentId, event.provider, event.event);
+    this.dispatch({ type: "provider_subagent", event: update });
   }
 
   private async resolveInitialPersistedTitle(
