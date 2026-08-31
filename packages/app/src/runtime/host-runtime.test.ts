@@ -3417,6 +3417,41 @@ describe("HostRuntimeStore", () => {
   });
 });
 
+describe("HostRuntimeStore queue identity reconciliation", () => {
+  it("preserves local migration candidates when a placeholder server id is reconciled", async () => {
+    const oldServerId = "placeholder-server";
+    const newServerId = "srv_reconciled";
+    const host = makeHost({ serverId: oldServerId });
+    const fakeClient = new FakeDaemonClient();
+    // DaemonClient has private nominal state, so the established legacy fake
+    // cannot satisfy it structurally. Keep that boundary to one local value.
+    const daemonClient = fakeClient as unknown as DaemonClient;
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => daemonClient,
+        connectToDaemon: async () => ({
+          client: daemonClient,
+          serverId: oldServerId,
+          hostname: null,
+        }),
+        getClientId: async () => "cid_reconciled_queue",
+      },
+    });
+    store.syncHosts([host]);
+    await vi.waitFor(() => expect(store.getSnapshot(oldServerId)?.client).toBe(fakeClient));
+    const queued = [{ id: "message-1", text: "migrate me", attachments: [] }];
+    useSessionStore.getState().setQueuedMessages(oldServerId, new Map([["agent-1", queued]]));
+
+    store.reconcileServerId(oldServerId, newServerId);
+
+    expect(useSessionStore.getState().sessions[oldServerId]).toBeUndefined();
+    expect(useSessionStore.getState().sessions[newServerId]?.queuedMessages.get("agent-1")).toEqual(
+      queued,
+    );
+    store.syncHosts([]);
+  });
+});
+
 describe("readInitialDaemonConnectionHint", () => {
   it("returns null when no hint is present", () => {
     expect(readInitialDaemonConnectionHint({ isWebRuntime: true })).toBeNull();

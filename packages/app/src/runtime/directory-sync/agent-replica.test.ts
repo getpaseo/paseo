@@ -50,12 +50,18 @@ function entry(agent: AgentSnapshotPayload): FetchAgentsEntry {
   };
 }
 
+const NOOP_REPLICA_CALLBACKS = {
+  onStoppedRunning: () => undefined,
+  onAgentInactive: () => undefined,
+  onDirectoryCommitted: () => undefined,
+};
+
 describe("AgentDirectoryReplica", () => {
   it("accepts the requested agent from the authoritative timeline after a cache miss", () => {
     const serverId = "agent-replica-cache-miss";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
-    const replica = new AgentDirectoryReplica(serverId, () => undefined);
+    const replica = new AgentDirectoryReplica(serverId, NOOP_REPLICA_CALLBACKS);
 
     expect(replica.submitTimelineAgent(replica.captureTimeline("agent"), payload("network"))).toBe(
       true,
@@ -70,7 +76,7 @@ describe("AgentDirectoryReplica", () => {
     const serverId = "agent-replica-catch-up";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
-    const replica = new AgentDirectoryReplica(serverId, () => undefined);
+    const replica = new AgentDirectoryReplica(serverId, NOOP_REPLICA_CALLBACKS);
     replica.commitSnapshot(
       [
         entry({
@@ -95,7 +101,7 @@ describe("AgentDirectoryReplica", () => {
     const serverId = "agent-replica";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
-    const replica = new AgentDirectoryReplica(serverId, () => undefined);
+    const replica = new AgentDirectoryReplica(serverId, NOOP_REPLICA_CALLBACKS);
     replica.commitSnapshot([entry(payload("directory"))], []);
     const directoryPlacement = useSessionStore
       .getState()

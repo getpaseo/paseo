@@ -1,30 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { submitAgentInput } from "./submit";
 
-function createDeferredPromise<T>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((nextResolve, nextReject) => {
-    resolve = nextResolve;
-    reject = nextReject;
-  });
-  return {
-    promise,
-    resolve,
-    reject,
-  };
+function createDeferredPromise<T>(): PromiseWithResolvers<T> {
+  return Promise.withResolvers<T>();
 }
 
 describe("submitAgentInput", () => {
-  it("clears the composer before an in-flight submit resolves", async () => {
+  it("starts a draft attempt before an in-flight submit resolves", async () => {
     const deferred = createDeferredPromise<void>();
     const queueMessage = vi.fn();
     const submitMessage = vi.fn(async () => {
       await deferred.promise;
     });
-    const clearDraft = vi.fn();
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
+    const beginDraftAttempt = vi.fn(() => 1);
+    const settleDraftAttempt = vi.fn();
     const setSendError = vi.fn();
     const setIsProcessing = vi.fn();
 
@@ -35,9 +24,8 @@ describe("submitAgentInput", () => {
       canSubmit: true,
       queueMessage,
       submitMessage,
-      clearDraft,
-      setUserInput,
-      setAttachments,
+      beginDraftAttempt,
+      settleDraftAttempt,
       setSendError,
       setIsProcessing,
     });
@@ -47,28 +35,25 @@ describe("submitAgentInput", () => {
       message: "hello world",
       attachments: [],
     });
-    expect(setUserInput).toHaveBeenCalledWith("");
-    expect(setAttachments).toHaveBeenCalledWith([]);
+    expect(beginDraftAttempt).toHaveBeenCalledWith({ message: "hello world", attachments: [] });
     expect(setSendError).toHaveBeenCalledWith(null);
     expect(setIsProcessing).toHaveBeenCalledWith(true);
-    expect(clearDraft).not.toHaveBeenCalled();
 
     deferred.resolve();
 
     await expect(submitPromise).resolves.toBe("submitted");
-    expect(clearDraft).toHaveBeenCalledWith("sent");
+    expect(settleDraftAttempt).toHaveBeenCalledWith({ attemptId: 1, outcome: "accepted" });
   });
 
-  it("preserves the composer before an in-flight submit resolves when requested", async () => {
+  it("does not start a draft attempt for preserve-and-lock submits", async () => {
     const deferred = createDeferredPromise<void>();
     const attachments = [{ id: "img-1" }];
     const queueMessage = vi.fn();
     const submitMessage = vi.fn(async () => {
       await deferred.promise;
     });
-    const clearDraft = vi.fn();
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
+    const beginDraftAttempt = vi.fn(() => 1);
+    const settleDraftAttempt = vi.fn();
     const setSendError = vi.fn();
     const setIsProcessing = vi.fn();
 
@@ -80,9 +65,8 @@ describe("submitAgentInput", () => {
       canSubmit: true,
       queueMessage,
       submitMessage,
-      clearDraft,
-      setUserInput,
-      setAttachments,
+      beginDraftAttempt,
+      settleDraftAttempt,
       setSendError,
       setIsProcessing,
     });
@@ -92,24 +76,21 @@ describe("submitAgentInput", () => {
       message: "keep me",
       attachments,
     });
-    expect(setUserInput).not.toHaveBeenCalled();
-    expect(setAttachments).not.toHaveBeenCalled();
+    expect(beginDraftAttempt).not.toHaveBeenCalled();
+    expect(settleDraftAttempt).not.toHaveBeenCalled();
     expect(setSendError).toHaveBeenCalledWith(null);
     expect(setIsProcessing).toHaveBeenCalledWith(true);
-    expect(clearDraft).not.toHaveBeenCalled();
 
     deferred.resolve();
 
     await expect(submitPromise).resolves.toBe("submitted");
-    expect(clearDraft).toHaveBeenCalledWith("sent");
   });
 
-  it("queues while the agent is running and clears the composer immediately", async () => {
+  it("queues while the agent is running and leaves clearing to queueMessage", async () => {
     const queueMessage = vi.fn();
     const submitMessage = vi.fn();
-    const clearDraft = vi.fn();
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
+    const beginDraftAttempt = vi.fn(() => 1);
+    const settleDraftAttempt = vi.fn();
     const setSendError = vi.fn();
     const setIsProcessing = vi.fn();
 
@@ -121,9 +102,8 @@ describe("submitAgentInput", () => {
         canSubmit: true,
         queueMessage,
         submitMessage,
-        clearDraft,
-        setUserInput,
-        setAttachments,
+        beginDraftAttempt,
+        settleDraftAttempt,
         setSendError,
         setIsProcessing,
       }),
@@ -134,11 +114,10 @@ describe("submitAgentInput", () => {
       attachments: [{ id: "img-1" }],
     });
     expect(submitMessage).not.toHaveBeenCalled();
-    expect(setUserInput).toHaveBeenCalledWith("");
-    expect(setAttachments).toHaveBeenCalledWith([]);
+    expect(beginDraftAttempt).not.toHaveBeenCalled();
+    expect(settleDraftAttempt).not.toHaveBeenCalled();
     expect(setSendError).not.toHaveBeenCalled();
     expect(setIsProcessing).not.toHaveBeenCalled();
-    expect(clearDraft).not.toHaveBeenCalled();
   });
 
   it("restores the composer when submit fails", async () => {
@@ -147,9 +126,8 @@ describe("submitAgentInput", () => {
     const submitMessage = vi.fn(async () => {
       throw submitError;
     });
-    const clearDraft = vi.fn();
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
+    const beginDraftAttempt = vi.fn(() => 7);
+    const settleDraftAttempt = vi.fn();
     const setSendError = vi.fn();
     const setIsProcessing = vi.fn();
     const onSubmitError = vi.fn();
@@ -163,9 +141,8 @@ describe("submitAgentInput", () => {
         canSubmit: true,
         queueMessage,
         submitMessage,
-        clearDraft,
-        setUserInput,
-        setAttachments,
+        beginDraftAttempt,
+        settleDraftAttempt,
         setSendError,
         setIsProcessing,
         onSubmitError,
@@ -173,56 +150,85 @@ describe("submitAgentInput", () => {
     ).resolves.toBe("failed");
 
     expect(onSubmitError).toHaveBeenCalledWith(submitError);
-    expect(setUserInput).toHaveBeenNthCalledWith(1, "");
-    expect(setUserInput).toHaveBeenNthCalledWith(2, "hello world");
-    expect(setAttachments).toHaveBeenNthCalledWith(1, []);
-    expect(setAttachments).toHaveBeenNthCalledWith(2, attachments);
+    expect(beginDraftAttempt).toHaveBeenCalledWith({
+      message: "hello world",
+      attachments,
+    });
+    expect(settleDraftAttempt).toHaveBeenCalledWith({ attemptId: 7, outcome: "failed" });
     expect(setSendError).toHaveBeenNthCalledWith(1, null);
     expect(setSendError).toHaveBeenNthCalledWith(2, "No host selected");
     expect(setIsProcessing).toHaveBeenNthCalledWith(1, true);
     expect(setIsProcessing).toHaveBeenNthCalledWith(2, false);
-    expect(clearDraft).not.toHaveBeenCalled();
+  });
+
+  it("does not submit a duplicate draft attempt while one is pending", async () => {
+    const queueMessage = vi.fn();
+    const submitMessage = vi.fn(async () => {});
+    const beginDraftAttempt = vi.fn(() => null);
+    const settleDraftAttempt = vi.fn();
+    const setSendError = vi.fn();
+    const setIsProcessing = vi.fn();
+
+    await expect(
+      submitAgentInput({
+        message: "duplicate",
+        attachments: [],
+        isAgentRunning: false,
+        canSubmit: true,
+        queueMessage,
+        submitMessage,
+        beginDraftAttempt,
+        settleDraftAttempt,
+        setSendError,
+        setIsProcessing,
+      }),
+    ).resolves.toBe("noop");
+
+    expect(submitMessage).not.toHaveBeenCalled();
+    expect(settleDraftAttempt).not.toHaveBeenCalled();
+    expect(setIsProcessing).not.toHaveBeenCalled();
   });
 
   it("restores a steered active-turn draft after an ambiguous immediate-send error", async () => {
     const error = new Error("connection lost after delivery");
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
+    const attachments = [{ id: "img-1" }];
+    const queueMessage = vi.fn();
+    const submitMessage = vi.fn(async () => {
+      throw error;
+    });
+    const beginDraftAttempt = vi.fn(() => 9);
+    const settleDraftAttempt = vi.fn();
     const setSendError = vi.fn();
     const setIsProcessing = vi.fn();
 
     await expect(
       submitAgentInput({
         message: "  steer this turn  ",
-        attachments: [{ id: "img-1" }],
+        attachments,
         forceSend: true,
         isAgentRunning: true,
         canSubmit: true,
-        queueMessage: vi.fn(),
-        submitMessage: async () => {
-          throw error;
-        },
-        clearDraft: vi.fn(),
-        setUserInput,
-        setAttachments,
+        queueMessage,
+        submitMessage,
+        beginDraftAttempt,
+        settleDraftAttempt,
         setSendError,
         setIsProcessing,
       }),
     ).resolves.toBe("failed");
 
-    expect(setUserInput).toHaveBeenNthCalledWith(1, "");
-    expect(setUserInput).toHaveBeenNthCalledWith(2, "steer this turn");
-    expect(setAttachments).toHaveBeenNthCalledWith(1, []);
-    expect(setAttachments).toHaveBeenNthCalledWith(2, [{ id: "img-1" }]);
+    expect(queueMessage).not.toHaveBeenCalled();
+    expect(submitMessage).toHaveBeenCalledWith({ message: "steer this turn", attachments });
+    expect(beginDraftAttempt).toHaveBeenCalledWith({ message: "steer this turn", attachments });
+    expect(settleDraftAttempt).toHaveBeenCalledWith({ attemptId: 9, outcome: "failed" });
     expect(setSendError).toHaveBeenLastCalledWith("connection lost after delivery");
   });
 
   it("submits when empty submit is explicitly allowed", async () => {
     const queueMessage = vi.fn();
     const submitMessage = vi.fn(async () => {});
-    const clearDraft = vi.fn();
-    const setUserInput = vi.fn();
-    const setAttachments = vi.fn();
+    const beginDraftAttempt = vi.fn(() => 1);
+    const settleDraftAttempt = vi.fn();
     const setSendError = vi.fn();
     const setIsProcessing = vi.fn();
 
@@ -235,9 +241,8 @@ describe("submitAgentInput", () => {
         canSubmit: true,
         queueMessage,
         submitMessage,
-        clearDraft,
-        setUserInput,
-        setAttachments,
+        beginDraftAttempt,
+        settleDraftAttempt,
         setSendError,
         setIsProcessing,
       }),
@@ -248,6 +253,5 @@ describe("submitAgentInput", () => {
       message: "",
       attachments: [],
     });
-    expect(clearDraft).toHaveBeenCalledWith("sent");
   });
 });

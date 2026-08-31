@@ -6,6 +6,7 @@ import path from "node:path";
 import { execSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 
 import {
   createDaemonTestContext,
@@ -398,6 +399,255 @@ class RejectingMcpResumeClient implements AgentClient {
   }
 }
 
+test("queued agent messages are replayed by the daemon after the queuing client disconnects", async () => {
+  const cwd = tmpCwd();
+  const daemon = await createTestPaseoDaemon();
+  const firstClient = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+  const secondClient = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await firstClient.connect();
+    await firstClient.fetchAgents({ subscribe: { subscriptionId: "server-queue-first-client" } });
+
+    const agent = await firstClient.createAgent({
+      provider: "codex",
+      cwd,
+      title: "Server queued replay agent",
+      modeId: "full-access",
+      model: "gpt-5.4-mini",
+      initialPrompt: "Run exactly: sleep 30",
+    });
+
+    expect(agent.status).toBe("running");
+
+    const queuedUpdatePromise = waitForSignal(15000, (resolve) => {
+      const unsubscribe = firstClient.on("queue.agent_message.updated", (message) => {
+        if (message.type !== "queue.agent_message.updated") {
+          return;
+        }
+        if (message.payload.agentId !== agent.id) {
+          return;
+        }
+        if (hasQueuedMessage(message.payload.messages, "queued-after-disconnect")) {
+          resolve(message);
+        }
+      });
+      return unsubscribe;
+    });
+
+    await expect(
+      firstClient.queueAgentMessage(agent.id, "respond with exactly: SERVER_QUEUE_REPLAYED", {
+        messageId: "queued-after-disconnect",
+      }),
+    ).resolves.toMatchObject({
+      id: "queued-after-disconnect",
+      agentId: agent.id,
+      text: "respond with exactly: SERVER_QUEUE_REPLAYED",
+    });
+    await queuedUpdatePromise;
+
+    await firstClient.close();
+
+    await secondClient.connect();
+    await secondClient.fetchAgents({
+      subscribe: { subscriptionId: "server-queue-second-client" },
+    });
+
+    await expect(
+      waitForTimelineText(secondClient, agent.id, "SERVER_QUEUE_REPLAYED", 30000),
+    ).resolves.toBe(true);
+
+    const queues = await secondClient.listQueuedAgentMessages(agent.id);
+    expect(queues).toEqual([
+      {
+        agentId: agent.id,
+        revision: 2,
+        messages: [],
+      },
+    ]);
+  } finally {
+    await firstClient.close();
+    await secondClient.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 45000);
+
+test("queue updates are only broadcast to clients that advertise queue event support", async () => {
+  const cwd = tmpCwd();
+  const daemon = await createTestPaseoDaemon();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.103",
+  });
+  const legacyClient = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.102",
+    capabilities: { [CLIENT_CAPS.agentMessageQueueEvents]: false },
+  });
+  let legacyQueueUpdateCount = 0;
+
+  try {
+    const unsubscribeLegacyQueueUpdates = legacyClient.on("queue.agent_message.updated", () => {
+      legacyQueueUpdateCount += 1;
+    });
+
+    await legacyClient.connect();
+    await client.connect();
+    await client.fetchAgents({ subscribe: { subscriptionId: "queue-event-capable-client" } });
+
+    const agent = await client.createAgent({
+      provider: "codex",
+      cwd,
+      title: "Queue event capability agent",
+      modeId: "full-access",
+      model: "gpt-5.4-mini",
+      initialPrompt: "Run exactly: sleep 30",
+    });
+    expect(agent.status).toBe("running");
+
+    const queuedUpdatePromise = waitForSignal(15000, (resolve) => {
+      const unsubscribe = client.on("queue.agent_message.updated", (message) => {
+        if (message.type !== "queue.agent_message.updated") {
+          return;
+        }
+        if (message.payload.agentId !== agent.id) {
+          return;
+        }
+        if (hasQueuedMessage(message.payload.messages, "queued-event-capability")) {
+          resolve(message);
+        }
+      });
+      return unsubscribe;
+    });
+
+    await client.queueAgentMessage(agent.id, "respond with exactly: QUEUE_EVENT_CAPABILITY", {
+      messageId: "queued-event-capability",
+    });
+    await queuedUpdatePromise;
+    await legacyClient.listQueuedAgentMessages(agent.id);
+
+    expect(legacyQueueUpdateCount).toBe(0);
+    unsubscribeLegacyQueueUpdates();
+  } finally {
+    await legacyClient.close();
+    await client.close();
+    await daemon.close();
+    rmSync(cwd, { recursive: true, force: true });
+  }
+}, 45000);
+
+test("queued agent messages replay after a daemon restart loads the persisted agent lazily", async () => {
+  const cwd = tmpCwd();
+  const paseoHomeRoot = mkdtempSync(path.join(tmpdir(), "paseo-queue-restart-home-"));
+  const staticDir = mkdtempSync(path.join(tmpdir(), "paseo-queue-restart-static-"));
+  let firstDaemon: Awaited<ReturnType<typeof createTestPaseoDaemon>> | null = null;
+  let secondDaemon: Awaited<ReturnType<typeof createTestPaseoDaemon>> | null = null;
+  let firstClient: DaemonClient | null = null;
+  let secondClient: DaemonClient | null = null;
+
+  try {
+    firstDaemon = await createTestPaseoDaemon({
+      paseoHomeRoot,
+      staticDir,
+      cleanup: false,
+      agentClients: {
+        codex: new StubAgentClient({
+          sessionId: "queue-restart-blocked-session",
+          supportsStreaming: true,
+        }),
+      },
+    });
+    firstClient = new DaemonClient({
+      url: `ws://127.0.0.1:${firstDaemon.port}/ws`,
+      appVersion: "0.1.82",
+    });
+    await firstClient.connect();
+    await firstClient.fetchAgents({ subscribe: { subscriptionId: "server-queue-restart-first" } });
+
+    const agent = await firstClient.createAgent({
+      provider: "codex",
+      cwd,
+      title: "Restart queued replay agent",
+      modeId: "full-access",
+      model: "gpt-5.4-mini",
+      initialPrompt: "Keep this run active until the daemon restarts",
+    });
+    expect(agent.status).toBe("running");
+
+    const queuedUpdatePromise = waitForSignal(15000, (resolve) => {
+      const unsubscribe = firstClient?.on("queue.agent_message.updated", (message) => {
+        if (message.type !== "queue.agent_message.updated") {
+          return;
+        }
+        if (message.payload.agentId !== agent.id) {
+          return;
+        }
+        if (hasQueuedMessage(message.payload.messages, "queued-after-daemon-restart")) {
+          resolve(message);
+        }
+      });
+      return () => unsubscribe?.();
+    });
+
+    await firstClient.queueAgentMessage(
+      agent.id,
+      "respond with exactly: SERVER_QUEUE_REPLAYED_AFTER_RESTART",
+      {
+        messageId: "queued-after-daemon-restart",
+      },
+    );
+    await queuedUpdatePromise;
+    await firstClient.close();
+    firstClient = null;
+
+    const queueFilePath = path.join(firstDaemon.paseoHome, "agent-message-queue.json");
+    await firstDaemon.close();
+    firstDaemon = null;
+
+    await expect(readFile(queueFilePath, "utf8").then(JSON.parse)).resolves.toMatchObject({
+      queues: {
+        [agent.id]: [expect.objectContaining({ id: "queued-after-daemon-restart" })],
+      },
+    });
+
+    secondDaemon = await createTestPaseoDaemon({
+      paseoHomeRoot,
+      staticDir,
+      cleanup: false,
+    });
+    secondClient = new DaemonClient({
+      url: `ws://127.0.0.1:${secondDaemon.port}/ws`,
+      appVersion: "0.1.82",
+    });
+    await secondClient.connect();
+    await secondClient.fetchAgents({
+      subscribe: { subscriptionId: "server-queue-restart-second" },
+    });
+
+    await expect(
+      waitForTimelineText(secondClient, agent.id, "SERVER_QUEUE_REPLAYED_AFTER_RESTART", 30000),
+    ).resolves.toBe(true);
+    await expect(secondClient.listQueuedAgentMessages(agent.id)).resolves.toMatchObject([
+      { agentId: agent.id, messages: [] },
+    ]);
+  } finally {
+    await firstClient?.close();
+    await secondClient?.close();
+    await firstDaemon?.close();
+    await secondDaemon?.close();
+    rmSync(cwd, { recursive: true, force: true });
+    rmSync(paseoHomeRoot, { recursive: true, force: true });
+    rmSync(staticDir, { recursive: true, force: true });
+  }
+}, 45000);
+
 test("createAgent fails when the initial turn cannot start", async () => {
   const testAgent = new StubAgentClient({
     sessionId: "start-turn-failure-session",
@@ -511,6 +761,46 @@ function waitForSignal<T>(
       },
     );
   });
+}
+
+function hasQueuedMessage(messages: ReadonlyArray<{ id: string }>, id: string): boolean {
+  for (const message of messages) {
+    if (message.id === id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function waitForTimelineText(
+  client: DaemonClient,
+  agentId: string,
+  expectedText: string,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  let lastEntryCount = 0;
+
+  while (Date.now() < deadline) {
+    const timeline = await client.fetchAgentTimeline(agentId, {
+      direction: "tail",
+      limit: 0,
+    });
+    lastEntryCount = timeline.entries.length;
+    if (
+      timeline.entries.some(
+        (entry) =>
+          entry.item.type === "assistant_message" && entry.item.text.includes(expectedText),
+      )
+    ) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+
+  throw new Error(
+    `Timed out waiting for timeline text "${expectedText}" after ${timeoutMs}ms; last entry count: ${lastEntryCount}`,
+  );
 }
 
 class NonPersistentReloadSession implements AgentSession {

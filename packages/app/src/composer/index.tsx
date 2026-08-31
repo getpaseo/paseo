@@ -13,6 +13,7 @@ import {
   useRef,
   useCallback,
   useMemo,
+  useSyncExternalStore,
   memo,
   type ReactElement,
   type ReactNode,
@@ -63,6 +64,7 @@ import {
   dispatchComposerAgentMessage,
   editQueuedComposerMessage,
   findForgeItemByOption,
+  getQueuedComposerMessageEditDraft,
   isAttachmentSelectedForForgeItem,
   openComposerAttachment,
   pickAndPersistImages,
@@ -75,6 +77,13 @@ import {
   type QueueWriter,
   type QueuedComposerMessage,
 } from "@/composer/actions";
+import {
+  createComposerDraftCoordinator,
+  type ComposerDraftSnapshot,
+  type PendingQueuedComposerAction,
+  type QueuedComposerActionKind,
+  type QueuedComposerActionOutcome,
+} from "@/composer/draft-coordinator";
 import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -103,6 +112,7 @@ import type { KeyboardActionDefinition } from "@/keyboard/keyboard-action-dispat
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
 import { submitAgentInput } from "@/composer/submit";
 import { createMessageSubmissionWriter } from "@/composer/submission/writer";
+import { createUserMessage } from "@/types/stream";
 import { ComposerKeyboardScopeProvider, useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useAppSettings } from "@/hooks/use-settings";
 import { RenderProfile } from "@/utils/render-profiler";
@@ -121,6 +131,7 @@ import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/su
 import { composerWorkspaceAttachment } from "@/composer/attachments/workspace";
 import { useWorkspaceAttachmentsForScopes } from "@/attachments/workspace-attachments-store";
 import { droppedItemsToPickedFiles } from "@/composer/attachments/drop";
+import { splitComposerAttachmentsForSubmit } from "@/composer/attachments/submit";
 import { getFileTypeLabel } from "@/attachments/file-types";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { AttachmentLabel, AttachmentPill, AttachmentThumbnail } from "@/components/attachment-pill";
@@ -137,6 +148,7 @@ import { readClipboardImage } from "./clipboard-image";
 import { normalizeNativePastedImages, type NativePastedFile } from "./native-pasted-image";
 import { PluginResourceAttachmentPill, usePluginAttachmentPicker } from "@/plugins";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
+import { buildDraftStoreKey } from "@/stores/draft-keys";
 import {
   appendWorkspaceFileAttachment,
   getWorkspaceFileAttachmentKey,
@@ -146,6 +158,7 @@ import {
   resolveWorkspaceFileDrop,
   type WorkspaceFileDragPayload,
 } from "@/attachments/workspace-file-drag";
+import { supportsAgentMessageQueue } from "@/utils/server-info-capabilities";
 
 const composerImageAttachmentPersister: Pick<
   AttachmentPersister,
@@ -331,6 +344,7 @@ interface RenderAttachmentTrayArgs {
   handleRemoveAttachment: (index: number) => void;
   labels: {
     openImage: string;
+    openFile: string;
     removeImage: string;
     removeFile: string;
     openGithub: (kind: string, numberLabel: string) => string;
@@ -367,13 +381,22 @@ interface RenderQueueTrackArgs {
   queuedMessages: readonly QueuedMessage[];
   handleEditQueuedMessage: (id: string) => void;
   handleSendQueuedNow: (id: string) => Promise<void>;
+  actionsDisabled: boolean;
+  pendingAction: PendingQueuedComposerAction | null;
   editLabel: string;
   sendNowLabel: string;
 }
 
 function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
-  const { queuedMessages, handleEditQueuedMessage, handleSendQueuedNow, editLabel, sendNowLabel } =
-    args;
+  const {
+    queuedMessages,
+    handleEditQueuedMessage,
+    handleSendQueuedNow,
+    actionsDisabled,
+    pendingAction,
+    editLabel,
+    sendNowLabel,
+  } = args;
   if (queuedMessages.length === 0) return null;
   return (
     <View style={styles.queueTrack}>
@@ -383,6 +406,8 @@ function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
           item={item}
           onEdit={handleEditQueuedMessage}
           onSendNow={handleSendQueuedNow}
+          actionsDisabled={actionsDisabled}
+          pendingAction={pendingAction}
           editLabel={editLabel}
           sendNowLabel={sendNowLabel}
         />
@@ -655,6 +680,8 @@ interface QueuedMessageRowProps {
   item: QueuedMessage;
   onEdit: (id: string) => void;
   onSendNow: (id: string) => void;
+  actionsDisabled: boolean;
+  pendingAction: PendingQueuedComposerAction | null;
   editLabel: string;
   sendNowLabel: string;
 }
@@ -663,6 +690,8 @@ function QueuedMessageRow({
   item,
   onEdit,
   onSendNow,
+  actionsDisabled,
+  pendingAction,
   editLabel,
   sendNowLabel,
 }: QueuedMessageRowProps) {
@@ -672,27 +701,42 @@ function QueuedMessageRow({
   const handleSendNow = useCallback(() => {
     onSendNow(item.id);
   }, [onSendNow, item.id]);
+  const pendingEdit = pendingAction?.messageId === item.id && pendingAction.action === "edit";
+  const pendingSend = pendingAction?.messageId === item.id && pendingAction.action === "send";
+  const disabledStyle = actionsDisabled ? styles.buttonDisabled : undefined;
   return (
     <View style={styles.queueItem}>
       <Text style={styles.queueText} numberOfLines={2} ellipsizeMode="tail">
         {item.text}
       </Text>
       <View style={styles.queueActions}>
-        <Pressable
-          onPress={handleEdit}
-          style={styles.queueActionButton}
-          accessibilityLabel={editLabel}
-          accessibilityRole="button"
-        >
-          <ThemedPencil size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
-        </Pressable>
+        {item.canEdit !== false ? (
+          <Pressable
+            onPress={handleEdit}
+            disabled={actionsDisabled}
+            style={[styles.queueActionButton, disabledStyle]}
+            accessibilityLabel={editLabel}
+            accessibilityRole="button"
+          >
+            {pendingEdit ? (
+              <ThemedLoadingSpinner size="small" uniProps={iconForegroundMutedMapping} />
+            ) : (
+              <ThemedPencil size={ICON_SIZE.sm} uniProps={iconForegroundMapping} />
+            )}
+          </Pressable>
+        ) : null}
         <Pressable
           onPress={handleSendNow}
-          style={[styles.queueActionButton, styles.queueSendButton]}
+          disabled={actionsDisabled}
+          style={[styles.queueActionButton, styles.queueSendButton, disabledStyle]}
           accessibilityLabel={sendNowLabel}
           accessibilityRole="button"
         >
-          <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
+          {pendingSend ? (
+            <ThemedLoadingSpinner size="small" uniProps={iconAccentForegroundMapping} />
+          ) : (
+            <ThemedArrowUp size={ICON_SIZE.sm} uniProps={iconAccentForegroundMapping} />
+          )}
         </Pressable>
       </View>
     </View>
@@ -1205,6 +1249,9 @@ function ComposerContentImpl({
     state.sessions[serverId]?.queuedMessages?.get(agentId),
   );
   const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
+  const serverQueuesAgentMessages = useSessionStore((state) =>
+    supportsAgentMessageQueue(state.sessions[serverId]?.serverInfo),
+  );
 
   const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
 
@@ -1214,7 +1261,34 @@ function ComposerContentImpl({
   const isDesktopLayout = resolveIsDesktopWebBreakpoint(isCompactLayout);
   const messagePlaceholder = resolveMessagePlaceholder(inputMode, isDesktopLayout, t, placeholder);
   const userInput = value;
-  const setUserInput = onChangeText;
+  const draftOwnerId = buildDraftStoreKey({ serverId, agentId });
+  const [draftCoordinator] = useState(createComposerDraftCoordinator);
+  const getDraftOwnerSnapshot = useCallback(
+    () => draftCoordinator.getSnapshot(draftOwnerId),
+    [draftCoordinator, draftOwnerId],
+  );
+  const draftCoordinatorState = useSyncExternalStore(
+    draftCoordinator.subscribe,
+    getDraftOwnerSnapshot,
+    getDraftOwnerSnapshot,
+  );
+  const getCurrentDraft = useCallback((): ComposerDraftSnapshot => {
+    return draftCoordinator.getSnapshot(draftOwnerId)?.draft ?? { text: userInput, attachments };
+  }, [attachments, draftCoordinator, draftOwnerId, userInput]);
+  const setUserInput = useCallback(
+    (text: string) => {
+      const current = getCurrentDraft();
+      draftCoordinator.syncDraft({
+        ownerId: draftOwnerId,
+        draft: { ...current, text },
+      });
+      if (text.length > 0) {
+        draftCoordinator.setError(draftOwnerId, null);
+      }
+      onChangeText(text);
+    },
+    [draftCoordinator, draftOwnerId, getCurrentDraft, onChangeText],
+  );
   const workspaceAttachments = useWorkspaceAttachmentsForScopes(attachmentScopeKeys);
   const {
     selectedAttachments,
@@ -1230,7 +1304,25 @@ function ComposerContentImpl({
     workspaceAttachments,
     onOpenWorkspaceAttachment,
   });
-  const setSelectedAttachments = onChangeAttachments;
+  const setSelectedAttachments = useCallback(
+    (updater: AttachmentListUpdater) => {
+      const current = getCurrentDraft();
+      const nextAttachments =
+        typeof updater === "function" ? updater(current.attachments) : updater;
+      draftCoordinator.syncDraft({
+        ownerId: draftOwnerId,
+        draft: { ...current, attachments: nextAttachments },
+      });
+      onChangeAttachments(nextAttachments);
+    },
+    [draftCoordinator, draftOwnerId, getCurrentDraft, onChangeAttachments],
+  );
+  useEffect(() => {
+    draftCoordinator.syncDraft({
+      ownerId: draftOwnerId,
+      draft: { text: userInput, attachments },
+    });
+  }, [attachments, draftCoordinator, draftOwnerId, userInput]);
   const checkoutStatusQuery = useCheckoutStatusQuery({ serverId, cwd });
   const supportsForgeSearch = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
@@ -1253,7 +1345,13 @@ function ComposerContentImpl({
   const [isProcessing, setIsProcessing] = useState(false);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [pendingNativeImagePastes, setPendingNativeImagePastes] = useState(0);
-  const [sendError, setSendError] = useState<string | null>(null);
+  const sendError = draftCoordinatorState?.errorMessage ?? null;
+  const setSendError = useCallback(
+    (message: string | null) => {
+      draftCoordinator.setError(draftOwnerId, message);
+    },
+    [draftCoordinator, draftOwnerId],
+  );
   const [isMessageInputFocused, setIsMessageInputFocused] = useState(false);
   const [isGithubPickerOpen, setIsGithubPickerOpen] = useState(false);
   const [githubSearchQuery, setGithubSearchQuery] = useState("");
@@ -1314,6 +1412,7 @@ function ComposerContentImpl({
       clearDraft,
       onClientSlashCommand,
       resetSuppression,
+      setSendError,
       setSelectedAttachments,
       replaceUserInput,
     ],
@@ -1341,7 +1440,6 @@ function ComposerContentImpl({
     [selectAutocompleteOption],
   );
 
-  // Clear send error when user edits the input
   useEffect(() => {
     setCursorIndex((current) => Math.min(current, userInput.length));
   }, [userInput.length]);
@@ -1493,6 +1591,44 @@ function ComposerContentImpl({
   );
   const hasAgent = agentState.status !== null;
 
+  const applyDraftReplacement = useCallback(
+    (draft: ComposerDraftSnapshot | null) => {
+      if (!draft) return;
+      setUserInput(draft.text);
+      setSelectedAttachments(draft.attachments);
+    },
+    [setSelectedAttachments, setUserInput],
+  );
+
+  const beginDraftAttempt = useCallback(
+    (text: string, outgoingAttachments: ComposerAttachment[]): number | null => {
+      const draft = {
+        text,
+        attachments: composerWorkspaceAttachment.userAttachmentsOnly(outgoingAttachments),
+      };
+      const attemptId = draftCoordinator.beginDraftAttempt({
+        ownerId: draftOwnerId,
+        draft,
+      });
+      if (attemptId === null) return null;
+      clearDraft("sent");
+      return attemptId;
+    },
+    [clearDraft, draftCoordinator, draftOwnerId],
+  );
+
+  const settleDraftAttempt = useCallback(
+    (attemptId: number, outcome: "accepted" | "failed") => {
+      const draft = draftCoordinator.settleDraftAttempt({
+        ownerId: draftOwnerId,
+        attemptId,
+        outcome,
+      });
+      applyDraftReplacement(draft);
+    },
+    [applyDraftReplacement, draftCoordinator, draftOwnerId],
+  );
+
   const queueWriter = useMemo<QueueWriter>(
     () => ({
       read: (id) => useSessionStore.getState().sessions[serverId]?.queuedMessages?.get(id) ?? [],
@@ -1502,10 +1638,44 @@ function ComposerContentImpl({
   );
 
   const queueMessage = useCallback(
-    (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
+    async (queuedMessage: string, queuedAttachments: ComposerAttachment[]) => {
+      const trimmed = queuedMessage.trim();
+      if (!trimmed && queuedAttachments.length === 0) {
+        return;
+      }
+
+      if (serverQueuesAgentMessages) {
+        if (!client) {
+          throw new Error(t("workspace.terminal.hostDisconnected"));
+        }
+        const attemptId = beginDraftAttempt(trimmed, queuedAttachments);
+        if (attemptId === null) {
+          return;
+        }
+        resetSuppression();
+        try {
+          const wirePayload = splitComposerAttachmentsForSubmit(queuedAttachments, {
+            format: resolveComposerAttachmentSubmitFormat({
+              supportsForgeAttachments: supportsForgeSearch,
+            }),
+          });
+          const imagesData = await encodeImages(wirePayload.images);
+          await client.queueAgentMessage(agentId, trimmed, {
+            ...(imagesData && imagesData.length > 0 ? { images: imagesData } : {}),
+            ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
+          });
+        } catch (error) {
+          settleDraftAttempt(attemptId, "failed");
+          throw error;
+        }
+        settleDraftAttempt(attemptId, "accepted");
+        clearSentAttachments(queuedAttachments);
+        return;
+      }
+
       const result = queueComposerMessage({
         agentId,
-        text: queuedMessage,
+        text: trimmed,
         attachments: queuedAttachments,
         queue: queueWriter,
       });
@@ -1518,11 +1688,17 @@ function ComposerContentImpl({
     },
     [
       agentId,
+      beginDraftAttempt,
       clearSentAttachments,
+      client,
       queueWriter,
       resetSuppression,
+      serverQueuesAgentMessages,
+      settleDraftAttempt,
       setSelectedAttachments,
       replaceUserInput,
+      supportsForgeSearch,
+      t,
     ],
   );
 
@@ -1543,20 +1719,17 @@ function ComposerContentImpl({
         // Parent-managed submits are still valid submit paths even when the
         // transport is disconnected, because the parent decides the failure mode.
         canSubmit: Boolean(sendAgentMessageRef.current || onSubmitMessageRef.current),
-        queueMessage: ({ message: queuedText, attachments: queuedAttachments }) => {
-          queueMessage(queuedText, queuedAttachments);
-        },
+        queueMessage: ({ message: queuedText, attachments: queuedAttachments }) =>
+          queueMessage(queuedText, queuedAttachments),
         submitMessage: async ({ message: submitText, attachments: submitAttachments }) => {
           if (submitBehavior !== "preserve-and-lock") {
             beginSubmit(submitAttachments);
           }
           await submitMessage(submitText, submitAttachments);
         },
-        clearDraft,
-        setUserInput: replaceUserInput,
-        setAttachments: (nextAttachments) => {
-          setSelectedAttachments(composerWorkspaceAttachment.userAttachmentsOnly(nextAttachments));
-        },
+        beginDraftAttempt: ({ message: submitText, attachments: submitAttachments }) =>
+          beginDraftAttempt(submitText, submitAttachments),
+        settleDraftAttempt: ({ attemptId, outcome }) => settleDraftAttempt(attemptId, outcome),
         setSendError,
         setIsProcessing,
         onSubmitError: (error) => {
@@ -1572,13 +1745,13 @@ function ComposerContentImpl({
     [
       allowEmptySubmit,
       beginSubmit,
-      clearDraft,
+      beginDraftAttempt,
       completeSubmit,
       hasExternalContent,
       isAgentRunning,
       queueMessage,
-      setSelectedAttachments,
-      replaceUserInput,
+      setSendError,
+      settleDraftAttempt,
       submitBehavior,
       submitMessage,
       t,
@@ -1587,7 +1760,7 @@ function ComposerContentImpl({
 
   const handleSubmit = useCallback(
     (payload: MessagePayload) => {
-      const outgoingAttachments = buildOutgoingAttachments(attachments);
+      const outgoingAttachments = buildOutgoingAttachments(getCurrentDraft().attachments);
       const clientSlashCommand = resolveClientSlashCommand({
         text: payload.text,
         hasAttachments: outgoingAttachments.length > 0,
@@ -1602,9 +1775,9 @@ function ComposerContentImpl({
       void sendMessageWithContent(payload.text, outgoingAttachments, payload.forceSend);
     },
     [
-      attachments,
       blurOnSubmit,
       buildOutgoingAttachments,
+      getCurrentDraft,
       runClientSlashCommand,
       sendMessageWithContent,
     ],
@@ -1817,23 +1990,122 @@ function ComposerContentImpl({
     });
   }, [agentId, hasAgent, isConnected, serverId, voice]);
 
+  const beginQueuedAction = useCallback(
+    (messageId: string, action: QueuedComposerActionKind): boolean => {
+      return draftCoordinator.beginQueuedAction({
+        ownerId: draftOwnerId,
+        currentDraft: getCurrentDraft(),
+        messageId,
+        action,
+      });
+    },
+    [draftCoordinator, draftOwnerId, getCurrentDraft],
+  );
+
+  const settleQueuedAction = useCallback(
+    (messageId: string, action: QueuedComposerActionKind, outcome: QueuedComposerActionOutcome) => {
+      const draft = draftCoordinator.settleQueuedAction({
+        ownerId: draftOwnerId,
+        messageId,
+        action,
+        outcome,
+      });
+      applyDraftReplacement(draft);
+    },
+    [applyDraftReplacement, draftCoordinator, draftOwnerId],
+  );
+
   const handleEditQueuedMessage = useCallback(
     (id: string) => {
+      const messages = serverQueuesAgentMessages ? queuedMessages : queueWriter.read(agentId);
+      const draft = getQueuedComposerMessageEditDraft({ messages, messageId: id });
+      if (!draft || (serverQueuesAgentMessages && !client) || !beginQueuedAction(id, "edit")) {
+        return;
+      }
+
+      if (serverQueuesAgentMessages && client) {
+        void (async () => {
+          try {
+            await client.cancelQueuedAgentMessage(agentId, id);
+            settleQueuedAction(id, "edit", { kind: "edited", draft });
+          } catch (error) {
+            settleQueuedAction(id, "edit", { kind: "failed" });
+            console.error("[Composer] Failed to cancel queued message for edit:", error);
+            setSendError(
+              error instanceof Error ? error.message : t("composer.errors.failedToSend"),
+            );
+          }
+        })();
+        return;
+      }
+
       const result = editQueuedComposerMessage({
         agentId,
         messageId: id,
         queue: queueWriter,
       });
-      if (!result) return;
-      replaceUserInput(result.text);
-      setSelectedAttachments(result.attachments);
+      const outcome: QueuedComposerActionOutcome = result
+        ? { kind: "edited", draft: result }
+        : { kind: "failed" };
+      settleQueuedAction(id, "edit", outcome);
     },
-    [agentId, queueWriter, replaceUserInput, setSelectedAttachments],
+    [
+      agentId,
+      beginQueuedAction,
+      client,
+      queuedMessages,
+      queueWriter,
+      serverQueuesAgentMessages,
+      setSendError,
+      settleQueuedAction,
+      t,
+    ],
   );
 
   const handleSendQueuedNow = useCallback(
     async (id: string) => {
-      if (!sendAgentMessageRef.current && !onSubmitMessageRef.current) return;
+      if (serverQueuesAgentMessages) {
+        if (!client || !beginQueuedAction(id, "send")) return;
+        const queued = queuedMessages.find((message) => message.id === id);
+        if (!queued) {
+          settleQueuedAction(id, "send", { kind: "failed" });
+          return;
+        }
+        const wirePayload = splitComposerAttachmentsForSubmit(queued.attachments, {
+          format: resolveComposerAttachmentSubmitFormat({
+            supportsForgeAttachments: supportsForgeSearch,
+          }),
+        });
+        const clientMessageId = id;
+        const submission = createMessageSubmissionWriter(serverId);
+        submission.begin(
+          agentId,
+          createUserMessage({
+            clientMessageId,
+            text: queued.text,
+            timestamp: new Date(),
+            images: wirePayload.images,
+            attachments: wirePayload.attachments,
+          }),
+        );
+        try {
+          await client.dispatchQueuedAgentMessage(agentId, id);
+          submission.accept(agentId, clientMessageId);
+          settleQueuedAction(id, "send", { kind: "sent" });
+        } catch (error) {
+          submission.reject(agentId, clientMessageId);
+          settleQueuedAction(id, "send", { kind: "failed" });
+          setSendError(error instanceof Error ? error.message : t("composer.errors.failedToSend"));
+        }
+        return;
+      }
+
+      if (
+        (!sendAgentMessageRef.current && !onSubmitMessageRef.current) ||
+        !beginQueuedAction(id, "send")
+      ) {
+        return;
+      }
       // Reuse the regular send path; server-side send atomically interrupts any active run.
       const result = await sendQueuedComposerMessageNow({
         agentId,
@@ -1844,15 +2116,35 @@ function ComposerContentImpl({
         failedToSendMessage: t("composer.errors.failedToSend"),
       });
       if (result.status === "failed") {
+        settleQueuedAction(id, "send", { kind: "failed" });
         setSendError(result.errorMessage);
+        return;
       }
+      let outcome: QueuedComposerActionOutcome = { kind: "failed" };
+      if (result.status === "submitted") {
+        outcome = { kind: "sent" };
+      }
+      settleQueuedAction(id, "send", outcome);
     },
-    [agentId, queueWriter, submitMessage, t],
+    [
+      agentId,
+      beginQueuedAction,
+      client,
+      queuedMessages,
+      queueWriter,
+      serverId,
+      serverQueuesAgentMessages,
+      setSendError,
+      settleQueuedAction,
+      submitMessage,
+      supportsForgeSearch,
+      t,
+    ],
   );
 
   const handleQueue = useCallback(
     (payload: MessagePayload) => {
-      const outgoingAttachments = buildOutgoingAttachments(attachments);
+      const outgoingAttachments = buildOutgoingAttachments(getCurrentDraft().attachments);
       const clientSlashCommand = resolveClientSlashCommand({
         text: payload.text,
         hasAttachments: outgoingAttachments.length > 0,
@@ -1860,12 +2152,26 @@ function ComposerContentImpl({
       if (clientSlashCommand && runClientSlashCommand(clientSlashCommand)) {
         return;
       }
-      queueMessage(payload.text, outgoingAttachments);
+      void queueMessage(payload.text, outgoingAttachments).catch((error) => {
+        console.error("[Composer] Failed to queue message:", error);
+        setSendError(error instanceof Error ? error.message : t("composer.errors.failedToSend"));
+      });
     },
-    [attachments, buildOutgoingAttachments, queueMessage, runClientSlashCommand],
+    [
+      buildOutgoingAttachments,
+      getCurrentDraft,
+      queueMessage,
+      runClientSlashCommand,
+      setSendError,
+      t,
+    ],
   );
 
   const hasSendableContent = userInput.trim().length > 0 || selectedAttachments.length > 0;
+  const pendingAction = draftCoordinatorState?.pending ?? null;
+  const pendingQueuedAction = pendingAction?.kind === "queued" ? pendingAction : null;
+  const isDraftAttemptPending = pendingAction?.kind === "draft";
+  const queuedActionsDisabled = pendingQueuedAction !== null || isDraftAttemptPending;
 
   // Handle keyboard navigation for command autocomplete.
   const handleCommandKeyPress = useCallback(
@@ -2196,6 +2502,7 @@ function ComposerContentImpl({
         handleRemoveAttachment,
         labels: {
           openImage: t("composer.attachments.openImage"),
+          openFile: t("message.actions.openFile"),
           removeImage: t("composer.attachments.removeImage"),
           removeFile: t("composer.attachments.removeFile"),
           openGithub: (kind: string, numberLabel: string) =>
@@ -2213,22 +2520,37 @@ function ComposerContentImpl({
         queuedMessages,
         handleEditQueuedMessage,
         handleSendQueuedNow,
+        actionsDisabled: queuedActionsDisabled,
+        pendingAction: pendingQueuedAction,
         editLabel: t("composer.attachments.editQueuedMessage"),
         sendNowLabel: t("composer.attachments.sendQueuedMessageNow"),
       }),
-    [handleEditQueuedMessage, handleSendQueuedNow, queuedMessages, t],
+    [
+      handleEditQueuedMessage,
+      handleSendQueuedNow,
+      pendingQueuedAction,
+      queuedActionsDisabled,
+      queuedMessages,
+      t,
+    ],
   );
 
   const messageInputContainerRef = useRef<View>(null);
 
   const isSubmitLoadingVisible =
-    isProcessing || isSubmitLoading || isUploadingFile || pendingNativeImagePastes > 0;
+    isProcessing ||
+    isDraftAttemptPending ||
+    isSubmitLoading ||
+    isUploadingFile ||
+    pendingNativeImagePastes > 0;
   const isSubmitDisabled =
-    isSubmitLoadingVisible || (waitForForgeAutoAttachOnSubmit && forgeAutoAttach.isResolving);
+    isSubmitLoadingVisible ||
+    pendingQueuedAction !== null ||
+    (waitForForgeAutoAttachOnSubmit && forgeAutoAttach.isResolving);
 
   // Disable drops while submitting/uploading: the submit path clears and restores attachments,
-  // so a drop in that window would be lost or land on a locked draft. `disabled` hides the
-  // backdrop and rejects the drop atomically, instead of accepting a drop with no feedback.
+  // so a drop in that window would be lost or land on a locked draft. Background pull request
+  // resolution only gates submission and does not own the draft, so it leaves file drop enabled.
   useFileDrop(
     {
       onFiles: addImages,
@@ -2506,6 +2828,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
 
 const ThemedPencil = withUnistyles(Pencil);
 const ThemedArrowUp = withUnistyles(ArrowUp);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedCircleDot = withUnistyles(CircleDot);
 const ThemedAudioLines = withUnistyles(AudioLines);

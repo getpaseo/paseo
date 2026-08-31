@@ -28,6 +28,9 @@ export const CLIENT_CAPS = {
   // reconstructed timeline replay after 2027-02-21 once the client floor supports invalidation.
   timelineReplacementInvalidation: "timeline_replacement_invalidation",
   browserHost: "browser_host",
+  // The daemon sends queue.agent_message.updated only to clients that know the
+  // event type; the compatibility cleanup site lives at the broadcast filter.
+  agentMessageQueueEvents: "agent_message_queue_events",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];

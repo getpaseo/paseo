@@ -407,7 +407,7 @@ async function expectInterruptedTurnOrderAfterReconnect(
     await page.getByRole("button", { name: "Send queued message now" }).click();
     const promptRow = page.getByTestId("user-message").filter({ hasText: prompt });
     await expect(promptRow).toBeVisible();
-    await gate.waitForServerMessage("send_agent_message_response");
+    await gate.waitForServerMessage("queue.agent_message.dispatch.response");
     await gate.drop();
     await agent.client.waitForFinish(agent.agentId, 30_000);
     gate.setAgentStreamSuppressed(false);
@@ -1220,7 +1220,7 @@ test.describe("Agent message submission", () => {
     await replaySteeredSleepTurnInBrowser(page, testInfo, "codex");
   });
 
-  test("restores overlapping queued sends when their connection fails", async ({
+  test("restores queued sends when their dispatch request is rejected", async ({
     page,
   }, testInfo) => {
     test.setTimeout(120_000);
@@ -1236,9 +1236,11 @@ test.describe("Agent message submission", () => {
       await queueMessage(page, prompts[1]);
       await page.getByRole("button", { name: "Send queued message now" }).first().click();
       await gate.waitForRequest(1);
-      await page.getByRole("button", { name: "Send queued message now" }).first().click();
+      gate.reject(0);
+      await expectQueuedSendFailuresRestored(page, prompts);
+      await page.getByRole("button", { name: "Send queued message now" }).last().click();
       await gate.waitForRequest(2);
-      await gate.disconnect();
+      gate.reject(1);
       await expectQueuedSendFailuresRestored(page, prompts);
     } finally {
       await agent.cleanup();

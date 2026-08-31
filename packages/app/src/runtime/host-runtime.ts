@@ -60,6 +60,10 @@ import { createMessageSubmissionWriter } from "@/composer/submission/writer";
 import { resolveComposerAttachmentSubmitFormat } from "@/composer/attachments/submit";
 import { encodeImages } from "@/utils/encode-images";
 import { DirectorySync, type RefreshAgentDirectoryResult } from "@/runtime/directory-sync";
+import {
+  AgentMessageQueueSync,
+  toAgentMessageQueueConnection,
+} from "@/runtime/agent-message-queue-sync";
 import { ReplicaCache } from "@/runtime/replica-cache";
 import type { ReplicaRowStore } from "@/runtime/replica-cache/row-store";
 import { createReplicaRowStore } from "@/runtime/replica-cache/row-store-factory";
@@ -1395,6 +1399,7 @@ export class HostRuntimeStore {
   private queuedAgentDrainInFlight = new Set<string>();
   private directorySyncByServer = new Map<string, DirectorySync>();
   private timelineReplicaByServer = new Map<string, TimelineReplica>();
+  private agentMessageQueueSyncByServer = new Map<string, AgentMessageQueueSync>();
   private configuredOverrideBootstrapInFlight: Promise<void> | null = null;
   private bootPromise: Promise<void> | null = null;
   private storage: HostRuntimeStorage;
@@ -1644,14 +1649,23 @@ export class HostRuntimeStore {
     rekeyMap(this.lastConnectionStatusByServer, oldServerId, newServerId);
     rekeyMap(this.connectionStatusStartedAtByServer, oldServerId, newServerId);
     this.replicaCache.reconcileServerId(oldServerId, newServerId);
+    const queuedMessages = useSessionStore.getState().sessions[oldServerId]?.queuedMessages;
     projectIconCache.reconcileServerId(oldServerId, newServerId);
     this.directorySyncByServer.get(oldServerId)?.dispose();
     this.directorySyncByServer.delete(oldServerId);
     this.timelineReplicaByServer.delete(oldServerId);
+    const queueSync =
+      this.agentMessageQueueSyncByServer.get(oldServerId) ?? new AgentMessageQueueSync(newServerId);
+    this.agentMessageQueueSyncByServer.delete(oldServerId);
+    queueSync.adoptServerId(newServerId);
+    this.agentMessageQueueSyncByServer.set(newServerId, queueSync);
     const directory = new DirectorySync(
       newServerId,
       {
         onAgentStoppedRunning: (agentId) => this.drainQueuedAgentMessage(newServerId, agentId),
+        onAgentInactive: (agentId, source) => queueSync.removeAgent(agentId, source),
+        onAgentDirectoryCommitted: (agentIds, source) =>
+          queueSync.directoryCommitted(agentIds, source),
         markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
         markAgentReady: () => controller.markAgentDirectorySyncReady(),
         markAgentError: (error) => controller.markAgentDirectorySyncError(error),
@@ -1671,14 +1685,19 @@ export class HostRuntimeStore {
     const snapshot = controller.getSnapshot();
     this.clearHostReplica(oldServerId);
     this.syncSessionReplica(newServerId, snapshot);
-    directory.connectionChanged({
+    if (queuedMessages && queuedMessages.size > 0) {
+      useSessionStore.getState().setQueuedMessages(newServerId, queuedMessages);
+    }
+    const connection = {
       client: snapshot.client,
       status: snapshot.connectionStatus === "online" ? "online" : "offline",
       source: {
         clientGeneration: snapshot.clientGeneration,
         connectionEpoch: snapshot.connectionEpoch,
       },
-    });
+    } as const;
+    queueSync.connectionChanged(toAgentMessageQueueConnection(connection));
+    directory.connectionChanged(connection);
 
     const listeners = this.serverListeners.get(oldServerId);
     if (listeners) {
@@ -2042,6 +2061,8 @@ export class HostRuntimeStore {
       this.directorySyncByServer.get(serverId)?.dispose();
       this.directorySyncByServer.delete(serverId);
       this.timelineReplicaByServer.delete(serverId);
+      this.agentMessageQueueSyncByServer.get(serverId)?.dispose();
+      this.agentMessageQueueSyncByServer.delete(serverId);
       this.clearHostReplica(serverId);
       void controller.stop();
       this.emit(serverId);
@@ -2066,10 +2087,15 @@ export class HostRuntimeStore {
       });
       this.controllers.set(host.serverId, controller);
       useSessionStore.getState().initializeSession(host.serverId, null);
+      const queueSync = new AgentMessageQueueSync(host.serverId);
+      this.agentMessageQueueSyncByServer.set(host.serverId, queueSync);
       const directory = new DirectorySync(
         host.serverId,
         {
           onAgentStoppedRunning: (agentId) => this.drainQueuedAgentMessage(host.serverId, agentId),
+          onAgentInactive: (agentId, source) => queueSync.removeAgent(agentId, source),
+          onAgentDirectoryCommitted: (agentIds, source) =>
+            queueSync.directoryCommitted(agentIds, source),
           markAgentLoading: () => controller.markAgentDirectorySyncLoading(),
           markAgentReady: () => controller.markAgentDirectorySyncReady(),
           markAgentError: (error) => controller.markAgentDirectorySyncError(error),
@@ -2132,15 +2158,18 @@ export class HostRuntimeStore {
       return;
     }
     const snapshot = controller.getSnapshot();
-    const directory = this.directorySyncByServer.get(serverId);
-    directory?.connectionChanged({
+    const connection = {
       client: snapshot.client,
       status: snapshot.connectionStatus === "online" ? "online" : "offline",
       source: {
         clientGeneration: snapshot.clientGeneration,
         connectionEpoch: snapshot.connectionEpoch,
       },
-    });
+    } as const;
+    this.agentMessageQueueSyncByServer
+      .get(serverId)
+      ?.connectionChanged(toAgentMessageQueueConnection(connection));
+    this.directorySyncByServer.get(serverId)?.connectionChanged(connection);
     const previousStatus = this.lastConnectionStatusByServer.get(serverId);
     const statusChanged = previousStatus !== snapshot.connectionStatus;
     const isUnavailable =
@@ -2165,6 +2194,9 @@ export class HostRuntimeStore {
   }
 
   drainQueuedAgentMessage(serverId: string, agentId: string): void {
+    if (this.agentMessageQueueSyncByServer.get(serverId)?.isDaemonQueueEnabled()) {
+      return;
+    }
     const drainKey = `${serverId}:${agentId}`;
     if (this.queuedAgentDrainInFlight.has(drainKey)) return;
     const store = useSessionStore.getState();

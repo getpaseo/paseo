@@ -16,6 +16,9 @@ export interface PendingForegroundRun {
   stagedEvents: AgentStreamEvent[];
   turnId: string | null;
   started: boolean;
+  startAcknowledged: Promise<void>;
+  acknowledgeStart: () => void;
+  failStart: (error: Error) => void;
   settled: boolean;
   settledPromise: Promise<void>;
   resolveSettled: () => void;
@@ -201,6 +204,9 @@ export class AgentRunState {
 
   private clearRun(agentId: string, run: TrackedAgentRun): void {
     this.runs.delete(agentId);
+    if (run.kind === "foreground" && !run.started) {
+      run.failStart(new Error(`Agent ${agentId} run finished before starting`));
+    }
     settleTrackedRun(run);
   }
 }
@@ -265,11 +271,21 @@ export class ForegroundTurnStream {
 }
 
 function createPendingForegroundRun(): PendingForegroundRun {
+  let acknowledgeStart!: () => void;
+  let failStart!: (error: Error) => void;
+  const startAcknowledged = new Promise<void>((resolve, reject) => {
+    acknowledgeStart = resolve;
+    failStart = reject;
+  });
+  void startAcknowledged.catch(() => {});
   return {
     ...createTrackedRunState(),
     kind: "foreground",
     turnId: null,
     started: false,
+    startAcknowledged,
+    acknowledgeStart,
+    failStart,
     stagedEvents: [],
   };
 }

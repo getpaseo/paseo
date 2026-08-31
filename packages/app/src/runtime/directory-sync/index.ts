@@ -133,13 +133,23 @@ export class DirectorySync {
     private readonly serverId: string,
     private readonly callbacks: {
       onAgentStoppedRunning: (agentId: string) => void;
+      onAgentInactive: (agentId: string, source: DirectorySourceToken) => void;
+      onAgentDirectoryCommitted: (
+        agentIds: ReadonlySet<string>,
+        source: DirectorySourceToken,
+      ) => void;
       markAgentLoading: () => void;
       markAgentReady: () => void;
       markAgentError: (error: string) => void;
     },
     private readonly checkpoints?: DirectoryCheckpointStorage,
   ) {
-    this.agents = new AgentDirectoryReplica(serverId, callbacks.onAgentStoppedRunning);
+    this.agents = new AgentDirectoryReplica(serverId, {
+      onStoppedRunning: callbacks.onAgentStoppedRunning,
+      onAgentInactive: (agentId) => callbacks.onAgentInactive(agentId, this.connection.source),
+      onDirectoryCommitted: (agentIds) =>
+        callbacks.onAgentDirectoryCommitted(agentIds, this.connection.source),
+    });
     this.workspaces = new WorkspaceDirectoryReplica(serverId);
   }
 

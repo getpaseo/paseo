@@ -17,6 +17,7 @@ import type { DaemonConfigStore, MutableDaemonConfig } from "./daemon-config-sto
 import {
   type ServerInfoStatusPayload,
   type SessionOutboundMessage,
+  type QueuedAgentMessageQueuePayload,
   type WorkspaceSetupSnapshot,
   type WSHelloMessage,
   type WSInboundMessage,
@@ -26,6 +27,10 @@ import {
   type WSOutboundMessage,
   wrapSessionMessage,
 } from "./messages.js";
+import {
+  createAgentMessageQueueService,
+  type AgentMessageQueueService,
+} from "./agent-message-queue.js";
 import { asUint8Array, decodeBinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import type { TerminalActivity } from "@getpaseo/protocol/terminal-activity";
 import type { HostnamesConfig } from "./hostnames.js";
@@ -577,6 +582,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly workspaceSetupRuntime: WorkspaceSetupRuntime;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private onLifecycleIntent!: ((intent: SessionLifecycleIntent) => void) | null;
+  private readonly agentMessageQueue: AgentMessageQueueService;
   private onBranchChanged!:
     | ((workspaceId: string, oldBranch: string | null, newBranch: string | null) => void)
     | null;
@@ -725,6 +731,17 @@ export class VoiceAssistantWebSocketServer {
       filePath: join(paseoHome, "push-tokens.json"),
     });
     this.pushNotificationSender = pushNotificationSender ?? this.pushNotifications;
+
+    this.agentMessageQueue = createAgentMessageQueueService({
+      paseoHome,
+      agentManager: this.agentManager,
+      agentStorage: this.agentStorage,
+      logger: this.logger.child({ module: "agent-message-queue" }),
+      onQueueUpdated: (queue) => this.broadcastAgentMessageQueueUpdated(queue),
+    });
+    void this.agentMessageQueue.start().catch((error) => {
+      this.logger.error({ err: error }, "Failed to start agent message queue");
+    });
 
     this.agentManager.setAgentAttentionCallback((params) => {
       void this.broadcastAgentAttention(params).catch((err) => {
@@ -1013,6 +1030,7 @@ export class VoiceAssistantWebSocketServer {
 
   public prepareForShutdown(): void {
     this.connectionLifecycle = "stopping";
+    this.agentMessageQueue.stop();
   }
 
   public beginAcceptingConnections(): void {
@@ -1408,6 +1426,7 @@ export class VoiceAssistantWebSocketServer {
       worktreesRoot: this.worktreesRoot,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
+      agentMessageQueue: this.agentMessageQueue,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       workspaceLabelService: this.workspaceLabelService ?? undefined,
@@ -1757,6 +1776,8 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        // COMPAT(agentMessageQueue): added in v0.6.2, remove gate after 2027-02-26.
+        agentMessageQueue: true,
       },
     };
   }
@@ -1789,6 +1810,24 @@ export class VoiceAssistantWebSocketServer {
 
   private broadcastDaemonConfigChanged(config: MutableDaemonConfig): void {
     this.broadcast(this.createDaemonConfigChangedMessage(config));
+  }
+
+  private broadcastAgentMessageQueueUpdated(queue: QueuedAgentMessageQueuePayload): void {
+    // COMPAT(agentMessageQueueEvents): added in v0.6.2. Remove the per-source
+    // capability filter after 2027-02-26 once the supported client floor is >= v0.6.2.
+    const capableSockets = [...this.sessions].flatMap(([socket, connection]) =>
+      connection.kind === "trusted" &&
+      connection.session.supportsForSource(CLIENT_CAPS.agentMessageQueueEvents, socket)
+        ? [socket]
+        : [],
+    );
+    this.sendMessageToSockets(
+      capableSockets,
+      wrapSessionMessage({
+        type: "queue.agent_message.updated",
+        payload: queue,
+      }),
+    );
   }
 
   private bindSocketHandlers(ws: WebSocketLike): void {

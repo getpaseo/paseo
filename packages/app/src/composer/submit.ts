@@ -11,11 +11,10 @@ export interface AgentInputSubmitActionInput<TAttachment> {
   forceSend?: boolean;
   isAgentRunning: boolean;
   canSubmit: boolean;
-  queueMessage: (input: { message: string; attachments: TAttachment[] }) => void;
+  queueMessage: (input: { message: string; attachments: TAttachment[] }) => Promise<void> | void;
   submitMessage: (input: { message: string; attachments: TAttachment[] }) => Promise<void>;
-  clearDraft: (lifecycle: "sent" | "abandoned") => void;
-  setUserInput: (text: string) => void;
-  setAttachments: (attachments: TAttachment[]) => void;
+  beginDraftAttempt: (input: { message: string; attachments: TAttachment[] }) => number | null;
+  settleDraftAttempt: (input: { attemptId: number; outcome: "accepted" | "failed" }) => void;
   setSendError: (message: string | null) => void;
   setIsProcessing: (isProcessing: boolean) => void;
   onSubmitError?: (error: unknown) => void;
@@ -43,32 +42,43 @@ export async function submitAgentInput<TAttachment>(
   }
 
   if (input.isAgentRunning && !input.forceSend) {
-    input.queueMessage({ message: trimmedMessage, attachments });
-    if (shouldClearOnSubmit) {
-      input.setUserInput("");
-      input.setAttachments([]);
+    try {
+      // queueMessage owns the synchronous clear and reconciles a failed
+      // queued draft with input entered during its network round-trip.
+      await input.queueMessage({ message: trimmedMessage, attachments });
+      return "queued";
+    } catch (error) {
+      input.onSubmitError?.(error);
+      input.setSendError(
+        error instanceof Error
+          ? error.message
+          : (input.failedToSendMessage ?? i18n.t("composer.errors.failedToSend")),
+      );
+      return "failed";
     }
-    return "queued";
   }
 
-  // Clear immediately so the submitted timeline row and composer state stay in sync.
+  let draftAttemptId: number | null = null;
   if (shouldClearOnSubmit) {
-    input.setUserInput("");
-    input.setAttachments([]);
+    draftAttemptId = input.beginDraftAttempt({ message: trimmedMessage, attachments });
+    if (draftAttemptId === null) {
+      return "noop";
+    }
   }
   input.setSendError(null);
   input.setIsProcessing(true);
 
   try {
     await input.submitMessage({ message: trimmedMessage, attachments });
-    input.clearDraft("sent");
+    if (draftAttemptId !== null) {
+      input.settleDraftAttempt({ attemptId: draftAttemptId, outcome: "accepted" });
+    }
     input.setIsProcessing(false);
     return "submitted";
   } catch (error) {
     input.onSubmitError?.(error);
-    if (shouldClearOnSubmit) {
-      input.setUserInput(trimmedMessage);
-      input.setAttachments(attachments);
+    if (draftAttemptId !== null) {
+      input.settleDraftAttempt({ attemptId: draftAttemptId, outcome: "failed" });
     }
     input.setSendError(
       error instanceof Error

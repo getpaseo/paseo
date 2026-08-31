@@ -7276,13 +7276,21 @@ test("fires onAgentArchived for archived parent and cascaded children", async ()
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
   const archivedIds: string[] = [];
+  const beforeSetArchivedIds: string[] = [];
+  const additionalArchivedIds: string[] = [];
   const manager = new AgentManager({
     clients: { codex: new TestAgentClient() },
     registry: storage,
     logger,
   });
+  manager.addAgentArchivedCallback((agentId) => {
+    beforeSetArchivedIds.push(agentId);
+  });
   manager.setAgentArchivedCallback((agentId) => {
     archivedIds.push(agentId);
+  });
+  manager.addAgentArchivedCallback((agentId) => {
+    additionalArchivedIds.push(agentId);
   });
 
   const liveParent = await manager.createAgent(
@@ -7301,7 +7309,9 @@ test("fires onAgentArchived for archived parent and cascaded children", async ()
   );
 
   await manager.archiveAgent(liveParent.id);
+  expect([...beforeSetArchivedIds].sort()).toEqual([liveChild.id, liveParent.id].sort());
   expect([...archivedIds].sort()).toEqual([liveChild.id, liveParent.id].sort());
+  expect([...additionalArchivedIds].sort()).toEqual([liveChild.id, liveParent.id].sort());
 });
 
 test("fires onAgentArchived for stored-only snapshot archives", async () => {
@@ -7331,6 +7341,37 @@ test("fires onAgentArchived for stored-only snapshot archives", async () => {
 
   await manager.archiveSnapshot(storedOnly.id, new Date().toISOString());
   expect(archivedIds).toEqual([storedOnly.id]);
+});
+
+test("streamAgent marks a run in-flight before the provider turn starts", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-pending-run-"));
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent(
+      {
+        provider: "codex",
+        cwd: workdir,
+        title: "Pending run marker",
+      },
+      undefined,
+      {},
+    );
+
+    const stream = manager.streamAgent(agent.id, "hello");
+    expect(manager.hasInFlightRun(agent.id)).toBe(true);
+
+    for await (const _event of stream) {
+      // Drain the foreground stream so the pending run settles before the test exits.
+    }
+
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("unarchiveSnapshot skips native provider unarchive for active records", async () => {

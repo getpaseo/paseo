@@ -52,6 +52,7 @@ $PASEO_HOME/
 ├── agents/
 │   └── {sanitized-cwd}/
 │       └── {agentId}.json               # One file per agent
+├── agent-message-queue.json             # Queued prompts pending daemon-side replay
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
 ├── projects/
@@ -171,6 +172,45 @@ Each agent is stored as a separate JSON file, grouped by project directory.
 Terminals are live daemon state, not persisted JSON records. A terminal carries a `workspaceId` while it is running; workspace-scoped terminal lists include only terminals with the matching `workspaceId`. Legacy live terminals without an owner remain visible to unscoped terminal reads but contribute to no workspace status.
 
 Terminal activity contributes to the workspace status bucket **per `workspaceId`**: a working terminal drives `running` onto the workspace it carries only. Same-`cwd` siblings are untouched; terminal visibility is likewise `workspaceId`-scoped.
+
+---
+
+## Agent Message Queue
+
+**Path:** `$PASEO_HOME/agent-message-queue.json`
+
+Single file containing queued prompts grouped by agent id. Writes are serialized in memory and persisted atomically. Each record stores the full dispatch payload needed for daemon-side replay and multi-client editing: text, encoded images, structured attachments, and creation time. Each agent queue also has a monotonic revision so clients can ignore stale queue broadcasts and reconnect snapshots.
+
+List responses carry the complete queued payload (`images`, `attachments`) plus summary counts. Queue update broadcasts fan out to every capable client on every queue change, so they omit both image and structured attachment payload arrays while `imageCount` and `attachmentCount` stay accurate; clients hydrate unseen payloads through the list RPC. Broadcasts are sent only to clients that advertise the queue-event client capability, so older clients can connect to newer daemons without receiving an unknown event type. The queue service replays the same payload through the normal agent send path once the agent has no in-flight run, retrying failed dispatches on an escalating delay ladder before suspending until the next agent event. On daemon startup, persisted queues are scheduled for non-internal, non-archived stored agents even before those agents are lazily loaded into memory; queue records and revision tombstones with neither a stored nor live agent are removed and broadcast as empty. Archiving or deleting an agent discards that agent's pending queued messages; enqueue eligibility is re-checked inside the store's serialized mutation so a concurrent archive cannot strand a new record. A client-supplied message id deduplicates only against records that are still pending; the queue does not keep a delivered-message ledger.
+
+Queued records are durable while waiting in the queue. Per-agent revisions are retained as queue tombstones while the agent record still exists, including after archive, so reconnecting clients can clear stale local mirrors and ignore stale broadcasts across archive/unarchive cycles. Hard delete removes the tombstone. Dispatch removes a record before starting the agent turn, registers a foreground turn-start acknowledgement before consuming the provider iterator, and waits without a timeout. A provider start failure restores the record at the front of the queue and advances the queue revision before retrying. An indefinitely hung provider start blocks that agent's queue rather than risking duplicate delivery from a late start.
+
+Provider acknowledgement cannot be atomically committed with the queue file. A daemon crash after the durable removal but before Paseo observes the provider acknowledgement can therefore lose that queue record whether or not the provider actually started the turn. Keeping the record until acknowledgement would choose the opposite failure mode: replay after restart could duplicate a turn the provider already accepted. Paseo deliberately does not use timeout retries to pretend this boundary is exactly-once.
+
+The one-time legacy local-to-daemon queue migration has a separate acknowledgement-loss window. The client keeps a local message pending until its enqueue RPC is acknowledged. If the daemon accepts the record, dispatches it, and removes it from the queue before that response is lost, reconnect migration retries the same `messageId`; pending-record deduplication no longer sees it and the turn can be duplicated. This migration edge is deliberately at-least-once and does not justify a delivered-message ledger.
+
+If a client that already mirrored a daemon queue reconnects to an older daemon without the queue capability, it removes daemon-confirmed records from the legacy local mirror and retains only the unacknowledged migration suffix. Confirmed records remain owned by the newer daemon's queue file and reappear when that daemon version is restored; the old local drain must never dispatch them a second time.
+
+If the queue file is invalid JSON or fails schema validation, the daemon renames it with a `.corrupt-<timestamp>-<uuid>` suffix, logs the quarantine path, and starts with an empty queue. This favors daemon availability and forensic recovery of the original bytes over retaining unparseable queue state; queued messages in that file are not replayed automatically. Clients treat the first snapshot from each new connection as authoritative, so stale in-memory mirrors are cleared even when the recovered store has restarted its revisions.
+
+```ts
+{
+  version: 1,
+  queues: {
+    [agentId: string]: Array<{
+      id: string
+      agentId: string
+      text: string
+      images: Array<{ data: string, mimeType: string }>
+      attachments: AgentAttachment[]
+      createdAt: string
+    }>
+  },
+  revisions: {
+    [agentId: string]: number
+  }
+}
+```
 
 ---
 
