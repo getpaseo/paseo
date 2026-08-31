@@ -39,6 +39,10 @@ export function checkoutCommitsQueryKey(serverId: string, cwd: string) {
   return ["checkoutCommits", serverId, cwd] as const;
 }
 
+export function commitLogQueryKey(serverId: string, cwd: string, scope: "head" | "all") {
+  return ["commitLog", serverId, cwd, scope] as const;
+}
+
 export function checkoutCommitFileDiffQueryKey(
   serverId: string,
   cwd: string,
@@ -65,6 +69,10 @@ export async function invalidateCheckoutGitQueriesForClient(
     queryClient.invalidateQueries({
       queryKey: checkoutCommitsQueryKey(identity.serverId, identity.cwd),
     }),
+    // Both scopes at once: the predicate matches on key[0..2] only.
+    queryClient.invalidateQueries({
+      predicate: checkoutQueryPredicate("commitLog", identity),
+    }),
     queryClient.invalidateQueries({
       predicate: checkoutQueryPredicate(prPaneTimelineQueryKind, identity),
     }),
@@ -85,6 +93,7 @@ export async function invalidateCheckoutGitQueriesForServer(
     "checkoutStatus",
     "checkoutPrStatus",
     "checkoutCommits",
+    "commitLog",
     prPaneTimelineQueryKind,
     prPanePipelineQueryKind,
   ];

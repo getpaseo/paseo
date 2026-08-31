@@ -4,6 +4,7 @@ import {
   checkoutDiffQueryKey,
   checkoutCommitsQueryKey,
   checkoutPrStatusQueryKey,
+  commitLogQueryKey,
   checkoutStatusQueryKey,
   invalidateCheckoutGitQueriesForClient,
   invalidateCheckoutGitQueriesForServer,
@@ -160,6 +161,40 @@ describe("checkout query keys", () => {
     ).toBe(false);
     expect(
       queryClient.getQueryState(checkoutStatusQueryKey(otherServerId, cwd))?.isInvalidated,
+    ).toBe(false);
+
+    queryClient.clear();
+  });
+  it("invalidates both commit log scopes for a checkout and server-wide", async () => {
+    const queryClient = new QueryClient();
+    const otherServerId = "server-2";
+
+    for (const scope of ["head", "all"] as const) {
+      queryClient.setQueryData(commitLogQueryKey(serverId, cwd, scope), { pages: [] });
+      queryClient.setQueryData(commitLogQueryKey(serverId, "/tmp/other", scope), { pages: [] });
+      queryClient.setQueryData(commitLogQueryKey(otherServerId, cwd, scope), { pages: [] });
+    }
+
+    await invalidateCheckoutGitQueriesForClient(queryClient, { serverId, cwd });
+
+    for (const scope of ["head", "all"] as const) {
+      // The predicate matches on key[0..2], so a commit or push refreshes both
+      // scopes rather than leaving the unselected one stale.
+      expect(
+        queryClient.getQueryState(commitLogQueryKey(serverId, cwd, scope))?.isInvalidated,
+      ).toBe(true);
+      expect(
+        queryClient.getQueryState(commitLogQueryKey(serverId, "/tmp/other", scope))?.isInvalidated,
+      ).toBe(false);
+    }
+
+    await invalidateCheckoutGitQueriesForServer(queryClient, serverId);
+
+    expect(
+      queryClient.getQueryState(commitLogQueryKey(serverId, "/tmp/other", "head"))?.isInvalidated,
+    ).toBe(true);
+    expect(
+      queryClient.getQueryState(commitLogQueryKey(otherServerId, cwd, "head"))?.isInvalidated,
     ).toBe(false);
 
     queryClient.clear();

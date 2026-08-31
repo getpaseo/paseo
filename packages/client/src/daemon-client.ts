@@ -34,6 +34,8 @@ import type {
   GitSetupOptions,
   CheckoutStatusResponse,
   CheckoutCommit,
+  CommitLogEntry,
+  CommitLogScope,
   ParsedDiffFile,
   CheckoutCommitResponse,
   CheckoutMergeResponse,
@@ -398,6 +400,16 @@ type SubscribeCheckoutDiffPayload = Extract<
 >["payload"];
 type CheckoutDiffPayload = Omit<SubscribeCheckoutDiffPayload, "subscriptionId">;
 type CheckoutCommitPayload = CheckoutCommitResponse["payload"];
+
+export interface CommitLogPageResult {
+  scope: CommitLogScope;
+  commits: CommitLogEntry[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  cursorExpired: boolean;
+  pinnedTipCount: number;
+  pinnedTipsTruncated: boolean;
+}
 type CheckoutMergePayload = CheckoutMergeResponse["payload"];
 type CheckoutMergeFromBasePayload = CheckoutMergeFromBaseResponse["payload"];
 type CheckoutPullPayload = CheckoutPullResponse["payload"];
@@ -3878,6 +3890,38 @@ export class DaemonClient {
       throw new Error(payload.error.message);
     }
     return { baseRef: payload.baseRef, commits: payload.commits };
+  }
+
+  async listCommitHistory(input: {
+    cwd: string;
+    scope: CommitLogScope;
+    limit: number;
+    cursor?: string;
+    requestId?: string;
+  }): Promise<CommitLogPageResult> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"checkout.commits.list_history.response">({
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        message: {
+          type: "checkout.commits.list_history.request",
+          cwd: input.cwd,
+          scope: input.scope,
+          page: { limit: input.limit, ...(input.cursor ? { cursor: input.cursor } : {}) },
+        },
+        timeout: 60000,
+      });
+    if (payload.error) {
+      throw new Error(payload.error.message);
+    }
+    return {
+      scope: payload.scope,
+      commits: payload.commits,
+      nextCursor: payload.pageInfo.nextCursor,
+      hasMore: payload.pageInfo.hasMore,
+      cursorExpired: payload.cursorExpired,
+      pinnedTipCount: payload.pinnedTipCount,
+      pinnedTipsTruncated: payload.pinnedTipsTruncated,
+    };
   }
 
   async getCommitFileDiff(

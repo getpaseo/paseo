@@ -6,6 +6,7 @@ import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import type {
   BranchSuggestionsRequest,
   CheckoutCommitsListRequest,
+  CheckoutCommitsListHistoryRequest,
   CheckoutCommitFileDiffRequest,
   CheckoutRefreshRequest,
   CheckoutRenameBranchRequest,
@@ -52,6 +53,11 @@ import {
   listCheckoutCommits,
   getCommitFileDiff,
 } from "../../../utils/checkout-git.js";
+import {
+  CommitLogCursorError,
+  DEFAULT_COMMIT_LOG_PAGE_LIMIT,
+  listCommitLogPage,
+} from "../../../utils/checkout-commit-log.js";
 import { runGitCommand } from "../../../utils/run-git-command.js";
 import { expandTilde } from "../../../utils/path.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
@@ -280,6 +286,52 @@ export class CheckoutSession {
       this.host.emit({
         type: "checkout.commits.list.response",
         payload: { cwd, baseRef: null, commits: [], error: toCheckoutError(error), requestId },
+      });
+    }
+  }
+
+  async handleCommitsListHistoryRequest(msg: CheckoutCommitsListHistoryRequest): Promise<void> {
+    const { cwd, requestId } = msg;
+    const scope = msg.scope ?? "head";
+    const limit = msg.page?.limit ?? DEFAULT_COMMIT_LOG_PAGE_LIMIT;
+
+    try {
+      const page = await listCommitLogPage({
+        cwd: expandTilde(cwd),
+        scope,
+        limit,
+        ...(msg.page?.cursor ? { cursor: msg.page.cursor } : {}),
+      });
+      this.host.emit({
+        type: "checkout.commits.list_history.response",
+        payload: {
+          cwd,
+          scope: page.scope,
+          commits: page.commits,
+          pageInfo: { nextCursor: page.nextCursor, hasMore: page.hasMore },
+          cursorExpired: page.cursorExpired,
+          pinnedTipCount: page.pinnedTipCount,
+          pinnedTipsTruncated: page.pinnedTipsTruncated,
+          error: null,
+          requestId,
+        },
+      });
+    } catch (error) {
+      this.host.emit({
+        type: "checkout.commits.list_history.response",
+        payload: {
+          cwd,
+          scope,
+          commits: [],
+          pageInfo: { nextCursor: null, hasMore: false },
+          // A bad or stale cursor reports both, so the client restarts from page
+          // one instead of showing an error for something it can recover from.
+          cursorExpired: error instanceof CommitLogCursorError,
+          pinnedTipCount: 0,
+          pinnedTipsTruncated: false,
+          error: toCheckoutError(error),
+          requestId,
+        },
       });
     }
   }

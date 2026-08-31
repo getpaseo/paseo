@@ -1,15 +1,27 @@
 import { useCallback, useMemo, type ReactNode } from "react";
 import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { FileDiff, GitCommitHorizontal } from "lucide-react-native";
+import {
+  Columns2,
+  FileDiff,
+  GitCommitHorizontal,
+  ListChevronsDownUp,
+  ListChevronsUpDown,
+  WrapText,
+} from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { PaneContentToolbar } from "@/components/ui/pane-content-toolbar";
+import {
+  PaneContentToolbar,
+  paneContentToolbarIconSize,
+  ToolbarButton,
+} from "@/components/ui/pane-content-toolbar";
+import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
 import { isWeb } from "@/constants/platform";
 import { DiffDocument } from "@/git/diff-document";
-import { ChangesSurface, DiffLayoutToggle, resolveDiffLayout } from "@/git/diff-pane";
+import { ChangesSurface, resolveDiffLayout } from "@/git/diff-pane";
 import { useCommitDiffFiles } from "@/git/use-diff-files";
 import { useChangesPreferences } from "@/hooks/use-changes-preferences";
 import { useAppSettings } from "@/hooks/use-settings";
@@ -19,11 +31,16 @@ import { useAddFileToChat } from "@/panels/use-add-file-to-chat";
 import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
 import { defaultChangesState, changesStateSchema } from "@/panels/changes/state";
+import { commitDiffStateSchema, defaultCommitDiffState } from "@/panels/commit-diff/state";
 import { usePanelState } from "@/panels/use-panel-state";
 import { RenderProfile } from "@/utils/render-profiler";
 
 const ThemedFileDiff = withUnistyles(FileDiff);
 const ThemedGitCommitHorizontal = withUnistyles(GitCommitHorizontal);
+const ThemedColumns2 = withUnistyles(Columns2);
+const ThemedListChevronsDownUp = withUnistyles(ListChevronsDownUp);
+const ThemedListChevronsUpDown = withUnistyles(ListChevronsUpDown);
+const ThemedWrapText = withUnistyles(WrapText);
 
 function useDiffPanelPreferences() {
   const { settings } = useAppSettings();
@@ -46,9 +63,6 @@ function useDiffPanelPreferences() {
   const toggleWrapLines = useCallback(() => {
     void updatePreferences({ wrapLines: !preferences.wrapLines });
   }, [preferences.wrapLines, updatePreferences]);
-  const toggleHideWhitespace = useCallback(() => {
-    void updatePreferences({ hideWhitespace: !preferences.hideWhitespace });
-  }, [preferences.hideWhitespace, updatePreferences]);
   return {
     preferences,
     isCompact,
@@ -56,8 +70,81 @@ function useDiffPanelPreferences() {
     displayPreferences,
     toggleLayout,
     toggleWrapLines,
-    toggleHideWhitespace,
   };
+}
+
+function CommitDiffToolbar({
+  compact,
+  collapsible,
+  allFilesCollapsed,
+  onToggleCollapseAll,
+  layout,
+  onToggleLayout,
+  wrapLines,
+  onToggleWrapLines,
+}: {
+  compact: boolean;
+  collapsible: boolean;
+  allFilesCollapsed: boolean;
+  onToggleCollapseAll: () => void;
+  /** Null when the pane is too narrow for side-by-side. */
+  layout: "unified" | "split" | null;
+  onToggleLayout: () => void;
+  wrapLines: boolean;
+  onToggleWrapLines: () => void;
+}) {
+  const { t } = useTranslation();
+  const iconSize = paneContentToolbarIconSize(compact);
+  return (
+    <PaneContentToolbar style={styles.toolbar} testID="commit-diff-header">
+      <View style={styles.toolbarActions} testID="commit-diff-toolbar">
+        {collapsible ? (
+          <ToolbarButton
+            compact={compact}
+            label={t(
+              allFilesCollapsed
+                ? "workspace.git.diff.expandAllFiles"
+                : "workspace.git.diff.collapseAllFiles",
+            )}
+            testID="commit-diff-toggle-collapse-all"
+            onPress={onToggleCollapseAll}
+          >
+            {allFilesCollapsed ? (
+              <ThemedListChevronsUpDown size={iconSize} uniProps={extraMutedIconColorMapping} />
+            ) : (
+              <ThemedListChevronsDownUp size={iconSize} uniProps={extraMutedIconColorMapping} />
+            )}
+          </ToolbarButton>
+        ) : null}
+        {layout ? (
+          <ToolbarButton
+            compact={compact}
+            label={t(
+              layout === "split"
+                ? "workspace.git.diff.switchToUnified"
+                : "workspace.git.diff.switchToSplit",
+            )}
+            selected={layout === "split"}
+            testID="commit-diff-toggle-layout"
+            onPress={onToggleLayout}
+          >
+            <ThemedColumns2 size={iconSize} uniProps={extraMutedIconColorMapping} />
+          </ToolbarButton>
+        ) : null}
+        <ToolbarButton
+          compact={compact}
+          label={t(
+            wrapLines ? "workspace.git.diff.scrollLongLines" : "workspace.git.diff.wrapLongLines",
+          )}
+          selected={wrapLines}
+          testID="commit-diff-toggle-wrap"
+          onPress={onToggleWrapLines}
+        >
+          <ThemedWrapText size={iconSize} uniProps={extraMutedIconColorMapping} />
+        </ToolbarButton>
+      </View>
+    </PaneContentToolbar>
+  );
 }
 
 function PanelState({
@@ -155,6 +242,7 @@ function CommitDiffPanel() {
   const { serverId, workspaceId, target } = usePaneContext();
   const cwd = useWorkspaceDirectory(serverId, workspaceId);
   const panelPreferences = useDiffPanelPreferences();
+  const [panelState, setPanelState] = usePanelState(commitDiffStateSchema, defaultCommitDiffState);
   invariant(target.kind === "commit_diff", "CommitDiffPanel requires commit_diff target");
   const { files, isLoading, error, capabilityMissing } = useCommitDiffFiles({
     serverId,
@@ -163,6 +251,21 @@ function CommitDiffPanel() {
     enabled: Boolean(cwd),
   });
   const mode = useMemo(() => ({ kind: "commit" as const }), []);
+  const collapsedFilePaths = panelState.collapsedFilePaths;
+  const updateCollapsedFilePaths = useCallback(
+    (paths: string[]) => setPanelState({ collapsedFilePaths: paths }),
+    [setPanelState],
+  );
+  const collapseState = useMemo(
+    () => ({ paths: collapsedFilePaths, onChange: updateCollapsedFilePaths }),
+    [collapsedFilePaths, updateCollapsedFilePaths],
+  );
+  const allFilesCollapsed =
+    files.length > 0 && files.every((file) => collapsedFilePaths.includes(file.path));
+  const handleToggleCollapseAll = useCallback(
+    () => updateCollapsedFilePaths(allFilesCollapsed ? [] : files.map((file) => file.path)),
+    [allFilesCollapsed, files, updateCollapsedFilePaths],
+  );
 
   let body: ReactNode;
   if (!cwd) {
@@ -186,6 +289,7 @@ function CommitDiffPanel() {
     body = (
       <DiffDocument
         files={files}
+        collapseState={collapseState}
         displayPreferences={panelPreferences.displayPreferences}
         mode={mode}
       />
@@ -194,18 +298,16 @@ function CommitDiffPanel() {
 
   return (
     <View style={styles.container} testID="commit-diff-panel">
-      {panelPreferences.canUseSplitLayout ? (
-        <PaneContentToolbar style={styles.toolbar} testID="commit-diff-header">
-          <View style={styles.toolbarActions} testID="commit-diff-toolbar">
-            <DiffLayoutToggle
-              layout={panelPreferences.preferences.layout}
-              isMobile={panelPreferences.isCompact}
-              testID="commit-diff-toggle-layout"
-              onToggle={panelPreferences.toggleLayout}
-            />
-          </View>
-        </PaneContentToolbar>
-      ) : null}
+      <CommitDiffToolbar
+        compact={panelPreferences.isCompact}
+        collapsible={files.length > 0}
+        allFilesCollapsed={allFilesCollapsed}
+        onToggleCollapseAll={handleToggleCollapseAll}
+        layout={panelPreferences.canUseSplitLayout ? panelPreferences.preferences.layout : null}
+        onToggleLayout={panelPreferences.toggleLayout}
+        wrapLines={panelPreferences.preferences.wrapLines}
+        onToggleWrapLines={panelPreferences.toggleWrapLines}
+      />
       <View style={styles.body}>{body}</View>
     </View>
   );

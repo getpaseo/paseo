@@ -81,6 +81,7 @@ const BUILT_IN_SELECTIONS: Record<BuiltInLaunchItemId, NewTabSelection> = {
   changes: { kind: "target", target: { kind: "changes_tree" } },
   diff: { kind: "target", target: { kind: "working_diff" } },
   files: { kind: "target", target: { kind: "files" } },
+  commitLog: { kind: "target", target: { kind: "commit_log" } },
   browser: { kind: "browser" },
   pullRequest: { kind: "target", target: { kind: "pull_request" } },
 };
@@ -119,6 +120,7 @@ export function useWorkspaceTabLaunchCatalog(input: {
     const changesPresentation = getLaunchPresentation("changes_tree");
     const diffPresentation = getLaunchPresentation("working_diff");
     const filesPresentation = getLaunchPresentation("files");
+    const commitLogPresentation = getLaunchPresentation("commit_log");
     const pullRequestPresentation = getLaunchPresentation("pull_request");
     const builtIns: Record<BuiltInLaunchItemId, WorkspaceTabLaunchItem & { hidden?: boolean }> = {
       agent: {
@@ -166,6 +168,15 @@ export function useWorkspaceTabLaunchCatalog(input: {
         disabled: false,
         panelKind: "files",
         launch: launchSelection(BUILT_IN_SELECTIONS.files),
+      },
+      commitLog: {
+        id: "commit-log",
+        label: commitLogPresentation.label(t),
+        Icon: commitLogPresentation.icon,
+        disabled: false,
+        panelKind: "commit_log",
+        hidden: !launcher.showChanges,
+        launch: launchSelection(BUILT_IN_SELECTIONS.commitLog),
       },
       browser: {
         id: "browser",

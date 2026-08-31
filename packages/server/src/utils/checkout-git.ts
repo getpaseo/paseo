@@ -2259,8 +2259,9 @@ export async function getCheckoutStatus(
 // commits list supports paging older base commits.
 const CHECKOUT_BASE_COMMIT_LIMIT = 10;
 // Bytes git emits between fields/records. We split parsed output on these.
-const COMMIT_FIELD_SEPARATOR = "\x00";
-const COMMIT_RECORD_SEPARATOR = "\x1e";
+// Exported so checkout-commit-log.ts frames its own log output identically.
+export const COMMIT_FIELD_SEPARATOR = "\x00";
+export const COMMIT_RECORD_SEPARATOR = "\x1e";
 // Record-separated, NUL-field-separated so arbitrary subject text stays parseable.
 // `%x1e`/`%x00` are git placeholders (literal text in the arg, real bytes in the
 // output) — passing actual NUL bytes as a process arg is rejected by Node.
