@@ -60,6 +60,7 @@ function buildPayloads(input: {
   daemonPort: number | null;
   serviceProxyPublicBaseUrl?: string | null;
   gitMetadata?: { projectSlug: string; currentBranch: string | null };
+  suppressedScriptNames?: ReadonlySet<string>;
   resolveHealth?: (hostname: string) => ScriptHealthState | null;
 }) {
   const paseoConfig =
@@ -408,6 +409,49 @@ describe("script-status-projection", () => {
     }
   });
 
+  it("hides a legacy script that a project launch supersedes", () => {
+    const workspaceId = "workspace-superseded-service";
+    const workspace = createWorkspaceRepo({
+      paseoConfig: {
+        scripts: {
+          dev: { type: "service", command: "./bin/legacy-dev" },
+        },
+      },
+    });
+    const routeStore = new ScriptRouteStore();
+    routeStore.registerRoute({
+      hostname: "dev--repo.localhost",
+      port: 33269,
+      workspaceId,
+      projectSlug: "repo",
+      scriptName: "dev",
+    });
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    runtimeStore.set({
+      workspaceId,
+      scriptName: "dev",
+      type: "service",
+      lifecycle: "running",
+      terminalId: "term-dev",
+      exitCode: null,
+    });
+
+    try {
+      expect(
+        buildPayloads({
+          workspaceId,
+          workspaceDirectory: workspace.repoDir,
+          routeStore,
+          runtimeStore,
+          daemonPort: 6767,
+          suppressedScriptNames: new Set(["dev"]),
+        }),
+      ).toEqual([]);
+    } finally {
+      workspace.cleanup();
+    }
+  });
+
   it("projects orphaned plain scripts as scripts instead of services", () => {
     const workspaceId = "workspace-orphaned-script";
     const workspace = createWorkspaceRepo();
@@ -544,8 +588,10 @@ describe("script-status-projection", () => {
       serviceProxy: routeStore,
       runtimeStore,
       daemonPort: 6767,
-      resolveWorkspaceDirectory: async (requestedWorkspaceId) =>
-        requestedWorkspaceId === "workspace-emitter" ? workspace.repoDir : null,
+      resolveWorkspaceConfig: async (requestedWorkspaceId) =>
+        requestedWorkspaceId === "workspace-emitter"
+          ? { workspaceDirectory: workspace.repoDir }
+          : null,
       logger: createTestLogger(),
     });
 
@@ -594,6 +640,74 @@ describe("script-status-projection", () => {
       });
     } finally {
       workspace.cleanup();
+    }
+  });
+
+  it("does not re-emit a superseded service on health changes", async () => {
+    const workspaceId = "workspace-emitter-superseded";
+    const workspace = createWorkspaceRepo({
+      paseoConfig: {
+        scripts: {
+          dev: { type: "service", command: "./bin/legacy-dev" },
+        },
+      },
+    });
+    const projectDirectory = mkdtempSync(path.join(tmpdir(), "launch-project-config-"));
+    writeFileSync(
+      path.join(projectDirectory, "paseo.json"),
+      JSON.stringify({ launches: { dev: { command: "./bin/project-dev" } } }),
+    );
+    const routeStore = new ScriptRouteStore();
+    routeStore.registerRoute({
+      hostname: "dev--repo.localhost",
+      port: 33269,
+      workspaceId,
+      projectSlug: "repo",
+      scriptName: "dev",
+    });
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    runtimeStore.set({
+      workspaceId,
+      scriptName: "dev",
+      type: "service",
+      lifecycle: "running",
+      terminalId: "term-dev",
+      exitCode: null,
+    });
+    const session = { emit: vi.fn() };
+    const emitUpdate = createScriptStatusEmitter({
+      sessions: () => [session],
+      serviceProxy: routeStore,
+      runtimeStore,
+      daemonPort: 6767,
+      resolveWorkspaceConfig: async (requestedWorkspaceId) =>
+        requestedWorkspaceId === workspaceId
+          ? {
+              workspaceDirectory: workspace.repoDir,
+              projectConfigDirectory: projectDirectory,
+            }
+          : null,
+      logger: createTestLogger(),
+    });
+
+    try {
+      emitUpdate(workspaceId, [
+        {
+          scriptName: "dev",
+          hostname: "dev--repo.localhost",
+          port: 33269,
+          health: "healthy",
+        },
+      ]);
+      await vi.waitFor(() => {
+        expect(session.emit).toHaveBeenCalledWith({
+          type: "script_status_update",
+          payload: { workspaceId, scripts: [] },
+        });
+      });
+    } finally {
+      workspace.cleanup();
+      rmSync(projectDirectory, { recursive: true, force: true });
     }
   });
 });
