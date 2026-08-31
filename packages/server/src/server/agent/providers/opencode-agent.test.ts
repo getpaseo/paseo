@@ -6361,7 +6361,7 @@ describe("OpenCode provider subagent contract", () => {
           messageID: "msg_child_prompt",
           type: "text",
           text: "Inspect the auth flow.",
-          time: { start: 1, end: 2 },
+          time: { start: 1 },
         },
       },
     });
