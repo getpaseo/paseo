@@ -34,23 +34,30 @@ Field-by-field detail is in the [configuration reference](/docs/hub/configuratio
 
 ## Events
 
-| `on`                                  | Fires when                                           |
-| ------------------------------------- | ---------------------------------------------------- |
-| `github.issue_created`                | An issue is opened.                                  |
-| `github.pull_request_created`         | A pull request is opened.                            |
-| `github.issue_comment_created`        | A comment is created on an issue.                    |
-| `github.pull_request_comment_created` | A conversation comment is created on a pull request. |
-| `github.issue_label_added`            | A label is added to an issue.                        |
-| `github.pull_request_label_added`     | A label is added to a pull request.                  |
-| `slack.mention`                       | The bot is mentioned in a channel.                   |
-| `discord.mention`                     | The bot is mentioned in a guild.                     |
-| `manual.run`                          | A run started from the API.                          |
+| `on`                                   | Fires when                                           |
+| -------------------------------------- | ---------------------------------------------------- |
+| `github.issue_created`                 | An issue is opened.                                  |
+| `github.pull_request_created`          | A pull request is opened.                            |
+| `github.issue_comment_created`         | A comment is created on an issue.                    |
+| `github.pull_request_comment_created`  | A conversation comment is created on a pull request. |
+| `github.issue_label_added`             | A label is added to an issue.                        |
+| `github.pull_request_label_added`      | A label is added to a pull request.                  |
+| `forgejo.issue_created`                | An issue is opened.                                  |
+| `forgejo.pull_request_created`         | A pull request is opened.                            |
+| `forgejo.issue_comment_created`        | A comment is created on an issue.                    |
+| `forgejo.pull_request_comment_created` | A conversation comment is created on a pull request. |
+| `forgejo.issue_label_added`            | A label is added to an issue.                        |
+| `forgejo.pull_request_label_added`     | A label is added to a pull request.                  |
+| `slack.mention`                        | The bot is mentioned in a channel.                   |
+| `discord.mention`                      | The bot is mentioned in a guild.                     |
+| `manual.run`                           | A run started from the API.                          |
 
-New GitHub workflows should use a semantic event. The five legacy events remain compatible: `github.issues`, `github.issue_comment`, `github.pull_request_review`, `github.pull_request_review_comment`, and `github.push`. See [GitHub triggers](/docs/hub/triggers/github) for complete workflows and when to use each event.
+New GitHub and Forgejo workflows should use a semantic event. The GitHub legacy events remain compatible: `github.issues`, `github.issue_comment`, `github.pull_request_review`, `github.pull_request_review_comment`, and `github.push`. Forgejo also accepts its native raw families for existing workflows. See [GitHub triggers](/docs/hub/triggers/github) and [Forgejo triggers](/docs/hub/triggers/forgejo) for complete workflows and when to use each event.
 
 Each provider page documents its events and the data they expose:
 
 - [GitHub triggers](/docs/hub/triggers/github)
+- [Forgejo triggers](/docs/hub/triggers/forgejo)
 - [Slack triggers](/docs/hub/triggers/slack)
 - [Discord triggers](/docs/hub/triggers/discord)
 
@@ -62,18 +69,18 @@ The allowlist is what keeps a stranger's comment on a public issue from starting
 
 An allowlist is one layer of defense. It does not make a permitted account trustworthy after compromise or make prompt injection harmless. See [Hub security](/docs/hub/security) before choosing the daemon, working directory, provider policy, and outputs for an external trigger.
 
-| Filter       | Applies to                | Matches                                                              |
-| ------------ | ------------------------- | -------------------------------------------------------------------- |
-| `from_users` | all                       | GitHub: login. Slack and Discord: **user id**, not display name      |
-| `repo`       | GitHub                    | `owner/name`                                                         |
-| `workspace`  | Slack                     | Team id, `T01234567`                                                 |
-| `guild`      | Discord                   | Guild id                                                             |
-| `channels`   | Slack, Discord            | Channel ids                                                          |
-| `contains`   | all                       | GitHub substring; Slack and Discord invocation prefix                |
-| `pattern`    | all                       | Invocation prefix                                                    |
-| `connection` | all                       | A connection slug, when the organization has several                 |
-| `label`      | GitHub label-added events | The label added by this delivery, case-insensitively                 |
-| `labels`     | GitHub                    | Every listed current issue or pull-request label, case-insensitively |
+| Filter       | Applies to                            | Matches                                                                     |
+| ------------ | ------------------------------------- | --------------------------------------------------------------------------- |
+| `from_users` | all                                   | GitHub and Forgejo: login. Slack and Discord: **user id**, not display name |
+| `repo`       | GitHub, Forgejo                       | `owner/name`                                                                |
+| `workspace`  | Slack                                 | Team id, `T01234567`                                                        |
+| `guild`      | Discord                               | Guild id                                                                    |
+| `channels`   | Slack, Discord                        | Channel ids                                                                 |
+| `contains`   | all                                   | GitHub and Forgejo substring; Slack and Discord invocation prefix           |
+| `pattern`    | all                                   | Invocation prefix                                                           |
+| `connection` | all                                   | A connection slug, when the organization has several                        |
+| `label`      | GitHub and Forgejo label-added events | The label added by this delivery, case-insensitively                        |
+| `labels`     | GitHub, Forgejo                       | Every listed current issue or pull-request label, case-insensitively        |
 
 All conditions must pass. There is no `any` mode.
 
@@ -102,6 +109,6 @@ Put `allow_outputs` on the step that should reply. The reply capabilities are `s
 - Set `max` when a step needs more than one update.
 - Set `required: true` when the step must emit at least one reply before it can finish. A required type must be registered and available for the execution context.
 
-GitHub has no reply capability; a step with a [`github` block](/docs/hub/github) comments through `gh` instead. The [output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) has the contract.
+GitHub and Forgejo have no reply capability. A step with a [`github` block](/docs/hub/github) or [`forgejo` block](/docs/hub/forgejo) acts through that provider's explicit authority instead. The [output capability reference](/docs/hub/configuration/hub-yml#output-capabilities) has the contract.
 
 The declaration grants the `hub.reply` tool; the prompt has to tell the agent to call it. See [Tell the agent which tool to call](/docs/hub/workflows#tell-the-agent-which-tool-to-call).

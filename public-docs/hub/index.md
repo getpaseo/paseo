@@ -19,7 +19,7 @@ A daemon runs agents on one machine, for you. Paseo Hub is the layer above your 
 
 What that gives you today:
 
-- Agents that start on their own, from activity in GitHub, Slack, and Discord.
+- Agents that start on their own, from activity in GitHub, Forgejo, Slack, and Discord.
 - Configuration that lives in a repository and deploys when you push.
 - A record of everything that arrived, what it matched, and what ran.
 - One place for your team to see all of it.
@@ -47,10 +47,11 @@ Guided setup deploys the bundle, and mentioning the bot starts an agent on your 
 4. [Triggers](/docs/hub/triggers)
 5. [Workflows](/docs/hub/workflows)
 6. [GitHub access](/docs/hub/github)
-7. [Configuration](/docs/hub/configuration)
-8. [Security](/docs/hub/security)
+7. [Forgejo access](/docs/hub/forgejo)
+8. [Configuration](/docs/hub/configuration)
+9. [Security](/docs/hub/security)
 
-If a workflow accepts requests from GitHub, Slack, Discord, or the API, read [Hub security](/docs/hub/security) before giving an agent access to a working directory or output capability.
+If a workflow accepts requests from GitHub, Forgejo, Slack, Discord, or the API, read [Hub security](/docs/hub/security) before giving an agent access to a working directory or output capability.
 
 ## Run Hub yourself
 

@@ -14,7 +14,7 @@ The shortest path is one command:
 npx @getpaseo/hub
 ```
 
-Open <http://localhost:3000>. A fresh Hub creates its embedded database and authentication secret, then guides you through creating the operator account and the GitHub, Slack, or Discord apps you want.
+Open <http://localhost:3000>. A fresh Hub creates its embedded database and authentication secret, then guides you through creating the operator account and configuring the GitHub, Forgejo, Slack, or Discord providers you want.
 
 Follow the [quickstart](/docs/hub/quickstart) to connect Slack over Socket Mode and run the first workflow without a public server.
 
@@ -34,7 +34,7 @@ Embedded mode supports one Hub process per data directory. It is intended for a 
 
 Hub defaults to `http://localhost:3000`. That is enough for its dashboard, daemons, Slack Socket Mode, and providers that connect out from Hub.
 
-GitHub event triggers use webhooks and need a public HTTPS address. Repository access can still work without the webhook. Slack's optional Webhooks transport also needs public HTTPS; Socket Mode does not.
+GitHub and Forgejo event triggers use webhooks and need a public HTTPS address. Repository access and repository-backed configuration can still work without an inbound webhook. Slack's optional Webhooks transport also needs public HTTPS; Socket Mode does not.
 
 When Hub is available at a stable public origin, set it before starting:
 
@@ -59,7 +59,7 @@ The database also stores Hub's generated authentication secret. Set `PASEO_HUB_A
 
 ## App configuration
 
-The operator configures GitHub, Slack, and Discord under **Apps**. Hub verifies the credentials before saving them in its database and starts the same provider runtime used by environment-configured deployments.
+The operator configures GitHub, Slack, Discord, and approved Forgejo instances in Hub. Hub verifies provider setup before saving it in its database and starts the same provider runtime used by environment-configured deployments.
 
 Environment variables remain available for deployments that manage secrets outside Hub. A complete environment configuration takes precedence over a saved application and appears as **Managed by environment** in the dashboard.
 
@@ -90,7 +90,7 @@ DISCORD_CLIENT_SECRET=
 DISCORD_BOT_TOKEN=
 ```
 
-See [GitHub](/docs/hub/self-hosting/github-app), [Slack](/docs/hub/self-hosting/slack-app), and [Discord](/docs/hub/self-hosting/discord-app) for provider behavior and connection steps.
+See [GitHub](/docs/hub/self-hosting/github-app), [Forgejo](/docs/hub/self-hosting/forgejo), [Slack](/docs/hub/self-hosting/slack-app), and [Discord](/docs/hub/self-hosting/discord-app) for provider behavior and connection steps.
 
 ## Bootstrap from environment
 

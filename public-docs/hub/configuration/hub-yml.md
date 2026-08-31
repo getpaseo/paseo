@@ -170,6 +170,32 @@ Use `label` only with a label-added event. It has no match on other events. Use 
 
 See [GitHub triggers](/docs/hub/triggers/github) for complete triage, pull-request review, and ready-for-agent workflows.
 
+### Forgejo events and filters
+
+Use one of these semantic event names for new Forgejo workflows:
+
+| `on`                                   | Matches                                                                   |
+| -------------------------------------- | ------------------------------------------------------------------------- |
+| `forgejo.issue_created`                | An `issues` delivery whose action is `opened`.                            |
+| `forgejo.pull_request_created`         | A `pull_request` delivery whose action is `opened`.                       |
+| `forgejo.issue_comment_created`        | An `issue_comment` delivery whose action is `created`, on an issue.       |
+| `forgejo.pull_request_comment_created` | An `issue_comment` delivery whose action is `created`, on a pull request. |
+| `forgejo.issue_label_added`            | A label is added to an issue.                                             |
+| `forgejo.pull_request_label_added`     | A label is added to a pull request.                                       |
+
+Existing configurations may use `forgejo.issues`, `forgejo.issue_comment`,
+`forgejo.pull_request`, `forgejo.pull_request_review`,
+`forgejo.pull_request_review_comment`, and `forgejo.push`. Those native raw families retain
+their existing behavior.
+
+Forgejo uses the same `filters` field shape as GitHub: `from_users`, `repo`, `connection`,
+`contains`, `pattern`, `label`, and `labels`. `from_users` must be non-empty for every externally
+sourced workflow, and all supplied filters compose with AND. Forgejo `repo` and `connection`
+values refer only to the connection's explicitly enrolled repositories.
+
+See [Forgejo triggers](/docs/hub/triggers/forgejo) for complete workflows, reaction behavior, and
+the native event differences.
+
 ### Inputs and values
 
 Inputs have `type: string | number | boolean`, plus optional `required`, `default`, and `choices`. `required` and `default` cannot be combined. Finite `choices` are required when an input can choose authority such as an environment or named agent.
@@ -202,6 +228,7 @@ An environment or dynamic named-agent expression must have a finite set of possi
 | `allow_outputs` | no       | Provider output capabilities with optional `max` and `required`.                         |
 | `auto_archive`  | no       | Archive the agent after the step ends.                                                   |
 | `github`        | no       | Explicit GitHub authority for this step.                                                 |
+| `forgejo`       | no       | Explicit Forgejo authority for this step.                                                |
 
 An inline agent is static and complete:
 
