@@ -5,13 +5,10 @@ export interface DefinitionTarget {
   line: number;
 }
 
+/** What a position resolved to: the range to underline and where it leads. */
+export type ResolvedDefinition = { originRange?: CodeRange; target: DefinitionTarget } | null;
+
 export interface GoToDefinitionCallbacks {
-  /**
-   * Resolve the symbol at a position. Returns the range to underline and where it leads,
-   * or null when nothing resolves there.
-   */
-  resolve: (
-    position: CodePosition,
-  ) => Promise<{ originRange?: CodeRange; target: DefinitionTarget } | null>;
+  resolve: (position: CodePosition) => Promise<ResolvedDefinition>;
   navigate: (target: DefinitionTarget) => void;
 }

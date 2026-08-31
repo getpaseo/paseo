@@ -60,7 +60,11 @@ or `export` with the function containing it, and linking every keyword to the bl
 already inside is noise.
 
 One server runs per (workspace root, language), started on first use and stopped after ten idle
-minutes — a loaded project graph is the expensive thing it holds.
+minutes or when a fifth would be needed — a loaded project graph is the expensive thing it holds,
+and Paseo hands out a worktree per agent.
+
+The daemon compares the file's size and mtime before reading it, so repeated requests against an
+unchanged file cost neither a disk read nor a document sync.
 
 ## Scope
 

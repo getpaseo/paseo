@@ -7,7 +7,7 @@ import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { FileEditorModel } from "./model";
 import { editorBaseExtensions, editorTheme, type EditorVisualTheme } from "./extensions.web";
-import { goToDefinition } from "../source/go-to-definition.web";
+import { useGoToDefinitionExtension } from "../source/go-to-definition.web";
 import type { GoToDefinitionCallbacks } from "../source/go-to-definition";
 
 interface FileEditorViewProps {
@@ -45,11 +45,16 @@ export function FileEditorView({
 }: FileEditorViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  // The extension is installed once; this ref keeps it calling the current callbacks.
-  const definitionsRef = useRef(definitions);
-  definitionsRef.current = definitions;
+  const goToDefinitionExtension = useGoToDefinitionExtension(definitions ?? null);
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
-  const initial = useRef({ filename, model, theme, vimEnabled, content: snapshot.content });
+  const initial = useRef({
+    filename,
+    model,
+    theme,
+    vimEnabled,
+    content: snapshot.content,
+    goToDefinitionExtension,
+  });
   const onCursorChangeRef = useRef(onCursorChange);
   onCursorChangeRef.current = onCursorChange;
 
@@ -66,11 +71,7 @@ export function FileEditorView({
           languageCompartment.of(getLanguageForFile(values.filename)?.extension ?? []),
           wrappingCompartment.of(wrappingForFile(values.filename)),
           themeCompartment.of(editorTheme(values.theme)),
-          goToDefinition({
-            resolve: (position) =>
-              definitionsRef.current?.resolve(position) ?? Promise.resolve(null),
-            navigate: (target) => definitionsRef.current?.navigate(target),
-          }),
+          initial.current.goToDefinitionExtension,
           EditorView.updateListener.of((update) => {
             if (
               update.docChanged &&

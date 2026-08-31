@@ -1,4 +1,3 @@
-import type { spawn } from "node:child_process";
 import type pino from "pino";
 import type { LocationLink, Position } from "vscode-languageserver-protocol";
 import {
@@ -10,6 +9,14 @@ import { LspSession } from "./session.js";
 
 /** Idle sessions hold a language server process and its whole project graph in memory. */
 const SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+/** Paseo hands out a worktree per agent, so the key space is unbounded without a cap. */
+const MAX_SESSIONS = 4;
+/**
+ * Resolving a command costs a `which` spawn plus a `--version` probe, and a miss repeats it on
+ * every hover. Remember the answer briefly so installing a server is still picked up without a
+ * daemon restart.
+ */
+const RESOLUTION_TTL_MS = 30_000;
 
 /**
  * A language server being absent is the common case, not a failure: Paseo does not ship
@@ -24,44 +31,46 @@ export interface DefinitionInput {
   /** Workspace directory that scopes the language server process. */
   rootPath: string;
   filePath: string;
-  /** File text as the client rendered it; the position refers to this exact content. */
-  text: string;
+  /** Identifies the file's content, so an unchanged file is not re-read. */
+  version: string;
+  readText: () => Promise<string>;
   position: Position;
 }
 
 export interface LspHostOptions {
   logger: pino.Logger;
   /**
-   * Per-server command overrides keyed by descriptor id, read on each cold session so a
-   * config edit applies without restarting the daemon.
+   * Per-server command overrides keyed by descriptor id, read when a resolution is not cached
+   * so a config edit applies without restarting the daemon.
    */
   commandOverrides?: () => Readonly<Record<string, string>>;
-  idleTimeoutMs?: number;
-  spawnProcess?: typeof spawn;
 }
 
 interface PooledSession {
-  session: LspSession;
+  session: Promise<LspSession>;
   idleTimer: NodeJS.Timeout;
 }
 
+interface CachedResolution {
+  executablePath: string | null;
+  expiresAt: number;
+}
+
 /**
- * Pools one language server per (workspace root, language). Servers start on first use and
- * are reaped when idle, because a loaded project graph is the expensive thing they hold.
+ * Pools one language server per (workspace root, language). Servers start on first use and are
+ * reaped when idle or when the pool overflows, because a loaded project graph is the expensive
+ * thing they hold.
  */
 export class LspHost {
   private readonly logger: pino.Logger;
   private readonly readCommandOverrides: () => Readonly<Record<string, string>>;
-  private readonly idleTimeoutMs: number;
-  private readonly spawnProcess: typeof spawn | undefined;
   private readonly sessions = new Map<string, PooledSession>();
+  private readonly resolutions = new Map<string, CachedResolution>();
   private disposed = false;
 
   constructor(options: LspHostOptions) {
     this.logger = options.logger;
     this.readCommandOverrides = options.commandOverrides ?? (() => ({}));
-    this.idleTimeoutMs = options.idleTimeoutMs ?? SESSION_IDLE_TIMEOUT_MS;
-    this.spawnProcess = options.spawnProcess;
   }
 
   async definition(input: DefinitionInput): Promise<DefinitionOutcome> {
@@ -70,18 +79,16 @@ export class LspHost {
       return { status: "unsupported-language" };
     }
 
-    const session = await this.acquireSession(descriptor, input.rootPath);
+    const command = this.readCommandOverrides()[descriptor.id] ?? descriptor.command;
+    const session = await this.acquireSession(descriptor, input.rootPath, command);
     if (!session) {
-      return {
-        status: "server-not-installed",
-        serverId: descriptor.id,
-        command: this.readCommandOverrides()[descriptor.id] ?? descriptor.command,
-      };
+      return { status: "server-not-installed", serverId: descriptor.id, command };
     }
 
     const links = await session.definition({
       filePath: input.filePath,
-      text: input.text,
+      version: input.version,
+      readText: input.readText,
       position: input.position,
     });
     return { status: "ok", links };
@@ -91,17 +98,14 @@ export class LspHost {
     this.disposed = true;
     const pooled = [...this.sessions.values()];
     this.sessions.clear();
-    await Promise.all(
-      pooled.map((entry) => {
-        clearTimeout(entry.idleTimer);
-        return entry.session.dispose();
-      }),
-    );
+    this.resolutions.clear();
+    await Promise.all(pooled.map((entry) => this.closeEntry(entry)));
   }
 
   private async acquireSession(
     descriptor: LanguageServerDescriptor,
     rootPath: string,
+    command: string,
   ): Promise<LspSession | null> {
     if (this.disposed) {
       throw new Error("language server host is disposed");
@@ -114,28 +118,64 @@ export class LspHost {
       return existing.session;
     }
 
-    const server = await resolveLanguageServer(
-      descriptor,
-      this.readCommandOverrides()[descriptor.id],
-    );
-    if (!server) {
+    const executablePath = await this.resolveExecutable(descriptor, command);
+    if (!executablePath) {
       return null;
     }
 
-    const session = new LspSession({
-      server,
-      rootPath,
-      logger: this.logger,
-      spawnProcess: this.spawnProcess,
-    });
-    const entry: PooledSession = { session, idleTimer: this.scheduleReap(key) };
-    this.sessions.set(key, entry);
+    // Re-check: resolution awaited, and a concurrent request may have won the race. Without
+    // this the loser's process is dropped from the map and never disposed.
+    const raced = this.sessions.get(key);
+    if (raced) {
+      this.touch(key, raced);
+      return raced.session;
+    }
+
+    const session = Promise.resolve(
+      new LspSession({
+        server: { descriptor, executablePath },
+        rootPath,
+        logger: this.logger,
+      }),
+    );
+    this.sessions.set(key, { session, idleTimer: this.scheduleReap(key) });
+    this.evictOverflow();
     return session;
+  }
+
+  private async resolveExecutable(
+    descriptor: LanguageServerDescriptor,
+    command: string,
+  ): Promise<string | null> {
+    const cached = this.resolutions.get(command);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.executablePath;
+    }
+    const resolved = await resolveLanguageServer(descriptor, command);
+    const executablePath = resolved?.executablePath ?? null;
+    this.resolutions.set(command, { executablePath, expiresAt: Date.now() + RESOLUTION_TTL_MS });
+    return executablePath;
+  }
+
+  /** Oldest insertion first, which for a Map is plain iteration order after touch re-inserts. */
+  private evictOverflow(): void {
+    while (this.sessions.size > MAX_SESSIONS) {
+      const [key, entry] = this.sessions.entries().next().value ?? [];
+      if (!key || !entry) {
+        return;
+      }
+      this.sessions.delete(key);
+      this.logger.debug({ key }, "evicting least recently used language server session");
+      void this.closeEntry(entry);
+    }
   }
 
   private touch(key: string, entry: PooledSession): void {
     clearTimeout(entry.idleTimer);
     entry.idleTimer = this.scheduleReap(key);
+    // Re-insert so Map iteration order tracks recency for eviction.
+    this.sessions.delete(key);
+    this.sessions.set(key, entry);
   }
 
   private scheduleReap(key: string): NodeJS.Timeout {
@@ -146,9 +186,15 @@ export class LspHost {
       }
       this.sessions.delete(key);
       this.logger.debug({ key }, "reaping idle language server session");
-      void entry.session.dispose();
-    }, this.idleTimeoutMs);
+      void this.closeEntry(entry);
+    }, SESSION_IDLE_TIMEOUT_MS);
     timer.unref?.();
     return timer;
+  }
+
+  private async closeEntry(entry: PooledSession): Promise<void> {
+    clearTimeout(entry.idleTimer);
+    const session = await entry.session;
+    await session.dispose();
   }
 }

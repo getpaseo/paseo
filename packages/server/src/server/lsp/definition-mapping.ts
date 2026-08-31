@@ -1,34 +1,15 @@
-import { isAbsolute, relative, resolve } from "node:path";
 import type {
   CodeDefinitionResponse,
   CodeDefinitionTarget,
   CodePosition,
   CodeRange,
 } from "@getpaseo/protocol/messages";
+import { sep } from "node:path";
 import { URI } from "vscode-uri";
+import { getRealpathAwareRelativePath } from "../../utils/path.js";
 import type { DefinitionOutcome } from "./host.js";
 
 type DefinitionResult = CodeDefinitionResponse["payload"]["result"];
-
-export class PathOutsideWorkspaceError extends Error {
-  constructor(public readonly requestedPath: string) {
-    super(`Path escapes the workspace: ${requestedPath}`);
-    this.name = "PathOutsideWorkspaceError";
-  }
-}
-
-/**
- * Resolve a workspace-relative path, refusing anything that escapes the root. The client
- * supplies this path, so traversal has to be rejected here rather than trusted.
- */
-export function resolvePathWithinRoot(root: string, relativePath: string): string {
-  const resolved = resolve(root, relativePath);
-  const offset = relative(root, resolved);
-  if (offset.startsWith("..") || isAbsolute(offset)) {
-    throw new PathOutsideWorkspaceError(relativePath);
-  }
-  return resolved;
-}
 
 function containsPosition(range: CodeRange, position: CodePosition): boolean {
   if (position.line < range.start.line || position.line > range.end.line) {
@@ -38,6 +19,11 @@ function containsPosition(range: CodeRange, position: CodePosition): boolean {
     return false;
   }
   return !(position.line === range.end.line && position.character > range.end.character);
+}
+
+/** Paths cross the wire with `/` separators, matching every other path the daemon sends. */
+function toWirePath(relativePath: string): string {
+  return relativePath.split(sep).join("/");
 }
 
 export interface DefinitionOrigin {
@@ -54,12 +40,17 @@ export interface DefinitionOrigin {
  * leak a location from outside the workspace. One that encloses the request position is where
  * the user already is: tsserver answers a click on `return` or `export` with the surrounding
  * function, and underlining every keyword is noise.
+ *
+ * Containment goes through the daemon's realpath-aware comparison. Plain `path.relative` reads
+ * a symlinked workspace root (`/tmp` on macOS, any symlinked checkout) as outside itself, which
+ * would silently drop every target.
  */
-export function toDefinitionResult(
-  root: string,
-  outcome: DefinitionOutcome,
-  origin: DefinitionOrigin,
-): DefinitionResult {
+export function toDefinitionResult(input: {
+  root: string;
+  outcome: DefinitionOutcome;
+  origin: DefinitionOrigin;
+}): DefinitionResult {
+  const { root, outcome, origin } = input;
   if (outcome.status === "unsupported-language") {
     return { status: "unsupported_language" };
   }
@@ -73,24 +64,20 @@ export function toDefinitionResult(
 
   const targets: CodeDefinitionTarget[] = [];
   for (const link of outcome.links) {
-    const targetPath = URI.parse(link.targetUri).fsPath;
-    const offset = relative(root, targetPath);
-    if (offset.startsWith("..") || isAbsolute(offset)) {
+    const relativePath = getRealpathAwareRelativePath(root, URI.parse(link.targetUri).fsPath);
+    if (relativePath === null) {
       continue;
     }
-    if (offset === origin.path && containsPosition(link.targetRange, origin.position)) {
+    const wirePath = toWirePath(relativePath);
+    if (wirePath === origin.path && containsPosition(link.targetRange, origin.position)) {
       continue;
     }
     targets.push({
-      path: offset,
+      path: wirePath,
       range: link.targetRange,
       selectionRange: link.targetSelectionRange,
       ...(link.originSelectionRange ? { originRange: link.originSelectionRange } : {}),
     });
   }
   return { status: "ok", targets };
-}
-
-export function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

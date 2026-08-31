@@ -35,6 +35,7 @@ import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
 import { FileSourceView } from "./source/view";
 import { useGoToDefinition } from "./source/use-go-to-definition";
+import type { GoToDefinitionCallbacks } from "./source/go-to-definition";
 import type { FileConflictAlertState } from "./conflict-alert";
 import type { LiveFileModel } from "./live-file/model";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -55,9 +56,7 @@ interface FilePreviewBodyProps {
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
-  serverId: string;
-  workspaceId: string;
-  cwd: string;
+  definitions: GoToDefinitionCallbacks | null;
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
@@ -85,21 +84,16 @@ function ReadonlySource({
   filename,
   location,
   navigationRevision,
-  serverId,
-  workspaceId,
-  cwd,
+  definitions,
 }: {
   preview: ExplorerFile;
   filename: string;
   location: WorkspaceFileLocation;
   navigationRevision: number;
-  serverId: string;
-  workspaceId: string;
-  cwd: string;
+  definitions: GoToDefinitionCallbacks | null;
 }) {
   const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
-  const definitions = useGoToDefinition({ serverId, workspaceId, cwd, path: location.path });
   const visualTheme = useMemo(
     () => ({
       colorScheme: theme.colorScheme,
@@ -147,9 +141,7 @@ function FilePreviewBody({
   location,
   navigationRevision,
   imagePreviewUri,
-  serverId,
-  workspaceId,
-  cwd,
+  definitions,
 }: FilePreviewBodyProps) {
   const { t } = useTranslation();
   const filePath = location.path;
@@ -209,9 +201,7 @@ function FilePreviewBody({
         filename={filePath}
         location={location}
         navigationRevision={navigationRevision}
-        serverId={serverId}
-        workspaceId={workspaceId}
-        cwd={cwd}
+        definitions={definitions}
       />
     );
   }
@@ -402,6 +392,13 @@ function FilePanePresentation({
   navigationRevision: number;
   imagePreviewUri: string | null;
 }) {
+  const definitions = useGoToDefinition({
+    serverId,
+    workspaceId,
+    cwd: readTarget?.cwd ?? "",
+    path: readTarget?.path ?? "",
+  });
+
   if (!client && readTarget) {
     return (
       <View style={styles.container} testID="workspace-file-pane">
@@ -417,8 +414,7 @@ function FilePanePresentation({
       <EditableFilePane
         key={`${serverId}:${readTarget.cwd}:${readTarget.path}`}
         client={client}
-        serverId={serverId}
-        workspaceId={workspaceId}
+        definitions={definitions}
         cwd={readTarget.cwd}
         path={readTarget.path}
         preview={preview as TextExplorerFile}
@@ -474,9 +470,7 @@ function FilePanePresentation({
         location={location}
         navigationRevision={navigationRevision}
         imagePreviewUri={imagePreviewUri}
-        serverId={serverId}
-        workspaceId={workspaceId}
-        cwd={readTarget?.cwd ?? ""}
+        definitions={definitions}
       />
     </View>
   );
@@ -484,8 +478,7 @@ function FilePanePresentation({
 
 function EditableFilePane({
   client,
-  serverId,
-  workspaceId,
+  definitions,
   cwd,
   path,
   preview,
@@ -501,8 +494,7 @@ function EditableFilePane({
   navigationRevision,
 }: {
   client: DaemonClient;
-  serverId: string;
-  workspaceId: string;
+  definitions: GoToDefinitionCallbacks | null;
   cwd: string;
   path: string;
   preview: TextExplorerFile;
@@ -517,7 +509,6 @@ function EditableFilePane({
   location: WorkspaceFileLocation;
   navigationRevision: number;
 }) {
-  const definitions = useGoToDefinition({ serverId, workspaceId, cwd, path });
   const { settings } = useAppSettings();
   const { t } = useTranslation();
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
@@ -656,9 +647,7 @@ function EditableFilePane({
           location={location}
           navigationRevision={navigationRevision}
           imagePreviewUri={null}
-          serverId={serverId}
-          workspaceId={workspaceId}
-          cwd={cwd}
+          definitions={definitions}
         />
       )}
     </View>

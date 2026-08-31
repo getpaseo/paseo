@@ -34,7 +34,8 @@ describe("LspHost", () => {
     const outcome = await host.definition({
       rootPath: APP_ROOT,
       filePath: resolve(APP_ROOT, "README.md"),
-      text: "# hi",
+      version: "1",
+      readText: async () => "# hi",
       position: { line: 0, character: 2 },
     });
     expect(outcome).toEqual({ status: "unsupported-language" });
@@ -45,7 +46,8 @@ describe("LspHost", () => {
     const outcome = await host.definition({
       rootPath: APP_ROOT,
       filePath: SESSIONS_ROUTE,
-      text: readFileSync(SESSIONS_ROUTE, "utf8"),
+      version: "1",
+      readText: async () => readFileSync(SESSIONS_ROUTE, "utf8"),
       position: { line: 1, character: 12 },
     });
     expect(outcome).toEqual({
@@ -57,19 +59,20 @@ describe("LspHost", () => {
 
   it("reuses one server process across requests for the same root", async () => {
     host = createHost();
-    const text = readFileSync(SESSIONS_ROUTE, "utf8");
 
     const first = await host.definition({
       rootPath: APP_ROOT,
       filePath: SESSIONS_ROUTE,
-      text,
+      version: "1",
+      readText: async () => readFileSync(SESSIONS_ROUTE, "utf8"),
       position: { line: 1, character: 12 },
     });
     const startedAt = Date.now();
     const second = await host.definition({
       rootPath: APP_ROOT,
       filePath: SESSIONS_ROUTE,
-      text,
+      version: "1",
+      readText: async () => readFileSync(SESSIONS_ROUTE, "utf8"),
       position: { line: 0, character: 12 },
     });
     const secondDurationMs = Date.now() - startedAt;

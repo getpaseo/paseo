@@ -5,6 +5,17 @@ import { describe, expect, it, vi } from "vitest";
 import { goToDefinition } from "./go-to-definition.web";
 import type { DefinitionTarget } from "./go-to-definition";
 
+// Unistyles reads matchMedia when it is imported, reached here through the shared macOS check,
+// and jsdom does not implement it. Hoisted so it lands before the module graph is evaluated.
+vi.hoisted(() => {
+  window.matchMedia = ((query: string) => ({
+    matches: false,
+    media: query,
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  })) as unknown as typeof window.matchMedia;
+});
+
 // jsdom has no layout, so CodeMirror's own default mousedown handler throws when it measures
 // text. Our handler declines plain clicks and lets that default run, which is the behavior under
 // test; the shim keeps the environment from failing the run.

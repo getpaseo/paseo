@@ -68,7 +68,8 @@ describe("LspSession against a real language server", () => {
     // `import { SessionsScreen } from "@/screens/sessions-screen"` — on the symbol.
     const links = await session.definition({
       filePath: SESSIONS_ROUTE,
-      text: readFileSync(SESSIONS_ROUTE, "utf8"),
+      version: "1",
+      readText: async () => readFileSync(SESSIONS_ROUTE, "utf8"),
       position: { line: 1, character: 12 },
     });
 
@@ -82,7 +83,6 @@ describe("LspSession against a real language server", () => {
       start: { line: 1, character: 9 },
       end: { line: 1, character: 23 },
     });
-    expect(session.negotiatedPositionEncoding).toBe("utf-16");
   }, 90_000);
 
   it("returns no links for a position on punctuation", async () => {
@@ -91,7 +91,8 @@ describe("LspSession against a real language server", () => {
     session = new LspSession({ server: server!, rootPath: APP_ROOT, logger });
     const links = await session.definition({
       filePath: SESSIONS_ROUTE,
-      text: readFileSync(SESSIONS_ROUTE, "utf8"),
+      version: "1",
+      readText: async () => readFileSync(SESSIONS_ROUTE, "utf8"),
       position: { line: 2, character: 0 },
     });
     expect(links).toEqual([]);

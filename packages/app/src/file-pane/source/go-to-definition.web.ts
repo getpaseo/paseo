@@ -1,7 +1,9 @@
+import { useMemo, useRef } from "react";
 import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, type DecorationSet } from "@codemirror/view";
-import type { CodePosition, CodeRange } from "@getpaseo/protocol/messages";
-import type { DefinitionTarget, GoToDefinitionCallbacks } from "./go-to-definition";
+import { getShortcutOs } from "@/utils/shortcut-platform";
+import type { CodePosition } from "@getpaseo/protocol/messages";
+import type { GoToDefinitionCallbacks, ResolvedDefinition } from "./go-to-definition";
 
 /**
  * The word under the pointer underlines the moment the modifier is held, before the daemon has
@@ -11,15 +13,12 @@ import type { DefinitionTarget, GoToDefinitionCallbacks } from "./go-to-definiti
  */
 const RESOLVE_DEBOUNCE_MS = 40;
 
-type Resolved = { originRange?: CodeRange; target: DefinitionTarget } | null;
-
 interface Span {
   from: number;
   to: number;
 }
 
 const setHighlight = StateEffect.define<Span | null>();
-const setPending = StateEffect.define<boolean>();
 
 const symbolMark = Decoration.mark({ class: "cm-definitionLink" });
 
@@ -38,36 +37,17 @@ const highlightField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
-/** A cold server takes seconds to answer; the cursor says the click was received. */
-const pendingField = StateField.define<boolean>({
-  create: () => false,
-  update(pending, transaction) {
-    for (const effect of transaction.effects) {
-      if (effect.is(setPending)) {
-        return effect.value;
-      }
-    }
-    return pending;
-  },
-  provide: (field) =>
-    EditorView.contentAttributes.from(field, (pending) => ({
-      class: pending ? "cm-definitionPending" : "",
-    })),
-});
-
 const linkTheme = EditorView.baseTheme({
   ".cm-definitionLink": {
     textDecoration: "underline",
     textUnderlineOffset: "2px",
     cursor: "pointer",
   },
-  ".cm-definitionPending": { cursor: "progress" },
 });
 
 /** Cmd on macOS, Ctrl elsewhere — the same chord editors already trained people to use. */
 function hasModifier(event: MouseEvent | KeyboardEvent): boolean {
-  const isApple = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
-  return isApple ? event.metaKey : event.ctrlKey;
+  return getShortcutOs() === "mac" ? event.metaKey : event.ctrlKey;
 }
 
 function positionAt(view: EditorView, offset: number): CodePosition {
@@ -82,7 +62,7 @@ function offsetAt(view: EditorView, position: CodePosition): number {
 }
 
 /** Prefer the server's own range; fall back to the word that was underlined optimistically. */
-function highlightFor(view: EditorView, fallback: Span, resolved: Resolved): Span | null {
+function highlightFor(view: EditorView, fallback: Span, resolved: ResolvedDefinition): Span | null {
   if (!resolved) {
     return null;
   }
@@ -93,16 +73,33 @@ function highlightFor(view: EditorView, fallback: Span, resolved: Resolved): Spa
   return { from: offsetAt(view, range.start), to: offsetAt(view, range.end) };
 }
 
-function wordAt(view: EditorView, offset: number): Span | null {
-  const word = view.state.wordAt(offset);
-  return word ? { from: word.from, to: word.to } : null;
+function wordAtEvent(view: EditorView, event: MouseEvent): Span | null {
+  const offset = view.posAtCoords({ x: event.clientX, y: event.clientY });
+  return offset === null ? null : view.state.wordAt(offset);
+}
+
+/**
+ * Build the extension once and keep it calling the current callbacks. Every surface that hosts
+ * the editor needs this bridge, so it lives here instead of being restated at each call site.
+ */
+export function useGoToDefinitionExtension(definitions: GoToDefinitionCallbacks | null): Extension {
+  const latest = useRef(definitions);
+  latest.current = definitions;
+  return useMemo(
+    () =>
+      goToDefinition({
+        resolve: (position) => latest.current?.resolve(position) ?? Promise.resolve(null),
+        navigate: (target) => latest.current?.navigate(target),
+      }),
+    [],
+  );
 }
 
 export function goToDefinition(callbacks: GoToDefinitionCallbacks): Extension {
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let hoveredWord: Span | null = null;
   /** Keyed by word start. Holds misses too, so a word that resolves to nothing is asked once. */
-  let cache = new Map<number, Resolved>();
+  let cache = new Map<number, ResolvedDefinition>();
 
   function clearHighlight(view: EditorView): void {
     clearTimeout(debounceTimer);
@@ -112,7 +109,7 @@ export function goToDefinition(callbacks: GoToDefinitionCallbacks): Extension {
     }
   }
 
-  function resolveWord(view: EditorView, word: Span): Promise<Resolved> {
+  function resolveWord(view: EditorView, word: Span): Promise<ResolvedDefinition> {
     const cached = cache.get(word.from);
     if (cached !== undefined) {
       return Promise.resolve(cached);
@@ -147,7 +144,6 @@ export function goToDefinition(callbacks: GoToDefinitionCallbacks): Extension {
 
   return [
     highlightField,
-    pendingField,
     linkTheme,
     EditorView.updateListener.of((update) => {
       if (update.docChanged) {
@@ -160,8 +156,7 @@ export function goToDefinition(callbacks: GoToDefinitionCallbacks): Extension {
           clearHighlight(view);
           return;
         }
-        const offset = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        const word = offset === null ? null : wordAt(view, offset);
+        const word = wordAtEvent(view, event);
         if (!word) {
           clearHighlight(view);
           return;
@@ -181,15 +176,16 @@ export function goToDefinition(callbacks: GoToDefinitionCallbacks): Extension {
         if (!hasModifier(event) || event.button !== 0) {
           return false;
         }
-        const offset = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        const word = offset === null ? null : wordAt(view, offset);
+        const word = wordAtEvent(view, event);
         if (!word) {
           return false;
         }
         event.preventDefault();
-        view.dispatch({ effects: setPending.of(true) });
+        // A cold server takes seconds; the cursor says the click was received.
+        view.contentDOM.style.cursor = "progress";
         void resolveWord(view, word).then((resolved) => {
-          view.dispatch({ effects: [setPending.of(false), setHighlight.of(null)] });
+          view.contentDOM.style.cursor = "";
+          view.dispatch({ effects: setHighlight.of(null) });
           if (resolved) {
             callbacks.navigate(resolved.target);
           }

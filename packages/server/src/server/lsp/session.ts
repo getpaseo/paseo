@@ -1,27 +1,25 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import type pino from "pino";
 import {
   createMessageConnection,
-  StreamMessageReader,
-  StreamMessageWriter,
-  type MessageConnection,
-} from "vscode-jsonrpc/node";
-import {
   DefinitionRequest,
-  DidCloseTextDocumentNotification,
+  DidChangeTextDocumentNotification,
   DidOpenTextDocumentNotification,
   ExitNotification,
   InitializedNotification,
   InitializeRequest,
   PublishDiagnosticsNotification,
   ShutdownRequest,
+  StreamMessageReader,
+  StreamMessageWriter,
   type InitializeResult,
   type LocationLink,
+  type MessageConnection,
   type Position,
-  type PositionEncodingKind,
-} from "vscode-languageserver-protocol";
-import { TextDocument } from "vscode-languageserver-textdocument";
+} from "vscode-languageserver-protocol/node";
 import { URI } from "vscode-uri";
+import { spawnProcess } from "../../utils/spawn.js";
+import { terminateWithTreeKill } from "../../utils/tree-kill.js";
 import { languageIdForFile, type ResolvedLanguageServer } from "./language-servers.js";
 
 /**
@@ -29,23 +27,35 @@ import { languageIdForFile, type ResolvedLanguageServer } from "./language-serve
  *
  * tsserver answers `textDocument/definition` from a partially loaded project: the reply is
  * well-formed and wrong, pointing back at the import statement instead of the declaration.
- * The first `publishDiagnostics` for the document is the boundary — every request before it
- * was wrong and the first one after it was right. Servers that publish no diagnostics (or
- * use pull diagnostics) never send it, so the wait is bounded rather than required.
+ * The first `publishDiagnostics` for the document is the boundary where its answers become
+ * correct. Servers using pull diagnostics never send it, so the wait is bounded rather than
+ * required.
  */
 const PROJECT_READY_TIMEOUT_MS = 20_000;
-const SHUTDOWN_TIMEOUT_MS = 2_000;
+const GRACEFUL_SHUTDOWN_TIMEOUT_MS = 2_000;
+const FORCE_SHUTDOWN_TIMEOUT_MS = 2_000;
 
 export interface LspSessionOptions {
   server: ResolvedLanguageServer;
   /** Workspace directory the server indexes; becomes the LSP root and the process cwd. */
   rootPath: string;
   logger: pino.Logger;
-  spawnProcess?: typeof spawn;
+}
+
+export interface DefinitionRequestInput {
+  filePath: string;
+  /** Identifies the file's content, so an unchanged file is neither re-read nor re-synced. */
+  version: string;
+  /** Called only when the server's copy is stale. */
+  readText: () => Promise<string>;
+  position: Position;
 }
 
 interface OpenDocument {
-  document: TextDocument;
+  version: string;
+  /** LSP document version, which must increase on every change notification. */
+  revision: number;
+  /** Resolves on the document's first diagnostics, and stays resolved across edits. */
   ready: Promise<void>;
   markReady: () => void;
 }
@@ -59,39 +69,23 @@ export class LspSession {
   private readonly server: ResolvedLanguageServer;
   private readonly rootPath: string;
   private readonly logger: pino.Logger;
-  private readonly spawnProcess: typeof spawn;
   private readonly documents = new Map<string, OpenDocument>();
 
-  private child: ChildProcessWithoutNullStreams | null = null;
+  private child: ChildProcess | null = null;
   private connection: MessageConnection | null = null;
   private initializing: Promise<InitializeResult> | null = null;
-  private positionEncoding: PositionEncodingKind = "utf-16";
   private disposed = false;
 
   constructor(options: LspSessionOptions) {
     this.server = options.server;
     this.rootPath = options.rootPath;
     this.logger = options.logger.child({ lsp: options.server.descriptor.id });
-    this.spawnProcess = options.spawnProcess ?? spawn;
   }
 
-  /**
-   * Position encoding negotiated at initialize. JavaScript strings are UTF-16, so the app's
-   * character offsets match the default; a server that picks UTF-8 needs conversion before
-   * its positions can be trusted.
-   */
-  get negotiatedPositionEncoding(): PositionEncodingKind {
-    return this.positionEncoding;
-  }
-
-  async definition(input: {
-    filePath: string;
-    text: string;
-    position: Position;
-  }): Promise<LocationLink[]> {
+  async definition(input: DefinitionRequestInput): Promise<LocationLink[]> {
     const connection = await this.ensureInitialized();
     const uri = URI.file(input.filePath).toString();
-    const document = this.syncDocument(uri, input.filePath, input.text);
+    const document = await this.syncDocument({ connection, uri, input });
 
     await withTimeout(document.ready, PROJECT_READY_TIMEOUT_MS);
 
@@ -117,14 +111,24 @@ export class LspSession {
 
     if (connection) {
       try {
-        await withTimeout(connection.sendRequest(ShutdownRequest.type), SHUTDOWN_TIMEOUT_MS);
+        await withTimeout(
+          connection.sendRequest(ShutdownRequest.type),
+          GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+        );
         connection.sendNotification(ExitNotification.type);
       } catch (error) {
         this.logger.debug({ error }, "language server shutdown failed; killing process");
       }
       connection.dispose();
     }
-    child?.kill();
+    if (child) {
+      // typescript-language-server forks tsserver and pyright-langserver is a shim, so killing
+      // the parent alone orphans a process holding the whole project graph.
+      await terminateWithTreeKill(child, {
+        gracefulTimeoutMs: GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+        forceTimeoutMs: FORCE_SHUTDOWN_TIMEOUT_MS,
+      });
+    }
   }
 
   private async ensureInitialized(): Promise<MessageConnection> {
@@ -144,21 +148,27 @@ export class LspSession {
 
   private async start(): Promise<InitializeResult> {
     const { descriptor, executablePath } = this.server;
-    const child = this.spawnProcess(executablePath, descriptor.args, {
+    const child = spawnProcess(executablePath, descriptor.args, {
       cwd: this.rootPath,
       stdio: ["pipe", "pipe", "pipe"],
-    }) as ChildProcessWithoutNullStreams;
+    });
     this.child = child;
 
-    child.stderr.on("data", (chunk: Buffer) => {
-      this.logger.debug({ output: chunk.toString().trimEnd() }, "language server stderr");
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (this.logger.isLevelEnabled?.("debug")) {
+        this.logger.debug({ output: chunk.toString().trimEnd() }, "language server stderr");
+      }
     });
     child.on("exit", (code, signal) => {
       this.logger.info({ code, signal }, "language server exited");
       this.connection = null;
       this.initializing = null;
+      this.documents.clear();
     });
 
+    if (!child.stdout || !child.stdin) {
+      throw new Error("language server was spawned without stdio pipes");
+    }
     const connection = createMessageConnection(
       new StreamMessageReader(child.stdout),
       new StreamMessageWriter(child.stdin),
@@ -183,50 +193,64 @@ export class LspSession {
         },
       },
     });
-    this.positionEncoding = result.capabilities.positionEncoding ?? "utf-16";
+    const encoding = result.capabilities.positionEncoding;
+    if (encoding && encoding !== "utf-16") {
+      // Positions arrive as UTF-16 code units, which is what JavaScript strings index in, and
+      // nothing converts them. A server insisting on UTF-8 is off on any line with astral
+      // characters, so say so rather than returning quietly wrong ranges.
+      this.logger.warn({ encoding }, "language server chose an unsupported position encoding");
+    }
     connection.sendNotification(InitializedNotification.type, {});
     return result;
   }
 
   /**
-   * Open the document, or push a new version when its text changed. Full-text sync keeps the
-   * server's copy identical to what the client rendered, which is what the position refers to.
+   * Open the document, or push a change when its content moved on. The version is compared
+   * before the text is read, so an unchanged file costs neither a disk read nor a round trip,
+   * and the readiness gate survives edits instead of restarting on every save.
    */
-  private syncDocument(uri: string, filePath: string, text: string): OpenDocument {
-    const connection = this.connection;
-    if (!connection) {
-      throw new Error("language server connection is unavailable");
-    }
-
+  private async syncDocument(params: {
+    connection: MessageConnection;
+    uri: string;
+    input: DefinitionRequestInput;
+  }): Promise<OpenDocument> {
+    const { connection, uri, input } = params;
     const existing = this.documents.get(uri);
-    if (existing) {
-      if (existing.document.getText() === text) {
-        return existing;
-      }
-      connection.sendNotification(DidCloseTextDocumentNotification.type, {
-        textDocument: { uri },
-      });
-      this.documents.delete(uri);
+    if (existing?.version === input.version) {
+      return existing;
     }
 
-    const languageId = languageIdForFile(this.server.descriptor, filePath);
-    const document = TextDocument.create(uri, languageId, 1, text);
-    const opened = createOpenDocument(document);
-    this.documents.set(uri, opened);
+    const text = await input.readText();
+    if (existing) {
+      existing.version = input.version;
+      existing.revision += 1;
+      connection.sendNotification(DidChangeTextDocumentNotification.type, {
+        textDocument: { uri, version: existing.revision },
+        contentChanges: [{ text }],
+      });
+      return existing;
+    }
 
+    const opened = createOpenDocument(input.version);
+    this.documents.set(uri, opened);
     connection.sendNotification(DidOpenTextDocumentNotification.type, {
-      textDocument: { uri, languageId, version: 1, text },
+      textDocument: {
+        uri,
+        languageId: languageIdForFile(this.server.descriptor, input.filePath),
+        version: opened.revision,
+        text,
+      },
     });
     return opened;
   }
 }
 
-function createOpenDocument(document: TextDocument): OpenDocument {
+function createOpenDocument(version: string): OpenDocument {
   let markReady = () => {};
   const ready = new Promise<void>((resolve) => {
     markReady = resolve;
   });
-  return { document, ready, markReady };
+  return { version, revision: 1, ready, markReady };
 }
 
 /** LSP allows `Location`, `Location[]`, `LocationLink[]`, or null. Normalize to links. */

@@ -1,11 +1,6 @@
-import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { URI } from "vscode-uri";
-import {
-  PathOutsideWorkspaceError,
-  resolvePathWithinRoot,
-  toDefinitionResult,
-} from "./definition-mapping.js";
+import { toDefinitionResult } from "./definition-mapping.js";
 
 const ROOT = "/workspace/project";
 const ORIGIN = { path: "src/app.ts", position: { line: 1, character: 12 } };
@@ -20,33 +15,16 @@ function link(absolutePath: string) {
   };
 }
 
-describe("resolvePathWithinRoot", () => {
-  it("resolves a relative path against the root", () => {
-    expect(resolvePathWithinRoot(ROOT, "src/app.ts")).toBe(resolve(ROOT, "src/app.ts"));
-  });
-
-  it("rejects traversal out of the workspace", () => {
-    expect(() => resolvePathWithinRoot(ROOT, "../secrets.txt")).toThrow(PathOutsideWorkspaceError);
-    expect(() => resolvePathWithinRoot(ROOT, "src/../../secrets.txt")).toThrow(
-      PathOutsideWorkspaceError,
-    );
-  });
-
-  it("rejects an absolute path pointing elsewhere", () => {
-    expect(() => resolvePathWithinRoot(ROOT, "/etc/passwd")).toThrow(PathOutsideWorkspaceError);
-  });
-});
-
 describe("toDefinitionResult", () => {
   it("returns workspace-relative targets and keeps the origin range", () => {
-    const result = toDefinitionResult(
-      ROOT,
-      {
+    const result = toDefinitionResult({
+      root: ROOT,
+      outcome: {
         status: "ok",
         links: [link(`${ROOT}/src/screens/sessions-screen.tsx`)],
       },
-      ORIGIN,
-    );
+      origin: ORIGIN,
+    });
 
     expect(result).toEqual({
       status: "ok",
@@ -65,14 +43,14 @@ describe("toDefinitionResult", () => {
   });
 
   it("drops targets outside the workspace instead of leaking their paths", () => {
-    const result = toDefinitionResult(
-      ROOT,
-      {
+    const result = toDefinitionResult({
+      root: ROOT,
+      outcome: {
         status: "ok",
         links: [link("/usr/lib/node_modules/react/index.d.ts"), link(`${ROOT}/src/other.ts`)],
       },
-      ORIGIN,
-    );
+      origin: ORIGIN,
+    });
 
     expect(result).toEqual({
       status: "ok",
@@ -90,18 +68,24 @@ describe("toDefinitionResult", () => {
       originSelectionRange: { start: { line: 1, character: 2 }, end: { line: 1, character: 8 } },
     };
 
-    expect(toDefinitionResult(ROOT, { status: "ok", links: [enclosing] }, ORIGIN)).toEqual({
+    expect(
+      toDefinitionResult({
+        root: ROOT,
+        outcome: { status: "ok", links: [enclosing] },
+        origin: ORIGIN,
+      }),
+    ).toEqual({
       status: "ok",
       targets: [],
     });
   });
 
   it("keeps a same-file target that does not enclose the position", () => {
-    const result = toDefinitionResult(
-      ROOT,
-      { status: "ok", links: [link(`${ROOT}/src/app.ts`)] },
-      { path: "src/app.ts", position: { line: 40, character: 4 } },
-    );
+    const result = toDefinitionResult({
+      root: ROOT,
+      outcome: { status: "ok", links: [link(`${ROOT}/src/app.ts`)] },
+      origin: { path: "src/app.ts", position: { line: 40, character: 4 } },
+    });
     expect(result).toEqual({
       status: "ok",
       targets: [expect.objectContaining({ path: "src/app.ts" })],
@@ -110,14 +94,20 @@ describe("toDefinitionResult", () => {
 
   it("passes the absent-server state through for the client to act on", () => {
     expect(
-      toDefinitionResult(
-        ROOT,
-        { status: "server-not-installed", serverId: "go", command: "gopls" },
-        ORIGIN,
-      ),
+      toDefinitionResult({
+        root: ROOT,
+        outcome: { status: "server-not-installed", serverId: "go", command: "gopls" },
+        origin: ORIGIN,
+      }),
     ).toEqual({ status: "server_not_installed", serverId: "go", command: "gopls" });
 
-    expect(toDefinitionResult(ROOT, { status: "unsupported-language" }, ORIGIN)).toEqual({
+    expect(
+      toDefinitionResult({
+        root: ROOT,
+        outcome: { status: "unsupported-language" },
+        origin: ORIGIN,
+      }),
+    ).toEqual({
       status: "unsupported_language",
     });
   });

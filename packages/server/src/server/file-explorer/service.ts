@@ -423,6 +423,18 @@ export async function getExplorerFileVersion({
   }
 }
 
+/**
+ * Read a workspace file as text, refusing anything the explorer would not show as text. Used
+ * by callers that need the exact content the viewer renders, such as code navigation.
+ */
+export async function readExplorerFileText(params: ReadFileParams): Promise<string> {
+  const file = await readExplorerFile(params);
+  if (file.kind !== "text" || file.content === undefined) {
+    throw new Error(`Not a text file: ${params.relativePath}`);
+  }
+  return file.content;
+}
+
 export async function resolveExplorerFilePath({
   root,
   relativePath,

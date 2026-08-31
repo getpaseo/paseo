@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import type pino from "pino";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
 import {
@@ -6,6 +7,7 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import type {
+  CodeDefinitionRequest,
   FileDownloadTokenRequest,
   FileEntryCreateRequest,
   FileEntryDeleteRequest,
@@ -28,12 +30,17 @@ import {
   getDownloadableFileInfo,
   listDirectoryEntries,
   readExplorerFile,
+  readExplorerFileText,
   renameExplorerEntry,
+  resolveExplorerFilePath,
   streamExplorerFile,
   writeExplorerFile,
 } from "../../file-explorer/service.js";
 import { workspaceFileObserver, type FileObserver } from "../../file-explorer/observer.js";
 import { getProjectIcon } from "../../../utils/project-icon.js";
+import { expandUserPath } from "../../path-utils.js";
+import type { LspHost } from "../../lsp/host.js";
+import { toDefinitionResult } from "../../lsp/definition-mapping.js";
 
 /**
  * What a workspace file-access request reaches outside its own domain: the
@@ -53,6 +60,7 @@ export interface WorkspaceFilesSessionOptions {
   paseoHome: string;
   logger: pino.Logger;
   fileObserver?: FileObserver;
+  lspHost?: LspHost;
 }
 
 /**
@@ -69,6 +77,7 @@ export class WorkspaceFilesSession {
   private readonly fileUploads: FileUploadStore;
   private readonly fileObserver: FileObserver;
   private readonly fileSubscriptions = new Map<string, () => void>();
+  private readonly lspHost: LspHost | undefined;
 
   constructor(options: WorkspaceFilesSessionOptions) {
     this.host = options.host;
@@ -76,6 +85,56 @@ export class WorkspaceFilesSession {
     this.logger = options.logger;
     this.fileUploads = new FileUploadStore({ paseoHome: options.paseoHome });
     this.fileObserver = options.fileObserver ?? workspaceFileObserver;
+    this.lspHost = options.lspHost;
+  }
+
+  /**
+   * Resolve the symbol at a position to where it is declared.
+   *
+   * The daemon reads the file rather than taking text from the client: the viewer streams
+   * large files in chunks, so the client may hold only part of what the position refers to.
+   * The read is deferred until the language server's copy is known to be stale.
+   */
+  async handleCodeDefinitionRequest(request: CodeDefinitionRequest): Promise<void> {
+    const requestId = request.requestId;
+    if (!this.lspHost) {
+      this.emitDefinitionFailure(requestId, "Code navigation is unavailable on this daemon.");
+      return;
+    }
+
+    try {
+      const root = expandUserPath(request.cwd);
+      const filePath = await resolveExplorerFilePath({ root, relativePath: request.path });
+      const stats = await stat(filePath);
+      const outcome = await this.lspHost.definition({
+        rootPath: root,
+        filePath,
+        version: `${stats.mtimeMs}:${stats.size}`,
+        readText: () => readExplorerFileText({ root, relativePath: request.path }),
+        position: request.position,
+      });
+      this.host.emit({
+        type: "code.definition.response",
+        payload: {
+          requestId,
+          result: toDefinitionResult({
+            root,
+            outcome,
+            origin: { path: request.path, position: request.position },
+          }),
+        },
+      });
+    } catch (error) {
+      this.logger.debug({ error, path: request.path }, "code definition request failed");
+      this.emitDefinitionFailure(requestId, getErrorMessage(error));
+    }
+  }
+
+  private emitDefinitionFailure(requestId: string, message: string): void {
+    this.host.emit({
+      type: "code.definition.response",
+      payload: { requestId, result: { status: "failed", message } },
+    });
   }
 
   async handleFileSubscribeRequest(request: FileSubscribeRequest): Promise<void> {

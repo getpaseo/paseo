@@ -7,7 +7,7 @@ import type { EditorVisualTheme } from "../editor/extensions.web";
 import { editorTheme } from "../editor/extensions.web";
 import { selectSourcePresentation, type SourcePresentation } from "./presentation";
 import type { GoToDefinitionCallbacks } from "./go-to-definition";
-import { goToDefinition } from "./go-to-definition.web";
+import { useGoToDefinitionExtension } from "./go-to-definition.web";
 
 interface FileSourceViewProps {
   content: string;
@@ -68,10 +68,8 @@ function ReadonlyCodeMirror({
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const initial = useRef({ content, filename, presentation, theme });
-  // The extension is installed once; this ref keeps it calling the current callbacks.
-  const definitionsRef = useRef(definitions);
-  definitionsRef.current = definitions;
+  const goToDefinitionExtension = useGoToDefinitionExtension(definitions ?? null);
+  const initial = useRef({ content, filename, presentation, theme, goToDefinitionExtension });
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -87,11 +85,7 @@ function ReadonlyCodeMirror({
             languageFor({ filename: values.filename, presentation: values.presentation }),
           ),
           themeCompartment.of(editorTheme(values.theme)),
-          goToDefinition({
-            resolve: (position) =>
-              definitionsRef.current?.resolve(position) ?? Promise.resolve(null),
-            navigate: (target) => definitionsRef.current?.navigate(target),
-          }),
+          initial.current.goToDefinitionExtension,
         ],
       }),
     });
