@@ -178,6 +178,19 @@ export class TerminalSessionController {
     };
   }
 
+  async hasDirectorySubscription(input: { cwd: string; workspaceId?: string }): Promise<boolean> {
+    const workspaceRoots = await this.listTerminalWorkspaceRoots();
+    return Array.from(this.subscribedDirectories.values()).some((subscription) => {
+      if (
+        subscription.workspaceId !== undefined &&
+        subscription.workspaceId !== input.workspaceId
+      ) {
+        return false;
+      }
+      return this.terminalBelongsToRoot(subscription.cwd, input.cwd, workspaceRoots);
+    });
+  }
+
   dispatch(msg: SessionInboundMessage): Promise<void> | undefined {
     if (!isTerminalMessage(msg)) {
       return undefined;

@@ -538,6 +538,16 @@ test.describe("CodeMirror workspace file editing", () => {
     await openWorkspaceFile(page, "pixel.png");
     const image = visibleFilePane.locator("img");
     await expect(image).toBeVisible();
+    const imageCanvas = page.getByTestId("image-file-preview-canvas");
+    await expect(imageCanvas).toBeVisible();
+    await imageCanvas.hover();
+    const transformedContent = imageCanvas.locator(":scope > div").first();
+    const fittedImageBox = await transformedContent.boundingBox();
+    expect(fittedImageBox).not.toBeNull();
+    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await expect
+      .poll(async () => (await transformedContent.boundingBox())?.width ?? 0)
+      .toBeGreaterThan(fittedImageBox!.width * 1.2);
     const initialSource = await image.getAttribute("src");
     await writeFile(imagePath, BLUE_PIXEL);
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);
