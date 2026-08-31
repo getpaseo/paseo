@@ -46,8 +46,18 @@ Paseo gates every request on the document's first `publishDiagnostics`, which is
 that server's answers become correct. The wait is bounded rather than required, because servers
 using pull diagnostics never send it.
 
-The hover that draws the underline issues the same request as the click. That is deliberate: by the
-time you press the mouse, the project is usually loaded and the jump is instant.
+The underline appears on the word under the pointer before the daemon has answered, and the
+server's own range replaces it when the answer arrives. Waiting for the round trip first made a
+warm server feel sluggish and a cold one feel broken. A word that resolves to nothing loses its
+underline, and results are cached per word so a second hover costs nothing.
+
+The hover issues the same request as the click, so by the time you press the mouse the project is
+usually loaded and the jump is instant. While a click waits on a cold server the cursor shows
+progress.
+
+A target that encloses the position you clicked is dropped. tsserver answers a click on `return`
+or `export` with the function containing it, and linking every keyword to the block you are
+already inside is noise.
 
 One server runs per (workspace root, language), started on first use and stopped after ten idle
 minutes — a loaded project graph is the expensive thing it holds.

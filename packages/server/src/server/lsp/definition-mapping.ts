@@ -1,5 +1,10 @@
 import { isAbsolute, relative, resolve } from "node:path";
-import type { CodeDefinitionResponse, CodeDefinitionTarget } from "@getpaseo/protocol/messages";
+import type {
+  CodeDefinitionResponse,
+  CodeDefinitionTarget,
+  CodePosition,
+  CodeRange,
+} from "@getpaseo/protocol/messages";
 import { URI } from "vscode-uri";
 import type { DefinitionOutcome } from "./host.js";
 
@@ -25,12 +30,36 @@ export function resolvePathWithinRoot(root: string, relativePath: string): strin
   return resolved;
 }
 
+function containsPosition(range: CodeRange, position: CodePosition): boolean {
+  if (position.line < range.start.line || position.line > range.end.line) {
+    return false;
+  }
+  if (position.line === range.start.line && position.character < range.start.character) {
+    return false;
+  }
+  return !(position.line === range.end.line && position.character > range.end.character);
+}
+
+export interface DefinitionOrigin {
+  /** Workspace-relative path of the file the request came from. */
+  path: string;
+  position: CodePosition;
+}
+
 /**
- * Map the host's outcome onto the wire result. Targets outside the workspace are dropped:
- * a declaration in `node_modules` above the root, or in another checkout, is not a file the
- * client can open, and sending it would leak a path from outside the workspace.
+ * Map the host's outcome onto the wire result.
+ *
+ * Two kinds of target are dropped. One outside the workspace — a declaration in a parent
+ * `node_modules` or another checkout — is not a file the client can open, and its path would
+ * leak a location from outside the workspace. One that encloses the request position is where
+ * the user already is: tsserver answers a click on `return` or `export` with the surrounding
+ * function, and underlining every keyword is noise.
  */
-export function toDefinitionResult(root: string, outcome: DefinitionOutcome): DefinitionResult {
+export function toDefinitionResult(
+  root: string,
+  outcome: DefinitionOutcome,
+  origin: DefinitionOrigin,
+): DefinitionResult {
   if (outcome.status === "unsupported-language") {
     return { status: "unsupported_language" };
   }
@@ -47,6 +76,9 @@ export function toDefinitionResult(root: string, outcome: DefinitionOutcome): De
     const targetPath = URI.parse(link.targetUri).fsPath;
     const offset = relative(root, targetPath);
     if (offset.startsWith("..") || isAbsolute(offset)) {
+      continue;
+    }
+    if (offset === origin.path && containsPosition(link.targetRange, origin.position)) {
       continue;
     }
     targets.push({

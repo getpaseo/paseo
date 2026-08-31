@@ -2566,7 +2566,13 @@ export class Session {
       });
       this.emit({
         type: "code.definition.response",
-        payload: { requestId, result: toDefinitionResult(root, outcome) },
+        payload: {
+          requestId,
+          result: toDefinitionResult(root, outcome, {
+            path: msg.path,
+            position: msg.position,
+          }),
+        },
       });
     } catch (error) {
       this.sessionLogger.debug({ error, path: msg.path }, "code definition request failed");

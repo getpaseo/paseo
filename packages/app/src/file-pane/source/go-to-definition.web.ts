@@ -1,16 +1,25 @@
 import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, type DecorationSet } from "@codemirror/view";
 import type { CodePosition, CodeRange } from "@getpaseo/protocol/messages";
-import type { GoToDefinitionCallbacks } from "./go-to-definition";
+import type { DefinitionTarget, GoToDefinitionCallbacks } from "./go-to-definition";
 
 /**
- * Hovering with the modifier held resolves the symbol under the pointer and underlines the
- * range the language server reported. That hover also warms the server's project graph, so
- * the click that follows lands on an already-loaded session instead of a cold start.
+ * The word under the pointer underlines the moment the modifier is held, before the daemon has
+ * answered. The language server's own range replaces it when the answer arrives, and the
+ * underline disappears if nothing resolved. Waiting for the round trip first made a warm server
+ * feel sluggish and a cold one feel broken.
  */
-const HOVER_RESOLVE_DELAY_MS = 120;
+const RESOLVE_DEBOUNCE_MS = 40;
 
-const setHighlight = StateEffect.define<{ from: number; to: number } | null>();
+type Resolved = { originRange?: CodeRange; target: DefinitionTarget } | null;
+
+interface Span {
+  from: number;
+  to: number;
+}
+
+const setHighlight = StateEffect.define<Span | null>();
+const setPending = StateEffect.define<boolean>();
 
 const symbolMark = Decoration.mark({ class: "cm-definitionLink" });
 
@@ -29,12 +38,30 @@ const highlightField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
+/** A cold server takes seconds to answer; the cursor says the click was received. */
+const pendingField = StateField.define<boolean>({
+  create: () => false,
+  update(pending, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(setPending)) {
+        return effect.value;
+      }
+    }
+    return pending;
+  },
+  provide: (field) =>
+    EditorView.contentAttributes.from(field, (pending) => ({
+      class: pending ? "cm-definitionPending" : "",
+    })),
+});
+
 const linkTheme = EditorView.baseTheme({
   ".cm-definitionLink": {
     textDecoration: "underline",
     textUnderlineOffset: "2px",
     cursor: "pointer",
   },
+  ".cm-definitionPending": { cursor: "progress" },
 });
 
 /** Cmd on macOS, Ctrl elsewhere — the same chord editors already trained people to use. */
@@ -54,52 +81,79 @@ function offsetAt(view: EditorView, position: CodePosition): number {
   return Math.min(line.from + position.character, line.to);
 }
 
-/** Underline the server's own range when it gave one; otherwise mark nothing. */
-function highlightFor(
-  view: EditorView,
-  offset: number,
-  resolved: { originRange?: CodeRange } | null,
-): { from: number; to: number } | null {
+/** Prefer the server's own range; fall back to the word that was underlined optimistically. */
+function highlightFor(view: EditorView, fallback: Span, resolved: Resolved): Span | null {
   if (!resolved) {
     return null;
   }
   const range = resolved.originRange;
   if (!range) {
-    return { from: offset, to: offset + 1 };
+    return fallback;
   }
   return { from: offsetAt(view, range.start), to: offsetAt(view, range.end) };
 }
 
+function wordAt(view: EditorView, offset: number): Span | null {
+  const word = view.state.wordAt(offset);
+  return word ? { from: word.from, to: word.to } : null;
+}
+
 export function goToDefinition(callbacks: GoToDefinitionCallbacks): Extension {
-  let hoverTimer: ReturnType<typeof setTimeout> | undefined;
-  let hoveredOffset: number | null = null;
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let hoveredWord: Span | null = null;
+  /** Keyed by word start. Holds misses too, so a word that resolves to nothing is asked once. */
+  let cache = new Map<number, Resolved>();
 
   function clearHighlight(view: EditorView): void {
-    clearTimeout(hoverTimer);
-    hoveredOffset = null;
+    clearTimeout(debounceTimer);
+    hoveredWord = null;
     if (view.state.field(highlightField).size > 0) {
       view.dispatch({ effects: setHighlight.of(null) });
     }
   }
 
-  function scheduleResolve(view: EditorView, offset: number): void {
-    clearTimeout(hoverTimer);
-    hoverTimer = setTimeout(() => {
-      const position = positionAt(view, offset);
-      void callbacks.resolve(position).then((resolved) => {
-        // The pointer moved on, or the modifier was released, while the request was in flight.
-        if (hoveredOffset !== offset) {
-          return undefined;
+  function resolveWord(view: EditorView, word: Span): Promise<Resolved> {
+    const cached = cache.get(word.from);
+    if (cached !== undefined) {
+      return Promise.resolve(cached);
+    }
+    return callbacks.resolve(positionAt(view, word.from)).then((resolved) => {
+      cache.set(word.from, resolved);
+      return resolved;
+    });
+  }
+
+  function handleHover(view: EditorView, word: Span): void {
+    hoveredWord = word;
+    const cached = cache.get(word.from);
+    // A known miss leaves the text alone instead of flashing an underline onto it.
+    view.dispatch({
+      effects: setHighlight.of(cached === undefined ? word : highlightFor(view, word, cached)),
+    });
+    if (cached !== undefined) {
+      return;
+    }
+
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      void resolveWord(view, word).then((resolved) => {
+        if (hoveredWord?.from === word.from) {
+          view.dispatch({ effects: setHighlight.of(highlightFor(view, word, resolved)) });
         }
-        view.dispatch({ effects: setHighlight.of(highlightFor(view, offset, resolved)) });
         return undefined;
       });
-    }, HOVER_RESOLVE_DELAY_MS);
+    }, RESOLVE_DEBOUNCE_MS);
   }
 
   return [
     highlightField,
+    pendingField,
     linkTheme,
+    EditorView.updateListener.of((update) => {
+      if (update.docChanged) {
+        cache = new Map();
+      }
+    }),
     EditorView.domEventHandlers({
       mousemove(event, view) {
         if (!hasModifier(event)) {
@@ -107,11 +161,15 @@ export function goToDefinition(callbacks: GoToDefinitionCallbacks): Extension {
           return;
         }
         const offset = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        if (offset === null || offset === hoveredOffset) {
+        const word = offset === null ? null : wordAt(view, offset);
+        if (!word) {
+          clearHighlight(view);
           return;
         }
-        hoveredOffset = offset;
-        scheduleResolve(view, offset);
+        if (hoveredWord?.from === word.from && hoveredWord.to === word.to) {
+          return;
+        }
+        handleHover(view, word);
       },
       mouseleave(_event, view) {
         clearHighlight(view);
@@ -124,12 +182,14 @@ export function goToDefinition(callbacks: GoToDefinitionCallbacks): Extension {
           return false;
         }
         const offset = view.posAtCoords({ x: event.clientX, y: event.clientY });
-        if (offset === null) {
+        const word = offset === null ? null : wordAt(view, offset);
+        if (!word) {
           return false;
         }
         event.preventDefault();
-        clearHighlight(view);
-        void callbacks.resolve(positionAt(view, offset)).then((resolved) => {
+        view.dispatch({ effects: setPending.of(true) });
+        void resolveWord(view, word).then((resolved) => {
+          view.dispatch({ effects: [setPending.of(false), setHighlight.of(null)] });
           if (resolved) {
             callbacks.navigate(resolved.target);
           }

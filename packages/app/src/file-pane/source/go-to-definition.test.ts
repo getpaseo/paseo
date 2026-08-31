@@ -72,7 +72,9 @@ describe("goToDefinition", () => {
     view.contentDOM.dispatchEvent(mouseEvent("mousedown", { metaKey: true, ctrlKey: true }));
     await vi.waitFor(() => expect(navigate).toHaveBeenCalledTimes(1));
 
-    expect(resolve).toHaveBeenCalledWith({ line: 0, character: 12 });
+    // Asked at the word start, not where the pointer landed, so every point inside a symbol
+    // is one cache entry and one request.
+    expect(resolve).toHaveBeenCalledWith({ line: 0, character: 9 });
     expect(navigate).toHaveBeenCalledWith({
       path: "src/screens/sessions-screen.tsx",
       line: 62,
@@ -89,6 +91,48 @@ describe("goToDefinition", () => {
 
     expect(resolve).not.toHaveBeenCalled();
     expect(navigate).not.toHaveBeenCalled();
+    view.destroy();
+  });
+
+  it("underlines the word before the daemon answers", async () => {
+    let settle: (value: unknown) => void = () => {};
+    const resolve = vi.fn().mockReturnValue(new Promise((r) => (settle = r)));
+    const view = createView({ resolve, navigate: vi.fn() });
+
+    view.contentDOM.dispatchEvent(mouseEvent("mousemove", { metaKey: true, ctrlKey: true }));
+
+    // Underlined synchronously, with the request still in flight.
+    expect(decorationRanges(view)).toContainEqual({ from: 9, to: 23 });
+    settle(null);
+    view.destroy();
+  });
+
+  it("drops the underline when the word resolves to nothing", async () => {
+    const resolve = vi.fn().mockResolvedValue(null);
+    const view = createView({ resolve, navigate: vi.fn() });
+
+    view.contentDOM.dispatchEvent(mouseEvent("mousemove", { metaKey: true, ctrlKey: true }));
+    await vi.waitFor(() => expect(decorationRanges(view)).toEqual([]));
+    view.destroy();
+  });
+
+  it("asks once per word and serves repeat hovers from cache", async () => {
+    const resolve = vi.fn().mockResolvedValue({
+      originRange: SYMBOL_RANGE,
+      target: { path: "src/screens/sessions-screen.tsx", line: 62 },
+    });
+    const view = createView({ resolve, navigate: vi.fn() });
+    const hover = () =>
+      view.contentDOM.dispatchEvent(mouseEvent("mousemove", { metaKey: true, ctrlKey: true }));
+
+    hover();
+    await vi.waitFor(() => expect(resolve).toHaveBeenCalledTimes(1));
+    view.contentDOM.dispatchEvent(mouseEvent("mouseleave"));
+    hover();
+    view.contentDOM.dispatchEvent(mouseEvent("mousedown", { metaKey: true, ctrlKey: true }));
+
+    await vi.waitFor(() => expect(decorationRanges(view)).toEqual([]));
+    expect(resolve).toHaveBeenCalledTimes(1);
     view.destroy();
   });
 
