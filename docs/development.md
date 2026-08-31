@@ -343,6 +343,10 @@ the launch environment remains authoritative. Lower values reduce machine pressu
 Git RPCs wait longer. See [Git process limits](data-model.md#git-process-limits) for defaults,
 semantics, and environment-variable overrides.
 
+When `paseo daemon restart` runs inside a Paseo-owned agent, the CLI asks the existing supervisor to
+recycle its daemon worker so the command cannot kill its own restart process. Run the command from an
+external shell when changing launch options such as `--listen`, `--port`, or relay settings.
+
 ### Agent Tool Catalog Measurement
 
 Measure the MCP `tools/list` payload that Paseo injects into agents with:

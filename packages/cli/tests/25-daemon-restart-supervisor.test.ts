@@ -94,6 +94,17 @@ async function readDaemonStatus(paseoHome: string): Promise<DaemonStatus> {
   }
 }
 
+async function waitForRunningDaemon(paseoHome: string, supervisorPid: number): Promise<void> {
+  await waitFor(
+    async () => {
+      const status = await readDaemonStatus(paseoHome);
+      return status.localDaemon === "running" && status.pid === supervisorPid;
+    },
+    120000,
+    "daemon did not become responsive after worker restart",
+  );
+}
+
 async function readCapturedSupervisorLogs(paseoHome: string, recentLogs: string): Promise<string> {
   const durableLogs = await readFile(join(paseoHome, "daemon.log"), "utf8").catch(() => "");
   return `${recentLogs}\n${durableLogs}`;
@@ -216,6 +227,7 @@ try {
     "worker pid should change after restart",
   );
 
+  await waitForRunningDaemon(paseoHome, supervisorPid);
   const statusAfterRestart = await readDaemonStatus(paseoHome);
   assert.strictEqual(
     statusAfterRestart.localDaemon,
@@ -239,6 +251,40 @@ try {
     `restart should log supervisor signal dispatch, logs:\n${capturedSupervisorLogs}`,
   );
   console.log("✓ app-style restart keeps daemon healthy and restarts worker\n");
+
+  console.log("Test 3: a Paseo-owned CLI restart recycles the worker, not the supervisor");
+  const workerPidBeforeCliRestart = workerPidAfterRestart;
+  const cliRestart =
+    await $`PASEO_HOME=${paseoHome} PASEO_AGENT_ID=managed-test-agent PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon restart --home ${paseoHome} --json`.nothrow();
+  assert.strictEqual(
+    cliRestart.exitCode,
+    0,
+    `managed CLI restart should succeed:\nstdout:\n${cliRestart.stdout}\nstderr:\n${cliRestart.stderr}`,
+  );
+  const cliRestartOutput = JSON.parse(cliRestart.stdout) as { action?: unknown; pid?: unknown };
+  assert.strictEqual(cliRestartOutput.action, "restart_requested");
+  assert.strictEqual(cliRestartOutput.pid, String(supervisorPid));
+
+  await waitFor(
+    () => {
+      const workerPid = readWorkerPid(supervisorPid);
+      return (
+        workerPid !== null && workerPid !== workerPidBeforeCliRestart && isProcessRunning(workerPid)
+      );
+    },
+    20000,
+    "worker pid did not change after managed CLI restart",
+  );
+
+  await waitForRunningDaemon(paseoHome, supervisorPid);
+  const statusAfterCliRestart = await readDaemonStatus(paseoHome);
+  assert.strictEqual(statusAfterCliRestart.localDaemon, "running");
+  assert.strictEqual(
+    statusAfterCliRestart.pid,
+    supervisorPid,
+    "managed CLI restart must preserve the owning supervisor",
+  );
+  console.log("✓ managed CLI restart preserves supervisor and recycles worker\n");
 } finally {
   if (supervisorProcess?.pid && isProcessRunning(supervisorProcess.pid)) {
     supervisorProcess.kill("SIGTERM");
@@ -251,7 +297,6 @@ try {
     });
   }
 
-  await $`PASEO_HOME=${paseoHome} PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD=${testEnv.PASEO_LOCAL_SPEECH_AUTO_DOWNLOAD} PASEO_DICTATION_ENABLED=${testEnv.PASEO_DICTATION_ENABLED} PASEO_VOICE_MODE_ENABLED=${testEnv.PASEO_VOICE_MODE_ENABLED} npx paseo daemon stop --home ${paseoHome} --force`.nothrow();
   await rm(paseoHome, { recursive: true, force: true });
 }
 
