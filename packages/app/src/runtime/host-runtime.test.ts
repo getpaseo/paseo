@@ -1762,7 +1762,7 @@ describe("HostRuntimeStore", () => {
     });
 
     store.syncHosts([host]);
-    await waitForDirectoryReady(store, host.serverId);
+    await waitForHostOnline(store, host.serverId);
 
     const pin = store.pinActiveConnection(host.serverId);
     expect(pin).toMatchObject({
