@@ -1,5 +1,51 @@
-import { describe, expect, it } from "vitest";
-import { reloadActiveBrowserOrWindow } from "./menu.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { reloadActiveBrowserOrWindow, setupApplicationMenu } from "./menu.js";
+
+const electronMocks = vi.hoisted(() => {
+  const appMenuInsert = vi.fn();
+  return {
+    appMenuInsert,
+    buildFromTemplate: vi.fn((template: unknown) => ({
+      getMenuItemById: vi.fn((id: string) =>
+        id === "application-menu"
+          ? {
+              submenu: {
+                insert: appMenuInsert,
+                items: [{ role: "about" }, { type: "separator" }, { role: "services" }],
+              },
+            }
+          : null,
+      ),
+      template,
+    })),
+    setApplicationMenu: vi.fn(),
+  };
+});
+
+vi.mock("electron", () => ({
+  app: { on: vi.fn() },
+  BrowserWindow: class BrowserWindow {
+    public readonly webContents = {};
+
+    public static getFocusedWindow(): null {
+      return null;
+    }
+
+    public static fromWebContents(): null {
+      return null;
+    }
+  },
+  ipcMain: { handle: vi.fn() },
+  Menu: electronMocks,
+  MenuItem: class MenuItem {
+    public constructor(public readonly options: unknown) {}
+  },
+}));
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.clearAllMocks();
+});
 
 class FakeWebContents {
   public readonly reloads: string[] = [];
@@ -66,5 +112,39 @@ describe("reloadActiveBrowserOrWindow", () => {
     expect(browserReloads.firstBrowser.reloads).toEqual([]);
     expect(browserReloads.secondBrowser.reloads).toEqual(["force-reload"]);
     expect(browserReloads.secondWindow.webContents.reloads).toEqual([]);
+  });
+});
+
+describe("setupApplicationMenu", () => {
+  it("adds Preferences to Electron's native macOS application and Window menus", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+
+    setupApplicationMenu({ onNewWindow: vi.fn() });
+
+    const template = electronMocks.buildFromTemplate.mock.calls[0]?.[0];
+    expect(template).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "application-menu", role: "appMenu" }),
+        expect.objectContaining({ role: "windowMenu" }),
+      ]),
+    );
+    expect(electronMocks.appMenuInsert).toHaveBeenNthCalledWith(
+      1,
+      2,
+      expect.objectContaining({
+        options: expect.objectContaining({
+          label: "Preferences…",
+          accelerator: "Command+,",
+          click: expect.any(Function),
+        }),
+      }),
+    );
+    expect(electronMocks.appMenuInsert).toHaveBeenNthCalledWith(
+      2,
+      3,
+      expect.objectContaining({
+        options: expect.objectContaining({ type: "separator" }),
+      }),
+    );
   });
 });

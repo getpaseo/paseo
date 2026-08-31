@@ -1,4 +1,4 @@
-import { app, Menu, BrowserWindow, ipcMain } from "electron";
+import { app, Menu, BrowserWindow, ipcMain, MenuItem } from "electron";
 import { getActivePaseoBrowserWebContentsForHostWindow } from "./browser-webviews/index.js";
 
 interface ShowContextMenuInput {
@@ -8,6 +8,11 @@ interface ShowContextMenuInput {
 
 interface ApplicationMenuOptions {
   onNewWindow: () => void;
+}
+
+function openPreferences(win: BrowserWindow): void {
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: ",", modifiers: ["meta"] });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: ",", modifiers: ["meta"] });
 }
 
 function withBrowserWindow(
@@ -75,18 +80,8 @@ function buildApplicationMenuTemplate(
     ...(isMac
       ? [
           {
-            label: app.name,
-            submenu: [
-              { role: "about" as const },
-              { type: "separator" as const },
-              { role: "services" as const },
-              { type: "separator" as const },
-              { role: "hide" as const },
-              { role: "hideOthers" as const },
-              { role: "unhide" as const },
-              { type: "separator" as const },
-              { role: "quit" as const },
-            ],
+            id: "application-menu",
+            role: "appMenu" as const,
           },
         ]
       : []),
@@ -168,27 +163,55 @@ function buildApplicationMenuTemplate(
         { role: "togglefullscreen" },
       ],
     },
-    {
-      label: "Window",
-      submenu: [
-        { role: "minimize" },
-        { role: "zoom" },
-        ...(isMac
-          ? [{ type: "separator" as const }, { role: "front" as const }]
-          : [{ role: "close" as const }]),
-      ],
-    },
+    ...(isMac
+      ? [{ role: "windowMenu" as const }]
+      : [
+          {
+            label: "Window",
+            submenu: [
+              { role: "minimize" as const },
+              { role: "zoom" as const },
+              { role: "close" as const },
+            ],
+          },
+        ]),
   ];
 }
 
 let applicationMenuOptions: ApplicationMenuOptions | null = null;
 let capturingShortcut = false;
 
+function addMacPreferencesMenuItem(menu: Menu): void {
+  const appMenu = menu.getMenuItemById("application-menu")?.submenu;
+  if (!appMenu) {
+    return;
+  }
+
+  const firstSeparatorIndex = appMenu.items.findIndex((item) => item.type === "separator");
+  if (firstSeparatorIndex === -1) {
+    return;
+  }
+
+  const preferencesIndex = firstSeparatorIndex + 1;
+  appMenu.insert(
+    preferencesIndex,
+    new MenuItem({
+      label: "Preferences…",
+      accelerator: "Command+,",
+      click: withBrowserWindow(openPreferences),
+    }),
+  );
+  appMenu.insert(preferencesIndex + 1, new MenuItem({ type: "separator" }));
+}
+
 function rebuildApplicationMenu(): void {
   if (!applicationMenuOptions) return;
   const menu = Menu.buildFromTemplate(
     buildApplicationMenuTemplate(applicationMenuOptions, capturingShortcut),
   );
+  if (process.platform === "darwin") {
+    addMacPreferencesMenuItem(menu);
+  }
   Menu.setApplicationMenu(menu);
 }
 
