@@ -1,6 +1,6 @@
 import equal from "fast-deep-equal";
 import { v4 as uuidv4 } from "uuid";
-import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readFile, rename, rm, stat } from "node:fs/promises";
 import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
@@ -76,6 +76,14 @@ import {
   WorkspaceLabelStorageUncertainError,
   type WorkspaceLabelService,
 } from "./workspace-labels/index.js";
+import { expandUserPath } from "./path-utils.js";
+import type { CodeDefinitionRequest } from "@getpaseo/protocol/messages";
+import type { LspHost } from "./lsp/host.js";
+import {
+  describeError,
+  resolvePathWithinRoot,
+  toDefinitionResult,
+} from "./lsp/definition-mapping.js";
 
 import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
@@ -456,6 +464,7 @@ export interface SessionOptions {
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
   workspaceLabelService?: WorkspaceLabelService;
+  lspHost?: LspHost;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
@@ -696,6 +705,7 @@ export class Session {
   private readonly agentUpdates: AgentUpdatesService;
   private workspaceUpdatesSubscription: WorkspaceUpdatesSubscriptionState | null = null;
   private readonly workspaceLabelService: WorkspaceLabelService | null;
+  private readonly lspHost: LspHost | undefined;
   private workspaceLabelSubscription: {
     owner: object;
     id: string;
@@ -763,6 +773,7 @@ export class Session {
       workspaceRegistry,
       directorySync,
       workspaceLabelService,
+      lspHost,
       filesystem,
       scheduleService,
       checkoutDiffManager,
@@ -836,6 +847,7 @@ export class Session {
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
     this.workspaceLabelService = resolveWorkspaceLabelService(workspaceLabelService);
+    this.lspHost = lspHost;
     this.filesystem = filesystem ?? nodeSessionFileSystem;
     this.github = github ?? createGitHubService();
     this.renameCurrentBranch = renameCurrentBranch ?? renameCurrentBranchDefault;
@@ -2523,6 +2535,51 @@ export class Session {
     }
   }
 
+  /**
+   * Resolve the symbol at a position to where it is declared.
+   *
+   * The daemon reads the file rather than taking text from the client: the viewer streams
+   * large files in chunks, so the client may hold only part of what the position refers to.
+   */
+  private async handleCodeDefinitionRequest(msg: CodeDefinitionRequest): Promise<void> {
+    const requestId = msg.requestId;
+    if (!this.lspHost) {
+      this.emit({
+        type: "code.definition.response",
+        payload: {
+          requestId,
+          result: { status: "failed", message: "Code navigation is unavailable on this daemon." },
+        },
+      });
+      return;
+    }
+
+    try {
+      const root = expandUserPath(msg.cwd);
+      const filePath = resolvePathWithinRoot(root, msg.path);
+      const text = await readFile(filePath, "utf8");
+      const outcome = await this.lspHost.definition({
+        rootPath: root,
+        filePath,
+        text,
+        position: msg.position,
+      });
+      this.emit({
+        type: "code.definition.response",
+        payload: { requestId, result: toDefinitionResult(root, outcome) },
+      });
+    } catch (error) {
+      this.sessionLogger.debug({ error, path: msg.path }, "code definition request failed");
+      this.emit({
+        type: "code.definition.response",
+        payload: {
+          requestId,
+          result: { status: "failed", message: describeError(error) },
+        },
+      });
+    }
+  }
+
   private dispatchWorkspaceFileMessage(
     msg: SessionInboundMessage,
     source?: object,
@@ -2547,6 +2604,8 @@ export class Session {
         return this.workspaceFilesSession.handleFileEntryDeleteRequest(msg);
       case "project_icon_request":
         return this.workspaceFilesSession.handleProjectIconRequest(msg);
+      case "code.definition.request":
+        return this.handleCodeDefinitionRequest(msg);
       case "project.icon.get.request":
         return this.handleProjectIconGetRequest(msg.projectId, msg.requestId);
       case "file_download_token_request":

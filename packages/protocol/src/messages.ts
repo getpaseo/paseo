@@ -1430,6 +1430,30 @@ export const DiagnosticsRequestSchema = z.object({
   requestId: z.string(),
 });
 
+/**
+ * A position in a text document, in UTF-16 code units, matching LSP's default encoding and
+ * JavaScript string indexing. Both zero-based.
+ */
+export const CodePositionSchema = z.object({
+  line: z.number().int().nonnegative(),
+  character: z.number().int().nonnegative(),
+});
+
+export const CodeRangeSchema = z.object({
+  start: CodePositionSchema,
+  end: CodePositionSchema,
+});
+
+export const CodeDefinitionRequestSchema = z.object({
+  type: z.literal("code.definition.request"),
+  requestId: z.string(),
+  /** Workspace directory, matching the file APIs the viewer already uses. */
+  cwd: z.string(),
+  /** Workspace-relative path of the file the position refers to. */
+  path: z.string(),
+  position: CodePositionSchema,
+});
+
 export const PluginCatalogGetRequestSchema = z.object({
   type: z.literal("plugin.catalog.get.request"),
   requestId: z.string(),
@@ -3036,6 +3060,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   DiagnosticsRequestSchema,
   PluginCatalogGetRequestSchema,
   PluginListRequestSchema,
+  CodeDefinitionRequestSchema,
   PluginLogsGetRequestSchema,
   PluginDirectoryInstallRequestSchema,
   PluginDirectoryInspectRequestSchema,
@@ -3402,6 +3427,8 @@ export const ServerInfoStatusPayloadSchema = z
         // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
         // so a theme plugin cannot start there at all.
         pluginThemes: z.boolean().optional(),
+        // COMPAT(codeNavigation): added in v0.7.1, remove gate after 2027-09-01.
+        codeNavigation: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -6198,6 +6225,41 @@ export const PluginLogsGetResponseSchema = z.object({
   }),
 });
 
+/**
+ * One place a symbol is declared. `originRange` is the range of the clicked symbol as the
+ * language server reported it, so the client underlines exactly what resolved rather than
+ * guessing where the symbol starts and ends.
+ */
+export const CodeDefinitionTargetSchema = z.object({
+  path: z.string(),
+  range: CodeRangeSchema,
+  selectionRange: CodeRangeSchema,
+  originRange: CodeRangeSchema.optional(),
+});
+
+export const CodeDefinitionResponseSchema = z.object({
+  type: z.literal("code.definition.response"),
+  payload: z.object({
+    requestId: z.string(),
+    result: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("ok"), targets: z.array(CodeDefinitionTargetSchema) }),
+      z.object({ status: z.literal("unsupported_language") }),
+      z.object({
+        status: z.literal("server_not_installed"),
+        serverId: z.string(),
+        command: z.string(),
+      }),
+      z.object({ status: z.literal("failed"), message: z.string() }),
+    ]),
+  }),
+});
+
+export type CodeDefinitionRequest = z.infer<typeof CodeDefinitionRequestSchema>;
+export type CodeDefinitionResponse = z.infer<typeof CodeDefinitionResponseSchema>;
+export type CodeDefinitionTarget = z.infer<typeof CodeDefinitionTargetSchema>;
+export type CodePosition = z.infer<typeof CodePositionSchema>;
+export type CodeRange = z.infer<typeof CodeRangeSchema>;
+
 export const PluginDirectoryInstallResponseSchema = z.object({
   type: z.literal("plugin.directory.install.response"),
   payload: z.object({ requestId: z.string(), plugin: PluginListItemSchema }),
@@ -6306,6 +6368,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   BrowserAutomationExecuteRequestSchema,
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,
+  CodeDefinitionResponseSchema,
   PluginLogsGetResponseSchema,
   PluginDirectoryInstallResponseSchema,
   PluginDirectoryInspectResponseSchema,
