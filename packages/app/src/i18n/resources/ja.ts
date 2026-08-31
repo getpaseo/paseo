@@ -1990,6 +1990,10 @@ export const ja: TranslationResources = {
           queue: "キュー",
         },
       },
+      previewTabs: {
+        label: "エクスプローラーのプレビューでタブを再利用",
+        hint: "ファイルをダブルクリックすると専用のタブで開いたままになります",
+      },
       serviceUrls: {
         label: "サービスURL",
         description: "実行中のスクリプトからURLを開く場所",

@@ -84,3 +84,6 @@ desktop preference.
 Panels request an implicit open through the narrow `openPreferredTarget(target, source)` pane
 contract. Entry points outside panels use `openPreferredWorkspaceTarget`. Do not branch on a
 specific shell inside a panel.
+
+`openPreferredTargetAsNormalTab` is the same contract at the same destination, but claiming a tab of its
+own instead of the pane's **Preview tab**. Only the Explorer file tree uses it, on a double click.

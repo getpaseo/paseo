@@ -1949,6 +1949,10 @@ export const zhCN: TranslationResources = {
           queue: "排队",
         },
       },
+      previewTabs: {
+        label: "为资源管理器预览复用标签页",
+        hint: "双击文件即可将其保留在独立标签页中",
+      },
       serviceUrls: {
         label: "服务 URL",
         description: "运行脚本中的 URL 打开位置",

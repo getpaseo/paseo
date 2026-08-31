@@ -2072,6 +2072,10 @@ export const en = {
           queue: "Queue",
         },
       },
+      previewTabs: {
+        label: "Reuse a tab for Explorer previews",
+        hint: "Double-click a file to keep it in its own tab",
+      },
       serviceUrls: {
         label: "Service URLs",
         description: "Where to open URLs from running scripts",

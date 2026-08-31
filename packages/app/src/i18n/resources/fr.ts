@@ -2026,6 +2026,10 @@ export const fr: TranslationResources = {
           queue: "File d'attente",
         },
       },
+      previewTabs: {
+        label: "Réutiliser un onglet pour les aperçus de l'explorateur",
+        hint: "Double-cliquez sur un fichier pour le conserver dans son propre onglet",
+      },
       serviceUrls: {
         label: "URL de services",
         description: "Où ouvrir les URL à partir de scripts en cours d'exécution",

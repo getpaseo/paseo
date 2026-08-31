@@ -281,6 +281,7 @@ interface GeneralSectionProps {
   handleSendBehaviorChange: (behavior: SendBehavior) => void;
   handleServiceUrlBehaviorChange: (behavior: ServiceUrlBehavior) => void;
   handleLanguageChange: (language: AppLanguage) => void;
+  handlePreviewTabsChange: (previewTabsEnabled: boolean) => void;
   handleTerminalScrollbackLinesChange: (lines: number) => void;
 }
 
@@ -355,6 +356,7 @@ function GeneralSection({
   handleSendBehaviorChange,
   handleServiceUrlBehaviorChange,
   handleLanguageChange,
+  handlePreviewTabsChange,
   handleTerminalScrollbackLinesChange,
 }: GeneralSectionProps) {
   const { t, i18n } = useTranslation();
@@ -453,6 +455,18 @@ function GeneralSection({
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+        </View>
+        <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>{t("settings.general.previewTabs.label")}</Text>
+            <Text style={settingsStyles.rowHint}>{t("settings.general.previewTabs.hint")}</Text>
+          </View>
+          <Switch
+            value={settings.previewTabsEnabled}
+            onValueChange={handlePreviewTabsChange}
+            accessibilityLabel={t("settings.general.previewTabs.label")}
+            testID="preview-tabs-toggle"
+          />
         </View>
         {isDesktopApp ? (
           <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
@@ -1249,6 +1263,13 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
     [updateSettings],
   );
 
+  const handlePreviewTabsChange = useCallback(
+    (previewTabsEnabled: boolean) => {
+      void updateSettings({ previewTabsEnabled });
+    },
+    [updateSettings],
+  );
+
   const handleTerminalScrollbackLinesChange = useCallback(
     (terminalScrollbackLines: number) => {
       void updateSettings({ terminalScrollbackLines });
@@ -1475,6 +1496,7 @@ export default function SettingsScreen({ view, openAddHostIntent = null }: Setti
                   handleSendBehaviorChange={handleSendBehaviorChange}
                   handleServiceUrlBehaviorChange={handleServiceUrlBehaviorChange}
                   handleLanguageChange={handleLanguageChange}
+                  handlePreviewTabsChange={handlePreviewTabsChange}
                   handleTerminalScrollbackLinesChange={handleTerminalScrollbackLinesChange}
                 />
                 {isDesktopApp ? <BrowserDataSection /> : null}

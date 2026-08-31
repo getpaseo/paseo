@@ -1838,6 +1838,7 @@ function WorkspaceScreenContent({
     [openTab],
   );
   const openInSidePane = useSettings((settings) => settings.openInSidePane);
+  const previewTabsEnabled = useSettings((settings) => settings.previewTabsEnabled);
   const pullRequestOpenLocation = useSettings((settings) => settings.pullRequestOpenLocation);
   const focusWorkspaceTab = useWorkspaceLayoutStore((state) => state.focusTab);
   const selectWorkspaceTabInPane = useWorkspaceLayoutStore((state) => state.selectTabInPane);
@@ -3499,7 +3500,7 @@ function WorkspaceScreenContent({
         source,
         preferences: openInSidePane,
         mode,
-        previewEnabled: true,
+        previewEnabled: previewTabsEnabled,
       });
       if (tabId && target.kind === "file") requestFileNavigation(tabId);
       if (tabId) navigateToTabId(tabId);
@@ -3513,6 +3514,7 @@ function WorkspaceScreenContent({
       normalizedWorkspaceId,
       openInSidePane,
       persistenceKey,
+      previewTabsEnabled,
       requestFileNavigation,
     ],
   );

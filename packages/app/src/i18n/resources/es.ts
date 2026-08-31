@@ -2022,6 +2022,10 @@ export const es: TranslationResources = {
           queue: "Cola",
         },
       },
+      previewTabs: {
+        label: "Reutilizar una pestaña para las vistas previas del Explorador",
+        hint: "Haz doble clic en un archivo para conservarlo en su propia pestaña",
+      },
       serviceUrls: {
         label: "URL de servicio",
         description: "Dónde abrir URL desde scripts en ejecución",

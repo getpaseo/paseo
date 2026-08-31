@@ -2006,6 +2006,10 @@ export const ptBR: TranslationResources = {
           queue: "Fila",
         },
       },
+      previewTabs: {
+        label: "Reutilizar uma aba para as prévias do Explorador",
+        hint: "Dê um duplo clique em um arquivo para mantê-lo em uma aba própria",
+      },
       serviceUrls: {
         label: "URLs de serviço",
         description: "Onde abrir URLs de scripts em execução",
