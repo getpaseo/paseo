@@ -129,6 +129,14 @@ export type AgentRunCancellationResult =
   | { status: "settled" }
   | { status: "refused" };
 
+export interface AgentCompactionResult {
+  status: "confirmed" | "unsupported" | "failed";
+  provider: AgentProvider;
+  nativeSessionIdBefore: string | null;
+  nativeSessionIdAfter: string | null;
+  error: string | null;
+}
+
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
@@ -2112,6 +2120,62 @@ export class AgentManager {
       }
     })();
     return true;
+  }
+
+  async compactAgent(agentId: string): Promise<AgentCompactionResult> {
+    return await this.runLifecycleMutation(agentId, () => this.compactAgentUnlocked(agentId));
+  }
+
+  private async compactAgentUnlocked(agentId: string): Promise<AgentCompactionResult> {
+    const agent = this.requireSessionAgent(agentId);
+    const before = agent.session.describePersistence()?.sessionId ?? null;
+    if (!agent.session.capabilities.supportsSameSessionCompaction || !agent.session.compact) {
+      return {
+        status: "unsupported",
+        provider: agent.provider,
+        nativeSessionIdBefore: before,
+        nativeSessionIdAfter: before,
+        error: `${agent.provider} does not support same-session compaction`,
+      };
+    }
+    if (!before) {
+      return {
+        status: "failed",
+        provider: agent.provider,
+        nativeSessionIdBefore: null,
+        nativeSessionIdAfter: null,
+        error: "Native session identity is unavailable before compaction",
+      };
+    }
+    try {
+      await agent.session.compact();
+      await this.drainSessionEvents(agent.id);
+    } catch (error) {
+      return {
+        status: "failed",
+        provider: agent.provider,
+        nativeSessionIdBefore: before,
+        nativeSessionIdAfter: agent.session.describePersistence()?.sessionId ?? null,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+    const after = agent.session.describePersistence()?.sessionId ?? null;
+    if (after !== before) {
+      return {
+        status: "failed",
+        provider: agent.provider,
+        nativeSessionIdBefore: before,
+        nativeSessionIdAfter: after,
+        error: "Native session identity changed during compaction",
+      };
+    }
+    return {
+      status: "confirmed",
+      provider: agent.provider,
+      nativeSessionIdBefore: before,
+      nativeSessionIdAfter: after,
+      error: null,
+    };
   }
 
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {

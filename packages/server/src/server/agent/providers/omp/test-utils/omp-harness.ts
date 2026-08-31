@@ -451,6 +451,10 @@ export class OmpHarness {
     await this.requireSession().revertConversation({ messageId });
   }
 
+  async compact(): Promise<void> {
+    await this.requireSession().compact();
+  }
+
   branchRequests(): string[] {
     return this.omp.latestSession().branchRequests;
   }

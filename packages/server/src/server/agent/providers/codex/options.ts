@@ -38,6 +38,8 @@ const NetworkPolicySchema = z
 export const CodexProviderOptionsSchema = z
   .object({
     approval_policy: ApprovalPolicySchema.optional(),
+    model_auto_compact_token_limit: z.number().int().positive().optional(),
+    model_auto_compact_token_limit_scope: z.enum(["total", "body_after_prefix"]).optional(),
     sandbox_mode: z.enum(["read-only", "workspace-write", "danger-full-access"]).optional(),
     sandbox_workspace_write: z
       .object({

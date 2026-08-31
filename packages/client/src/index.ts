@@ -1,4 +1,5 @@
 import type {
+  AgentCompactResponseMessage,
   AgentSnapshotPayload,
   CreateAgentRequestMessage,
   FetchWorkspacesRequestMessage,
@@ -302,6 +303,7 @@ export interface PaseoAgentHandle {
    */
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
   archive(): Promise<{ archivedAt: string }>;
+  compact(): Promise<AgentCompactResponseMessage["payload"]>;
   detach(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
 }
@@ -695,6 +697,7 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
         }
         return result;
       },
+      compact: () => daemonClient.compactAgent(id),
       detach: async () => {
         await daemonClient.detachAgent(id);
       },

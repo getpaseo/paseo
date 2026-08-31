@@ -126,6 +126,7 @@ const OMP_CORE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsSameSessionCompaction: true,
 };
 
 export interface OmpAgentClientOptions {
@@ -1166,6 +1167,17 @@ export class OmpAgentSession implements AgentSession {
     } finally {
       this.clearOmpSessionState();
     }
+  }
+
+  async compact(): Promise<void> {
+    if (this.closed) {
+      throw new Error("OMP session is closed");
+    }
+    if (this.activeTurnId) {
+      throw new Error("Cannot compact OMP context while a turn is active");
+    }
+    await this.runtimeSession.compact();
+    await this.refreshState();
   }
 
   private clearOmpSessionState(): void {

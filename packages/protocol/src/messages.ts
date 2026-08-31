@@ -359,6 +359,24 @@ const AgentModelDefinitionSchema = z.object({
   defaultThinkingOptionId: z.string().optional(),
 }) satisfies z.ZodType<AgentModelDefinition>;
 
+const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
+  .object({
+    supportsStreaming: z.boolean(),
+    supportsSessionPersistence: z.boolean(),
+    supportsSessionListing: z.boolean().optional(),
+    supportsDynamicModes: z.boolean(),
+    supportsMcpServers: z.boolean(),
+    supportsReasoningStream: z.boolean(),
+    supportsToolInvocations: z.boolean(),
+    // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
+    supportsRewindConversation: z.boolean().optional().default(false),
+    // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
+    supportsRewindFiles: z.boolean().optional().default(false),
+    // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
+    supportsRewindBoth: z.boolean().optional().default(false),
+  })
+  .catchall(z.boolean());
+
 export const ProviderSnapshotEntrySchema = z.object({
   provider: AgentProviderSchema,
   status: ProviderStatusSchema,
@@ -371,6 +389,7 @@ export const ProviderSnapshotEntrySchema = z.object({
   label: z.string().optional(),
   description: z.string().optional(),
   defaultModeId: z.string().nullable().optional(),
+  capabilities: AgentCapabilityFlagsSchema.optional(),
 });
 
 export const CompactProviderSnapshotModelSchema = AgentModelDefinitionSchema.omit({
@@ -395,24 +414,6 @@ export const CompactProviderSnapshotSchema = z.object({
   entries: z.array(CompactProviderSnapshotEntrySchema),
   thinkingSets: z.array(ProviderSnapshotThinkingSetSchema),
 });
-
-const AgentCapabilityFlagsSchema: z.ZodType<AgentCapabilityFlags> = z
-  .object({
-    supportsStreaming: z.boolean(),
-    supportsSessionPersistence: z.boolean(),
-    supportsSessionListing: z.boolean().optional(),
-    supportsDynamicModes: z.boolean(),
-    supportsMcpServers: z.boolean(),
-    supportsReasoningStream: z.boolean(),
-    supportsToolInvocations: z.boolean(),
-    // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
-    supportsRewindConversation: z.boolean().optional().default(false),
-    // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
-    supportsRewindFiles: z.boolean().optional().default(false),
-    // COMPAT(rewind): added in v0.1.X, drop when floor >= v0.1.X.
-    supportsRewindBoth: z.boolean().optional().default(false),
-  })
-  .catchall(z.boolean());
 
 const AgentUsageSchema: z.ZodType<AgentUsage> = z.object({
   inputTokens: z.number().optional(),
@@ -1927,6 +1928,25 @@ export const AgentRewindResponseMessageSchema = z.object({
   }),
 });
 
+export const AgentCompactRequestMessageSchema = z.object({
+  type: z.literal("agent.compact.request"),
+  agentId: z.string(),
+  requestId: z.string(),
+});
+
+export const AgentCompactResponseMessageSchema = z.object({
+  type: z.literal("agent.compact.response"),
+  payload: z.object({
+    requestId: z.string(),
+    agentId: z.string(),
+    provider: AgentProviderSchema.nullable(),
+    status: z.enum(["confirmed", "unsupported", "failed"]),
+    nativeSessionIdBefore: z.string().nullable(),
+    nativeSessionIdAfter: z.string().nullable(),
+    error: z.string().nullable(),
+  }),
+});
+
 export const UpdateAgentResponseMessageSchema = z.object({
   type: z.literal("update_agent_response"),
   payload: AgentActionResponsePayloadSchema,
@@ -3089,6 +3109,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentConfigApplyRequestMessageSchema,
   AgentDetachRequestMessageSchema,
   AgentRewindRequestMessageSchema,
+  AgentCompactRequestMessageSchema,
   AgentPermissionResponseMessageSchema,
   CheckoutStatusRequestSchema,
   SubscribeCheckoutDiffRequestSchema,
@@ -3358,6 +3379,8 @@ export const ServerInfoStatusPayloadSchema = z
         providersSnapshot: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
+        // COMPAT(contextManagement): added in v0.5.x, remove gate after 2027-08-23.
+        contextManagement: z.boolean().optional(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
@@ -6403,6 +6426,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentConfigApplyResponseMessageSchema,
   AgentDetachResponseMessageSchema,
   AgentRewindResponseMessageSchema,
+  AgentCompactResponseMessageSchema,
   UpdateAgentResponseMessageSchema,
   ProjectRenameResponseSchema,
   ProjectIconSetResponseSchema,
@@ -6598,6 +6622,8 @@ export type SetAgentFeatureResponseMessage = z.infer<typeof SetAgentFeatureRespo
 export type AgentConfigApplyResponseMessage = z.infer<typeof AgentConfigApplyResponseMessageSchema>;
 export type AgentDetachResponseMessage = z.infer<typeof AgentDetachResponseMessageSchema>;
 export type AgentRewindResponseMessage = z.infer<typeof AgentRewindResponseMessageSchema>;
+export type AgentCompactRequestMessage = z.infer<typeof AgentCompactRequestMessageSchema>;
+export type AgentCompactResponseMessage = z.infer<typeof AgentCompactResponseMessageSchema>;
 export type UpdateAgentResponseMessage = z.infer<typeof UpdateAgentResponseMessageSchema>;
 export type ProjectRenameResponse = z.infer<typeof ProjectRenameResponseSchema>;
 export type ProjectIconSetResponse = z.infer<typeof ProjectIconSetResponseSchema>;

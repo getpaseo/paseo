@@ -612,6 +612,37 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
     rmSync(cwd, { recursive: true, force: true });
   }, 120_000);
 
+  test("compact uses native summarize and waits for same-session completion", async () => {
+    const cwd = tmpCwd();
+    const runtime = new TestOpenCodeHarness();
+    const openCodeClient = new TestOpenCodeClient();
+    openCodeClient.sessionSummarizeEvents = manualCompactEvents();
+    runtime.enqueueClient(openCodeClient);
+    const client = new OpenCodeAgentClient(logger, undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd,
+      model: "test-provider/gpt-5.5",
+    });
+
+    await expect(session.compact?.()).resolves.toBeUndefined();
+    expect(openCodeClient.calls.sessionSummarize).toEqual([
+      expect.objectContaining({
+        sessionID: "session-1",
+        directory: cwd,
+        providerID: "test-provider",
+        modelID: "gpt-5.5",
+      }),
+    ]);
+    expect(session.describePersistence?.()?.sessionId).toBe("session-1");
+
+    await session.close();
+    rmSync(cwd, { recursive: true, force: true });
+  });
+
   test("fetchCatalog returns models with required fields", async () => {
     const runtime = new TestOpenCodeHarness();
     const openCodeClient = new TestOpenCodeClient();

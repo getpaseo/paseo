@@ -1228,13 +1228,17 @@ describe("create_agent MCP tool", () => {
     await registeredTool(server, "create_agent").handler({
       title: "Top-level agent",
       provider: "codex/gpt-5.4",
+      providerOptions: { model_auto_compact_token_limit: 256_000 },
       initialPrompt: "Do work",
       background: true,
     });
 
     expect(ensureWorkspace).toHaveBeenCalledWith(existingCwd, { prompt: "Do work" });
     expect(spies.agentManager.createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: existingCwd }),
+      expect.objectContaining({
+        cwd: existingCwd,
+        providerOptions: { model_auto_compact_token_limit: 256_000 },
+      }),
       undefined,
       { workspaceId: "workspace-created" },
     );

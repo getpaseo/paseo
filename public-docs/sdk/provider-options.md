@@ -29,6 +29,8 @@ const agent = await client.agents.create({
     provider: "codex/gpt-5.5",
     options: {
       approval_policy: "never",
+      model_auto_compact_token_limit: 256_000,
+      model_auto_compact_token_limit_scope: "body_after_prefix",
       sandbox_mode: "workspace-write",
       sandbox_workspace_write: {
         writable_roots: ["/Users/me/dev/storefront"],
@@ -48,13 +50,15 @@ console.log(result.status, result.lastMessage);
 await client.close();
 ```
 
-| Option                    | Values                                                                            |
-| ------------------------- | --------------------------------------------------------------------------------- |
-| `approval_policy`         | `untrusted`, `on-request`, `never`, or `{ granular: { … } }`                      |
-| `sandbox_mode`            | `read-only`, `workspace-write`, `danger-full-access`                              |
-| `sandbox_workspace_write` | `writable_roots`, `network_access`, `exclude_slash_tmp`, `exclude_tmpdir_env_var` |
-| `web_search`              | `disabled`, `cached`, `indexed`, `live`                                           |
-| `features`                | `multi_agent_v2`, `network_proxy` (boolean or a proxy/domain policy object)       |
+| Option                                 | Values                                                                            |
+| -------------------------------------- | --------------------------------------------------------------------------------- |
+| `approval_policy`                      | `untrusted`, `on-request`, `never`, or `{ granular: { … } }`                      |
+| `model_auto_compact_token_limit`       | Positive integer token threshold                                                  |
+| `model_auto_compact_token_limit_scope` | `total` or `body_after_prefix`                                                    |
+| `sandbox_mode`                         | `read-only`, `workspace-write`, `danger-full-access`                              |
+| `sandbox_workspace_write`              | `writable_roots`, `network_access`, `exclude_slash_tmp`, `exclude_tmpdir_env_var` |
+| `web_search`                           | `disabled`, `cached`, `indexed`, `live`                                           |
+| `features`                             | `multi_agent_v2`, `network_proxy` (boolean or a proxy/domain policy object)       |
 
 `approval_policy: "never"` only removes the prompts. What the agent is allowed to touch is `sandbox_mode`. Setting `never` without a sandbox mode gives an unattended agent full access.
 
@@ -73,6 +77,10 @@ const agent = await client.agents.create({
     provider: "claude/claude-sonnet-5",
     options: {
       disallowedTools: ["WebFetch"],
+      settings: {
+        autoCompactEnabled: true,
+        autoCompactWindow: 400_000,
+      },
       sandbox: {
         enabled: true,
         failIfUnavailable: true,
@@ -104,9 +112,11 @@ await client.close();
 | `disallowedTools`       | Tool names the agent may never use                                                                      |
 | `additionalDirectories` | Extra directories the agent may access                                                                  |
 | `sandbox`               | `enabled`, `failIfUnavailable`, `allowUnsandboxedCommands`, `excludedCommands`, `filesystem`, `network` |
-| `settings`              | `permissions` (`allow`/`ask`/`deny` rule lists) and a nested `sandbox`                                  |
+| `settings`              | `autoCompactEnabled`, `autoCompactWindow` (100,000–1,000,000), `permissions`, and a nested `sandbox`    |
 
 `failIfUnavailable: true` makes agent startup fail when the sandbox cannot be established. Leave it off and Claude runs unsandboxed instead.
+
+`autoCompactWindow` is Claude's effective context capacity for that session. Claude derives an earlier compaction trigger from it, so it is a working-window ceiling rather than an exact trigger token.
 
 `sandbox.filesystem` takes `allowWrite`, `denyWrite`, `allowRead`, and `denyRead`. `sandbox.network` takes `allowedDomains`, `deniedDomains`, `strictAllowlist`, and proxy settings.
 

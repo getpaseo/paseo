@@ -658,6 +658,61 @@ test("uses an injected timeline store without making it a production requirement
   }
 });
 
+test("only confirms compaction when the native session identity is unchanged", async () => {
+  async function run(changesIdentity: boolean) {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-compact-"));
+    class CompactSession extends TestAgentSession {
+      override readonly capabilities = {
+        ...TEST_CAPABILITIES,
+        supportsSameSessionCompaction: true,
+      };
+      private nativeSessionId = "native-session-1";
+
+      override async compact(): Promise<void> {
+        if (changesIdentity) this.nativeSessionId = "native-session-2";
+      }
+
+      override describePersistence() {
+        return { provider: this.provider, sessionId: this.nativeSessionId };
+      }
+    }
+    const manager = new AgentManager({
+      clients: {
+        codex: new (class extends TestAgentClient {
+          override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+            return new CompactSession(config);
+          }
+        })(),
+      },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      return await manager.compactAgent(agent.id);
+    } finally {
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  }
+
+  await expect(run(false)).resolves.toEqual({
+    status: "confirmed",
+    provider: "codex",
+    nativeSessionIdBefore: "native-session-1",
+    nativeSessionIdAfter: "native-session-1",
+    error: null,
+  });
+  await expect(run(true)).resolves.toEqual({
+    status: "failed",
+    provider: "codex",
+    nativeSessionIdBefore: "native-session-1",
+    nativeSessionIdAfter: "native-session-2",
+    error: "Native session identity changed during compaction",
+  });
+});
+
 test("retries provider history hydration after a stream failure", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-retry-"));
   let attempts = 0;

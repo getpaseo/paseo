@@ -20,6 +20,8 @@ describe("provider-owned option schemas", () => {
     expect(
       CodexProviderOptionsSchema.parse({
         approval_policy: "never",
+        model_auto_compact_token_limit: 256_000,
+        model_auto_compact_token_limit_scope: "body_after_prefix",
         sandbox_mode: "workspace-write",
         sandbox_workspace_write: {
           writable_roots: ["/var/cache/npm"],
@@ -34,8 +36,18 @@ describe("provider-owned option schemas", () => {
         },
       }),
     ).toMatchObject({
+      model_auto_compact_token_limit: 256_000,
+      model_auto_compact_token_limit_scope: "body_after_prefix",
       sandbox_workspace_write: { writable_roots: ["/var/cache/npm"] },
     });
+  });
+
+  test.each([0, -1, 1.5])("rejects invalid Codex auto-compaction limit %s", (limit) => {
+    expect(() =>
+      validateProviderOptions("codex", CodexProviderOptionsSchema, {
+        model_auto_compact_token_limit: limit,
+      }),
+    ).toThrow("providerOptions.model_auto_compact_token_limit");
   });
 
   test("reports the exact invalid Codex option path", () => {
@@ -61,10 +73,28 @@ describe("provider-owned option schemas", () => {
             allowUnixSockets: ["/var/run/docker.sock"],
           },
         },
-        settings: { permissions: { ask: ["Bash(*)"], deny: ["Edit(.env)"] } },
+        settings: {
+          autoCompactEnabled: true,
+          autoCompactWindow: 256_000,
+          permissions: { ask: ["Bash(*)"], deny: ["Edit(.env)"] },
+        },
       }),
-    ).toMatchObject({ sandbox: { enabled: true, failIfUnavailable: true } });
+    ).toMatchObject({
+      sandbox: { enabled: true, failIfUnavailable: true },
+      settings: { autoCompactEnabled: true, autoCompactWindow: 256_000 },
+    });
   });
+
+  test.each([99_999, 1_000_001, 128_000.5])(
+    "rejects invalid Claude auto-compaction window %s",
+    (window) => {
+      expect(() =>
+        validateProviderOptions("claude", ClaudeProviderOptionsSchema, {
+          settings: { autoCompactWindow: window },
+        }),
+      ).toThrow("providerOptions.settings.autoCompactWindow");
+    },
+  );
 
   test("reports the exact invalid Claude option path", () => {
     expect(() =>

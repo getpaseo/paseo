@@ -71,6 +71,7 @@ import {
 } from "../../../executable-resolution/executable-resolution.js";
 import { createPathEquivalenceMatcher } from "../../../utils/path.js";
 import { spawnProcess } from "../../../utils/spawn.js";
+import { withTimeout } from "../../../utils/promise-timeout.js";
 import { extractCodexTerminalSessionId, nonEmptyString } from "./tool-call-mapper-utils.js";
 import { buildCodexFeatures, codexModelSupportsFastMode } from "./codex-feature-definitions.js";
 import {
@@ -220,6 +221,8 @@ const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsContextWindowPolicy: true,
+  supportsSameSessionCompaction: true,
 };
 
 const CODEX_MODES: AgentMode[] = [
@@ -4830,6 +4833,34 @@ export class CodexAppServerAgentSession implements AgentSession {
         });
       },
     };
+  }
+
+  async compact(): Promise<void> {
+    if (this.activeForegroundTurnId) {
+      throw new Error("Cannot compact Codex context while a foreground turn is active");
+    }
+    let unsubscribe: () => void = () => undefined;
+    const completed = new Promise<void>((resolve) => {
+      unsubscribe = this.subscribe((event) => {
+        if (
+          event.type === "timeline" &&
+          event.item.type === "compaction" &&
+          event.item.status === "completed" &&
+          event.item.trigger === "manual"
+        ) {
+          resolve();
+        }
+      });
+    });
+    try {
+      const error = await this.executeCompactCommand();
+      if (error) {
+        throw new Error(error);
+      }
+      await withTimeout(completed, 300_000, "Timed out waiting for Codex context compaction");
+    } finally {
+      unsubscribe();
+    }
   }
 
   private async executeCompactCommand(): Promise<string | null> {

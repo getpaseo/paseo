@@ -872,6 +872,40 @@ describe("Codex app-server provider", () => {
     });
   });
 
+  test("forwards the native auto-compaction threshold to thread and turn start", async () => {
+    const session = createSession({
+      modeId: undefined,
+      providerOptions: {
+        model_auto_compact_token_limit: 256_000,
+        model_auto_compact_token_limit_scope: "body_after_prefix",
+      },
+    });
+    const request = vi.fn(async (method: string) => {
+      if (method === "model/list") {
+        return { data: [{ id: "gpt-5.4", isDefault: true, defaultReasoningEffort: "medium" }] };
+      }
+      if (method === "thread/start") return { thread: { id: "compact-thread" } };
+      if (method === "turn/start") return {};
+      throw new Error(`Unexpected request: ${method}`);
+    });
+    session.currentThreadId = null;
+    session.activeForegroundTurnId = null;
+    session.client = createStub<CodexClientLike>({ request });
+
+    await session.startTurn("use the configured threshold");
+
+    const expectedConfig = {
+      model_auto_compact_token_limit: 256_000,
+      model_auto_compact_token_limit_scope: "body_after_prefix",
+    };
+    expect(request.mock.calls.find(([method]) => method === "thread/start")?.[1]).toMatchObject({
+      config: expectedConfig,
+    });
+    expect(request.mock.calls.find(([method]) => method === "turn/start")?.[1]).toMatchObject({
+      config: expectedConfig,
+    });
+  });
+
   test("preserves cwd-resolved Codex writable roots under an explicit workflow mode", async () => {
     const appServer = createFakeCodexAppServer({
       "config/read": () => ({
@@ -4683,6 +4717,31 @@ describe("Codex app-server provider", () => {
         },
       },
     ]);
+  });
+
+  test("compact waits for native completion", async () => {
+    const session = createSession();
+    session.activeForegroundTurnId = null;
+    session.client = {
+      request: vi.fn(async () => ({})),
+    };
+
+    const compact = session.compact?.();
+    await vi.waitFor(() => {
+      expect(session.client?.request).toHaveBeenCalledWith("thread/compact/start", {
+        threadId: "test-thread",
+      });
+    });
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "rpc-compact" },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "rpc-compact" },
+    });
+
+    await expect(compact).resolves.toBeUndefined();
   });
 
   test("maps question responses from headers back to question ids and completes the tool call", async () => {

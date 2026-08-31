@@ -125,6 +125,7 @@ export interface ProviderSnapshotEntry {
   label?: string;
   description?: string;
   defaultModeId?: string | null;
+  capabilities?: AgentCapabilityFlags;
 }
 
 export interface AgentCreateConfigParent {
@@ -190,6 +191,8 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  supportsContextWindowPolicy?: boolean;
+  supportsSameSessionCompaction?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -668,6 +671,7 @@ export interface AgentSession {
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
+  compact?(): Promise<void>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events

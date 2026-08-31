@@ -636,9 +636,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     return parentAgent;
   };
 
-  const resolveInheritedProviderConfig = (
+  const resolveCreateProviderConfig = (
+    args: ResolvedCreateAgentToolArgs,
     selectedProvider: string,
   ): Pick<AgentSessionConfig, "providerOptions"> | undefined => {
+    if (
+      args.kind === "top-level" &&
+      "providerOptions" in args.parsedArgs &&
+      args.parsedArgs.providerOptions
+    ) {
+      return { providerOptions: args.parsedArgs.providerOptions };
+    }
     const callerAgent = resolveCallerAgent();
     if (callerAgent?.provider !== selectedProvider || !callerAgent.config?.providerOptions) {
       return undefined;
@@ -1022,6 +1030,10 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   };
   const canonicalTopLevelInputSchema = {
     ...canonicalCreateAgentFields,
+    providerOptions: z
+      .record(z.string(), z.json())
+      .optional()
+      .describe("Provider-native options validated before the agent starts."),
     background: z
       .boolean()
       .optional()
@@ -1430,7 +1442,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         notifyOnFinish = resolvedArgs.parsedArgs.notifyOnFinish ?? false;
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
-      const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+      const config = resolveCreateProviderConfig(resolvedArgs, selectedProvider);
       const {
         snapshot,
         background: createdInBackground,
@@ -1454,7 +1466,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           provider: parsedArgs.provider,
           title: parsedArgs.title,
           initialPrompt: parsedArgs.initialPrompt,
-          config: inheritedConfig,
+          config,
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,
           thinking: parsedArgs.settings?.thinkingOptionId,

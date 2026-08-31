@@ -1966,6 +1966,16 @@ describe("PiRpcAgentClient", () => {
     ]);
   });
 
+  test("compact uses the native RPC without prompt text", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await expect((session as AgentSession).compact?.()).resolves.toBeUndefined();
+
+    expect(fakeSession.compactRequests).toEqual([{ customInstructions: undefined }]);
+    expect(fakeSession.prompts).toEqual([]);
+  });
+
   test("closes Pi compact loading marker when RPC rejects after compaction starts", async () => {
     const { pi, session } = await createSession();
     const fakeSession = pi.latestSession();

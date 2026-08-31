@@ -1484,6 +1484,48 @@ describe("agent detach RPC", () => {
   });
 });
 
+describe("agent compact RPC", () => {
+  test("returns the provider identity receipt", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const compactAgent = vi.fn().mockResolvedValue({
+      status: "confirmed",
+      provider: "opencode",
+      nativeSessionIdBefore: "session-1",
+      nativeSessionIdAfter: "session-1",
+      error: null,
+    });
+    const session = createSessionForTest({
+      messages,
+      agentManager: { compactAgent },
+      agentStorage: {
+        list: vi
+          .fn()
+          .mockResolvedValue([createStoredAgentRecord({ id: "agent-1", cwd: "/tmp/agent-1" })]),
+      },
+    });
+
+    await session.handleMessage({
+      type: "agent.compact.request",
+      agentId: "agent-1",
+      requestId: "compact-1",
+    });
+
+    expect(compactAgent).toHaveBeenCalledWith("agent-1");
+    expect(messages).toContainEqual({
+      type: "agent.compact.response",
+      payload: {
+        requestId: "compact-1",
+        agentId: "agent-1",
+        provider: "opencode",
+        status: "confirmed",
+        nativeSessionIdBefore: "session-1",
+        nativeSessionIdAfter: "session-1",
+        error: null,
+      },
+    });
+  });
+});
+
 function createProjectRecord(rootPath: string, archivedAt: string | null = null) {
   return {
     projectId: `project:${rootPath}`,

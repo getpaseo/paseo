@@ -137,6 +137,7 @@ const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: true,
+  supportsSameSessionCompaction: true,
 };
 
 const OPENCODE_BUILD_MODE_ID = "build";
@@ -3421,6 +3422,50 @@ class OpenCodeAgentSession implements AgentSession {
     };
   }
 
+  async compact(): Promise<void> {
+    if (this.closed) {
+      throw new Error("OpenCode session is closed");
+    }
+    if (this.turnState.status !== "idle") {
+      throw new Error("Cannot compact OpenCode context while a turn is active");
+    }
+    await withTimeout(
+      this.events.ready(),
+      OPENCODE_SERVER_STARTUP_TIMEOUT_MS,
+      "OpenCode event stream first record",
+    );
+    const completed = createDeferred<void>();
+    const unsubscribe = this.subscribe((event) => {
+      if (
+        event.type === "timeline" &&
+        event.item.type === "compaction" &&
+        event.item.status === "completed"
+      ) {
+        completed.resolve();
+      }
+    });
+    try {
+      const model = this.parseModel(this.config.model);
+      const response = await this.client.session.summarize({
+        sessionID: this.sessionId,
+        directory: this.config.cwd,
+        ...(model ? { providerID: model.providerID, modelID: model.modelID } : {}),
+      });
+      if (response.error) {
+        throw new Error(
+          `OpenCode session.summarize failed: ${toDiagnosticErrorMessage(response.error)}`,
+        );
+      }
+      await withTimeout(
+        completed.promise,
+        300_000,
+        "Timed out waiting for OpenCode context compaction",
+      );
+    } finally {
+      unsubscribe();
+    }
+  }
+
   async setModel(modelId: string | null): Promise<void> {
     const normalizedModelId =
       typeof modelId === "string" && modelId.trim().length > 0 ? modelId : null;
@@ -4441,7 +4486,7 @@ class OpenCodeAgentSession implements AgentSession {
       turnId = this.startAutonomousTurn();
     }
     if (!turnId) {
-      this.emitBackgroundPermissionRequests(foregroundEvents);
+      this.emitBackgroundEvents(foregroundEvents);
       this.traceOpenCode("provider.opencode.event.skip", {
         n: eventCount,
         reason: "no_active_turn",
@@ -4499,9 +4544,12 @@ class OpenCodeAgentSession implements AgentSession {
     return true;
   }
 
-  private emitBackgroundPermissionRequests(events: readonly AgentStreamEvent[]): void {
+  private emitBackgroundEvents(events: readonly AgentStreamEvent[]): void {
     for (const event of events) {
-      if (event.type === "permission_requested") {
+      if (
+        event.type === "permission_requested" ||
+        (event.type === "timeline" && event.item.type === "compaction")
+      ) {
         this.notifySubscribers(event, null);
       }
     }

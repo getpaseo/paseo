@@ -1941,7 +1941,7 @@ export class Session {
   private async dispatchInboundMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
     const promise =
       this.dispatchVoiceAndControlMessage(msg) ??
-      this.dispatchAgentRewindMessage(msg, source) ??
+      this.dispatchAgentContextMessage(msg, source) ??
       this.dispatchAgentRelationshipMessage(msg) ??
       this.dispatchAgentTimelineMessage(msg, source) ??
       this.dispatchHubExecutionMessage(msg) ??
@@ -2224,13 +2224,15 @@ export class Session {
     }
   }
 
-  private dispatchAgentRewindMessage(
+  private dispatchAgentContextMessage(
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
     switch (msg.type) {
       case "agent.rewind.request":
         return this.handleAgentRewindRequest(msg, source);
+      case "agent.compact.request":
+        return this.handleAgentCompactRequest(msg);
       default:
         return undefined;
     }
@@ -4040,6 +4042,47 @@ export class Session {
         },
         source,
       );
+    }
+  }
+
+  private async handleAgentCompactRequest(
+    msg: Extract<SessionInboundMessage, { type: "agent.compact.request" }>,
+  ): Promise<void> {
+    const resolved = await this.resolveAgentIdentifier(msg.agentId);
+    if (!resolved.ok) {
+      this.emit({
+        type: "agent.compact.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: msg.agentId,
+          provider: null,
+          status: "failed",
+          nativeSessionIdBefore: null,
+          nativeSessionIdAfter: null,
+          error: resolved.error,
+        },
+      });
+      return;
+    }
+    try {
+      const result = await this.agentManager.compactAgent(resolved.agentId);
+      this.emit({
+        type: "agent.compact.response",
+        payload: { requestId: msg.requestId, agentId: resolved.agentId, ...result },
+      });
+    } catch (error) {
+      this.emit({
+        type: "agent.compact.response",
+        payload: {
+          requestId: msg.requestId,
+          agentId: resolved.agentId,
+          provider: this.agentManager.getAgent(resolved.agentId)?.provider ?? null,
+          status: "failed",
+          nativeSessionIdBefore: null,
+          nativeSessionIdAfter: null,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
     }
   }
 

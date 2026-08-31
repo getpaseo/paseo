@@ -44,6 +44,10 @@ MCP does not expose an agent-detach tool. Detaching is a manual user action in t
 | `get_agent_activity` | Return recent agent timeline entries as a curated summary.                              |
 | `set_agent_mode`     | Switch an agent's session mode.                                                         |
 
+A top-level `create_agent` call may include `providerOptions`. Paseo validates these native
+options against the selected provider before launch. Agent-scoped calls cannot override them;
+same-provider children inherit their caller's options.
+
 ### Workspaces
 
 | Tool                | Function                                                                                              |

@@ -960,6 +960,7 @@ export class ProviderSnapshotManager {
         enabled: true,
         models: catalog.models,
         modes: catalog.modes,
+        capabilities: client.capabilities,
         fetchedAt: new Date().toISOString(),
       });
     } catch (error) {
@@ -1132,6 +1133,7 @@ function entriesToArray(
 function cloneEntry(entry: ProviderSnapshotEntry): ProviderSnapshotEntry {
   return {
     ...entry,
+    capabilities: entry.capabilities ? { ...entry.capabilities } : undefined,
     models: entry.models?.map((model) => ({ ...model })),
     modes: entry.modes?.map((mode) => ({ ...mode })),
   };

@@ -68,6 +68,8 @@ export const ClaudeProviderOptionsSchema = z
       .optional(),
     settings: z
       .object({
+        autoCompactEnabled: z.boolean().optional(),
+        autoCompactWindow: z.number().int().min(100_000).max(1_000_000).optional(),
         permissions: PermissionRulesSchema.optional(),
         sandbox: z
           .object({
