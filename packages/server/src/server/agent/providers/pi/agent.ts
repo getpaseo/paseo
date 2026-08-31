@@ -229,6 +229,10 @@ function isPiDefinitiveSteerRejection(error: unknown): boolean {
   return toDiagnosticErrorMessage(error) === "Unknown command: steer";
 }
 
+function isPiMissingClearQueueRpc(error: unknown): boolean {
+  return toDiagnosticErrorMessage(error) === "Unknown command: clear_queue";
+}
+
 interface PiRpcAgentSessionOptions {
   runtimeSession: PiRuntimeSession;
   config: AgentSessionConfig;
@@ -1423,13 +1427,13 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
-  private takePendingSteerClientMessageId(text: string): string | null {
+  private takePendingSteerSubmission(text: string): PiPendingSteerSubmission | undefined {
     const index = this.pendingSteerSubmissions.findIndex((submission) => submission.text === text);
     if (index < 0) {
-      return null;
+      return undefined;
     }
     const [submission] = this.pendingSteerSubmissions.splice(index, 1);
-    return submission?.clientMessageId ?? null;
+    return submission;
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -1525,6 +1529,15 @@ export class PiRpcAgentSession implements AgentSession {
       this.lastInterruptedTurnId = turnId;
     }
     try {
+      try {
+        await this.runtimeSession.clearQueue();
+      } catch (error) {
+        // COMPAT(piClearQueueFallback): added in v0.5.0, remove after 2027-03-01 once
+        // the pi floor supports clear_queue (added in pi 0.84.4).
+        if (!isPiMissingClearQueueRpc(error)) {
+          throw error;
+        }
+      }
       await this.runtimeSession.abort();
     } catch (error) {
       if (this.interruptingTurnId === turnId) {
@@ -1953,8 +1966,10 @@ export class PiRpcAgentSession implements AgentSession {
     if (!entry) {
       return true;
     }
-    const clientMessageId =
-      this.takePendingSteerClientMessageId(entry.text) ?? this.activeClientMessageId;
+    const pendingSteer = this.takePendingSteerSubmission(entry.text);
+    const clientMessageId = pendingSteer
+      ? pendingSteer.clientMessageId
+      : this.activeClientMessageId;
     this.emit({
       type: "timeline",
       provider: this.provider,

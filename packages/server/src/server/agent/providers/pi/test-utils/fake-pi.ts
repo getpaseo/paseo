@@ -96,6 +96,8 @@ export class FakePiSession implements PiRuntimeSession {
   readonly prompts: Array<{ message: string; imageCount: number }> = [];
   readonly steerCalls: Array<{ message: string; imageCount: number }> = [];
   steerError: Error | null = null;
+  readonly controlRequests: string[] = [];
+  clearQueueError: Error | null = null;
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentSubscriptionRequests: FakePiSubagentSubscriptionLevel[] = [];
@@ -212,6 +214,13 @@ export class FakePiSession implements PiRuntimeSession {
     }
   }
 
+  async clearQueue(): Promise<void> {
+    this.controlRequests.push("clear_queue");
+    if (this.clearQueueError) {
+      throw this.clearQueueError;
+    }
+  }
+
   async compact(customInstructions?: string): Promise<void> {
     this.compactRequests.push(customInstructions === undefined ? {} : { customInstructions });
     this.emit({ type: "compaction_start", reason: "manual" });
@@ -232,6 +241,7 @@ export class FakePiSession implements PiRuntimeSession {
   }
 
   async abort(): Promise<void> {
+    this.controlRequests.push("abort");
     this.abortRequested = true;
   }
 

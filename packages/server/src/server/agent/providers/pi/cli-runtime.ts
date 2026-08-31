@@ -130,6 +130,10 @@ class PiCliRuntimeSession implements PiRuntimeSession {
     });
   }
 
+  async clearQueue(): Promise<void> {
+    await this.request({ type: "clear_queue" });
+  }
+
   async compact(customInstructions?: string): Promise<void> {
     await this.waitForCompletion({
       type: "compact",

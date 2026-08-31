@@ -932,6 +932,27 @@ describe("PiRpcAgentSession", () => {
     ).not.toContain("turn_failed");
   });
 
+  test("clears queued Pi messages before interrupting", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("work");
+    await session.interrupt();
+
+    expect(fakeSession.controlRequests).toEqual(["clear_queue", "abort"]);
+  });
+
+  test("still interrupts when an older Pi binary lacks clear_queue", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.clearQueueError = new Error("Unknown command: clear_queue");
+
+    await session.startTurn("work");
+    await session.interrupt();
+
+    expect(fakeSession.controlRequests).toEqual(["clear_queue", "abort"]);
+  });
+
   test("adds Pi assistant context to generic provider finish errors", async () => {
     const { pi, session, events } = await createSession();
 
@@ -1662,6 +1683,25 @@ describe("PiRpcAgentSession steering", () => {
         clientMessageId: "client-steer-1",
       },
     ]);
+  });
+
+  test("does not reuse the foreground client ID for a steer without one", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("work", { clientMessageId: "client-prompt-1" });
+
+    await session.steerActiveTurn("steer without a client ID", { expectedTurnId: turnId });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer-1",
+      parentId: null,
+      text: "steer without a client ID",
+    });
+
+    expect(events.timelineItems()).toContainEqual({
+      type: "user_message",
+      text: "steer without a client ID",
+      messageId: "entry-steer-1",
+    });
   });
 
   test("keeps multiple steers correlated in admission order", async () => {
