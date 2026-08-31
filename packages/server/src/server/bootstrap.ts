@@ -604,7 +604,13 @@ export async function createPaseoDaemon(
   });
   const browserToolsPolicy = new DaemonConfigBrowserToolsPolicy(daemonConfigStore);
   const browserToolsBroker = new BrowserToolsBroker({});
-  const lspHost = new LspHost({ logger });
+  const lspHost = new LspHost({
+    logger,
+    // Read from disk per cold session so editing config.json and running `paseo reload`
+    // is enough; the running sessions keep the binary they already resolved.
+    commandOverrides: () =>
+      loadPersistedConfig(config.paseoHome, logger).daemon?.codeNavigation?.servers ?? {},
+  });
   const pluginRuntime = new PluginService(logger, daemonConfigStore, daemonVersion, {
     managedSources: new ManagedPluginSources(config.paseoHome),
   });

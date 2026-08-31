@@ -17,7 +17,7 @@ const logger = pino({ level: "silent" });
 function createHost(overrides: Record<string, string> = {}): LspHost {
   return new LspHost({
     logger,
-    commandOverrides: { typescript: TYPESCRIPT_LANGUAGE_SERVER, ...overrides },
+    commandOverrides: () => ({ typescript: TYPESCRIPT_LANGUAGE_SERVER, ...overrides }),
   });
 }
 

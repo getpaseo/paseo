@@ -31,8 +31,11 @@ export interface DefinitionInput {
 
 export interface LspHostOptions {
   logger: pino.Logger;
-  /** Per-server command overrides, keyed by descriptor id. */
-  commandOverrides?: Readonly<Record<string, string>>;
+  /**
+   * Per-server command overrides keyed by descriptor id, read on each cold session so a
+   * config edit applies without restarting the daemon.
+   */
+  commandOverrides?: () => Readonly<Record<string, string>>;
   idleTimeoutMs?: number;
   spawnProcess?: typeof spawn;
 }
@@ -48,7 +51,7 @@ interface PooledSession {
  */
 export class LspHost {
   private readonly logger: pino.Logger;
-  private readonly commandOverrides: Readonly<Record<string, string>>;
+  private readonly readCommandOverrides: () => Readonly<Record<string, string>>;
   private readonly idleTimeoutMs: number;
   private readonly spawnProcess: typeof spawn | undefined;
   private readonly sessions = new Map<string, PooledSession>();
@@ -56,7 +59,7 @@ export class LspHost {
 
   constructor(options: LspHostOptions) {
     this.logger = options.logger;
-    this.commandOverrides = options.commandOverrides ?? {};
+    this.readCommandOverrides = options.commandOverrides ?? (() => ({}));
     this.idleTimeoutMs = options.idleTimeoutMs ?? SESSION_IDLE_TIMEOUT_MS;
     this.spawnProcess = options.spawnProcess;
   }
@@ -72,7 +75,7 @@ export class LspHost {
       return {
         status: "server-not-installed",
         serverId: descriptor.id,
-        command: this.commandOverrides[descriptor.id] ?? descriptor.command,
+        command: this.readCommandOverrides()[descriptor.id] ?? descriptor.command,
       };
     }
 
@@ -111,7 +114,10 @@ export class LspHost {
       return existing.session;
     }
 
-    const server = await resolveLanguageServer(descriptor, this.commandOverrides[descriptor.id]);
+    const server = await resolveLanguageServer(
+      descriptor,
+      this.readCommandOverrides()[descriptor.id],
+    );
     if (!server) {
       return null;
     }

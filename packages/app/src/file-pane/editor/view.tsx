@@ -3,6 +3,7 @@ import { StyleSheet } from "react-native-unistyles";
 import type { HighlightStyle } from "@getpaseo/highlight";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { FileEditorModel } from "./model";
+import type { GoToDefinitionCallbacks } from "../source/go-to-definition";
 
 export function FileEditorView(_props: {
   model: FileEditorModel;
@@ -22,6 +23,8 @@ export function FileEditorView(_props: {
   };
   onCursorChange(position: { line: number; column: number }): void;
   onVimModeChange(mode: string | null): void;
+  /** Web-only: native has no pointer to hold a modifier over. */
+  definitions?: GoToDefinitionCallbacks | null;
 }) {
   return (
     <View style={styles.container}>

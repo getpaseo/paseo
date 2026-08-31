@@ -517,6 +517,7 @@ function EditableFilePane({
   location: WorkspaceFileLocation;
   navigationRevision: number;
 }) {
+  const definitions = useGoToDefinition({ serverId, workspaceId, cwd, path });
   const { settings } = useAppSettings();
   const { t } = useTranslation();
   const [cursor, setCursor] = useState({ line: 1, column: 1 });
@@ -636,6 +637,7 @@ function EditableFilePane({
       />
       {showSource ? (
         <FileEditorView
+          definitions={definitions}
           model={model}
           filename={filename}
           location={location}
