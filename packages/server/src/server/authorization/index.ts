@@ -1,22 +1,23 @@
 import type { SessionInboundMessage, SessionOutboundMessage } from "../messages.js";
+import { DAEMON_PERMISSIONS, type DaemonPermission } from "@getpaseo/protocol/messages";
 import {
   requiredPermissionForInbound,
   requiredPermissionForOutbound,
 } from "./operation-permissions.js";
 
-export const DAEMON_PERMISSIONS = [
-  "daemon.read",
-  "daemon.manage",
-  "tunnel.manage",
-  "access.manage",
-  "workspace.read",
-  "workspace.write",
-  "workspace.manage",
-  "automation.manage",
-  "hub.execute",
-] as const;
+export { DAEMON_PERMISSIONS, type DaemonPermission };
 
-export type DaemonPermission = (typeof DAEMON_PERMISSIONS)[number];
+const daemonPermissionSet: ReadonlySet<string> = new Set(DAEMON_PERMISSIONS);
+
+export function isDaemonPermission(value: string): value is DaemonPermission {
+  return daemonPermissionSet.has(value);
+}
+
+export function parseDaemonPermissions(values: readonly string[]): DaemonPermission[] {
+  const permissions = [...new Set(values)];
+  if (!permissions.every(isDaemonPermission)) throw new Error("Invalid daemon permission");
+  return permissions;
+}
 
 export const OWNER_PERMISSIONS: readonly DaemonPermission[] = DAEMON_PERMISSIONS;
 
@@ -37,6 +38,14 @@ export class SessionAuthorization {
 
   replacePermissions(permissions: readonly DaemonPermission[]): void {
     this.permissions = new Set(permissions);
+  }
+
+  listPermissions(): DaemonPermission[] {
+    return [...this.permissions];
+  }
+
+  allowsPermission(permission: DaemonPermission): boolean {
+    return this.permissions.has(permission);
   }
 
   private allows(permission: DaemonPermission | null): boolean {

@@ -191,8 +191,43 @@ export async function continueHubGuidedSetup(
   origin: string,
   environment: HubGuidedSetupEnvironment,
 ): Promise<void> {
-  if (await requiredConfirm(environment, "Connect this daemon to this Hub?", true)) {
-    await ensureDaemonConnection(origin, environment, true);
+  const currentStatus = await withHubDaemon(environment.daemon, undefined, async (daemon) =>
+    daemon.getHubStatus().then((response) => response.status),
+  );
+  const current = resolveHubInitConnection(currentStatus, origin);
+  if (current.kind === "connected") {
+    reportMessage(
+      environment,
+      `This daemon is already connected to ${origin}. Permissions: ${
+        currentStatus.permissions.join(", ") || "None"
+      }.`,
+    );
+  } else if (current.kind === "pending") {
+    await waitForDaemonReady(origin, environment.daemon);
+  } else if (current.kind === "conflict") {
+    reportMessage(
+      environment,
+      `This daemon is connected to ${current.origin}. Disconnect it before connecting to ${origin}.`,
+    );
+  } else if (
+    await requiredConfirm(
+      environment,
+      "Connect this daemon to Paseo Hub?\n\nConnecting lets Hub identify this daemon and show whether it is online.\nIt does not allow Hub to create workspaces or run agents.",
+      true,
+    )
+  ) {
+    const grantExecution = await requiredConfirm(
+      environment,
+      "Allow Hub automations to run agents on this daemon?\n\nThis lets workflows triggered from GitHub, Slack, Discord, Linear, and other integrations create workspaces and run agents here.\n\nAgents can access files and run commands allowed by their workspace runtime.",
+      false,
+    );
+    await ensureDaemonConnection(origin, environment, true, grantExecution ? ["hub.execute"] : []);
+    if (!grantExecution) {
+      reportMessage(
+        environment,
+        "Daemon connected with no permissions.\n\nEnable Hub automations later:\n  paseo hub permissions grant hub.execute",
+      );
+    }
   } else {
     reportMessage(
       environment,
@@ -252,12 +287,19 @@ async function ensureDaemonConnection(
   origin: string,
   environment: HubGuidedSetupEnvironment,
   confirmed = false,
+  permissions: readonly string[] = ["hub.execute"],
 ): Promise<string> {
   const status = await withHubDaemon(environment.daemon, undefined, async (daemon) =>
     daemon.getHubStatus().then((response) => response.status),
   );
   const connection = resolveHubInitConnection(status, origin);
   if (connection.kind === "connected") {
+    if (permissions.includes("hub.execute") && !status.permissions.includes("hub.execute")) {
+      throw new HubCommandError(
+        "HUB_DAEMON_EXECUTION_NOT_ALLOWED",
+        "This daemon is connected to Hub but cannot run Hub automations. Run `paseo hub permissions grant hub.execute`, then run Hub init again.",
+      );
+    }
     return connection.daemonId;
   }
   if (connection.kind === "pending") {
@@ -271,20 +313,25 @@ async function ensureDaemonConnection(
   }
   if (
     !confirmed &&
-    !(await requiredConfirm(environment, `Connect this daemon to ${origin}?`, true))
+    !(await requiredConfirm(
+      environment,
+      `Connect this daemon to ${origin} and allow Hub workflows to create and control workspaces and agents?`,
+      true,
+    ))
   ) {
     throw new HubInitCancelledError("A connected daemon is required to create the bundle.");
   }
-  return connectDaemon(origin, environment);
+  return connectDaemon(origin, environment, permissions);
 }
 
 async function connectDaemon(
   origin: string,
   environment: HubGuidedSetupEnvironment,
+  permissions: readonly string[] = ["hub.execute"],
 ): Promise<string> {
   await runHubConnect(
     origin,
-    {},
+    { permissions },
     {
       env: environment.env,
       credentials: environment.credentials,
