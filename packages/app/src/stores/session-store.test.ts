@@ -507,7 +507,7 @@ describe("normalizeWorkspaceDescriptor", () => {
     expect(workspace.scripts).toEqual([]);
   });
 
-  it("defaults missing launches and copies launch payloads from new daemons", () => {
+  it("preserves missing launches and copies launch payloads from new daemons", () => {
     const base = {
       id: "1",
       projectId: "1",
@@ -542,7 +542,7 @@ describe("normalizeWorkspaceDescriptor", () => {
     ];
     const current = normalizeWorkspaceDescriptor({ ...base, launches });
 
-    expect(legacy.launches).toEqual([]);
+    expect(legacy.launches).toBeUndefined();
     expect(current.launches).toEqual(launches);
     expect(current.launches).not.toBe(launches);
   });

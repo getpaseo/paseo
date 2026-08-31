@@ -163,8 +163,12 @@ export function normalizeWorkspaceDescriptor(
     archivingAt: payload.archivingAt ?? null,
     diffStat: payload.diffStat ?? null,
     scripts: (payload.scripts ?? []).map((s) => Object.assign({}, s)),
-    // COMPAT(workspaceLaunchManagement): old daemons omit launches.
-    launches: (payload.launches ?? []).map((launch) => Object.assign({}, launch)),
+    // COMPAT(workspaceLaunchManagement): old daemons omit launches. Preserve that absence so
+    // feature consumers can distinguish an old descriptor from a supported daemon with no
+    // configured launches.
+    ...(payload.launches !== undefined
+      ? { launches: payload.launches.map((launch) => Object.assign({}, launch)) }
+      : {}),
     gitRuntime: payload.gitRuntime,
     githubRuntime: payload.githubRuntime,
     forge: payload.forge,
