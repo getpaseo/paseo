@@ -46,6 +46,21 @@ older cancellation from settling a newer turn. If interruption is rejected or ti
 keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
 Accepting new work after an ambiguous interruption would create a split-brain session.
 
+### Provider-declared busy turns
+
+An ACP provider may start autonomous work outside a Paseo foreground prompt. If a new
+`session/prompt` is rejected with JSON-RPC `data.code === "turn.agent_busy"`, the generic ACP
+adapter keeps the Paseo turn `running` and retries the same prompt and message ID with jittered
+exponential backoff (250 ms, capped at 5 seconds). The canonical user timeline row is emitted only
+once. Provider content received while the busy retry is waiting, including autonomous tool updates,
+remains out-of-prompt and unscoped.
+Other `-32600` errors remain terminal because their retry safety is unknown.
+
+Stop during a busy retry first waits for the provider to acknowledge `session/cancel`; only then
+does Paseo cancel the queued turn and clear its retry timer. A rejected cancel leaves the retry and
+foreground lifecycle intact. Closing or reloading the session aborts pending retry timers so no
+prompt or lifecycle event can arrive from the disposed runtime.
+
 ## Relationships
 
 Agents can launch other agents via the agent-scoped `create_agent` MCP tool. Agent-scoped creation is always asynchronous and always stamps `paseo.parent-agent-id`, pointing back at the caller. Omit `workspaceId` to use the caller's workspace, or pass an existing workspace ID returned by `create_workspace`. Placement never changes parentage.
