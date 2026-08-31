@@ -18,12 +18,33 @@ interface AgentTimelineState {
   epoch: string;
   rows: AgentTimelineRow[];
   nextSeq: number;
+  toolCallSeqBounds: Map<string, ToolCallSeqBounds>;
+}
+
+export interface ToolCallSeqBounds {
+  minSeq: number;
+  maxSeq: number;
 }
 
 const DEFAULT_TIMELINE_FETCH_LIMIT = 200;
 
 function cloneRow(row: AgentTimelineRow): AgentTimelineRow {
   return { ...row };
+}
+
+function indexToolCallRow(
+  boundsByCall: Map<string, ToolCallSeqBounds>,
+  row: AgentTimelineRow,
+): void {
+  if (row.item.type !== "tool_call") {
+    return;
+  }
+  const key = row.item.callId;
+  const previous = boundsByCall.get(key);
+  boundsByCall.set(key, {
+    minSeq: previous ? Math.min(previous.minSeq, row.seq) : row.seq,
+    maxSeq: previous ? Math.max(previous.maxSeq, row.seq) : row.seq,
+  });
 }
 
 interface FetchContext {
@@ -95,11 +116,9 @@ function fetchBefore(ctx: FetchContext): AgentTimelineFetchResult {
   const { state, direction, limit, selectAll, cursor, minSeq, window } = ctx;
   const beforeSeq = cursor?.seq ?? state.nextSeq;
   const endExclusive = state.rows.findIndex((row) => row.seq >= beforeSeq);
-  const boundedRows = endExclusive < 0 ? state.rows : state.rows.slice(0, endExclusive);
-  const selected =
-    selectAll || limit >= boundedRows.length
-      ? boundedRows
-      : boundedRows.slice(boundedRows.length - limit);
+  const boundedLength = endExclusive < 0 ? state.rows.length : endExclusive;
+  const startInclusive = selectAll ? 0 : Math.max(0, boundedLength - limit);
+  const selected = state.rows.slice(startInclusive, boundedLength);
   return {
     epoch: state.epoch,
     direction,
@@ -148,10 +167,15 @@ export class InMemoryAgentTimelineStore {
       ? options.rows.map(cloneRow)
       : this.buildRowsFromItems(options?.items ?? [], options?.nextSeq ?? 1, timestamp);
     const nextSeq = options?.nextSeq ?? (rows.length ? rows[rows.length - 1].seq + 1 : 1);
+    const toolCallSeqBounds = new Map<string, ToolCallSeqBounds>();
+    for (const row of rows) {
+      indexToolCallRow(toolCallSeqBounds, row);
+    }
     this.states.set(agentId, {
       epoch: options?.epoch ?? randomUUID(),
       rows,
       nextSeq,
+      toolCallSeqBounds,
     });
   }
 
@@ -198,6 +222,16 @@ export class InMemoryAgentTimelineStore {
 
   getEpoch(agentId: string): string {
     return this.requireState(agentId).epoch;
+  }
+
+  /**
+   * Tool projection stays anchored at the first row for a call while later lifecycle rows extend
+   * its canonical span. Bounded consumers use these indexed bounds to decide whether a page must
+   * grow without first cloning the complete timeline.
+   */
+  getToolCallSeqBounds(agentId: string, callId: string): ToolCallSeqBounds | null {
+    const bounds = this.requireState(agentId).toolCallSeqBounds.get(callId);
+    return bounds ? { ...bounds } : null;
   }
 
   fetch(agentId: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
@@ -276,6 +310,7 @@ export class InMemoryAgentTimelineStore {
     };
     state.nextSeq += 1;
     state.rows.push(row);
+    indexToolCallRow(state.toolCallSeqBounds, row);
     return cloneRow(row);
   }
 
