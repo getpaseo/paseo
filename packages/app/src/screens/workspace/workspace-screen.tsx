@@ -41,6 +41,7 @@ import { WorkspaceActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/workspace/open-in-editor/button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
 import { WorkspaceLaunchesButton } from "@/screens/workspace/workspace-launches-button";
+import { canManageWorkspaceLaunches } from "@/screens/workspace/workspace-launches-capability";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
 import { useToast } from "@/contexts/toast-context";
@@ -226,6 +227,12 @@ function getWorkspaceLaunches(
   workspaceDescriptor: WorkspaceDescriptor | null | undefined,
 ): NonNullable<WorkspaceDescriptor["launches"]> {
   return workspaceDescriptor?.launches ?? EMPTY_WORKSPACE_LAUNCHES;
+}
+
+function getWorkspaceLaunchDescriptor(
+  workspaceDescriptor: WorkspaceDescriptor | null | undefined,
+): WorkspaceDescriptor["launches"] {
+  return workspaceDescriptor?.launches;
 }
 
 interface WorkspaceFileLocationFields {
@@ -965,7 +972,7 @@ interface WorkspaceHeaderTitleBarProps {
   normalizedWorkspaceId: string;
   workspaceScripts: WorkspaceDescriptor["scripts"];
   workspaceLaunches: NonNullable<WorkspaceDescriptor["launches"]>;
-  supportsWorkspaceLaunchManagement: boolean;
+  workspaceLaunchManagementAvailable: boolean;
   liveTerminalIds: string[];
   showWorkspaceSetup: boolean;
   showCreateBrowserTab: boolean;
@@ -996,7 +1003,7 @@ function WorkspaceHeaderTitleBar({
   normalizedWorkspaceId,
   workspaceScripts,
   workspaceLaunches,
-  supportsWorkspaceLaunchManagement,
+  workspaceLaunchManagementAvailable,
   liveTerminalIds,
   showWorkspaceSetup,
   showCreateBrowserTab,
@@ -1063,7 +1070,7 @@ function WorkspaceHeaderTitleBar({
             onOpenSetupTab={onOpenSetupTab}
           />
         )}
-        {isMobile && supportsWorkspaceLaunchManagement && workspaceLaunches.length > 0 ? (
+        {isMobile && workspaceLaunchManagementAvailable && workspaceLaunches.length > 0 ? (
           <WorkspaceLaunchesButton
             serverId={normalizedServerId}
             workspaceId={normalizedWorkspaceId}
@@ -1613,6 +1620,10 @@ function WorkspaceScreenContent({
     (state) =>
       state.sessions[normalizedServerId]?.serverInfo?.features?.workspaceLaunchManagement === true,
   );
+  const workspaceLaunchManagementAvailable = canManageWorkspaceLaunches({
+    daemonAdvertisesSupport: supportsWorkspaceLaunchManagement,
+    launchDescriptor: getWorkspaceLaunchDescriptor(workspaceDescriptor),
+  });
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
@@ -3789,7 +3800,7 @@ function WorkspaceScreenContent({
     () => (
       <View style={styles.headerRight}>
         <PluginHeaderButtons serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
-        {!isMobile && supportsWorkspaceLaunchManagement && workspaceLaunches.length > 0 ? (
+        {!isMobile && workspaceLaunchManagementAvailable && workspaceLaunches.length > 0 ? (
           <WorkspaceLaunchesButton
             serverId={normalizedServerId}
             workspaceId={normalizedWorkspaceId}
@@ -3849,7 +3860,7 @@ function WorkspaceScreenContent({
     ),
     [
       isMobile,
-      supportsWorkspaceLaunchManagement,
+      workspaceLaunchManagementAvailable,
       workspaceDescriptor,
       workspaceLaunches,
       normalizedServerId,
@@ -3939,7 +3950,7 @@ function WorkspaceScreenContent({
                 normalizedWorkspaceId={normalizedWorkspaceId}
                 workspaceScripts={workspaceScripts}
                 workspaceLaunches={workspaceLaunches}
-                supportsWorkspaceLaunchManagement={supportsWorkspaceLaunchManagement}
+                workspaceLaunchManagementAvailable={workspaceLaunchManagementAvailable}
                 liveTerminalIds={liveTerminalIds}
                 showWorkspaceSetup={showWorkspaceSetup}
                 showCreateBrowserTab={showCreateBrowserTab}
@@ -3994,7 +4005,7 @@ function WorkspaceScreenContent({
       isWorkspaceHeaderSubtitleDistinct,
       workspaceScripts,
       workspaceLaunches,
-      supportsWorkspaceLaunchManagement,
+      workspaceLaunchManagementAvailable,
     ],
   );
   const desktopSplitContent = useMemo(() => {
