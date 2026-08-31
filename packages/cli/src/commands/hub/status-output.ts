@@ -5,7 +5,7 @@ export interface HubRow {
   state: string;
   daemonId: string | null;
   hub: string | null;
-  scopes: string;
+  permissions: string;
   connectedAt: string | null;
   error: string | null;
   warning?: string;
@@ -17,7 +17,7 @@ const schema: OutputSchema<HubRow> = {
     { header: "STATE", field: "state" },
     { header: "HUB", field: "hub" },
     { header: "DAEMON", field: "daemonId" },
-    { header: "SCOPES", field: "scopes" },
+    { header: "PERMISSIONS", field: "permissions" },
     { header: "CONNECTED", field: "connectedAt" },
     { header: "ERROR", field: "error" },
     { header: "WARNING", field: "warning" },
@@ -36,7 +36,7 @@ export function hubStatusResult(
         state: status.state,
         daemonId: status.daemonId,
         hub: reportedHubOrigin,
-        scopes: status.scopes.join(", "),
+        permissions: status.permissions.join(", "),
         connectedAt: status.connectedAt,
         error: status.lastError,
         warning,

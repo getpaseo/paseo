@@ -20,6 +20,7 @@ import { processHubReporter, type HubReporter } from "./reporter.js";
 import { hubStatusResult } from "./status-output.js";
 import { addHubResolutionHelp } from "./help.js";
 import { addHubInitCommand, continueHubGuidedSetup } from "./init.js";
+import { addHubPermissionsCommand } from "./permissions.js";
 
 interface HubCommandEnvironment {
   env: Readonly<Record<string, string | undefined>>;
@@ -77,6 +78,10 @@ export function createHubCommand(overrides: Partial<HubCommandEnvironment> = {})
     }),
   );
   addHubDisconnectCommand(hub, {
+    daemon: environment.daemon,
+    reporter: environment.reporter,
+  });
+  addHubPermissionsCommand(hub, {
     daemon: environment.daemon,
     reporter: environment.reporter,
   });
