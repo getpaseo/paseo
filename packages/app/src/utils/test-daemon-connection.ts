@@ -9,9 +9,10 @@ import {
   shouldUseTlsForDefaultHostedRelay,
 } from "./daemon-endpoints";
 import {
-  buildLocalDaemonTransportUrl,
-  createDesktopLocalDaemonTransportFactory,
+  buildDesktopDaemonTransportUrl,
+  createDesktopDaemonTransportFactory,
 } from "@/desktop/daemon/desktop-daemon-transport";
+import type { DesktopDaemonTransportTarget } from "@/desktop/daemon/desktop-daemon";
 
 export interface DaemonProbeClient {
   readonly lastError: string | null;
@@ -20,26 +21,44 @@ export interface DaemonProbeClient {
   getLastServerInfoMessage(): { serverId: string; hostname: string | null } | null;
 }
 
-interface LocalTransportUrlInput {
-  transportType: "socket" | "pipe";
-  transportPath: string;
-}
-
 export interface DaemonConnectionDependencies<TClient extends DaemonProbeClient> {
   getClientId(): Promise<string>;
   resolveAppVersion(): string | null;
-  createLocalTransportFactory(): DaemonClientConfig["transportFactory"] | null;
-  buildLocalTransportUrl(input: LocalTransportUrlInput): string;
+  createDesktopTransportFactory(): DaemonClientConfig["transportFactory"] | null;
+  buildDesktopTransportUrl(input: DesktopDaemonTransportTarget): string;
   createClient(config: DaemonClientConfig): TClient;
 }
 
 const defaultDaemonConnectionDependencies: DaemonConnectionDependencies<DaemonClient> = {
   getClientId: getOrCreateClientId,
   resolveAppVersion,
-  createLocalTransportFactory: createDesktopLocalDaemonTransportFactory,
-  buildLocalTransportUrl: buildLocalDaemonTransportUrl,
+  createDesktopTransportFactory: createDesktopDaemonTransportFactory,
+  buildDesktopTransportUrl: buildDesktopDaemonTransportUrl,
   createClient: (config) => new DaemonClient(config),
 };
+
+function buildRemoteSshClientConfig(input: {
+  connection: Extract<HostConnection, { type: "remoteSsh" }>;
+  base: Omit<DaemonClientConfig, "url">;
+  desktopTransportFactory: DaemonClientConfig["transportFactory"] | null;
+  buildDesktopTransportUrl: (target: DesktopDaemonTransportTarget) => string;
+}): DaemonClientConfig {
+  if (!input.desktopTransportFactory) {
+    throw new Error("Remote SSH is only available in the desktop app.");
+  }
+  return {
+    ...input.base,
+    transportFactory: input.desktopTransportFactory,
+    url: input.buildDesktopTransportUrl({
+      transportType: "ssh",
+      host: input.connection.host,
+      ...(input.connection.sshPort !== undefined ? { sshPort: input.connection.sshPort } : {}),
+      ...(input.connection.daemonPort !== undefined
+        ? { daemonPort: input.connection.daemonPort }
+        : {}),
+    }),
+  };
+}
 
 function normalizeNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -103,11 +122,14 @@ export async function buildClientConfig(
   },
   deps: Pick<
     DaemonConnectionDependencies<DaemonProbeClient>,
-    "getClientId" | "resolveAppVersion" | "createLocalTransportFactory" | "buildLocalTransportUrl"
+    | "getClientId"
+    | "resolveAppVersion"
+    | "createDesktopTransportFactory"
+    | "buildDesktopTransportUrl"
   > = defaultDaemonConnectionDependencies,
 ): Promise<DaemonClientConfig> {
   const clientId = await deps.getClientId();
-  const localTransportFactory = deps.createLocalTransportFactory();
+  const desktopTransportFactory = deps.createDesktopTransportFactory();
   const base = {
     clientId,
     clientType: "mobile" as const,
@@ -117,19 +139,28 @@ export async function buildClientConfig(
     ...(options?.capabilities ? { capabilities: options.capabilities } : {}),
     ...(options?.trace ? { trace: options.trace } : {}),
     ...((connection.type === "directSocket" || connection.type === "directPipe") &&
-    localTransportFactory
-      ? { transportFactory: localTransportFactory }
+    desktopTransportFactory
+      ? { transportFactory: desktopTransportFactory }
       : {}),
   };
 
   if (connection.type === "directSocket" || connection.type === "directPipe") {
     return {
       ...base,
-      url: deps.buildLocalTransportUrl({
+      url: deps.buildDesktopTransportUrl({
         transportType: connection.type === "directSocket" ? "socket" : "pipe",
         transportPath: connection.path,
       }),
     };
+  }
+
+  if (connection.type === "remoteSsh") {
+    return buildRemoteSshClientConfig({
+      connection,
+      base,
+      desktopTransportFactory,
+      buildDesktopTransportUrl: deps.buildDesktopTransportUrl,
+    });
   }
 
   if (connection.type === "directTcp") {
@@ -233,7 +264,9 @@ interface ProbeOptions {
 
 function resolveTimeout(connection: HostConnection, options?: ProbeOptions): number {
   if (options?.timeoutMs) return options.timeoutMs;
-  return connection.type === "relay" ? 10_000 : 6_000;
+  if (connection.type === "relay") return 10_000;
+  if (connection.type === "remoteSsh") return 15_000;
+  return 6_000;
 }
 
 export function connectToDaemon(

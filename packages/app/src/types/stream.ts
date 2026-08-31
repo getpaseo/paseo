@@ -799,7 +799,7 @@ export interface TodoEntry {
 
 export type TaskActivity =
   | { type: "created"; count: number }
-  | { type: "added" | "started" | "completed" | "reopened"; task: string };
+  | { type: "added" | "started" | "completed"; task: string };
 
 export interface TodoListItem {
   kind: "todo_list";
@@ -1307,8 +1307,6 @@ function deriveTaskActivities(
     if (before === after) continue;
     if (after === "completed") {
       activities.push({ type: "completed", task: task.text });
-    } else if (before === "completed") {
-      activities.push({ type: "reopened", task: task.text });
     } else if (after === "in_progress") {
       activities.push({ type: "started", task: task.text });
     }
