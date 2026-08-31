@@ -11,6 +11,7 @@ import { clionTarget } from "./targets/clion.js";
 import { cursorTarget } from "./targets/cursor.js";
 import { datagripTarget } from "./targets/datagrip.js";
 import { dataspellTarget } from "./targets/dataspell.js";
+import { devinTarget } from "./targets/devin-desktop.js";
 import { explorerTarget, fileManagerTarget, finderTarget } from "./targets/file-manager.js";
 import { golandTarget } from "./targets/goland.js";
 import { intellijIdeaTarget } from "./targets/intellij-idea.js";
@@ -31,6 +32,7 @@ export const EDITOR_TARGETS: readonly EditorTarget[] = [
   cursorTarget,
   traeTarget,
   kiroTarget,
+  devinTarget,
   vscodeTarget,
   vscodeInsidersTarget,
   vscodiumTarget,

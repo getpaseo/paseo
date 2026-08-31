@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { listAvailableEditorTargets, openEditorTarget } from "./registry.js";
+import { EDITOR_TARGETS, listAvailableEditorTargets, openEditorTarget } from "./registry.js";
 import type { EditorTargetIcon, EditorTargetRuntime } from "./target.js";
 import { cursorTarget } from "./targets/cursor.js";
+import { devinTarget } from "./targets/devin-desktop.js";
 import { explorerTarget, fileManagerTarget, finderTarget } from "./targets/file-manager.js";
 import { intellijIdeaTarget } from "./targets/intellij-idea.js";
 import { pycharmTarget } from "./targets/pycharm.js";
@@ -151,6 +152,54 @@ describe("editor target registry", () => {
       {
         command: "/bin/code",
         args: ["/repo", "--goto", "/repo/src/app.ts:12:4"],
+      },
+    ]);
+  });
+
+  it("lists the Devin target through the real editor target registry", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.installCommand("devin-desktop");
+
+    const targets = await listAvailableEditorTargets(runtime, EDITOR_TARGETS);
+
+    expect(targets).toEqual([
+      {
+        id: "devin-desktop",
+        label: "Devin",
+        kind: "editor",
+        icon: { kind: "image", dataUrl: "data:image/png;base64,devin-desktop.png" },
+      },
+      {
+        id: "file-manager",
+        label: "Files",
+        kind: "file-manager",
+        icon: { kind: "symbol", name: "folder" },
+      },
+    ]);
+  });
+
+  it("opens a file through the real registry using the Devin target", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.installCommand("devin-desktop");
+    runtime.addPath("/repo");
+    runtime.addPath("/repo/src/app.ts");
+
+    await openEditorTarget(
+      {
+        editorId: "devin-desktop",
+        workspacePath: "/repo",
+        filePath: "/repo/src/app.ts",
+        line: 5,
+        column: 9,
+      },
+      runtime,
+      EDITOR_TARGETS,
+    );
+
+    expect(runtime.launches).toEqual([
+      {
+        command: "/bin/devin-desktop",
+        args: ["/repo", "--goto", "/repo/src/app.ts:5:9"],
       },
     ]);
   });
@@ -323,5 +372,57 @@ describe("editor target registry", () => {
 
     expect(macTargets.map((target) => target.id)).toEqual(["finder"]);
     expect(windowsTargets.map((target) => target.id)).toEqual(["explorer"]);
+  });
+
+  it("detects and launches Devin Desktop through its shell command", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.installCommand("devin-desktop");
+
+    expect(await devinTarget.isInstalled(runtime)).toBe(true);
+    await devinTarget.launch(
+      { workspacePath: "/repo", filePath: "/repo/src/app.ts", line: 5, column: 9 },
+      runtime,
+    );
+
+    expect(runtime.launches).toEqual([
+      {
+        command: "/bin/devin-desktop",
+        args: ["/repo", "--goto", "/repo/src/app.ts:5:9"],
+      },
+    ]);
+  });
+
+  it("detects Devin Desktop's bundled command on macOS", async () => {
+    const runtime = new FakeEditorTargets("darwin");
+    const bundledCommand = "/Applications/Devin.app/Contents/Resources/app/bin/devin-desktop";
+    runtime.installCommand(bundledCommand, bundledCommand);
+
+    expect(await devinTarget.isInstalled(runtime)).toBe(true);
+    await devinTarget.launch(
+      { workspacePath: "/repo", filePath: "/repo/src/app.ts", line: 14 },
+      runtime,
+    );
+
+    expect(runtime.launches).toEqual([
+      {
+        command: bundledCommand,
+        args: ["/repo", "--goto", "/repo/src/app.ts:14"],
+      },
+    ]);
+  });
+
+  it("falls back to opening the macOS Devin app when the command is absent", async () => {
+    const runtime = new FakeEditorTargets("darwin");
+    runtime.installMacApplication("Devin");
+
+    expect(await devinTarget.isInstalled(runtime)).toBe(true);
+    await devinTarget.launch({ workspacePath: "/repo", filePath: "/repo/src/app.ts" }, runtime);
+
+    expect(runtime.openedMacApplications).toEqual([
+      {
+        applicationName: "Devin",
+        paths: ["/repo", "/repo/src/app.ts"],
+      },
+    ]);
   });
 });
