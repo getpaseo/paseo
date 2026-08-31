@@ -35,7 +35,7 @@ test("Hub retries one durable daemon execution across concurrency and reconstruc
   expect(reconstructed.durableAgentCount).toBe(1);
 });
 
-test("Hub denies trusted steering and browser dispatch", async () => {
+test("Hub session applies its scoped authorization to ordinary protocol messages", async () => {
   const hub = await launchRelationship();
   const localAgentId = await hub.createUnrelatedLocalAgent();
 
@@ -55,22 +55,34 @@ test("Hub denies trusted steering and browser dispatch", async () => {
     code: "access_denied",
   });
   expect(hub.observedAgentIds()).not.toContain(localAgentId);
-  expect(hub.observedTrustedLifecycleMessages()).toEqual([]);
+  expect(hub.observedTrustedLifecycleMessages()).toEqual(["server_info"]);
+  expect(hub.serverInfoPermissions()).toEqual([["hub.execute"]]);
 });
 
-test("Hub sockets reject trusted hello and capabilities", async () => {
+test("Hub completes the standard hello before rejecting a second hello", async () => {
   const hub = await launchRelationship();
 
+  expect(hub.serverInfoPermissions()).toEqual([["hub.execute"]]);
   expect(hub.probeTrustedHello()).toBe(4002);
 });
 
-test("Hub sockets reject trusted binary frames", async () => {
-  const hub = await launchRelationship();
+test("legacy Hub wire behavior still enters the common Session bootstrap", async () => {
+  const launched = await HubRelationshipHarness.start();
+  await launched.beginConnect().result;
+  launched.connectLatestLegacySocket();
+  relationship = launched;
 
-  expect(hub.probeBinaryFrame()).toBe(4002);
+  expect(launched.observedTrustedLifecycleMessages()).toEqual(["server_info"]);
+  expect(launched.serverInfoPermissions()).toEqual([["hub.execute"]]);
 });
 
-test("Hub does not receive trusted broadcasts", async () => {
+test("Hub binary frames enter the standard active-session path", async () => {
+  const hub = await launchRelationship();
+
+  expect(hub.probeBinaryFrame()).toBeNull();
+});
+
+test("Hub receives standard server info but not broadcasts outside its scope", async () => {
   const hub = await launchRelationship();
 
   const trustedBroadcasts = await hub.trustedBroadcastCount();
@@ -78,10 +90,10 @@ test("Hub does not receive trusted broadcasts", async () => {
 
   expect(trustedBroadcasts).toBe(0);
   expect(trustedStatus).toMatchObject({ pid: process.pid, relay: { enabled: false } });
-  expect(hub.observedTrustedLifecycleMessages()).toEqual([]);
+  expect(hub.observedTrustedLifecycleMessages()).toEqual(["server_info"]);
 });
 
-test("Hub reconnects without retaining trusted session state", async () => {
+test("Hub reconnects through the standard resumable session bootstrap", async () => {
   const hub = await launchRelationship();
   const created = await hub.createOwnedConcurrently();
 
@@ -91,7 +103,8 @@ test("Hub reconnects without retaining trusted session state", async () => {
     executionId: "execution-1",
     agentId: created.first.agentId,
   });
-  expect(hub.observedTrustedLifecycleMessages()).toEqual([]);
+  expect(hub.observedTrustedLifecycleMessages()).toEqual(["server_info", "server_info"]);
+  expect(hub.serverInfoPermissions()).toEqual([["hub.execute"], ["hub.execute"]]);
 });
 
 test("Hub interrupts an owned running execution idempotently", async () => {

@@ -536,9 +536,12 @@ describe("paseo daemon bootstrap", () => {
         await enrollmentReleased;
         return {
           daemonId: input.daemonId,
-          scopes: input.scopes,
+          permissions: input.permissions,
           webSocketUrl: "wss://hub.test/daemon",
         };
+      },
+      async updatePermissions(input) {
+        return { permissions: input.permissions };
       },
       async revoke(_input: HubRevocation): Promise<void> {},
       openSocket(_input: HubSocketCredentials, _events: HubSocketEvents): HubSocketConnection {

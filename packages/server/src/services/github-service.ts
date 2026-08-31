@@ -1471,13 +1471,29 @@ export function createGitHubService(options: CreateGitHubServiceOptions = {}): G
     const legacyTargets: GitHubPollTarget[] = [];
     const batchGroups = new Map<string, GitHubBatchPollEntry[]>();
     for (const target of due) {
+      if (target.retainCount <= 0) {
+        continue;
+      }
       const host = peekRepoHost(target.cwd);
       const slug = peekRepoSlug(target.cwd);
+      if (!host.settled || !slug.settled) {
+        target.pollCycleStartedAt = null;
+        void Promise.all([
+          resolveRepoHostCached(target.cwd).catch(() => null),
+          resolveRepoSlugCached(target.cwd),
+        ]).then(() => {
+          if (target.retainCount > 0 && target.nextDueAt === null) {
+            // A non-zero delay rejoins the shared polling grid.
+            scheduleGitHubPollAfter(target, 1);
+          }
+          return undefined;
+        });
+        continue;
+      }
       const [owner, name, extra] = slug.value?.split("/") ?? [];
-      // A cwd whose host or slug is still resolving (or has no origin slug at
-      // all) polls through the legacy per-target path this cycle; batch
-      // grouping needs both facts synchronously.
-      if (!host.settled || !slug.settled || !owner || !name || extra !== undefined) {
+      // A cwd with no origin slug polls through the legacy per-target path;
+      // batch grouping needs a complete owner/name identity.
+      if (!owner || !name || extra !== undefined) {
         legacyTargets.push(target);
         continue;
       }

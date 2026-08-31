@@ -348,7 +348,6 @@ export const ja: TranslationResources = {
         added: "追加",
         started: "開始",
         completed: "完了",
-        reopened: "再開",
       },
     },
     compaction: {

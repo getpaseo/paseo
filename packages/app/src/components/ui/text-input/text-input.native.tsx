@@ -1,4 +1,4 @@
-import React, { forwardRef, useCallback, useImperativeHandle, useRef } from "react";
+import React, { forwardRef, useCallback, useImperativeHandle, useRef, useState } from "react";
 import { TextInput } from "react-native";
 import { BottomSheetTextInput } from "@gorhom/bottom-sheet";
 import PasteInput, {
@@ -11,7 +11,7 @@ import type { EditingTextInputHandle, EditingTextInputProps } from "./types";
 type NativeInput = (TextInput | PasteTextInputInstance) & {
   blur(): void;
   focus(): void;
-  isFocused(): boolean;
+  isFocused?(): boolean;
   clear?(): void;
   replaceText?(text: string, selection?: { start: number; end: number }): void;
   setNativeProps?(props: { text?: string; selection?: { start: number; end: number } }): void;
@@ -35,26 +35,41 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     const inputRef = useRef<NativeInput | null>(null);
     const initialTextRef = useRef(initialValue);
     const textRef = useRef(initialTextRef.current);
+    const restoreFocusAfterResetRef = useRef(false);
+    const [nativeInputRevision, setNativeInputRevision] = useState(0);
+
+    const assignInputRef = useCallback((input: NativeInput | null) => {
+      inputRef.current = input;
+      if (!input || !restoreFocusAfterResetRef.current) return;
+      restoreFocusAfterResetRef.current = false;
+      input.focus();
+    }, []);
 
     useImperativeHandle(ref, () => ({
       focus: () => inputRef.current?.focus(),
       blur: () => inputRef.current?.blur(),
-      isFocused: () => inputRef.current?.isFocused() ?? false,
+      isFocused: () => inputRef.current?.isFocused?.() ?? false,
       getText: () => textRef.current,
       replaceText: (nextText, selection) => {
         textRef.current = nextText;
+        if (nextText === "") {
+          restoreFocusAfterResetRef.current = inputRef.current?.isFocused?.() ?? false;
+          if (inputRef.current?.replaceText) {
+            inputRef.current.replaceText(nextText, selection);
+          } else {
+            inputRef.current?.clear?.();
+          }
+          setNativeInputRevision((revision) => revision + 1);
+          return;
+        }
         if (inputRef.current?.replaceText) {
           inputRef.current.replaceText(nextText, selection);
           return;
         }
-        if (nextText === "") {
-          inputRef.current?.clear?.();
-        } else {
-          inputRef.current?.setNativeProps?.({
-            text: nextText,
-            ...(selection ? { selection } : {}),
-          });
-        }
+        inputRef.current?.setNativeProps?.({
+          text: nextText,
+          ...(selection ? { selection } : {}),
+        });
         if (selection) inputRef.current?.setSelection?.(selection.start, selection.end);
       },
       getNativeRef: () => inputRef.current?.getNativeRef?.() ?? inputRef.current,
@@ -82,8 +97,9 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       return (
         <PasteInput
           {...props}
-          ref={inputRef as React.Ref<PasteTextInputInstance>}
-          defaultValue={initialTextRef.current}
+          key={nativeInputRevision}
+          ref={assignInputRef as React.Ref<PasteTextInputInstance>}
+          defaultValue={textRef.current}
           onChangeText={handleChangeText}
           onPaste={handlePaste}
         />
@@ -93,8 +109,9 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
       return (
         <BottomSheetTextInput
           {...props}
-          ref={inputRef as unknown as React.Ref<never>}
-          defaultValue={initialTextRef.current}
+          key={nativeInputRevision}
+          ref={assignInputRef as unknown as React.Ref<never>}
+          defaultValue={textRef.current}
           onChangeText={handleChangeText}
         />
       );
@@ -102,8 +119,9 @@ export const EditingTextInput = forwardRef<EditingTextInputHandle, EditingTextIn
     return (
       <TextInput
         {...props}
-        ref={inputRef as React.Ref<TextInput>}
-        defaultValue={initialTextRef.current}
+        key={nativeInputRevision}
+        ref={assignInputRef as React.Ref<TextInput>}
+        defaultValue={textRef.current}
         onChangeText={handleChangeText}
       />
     );

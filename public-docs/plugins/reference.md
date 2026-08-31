@@ -161,11 +161,12 @@ export default function contribute(plugin: PluginContext) {
 
 `PluginSurfaceProps` contains:
 
-| Field    | Meaning                                                      |
-| -------- | ------------------------------------------------------------ |
-| `theme`  | Typed `PluginTheme` color tokens for the active Paseo theme. |
-| `host`   | Selected host `id` and display `label`.                      |
-| `layout` | `compact` and the `ios`, `android`, or `web` platform.       |
+| Field        | Meaning                                                                                                                      |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `theme`      | Typed `PluginTheme` color tokens for the active Paseo theme.                                                                 |
+| `host`       | Selected host `id` and display `label`.                                                                                      |
+| `layout`     | `compact` and the `ios`, `android`, or `web` platform.                                                                       |
+| `navigation` | Optional client navigation. `openAgent({ agentId })` and `openWorkspace({ workspaceId })` open targets on the selected host. |
 
 Paseo owns the route, header, close action, host picker, error boundary, and query client. The plugin owns the surface body.
 
@@ -322,6 +323,10 @@ Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, and `layout`.
 `item.data` with the registered schema before rendering. Keep transformers synchronous and
 deterministic because Paseo reruns them while reconciling projected history.
 
+Check `navigation` before showing an action that depends on it. Older Paseo clients leave the
+capability undefined. Let Paseo own route construction so the action works without reloading on
+desktop, browser, iOS, and Android.
+
 ## Theme and layout
 
 Plugin UI runs on desktop, browser, iOS, and Android, across every Paseo theme. `theme` is a typed `PluginTheme` mapped from the active host theme. Color and spacing must come from those props. Hardcoded colors and unstyled `Text` break when the host theme changes.
@@ -346,7 +351,7 @@ Recreate styles when `theme` or `layout.compact` changes.
 
 Do not hardcode `#000`, `#fff`, or React Native's default text color. Primary copy uses `foreground`. Labels use `foregroundMuted`. Tighten padding when `layout.compact` is true.
 
-Workspace and agent panels receive the same `theme` and `layout` fields.
+Workspace and agent panels receive the same `theme`, `layout`, and optional `navigation` fields.
 
 ## Contribute a theme
 
