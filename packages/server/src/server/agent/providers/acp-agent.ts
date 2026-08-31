@@ -3261,6 +3261,17 @@ function mapPlanToTimeline(plan: Plan): AgentTimelineItem {
   };
 }
 
+export function resolveAcpToolCallName(snapshot: ACPToolSnapshot): string {
+  const kind = typeof snapshot.kind === "string" ? snapshot.kind.trim() : "";
+  const title = snapshot.title.trim();
+  // Generic ACP "other" (and missing kind) should not become the display label
+  // "Other" — prefer the human title agents put on the tool.
+  if (!kind || kind === "other") {
+    return title || kind || snapshot.toolCallId;
+  }
+  return kind;
+}
+
 function mapToolSnapshotToTimeline(
   snapshot: ACPToolSnapshot,
   terminals: Map<string, TerminalEntry>,
@@ -3270,7 +3281,7 @@ function mapToolSnapshotToTimeline(
   const base = {
     type: "tool_call" as const,
     callId: snapshot.toolCallId,
-    name: snapshot.kind ?? snapshot.title,
+    name: resolveAcpToolCallName(snapshot),
     detail,
     metadata: {
       kind: snapshot.kind ?? undefined,

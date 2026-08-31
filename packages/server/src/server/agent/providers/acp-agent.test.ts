@@ -27,6 +27,7 @@ import {
   mapACPUsage,
   resolveACPModeSelection,
   resolveACPModelSelection,
+  resolveAcpToolCallName,
   summarizeACPRequestError,
 } from "./acp-agent.js";
 import type { ProcessTerminator, TreeKillTarget } from "../../../utils/tree-kill.js";
@@ -3788,5 +3789,46 @@ describe("ACP session/load invariant — cwd and mcpServers always passed", () =
       cwd: "/tmp/paseo-acp-test",
       mcpServers: [],
     });
+  });
+});
+
+describe("resolveAcpToolCallName", () => {
+  test("uses title when kind is other", () => {
+    expect(
+      resolveAcpToolCallName({
+        toolCallId: "call-1",
+        title: "Web search",
+        kind: "other",
+      } as never),
+    ).toBe("Web search");
+  });
+
+  test("uses title when kind is missing", () => {
+    expect(
+      resolveAcpToolCallName({
+        toolCallId: "call-2",
+        title: "Custom tool",
+      } as never),
+    ).toBe("Custom tool");
+  });
+
+  test("falls back to toolCallId when title and kind are empty", () => {
+    expect(
+      resolveAcpToolCallName({
+        toolCallId: "call-3",
+        title: "   ",
+        kind: "",
+      } as never),
+    ).toBe("call-3");
+  });
+
+  test("uses kind for normal tool kinds", () => {
+    expect(
+      resolveAcpToolCallName({
+        toolCallId: "call-4",
+        title: "Read a file",
+        kind: "read",
+      } as never),
+    ).toBe("read");
   });
 });
