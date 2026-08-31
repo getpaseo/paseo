@@ -138,6 +138,7 @@ type TurnTerminalEvent = Extract<
 const ONE_BY_ONE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X1r0AAAAASUVORK5CYII=";
 const CODEX_PROVIDER = "codex";
+const MAX_SERIALIZED_PARENT_SUB_AGENT_SNAPSHOT_BYTES = 64_000;
 
 function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSessionConfig {
   return {
@@ -147,6 +148,13 @@ function createConfig(overrides: Partial<AgentSessionConfig> = {}): AgentSession
     model: "gpt-5.4",
     ...overrides,
   };
+}
+
+function hasOnlyWellFormedCodePoints(text: string): boolean {
+  return Array.from(text).every((character) => {
+    const codePoint = character.codePointAt(0) ?? 0;
+    return character.length > 1 || codePoint < 0xd800 || codePoint > 0xdfff;
+  });
 }
 
 function createSession(
@@ -2651,6 +2659,383 @@ describe("Codex app-server provider", () => {
       id: "child-thread-1",
       status: "completed",
     });
+  });
+
+  test("keeps parent sub-agent snapshots bounded while retaining canonical child activity", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-bounded-child",
+        kind: "started",
+        agentThreadId: "bounded-child-thread",
+        agentPath: "/root/bounded-child",
+      },
+    });
+    const childMessages = Array.from({ length: 20 }, (_, index) => {
+      const marker = index === 0 ? "oldest-marker" : `activity-${index}`;
+      const latestMarker = index === 19 ? " newest-marker" : "";
+      return `${String.fromCharCode(97 + index).repeat(16_000)} ${marker}${latestMarker}`;
+    });
+    for (const [index, text] of childMessages.entries()) {
+      asInternals(session).handleNotification("item/completed", {
+        threadId: "bounded-child-thread",
+        item: {
+          type: "agentMessage",
+          id: `bounded-child-message-${index}`,
+          text,
+        },
+      });
+    }
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "bounded-child-thread",
+      turn: { status: "completed" },
+    });
+
+    const parentSnapshots = events.flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === "spawn-bounded-child" &&
+      event.item.detail.type === "sub_agent"
+        ? [event.item]
+        : [],
+    );
+    expect(parentSnapshots.length).toBeGreaterThan(1);
+    expect(
+      parentSnapshots.every((item) => Buffer.byteLength(item.detail.log, "utf8") <= 32_000),
+    ).toBe(true);
+    const serializedParentBytes = parentSnapshots.reduce(
+      (total, item) => total + Buffer.byteLength(JSON.stringify(item), "utf8"),
+      0,
+    );
+    expect(serializedParentBytes).toBeLessThanOrEqual(parentSnapshots.length * 33_000);
+    expect(parentSnapshots.at(-1)).toMatchObject({ status: "completed" });
+    expect(parentSnapshots.at(-1)?.detail.log).not.toContain("oldest-marker");
+    expect(parentSnapshots.at(-1)?.detail.log).toContain("newest-marker");
+
+    const canonicalMessages = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === "bounded-child-thread" &&
+      event.event.item.type === "assistant_message"
+        ? [event.event.item.text]
+        : [],
+    );
+    expect(canonicalMessages).toEqual(childMessages);
+  });
+
+  test("bounds the root sub-agent prompt in the complete emitted snapshot", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const prompt = `${"p".repeat(1_000_000)} newest-prompt-marker`;
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "spawn-large-prompt-child",
+        tool: "spawnAgent",
+        status: "inProgress",
+        prompt,
+        receiverThreadIds: [],
+        agentsStates: {},
+      },
+    });
+
+    const rootSnapshot = events.find(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "spawn-large-prompt-child",
+    );
+    if (rootSnapshot?.type !== "timeline" || rootSnapshot.item.type !== "tool_call") {
+      throw new Error("Expected root sub-agent snapshot");
+    }
+    expect(Buffer.byteLength(JSON.stringify(rootSnapshot.item), "utf8")).toBeLessThanOrEqual(
+      MAX_SERIALIZED_PARENT_SUB_AGENT_SNAPSHOT_BYTES,
+    );
+    expect(rootSnapshot.item.detail).toMatchObject({
+      type: "sub_agent",
+      description: expect.stringContaining("newest-prompt-marker"),
+    });
+  });
+
+  test("bounds the root sub-agent error in the complete emitted snapshot", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    const toJSON = vi.fn(() => ({ payload: "x".repeat(1_000_000) }));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "collabAgentToolCall",
+        id: "spawn-large-error-child",
+        tool: "spawnAgent",
+        status: "failed",
+        error: { toJSON },
+        prompt: "Fail safely.",
+        receiverThreadIds: [],
+        agentsStates: {},
+      },
+    });
+
+    const rootSnapshot = events.find(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "spawn-large-error-child",
+    );
+    if (rootSnapshot?.type !== "timeline" || rootSnapshot.item.type !== "tool_call") {
+      throw new Error("Expected failed root sub-agent snapshot");
+    }
+    const serialized = JSON.stringify(rootSnapshot.item);
+    expect(toJSON).not.toHaveBeenCalled();
+    expect(Buffer.byteLength(serialized, "utf8")).toBeLessThanOrEqual(
+      MAX_SERIALIZED_PARENT_SUB_AGENT_SNAPSHOT_BYTES,
+    );
+    expect(rootSnapshot.item).toMatchObject({ status: "failed" });
+  });
+
+  test("keeps nested descendant snapshots bounded while retaining descendant history", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-bounded-root",
+        kind: "started",
+        agentThreadId: "bounded-root-thread",
+        agentPath: "/root/bounded-root",
+      },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "bounded-root-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-bounded-descendant",
+        kind: "started",
+        agentThreadId: "bounded-descendant-thread",
+        agentPath: "/root/bounded-root/descendant",
+      },
+    });
+    const descendantMessages = Array.from({ length: 20 }, (_, index) => {
+      const marker = index === 0 ? "oldest-descendant-marker" : `descendant-${index}`;
+      const latestMarker = index === 19 ? " newest-descendant-marker" : "";
+      return `${String.fromCharCode(97 + index).repeat(16_000)} ${marker}${latestMarker}`;
+    });
+    for (const [index, text] of descendantMessages.entries()) {
+      asInternals(session).handleNotification("item/completed", {
+        threadId: "bounded-descendant-thread",
+        item: {
+          type: "agentMessage",
+          id: `bounded-descendant-message-${index}`,
+          text,
+        },
+      });
+    }
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "bounded-descendant-thread",
+      turn: { status: "completed" },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "bounded-root-thread",
+      turn: { status: "completed" },
+    });
+
+    const rootSnapshots = events.flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === "spawn-bounded-root" &&
+      event.item.detail.type === "sub_agent"
+        ? [event.item]
+        : [],
+    );
+    const serializedRootBytes = rootSnapshots.reduce(
+      (total, item) => total + Buffer.byteLength(JSON.stringify(item), "utf8"),
+      0,
+    );
+    expect(serializedRootBytes).toBeLessThanOrEqual(rootSnapshots.length * 33_000);
+    expect(rootSnapshots.every((item) => Buffer.byteLength(item.detail.log, "utf8") <= 4_500)).toBe(
+      true,
+    );
+    expect(rootSnapshots.at(-1)).toMatchObject({ status: "completed" });
+    expect(rootSnapshots.at(-1)?.detail.log).not.toContain("oldest-descendant-marker");
+    expect(rootSnapshots.at(-1)?.detail.log).toContain("newest-descendant-marker");
+
+    const canonicalDescendantMessages = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === "bounded-descendant-thread" &&
+      event.event.item.type === "assistant_message"
+        ? [event.event.item.text]
+        : [],
+    );
+    expect(canonicalDescendantMessages).toEqual(descendantMessages);
+  });
+
+  test("builds the parent sub-agent preview from only the latest child activities", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-latest-child",
+        kind: "started",
+        agentThreadId: "latest-child-thread",
+        agentPath: "/root/latest-child",
+      },
+    });
+    const childMessages = Array.from({ length: 201 }, (_, index) =>
+      index === 0 ? "oldest-activity-marker" : `child activity ${index}`,
+    );
+    for (const [index, text] of childMessages.entries()) {
+      asInternals(session).handleNotification("item/completed", {
+        threadId: "latest-child-thread",
+        item: {
+          type: "agentMessage",
+          id: `latest-child-message-${index}`,
+          text,
+        },
+      });
+    }
+
+    const parentSnapshots = events.flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === "spawn-latest-child" &&
+      event.item.detail.type === "sub_agent"
+        ? [event.item]
+        : [],
+    );
+    expect(parentSnapshots.at(-1)?.detail.log).not.toContain("oldest-activity-marker");
+    expect(parentSnapshots.at(-1)?.detail.log).toContain("child activity 200");
+
+    const canonicalMessages = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === "latest-child-thread" &&
+      event.event.item.type === "assistant_message"
+        ? [event.event.item.text]
+        : [],
+    );
+    expect(canonicalMessages).toEqual(childMessages);
+  });
+
+  test("does not serialize unbounded non-sub-agent tool payloads for the parent preview", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-tool-preview-child",
+        kind: "started",
+        agentThreadId: "tool-preview-child-thread",
+        agentPath: "/root/tool-preview-child",
+      },
+    });
+    const toJSON = vi.fn(() => ({ payload: "x".repeat(1_000_000) }));
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "tool-preview-child-thread",
+      item: {
+        type: "mcpToolCall",
+        id: "large-child-tool",
+        status: "completed",
+        server: "example",
+        tool: "large_payload",
+        arguments: { toJSON },
+        result: null,
+      },
+    });
+
+    expect(toJSON).not.toHaveBeenCalled();
+    const parentSnapshot = events.findLast(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "spawn-tool-preview-child" &&
+        event.item.detail.type === "sub_agent",
+    );
+    expect(parentSnapshot?.item.detail.log).toContain("example.large_payload");
+
+    const canonicalToolCall = events.find(
+      (event) =>
+        event.type === "provider_subagent" &&
+        event.event.type === "timeline" &&
+        event.event.id === "tool-preview-child-thread" &&
+        event.event.item.type === "tool_call",
+    );
+    expect(canonicalToolCall?.event.item).toMatchObject({
+      type: "tool_call",
+      callId: "large-child-tool",
+      detail: { type: "unknown", input: { toJSON } },
+    });
+  });
+
+  test("bounds streamed multibyte child activity by UTF-8 bytes without splitting code points", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: {
+        type: "subAgentActivity",
+        id: "spawn-multibyte-child",
+        kind: "started",
+        agentThreadId: "multibyte-child-thread",
+        agentPath: "/root/multibyte-child",
+      },
+    });
+    const deltas = Array.from({ length: 6 }, (_, index) =>
+      index === 5
+        ? `${"界".repeat(4_000)} 😀 newest-multibyte-marker`
+        : `${"界".repeat(4_000)} 😀 delta-${index}`,
+    );
+    for (const [index, delta] of deltas.entries()) {
+      asInternals(session).handleNotification("item/agentMessage/delta", {
+        threadId: "multibyte-child-thread",
+        itemId: `multibyte-child-message-${index}`,
+        delta,
+      });
+    }
+
+    const parentLogs = events.flatMap((event) =>
+      event.type === "timeline" &&
+      event.item.type === "tool_call" &&
+      event.item.callId === "spawn-multibyte-child" &&
+      event.item.detail.type === "sub_agent"
+        ? [event.item.detail.log]
+        : [],
+    );
+    expect(parentLogs.length).toBeGreaterThan(1);
+    expect(parentLogs.every((log) => Buffer.byteLength(log, "utf8") <= 32_000)).toBe(true);
+    expect(parentLogs.every(hasOnlyWellFormedCodePoints)).toBe(true);
+    expect(parentLogs.at(-1)).toContain("😀 newest-multibyte-marker");
+
+    const canonicalDeltas = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.id === "multibyte-child-thread" &&
+      event.event.item.type === "assistant_message"
+        ? [event.event.item.text]
+        : [],
+    );
+    expect(canonicalDeltas).toEqual(deltas);
   });
 
   test("keeps a settled child completed until Codex starts another child turn", async () => {

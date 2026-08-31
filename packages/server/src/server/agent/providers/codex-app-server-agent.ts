@@ -149,6 +149,13 @@ const CODEX_NON_ORIGINATING_APP_SERVER_CLIENT_INFO = {
 const ASSISTANT_MESSAGE_BOUNDARY_MARKDOWN = "\n\n---\n\n";
 const MAX_PENDING_SUB_AGENT_THREADS = 32;
 const MAX_PENDING_SUB_AGENT_NOTIFICATIONS_PER_THREAD = 128;
+const MAX_PARENT_SUB_AGENT_ACTIVITY_ITEMS = 200;
+const MAX_PARENT_SUB_AGENT_ACTIVITY_ITEM_BYTES = 4_000;
+const MAX_PARENT_SUB_AGENT_ACTIVITY_TOOL_NAME_BYTES = 256;
+const MAX_PARENT_SUB_AGENT_ACTIVITY_ACTIONS = 32;
+const MAX_PARENT_SUB_AGENT_ACTIVITY_ACTION_FIELD_BYTES = 256;
+const MAX_PARENT_SUB_AGENT_ACTIVITY_BYTES = 32_000;
+const OMITTED_SUB_AGENT_ACTIVITY_PREFIX = "…\n";
 // COMPAT(codexLegacyCollabAgentToolCall): Codex <0.143 emits this shape. Added in
 // Paseo v0.1.105; remove after 2027-01-09 once the supported Codex floor is >=0.143.
 const CODEX_TOOL_THREAD_ITEM_TYPES = new Set([
@@ -207,6 +214,235 @@ function parseGoalSubcommand(args: string | undefined): GoalSubcommand {
 
 function formatOutOfBandStatusMessage(text: string): string {
   return `${text.replace(/\n+$/u, "")}\n\n`;
+}
+
+function utf8CodePointByteLength(codePoint: number): number {
+  if (codePoint <= 0x7f) return 1;
+  if (codePoint <= 0x7ff) return 2;
+  if (codePoint <= 0xffff) return 3;
+  return 4;
+}
+
+function previousCodePointStart(text: string, end: number): number {
+  const lastIndex = end - 1;
+  const lastCodeUnit = text.charCodeAt(lastIndex);
+  if (lastCodeUnit >= 0xdc00 && lastCodeUnit <= 0xdfff && lastIndex > 0) {
+    const precedingCodeUnit = text.charCodeAt(lastIndex - 1);
+    if (precedingCodeUnit >= 0xd800 && precedingCodeUnit <= 0xdbff) {
+      return lastIndex - 1;
+    }
+  }
+  return lastIndex;
+}
+
+function utf8TailStart(text: string, maxBytes: number): number {
+  let start = text.length;
+  let retainedBytes = 0;
+  while (start > 0) {
+    const candidateStart = previousCodePointStart(text, start);
+    const codePoint = text.codePointAt(candidateStart);
+    if (codePoint === undefined) break;
+    const codePointBytes = utf8CodePointByteLength(codePoint);
+    if (retainedBytes + codePointBytes > maxBytes) break;
+    retainedBytes += codePointBytes;
+    start = candidateStart;
+  }
+  return start;
+}
+
+function tailSubAgentActivity(text: string, maxBytes: number): string {
+  const unprefixedStart = utf8TailStart(text, maxBytes);
+  if (unprefixedStart === 0) {
+    return text;
+  }
+  const prefixBytes = Buffer.byteLength(OMITTED_SUB_AGENT_ACTIVITY_PREFIX, "utf8");
+  if (maxBytes <= prefixBytes) {
+    return "";
+  }
+
+  const start = utf8TailStart(text, maxBytes - prefixBytes);
+  return `${OMITTED_SUB_AGENT_ACTIVITY_PREFIX}${text.slice(start)}`;
+}
+
+function boundedToolCallPreview(detail: ToolCallTimelineItem["detail"]): string | undefined {
+  switch (detail.type) {
+    case "shell":
+      return detail.command;
+    case "read":
+    case "edit":
+    case "write":
+      return detail.filePath;
+    case "search":
+      return detail.query;
+    case "fetch":
+      return detail.url;
+    case "worktree_setup":
+      return detail.branchName;
+    case "plain_text":
+      return detail.label ?? detail.text;
+    case "plan":
+      return detail.text;
+    case "unknown":
+      if (
+        typeof detail.input === "string" ||
+        typeof detail.input === "number" ||
+        typeof detail.input === "boolean" ||
+        typeof detail.input === "bigint"
+      ) {
+        return String(detail.input);
+      }
+      return undefined;
+    case "sub_agent":
+      return undefined;
+  }
+}
+
+function boundedToolCallPreviewName(item: ToolCallTimelineItem): string {
+  switch (item.detail.type) {
+    case "shell":
+      return "Shell";
+    case "read":
+      return "Read";
+    case "edit":
+      return "Edit";
+    case "write":
+      return "Write";
+    case "search":
+      return "Search";
+    case "fetch":
+      return "Fetch";
+    case "worktree_setup":
+      return "Worktree setup";
+    case "plan":
+      return "Plan";
+    case "sub_agent":
+    case "plain_text":
+    case "unknown":
+      return item.name;
+  }
+}
+
+function boundedToolCallError(item: ToolCallTimelineItem): unknown {
+  if (item.status !== "failed") return null;
+  return typeof item.error === "string"
+    ? tailSubAgentActivity(item.error, MAX_PARENT_SUB_AGENT_ACTIVITY_ITEM_BYTES)
+    : "Tool call failed";
+}
+
+function buildBoundedToolCallPreview(
+  item: ToolCallTimelineItem,
+  subAgentLogBytes = MAX_PARENT_SUB_AGENT_ACTIVITY_ITEM_BYTES,
+): ToolCallTimelineItem {
+  const preview =
+    item.detail.type === "sub_agent" ? undefined : boundedToolCallPreview(item.detail);
+  const detail: ToolCallTimelineItem["detail"] =
+    item.detail.type === "sub_agent"
+      ? {
+          type: "sub_agent",
+          ...(item.detail.subAgentType
+            ? {
+                subAgentType: tailSubAgentActivity(
+                  item.detail.subAgentType,
+                  MAX_PARENT_SUB_AGENT_ACTIVITY_TOOL_NAME_BYTES,
+                ),
+              }
+            : {}),
+          ...(item.detail.description
+            ? {
+                description: tailSubAgentActivity(
+                  item.detail.description,
+                  MAX_PARENT_SUB_AGENT_ACTIVITY_ITEM_BYTES,
+                ),
+              }
+            : {}),
+          ...(item.detail.childSessionId
+            ? {
+                childSessionId: tailSubAgentActivity(
+                  item.detail.childSessionId,
+                  MAX_PARENT_SUB_AGENT_ACTIVITY_TOOL_NAME_BYTES,
+                ),
+              }
+            : {}),
+          log: tailSubAgentActivity(item.detail.log, subAgentLogBytes),
+          ...(item.detail.actions
+            ? {
+                actions: item.detail.actions
+                  .slice(-MAX_PARENT_SUB_AGENT_ACTIVITY_ACTIONS)
+                  .map((action) => {
+                    const boundedAction = {
+                      index: action.index,
+                      toolName: tailSubAgentActivity(
+                        action.toolName,
+                        MAX_PARENT_SUB_AGENT_ACTIVITY_ACTION_FIELD_BYTES,
+                      ),
+                    };
+                    if (!action.summary) return boundedAction;
+                    return {
+                      index: boundedAction.index,
+                      toolName: boundedAction.toolName,
+                      summary: tailSubAgentActivity(
+                        action.summary,
+                        MAX_PARENT_SUB_AGENT_ACTIVITY_ACTION_FIELD_BYTES,
+                      ),
+                    };
+                  }),
+              }
+            : {}),
+        }
+      : {
+          type: "plain_text",
+          ...(preview
+            ? {
+                label: tailSubAgentActivity(preview, MAX_PARENT_SUB_AGENT_ACTIVITY_ITEM_BYTES),
+              }
+            : {}),
+        };
+  const base = {
+    type: "tool_call" as const,
+    callId: item.callId,
+    name: tailSubAgentActivity(
+      boundedToolCallPreviewName(item),
+      MAX_PARENT_SUB_AGENT_ACTIVITY_TOOL_NAME_BYTES,
+    ),
+    detail,
+  };
+  switch (item.status) {
+    case "running":
+    case "completed":
+    case "canceled":
+      return { ...base, status: item.status, error: null };
+    case "failed":
+      return { ...base, status: item.status, error: boundedToolCallError(item) };
+  }
+}
+
+function boundParentSubAgentActivityItem(item: AgentTimelineItem): AgentTimelineItem {
+  if (
+    item.type === "assistant_message" ||
+    item.type === "reasoning" ||
+    item.type === "user_message"
+  ) {
+    return {
+      ...item,
+      text: tailSubAgentActivity(item.text, MAX_PARENT_SUB_AGENT_ACTIVITY_ITEM_BYTES),
+    };
+  }
+  if (item.type === "error") {
+    return {
+      ...item,
+      message: tailSubAgentActivity(item.message, MAX_PARENT_SUB_AGENT_ACTIVITY_ITEM_BYTES),
+    };
+  }
+  if (item.type === "tool_call") {
+    return buildBoundedToolCallPreview(item);
+  }
+  return item;
+}
+
+function boundRootSubAgentTimelineItem(item: AgentTimelineItem): AgentTimelineItem {
+  return item.type === "tool_call" && item.detail.type === "sub_agent"
+    ? buildBoundedToolCallPreview(item, MAX_PARENT_SUB_AGENT_ACTIVITY_BYTES)
+    : item;
 }
 
 const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
@@ -5564,8 +5800,10 @@ export class CodexAppServerAgentSession implements AgentSession {
 
   private getSubAgentChildTimeline(state: CodexSubAgentCallState): AgentTimelineItem[] {
     return state.childItemOrder
+      .slice(-MAX_PARENT_SUB_AGENT_ACTIVITY_ITEMS)
       .map((itemId) => state.childItems.get(itemId))
-      .filter((item): item is AgentTimelineItem => Boolean(item));
+      .filter((item): item is AgentTimelineItem => Boolean(item))
+      .map(boundParentSubAgentActivityItem);
   }
 
   private emitSubAgentActivityUpdate(
@@ -5580,7 +5818,10 @@ export class CodexAppServerAgentSession implements AgentSession {
     const childTimeline = this.getSubAgentChildTimeline(state);
     const log =
       childTimeline.length > 0
-        ? curateAgentActivity(childTimeline, { labelAssistantMessages: true })
+        ? tailSubAgentActivity(
+            curateAgentActivity(childTimeline, { labelAssistantMessages: true }),
+            MAX_PARENT_SUB_AGENT_ACTIVITY_BYTES,
+          )
         : "";
     let resolvedStatus = status ?? state.toolCall.status;
     if (
@@ -5618,7 +5859,11 @@ export class CodexAppServerAgentSession implements AgentSession {
       this.emitSubAgentActivityUpdate(state.parentCallId);
       return;
     }
-    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: nextToolCall });
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: boundRootSubAgentTimelineItem(nextToolCall),
+    });
   }
 
   private emitProviderSubagentUpsert(
@@ -6328,7 +6573,11 @@ export class CodexAppServerAgentSession implements AgentSession {
       }
       this.warnOnIncompleteEditToolCall(timelineItem, "item_completed", parsed.item);
     }
-    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: boundRootSubAgentTimelineItem(timelineItem),
+    });
     if (timelineItem.type === "assistant_message") {
       this.pendingAssistantMessageBoundary = true;
     }
@@ -6479,7 +6728,11 @@ export class CodexAppServerAgentSession implements AgentSession {
       return;
     }
     this.warnOnIncompleteEditToolCall(timelineItem, "item_started", parsed.item);
-    this.emitEvent({ type: "timeline", provider: CODEX_PROVIDER, item: timelineItem });
+    this.emitEvent({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      item: boundRootSubAgentTimelineItem(timelineItem),
+    });
     if (itemId) {
       this.emittedItemStartedIds.add(itemId);
       this.pendingCommandOutputDeltas.delete(itemId);
