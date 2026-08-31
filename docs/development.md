@@ -50,6 +50,7 @@ than downloading a published desktop release.
 - **Repo dev scripts** default to `$ROOT/.dev/paseo-home`, where `$ROOT` is the current checkout or worktree root. This keeps all dev state scoped to the checkout instead of the packaged desktop app.
 - **`npm run cli -- ...`** runs through the same dev-home wrapper as the dev scripts, so the in-repo CLI automatically targets the current checkout's `.dev/paseo-home` and configured dev daemon endpoint.
 - **Paseo-created worktrees** seed `$PASEO_WORKTREE_PATH/.dev/paseo-home` from `$PASEO_SOURCE_CHECKOUT_PATH/.dev/paseo-home` by copying durable JSON metadata. Runtime files like pid files, sockets, and logs are not copied.
+- **Worktree lifecycle configuration follows the target ref.** Paseo preserves a `paseo.json` already present in the created worktree. When the target ref has no config, Paseo seeds an untracked or newly staged local `paseo.json` from the source checkout, but does not inject a config committed only on the source checkout's current branch. This prevents setup from invoking branch-local scripts that are absent from the selected base ref.
 - **This repo's worktree setup** also best-effort seeds `packages/app/ios` and the newest `.dev/ios-build` entry from the source checkout so iOS simulator services can reuse native project and Xcode cache state when it is safe enough to do so.
 
 Override knobs:

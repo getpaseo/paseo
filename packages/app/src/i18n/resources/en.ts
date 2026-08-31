@@ -496,6 +496,7 @@ export const en = {
         waiting: "Waiting for setup output",
       },
       waiting: "Setting up workspace...",
+      waitingForWorkspace: "Waiting for workspace setup",
       empty: {
         noCommands: "No setup commands ran for this workspace.",
       },

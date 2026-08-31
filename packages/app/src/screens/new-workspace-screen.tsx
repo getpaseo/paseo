@@ -62,6 +62,7 @@ import {
   useWorkspaceDraftSubmissionStore,
   type PendingWorkspaceDraftSetup,
 } from "@/stores/workspace-draft-submission-store";
+import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { useKeyboardShiftStyle } from "@/hooks/use-keyboard-shift-style";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import type { KeyboardActionId } from "@/keyboard/keyboard-action-dispatcher";
@@ -787,6 +788,10 @@ async function createAndMergeWorkspace(input: {
     throw new Error(payload.error ?? input.createFailedMessage);
   }
   const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
+  useWorkspaceSetupStore.getState().requestSetupReveal({
+    serverId: input.serverId,
+    workspaceId: normalizedWorkspace.id,
+  });
   const workspaceForInitialMerge = input.createInput.firstAgentContext
     ? { ...normalizedWorkspace, status: "running" as const, statusEnteredAt: new Date() }
     : normalizedWorkspace;
@@ -837,6 +842,12 @@ async function createMultiplicityWorkspace(input: {
     throw new Error(payload.error ?? input.createFailedMessage);
   }
   const normalizedWorkspace = normalizeWorkspaceDescriptor(payload.workspace);
+  if (isWorktree) {
+    useWorkspaceSetupStore.getState().requestSetupReveal({
+      serverId: input.serverId,
+      workspaceId: normalizedWorkspace.id,
+    });
+  }
   const workspaceForInitialMerge = input.withInitialAgent
     ? { ...normalizedWorkspace, status: "running" as const, statusEnteredAt: new Date() }
     : normalizedWorkspace;

@@ -2512,6 +2512,9 @@ export class DaemonClient {
     const status = await this.sendRequest({
       requestId,
       message,
+      // Workspace setup intentionally gates provider launch and may run for hours.
+      // Transport closure still rejects the waiter, so only disable the wall-clock deadline.
+      timeout: 0,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "status") {

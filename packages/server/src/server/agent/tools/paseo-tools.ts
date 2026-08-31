@@ -37,7 +37,12 @@ import type { FirstAgentContext } from "../../messages.js";
 import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../../path-utils.js";
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
-import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
+import type {
+  CreatePaseoWorktreeWorkflowFn,
+  CreatePaseoWorktreeWorkflowResult,
+} from "../../worktree-session.js";
+import { WorkspaceSetupExecutionError } from "../../worktree-session.js";
+import { deletePaseoWorktree } from "../../../utils/worktree.js";
 import type { ScheduleService } from "../../schedule/service.js";
 import {
   ScheduleRunSchema,
@@ -92,6 +97,14 @@ import type {
   PaseoToolExecutionContext,
   PaseoToolResult,
 } from "./types.js";
+import {
+  WorkspaceSetupFailedError,
+  type WorkspaceSetupReadiness,
+} from "../../workspace-setup-readiness.js";
+
+const READY_WORKSPACE_SETUP = {
+  waitUntilReady: async (_workspaceId: string): Promise<void> => {},
+};
 
 export interface PaseoToolHostDependencies {
   agentManager: AgentManager;
@@ -101,6 +114,7 @@ export interface PaseoToolHostDependencies {
   scheduleService?: ScheduleService | null;
   providerSnapshotManager: ProviderSnapshotManager;
   daemonConfigStore?: Pick<DaemonConfigStore, "get">;
+  workspaceSetupReadiness?: Pick<WorkspaceSetupReadiness, "waitUntilReady">;
   github?: ForgeService;
   workspaceGitService?: Pick<
     WorkspaceGitService,
@@ -602,6 +616,56 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return tool.handler(await parseToolInput(tool, input), context);
     },
   });
+
+  async function cleanupWorktreeAfterSetupFailure(
+    error: unknown,
+    failedWorktree: CreatePaseoWorktreeWorkflowResult | null,
+  ): Promise<void> {
+    if (!(error instanceof WorkspaceSetupFailedError) || !failedWorktree) return;
+
+    try {
+      await archiveByScope(
+        archiveWorktreeDependencies(options, {
+          agentManager,
+          agentStorage,
+          terminalManager: terminalManager ?? null,
+          logger: childLogger,
+        }),
+        {
+          requestId: "mcp:create_agent_setup_failed",
+          scope: {
+            kind: "worktree",
+            targetPath: failedWorktree.worktree.worktreePath,
+          },
+        },
+      );
+    } catch (cleanupError) {
+      childLogger.warn(
+        { err: cleanupError, workspaceId: failedWorktree.workspace.workspaceId },
+        "Worktree archive cleanup failed after workspace setup failure",
+      );
+    }
+
+    if (
+      error.setupError instanceof WorkspaceSetupExecutionError &&
+      !error.setupError.setupStarted
+    ) {
+      try {
+        await deletePaseoWorktree({
+          cwd: failedWorktree.repoRoot,
+          worktreePath: failedWorktree.worktree.worktreePath,
+          teardownCwds: [],
+          paseoHome: options.paseoHome,
+          worktreesBaseRoot: options.worktreesRoot,
+        });
+      } catch (cleanupError) {
+        childLogger.error(
+          { err: cleanupError, workspaceId: failedWorktree.workspace.workspaceId },
+          "Failed to remove worktree whose setup could not start",
+        );
+      }
+    }
+  }
 
   const buildCronScheduleCadence = (input: {
     cron: string | undefined;
@@ -1431,44 +1495,54 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
       const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
-      const {
-        snapshot,
-        background: createdInBackground,
-        initialPromptStarted,
-      } = await createAgentCommand(
-        {
-          agentManager,
-          agentStorage,
-          logger: childLogger,
-          paseoHome: options.paseoHome,
-          worktreesRoot: options.worktreesRoot,
-          terminalManager,
-          providerSnapshotManager,
-          createPaseoWorktree: options.createPaseoWorktree,
-          ...(options.ensureWorkspaceForCreate
-            ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
-            : {}),
-        },
-        {
-          kind: "mcp",
-          provider: parsedArgs.provider,
-          title: parsedArgs.title,
-          initialPrompt: parsedArgs.initialPrompt,
-          config: inheritedConfig,
-          cwd: resolvedArgs.cwd,
-          workspaceId: resolvedArgs.workspaceId,
-          thinking: parsedArgs.settings?.thinkingOptionId,
-          features: parsedArgs.settings?.features,
-          labels: parsedArgs.labels,
-          mode: parsedArgs.settings?.modeId,
-          background: requestedBackground,
-          notifyOnFinish,
-          detached: resolvedArgs.detached,
-          callerAgentId,
-          callerContext,
-          worktree,
-        },
-      );
+      const createdWorktreeForCleanup: { value: CreatePaseoWorktreeWorkflowResult | null } = {
+        value: null,
+      };
+      let createResult: Awaited<ReturnType<typeof createAgentCommand>>;
+      try {
+        createResult = await createAgentCommand(
+          {
+            agentManager,
+            agentStorage,
+            logger: childLogger,
+            paseoHome: options.paseoHome,
+            worktreesRoot: options.worktreesRoot,
+            terminalManager,
+            providerSnapshotManager,
+            workspaceSetupReadiness: options.workspaceSetupReadiness ?? READY_WORKSPACE_SETUP,
+            createPaseoWorktree: options.createPaseoWorktree,
+            ...(options.ensureWorkspaceForCreate
+              ? { ensureWorkspaceForCreate: options.ensureWorkspaceForCreate }
+              : {}),
+          },
+          {
+            kind: "mcp",
+            provider: parsedArgs.provider,
+            title: parsedArgs.title,
+            initialPrompt: parsedArgs.initialPrompt,
+            config: inheritedConfig,
+            cwd: resolvedArgs.cwd,
+            workspaceId: resolvedArgs.workspaceId,
+            thinking: parsedArgs.settings?.thinkingOptionId,
+            features: parsedArgs.settings?.features,
+            labels: parsedArgs.labels,
+            mode: parsedArgs.settings?.modeId,
+            background: requestedBackground,
+            notifyOnFinish,
+            detached: resolvedArgs.detached,
+            callerAgentId,
+            callerContext,
+            worktree,
+            onWorktreeCreated: (createdWorktree) => {
+              createdWorktreeForCleanup.value = createdWorktree;
+            },
+          },
+        );
+      } catch (error) {
+        await cleanupWorktreeAfterSetupFailure(error, createdWorktreeForCleanup.value);
+        throw error;
+      }
+      const { snapshot, background: createdInBackground, initialPromptStarted } = createResult;
 
       try {
         if (!createdInBackground && initialPromptStarted) {

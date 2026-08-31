@@ -16,6 +16,7 @@ import type { Logger } from "pino";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
+import type { WorkspaceSetupReadiness } from "../workspace-setup-readiness.js";
 
 import {
   getAgentStreamEventTurnId,
@@ -290,6 +291,7 @@ export interface AgentManagerOptions {
     agentId: string;
     expectedTurnId: string;
   }) => Promise<void>;
+  workspaceSetupReadiness?: Pick<WorkspaceSetupReadiness, "isPending" | "waitUntilReady">;
   logger: Logger;
 }
 
@@ -701,6 +703,10 @@ export class AgentManager {
   private logger: Logger;
   private readonly rescueTimeouts: Required<AgentManagerRescueTimeouts>;
   private readonly beforeSteerUnavailableFallback?: AgentManagerOptions["beforeSteerUnavailableFallback"];
+  private readonly workspaceSetupReadiness: Pick<
+    WorkspaceSetupReadiness,
+    "isPending" | "waitUntilReady"
+  >;
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
@@ -721,6 +727,10 @@ export class AgentManager {
         options.rescueTimeouts?.interruptSessionMs ?? INTERRUPT_SESSION_TIMEOUT_MS,
     };
     this.beforeSteerUnavailableFallback = options.beforeSteerUnavailableFallback;
+    this.workspaceSetupReadiness = options.workspaceSetupReadiness ?? {
+      isPending: () => false,
+      waitUntilReady: async () => {},
+    };
     this.agentStreamCoalescer = new AgentStreamCoalescer({
       windowMs: options.agentStreamCoalesceWindowMs ?? AGENT_STREAM_COALESCE_DEFAULT_WINDOW_MS,
       timers: { setTimeout, clearTimeout },
@@ -2076,6 +2086,9 @@ export class AgentManager {
    */
   tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
     const agent = this.requireSessionAgent(agentId);
+    if (agent.workspaceId && this.workspaceSetupReadiness.isPending(agent.workspaceId)) {
+      return false;
+    }
     const handler = agent.session.tryHandleOutOfBand?.(prompt);
     if (!handler) {
       return false;
@@ -2154,6 +2167,9 @@ export class AgentManager {
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
+      if (agent.workspaceId) {
+        await this.workspaceSetupReadiness.waitUntilReady(agent.workspaceId);
+      }
       const result = await agent.session.startTurn(prompt, options);
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
@@ -2680,6 +2696,11 @@ export class AgentManager {
 
       checkCurrentState();
     });
+  }
+
+  isAgentWaitingForWorkspaceSetup(agentId: string): boolean {
+    const agent = this.requireAgent(agentId);
+    return Boolean(agent.workspaceId && this.workspaceSetupReadiness.isPending(agent.workspaceId));
   }
 
   async respondToPermission(

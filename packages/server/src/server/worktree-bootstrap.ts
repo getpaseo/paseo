@@ -589,6 +589,24 @@ async function runWorktreeTerminalBootstrap(
   );
 }
 
+export async function runWorktreeTerminalsAfterSetup(
+  options: RunAsyncWorktreeBootstrapOptions,
+): Promise<void> {
+  if (options.shouldBootstrap === false) {
+    return;
+  }
+  const workspaceCwd = options.workspaceCwd ?? options.worktree.worktreePath;
+  if (getWorktreeTerminalSpecs(workspaceCwd).length === 0) {
+    return;
+  }
+  const runtimeEnv = await resolveWorktreeRuntimeEnv({
+    worktreePath: options.worktree.worktreePath,
+    branchName: options.worktree.branchName,
+  });
+  options.terminalManager?.registerCwdEnv({ cwd: workspaceCwd, env: runtimeEnv });
+  await runWorktreeTerminalBootstrap(options, runtimeEnv);
+}
+
 export async function runAsyncWorktreeBootstrap(
   options: RunAsyncWorktreeBootstrapOptions,
 ): Promise<void> {

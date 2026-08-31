@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useReducer } from "react";
+import { useCallback, useMemo, useReducer, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { ComposerAttachment } from "@/attachments/types";
 import {
@@ -84,6 +84,22 @@ interface CreateRequestContext {
   cwd: string;
 }
 
+async function runWithCreateLock<T>(input: {
+  lock: { current: boolean };
+  alreadyLoadingMessage: string;
+  run: () => Promise<T>;
+}): Promise<T> {
+  if (input.lock.current) {
+    throw new Error(input.alreadyLoadingMessage);
+  }
+  input.lock.current = true;
+  try {
+    return await input.run();
+  } finally {
+    input.lock.current = false;
+  }
+}
+
 interface UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult> {
   draftId: string;
   getPendingServerId: () => string | null;
@@ -112,6 +128,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
   onCreateError,
 }: UseDraftAgentCreateFlowOptions<TDraftAgent, TCreateResult>) {
   const { t } = useTranslation();
+  const createInFlightRef = useRef(false);
   const [machine, dispatch] = useReducer(
     reducer,
     initialAttempt,
@@ -242,67 +259,72 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
       if (isSubmitting) {
         throw new Error(t("composer.errors.alreadyLoading"));
       }
+      return runWithCreateLock({
+        lock: createInFlightRef,
+        alreadyLoadingMessage: t("composer.errors.alreadyLoading"),
+        run: async () => {
+          dispatch({ type: "DRAFT_SET_ERROR", message: "" });
+          const trimmedPrompt = text.trim();
+          const pendingServerId = getPendingServerId();
+          if (!pendingServerId) {
+            const error = new Error(t("composer.errors.noHostSelected"));
+            dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
+            throw error;
+          }
+          const supportsForgeSearch =
+            useSessionStore.getState().sessions[pendingServerId]?.serverInfo?.features
+              ?.forgeSearch === true;
+          const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
+            format: resolveComposerAttachmentSubmitFormat({
+              supportsForgeAttachments: supportsForgeSearch,
+            }),
+          });
+          const images = wirePayload.images;
 
-      dispatch({ type: "DRAFT_SET_ERROR", message: "" });
-      const trimmedPrompt = text.trim();
-      const pendingServerId = getPendingServerId();
-      if (!pendingServerId) {
-        const error = new Error(t("composer.errors.noHostSelected"));
-        dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
-        throw error;
-      }
-      const supportsForgeSearch =
-        useSessionStore.getState().sessions[pendingServerId]?.serverInfo?.features?.forgeSearch ===
-        true;
-      const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
-        format: resolveComposerAttachmentSubmitFormat({
-          supportsForgeAttachments: supportsForgeSearch,
-        }),
+          const hasAttachmentContent = images.length > 0 || wirePayload.attachments.length > 0;
+          if (!trimmedPrompt && !hasAttachmentContent && !allowEmptyText) {
+            const error = new Error(t("composer.errors.initialPromptRequired"));
+            dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
+            throw error;
+          }
+
+          const validationError = validateBeforeSubmit?.({
+            text: trimmedPrompt,
+            attachments,
+            cwd,
+          });
+          if (validationError) {
+            const error = new Error(validationError);
+            dispatch({ type: "DRAFT_SET_ERROR", message: validationError });
+            throw error;
+          }
+
+          const attempt: CreateAttempt = {
+            clientMessageId: generateMessageId(),
+            text: trimmedPrompt,
+            timestamp: new Date(),
+            ...(images && images.length > 0 ? { images } : {}),
+            ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
+          };
+
+          setPendingCreateAttempt({
+            draftId,
+            serverId: pendingServerId,
+            agentId: null,
+            clientMessageId: attempt.clientMessageId,
+            text: attempt.text,
+            timestamp: attempt.timestamp.getTime(),
+            ...(attempt.images && attempt.images.length > 0 ? { images: attempt.images } : {}),
+            ...(attempt.attachments && attempt.attachments.length > 0
+              ? { attachments: attempt.attachments }
+              : {}),
+          });
+
+          dispatch({ type: "SUBMIT", attempt });
+          onCreateStart?.();
+          await runCreateAttempt({ attempt, cwd });
+        },
       });
-      const images = wirePayload.images;
-
-      const hasAttachmentContent = images.length > 0 || wirePayload.attachments.length > 0;
-      if (!trimmedPrompt && !hasAttachmentContent && !allowEmptyText) {
-        const error = new Error(t("composer.errors.initialPromptRequired"));
-        dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
-        throw error;
-      }
-
-      const validationError = validateBeforeSubmit?.({
-        text: trimmedPrompt,
-        attachments,
-        cwd,
-      });
-      if (validationError) {
-        const error = new Error(validationError);
-        dispatch({ type: "DRAFT_SET_ERROR", message: validationError });
-        throw error;
-      }
-
-      const attempt: CreateAttempt = {
-        clientMessageId: generateMessageId(),
-        text: trimmedPrompt,
-        timestamp: new Date(),
-        ...(images && images.length > 0 ? { images } : {}),
-        ...(wirePayload.attachments.length > 0 ? { attachments: wirePayload.attachments } : {}),
-      };
-
-      setPendingCreateAttempt({
-        draftId,
-        serverId: pendingServerId,
-        agentId: null,
-        clientMessageId: attempt.clientMessageId,
-        text: attempt.text,
-        timestamp: attempt.timestamp.getTime(),
-        ...(attempt.images && attempt.images.length > 0 ? { images: attempt.images } : {}),
-        ...(attempt.attachments && attempt.attachments.length > 0
-          ? { attachments: attempt.attachments }
-          : {}),
-      });
-
-      dispatch({ type: "SUBMIT", attempt });
-      onCreateStart?.();
-      await runCreateAttempt({ attempt, cwd });
     },
     [
       allowEmptyText,
@@ -319,12 +341,18 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
 
   const continueCreateFromAttempt = useCallback(
     async ({ attempt, cwd }: { attempt: CreateAttempt; cwd: string }) => {
-      if (!isSubmitting) {
-        dispatch({ type: "SUBMIT", attempt });
-      }
-      await runCreateAttempt({ attempt, cwd });
+      return runWithCreateLock({
+        lock: createInFlightRef,
+        alreadyLoadingMessage: t("composer.errors.alreadyLoading"),
+        run: async () => {
+          if (!isSubmitting) {
+            dispatch({ type: "SUBMIT", attempt });
+          }
+          await runCreateAttempt({ attempt, cwd });
+        },
+      });
     },
-    [isSubmitting, runCreateAttempt],
+    [isSubmitting, runCreateAttempt, t],
   );
 
   return {

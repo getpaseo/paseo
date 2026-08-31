@@ -54,6 +54,7 @@ import {
 import {
   openPreferredWorkspacePreview,
   openPreferredWorkspaceTarget,
+  openWorkspaceTargetAtLocation,
   openWorkspaceTargetBeside,
 } from "@/workspace-tabs/open-beside";
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
@@ -1812,6 +1813,10 @@ function WorkspaceScreenContent({
     persistenceKey ? (state.snapshots[persistenceKey] ?? null) : null,
   );
   const ensureWorkspaceSetupStatus = useWorkspaceSetupStore((state) => state.ensureSetupStatus);
+  const setupRevealRequested = useWorkspaceSetupStore((state) =>
+    persistenceKey ? state.requestedSetupRevealKeys.has(persistenceKey) : false,
+  );
+  const clearSetupRevealRequest = useWorkspaceSetupStore((state) => state.clearSetupRevealRequest);
   const claimFailedSetupSurface = useWorkspaceSetupStore((state) => state.claimFailedSetupSurface);
   const showWorkspaceSetup = shouldShowWorkspaceSetup(workspaceSetupSnapshot);
   const uiTabs = useMemo(
@@ -2099,6 +2104,63 @@ function WorkspaceScreenContent({
     },
     [navigateToTabId, openWorkspaceTabFocused, persistenceKey],
   );
+
+  useEffect(() => {
+    if (
+      !isRouteFocused ||
+      !hasHydratedWorkspaceLayoutStore ||
+      !persistenceKey ||
+      !setupRevealRequested ||
+      !workspaceSetupSnapshot
+    ) {
+      return;
+    }
+
+    if (workspaceSetupSnapshot.status === "completed") {
+      clearSetupRevealRequest({
+        serverId: normalizedServerId,
+        workspaceId: normalizedWorkspaceId,
+      });
+      return;
+    }
+    if (!showWorkspaceSetup) {
+      return;
+    }
+
+    const target = normalizeWorkspaceTabTarget({
+      kind: "setup",
+      workspaceId: normalizedWorkspaceId,
+    });
+    if (!target) {
+      return;
+    }
+
+    const tabId = openWorkspaceTargetAtLocation({
+      isCompact: isMobile,
+      workspaceKey: persistenceKey,
+      target,
+      location: "side",
+    });
+    if (!tabId) {
+      return;
+    }
+
+    clearSetupRevealRequest({
+      serverId: normalizedServerId,
+      workspaceId: normalizedWorkspaceId,
+    });
+  }, [
+    clearSetupRevealRequest,
+    hasHydratedWorkspaceLayoutStore,
+    isMobile,
+    isRouteFocused,
+    normalizedServerId,
+    normalizedWorkspaceId,
+    persistenceKey,
+    setupRevealRequested,
+    showWorkspaceSetup,
+    workspaceSetupSnapshot,
+  ]);
 
   useEffect(() => {
     if (!isRouteFocused) {

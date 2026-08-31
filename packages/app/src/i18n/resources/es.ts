@@ -502,6 +502,7 @@ export const es: TranslationResources = {
         waiting: "Esperando el resultado de la configuración",
       },
       waiting: "Configurando el espacio de trabajo...",
+      waitingForWorkspace: "Esperando a que finalice la configuración del espacio de trabajo",
       empty: {
         noCommands: "No se ejecutó ningún comando de configuración para este espacio de trabajo.",
       },

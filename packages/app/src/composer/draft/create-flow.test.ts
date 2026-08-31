@@ -146,4 +146,42 @@ describe("useDraftAgentCreateFlow", () => {
     });
     expect(onCreateSuccess).toHaveBeenCalledTimes(1);
   });
+
+  it("rejects a second submission before React renders the creating state", async () => {
+    let finishCreate!: () => void;
+    const createRequest = vi.fn(
+      () =>
+        new Promise<{ agentId: string; result: { id: string } }>((resolve) => {
+          finishCreate = () => resolve({ agentId: "agent-1", result: { id: "agent-1" } });
+        }),
+    );
+    const { result } = renderHook(() =>
+      useDraftAgentCreateFlow({
+        draftId: "draft-1",
+        getPendingServerId: () => "server-1",
+        buildDraftAgent: (attempt) => ({ attempt }),
+        createRequest,
+        onCreateSuccess: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      const firstCreate = result.current.handleCreateFromInput({
+        text: "build this",
+        attachments: [],
+        cwd: "/repo",
+      });
+      await expect(
+        result.current.handleCreateFromInput({
+          text: "build this again",
+          attachments: [],
+          cwd: "/repo",
+        }),
+      ).rejects.toThrow();
+      finishCreate();
+      await firstCreate;
+    });
+
+    expect(createRequest).toHaveBeenCalledTimes(1);
+  });
 });

@@ -451,6 +451,36 @@ describe("shared sidebar workspace model", () => {
     expect(nextEntries.get("srv:two")).not.toBe(previousEntries.get("srv:two"));
   });
 
+  it("keeps a workspace busy while its setup is running", () => {
+    const model = buildSidebarWorkspacePlacementModel({
+      projects: [project({ projectKey: "project", workspaceKeys: ["srv:setting-up"] })],
+    });
+    const entries = buildSidebarWorkspaceEntries({
+      placements: model.workspaces,
+      sessions: [
+        {
+          serverId: "srv",
+          workspaceAgentActivity: new Map(),
+          workspaces: new Map([
+            [
+              "setting-up",
+              workspace({
+                id: "setting-up",
+                name: "setting-up",
+                projectId: "project",
+                projectDisplayName: "project",
+                status: "done",
+              }),
+            ],
+          ]),
+        },
+      ],
+      workspaceSetupStatuses: { "srv:setting-up": "running" },
+    });
+
+    expect(entries.get("srv:setting-up")?.statusBucket).toBe("running");
+  });
+
   it("keeps a structurally disambiguated project key in status entries", () => {
     const projectKey = "host:srv:project:prj_a";
     const model = buildSidebarWorkspacePlacementModel({
@@ -894,6 +924,18 @@ describe("deriveProjectStatusBucket", () => {
             agents: [agent({ id: "a1", workspaceId: "ws-1", status: "running" })],
           }),
         },
+      }),
+    ).toBe("running");
+  });
+
+  it("lifts a done workspace while setup is still running", () => {
+    expect(
+      deriveProjectStatusBucket({
+        workspaces: [workspacePlacement({ workspaceId: "ws-1" })],
+        sessions: {
+          srv: sessionWith({ workspaces: [projectWorkspace("ws-1", "done")] }),
+        },
+        workspaceSetupStatuses: { "srv:ws-1": "running" },
       }),
     ).toBe("running");
   });

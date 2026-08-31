@@ -25,10 +25,12 @@ import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submission-store";
 import { useAgentControlCommandCenterActions } from "@/command-center/agent-control-registration";
+import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { encodeImages } from "@/utils/encode-images";
 import type { WorkspaceFileOpenRequest } from "@/workspace/file-open";
 import { shouldAutoFocusWorkspaceDraftComposer } from "@/screens/workspace/workspace-draft-pane-focus";
 import {
+  resolveWorkspaceAutoSubmitAttempt,
   shouldAllowEmptyDraftText,
   validateDraftSubmission,
 } from "@/composer/draft/workspace-tab-core";
@@ -348,6 +350,10 @@ export function WorkspaceDraftAgentTab({
     id: w.id,
   }));
   const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
+  const workspaceSetupKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+  const isWorkspaceSetupRunning = useWorkspaceSetupStore((state) =>
+    workspaceSetupKey ? state.snapshots[workspaceSetupKey]?.status === "running" : false,
+  );
   const draftSetup = initialSetup ?? null;
   const draftWorkingDirectory = resolveDraftWorkingDirectory({
     workspaceDirectory,
@@ -586,20 +592,21 @@ export function WorkspaceDraftAgentTab({
     autoSubmitKeyRef.current = submitKey;
     replaceDraftText("");
     setDraftAttachments([]);
-    const preparedAttempt =
-      initialCreateAttempt?.clientMessageId === submission.clientMessageId
-        ? initialCreateAttempt
-        : null;
+    // The two handoff stores update independently. Read the create attempt
+    // directly so a stale rendered snapshot cannot fall back to a new message
+    // identity and launch the same prompt twice after a long workspace setup.
+    const latestStoredAttempt = useCreateFlowStore.getState().pendingByDraftId[draftId] ?? null;
+    const preparedAttempt = resolveWorkspaceAutoSubmitAttempt({
+      clientMessageId: submission.clientMessageId,
+      renderedAttempt: initialCreateAttempt,
+      latestStoredAttempt,
+    });
     const createPromise = preparedAttempt
       ? continueCreateFromAttempt({
           attempt: preparedAttempt,
           cwd: submission.cwd,
         })
-      : handleCreateFromInput({
-          text: submission.text,
-          attachments: submission.attachments,
-          cwd: submission.cwd,
-        });
+      : Promise.reject(new Error("Workspace draft create attempt is missing"));
     void createPromise.catch(() => {
       replaceDraftText(submission.text);
       setDraftAttachments(composerWorkspaceAttachment.userAttachmentsOnly(submission.attachments));
@@ -609,7 +616,6 @@ export function WorkspaceDraftAgentTab({
     continueCreateFromAttempt,
     consumePendingAutoSubmit,
     draftId,
-    handleCreateFromInput,
     initialCreateAttempt,
     isReadyForPendingAutoSubmit,
     serverId,
@@ -663,6 +669,9 @@ export function WorkspaceDraftAgentTab({
               turnPresentation={turnPresentation}
               pendingPermissions={EMPTY_PENDING_PERMISSIONS}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
+              runningStatusLabel={
+                isWorkspaceSetupRunning ? t("workspace.setup.waitingForWorkspace") : undefined
+              }
             />
           </View>
         ) : (

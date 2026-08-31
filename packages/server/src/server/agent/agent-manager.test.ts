@@ -1168,6 +1168,24 @@ test("steering records concurrent early echoes as canonical submitted prompts", 
   }
 });
 
+class StartRecordingTestAgentSession extends TestAgentSession {
+  startTurnCalls = 0;
+
+  override async startTurn(): Promise<{ turnId: string }> {
+    this.startTurnCalls += 1;
+    return super.startTurn();
+  }
+}
+
+class StartRecordingTestAgentClient extends TestAgentClient {
+  session: StartRecordingTestAgentSession | null = null;
+
+  override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+    this.session = new StartRecordingTestAgentSession(config);
+    return this.session;
+  }
+}
+
 class McpCapableTestAgentClient extends TestAgentClient {
   override readonly capabilities = {
     ...TEST_CAPABILITIES,
@@ -1678,6 +1696,72 @@ test("reload closes both sessions when the closed snapshot cannot be persisted",
     client.finishClosing();
     await manager.flushForShutdown().catch(() => undefined);
     await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("queues provider turns until workspace setup completes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-setup-gate-test-"));
+  const client = new StartRecordingTestAgentClient();
+  const setup = deferred<void>();
+  let setupPending = true;
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    workspaceSetupReadiness: {
+      isPending: () => setupPending,
+      waitUntilReady: () => setup.promise,
+    },
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "ws-setting-up",
+    });
+
+    const dispatch = await startAgentRun(manager, agent.id, "wait for setup", logger);
+    expect(dispatch).toEqual({ disposition: "queued" });
+    expect(client.session?.startTurnCalls).toBe(0);
+
+    setupPending = false;
+    setup.resolve();
+    await vi.waitFor(() => expect(client.session?.startTurnCalls).toBe(1));
+  } finally {
+    setup.resolve();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reports queued turns as failed when workspace setup fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-setup-failure-test-"));
+  const client = new StartRecordingTestAgentClient();
+  const setup = deferred<void>();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    workspaceSetupReadiness: {
+      isPending: () => true,
+      waitUntilReady: () => setup.promise,
+    },
+    logger,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: "ws-failed-setup",
+    });
+
+    const dispatch = await startAgentRun(manager, agent.id, "must not run", logger);
+    expect(dispatch.disposition).toBe("queued");
+    setup.reject(new Error("database setup failed"));
+
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("error"));
+    expect(manager.getAgent(agent.id)?.lastError).toContain("database setup failed");
+    expect(client.session?.startTurnCalls).toBe(0);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id)));
     rmSync(workdir, { recursive: true, force: true });
   }
 });

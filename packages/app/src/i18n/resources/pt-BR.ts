@@ -502,6 +502,7 @@ export const ptBR: TranslationResources = {
         waiting: "Aguardando saída da configuração",
       },
       waiting: "Configurando workspace...",
+      waitingForWorkspace: "Aguardando a configuração do workspace",
       empty: {
         noCommands: "Nenhum comando de configuração foi executado para este workspace.",
       },
