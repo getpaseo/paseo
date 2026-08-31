@@ -505,7 +505,7 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
       waitForReady: (options) => waitForProvidersReady(daemonClient, options),
       refresh: (options) => daemonClient.refreshProvidersSnapshot(options),
       diagnostic: (provider, options) => daemonClient.getProviderDiagnostic(provider, options),
-      listUsage: (options) => daemonClient.listProviderUsage(options),
+      listUsage: (options) => listProviderUsage(daemonClient, options),
       subscribe: (handler) =>
         daemonClient.on("providers_snapshot_update", (message) => {
           handler(message.payload);
@@ -754,6 +754,17 @@ function parseProviderModel(selection: string): { provider: string; model: strin
     provider: selection.slice(0, separator),
     model: selection.slice(separator + 1),
   };
+}
+
+function listProviderUsage(
+  daemonClient: DaemonClient,
+  options?: PaseoProviderUsageOptions,
+): Promise<PaseoProviderUsageResult> {
+  // COMPAT(providerUsageList): added in v0.1.98, remove after 2027-02-28 once daemon floor >= v0.1.98.
+  if (daemonClient.getLastServerInfoMessage()?.features?.providerUsageList !== true) {
+    return Promise.reject(new Error("Update the host to list provider usage."));
+  }
+  return daemonClient.listProviderUsage(options);
 }
 
 function waitForProvidersReady(

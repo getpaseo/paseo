@@ -83,7 +83,10 @@ function parseSentFrame(
 }
 
 async function connectClient(
-  features: Record<string, boolean> = { providersSnapshotCwd: true },
+  features: Record<string, boolean> = {
+    providerUsageList: true,
+    providersSnapshotCwd: true,
+  },
 ): Promise<{ client: PaseoClient; ws: FakeWebSocket }> {
   vi.stubGlobal("WebSocket", FakeWebSocket);
   const client = createPaseoClient({
@@ -1249,6 +1252,18 @@ test("waitForReady requires canonical provider snapshot identity from the host",
     "Update the host to wait for provider discovery.",
   );
   expect(ws.sent).toHaveLength(sentBeforeWait);
+
+  await client.close();
+});
+
+test("provider usage requires the advertised host capability", async () => {
+  const { client, ws } = await connectClient({});
+  const sentBeforeUsage = ws.sent.length;
+
+  await expect(client.providers.listUsage()).rejects.toThrow(
+    "Update the host to list provider usage.",
+  );
+  expect(ws.sent).toHaveLength(sentBeforeUsage);
 
   await client.close();
 });
