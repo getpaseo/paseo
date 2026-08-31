@@ -1,4 +1,10 @@
-import { isGitHubHost, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
+import { FORGE_DEFINITIONS } from "@getpaseo/protocol/forge-manifest";
+import {
+  isGitHubHost,
+  normalizeHost,
+  parseGitRemoteLocation,
+  type GitRemoteLocation,
+} from "@getpaseo/protocol/git-remote";
 import type { ProjectDescriptor, WorkspaceDescriptor } from "@/stores/session-store";
 
 /** A host-local project identity. Keep this separate from daemon projectKey. */
@@ -59,7 +65,7 @@ export function localProjectLinkViewKey(linkId: string): string {
 
 export function toLocalProjectLinkIdentity(identity: ProjectGitIdentity): LocalProjectLinkIdentity {
   return {
-    repository: identity.repository,
+    repository: canonicalProjectRepository(identity.repository),
     subdirectory: identity.subdirectory,
   };
 }
@@ -68,7 +74,10 @@ export function sameLocalProjectLinkIdentity(
   left: LocalProjectLinkIdentity,
   right: LocalProjectLinkIdentity,
 ): boolean {
-  return left.repository === right.repository && left.subdirectory === right.subdirectory;
+  return (
+    canonicalProjectRepository(left.repository) === canonicalProjectRepository(right.repository) &&
+    left.subdirectory === right.subdirectory
+  );
 }
 
 /**
@@ -118,11 +127,12 @@ export function deriveProjectGitIdentity(input: {
   const subdirectory = relativeProjectPath(input.worktreeRoot, input.projectRootPath);
   if (subdirectory === null) return null;
 
-  const host = remote.port ? `${remote.host}:${remote.port}` : remote.host;
+  const repositoryAuthority = projectRepositoryAuthority(remote);
+  const displayAuthority = remote.port ? `${remote.host}:${remote.port}` : remote.host;
   const path = isGitHubHost(remote.host) ? remote.path.toLowerCase() : remote.path;
   return {
-    repository: `${host}/${path}`,
-    remoteDisplay: `${host}/${path}`,
+    repository: `${repositoryAuthority}/${path}`,
+    remoteDisplay: `${displayAuthority}/${path}`,
     subdirectory,
   };
 }
@@ -490,7 +500,42 @@ export function isValidLocalProjectLink(
 }
 
 function projectLinkIdentityKey(identity: LocalProjectLinkIdentity): string {
-  return JSON.stringify([identity.repository, identity.subdirectory]);
+  return JSON.stringify([canonicalProjectRepository(identity.repository), identity.subdirectory]);
+}
+
+/**
+ * Canonicalize known cloud SSH aliases to their web host. SSH ports describe a transport
+ * endpoint, not a repository identity; self-hosted HTTP(S) ports remain part of the identity.
+ */
+function projectRepositoryAuthority(remote: GitRemoteLocation): string {
+  const cloudHost = canonicalCloudHost(remote.host);
+  const host = cloudHost ?? remote.host;
+  const port =
+    cloudHost || remote.transport === "ssh" || remote.transport === "scp" ? undefined : remote.port;
+  return port ? `${host}:${port}` : host;
+}
+
+/** Normalize persisted pre-canonicalization cloud identities before comparing them. */
+function canonicalProjectRepository(repository: string): string {
+  const [authority, ...pathSegments] = repository.split("/");
+  const host = authority?.match(/^([^:]+)(?::\d+)?$/u)?.[1];
+  if (!authority || !host || pathSegments.length === 0) return repository;
+
+  const cloudHost = canonicalCloudHost(host);
+  if (!cloudHost) return repository;
+
+  const path = pathSegments.join("/");
+  return `${cloudHost}/${isGitHubHost(normalizeHost(host)) ? path.toLowerCase() : path}`;
+}
+
+function canonicalCloudHost(host: string): string | null {
+  const normalizedHost = normalizeHost(host);
+  for (const definition of FORGE_DEFINITIONS) {
+    const cloudHosts = definition.cloudHosts?.map(normalizeHost) ?? [];
+    const primaryHost = cloudHosts[0];
+    if (primaryHost && cloudHosts.includes(normalizedHost)) return primaryHost;
+  }
+  return null;
 }
 
 function compareProjectLinkPlacements(
