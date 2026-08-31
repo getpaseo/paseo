@@ -208,7 +208,13 @@ export async function createAgentCommand(
       agentStorage: dependencies.agentStorage,
       childAgentId: snapshot.id,
       callerAgentId: input.callerAgentId,
-      requireParentOwnership: true,
+      // A detached child has its parent label stripped on purpose
+      // (resolveCreateAgentIntent), so requiring parent ownership here compares
+      // an absent label against the caller and can never pass. That makes
+      // `relationship: { kind: "detached" }` and `notifyOnFinish` silently
+      // incompatible — the caller waits forever on a child it created itself.
+      // Only require ownership for children that actually carry a parent label.
+      requireParentOwnership: !(input.detached ?? false),
       logger: dependencies.logger,
     });
   }
