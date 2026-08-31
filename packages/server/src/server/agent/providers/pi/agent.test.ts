@@ -832,6 +832,185 @@ describe("PiRpcAgentSession", () => {
     ]);
   });
 
+  test("correlates slash-prefixed prompts after Pi expands their submitted text", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("/review staged", { clientMessageId: "client-expanded" });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-expanded",
+      parentId: null,
+      text: "Review the currently staged changes",
+    });
+    await events.nextTimelineEvent();
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "Review the currently staged changes",
+        messageId: "entry-expanded",
+        clientMessageId: "client-expanded",
+      },
+    ]);
+  });
+
+  test("does not let a terminal turn's stale correlation hide a later identical message", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("same text", { clientMessageId: "client-stale" });
+    fakeSession.finishTurn();
+    await session.startTurn("same text", { clientMessageId: "client-current" });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-current",
+      parentId: null,
+      text: "same text",
+    });
+    await events.nextTimelineEvent();
+
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "same text",
+        messageId: "entry-current",
+        clientMessageId: "client-current",
+      },
+    ]);
+  });
+
+  test("marks an idle user prompt as a deterministic follow-up", async () => {
+    const { pi, session } = await createSession();
+
+    await session.startTurn("idle prompt", { clientMessageId: "client-idle" });
+
+    expect(pi.latestSession().prompts).toEqual([
+      {
+        message: "idle prompt",
+        imageCount: 0,
+        streamingBehavior: "followUp",
+      },
+    ]);
+  });
+
+  test("uses Pi steering only for an explicit active-turn steer and correlates its echo", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("initial", { clientMessageId: "client-initial" });
+    fakeSession.emit({ type: "turn_start" });
+
+    await expect(
+      session.steerActiveTurn("change course", {
+        expectedTurnId: turnId,
+        clientMessageId: "client-steer",
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer",
+      parentId: null,
+      text: "change course",
+    });
+    await events.nextTimelineEvent();
+
+    expect(fakeSession.prompts).toEqual([
+      { message: "initial", imageCount: 0, streamingBehavior: "followUp" },
+      { message: "change course", imageCount: 0, streamingBehavior: "steer" },
+    ]);
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "change course",
+        messageId: "entry-steer",
+        clientMessageId: "client-steer",
+      },
+    ]);
+  });
+
+  test("clears blocking Pi UI state before sending an explicit active-turn steer", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("initial");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "permission-before-steer",
+      method: "confirm",
+      title: "Continue?",
+      message: "Allow the current operation?",
+    });
+
+    await expect(
+      session.steerActiveTurn("user-selected steer behavior", {
+        expectedTurnId: turnId,
+        clearPendingPermissions: true,
+      }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    expect(session.getPendingPermissions()).toEqual([]);
+    expect(fakeSession.canceledExtensionUiRequests).toEqual(["permission-before-steer"]);
+    expect(fakeSession.prompts.at(-1)).toEqual({
+      message: "user-selected steer behavior",
+      imageCount: 0,
+      streamingBehavior: "steer",
+    });
+  });
+
+  test("queues capture and a normal send when Pi remains busy after a turn boundary", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.rejectMissingStreamingBehaviorWhileStreaming = true;
+
+    await session.startTurn("first", { clientMessageId: "client-first" });
+    fakeSession.state = { ...fakeSession.state, isStreaming: true };
+    await Array.fromAsync(session.streamHistory());
+    fakeSession.finishTurn();
+    await session.startTurn("additional", { clientMessageId: "client-additional" });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-additional",
+      parentId: null,
+      text: "additional",
+    });
+    await events.nextTimelineEvent();
+
+    expect(
+      fakeSession.prompts.map(({ message, streamingBehavior }) => ({
+        message: message.startsWith("/paseo_capture_entries ") ? "/paseo_capture_entries" : message,
+        streamingBehavior,
+      })),
+    ).toEqual([
+      { message: "first", streamingBehavior: "followUp" },
+      { message: "/paseo_capture_entries", streamingBehavior: "followUp" },
+      { message: "additional", streamingBehavior: "followUp" },
+    ]);
+    expect(events.timelineItems()).toEqual([
+      {
+        type: "user_message",
+        text: "additional",
+        messageId: "entry-additional",
+        clientMessageId: "client-additional",
+      },
+    ]);
+    expect(events.eventTypes()).not.toContain("turn_failed");
+  });
+
+  test("uses follow-up behavior for replay entry capture without adding transcript rows", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.messages = [{ role: "user", content: "history prompt" }];
+    fakeSession.capturedUserEntries = [
+      { id: "entry-history", parentId: null, text: "history prompt" },
+    ];
+
+    const history = await Array.fromAsync(session.streamHistory());
+
+    expect(fakeSession.prompts).toEqual([
+      {
+        message: expect.stringMatching(/^\/paseo_capture_entries /),
+        imageCount: 0,
+        streamingBehavior: "followUp",
+      },
+    ]);
+    expect(history.filter((event) => event.type === "timeline")).toHaveLength(1);
+  });
+
   test("surfaces Pi extension command messages and completes when no agent turn starts", async () => {
     const { pi, session, events } = await createSession();
     const fakeSession = pi.latestSession();
@@ -878,8 +1057,8 @@ describe("PiRpcAgentSession", () => {
       turnId: firstTurn.turnId,
     });
     expect(fakeSession.prompts).toEqual([
-      { message: "/silent-search", imageCount: 0 },
-      { message: "next request", imageCount: 0 },
+      { message: "/silent-search", imageCount: 0, streamingBehavior: "followUp" },
+      { message: "next request", imageCount: 0, streamingBehavior: "followUp" },
     ]);
     await expect(session.startTurn("overlapping request")).rejects.toThrow(
       "A Pi turn is already active",
@@ -1294,6 +1473,7 @@ describe("PiRpcAgentSession", () => {
       expect(fakeSession.prompts).toHaveLength(1);
       const prompt = fakeSession.prompts[0]!;
       expect(prompt.imageCount).toBe(0);
+      expect(prompt.streamingBehavior).toBe("followUp");
       expect(prompt.message).toContain("Describe this image.");
       expect(prompt.message).not.toContain(ONE_BY_ONE_PNG_BASE64);
       imagePath = prompt.message.match(/\[Image available at: (.+)\]/)?.[1];
@@ -1323,6 +1503,7 @@ describe("PiRpcAgentSession", () => {
       expect(fakeSession.prompts).toHaveLength(1);
       const prompt = fakeSession.prompts[0]!;
       expect(prompt.imageCount).toBe(0);
+      expect(prompt.streamingBehavior).toBe("followUp");
       expect(prompt.message).toContain("Describe this image.");
       imagePath = prompt.message.match(/\[Image available at: (.+)\]/)?.[1];
       expect(imagePath).toBeTypeOf("string");
@@ -1354,6 +1535,7 @@ describe("PiRpcAgentSession", () => {
       {
         message: "Describe this image.",
         imageCount: 1,
+        streamingBehavior: "followUp",
       },
     ]);
   });

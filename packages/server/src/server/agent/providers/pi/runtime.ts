@@ -5,6 +5,7 @@ import type {
   PiRpcSlashCommand,
   PiRuntimeEvent,
   PiSessionState,
+  PiStreamingBehavior,
   PiSessionStats,
 } from "./rpc-types.js";
 import type { ProviderRuntimeSettings } from "../../provider-launch-config.js";
@@ -43,7 +44,8 @@ export interface PiRuntimeSession {
   onEvent(callback: (event: PiRuntimeEvent) => void): () => void;
   prompt(
     message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    images: Array<{ type: "image"; data: string; mimeType: string }> | undefined,
+    streamingBehavior: PiStreamingBehavior,
   ): Promise<PiPromptAck>;
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;

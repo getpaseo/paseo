@@ -12,6 +12,7 @@ import type {
   PiRuntimeEvent,
   PiSessionState,
   PiSessionStats,
+  PiStreamingBehavior,
 } from "../rpc-types.js";
 import { buildPiLaunch } from "../runtime.js";
 
@@ -93,7 +94,11 @@ export class FakePi implements PiRuntime {
 }
 
 export class FakePiSession implements PiRuntimeSession {
-  readonly prompts: Array<{ message: string; imageCount: number }> = [];
+  readonly prompts: Array<{
+    message: string;
+    imageCount: number;
+    streamingBehavior: PiStreamingBehavior;
+  }> = [];
   readonly compactRequests: Array<{ customInstructions?: string }> = [];
   readonly setAutoCompactionRequests: boolean[] = [];
   readonly subagentSubscriptionRequests: FakePiSubagentSubscriptionLevel[] = [];
@@ -127,6 +132,7 @@ export class FakePiSession implements PiRuntimeSession {
   getStateError: Error | null = null;
   getSessionStatsError: Error | null = null;
   promptAck: PiPromptAck = {};
+  rejectMissingStreamingBehaviorWhileStreaming = false;
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
   readonly branchRequests: string[] = [];
   state: PiSessionState;
@@ -160,9 +166,22 @@ export class FakePiSession implements PiRuntimeSession {
 
   async prompt(
     message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
+    images: Array<{ type: "image"; data: string; mimeType: string }> | undefined,
+    streamingBehavior?: PiStreamingBehavior,
   ): Promise<PiPromptAck> {
-    this.prompts.push({ message, imageCount: images?.length ?? 0 });
+    if (
+      this.rejectMissingStreamingBehaviorWhileStreaming &&
+      this.state.isStreaming &&
+      streamingBehavior === undefined
+    ) {
+      throw new Error(
+        "[System Error] Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+      );
+    }
+    if (streamingBehavior === undefined) {
+      throw new Error("FakePi prompt requires streamingBehavior");
+    }
+    this.prompts.push({ message, imageCount: images?.length ?? 0, streamingBehavior });
     const heldPrompt = this.nextHeldPrompt;
     if (heldPrompt) {
       this.nextHeldPrompt = null;

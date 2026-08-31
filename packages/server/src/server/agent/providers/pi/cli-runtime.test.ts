@@ -151,6 +151,40 @@ describe("PiCliRuntime", () => {
     ]);
   });
 
+  test("serializes streaming behavior for racing prompt RPCs", async () => {
+    const child = createPiChild();
+    const commands: Record<string, unknown>[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(command);
+      return {};
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await Promise.all([
+      session.prompt("first", undefined, "followUp"),
+      session.prompt("second", undefined, "followUp"),
+      session.prompt("explicit steer", undefined, "steer"),
+    ]);
+
+    expect(commands).toEqual([
+      expect.objectContaining({
+        type: "prompt",
+        message: "first",
+        streamingBehavior: "followUp",
+      }),
+      expect.objectContaining({
+        type: "prompt",
+        message: "second",
+        streamingBehavior: "followUp",
+      }),
+      expect.objectContaining({
+        type: "prompt",
+        message: "explicit steer",
+        streamingBehavior: "steer",
+      }),
+    ]);
+  });
+
   test("passes an MCP config path to Pi", async () => {
     const child = createPiChild();
     replyToCommands(child, () => ({}));
