@@ -289,6 +289,7 @@ export const ja: TranslationResources = {
       zoomIn: "拡大",
       zoomOut: "縮小",
       resetZoom: "表示をリセット",
+      fullscreen: "全画面表示",
       viewSource: "ソースを表示",
       viewDiagram: "図を表示",
     },

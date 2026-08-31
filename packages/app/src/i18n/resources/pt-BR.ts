@@ -289,6 +289,7 @@ export const ptBR: TranslationResources = {
       zoomIn: "Aproximar",
       zoomOut: "Afastar",
       resetZoom: "Redefinir visualização",
+      fullscreen: "Tela cheia",
       viewSource: "Ver fonte",
       viewDiagram: "Ver diagrama",
     },

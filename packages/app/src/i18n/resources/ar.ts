@@ -286,6 +286,7 @@ export const ar: TranslationResources = {
       zoomIn: "تكبير",
       zoomOut: "تصغير",
       resetZoom: "إعادة تعيين العرض",
+      fullscreen: "ملء الشاشة",
       viewSource: "عرض المصدر",
       viewDiagram: "عرض المخطط",
     },

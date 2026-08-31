@@ -290,6 +290,7 @@ export const fr: TranslationResources = {
       zoomIn: "Zoomer",
       zoomOut: "Dézoomer",
       resetZoom: "Réinitialiser la vue",
+      fullscreen: "Plein écran",
       viewSource: "Afficher la source",
       viewDiagram: "Afficher le diagramme",
     },

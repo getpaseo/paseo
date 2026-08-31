@@ -288,6 +288,7 @@ export const ru: TranslationResources = {
       zoomIn: "Увеличить масштаб",
       zoomOut: "Уменьшить масштаб",
       resetZoom: "Сбросить масштаб",
+      fullscreen: "Полноэкранный режим",
       viewSource: "Показать исходный код",
       viewDiagram: "Показать диаграмму",
     },

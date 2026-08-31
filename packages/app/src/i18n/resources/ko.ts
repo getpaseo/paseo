@@ -287,6 +287,7 @@ export const ko: TranslationResources = {
       zoomIn: "확대",
       zoomOut: "축소",
       resetZoom: "보기 초기화",
+      fullscreen: "전체 화면",
       viewSource: "소스 보기",
       viewDiagram: "다이어그램 보기",
     },
