@@ -689,9 +689,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
 
   // --- Tab relative navigation ---
   {
-    id: "workspace-tab-navigate-relative-alt-shift-left",
+    id: "workspace-tab-navigate-relative-ctrl-shift-tab",
     action: "workspace.tab.navigate.relative",
-    combo: "Alt+Shift+[",
+    combo: "Ctrl+Shift+Tab",
     when: { commandCenter: false },
     payload: { type: "delta", delta: -1 },
     help: {
@@ -701,9 +701,9 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     },
   },
   {
-    id: "workspace-tab-navigate-relative-alt-shift-right",
+    id: "workspace-tab-navigate-relative-ctrl-tab",
     action: "workspace.tab.navigate.relative",
-    combo: "Alt+Shift+]",
+    combo: "Ctrl+Tab",
     when: { commandCenter: false },
     payload: { type: "delta", delta: 1 },
     help: {

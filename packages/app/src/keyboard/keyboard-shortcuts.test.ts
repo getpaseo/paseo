@@ -217,10 +217,16 @@ describe("keyboard-shortcuts", () => {
       payload: { delta: 1 },
     },
     {
-      name: "matches tab relative navigation via Alt+Shift+]",
-      event: { key: "}", code: "BracketRight", altKey: true, shiftKey: true },
+      name: "matches tab relative navigation via Ctrl+Tab",
+      event: { key: "Tab", code: "Tab", ctrlKey: true },
       action: "workspace.tab.navigate.relative",
       payload: { delta: 1 },
+    },
+    {
+      name: "matches reverse tab relative navigation via Ctrl+Shift+Tab",
+      event: { key: "Tab", code: "Tab", ctrlKey: true, shiftKey: true },
+      action: "workspace.tab.navigate.relative",
+      payload: { delta: -1 },
     },
     {
       name: "matches Mod+T to open new tab",
@@ -349,20 +355,6 @@ describe("keyboard-shortcuts", () => {
       event: { key: "\u2020", code: "KeyT", metaKey: true, altKey: true },
       context: { isMac: true },
       action: "theme.cycle",
-    },
-    {
-      name: "matches Alt+Shift+[ to previous tab on macOS when Option substitutes event.key",
-      event: { key: "\u201D", code: "BracketLeft", altKey: true, shiftKey: true },
-      context: { isMac: true },
-      action: "workspace.tab.navigate.relative",
-      payload: { delta: -1 },
-    },
-    {
-      name: "matches Alt+Shift+] to next tab on macOS when Option substitutes event.key",
-      event: { key: "\u2019", code: "BracketRight", altKey: true, shiftKey: true },
-      context: { isMac: true },
-      action: "workspace.tab.navigate.relative",
-      payload: { delta: 1 },
     },
     {
       name: "matches Alt+[ to previous workspace on macOS web when Option substitutes event.key",

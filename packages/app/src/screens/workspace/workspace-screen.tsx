@@ -159,6 +159,7 @@ import {
   workspaceAgentVisibilityEqual,
 } from "@/workspace-tabs/agent-visibility";
 import { deriveWorkspacePaneState } from "@/screens/workspace/workspace-pane-state";
+import { getWorkspaceRelativeTabId } from "@/screens/workspace/workspace-tab-navigation";
 import {
   buildWorkspacePaneContentModel,
   WorkspacePaneContent,
@@ -3125,14 +3126,14 @@ function WorkspaceScreenContent({
           return true;
         }
         case "workspace.tab.navigate-relative": {
-          if (tabs.length > 0) {
-            const currentIndex = tabs.findIndex((tab) => tab.tabId === activeTabId);
-            const fromIndex = currentIndex >= 0 ? currentIndex : 0;
-            const nextIndex = (fromIndex + action.delta + tabs.length) % tabs.length;
-            const next = tabs[nextIndex] ?? null;
-            if (next?.tabId) {
-              navigateToTabId(next.tabId);
-            }
+          const paneId = focusedPaneTabState.pane?.id;
+          const nextTabId = getWorkspaceRelativeTabId(
+            focusedPaneTabState.tabs.map((tab) => tab.descriptor.tabId),
+            focusedPaneTabState.activeTabId,
+            action.delta,
+          );
+          if (persistenceKey && paneId && nextTabId) {
+            selectWorkspaceTabInPane(persistenceKey, paneId, nextTabId);
           }
           return true;
         }
@@ -3147,8 +3148,10 @@ function WorkspaceScreenContent({
       handleCreateBrowserTab,
       handleCreateNewTab,
       handleCreateTerminal,
-      focusedPaneTabState.pane?.id,
+      focusedPaneTabState,
       navigateToTabId,
+      persistenceKey,
+      selectWorkspaceTabInPane,
       tabs,
     ],
   );
