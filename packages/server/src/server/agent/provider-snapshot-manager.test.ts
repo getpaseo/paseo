@@ -1148,7 +1148,11 @@ describe("ProviderSnapshotManager public surface", () => {
             return true;
           },
           async fetchCatalog() {
-            return { models: [] as AgentModelDefinition[], modes: childModes };
+            return {
+              models: [] as AgentModelDefinition[],
+              modes: childModes,
+              defaultModeId: "child-unattended",
+            };
           },
           async resolveCreateConfig(input) {
             resolverInputs.push(input);
@@ -1202,6 +1206,7 @@ describe("ProviderSnapshotManager public surface", () => {
           },
           unattended: true,
           availableModes: childModes,
+          defaultModeId: "child-unattended",
         },
       ]);
     } finally {
@@ -1226,7 +1231,7 @@ describe("ProviderSnapshotManager public surface", () => {
             return true;
           },
           async fetchCatalog() {
-            return { models: [] as AgentModelDefinition[], modes };
+            return { models: [] as AgentModelDefinition[], modes, defaultModeId: "worker" };
           },
           async resolveCreateConfig(input) {
             resolverInputs.push(input);
@@ -1257,6 +1262,7 @@ describe("ProviderSnapshotManager public surface", () => {
           parent: null,
           unattended: true,
           availableModes: modes,
+          defaultModeId: "worker",
         },
       ]);
     } finally {

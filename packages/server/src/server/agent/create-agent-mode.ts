@@ -16,6 +16,10 @@ export interface ResolveCreateAgentModeInput {
   // unvalidated, but cross-provider inheritance is still refused.
   // `[]` = target provider explicitly has no modes: use its default behavior.
   availableModes: string[] | undefined;
+  // The target provider's advertised default. This lets callers use the
+  // generic `default` alias even when the provider's concrete mode has a
+  // provider-specific id such as Codex's `auto`.
+  targetDefaultMode?: string | null;
   // Target provider's own unattended mode id, if it has one. Used to bridge
   // unattended parents into unattended children across providers.
   targetUnattendedMode: string | undefined;
@@ -47,6 +51,14 @@ export function resolveAndValidateCreateAgentMode(
 
   if (requestedMode !== undefined) {
     if (availableModes !== undefined && !availableModes.includes(requestedMode)) {
+      if (
+        requestedMode === "default" &&
+        input.targetDefaultMode !== null &&
+        input.targetDefaultMode !== undefined &&
+        availableModes.includes(input.targetDefaultMode)
+      ) {
+        return input.targetDefaultMode;
+      }
       throw new Error(
         `Invalid mode '${requestedMode}' for provider '${targetProvider}'. Available modes: ${listModes(availableModes)}`,
       );
@@ -92,6 +104,7 @@ export function resolveDefaultAgentCreateConfig(
       parent: input.parent,
       unattended: input.unattended,
       availableModes: availableModeIds,
+      targetDefaultMode: input.defaultModeId,
       targetUnattendedMode: input.availableModes?.find(isUnattendedMode)?.id,
     }),
     featureValues: input.featureValues,

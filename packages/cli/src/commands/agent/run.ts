@@ -38,7 +38,10 @@ export function addRunOptions(cmd: Command): Command {
         "Model to use (e.g., claude-sonnet-4-20250514, claude-3-5-haiku-20241022)",
       )
       .option("--thinking <id>", "Thinking option ID to use for this run")
-      .option("--mode <mode>", "Provider-specific mode (e.g., plan, default, bypass)")
+      .option(
+        "--mode <mode>",
+        "Provider-specific mode ID; omit for the provider default (see `paseo provider ls`)",
+      )
       .option("--new-workspace <local|worktree>", "Create a separate local or worktree workspace")
       .addOption(new Option("--worktree <name>", "Legacy workspace isolation alias").hideHelp())
       .option(
@@ -578,7 +581,10 @@ async function resolveRunWorkspace(
   console.error(
     "Tip: pass --workspace <id> (or set PASEO_WORKSPACE_ID) to run in an existing workspace.",
   );
-  return { id: result.workspace.id, cwd: result.workspace.workspaceDirectory ?? cwd };
+  return {
+    id: result.workspace.id,
+    cwd: result.workspace.workspaceDirectory ?? cwd,
+  };
 }
 
 export async function runRunCommand(

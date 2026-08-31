@@ -21,6 +21,45 @@ describe("resolveAndValidateCreateAgentMode", () => {
     expect(resolved).toBe("plan");
   });
 
+  it("resolves the generic default alias to the target provider's advertised default", () => {
+    const resolved = resolveAndValidateCreateAgentMode({
+      requestedMode: "default",
+      targetProvider: "codex",
+      parent: agentParent("claude", "default"),
+      unattended: false,
+      availableModes: CODEX_MODES,
+      targetDefaultMode: "auto",
+    });
+
+    expect(resolved).toBe("auto");
+  });
+
+  it("preserves a real provider mode named default", () => {
+    const resolved = resolveAndValidateCreateAgentMode({
+      requestedMode: "default",
+      targetProvider: "claude",
+      parent: null,
+      unattended: false,
+      availableModes: CLAUDE_MODES,
+      targetDefaultMode: "auto",
+    });
+
+    expect(resolved).toBe("default");
+  });
+
+  it("rejects the generic default alias when the provider advertises no default", () => {
+    expect(() =>
+      resolveAndValidateCreateAgentMode({
+        requestedMode: "default",
+        targetProvider: "codex",
+        parent: null,
+        unattended: false,
+        availableModes: CODEX_MODES,
+        targetDefaultMode: null,
+      }),
+    ).toThrow("Invalid mode 'default' for provider 'codex'. Available modes: auto, full-access");
+  });
+
   it("throws when the requested mode is invalid for the target provider", () => {
     expect(() =>
       resolveAndValidateCreateAgentMode({
