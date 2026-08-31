@@ -52,7 +52,7 @@ export const DEFAULT_UI_BASE_FONT_SIZE = defaultUiBaseFontSize(isNative);
 export const MIN_UI_BASE_FONT_SIZE = 10;
 export const MAX_UI_BASE_FONT_SIZE = 21;
 export function defaultContentFontSize(native: boolean): number {
-  return native ? 15 : FONT_SIZE.content;
+  return native ? 16 : FONT_SIZE.content;
 }
 
 export const DEFAULT_CONTENT_FONT_SIZE = defaultContentFontSize(isNative);
@@ -75,7 +75,7 @@ export interface AppSettings {
   uiFontFamily: string; // "" = platform default UI stack
   monoFontFamily: string; // "" = platform default mono stack
   uiBaseFontSize: number; // clamped px, platform default 14 or 15
-  contentFontSize: number; // clamped px, default 15
+  contentFontSize: number; // clamped px, platform default 15 or 16
   codeFontSize: number; // clamped px, default 12
   syntaxTheme: SyntaxThemeId; // default "one"
   workspaceTitleSource: WorkspaceTitleSource;
@@ -343,7 +343,7 @@ export async function loadAppSettingsFromStorage(deps: SettingsDeps): Promise<Ap
       await writeAppSettings(deps.storage, read.stored, read.settings);
     }
     const { needsWrite: _needsWrite, ...stored } = read.stored;
-    return await migrateAppSettings(read.settings, deps.storage, stored);
+    return await migrateAppSettings(read.settings, deps.storage, stored, { native: isNative });
   } catch (error) {
     console.error("[AppSettings] Failed to load settings:", error);
     throw error;

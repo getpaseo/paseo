@@ -1,5 +1,57 @@
 # Changelog
 
+## 0.7.0-beta.3 - 2026-08-31
+
+### Added
+
+- Added readable prompts, details, and results for Paseo tool calls ([#4066](https://github.com/getpaseo/paseo/pull/4066))
+- Added zoom and pan to workspace images and assistant timeline previews ([#4032](https://github.com/getpaseo/paseo/pull/4032), [#4049](https://github.com/getpaseo/paseo/pull/4049), [#4064](https://github.com/getpaseo/paseo/pull/4064))
+- Added host navigation from plugin surfaces to agents and workspaces ([#3901](https://github.com/getpaseo/paseo/pull/3901) by [@omercnet](https://github.com/omercnet))
+- Added Astro syntax highlighting to files, the editor, and diffs ([#3997](https://github.com/getpaseo/paseo/pull/3997))
+
+### Improved
+
+- Reused one OpenCode helper across ordinary agent sessions instead of spawning one per agent ([#4009](https://github.com/getpaseo/paseo/pull/4009))
+- Kept cold-start pull request status checks on the shared GitHub batch path ([#4025](https://github.com/getpaseo/paseo/pull/4025))
+
+### Fixed
+
+- Fixed Android first-message submissions crashing when the keyboard restarted during composer teardown ([#4044](https://github.com/getpaseo/paseo/pull/4044))
+- Fixed long mobile drafts hiding composer controls behind the keyboard ([#4051](https://github.com/getpaseo/paseo/pull/4051))
+- Fixed web and Electron composers losing focus after submission ([#4067](https://github.com/getpaseo/paseo/pull/4067))
+- Fixed Android dictation leaving Bluetooth audio in call-quality routing after capture stopped ([#4069](https://github.com/getpaseo/paseo/pull/4069))
+- Fixed dictation retries timing out after an abandoned partial transcript ([#4065](https://github.com/getpaseo/paseo/pull/4065))
+- Fixed the model selector crashing in iPad desktop layouts ([#3992](https://github.com/getpaseo/paseo/pull/3992) by [@yzim](https://github.com/yzim))
+- Fixed archived agents disappearing when opened from History ([#4033](https://github.com/getpaseo/paseo/pull/4033))
+- Fixed Grok unified-billing accounts showing zero credits instead of weekly usage ([#4029](https://github.com/getpaseo/paseo/pull/4029) by [@Lite-G](https://github.com/Lite-G), [@claude](https://github.com/claude))
+- Fixed slow Pi and OMP startup requests timing out after 30 seconds ([#4008](https://github.com/getpaseo/paseo/pull/4008))
+- Fixed Android system navigation covering the Commits controls ([#4005](https://github.com/getpaseo/paseo/pull/4005))
+- Fixed new agent work appearing as reopened tasks ([#4068](https://github.com/getpaseo/paseo/pull/4068))
+
+## 0.7.0-beta.2 - 2026-08-28
+
+### Added
+
+- Added SSH connections to existing remote daemons from Desktop and CLI ([#3989](https://github.com/getpaseo/paseo/pull/3989) by [@reidlevesque](https://github.com/reidlevesque))
+- Added workspace management and layout actions to the Command Center ([#3013](https://github.com/getpaseo/paseo/pull/3013) by [@cleiter](https://github.com/cleiter))
+- Added contextual composer-pill contributions for plugins ([#3956](https://github.com/getpaseo/paseo/pull/3956))
+- Added host UI primitives for client plugins ([#3967](https://github.com/getpaseo/paseo/pull/3967))
+- Added PR and MR number search to the Command Center ([#3008](https://github.com/getpaseo/paseo/pull/3008) by [@cleiter](https://github.com/cleiter))
+- Added session commands to agent SDK handles ([#3719](https://github.com/getpaseo/paseo/pull/3719) by [@gpambrozio](https://github.com/gpambrozio), [@marvin-ambrozio](https://github.com/marvin-ambrozio))
+
+### Improved
+
+- Batched GitHub pull request polling within the reserved API budget ([#3825](https://github.com/getpaseo/paseo/pull/3825) by [@dezchai](https://github.com/dezchai))
+
+### Fixed
+
+- Fixed daemon reconnects stalling while Git processes were queued ([#3945](https://github.com/getpaseo/paseo/pull/3945))
+- Fixed restored workspace tabs entering reconciliation loops ([#3987](https://github.com/getpaseo/paseo/pull/3987))
+- Fixed immediate dictation submissions omitting the newest speech segment ([#3968](https://github.com/getpaseo/paseo/pull/3968))
+- Fixed archived workspaces returning from durable cache ([#3975](https://github.com/getpaseo/paseo/pull/3975))
+- Fixed commits and squash merges bypassing configured Git signing ([#3976](https://github.com/getpaseo/paseo/pull/3976))
+- Fixed Markdown literal characters being replaced by typographic symbols ([#3253](https://github.com/getpaseo/paseo/pull/3253) by [@cleiter](https://github.com/cleiter))
+
 ## 0.7.0-beta.1 - 2026-08-27
 
 ### Changed
