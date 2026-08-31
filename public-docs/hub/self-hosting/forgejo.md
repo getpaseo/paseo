@@ -25,7 +25,7 @@ it. Organization owners cannot enter a URL during connection setup; they choose 
 
 Run the instance health check after a Forgejo upgrade, certificate change, DNS change, or other
 identity change. An incompatible, unreachable, or identity-drifted instance needs operator review
-before it can be used safely.
+before it can be used safely. Scheduled recovery continues in the background while Hub is running.
 
 ## Connect an organization
 
@@ -38,7 +38,14 @@ tokens, and unrelated scopes.
 Enroll only the repositories the connection needs. The connection PAT supports event intake,
 repository health, and reactions. Configure a separate repository-limited execution PAT when a
 workflow needs a `forgejo` step-authority block. Hub checks the execution PAT's repositories and
-capabilities at step launch; it never widens either boundary.
+capabilities at step launch; it never widens either boundary. Forgejo cannot mint a narrower token
+for a step that requested a subset of that PAT; the injected `FORGEJO_TOKEN` is the stored
+execution PAT after subset validation. Store a narrower execution PAT when a step must not inherit
+the broader credential.
+
+Hub also runs bounded scheduled recovery on the frozen health interval without an operator
+request. On-demand instance health checks still use the same coordinator. Automatic retry never
+claims `REMOTE_CLEANUP_PENDING` work.
 
 Rotate or revoke the connection and execution PATs in the Forgejo connection lifecycle controls.
 Use rotation when an upstream token's identity, scope, or repository list changes. Do not put a PAT

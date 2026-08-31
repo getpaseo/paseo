@@ -40,6 +40,8 @@ steps:
 An organization owner configures a repository-limited execution PAT for the connection. Hub
 checks the connection, enrolled repositories, and requested capability before it materializes the
 PAT for the running step. Hub does not create, expand, or silently replace the upstream PAT.
+Forgejo personal access tokens cannot be attenuated: after the step grant is shown to be a subset
+of that PAT, Hub injects the stored execution PAT as `FORGEJO_TOKEN`.
 
 ## Fields
 
