@@ -1237,6 +1237,10 @@ export const ru: TranslationResources = {
       noMatchingRefs: "Нет подходящих веток или PR.",
       searchPlaceholder: "Поиск веток и PR",
       title: "Начать с",
+      fetchBase: {
+        label: "Получить последние изменения из удалённого репозитория",
+        hint: "Начать с последнего отправленного коммита",
+      },
     },
     launch: {
       title: "Что запустить",

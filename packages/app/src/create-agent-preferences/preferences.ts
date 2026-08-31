@@ -18,6 +18,9 @@ export interface FormPreferences {
   favoriteModels?: Array<{ provider: string; modelId: string }>;
   isolation?: "local" | "worktree";
   launchTarget?: LaunchTarget;
+  // Absent means on: a new worktree branches off the freshest remote commit.
+  // Read it through `resolveFetchBaseBeforeCreate`, never bare.
+  fetchBaseBeforeCreate?: boolean;
 }
 
 const providerPreferencesSchema: z.ZodType<ProviderPreferences> = z.strictObject({
@@ -50,6 +53,7 @@ export const FormPreferencesSchema = z.strictObject({
   // What the New workspace composer submits to: the chat agent (default) or a
   // terminal profile. See `@/new-workspace-launch` for resolution/fallback.
   launchTarget: launchTargetSchema.optional(),
+  fetchBaseBeforeCreate: z.boolean().optional(),
 }) satisfies z.ZodType<FormPreferences>;
 
 const LegacyProviderPreferencesSchema = z.strictObject({
@@ -91,6 +95,15 @@ export const StoredFormPreferencesSchema: z.ZodType<FormPreferences> = z.union([
 ]);
 
 export const DEFAULT_FORM_PREFERENCES: FormPreferences = {};
+
+/**
+ * Branching off a stale base is almost never what someone wants, so an unset
+ * preference means fetch. The one owner of that default: reading the field bare
+ * turns "never configured" into "opted out".
+ */
+export function resolveFetchBaseBeforeCreate(preferences: FormPreferences): boolean {
+  return preferences.fetchBaseBeforeCreate ?? true;
+}
 
 export function parseFormPreferences(value: unknown): FormPreferences {
   const result = StoredFormPreferencesSchema.safeParse(value);

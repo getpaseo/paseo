@@ -389,21 +389,25 @@ test.each([1, 2, 10])(
     const creation = stopGitCommandMetrics();
 
     expect(response?.workspace?.name).toBe("created-during-measurement");
+    // This fixture has no origin remote, so refreshing the base ref costs the two
+    // lookups that decide there is nothing to fetch — one `config --get
+    // remote.origin.url` and one `rev-list` for the local-vs-remote comparison —
+    // and no `fetch`. A repo with a remote adds exactly one `fetch` on top.
     expect(countGitOperations(creation.submissions)).toEqual({
       branch: 4,
-      config: 22,
+      config: 23,
       diff: 3,
       "for-each-ref": 7,
       "ls-files": 4,
       "merge-base": 3,
-      "rev-list": 3,
+      "rev-list": 4,
       "rev-parse": 38,
       "show-ref": 7,
       status: 7,
       "symbolic-ref": 4,
       worktree: 1,
     });
-    expect(creation.submitted).toBe(103);
+    expect(creation.submitted).toBe(105);
     const existingWorktrees = new Set(fixture.siblingWorktrees.map((cwd) => realpathSync(cwd)));
     expect(
       creation.submissions.filter((command) => existingWorktrees.has(realpathSync(command.cwd))),

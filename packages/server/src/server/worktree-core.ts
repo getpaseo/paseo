@@ -29,6 +29,12 @@ export interface CreateWorktreeCoreInput {
   paseoHome?: string;
   worktreesRoot?: string;
   runSetup?: boolean;
+  /**
+   * Refresh the base ref from its remote before branching off it. Absent means
+   * fetch: callers opt out explicitly. Ignored by the checkout intents, which
+   * already fetch what they need.
+   */
+  fetchBase?: boolean;
 }
 
 export interface CreateWorktreeCoreDeps {
@@ -87,6 +93,7 @@ async function createWorktreeCoreWithPriority(
       refName: input.refName,
       branchName: requestedBranchName,
       worktreeSlug,
+      fetchBase: input.fetchBase,
     };
   }
 

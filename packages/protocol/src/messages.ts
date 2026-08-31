@@ -1617,6 +1617,8 @@ const GitSetupOptionsSchema = z.object({
   // checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once the
   // supported client floor is >= v0.2.0.
   githubPrNumber: z.number().int().positive().optional(),
+  // See the identical field on workspace.create.request's worktree source.
+  fetchBase: z.boolean().optional(),
 });
 
 export type GitSetupOptions = z.infer<typeof GitSetupOptionsSchema>;
@@ -2536,6 +2538,11 @@ export const WorkspaceCreateRequestSchema = z.object({
       // the supported client floor is >= v0.2.0.
       githubPrNumber: z.number().int().positive().optional(),
       worktreeSlug: z.string().optional(),
+      // Refresh the base ref from its remote before branching, so the worktree
+      // starts at the newest upstream commit. Absent means fetch: clients opt
+      // out explicitly, which keeps older clients on the better default. Only
+      // meaningful for action "branch-off".
+      fetchBase: z.boolean().optional(),
     }),
   ]),
 });
@@ -3398,6 +3405,8 @@ export const ServerInfoStatusPayloadSchema = z
         pluginLogs: z.boolean().optional(),
         // COMPAT(pluginGitManagement): added in v0.7.0, remove gate after 2027-08-26.
         pluginGitManagement: z.boolean().optional(),
+        // COMPAT(workspaceCreateFetchBase): added in v0.7.0, remove gate after 2027-09-01.
+        workspaceCreateFetchBase: z.boolean().optional(),
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
         // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
         // so a theme plugin cannot start there at all.

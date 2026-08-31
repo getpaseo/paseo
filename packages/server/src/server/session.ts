@@ -6072,6 +6072,7 @@ export class Session {
         branchName: source.branchName,
         checkoutSource: source.checkoutSource,
         githubPrNumber: source.githubPrNumber,
+        fetchBase: source.fetchBase,
         firstAgentContext: request.firstAgentContext,
         title: request.title,
       },

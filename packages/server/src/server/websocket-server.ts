@@ -1668,6 +1668,8 @@ export class VoiceAssistantWebSocketServer {
         pluginManagement: true,
         pluginGitManagement: true,
         pluginLogs: true,
+        // COMPAT(workspaceCreateFetchBase): added in v0.7.0, remove gate after 2027-09-01.
+        workspaceCreateFetchBase: true,
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
         pluginThemes: true,
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.

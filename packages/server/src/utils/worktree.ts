@@ -38,6 +38,7 @@ import {
   writePaseoWorktreeRuntimeMetadata,
 } from "./worktree-metadata.js";
 import { runGitCommand } from "./run-git-command.js";
+import { fetchBaseRefFromRemote, preferFastForwardedRemoteRef } from "./fetch-base-ref.js";
 import { spawnProcess } from "./spawn.js";
 import { resolvePaseoHome } from "../server/paseo-home.js";
 import { createExternalProcessEnv } from "../server/paseo-env.js";
@@ -178,7 +179,14 @@ export interface WorktreeCheckoutRef {
 }
 
 export type WorktreeSource =
-  | { kind: "branch-off"; baseBranch: string; branchName: string }
+  | {
+      kind: "branch-off";
+      baseBranch: string;
+      branchName: string;
+      // Refresh baseBranch from its remote first, so the new branch starts at the
+      // newest upstream commit rather than the last background fetch's snapshot.
+      fetchBase?: boolean;
+    }
   | { kind: "checkout-branch"; branchName: string }
   | {
       kind: "checkout-change-request";
@@ -1311,7 +1319,7 @@ async function resolveWorktreeSourcePlan({
       const branchName = source.branchName;
       await validateGitBranchName(cwd, branchName);
       const normalizedBaseBranch = normalizeRequiredBaseBranch(source.baseBranch);
-      const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
+      const resolvedBaseBranch = await resolveBranchOffBaseRef(cwd, source);
       const branchExists = await localBranchExists(cwd, branchName);
       const base = branchExists ? branchName : resolvedBaseBranch;
       const candidateBranch = branchExists ? desiredSlug : branchName;
@@ -1608,6 +1616,28 @@ function normalizeRequiredBaseBranch(baseBranch: string): string {
     throw new Error("Base branch cannot be HEAD when creating a Paseo worktree");
   }
   return normalizedBaseBranch;
+}
+
+/**
+ * The ref a new branch-off worktree starts from.
+ *
+ * Unless the caller opted out, the base is refreshed from its remote first, then
+ * allowed to follow the remote tip when the local branch is purely behind it.
+ * Both steps are no-ops without a reachable remote, so this degrades to the
+ * plain local resolution.
+ */
+async function resolveBranchOffBaseRef(
+  cwd: string,
+  source: Extract<WorktreeSource, { kind: "branch-off" }>,
+): Promise<string> {
+  if (source.fetchBase === false) {
+    return resolveBaseBranchForWorktree(cwd, source.baseBranch);
+  }
+  // Refresh before resolving: resolveBaseBranchForWorktree only rev-parses local
+  // refs, so the fetch has to land before it reads them.
+  await fetchBaseRefFromRemote(cwd, source.baseBranch);
+  const preferred = await preferFastForwardedRemoteRef(cwd, source.baseBranch);
+  return resolveBaseBranchForWorktree(cwd, preferred ?? source.baseBranch);
 }
 
 async function resolveBaseBranchForWorktree(
