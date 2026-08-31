@@ -393,6 +393,7 @@ Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui`
         },
         "params": {
           "sessionDir": "~/.local/state/omp-work/omp/agent/sessions",
+          "rpcTimeoutMs": 60000,
           "smolModel": "openai/gpt-5-mini",
           "slowModel": "anthropic/claude-opus-4-1",
           "planModel": "openai/o3"
@@ -403,7 +404,7 @@ Custom OMP profiles should extend `omp`. They inherit the OMP adapter's `rpc-ui`
 }
 ```
 
-`params.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `params.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command.
+`params.sessionDir` is used only for importing sessions that were started outside Paseo. If `command` or XDG env vars move OMP's state directory, set `params.sessionDir` to the resulting OMP JSONL session directory; launching and resuming still go through the configured command. `params.rpcTimeoutMs` overrides the 60-second OMP control-plane RPC deadline.
 
 For other providers that keep Pi's `--mode rpc` API but write sessions somewhere else, extend `pi`, replace the command, and provide the JSONL session directory:
 
@@ -416,7 +417,8 @@ For other providers that keep Pi's `--mode rpc` API but write sessions somewhere
         "label": "My Pi Fork",
         "command": ["my-pi-fork"],
         "params": {
-          "sessionDir": "~/.my-pi-fork/sessions"
+          "sessionDir": "~/.my-pi-fork/sessions",
+          "rpcTimeoutMs": 60000
         }
       }
     }
@@ -424,7 +426,7 @@ For other providers that keep Pi's `--mode rpc` API but write sessions somewhere
 }
 ```
 
-This session directory is also import-only. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`.
+This session directory is also import-only. Launching and resuming still go through the configured command, so this example resumes with `my-pi-fork --mode rpc --session <session-file>`. `params.rpcTimeoutMs` overrides the 60-second Pi control-plane RPC deadline.
 
 ---
 

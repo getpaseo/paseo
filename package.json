@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.7.0-beta.1",
+  "version": "0.7.0",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [
@@ -41,6 +41,7 @@
     "dev:server:raw": "npm run dev --workspace=@getpaseo/server",
     "dev:app": "cross-env PASEO_LISTEN=127.0.0.1:6768 EXPO_PORT=8081 ./scripts/dev-app.sh",
     "test:e2e:mobile": "./scripts/test-mobile-agent-device.sh",
+    "test:e2e:composer-keyboard:android": "./packages/app/e2e/mobile/composer-keyboard/android.sh",
     "dev:website": "npm run dev --workspace=@getpaseo/website",
     "postinstall": "node scripts/postinstall-patches.mjs",
     "prepare": "lefthook install --force",

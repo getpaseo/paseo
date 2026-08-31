@@ -93,6 +93,20 @@ export {
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
 
+export const DAEMON_PERMISSIONS = [
+  "daemon.read",
+  "daemon.manage",
+  "tunnel.manage",
+  "access.manage",
+  "workspace.read",
+  "workspace.write",
+  "workspace.manage",
+  "automation.manage",
+  "hub.execute",
+] as const;
+export const DaemonPermissionSchema = z.enum(DAEMON_PERMISSIONS);
+export type DaemonPermission = z.infer<typeof DaemonPermissionSchema>;
+
 const MutableDaemonProviderModelSchema = z
   .object({
     id: z.string().min(1),
@@ -1393,6 +1407,7 @@ export const HubManagementDaemonConnectRequestSchema = z.object({
   requestId: z.string(),
   hubUrl: z.string(),
   token: z.string(),
+  permissions: z.array(DaemonPermissionSchema).default([]),
 });
 export const HubManagementDaemonGetStatusRequestSchema = z.object({
   type: z.literal("hub.management.daemon.get_status.request"),
@@ -1402,6 +1417,12 @@ export const HubManagementDaemonDisconnectRequestSchema = z.object({
   type: z.literal("hub.management.daemon.disconnect.request"),
   requestId: z.string(),
   force: z.boolean().optional(),
+});
+export const HubManagementDaemonPermissionsUpdateRequestSchema = z.object({
+  type: z.literal("hub.management.daemon.permissions.update.request"),
+  requestId: z.string(),
+  grant: z.array(DaemonPermissionSchema).default([]),
+  revoke: z.array(DaemonPermissionSchema).default([]),
 });
 
 export const DiagnosticsRequestSchema = z.object({
@@ -3025,6 +3046,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubManagementDaemonConnectRequestSchema,
   HubManagementDaemonGetStatusRequestSchema,
   HubManagementDaemonDisconnectRequestSchema,
+  HubManagementDaemonPermissionsUpdateRequestSchema,
   DiagnosticsRequestSchema,
   PluginCatalogGetRequestSchema,
   PluginListRequestSchema,
@@ -3339,6 +3361,8 @@ export const ServerInfoStatusPayloadSchema = z
     serverId: z.string().trim().min(1),
     hostname: ServerInfoHostnameSchema.optional(),
     version: ServerInfoVersionSchema.optional(),
+    // COMPAT(sessionPermissions): optional while clients support older daemons.
+    permissions: z.array(DaemonPermissionSchema).optional(),
     // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
     desktopManaged: z.boolean().optional(),
     capabilities: ServerCapabilitiesFromUnknownSchema.optional(),
@@ -4613,7 +4637,7 @@ export const HubRelationshipStatusSchema = z.object({
   ]),
   daemonId: z.string().nullable(),
   hubOrigin: z.string().nullable(),
-  scopes: z.array(z.string()),
+  permissions: z.array(DaemonPermissionSchema),
   connectedAt: z.string().nullable(),
   lastError: z.string().nullable(),
 });
@@ -4632,6 +4656,10 @@ export const HubManagementDaemonDisconnectResponseSchema = z.object({
     status: HubRelationshipStatusSchema,
     warning: z.string().optional(),
   }),
+});
+export const HubManagementDaemonPermissionsUpdateResponseSchema = z.object({
+  type: z.literal("hub.management.daemon.permissions.update.response"),
+  payload: z.object({ requestId: z.string(), status: HubRelationshipStatusSchema }),
 });
 
 export const DaemonGetPairingOfferResponseSchema = z.object({
@@ -6379,6 +6407,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubManagementDaemonConnectResponseSchema,
   HubManagementDaemonGetStatusResponseSchema,
   HubManagementDaemonDisconnectResponseSchema,
+  HubManagementDaemonPermissionsUpdateResponseSchema,
   DiagnosticsResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
@@ -6953,7 +6982,7 @@ export const WSPongMessageSchema = z.object({
 export const WSHelloMessageSchema = z.object({
   type: z.literal("hello"),
   clientId: z.string().min(1),
-  clientType: z.enum(["mobile", "browser", "cli", "mcp"]),
+  clientType: z.enum(["mobile", "browser", "cli", "mcp", "hub"]),
   protocolVersion: z.number().int(),
   appVersion: z.string().optional(),
   capabilities: z

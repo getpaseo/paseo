@@ -7,6 +7,7 @@ import {
   GitHubAuthenticationError,
   GitHubCliMissingError,
   GitHubCommandError,
+  GITHUB_POLL_ALIGNMENT_MS,
   computeGithubNextInterval,
   createGitHubService,
   parseStatusCheckRollup,
@@ -876,6 +877,8 @@ describe("ForgeService", () => {
       ttlMs: 0,
       runner: runner.runner,
       resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => null,
+      resolveRepoSlug: async () => null,
     });
     const reads = recordCurrentPullRequestStatusReads(service);
 
@@ -885,6 +888,7 @@ describe("ForgeService", () => {
       headRepositoryOwner: "fork-owner",
     });
     await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
 
     expect(reads).toEqual([
       expect.objectContaining({
@@ -1155,6 +1159,138 @@ describe("ForgeService", () => {
 
     subscriptionA?.unsubscribe();
     subscriptionB?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("batches the first PR status poll after repository identity resolves", async () => {
+    let now = 0;
+    let resolveRepositoryIdentity!: () => void;
+    const repositoryIdentityReady = new Promise<void>((resolve) => {
+      resolveRepositoryIdentity = resolve;
+    });
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            number: 41,
+            url: "https://github.com/acme/widgets/pull/41",
+            headRefName: "feat-a",
+            headRefOid: "oid-a",
+          }),
+        ]),
+        t1: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            number: 52,
+            url: "https://github.com/acme/gadgets/pull/52",
+            headRefName: "feat-b",
+            headRefOid: "oid-b",
+          }),
+        ]),
+      }),
+      batchPollStatusJson({
+        t0: batchPollChecksAliasJson([]),
+        t1: batchPollChecksAliasJson([]),
+      }),
+    ]);
+    const slugs: Record<string, string> = { "/ws-a": "acme/widgets", "/ws-b": "acme/gadgets" };
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async () => {
+        await repositoryIdentityReady;
+        return null;
+      },
+      resolveRepoSlug: async (cwd) => {
+        await repositoryIdentityReady;
+        return slugs[cwd] ?? null;
+      },
+      now: () => now,
+    });
+
+    const subscriptionA = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-a",
+      headRef: "feat-a",
+      headSha: "oid-a",
+    });
+    const subscriptionB = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-b",
+      headRef: "feat-b",
+      headSha: "oid-b",
+    });
+    vi.advanceTimersByTime(0);
+    await flushMicrotasks();
+
+    expect(runner.calls).toHaveLength(0);
+
+    resolveRepositoryIdentity();
+    await flushMicrotasks();
+    now = GITHUB_POLL_ALIGNMENT_MS;
+    await vi.advanceTimersByTimeAsync(GITHUB_POLL_ALIGNMENT_MS);
+    await flushMicrotasks();
+
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls[0]?.args.slice(0, 2)).toEqual(["api", "graphql"]);
+    expect(runner.calls[0]?.args[3]).toContain('t0: repository(owner: "acme", name: "widgets")');
+    expect(runner.calls[0]?.args[3]).toContain('t1: repository(owner: "acme", name: "gadgets")');
+
+    subscriptionA?.unsubscribe();
+    subscriptionB?.unsubscribe();
+    service.dispose?.();
+  });
+
+  it("does not let one unresolved repository identity block ready poll targets", async () => {
+    let now = 0;
+    const neverResolves = new Promise<string | null>(() => {});
+    const runner = createScriptedRunner([
+      batchPollStatusJson({
+        t0: batchPollRepositoryJson([
+          batchPollPrNodeJson({
+            number: 41,
+            url: "https://github.com/acme/widgets/pull/41",
+            state: "OPEN",
+            mergedAt: null,
+            headRefName: "feat-ready",
+            headRefOid: "oid-ready",
+          }),
+        ]),
+      }),
+      batchPollStatusJson({ t0: batchPollChecksAliasJson([]) }),
+    ]);
+    const service = createGitHubService({
+      ttlMs: 0,
+      runner: runner.runner,
+      resolveGhPath: async () => "/usr/bin/gh",
+      resolveRepoHost: async (cwd) => (cwd === "/ws-blocked" ? neverResolves : null),
+      resolveRepoSlug: async (cwd) => (cwd === "/ws-blocked" ? neverResolves : "acme/widgets"),
+      now: () => now,
+    });
+    const readyStatuses: Array<CurrentPullRequestStatus | null> = [];
+
+    const blockedSubscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-blocked",
+      headRef: "feat-blocked",
+    });
+    const readySubscription = service.retainCurrentPullRequestStatusPoll?.({
+      cwd: "/ws-ready",
+      headRef: "feat-ready",
+      headSha: "oid-ready",
+      onStatus: (status) => readyStatuses.push(status),
+    });
+    vi.advanceTimersByTime(0);
+    await flushMicrotasks();
+    now = GITHUB_POLL_ALIGNMENT_MS;
+    await vi.advanceTimersByTimeAsync(GITHUB_POLL_ALIGNMENT_MS);
+    await flushMicrotasks();
+
+    expect(currentPullRequestStatusCalls(runner.calls)).toHaveLength(0);
+    expect(runner.calls).toHaveLength(2);
+    expect(runner.calls[0]?.args[3]).toContain('t0: repository(owner: "acme", name: "widgets")');
+    expect(readyStatuses).toEqual([expect.objectContaining({ number: 41 })]);
+
+    blockedSubscription?.unsubscribe();
+    readySubscription?.unsubscribe();
     service.dispose?.();
   });
 

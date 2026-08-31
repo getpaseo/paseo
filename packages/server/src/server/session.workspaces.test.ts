@@ -18,6 +18,7 @@ import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { createTestLogger } from "../test-utils/test-logger.js";
 import { Session } from "./session.js";
 import type { SessionOptions } from "./session.js";
+import { OWNER_PERMISSIONS } from "./authorization/index.js";
 import type { AgentUpdatesService } from "./session/agent-updates/agent-updates-service.js";
 import type { AgentSnapshotPayload, SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { TerminalManager } from "../terminal/terminal-manager.js";
@@ -642,7 +643,7 @@ function createSessionForWorkspaceTests(
   const session = asTestSession(
     new Session({
       clientId: "test-client",
-      scopes: ["*"],
+      permissions: OWNER_PERMISSIONS,
       appVersion: options.appVersion ?? null,
       onMessage: options.onMessage ?? vi.fn(),
       onWorkspaceRecovered: options.onWorkspaceRecovered,
@@ -1082,7 +1083,7 @@ test("create_agent_request keeps requested child cwd when grouped under an exist
       new Session({
         clientId: "test-client",
         serverId: "test-server",
-        scopes: ["*"],
+        permissions: OWNER_PERMISSIONS,
         appVersion: null,
         onMessage: (message) => emitted.push(message),
         logger: asSessionLogger(logger),
@@ -1234,7 +1235,7 @@ test("create_agent_request launches from an exact subdirectory in a created work
     const emitted: SessionOutboundMessage[] = [];
     const session = new Session({
       clientId: "test-client",
-      scopes: ["*"],
+      permissions: OWNER_PERMISSIONS,
       appVersion: null,
       onMessage: (message) => emitted.push(message),
       logger: asSessionLogger(logger),
@@ -1371,7 +1372,7 @@ test("create_agent_request does not title an existing workspace from the agent p
     const session = asTestSession(
       new Session({
         clientId: "test-client",
-        scopes: ["*"],
+        permissions: OWNER_PERMISSIONS,
         appVersion: null,
         onMessage: vi.fn(),
         logger: asSessionLogger(logger),
@@ -1640,7 +1641,7 @@ test("archive emits an authoritative agent_update upsert for subscribed clients"
   const session = asTestSession(
     new Session({
       clientId: "test-client",
-      scopes: ["*"],
+      permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
       logger: asSessionLogger(logger),
       downloadTokenStore: asDownloadTokenStore(),
@@ -2005,7 +2006,7 @@ test("close_items_request archives agents and kills terminals in one batch", asy
   const session = asTestSession(
     new Session({
       clientId: "test-client",
-      scopes: ["*"],
+      permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
       logger: asSessionLogger(sessionLogger),
       downloadTokenStore: asDownloadTokenStore(),
@@ -2173,7 +2174,7 @@ test("close_items_request archives stored agents that are not currently loaded",
   const session = asTestSession(
     new Session({
       clientId: "test-client",
-      scopes: ["*"],
+      permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
       logger: asSessionLogger(sessionLogger),
       downloadTokenStore: asDownloadTokenStore(),
@@ -2332,7 +2333,7 @@ test("close_items_request continues after an archive failure", async () => {
   const session = asTestSession(
     new Session({
       clientId: "test-client",
-      scopes: ["*"],
+      permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
       logger: asSessionLogger(sessionLogger),
       downloadTokenStore: asDownloadTokenStore(),
@@ -3593,7 +3594,7 @@ test("workspace update stream keeps persisted workspace visible after agents sto
   const session = asTestSession(
     new Session({
       clientId: "test-client",
-      scopes: ["*"],
+      permissions: OWNER_PERMISSIONS,
       onMessage: (message) => emitted.push(message),
       logger: asSessionLogger(logger),
       downloadTokenStore: asDownloadTokenStore(),
@@ -6070,7 +6071,7 @@ test("archive_workspace_request reports incomplete teardown instead of success",
   expect(response?.payload).toMatchObject({
     workspaceId,
     archivedAt: null,
-    error: `Workspace archival incomplete for: ${workspaceId}`,
+    error: `Workspace archival incomplete for: workspace ${workspaceId}`,
   });
   expect(archiveWorkspaceRecord).not.toHaveBeenCalled();
 });

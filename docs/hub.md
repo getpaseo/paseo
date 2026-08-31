@@ -4,7 +4,7 @@ Paseo Hub is an explicit opt-in connection from one Paseo daemon to one Hub. Run
 not register it with a Hub. The relationship begins only when a user runs
 `paseo hub connect [url]` from the daemon machine with an explicit API key or matching stored CLI login.
 
-The human CLI login and daemon relationship are separate identities. `paseo hub login [url]` stores a durable organization-scoped CLI credential keyed by normalized Hub origin under `PASEO_HOME`. Origin resolution uses explicit command input, `PASEO_HUB_URL`, active login, then `https://hub.paseo.sh`. Connect uses exact-origin authority to request a one-time enrollment token, then passes only that token to the daemon. The daemon generates and persists its own relationship credential.
+The human CLI login and daemon relationship are separate identities. `paseo hub login [url]` stores a durable organization-scoped CLI credential keyed by normalized Hub origin under `PASEO_HOME`. Interactive login optionally connects the local daemon, then points to the Hub UI for trigger configuration; it does not scaffold or deploy configuration. `paseo hub init` remains the explicit triggers-as-code scaffold. `paseo hub export [directory]` writes the active organization's current triggers as one self-contained YAML file per trigger, using the active login unless another Hub or API key is selected. Origin resolution uses explicit command input, `PASEO_HUB_URL`, active login, then `https://hub.paseo.sh`. Connect uses exact-origin authority to request a one-time enrollment token, then passes only that token to the daemon. The daemon generates and persists its own relationship credential.
 
 ## Connection and authority
 
@@ -17,17 +17,21 @@ The daemon persists a relationship ID and private connection credential before e
 relationship is independent of its current transport, so a future transport can replace the direct
 WebSocket without pairing again. The current foundation supports one Hub relationship per daemon.
 
-Normal authenticated daemon sessions may run the `hub.management.daemon.connect`,
-`hub.management.daemon.get_status`, and `hub.management.daemon.disconnect` RPCs. Hub connections
-receive only `hub.execution.*` authority, so execution credentials cannot manage the relationship.
+Normal authenticated daemon sessions may manage the daemon's Hub relationship and permissions.
+Hub connections have no daemon permissions by default. Connecting gives Hub machine identity and
+presence but no execution authority. The `hub.execute` permission lets workflows triggered from
+GitHub, Slack, Discord, Linear, and other integrations create workspaces and run agents. Grant it
+during interactive login or later with `paseo hub permissions grant hub.execute`. Relationships
+created before this split migrate their legacy execution scope to `hub.execute`. Hub sessions cannot
+manage their own relationship or permissions.
 
 ## Session grants and execution ownership
 
 Trusted clients and the Hub use the same `Session` implementation. The connection boundary supplies
-grants: trusted clients receive `*`, while an enrolled Hub connection receives its persisted
-`hub.execution.*` grant. One matcher handles exact RPC names and trailing namespace wildcards for
-both inbound requests and outbound messages. A denied request returns the ordinary `rpc_error`
-shape.
+semantic permissions: trusted clients receive the owner permission set, while an enrolled Hub
+connection receives its persisted permissions. Legacy relationship files carrying
+`hub.execution.*` migrate once to `hub.execute` at the persistence boundary. A denied request returns
+the ordinary `rpc_error` shape. See [permissions.md](permissions.md).
 
 The Hub connection still has a narrow lifecycle boundary: it has no trusted-client hello/resume,
 browser, binary, retained-session, or broadcast state. Its outbound execution events include only

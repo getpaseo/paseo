@@ -346,7 +346,6 @@ export const ko: TranslationResources = {
         added: "추가됨",
         started: "시작됨",
         completed: "완료됨",
-        reopened: "다시 열림",
       },
     },
     compaction: {

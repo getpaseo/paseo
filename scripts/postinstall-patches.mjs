@@ -13,6 +13,10 @@ const patchedPackages = [
     patchPrefix: "react-native-markdown-display+",
   },
   {
+    nodeModulesPath: "node_modules/react-native",
+    patchPrefix: "react-native+",
+  },
+  {
     nodeModulesPath: "node_modules/react-native-draggable-flatlist",
     patchPrefix: "react-native-draggable-flatlist+",
   },

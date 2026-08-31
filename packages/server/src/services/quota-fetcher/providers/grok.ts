@@ -3,14 +3,20 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
 import { z } from "zod";
-import type { ProviderUsage, ProviderUsageBalance } from "../../../server/messages.js";
+import type {
+  ProviderUsage,
+  ProviderUsageBalance,
+  ProviderUsageWindow,
+} from "../../../server/messages.js";
 import type { ProviderApiFetch, ProviderUsageFetcher } from "../provider.js";
 import {
   ApiNumberSchema,
+  ApiOptionalStringSchema,
   toneFromUsedPct,
   usedPctOf,
   fetchProviderApi,
   unavailableUsage,
+  windowFromUsedPct,
 } from "../usage.js";
 
 const GrokUsageResponseSchema = z.object({
@@ -24,6 +30,13 @@ const GrokUsageResponseSchema = z.object({
       used: z
         .object({
           val: ApiNumberSchema.optional(),
+        })
+        .nullish(),
+      creditUsagePercent: ApiNumberSchema.optional(),
+      currentPeriod: z
+        .object({
+          type: ApiOptionalStringSchema,
+          end: ApiOptionalStringSchema,
         })
         .nullish(),
     })
@@ -84,6 +97,22 @@ function grokMonthlyCreditBalance(
   };
 }
 
+function grokUsageWindow(
+  response: z.infer<typeof GrokUsageResponseSchema>,
+): ProviderUsageWindow | null {
+  const percent = response.config?.creditUsagePercent;
+  if (typeof percent !== "number") return null;
+  const period = response.config?.currentPeriod;
+  const weekly = (period?.type ?? "").toUpperCase().includes("WEEKLY");
+  return windowFromUsedPct({
+    id: weekly ? "weekly" : "monthly",
+    label: weekly ? "Weekly" : "Monthly",
+    utilizationPct: percent,
+    resetsAt: period?.end ?? null,
+    tone: toneFromUsedPct(percent),
+  });
+}
+
 export class GrokQuotaProvider implements ProviderUsageFetcher {
   readonly providerId = "grok";
   readonly displayName = "Grok";
@@ -104,9 +133,11 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
 
     if (!token) return unavailableUsage(this);
 
+    // The Grok CLI's /usage uses ?format=credits; without it, unified-billing accounts
+    // get a zeroed legacy monthly shape (monthlyLimit.val 0) instead of real usage.
     const res = await fetchProviderApi(
       this.fetchApi,
-      "https://cli-chat-proxy.grok.com/v1/billing",
+      "https://cli-chat-proxy.grok.com/v1/billing?format=credits",
       {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -123,13 +154,14 @@ export class GrokQuotaProvider implements ProviderUsageFetcher {
 
     const resp = GrokUsageResponseSchema.parse(await res.json());
     const balance = grokMonthlyCreditBalance(resp);
+    const window = grokUsageWindow(resp);
 
     return {
       providerId: this.providerId,
       displayName: this.displayName,
       status: "available",
       planLabel: null,
-      windows: [],
+      windows: window ? [window] : [],
       balances: balance ? [balance] : [],
       details: [],
       error: null,
