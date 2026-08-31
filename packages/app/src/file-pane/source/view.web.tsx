@@ -6,6 +6,8 @@ import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
 import { editorTheme } from "../editor/extensions.web";
 import { selectSourcePresentation, type SourcePresentation } from "./presentation";
+import type { GoToDefinitionCallbacks } from "./go-to-definition";
+import { goToDefinition } from "./go-to-definition.web";
 
 interface FileSourceViewProps {
   content: string;
@@ -15,6 +17,8 @@ interface FileSourceViewProps {
   size: number;
   theme: EditorVisualTheme;
   tooLargeMessage: string;
+  /** Absent when the host cannot resolve definitions; the affordance stays off entirely. */
+  definitions?: GoToDefinitionCallbacks | null;
 }
 
 const languageCompartment = new Compartment();
@@ -28,6 +32,7 @@ export function FileSourceView({
   size,
   theme,
   tooLargeMessage,
+  definitions,
 }: FileSourceViewProps) {
   const presentation = selectSourcePresentation({ size, platform: "web" });
   if (presentation === "unsupported") {
@@ -45,6 +50,7 @@ export function FileSourceView({
       navigationRevision={navigationRevision}
       presentation={presentation}
       theme={theme}
+      definitions={definitions}
     />
   );
 }
@@ -56,12 +62,16 @@ function ReadonlyCodeMirror({
   navigationRevision,
   presentation,
   theme,
+  definitions,
 }: Omit<FileSourceViewProps, "size" | "tooLargeMessage"> & {
   presentation: Exclude<SourcePresentation, "unsupported">;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const initial = useRef({ content, filename, presentation, theme });
+  // The extension is installed once; this ref keeps it calling the current callbacks.
+  const definitionsRef = useRef(definitions);
+  definitionsRef.current = definitions;
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -77,6 +87,11 @@ function ReadonlyCodeMirror({
             languageFor({ filename: values.filename, presentation: values.presentation }),
           ),
           themeCompartment.of(editorTheme(values.theme)),
+          goToDefinition({
+            resolve: (position) =>
+              definitionsRef.current?.resolve(position) ?? Promise.resolve(null),
+            navigate: (target) => definitionsRef.current?.navigate(target),
+          }),
         ],
       }),
     });

@@ -1764,6 +1764,9 @@ export const en = {
       loading: "Loading file...",
       noPreview: "No preview available",
       binaryPreviewUnavailable: "Binary preview unavailable",
+      goToDefinition: {
+        serverMissing: "Install {{command}} to jump to definitions in this file.",
+      },
       tooLargeToDisplay: "This file is too large to display",
       failedToLoad: "Failed to load file",
       failedToLoadPreview: "Failed to load file preview",

@@ -34,6 +34,7 @@ import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } fro
 import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
 import { FileSourceView } from "./source/view";
+import { useGoToDefinition } from "./source/use-go-to-definition";
 import type { FileConflictAlertState } from "./conflict-alert";
 import type { LiveFileModel } from "./live-file/model";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -54,6 +55,9 @@ interface FilePreviewBodyProps {
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  serverId: string;
+  workspaceId: string;
+  cwd: string;
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
@@ -81,14 +85,21 @@ function ReadonlySource({
   filename,
   location,
   navigationRevision,
+  serverId,
+  workspaceId,
+  cwd,
 }: {
   preview: ExplorerFile;
   filename: string;
   location: WorkspaceFileLocation;
   navigationRevision: number;
+  serverId: string;
+  workspaceId: string;
+  cwd: string;
 }) {
   const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
+  const definitions = useGoToDefinition({ serverId, workspaceId, cwd, path: location.path });
   const visualTheme = useMemo(
     () => ({
       colorScheme: theme.colorScheme,
@@ -113,6 +124,7 @@ function ReadonlySource({
       size={preview.size}
       theme={visualTheme}
       tooLargeMessage={t("panels.file.tooLargeToDisplay")}
+      definitions={definitions}
     />
   );
 }
@@ -135,6 +147,9 @@ function FilePreviewBody({
   location,
   navigationRevision,
   imagePreviewUri,
+  serverId,
+  workspaceId,
+  cwd,
 }: FilePreviewBodyProps) {
   const { t } = useTranslation();
   const filePath = location.path;
@@ -194,6 +209,9 @@ function FilePreviewBody({
         filename={filePath}
         location={location}
         navigationRevision={navigationRevision}
+        serverId={serverId}
+        workspaceId={workspaceId}
+        cwd={cwd}
       />
     );
   }
@@ -221,11 +239,13 @@ function FilePreviewBody({
 
 export function FilePane({
   serverId,
+  workspaceId,
   workspaceRoot,
   location,
   navigationRevision,
 }: {
   serverId: string;
+  workspaceId: string;
   workspaceRoot: string;
   location: WorkspaceFileLocation;
   navigationRevision: number;
@@ -297,6 +317,7 @@ export function FilePane({
   return (
     <FilePanePresentation
       serverId={serverId}
+      workspaceId={workspaceId}
       client={client}
       readTarget={readTarget}
       preview={preview}
@@ -338,6 +359,7 @@ function isEditableTextFile(input: {
 
 function FilePanePresentation({
   serverId,
+  workspaceId,
   client,
   readTarget,
   preview,
@@ -359,6 +381,7 @@ function FilePanePresentation({
   imagePreviewUri,
 }: {
   serverId: string;
+  workspaceId: string;
   client: DaemonClient | null;
   readTarget: { cwd: string; path: string } | null;
   preview: ExplorerFile | null;
@@ -394,6 +417,8 @@ function FilePanePresentation({
       <EditableFilePane
         key={`${serverId}:${readTarget.cwd}:${readTarget.path}`}
         client={client}
+        serverId={serverId}
+        workspaceId={workspaceId}
         cwd={readTarget.cwd}
         path={readTarget.path}
         preview={preview as TextExplorerFile}
@@ -449,6 +474,9 @@ function FilePanePresentation({
         location={location}
         navigationRevision={navigationRevision}
         imagePreviewUri={imagePreviewUri}
+        serverId={serverId}
+        workspaceId={workspaceId}
+        cwd={readTarget?.cwd ?? ""}
       />
     </View>
   );
@@ -456,6 +484,8 @@ function FilePanePresentation({
 
 function EditableFilePane({
   client,
+  serverId,
+  workspaceId,
   cwd,
   path,
   preview,
@@ -471,6 +501,8 @@ function EditableFilePane({
   navigationRevision,
 }: {
   client: DaemonClient;
+  serverId: string;
+  workspaceId: string;
   cwd: string;
   path: string;
   preview: TextExplorerFile;
@@ -622,6 +654,9 @@ function EditableFilePane({
           location={location}
           navigationRevision={navigationRevision}
           imagePreviewUri={null}
+          serverId={serverId}
+          workspaceId={workspaceId}
+          cwd={cwd}
         />
       )}
     </View>
