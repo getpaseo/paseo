@@ -4,6 +4,7 @@ import {
   getTerminalVirtualKeyboardControlId,
   shouldShowTerminalFloatingCopyAction,
   shouldShowTerminalPasteAction,
+  shouldShowTerminalVirtualKeyboard,
   TERMINAL_VIRTUAL_KEYBOARD_ROWS,
   type TerminalVirtualKeyboardControl,
 } from "./terminal-virtual-keyboard";
@@ -104,5 +105,26 @@ describe("terminal virtual keyboard policy", () => {
   it("keeps Paste native-gated", () => {
     expect(shouldShowTerminalPasteAction({ isNative: true })).toBe(true);
     expect(shouldShowTerminalPasteAction({ isNative: false })).toBe(false);
+  });
+
+  it("shows terminal controls on native devices at every layout width", () => {
+    expect(
+      shouldShowTerminalVirtualKeyboard({
+        isCompactFormFactor: false,
+        isNative: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowTerminalVirtualKeyboard({
+        isCompactFormFactor: true,
+        isNative: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowTerminalVirtualKeyboard({
+        isCompactFormFactor: false,
+        isNative: false,
+      }),
+    ).toBe(false);
   });
 });
