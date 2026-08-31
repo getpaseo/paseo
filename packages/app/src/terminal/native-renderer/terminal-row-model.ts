@@ -1,22 +1,10 @@
 import type { TextStyle } from "react-native";
 import type { TerminalCell } from "@getpaseo/protocol/messages";
+import { terminalCharColumns } from "@getpaseo/protocol/terminal-char-width";
 
 import type { TerminalCellStyleResolver } from "./colors";
 import { resolveTerminalCustomGlyph, type TerminalCustomGlyph } from "./terminal-custom-glyph";
 import type { TerminalSelectionRange } from "./terminal-selection";
-
-const WIDE_CHAR_RANGES: ReadonlyArray<readonly [number, number]> = [
-  [0x1100, 0x115f],
-  [0x2329, 0x232a],
-  [0x2e80, 0xa4cf],
-  [0xac00, 0xd7a3],
-  [0xf900, 0xfaff],
-  [0xfe10, 0xfe19],
-  [0xfe30, 0xfe6f],
-  [0xff00, 0xff60],
-  [0xffe0, 0xffe6],
-  [0x1f300, 0x1faff],
-];
 
 interface TerminalRunBase {
   key: string;
@@ -25,6 +13,7 @@ interface TerminalRunBase {
   styleKey: string;
   style: TextStyle;
   foregroundColor: string;
+  isWide: boolean;
 }
 
 export interface TerminalTextRun extends TerminalRunBase {
@@ -71,29 +60,37 @@ function finishHash(hash: number): string {
   return (hash >>> 0).toString(36);
 }
 
-function terminalCharWidth(char: string): number {
-  const codePoint = char.codePointAt(0);
-  if (codePoint === undefined) return 1;
-  const isWide = WIDE_CHAR_RANGES.some(([start, end]) => codePoint >= start && codePoint <= end);
-  return isWide ? 2 : 1;
+function isSpacerCell(cell: TerminalRenderableCell | undefined): boolean {
+  if (!cell) {
+    return false;
+  }
+  if (cell.width === 0) {
+    return true;
+  }
+  return cell.char === "" || cell.char === " ";
 }
 
 function shouldSkipSpacerCell(cells: TerminalRenderableCell[], col: number, char: string): boolean {
-  if (terminalCharWidth(char) < 2) {
+  if (terminalCharColumns(char) < 2) {
     return false;
   }
-  return cells[col + 1]?.char === " ";
+  return isSpacerCell(cells[col + 1]);
 }
 
 function terminalCellCount(cells: TerminalRenderableCell[], col: number, char: string): number {
   const authoritativeWidth = cells[col]?.width;
-  if (authoritativeWidth !== undefined) {
-    return Math.max(1, authoritativeWidth);
+  if (authoritativeWidth !== undefined && authoritativeWidth > 1) {
+    return authoritativeWidth;
   }
+  // A width of 1 on an intrinsically double-width character means the width was
+  // lost on the way here, not that the terminal drew it in one column. The
+  // spacer cell that follows it is the surviving evidence of the second column,
+  // and rendering that spacer shifts the rest of the row one column per
+  // character.
   if (shouldSkipSpacerCell(cells, col, char)) {
     return 2;
   }
-  return 1;
+  return Math.max(1, authoritativeWidth ?? 1);
 }
 
 function appendRun(input: {
@@ -106,12 +103,16 @@ function appendRun(input: {
   customGlyph: TerminalCustomGlyph | null;
   col: number;
 }): void {
+  // Wide glyphs need their own per-column padding, so they cannot share a run
+  // with single-column text even when the style matches.
+  const isWide = input.cellCount > 1;
   const renderKind = input.customGlyph ? "custom-glyph" : "text";
   const previousRun = input.runs[input.runs.length - 1];
   if (
     previousRun &&
     previousRun.styleKey === input.styleKey &&
-    previousRun.renderKind === renderKind
+    previousRun.renderKind === renderKind &&
+    previousRun.isWide === isWide
   ) {
     const offset = previousRun.cellCount;
     previousRun.text += input.text;
@@ -133,6 +134,7 @@ function appendRun(input: {
     styleKey: input.styleKey,
     style: input.style,
     foregroundColor: input.foregroundColor,
+    isWide,
   };
   if (input.customGlyph) {
     input.runs.push({

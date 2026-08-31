@@ -27,6 +27,11 @@ export interface TerminalCustomGlyphCellTransformInput {
   cellHeight: number;
 }
 
+export interface TerminalWideRunLetterSpacingInput {
+  cellWidth: number;
+  wideAdvance: number;
+}
+
 export function resolveTerminalCustomGlyphCellTransform(
   input: TerminalCustomGlyphCellTransformInput,
 ): string {
@@ -61,6 +66,20 @@ export function resolveTerminalCursorOffset(
     x: input.cursorCol * input.metrics.cellWidth,
     y: input.cursorRow * input.metrics.cellHeight,
   };
+}
+
+// A double-width cell owns two columns, but the font that supplies CJK glyphs
+// advances by its own em rather than by two monospace cells. Drawing a whole run
+// as one Text therefore walks the glyphs off the grid, and the drift only snaps
+// back where a style change starts the next run. Pad each glyph back to two
+// columns instead.
+export function resolveTerminalWideRunLetterSpacing(
+  input: TerminalWideRunLetterSpacingInput,
+): number {
+  if (input.wideAdvance <= 0) {
+    return 0;
+  }
+  return Math.max(0, input.cellWidth * 2 - input.wideAdvance);
 }
 
 function snapCellMetric(value: number, roundToNearestPixel: (value: number) => number): number {

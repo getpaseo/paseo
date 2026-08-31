@@ -28,7 +28,7 @@ describe("terminal row model", () => {
     ]);
   });
 
-  test("uses xterm's authoritative width instead of guessing from the code point", () => {
+  test("uses xterm's authoritative width and keeps wide cells in their own run", () => {
     const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
 
     const rows = buildRows({
@@ -37,7 +37,30 @@ describe("terminal row model", () => {
     });
 
     expect(rows[0].runs.map((run) => ({ text: run.text, cellCount: run.cellCount }))).toEqual([
-      { text: "A界", cellCount: 3 },
+      { text: "A", cellCount: 2 },
+      { text: "界", cellCount: 1 },
+    ]);
+  });
+
+  test("treats a spacer cell as proof that a wide character owns two columns", () => {
+    const resolver = createTerminalCellStyleResolver(DEFAULT_TERMINAL_THEME);
+
+    const rows = buildRows({
+      grid: [
+        [
+          cell("한", { width: 1 }),
+          cell(" ", { width: 1 }),
+          cell("글", { width: 1 }),
+          cell(" ", { width: 1 }),
+          cell("|", { width: 1 }),
+        ],
+      ],
+      resolver,
+    });
+
+    expect(rows[0].runs.map((run) => ({ text: run.text, cellCount: run.cellCount }))).toEqual([
+      { text: "한글", cellCount: 4 },
+      { text: "|", cellCount: 1 },
     ]);
   });
 

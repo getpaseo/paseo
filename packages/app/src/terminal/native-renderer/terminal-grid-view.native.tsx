@@ -24,6 +24,7 @@ import {
   resolveMeasuredTerminalCellMetrics,
   resolveTerminalCustomGlyphCellTransform,
   resolveTerminalGridMetricsMeasurement,
+  resolveTerminalWideRunLetterSpacing,
   resolveTerminalCursorOffset,
   type TerminalGridCellMetrics,
 } from "./terminal-grid-metrics";
@@ -37,6 +38,7 @@ import {
 import type { TerminalSelectionRange } from "./terminal-selection";
 
 const MEASURE_TEXT = "mmmmmmmmmm";
+const MEASURE_WIDE_TEXT = "가가가가가가가가가가";
 const DEFAULT_FONT_SIZE = 12;
 const INITIAL_CELL_WIDTH_RATIO = 0.62;
 const INITIAL_CELL_HEIGHT_RATIO = 1.35;
@@ -52,6 +54,7 @@ interface TerminalGridViewport {
 }
 
 interface TerminalGridRowProps {
+  wideLetterSpacing: number;
   row: TerminalRowModel;
   cellWidth: number;
   cellHeight: number;
@@ -61,6 +64,7 @@ interface TerminalGridRowProps {
 }
 
 interface TerminalGridRunProps {
+  wideLetterSpacing: number;
   run: TerminalRun;
   cellWidth: number;
   cellHeight: number;
@@ -99,7 +103,13 @@ function resolveVisibleCols(input: {
   return Math.min(input.gridCols, Math.max(1, Math.floor(input.viewportWidth / input.cellWidth)));
 }
 
-function TerminalGridRun({ run, cellWidth, cellHeight, textStyle }: TerminalGridRunProps) {
+function TerminalGridRun({
+  run,
+  cellWidth,
+  cellHeight,
+  textStyle,
+  wideLetterSpacing,
+}: TerminalGridRunProps) {
   const runStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
       styles.run,
@@ -112,8 +122,8 @@ function TerminalGridRun({ run, cellWidth, cellHeight, textStyle }: TerminalGrid
     [cellHeight, cellWidth, run.cellCount, run.style.backgroundColor],
   );
   const runTextStyle = useMemo<StyleProp<TextStyle>>(
-    () => [textStyle, run.style],
-    [run.style, textStyle],
+    () => [textStyle, run.style, run.isWide ? { letterSpacing: wideLetterSpacing } : null],
+    [run.isWide, run.style, textStyle, wideLetterSpacing],
   );
 
   return (
@@ -235,6 +245,7 @@ function TerminalGridRow({
   cellHeight,
   fontFamily,
   fontSize,
+  wideLetterSpacing,
 }: TerminalGridRowProps) {
   const rowStyle = useMemo<StyleProp<ViewStyle>>(
     () => [styles.row, { height: cellHeight }],
@@ -275,6 +286,7 @@ function TerminalGridRow({
           cellWidth={cellWidth}
           cellHeight={cellHeight}
           textStyle={textStyle}
+          wideLetterSpacing={wideLetterSpacing}
         />
       ))}
     </View>
@@ -288,6 +300,7 @@ const MemoTerminalGridRow = memo(TerminalGridRow, (previous, next) => {
     previous.cellHeight === next.cellHeight &&
     previous.fontFamily === next.fontFamily &&
     previous.fontSize === next.fontSize &&
+    previous.wideLetterSpacing === next.wideLetterSpacing &&
     previous.styleEpoch === next.styleEpoch
   );
 });
@@ -302,6 +315,7 @@ export function TerminalGridView({
   onCellMetricsChange,
 }: TerminalGridViewProps) {
   const [metrics, setMetrics] = useState<CellMetrics>(() => estimateCellMetrics(fontSize));
+  const [wideAdvance, setWideAdvance] = useState(0);
   const measuredMetricsRef = useRef<TerminalGridCellMetrics | null>(null);
   const [viewport, setViewport] = useState<TerminalGridViewport | null>(null);
   const resolvedFontFamily = useMemo(
@@ -395,6 +409,16 @@ export function TerminalGridView({
     [onCellMetricsChange],
   );
 
+  const handleWideMeasure = useCallback((event: LayoutChangeEvent) => {
+    const advance = event.nativeEvent.layout.width / MEASURE_WIDE_TEXT.length;
+    setWideAdvance((current) => (current === advance ? current : advance));
+  }, []);
+
+  const wideLetterSpacing = useMemo(
+    () => resolveTerminalWideRunLetterSpacing({ cellWidth: metrics.cellWidth, wideAdvance }),
+    [metrics.cellWidth, wideAdvance],
+  );
+
   const handleContainerLayout = useCallback((event: LayoutChangeEvent) => {
     const { width, height } = event.nativeEvent.layout;
     setViewport((current) => {
@@ -411,6 +435,9 @@ export function TerminalGridView({
         <Text onLayout={handleMeasure} pointerEvents="none" style={measureStyle}>
           {MEASURE_TEXT}
         </Text>
+        <Text onLayout={handleWideMeasure} pointerEvents="none" style={measureStyle}>
+          {MEASURE_WIDE_TEXT}
+        </Text>
         {rows.map((row) => (
           <MemoTerminalGridRow
             key={row.index}
@@ -419,6 +446,7 @@ export function TerminalGridView({
             cellHeight={metrics.cellHeight}
             fontFamily={resolvedFontFamily}
             fontSize={fontSize}
+            wideLetterSpacing={wideLetterSpacing}
             styleEpoch={resolver.themeKey}
           />
         ))}
