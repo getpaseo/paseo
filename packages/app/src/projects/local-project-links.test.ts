@@ -79,7 +79,7 @@ function hosts() {
           projectId: projectA.projectId,
           projectRoot: projectA.projectRootPath,
           worktreeRoot: "/repos/app",
-          remote: "git@github.com:Acme/App.git",
+          remote: "ssh://git@ssh.github.com:443/Acme/App.git",
         }),
       ],
     },
@@ -120,6 +120,43 @@ describe("local project links", () => {
       repository: "github.com/acme/app",
       remoteDisplay: "github.com/acme/app",
       subdirectory: "packages/web",
+    });
+  });
+
+  test("canonicalizes GitHub's SSH alias and transport port to the HTTPS repository", () => {
+    expect(
+      deriveProjectGitIdentity({
+        projectRootPath: "/repos/app",
+        worktreeRoot: "/repos/app",
+        remoteUrl: "ssh://git@ssh.github.com:443/Acme/App.git",
+      }),
+    ).toEqual({
+      repository: "github.com/acme/app",
+      remoteDisplay: "ssh.github.com:443/acme/app",
+      subdirectory: "",
+    });
+  });
+
+  test("omits SSH transport ports while preserving self-hosted HTTPS origin ports", () => {
+    expect(
+      deriveProjectGitIdentity({
+        projectRootPath: "/repos/app",
+        worktreeRoot: "/repos/app",
+        remoteUrl: "ssh://git@git.example.test:2222/team/app.git",
+      }),
+    ).toMatchObject({
+      repository: "git.example.test/team/app",
+      remoteDisplay: "git.example.test:2222/team/app",
+    });
+    expect(
+      deriveProjectGitIdentity({
+        projectRootPath: "/repos/app",
+        worktreeRoot: "/repos/app",
+        remoteUrl: "https://git.example.test:60443/team/app.git",
+      }),
+    ).toMatchObject({
+      repository: "git.example.test:60443/team/app",
+      remoteDisplay: "git.example.test:60443/team/app",
     });
   });
 
@@ -254,6 +291,26 @@ describe("local project links", () => {
     const blocked = buildProjectLinkGroupingOverrides({ placements: drifted, links: [link] });
     expect(blocked.get(projectLinkPlacementKey(drifted[0]!))).toEqual({ kind: "blocked" });
     expect(blocked.get(projectLinkPlacementKey(drifted[1]!))).toEqual({ kind: "blocked" });
+  });
+
+  test("keeps a saved cloud SSH-alias link valid after remote canonicalization", () => {
+    const placements = buildProjectLinkPlacements({ hosts: hosts() });
+    const link = {
+      id: "link-1",
+      members: placements.map(({ serverId, projectId }) => ({ serverId, projectId })),
+      identity: {
+        repository: "ssh.github.com:443/acme/app",
+        subdirectory: "packages/web",
+      },
+    };
+
+    const overrides = buildProjectLinkGroupingOverrides({ placements, links: [link] });
+    for (const placement of placements) {
+      expect(overrides.get(projectLinkPlacementKey(placement))).toEqual({
+        kind: "linked",
+        linkId: "link-1",
+      });
+    }
   });
 
   test("offers a verified new host as an addition to an existing local link", () => {
