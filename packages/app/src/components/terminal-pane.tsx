@@ -340,11 +340,11 @@ export function TerminalPane({
   );
 
   useEffect(() => {
-    if (!isTerminalActive) {
+    if (!isTerminalPresented) {
       return;
     }
     emulatorRef.current?.restoreSurface();
-  }, [isTerminalActive]);
+  }, [isTerminalPresented]);
 
   useEffect(() => {
     if (isMobile || !isPaneFocused || !terminalId) {
