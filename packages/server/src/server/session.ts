@@ -7279,7 +7279,7 @@ export class Session {
       if (!descriptor) {
         throw new Error("Provider subagent not found");
       }
-      const timeline = this.agentManager.fetchProviderSubagentTimeline(
+      const timeline = await this.agentManager.fetchProviderSubagentTimeline(
         msg.parentAgentId,
         msg.subagentId,
         {

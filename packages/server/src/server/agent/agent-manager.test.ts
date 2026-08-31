@@ -3611,7 +3611,7 @@ test("importProviderSession imports the selected session without listing and pub
   expect(manager.listProviderSubagents(imported.id)).toEqual([
     expect.objectContaining({ id: "thread-child", title: "Imported child", status: "completed" }),
   ]);
-  expect(manager.fetchProviderSubagentTimeline(imported.id, "thread-child").rows).toEqual([
+  expect((await manager.fetchProviderSubagentTimeline(imported.id, "thread-child")).rows).toEqual([
     expect.objectContaining({ item: { type: "assistant_message", text: "Child result" } }),
   ]);
   expect(events).toHaveLength(3);
@@ -3878,6 +3878,815 @@ test("reloadAgentSession terminalizes running provider children when preserving 
   expect(manager.listProviderSubagents(snapshot.id)).toEqual([
     expect.objectContaining({ id: "running-child", status: "canceled" }),
   ]);
+});
+
+test("fetchProviderSubagentTimeline single-flights lazy provider history and ingests it once", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-lazy-history-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const loadGate = deferred<void>();
+  let activeSession: LazyProviderChildSession | null = null;
+  class LazyProviderChildSession extends TestAgentSession {
+    loadCalls = 0;
+
+    override async loadProviderSubagentHistory(
+      subagentId: string,
+    ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>[]> {
+      this.loadCalls += 1;
+      await loadGate.promise;
+      return [
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: subagentId,
+            item: { type: "assistant_message", text: "Loaded lazily." },
+          },
+        },
+      ];
+    }
+  }
+  class LazyProviderChildClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new LazyProviderChildSession(config);
+      return activeSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new LazyProviderChildClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000120",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  activeSession?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "lazy-child", title: "Lazy child", status: "completed" },
+  });
+  await manager.flush();
+
+  const firstTimeline = manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+  const secondTimeline = manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+  await vi.waitFor(() => expect(activeSession?.loadCalls).toBe(1));
+  loadGate.resolve();
+
+  const timelines = await Promise.all([firstTimeline, secondTimeline]);
+  for (const timeline of timelines) {
+    expect(timeline).toMatchObject({
+      rows: [
+        expect.objectContaining({ item: { type: "assistant_message", text: "Loaded lazily." } }),
+      ],
+    });
+  }
+  expect(timelines[0]?.rows).toHaveLength(1);
+});
+
+test("reloadAgentSession preserves completed lazy provider history without replaying it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-lazy-hot-reload-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const sessions: ReloadableLazyProviderChildSession[] = [];
+  class ReloadableLazyProviderChildSession extends TestAgentSession {
+    readonly loadedSubagentIds = new Set<string>();
+    loadCalls = 0;
+
+    getLoadedProviderSubagentHistoryIds(): readonly string[] {
+      return [...this.loadedSubagentIds];
+    }
+
+    seedLoadedProviderSubagentHistoryIds(subagentIds: readonly string[]): void {
+      for (const subagentId of subagentIds) {
+        this.loadedSubagentIds.add(subagentId);
+      }
+    }
+
+    override async loadProviderSubagentHistory(
+      subagentId: string,
+    ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>[]> {
+      if (this.loadedSubagentIds.has(subagentId)) {
+        return [];
+      }
+      this.loadCalls += 1;
+      this.loadedSubagentIds.add(subagentId);
+      return [
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: subagentId,
+            item: { type: "assistant_message", text: "Loaded once across reloads." },
+          },
+        },
+      ];
+    }
+  }
+  class ReloadableLazyProviderChildClient extends TestAgentClient {
+    private create(config: AgentSessionConfig): AgentSession {
+      const session = new ReloadableLazyProviderChildSession(config);
+      sessions.push(session);
+      return session;
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return this.create(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return this.create({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ReloadableLazyProviderChildClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000124",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  sessions[0]?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "lazy-child", title: "Lazy child", status: "completed" },
+  });
+  await manager.flush();
+
+  const beforeReload = await manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+  expect(beforeReload.rows).toHaveLength(1);
+  expect(sessions[0]?.loadCalls).toBe(1);
+
+  await manager.reloadAgentSession(snapshot.id);
+  const afterReload = await manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+
+  expect(sessions).toHaveLength(2);
+  expect(sessions[1]?.loadCalls).toBe(0);
+  expect(afterReload.rows).toEqual(beforeReload.rows);
+});
+
+test("reloadAgentSession preserves a lazy provider history load that finishes during replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-lazy-reload-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const childLoadStarted = deferred<void>();
+  const childLoadGate = deferred<void>();
+  const resumeStarted = deferred<void>();
+  const resumeGate = deferred<void>();
+  const sessions: RacingReloadLazyProviderChildSession[] = [];
+  class RacingReloadLazyProviderChildSession extends TestAgentSession {
+    readonly loadedSubagentIds = new Set<string>();
+    loadCalls = 0;
+
+    getLoadedProviderSubagentHistoryIds(): readonly string[] {
+      return [...this.loadedSubagentIds];
+    }
+
+    seedLoadedProviderSubagentHistoryIds(subagentIds: readonly string[]): void {
+      for (const subagentId of subagentIds) {
+        this.loadedSubagentIds.add(subagentId);
+      }
+    }
+
+    override async loadProviderSubagentHistory(
+      subagentId: string,
+    ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>[]> {
+      if (this.loadedSubagentIds.has(subagentId)) {
+        return [];
+      }
+      this.loadCalls += 1;
+      if (sessions[0] === this) {
+        childLoadStarted.resolve();
+        await childLoadGate.promise;
+      }
+      this.loadedSubagentIds.add(subagentId);
+      return [
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: subagentId,
+            item: { type: "assistant_message", text: "Loaded while reload waits." },
+          },
+        },
+      ];
+    }
+  }
+  class RacingReloadLazyProviderChildClient extends TestAgentClient {
+    private create(config: AgentSessionConfig): RacingReloadLazyProviderChildSession {
+      const session = new RacingReloadLazyProviderChildSession(config);
+      sessions.push(session);
+      return session;
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return this.create(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      resumeStarted.resolve();
+      await resumeGate.promise;
+      return this.create({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new RacingReloadLazyProviderChildClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000126",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  sessions[0]?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "lazy-child", title: "Lazy child", status: "completed" },
+  });
+  await manager.flush();
+
+  const childFetch = manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+  await childLoadStarted.promise;
+  const reload = manager.reloadAgentSession(snapshot.id);
+  childLoadGate.resolve();
+  const loadedDuringReload = await childFetch;
+  await resumeStarted.promise;
+  resumeGate.resolve();
+  await reload;
+
+  const afterReload = await manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+
+  expect(sessions).toHaveLength(2);
+  expect(sessions[1]?.loadCalls).toBe(0);
+  expect(afterReload.rows).toEqual(loadedDuringReload.rows);
+  expect(afterReload.rows).toHaveLength(1);
+});
+
+test("reloadAgentSession atomically admits a provider history fetch started in the same turn", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-lazy-admission-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const childLoadStarted = deferred<void>();
+  const childLoadGate = deferred<void>();
+  const resumeStarted = deferred<void>();
+  const resumeGate = deferred<void>();
+  const sessions: AdmissionRaceLazyProviderChildSession[] = [];
+  class AdmissionRaceLazyProviderChildSession extends TestAgentSession {
+    readonly loadedSubagentIds = new Set<string>();
+    loadCalls = 0;
+
+    getLoadedProviderSubagentHistoryIds(): readonly string[] {
+      return [...this.loadedSubagentIds];
+    }
+
+    seedLoadedProviderSubagentHistoryIds(subagentIds: readonly string[]): void {
+      for (const subagentId of subagentIds) {
+        this.loadedSubagentIds.add(subagentId);
+      }
+    }
+
+    override async loadProviderSubagentHistory(
+      subagentId: string,
+    ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>[]> {
+      if (this.loadedSubagentIds.has(subagentId)) {
+        return [];
+      }
+      this.loadCalls += 1;
+      if (sessions[0] === this) {
+        childLoadStarted.resolve();
+        await childLoadGate.promise;
+      }
+      this.loadedSubagentIds.add(subagentId);
+      return [
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: subagentId,
+            item: { type: "assistant_message", text: "Admitted before reload." },
+          },
+        },
+      ];
+    }
+  }
+  class AdmissionRaceLazyProviderChildClient extends TestAgentClient {
+    private create(config: AgentSessionConfig): AdmissionRaceLazyProviderChildSession {
+      const session = new AdmissionRaceLazyProviderChildSession(config);
+      sessions.push(session);
+      return session;
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return this.create(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      resumeStarted.resolve();
+      await resumeGate.promise;
+      return this.create({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new AdmissionRaceLazyProviderChildClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000127",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  sessions[0]?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "lazy-child", title: "Lazy child", status: "completed" },
+  });
+  await manager.flush();
+
+  const childFetch = manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+  const reload = manager.reloadAgentSession(snapshot.id);
+  await childLoadStarted.promise;
+  childLoadGate.resolve();
+  const admittedTimeline = await childFetch;
+  await resumeStarted.promise;
+  resumeGate.resolve();
+  await reload;
+
+  const afterReload = await manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+
+  expect(sessions).toHaveLength(2);
+  expect(sessions[1]?.loadCalls).toBe(0);
+  expect(afterReload.rows).toEqual(admittedTimeline.rows);
+  expect(afterReload.rows).toHaveLength(1);
+});
+
+test("reloadAgentSession aborts a stuck provider history load and releases waiting fetches", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-lazy-stuck-reload-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const stuckLoadStarted = deferred<void>();
+  const sessions: StuckReloadLazyProviderChildSession[] = [];
+  class StuckReloadLazyProviderChildSession extends TestAgentSession {
+    loadCalls = 0;
+
+    override async loadProviderSubagentHistory(
+      subagentId: string,
+    ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>[]> {
+      this.loadCalls += 1;
+      if (sessions[0] === this) {
+        stuckLoadStarted.resolve();
+        return await new Promise(() => undefined);
+      }
+      return [
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: subagentId,
+            item: { type: "assistant_message", text: "Retried on the replacement session." },
+          },
+        },
+      ];
+    }
+  }
+  class StuckReloadLazyProviderChildClient extends TestAgentClient {
+    private create(config: AgentSessionConfig): StuckReloadLazyProviderChildSession {
+      const session = new StuckReloadLazyProviderChildSession(config);
+      sessions.push(session);
+      return session;
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return this.create(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return this.create({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new StuckReloadLazyProviderChildClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000128",
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  sessions[0]?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "lazy-child", title: "Lazy child", status: "completed" },
+  });
+  await manager.flush();
+
+  const stuckFetch = manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+  const stuckFetchRejection = expect(stuckFetch).rejects.toThrow(
+    "Provider subagent history load aborted for reload",
+  );
+  await stuckLoadStarted.promise;
+  const reload = manager.reloadAgentSession(snapshot.id);
+  const waitingFetch = manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+
+  await expect(
+    Promise.race([
+      reload.then(() => "reloaded"),
+      new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 200)),
+    ]),
+  ).resolves.toBe("reloaded");
+  await stuckFetchRejection;
+  await expect(waitingFetch).resolves.toMatchObject({
+    rows: [
+      expect.objectContaining({
+        item: { type: "assistant_message", text: "Retried on the replacement session." },
+      }),
+    ],
+  });
+  expect(sessions).toHaveLength(2);
+  expect(sessions[1]?.loadCalls).toBe(1);
+});
+
+test("closeAgent aborts and removes a stuck provider history load", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-lazy-stuck-close-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const stuckLoadStarted = deferred<void>();
+  let activeSession: StuckCloseLazyProviderChildSession | null = null;
+  class StuckCloseLazyProviderChildSession extends TestAgentSession {
+    override async loadProviderSubagentHistory(): Promise<
+      Extract<AgentStreamEvent, { type: "provider_subagent" }>[]
+    > {
+      stuckLoadStarted.resolve();
+      return await new Promise(() => undefined);
+    }
+  }
+  class StuckCloseLazyProviderChildClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new StuckCloseLazyProviderChildSession(config);
+      return activeSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new StuckCloseLazyProviderChildClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000129",
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  activeSession?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "lazy-child", title: "Lazy child", status: "completed" },
+  });
+  await manager.flush();
+
+  const stuckFetch = manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+  const stuckFetchRejection = expect(stuckFetch).rejects.toThrow(
+    "Provider subagent history load aborted because agent closed",
+  );
+  await stuckLoadStarted.promise;
+
+  await manager.closeAgent(snapshot.id);
+
+  expect(
+    (
+      manager as unknown as {
+        providerSubagentHistoryLoads: Map<string, unknown>;
+      }
+    ).providerSubagentHistoryLoads.size,
+  ).toBe(0);
+  await stuckFetchRejection;
+});
+
+test("reloadAgentSession rehydrates lazy provider history when requested", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-lazy-rehydrate-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const sessions: RehydratingLazyProviderChildSession[] = [];
+  class RehydratingLazyProviderChildSession extends TestAgentSession {
+    readonly loadedSubagentIds = new Set<string>();
+    loadCalls = 0;
+
+    getLoadedProviderSubagentHistoryIds(): readonly string[] {
+      return [...this.loadedSubagentIds];
+    }
+
+    seedLoadedProviderSubagentHistoryIds(subagentIds: readonly string[]): void {
+      for (const subagentId of subagentIds) {
+        this.loadedSubagentIds.add(subagentId);
+      }
+    }
+
+    override async loadProviderSubagentHistory(
+      subagentId: string,
+    ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>[]> {
+      if (this.loadedSubagentIds.has(subagentId)) {
+        return [];
+      }
+      this.loadCalls += 1;
+      this.loadedSubagentIds.add(subagentId);
+      return [
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: subagentId,
+            item: { type: "assistant_message", text: "Reloaded from disk." },
+          },
+        },
+      ];
+    }
+  }
+  class RehydratingLazyProviderChildClient extends TestAgentClient {
+    private create(config: AgentSessionConfig): AgentSession {
+      const session = new RehydratingLazyProviderChildSession(config);
+      sessions.push(session);
+      return session;
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return this.create(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return this.create({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new RehydratingLazyProviderChildClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000125",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  sessions[0]?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "lazy-child", title: "Lazy child", status: "completed" },
+  });
+  await manager.flush();
+  await manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+
+  await manager.reloadAgentSession(snapshot.id, undefined, { rehydrateFromDisk: true });
+  const rehydrated = await manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+
+  expect(sessions).toHaveLength(2);
+  expect(sessions[1]?.loadCalls).toBe(1);
+  expect(rehydrated.rows).toMatchObject([
+    { item: { type: "assistant_message", text: "Reloaded from disk." } },
+  ]);
+  expect(rehydrated.rows).toHaveLength(1);
+});
+
+test("reloadAgentSession waits for an in-flight provider history load before replacing it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-lazy-reload-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const loadStarted = deferred<void>();
+  const loadGate = deferred<void>();
+  let activeSession: ReloadingLazyProviderChildSession | null = null;
+  class ReloadingLazyProviderChildSession extends TestAgentSession {
+    override async loadProviderSubagentHistory(
+      subagentId: string,
+    ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>[]> {
+      loadStarted.resolve();
+      await loadGate.promise;
+      return [
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: subagentId,
+            item: { type: "assistant_message", text: "Loaded by the replaced session." },
+          },
+        },
+      ];
+    }
+  }
+  class ReloadingLazyProviderChildClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new ReloadingLazyProviderChildSession(config);
+      return activeSession;
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new TestAgentSession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new ReloadingLazyProviderChildClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000121",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  activeSession?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "lazy-child", title: "Lazy child", status: "completed" },
+  });
+  await manager.flush();
+
+  const timelinePromise = manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
+  await loadStarted.promise;
+  let reloadSettled = false;
+  const reload = manager.reloadAgentSession(snapshot.id).finally(() => {
+    reloadSettled = true;
+  });
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  expect(reloadSettled).toBe(false);
+  loadGate.resolve();
+
+  await expect(timelinePromise).resolves.toMatchObject({
+    rows: [
+      expect.objectContaining({
+        item: { type: "assistant_message", text: "Loaded by the replaced session." },
+      }),
+    ],
+  });
+  await reload;
+});
+
+test("fetchProviderSubagentTimeline ingests lazy history while a turn is pending", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-lazy-pending-run-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const startEntered = deferred<void>();
+  const startGate = deferred<void>();
+  let activeSession: PendingRunLazyProviderChildSession | null = null;
+  class PendingRunLazyProviderChildSession extends TestAgentSession {
+    override async startTurn(prompt: AgentPromptInput): Promise<{ turnId: string }> {
+      startEntered.resolve();
+      await startGate.promise;
+      return await super.startTurn(prompt);
+    }
+
+    override async loadProviderSubagentHistory(
+      subagentId: string,
+    ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>[]> {
+      return [
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: subagentId,
+            item: { type: "assistant_message", text: "Loaded during pending start." },
+          },
+        },
+      ];
+    }
+  }
+  class PendingRunLazyProviderChildClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new PendingRunLazyProviderChildSession(config);
+      return activeSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new PendingRunLazyProviderChildClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000122",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  activeSession?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "lazy-child", title: "Lazy child", status: "completed" },
+  });
+  await manager.flush();
+  const run = manager.streamAgent(snapshot.id, "hold start");
+  const consume = (async () => {
+    for await (const _event of run) {
+      // Drain the test run.
+    }
+  })();
+  await startEntered.promise;
+
+  try {
+    await expect(
+      manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child"),
+    ).resolves.toMatchObject({
+      rows: [
+        expect.objectContaining({
+          item: { type: "assistant_message", text: "Loaded during pending start." },
+        }),
+      ],
+    });
+  } finally {
+    startGate.resolve();
+    await consume;
+  }
+});
+
+test("fetchProviderSubagentTimeline ingests lazy history while steer admission is pending", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-lazy-steer-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const steerEntered = deferred<void>();
+  const steerGate = deferred<void>();
+  let activeSession: SteerLazyProviderChildSession | null = null;
+  class SteerLazyProviderChildSession extends SteeringTestSession {
+    override async steerActiveTurn(): Promise<import("./agent-sdk-types.js").SteerResult> {
+      this.steerCount += 1;
+      steerEntered.resolve();
+      await steerGate.promise;
+      return { status: "accepted" };
+    }
+
+    override async loadProviderSubagentHistory(
+      subagentId: string,
+    ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>[]> {
+      return [
+        {
+          type: "provider_subagent",
+          provider: "codex",
+          event: {
+            type: "timeline",
+            id: subagentId,
+            item: { type: "assistant_message", text: "Loaded during steer admission." },
+          },
+        },
+      ];
+    }
+  }
+  class SteerLazyProviderChildClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new SteerLazyProviderChildSession(config);
+      return activeSession;
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new SteerLazyProviderChildClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000123",
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  activeSession?.pushEvent({
+    type: "provider_subagent",
+    provider: "codex",
+    event: { type: "upsert", id: "lazy-child", title: "Lazy child", status: "completed" },
+  });
+  await manager.flush();
+  const run = manager.streamAgent(snapshot.id, "hold active turn");
+  const consume = (async () => {
+    for await (const _event of run) {
+      // Drain the test run.
+    }
+  })();
+  await manager.waitForAgentRunStart(snapshot.id);
+  const steer = manager.steerAgentRun(snapshot.id, "hold steer");
+  await steerEntered.promise;
+
+  try {
+    await expect(
+      manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child"),
+    ).resolves.toMatchObject({
+      rows: [
+        expect.objectContaining({
+          item: { type: "assistant_message", text: "Loaded during steer admission." },
+        }),
+      ],
+    });
+  } finally {
+    steerGate.resolve();
+    await steer;
+    activeSession?.pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "active-turn-1",
+    });
+    await consume;
+  }
 });
 
 test("hydrateTimelineFromProvider restores and broadcasts provider children from session history", async () => {
@@ -6933,9 +7742,9 @@ test("subscribe hides provider subagents of internal parents from global subscri
   expect(() => manager.getProviderSubagent(internalAgentId, "hidden-child")).toThrow(
     `Unknown agent '${internalAgentId}'`,
   );
-  expect(() => manager.fetchProviderSubagentTimeline(internalAgentId, "hidden-child")).toThrow(
-    `Unknown agent '${internalAgentId}'`,
-  );
+  await expect(
+    manager.fetchProviderSubagentTimeline(internalAgentId, "hidden-child"),
+  ).rejects.toThrow(`Unknown agent '${internalAgentId}'`);
   expect(manager.listProviderSubagentActivity()).toEqual([]);
 });
 

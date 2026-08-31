@@ -661,6 +661,19 @@ export interface AgentSession {
   steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
   subscribe(callback: (event: AgentStreamEvent) => void): () => void;
   streamHistory(): AsyncGenerator<AgentStreamEvent>;
+  /**
+   * Load one provider-owned subagent history on demand, if the provider persists it separately.
+   * Returned events have not been published through subscribe; the manager ingests them directly
+   * so an explicit history read cannot be delayed behind foreground-turn admission barriers.
+   */
+  loadProviderSubagentHistory?(
+    subagentId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<Extract<AgentStreamEvent, { type: "provider_subagent" }>[]>;
+  /** Snapshot provider-owned child histories already imported into the manager timeline. */
+  getLoadedProviderSubagentHistoryIds?(): readonly string[];
+  /** Preserve completed child hydration when replacing a session without replacing its timeline. */
+  seedLoadedProviderSubagentHistoryIds?(subagentIds: readonly string[]): void;
   getRuntimeInfo(): Promise<AgentRuntimeInfo>;
   getAvailableModes(): Promise<AgentMode[]>;
   getCurrentMode(): Promise<string | null>;
