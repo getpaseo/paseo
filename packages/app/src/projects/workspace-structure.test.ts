@@ -7,6 +7,7 @@ function project(input: {
   key: string | null;
   root: string;
   name?: string;
+  kind?: ProjectDescriptor["projectKind"];
 }): ProjectDescriptor {
   return {
     projectId: input.id,
@@ -14,7 +15,7 @@ function project(input: {
     projectDisplayName: input.name ?? "acme/app",
     projectCustomName: null,
     projectRootPath: input.root,
-    projectKind: "git",
+    projectKind: input.kind ?? "git",
   };
 }
 
@@ -92,6 +93,78 @@ describe("buildWorkspaceStructureProjects", () => {
       "host-a:ws-one",
       "host-a:ws-two",
     ]);
+  });
+
+  test("groups a legacy local project with its nested GitHub project", () => {
+    const remoteKey = "remote:github.com/elliotwu-7/plus";
+    const localRoot = "/Users/elliotwu/Downloads/Plus";
+    const remoteRoot = `${localRoot}/scene-assistant-plus`;
+    const result = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [
+            project({
+              id: localRoot,
+              key: null,
+              root: localRoot,
+              name: "Plus",
+              kind: "non_git",
+            }),
+            project({
+              id: "remote:github.com/Elliotwu-7/Plus",
+              key: null,
+              root: remoteRoot,
+              name: "Elliotwu-7/Plus",
+            }),
+          ],
+          workspaces: [
+            workspace("ws-local", localRoot, localRoot),
+            workspace("ws-remote", "remote:github.com/Elliotwu-7/Plus", remoteRoot),
+          ],
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      viewKey: remoteKey,
+      projectKey: remoteKey,
+      projectName: "Plus",
+      workspaceKeys: ["host-a:ws-local", "host-a:ws-remote"],
+    });
+    expect(result[0]?.hosts.map((host) => host.projectId)).toEqual([
+      "remote:github.com/Elliotwu-7/Plus",
+      localRoot,
+    ]);
+  });
+
+  test("keeps unrelated local and GitHub projects with the same name separate", () => {
+    const result = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [
+            project({
+              id: "/work/Plus",
+              key: null,
+              root: "/work/Plus",
+              name: "Plus",
+              kind: "non_git",
+            }),
+            project({
+              id: "remote:github.com/acme/Plus",
+              key: null,
+              root: "/repos/scene-assistant-plus",
+              name: "acme/Plus",
+            }),
+          ],
+          workspaces: [],
+        },
+      ],
+    });
+
+    expect(result).toHaveLength(2);
   });
 
   test("does not let project order choose which same-host clone groups with another host", () => {
