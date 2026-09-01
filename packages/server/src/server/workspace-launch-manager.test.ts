@@ -236,7 +236,7 @@ describe("WorkspaceLaunchManager", () => {
           expect.objectContaining({
             id: "dev:p0",
             port,
-            proxyUrl: expect.stringContaining("launch-dev-p0"),
+            proxyUrl: expect.stringContaining("paseo-launch"),
           }),
           {
             id: "dev:p1",
@@ -251,7 +251,7 @@ describe("WorkspaceLaunchManager", () => {
           expect.objectContaining({
             id: "dev:p2",
             port: port + 2,
-            proxyUrl: expect.stringContaining("launch-dev-p2"),
+            proxyUrl: expect.stringContaining("paseo-launch"),
           }),
         ]);
       });
@@ -260,6 +260,121 @@ describe("WorkspaceLaunchManager", () => {
       await close(firstServer);
       await close(secondServer);
       await close(thirdServer);
+    }
+  });
+
+  it("keeps a configured service route when a launch discovers an HTTP listener", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-route-"));
+    tempDirs.push(directory);
+    const launchPort = await getFreePort();
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: `${launchPort}-${launchPort}`, blockSize: 1 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+
+    const serviceProxy = createServiceProxySubsystem({ logger: pino({ level: "silent" }) });
+    serviceProxy.registerWorkspaceService({
+      workspaceId: "workspace-launch-route",
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+      scriptName: "launch-dev-p0",
+      port: 30_000,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: createTerminalManager().manager,
+      serviceProxy,
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      emitWorkspaceUpdates: async () => {},
+      endpointProbe: {
+        probeTcp: async (candidate) => candidate === launchPort,
+        probeHttp: async () => true,
+      },
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "workspace-launch-route",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+    };
+
+    try {
+      await manager.start(context, "dev");
+      await vi.waitFor(() => {
+        expect(serviceProxy.getWorkspaceHealthTargets(context.workspaceId)).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ scriptName: "launch-dev-p0", port: 30_000 }),
+            expect.objectContaining({
+              scriptName: "@paseo/launch:workspace-launch-route:dev:p0",
+              port: launchPort,
+            }),
+          ]),
+        );
+      });
+
+      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+        expect.objectContaining({
+          hostname: expect.stringContaining("paseo-launch"),
+          port: launchPort,
+        }),
+      ]);
+
+      await manager.stop(context, "dev");
+      expect(serviceProxy.getWorkspaceHealthTargets(context.workspaceId)).toEqual([
+        expect.objectContaining({ scriptName: "launch-dev-p0", port: 30_000 }),
+      ]);
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
+
+  it("keeps a removed launch visible only until its active runtime stops", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-config-"));
+    tempDirs.push(directory);
+    const port = await getFreePort();
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: createTerminalManager().manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      emitWorkspaceUpdates: async () => {},
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "workspace-launch-config",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+    };
+
+    try {
+      await manager.start(context, "dev");
+      writeFileSync(join(directory, "paseo.json"), JSON.stringify({ launches: {} }));
+
+      expect(manager.buildSnapshot(context)).toEqual([
+        expect.objectContaining({ launchName: "dev", lifecycle: "running" }),
+      ]);
+
+      await manager.stop(context, "dev");
+      expect(manager.buildSnapshot(context)).toEqual([]);
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
     }
   });
 
@@ -346,9 +461,9 @@ describe("WorkspaceLaunchManager", () => {
       logger: pino({ level: "silent" }),
     });
     const context = {
-      workspaceId: "workspace-launch-branch",
+      workspaceId: "ws",
       workspaceDirectory: directory,
-      projectSlug: "example-project",
+      projectSlug: "app",
       branchName: "feature/original",
     };
 
@@ -362,8 +477,8 @@ describe("WorkspaceLaunchManager", () => {
       expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
         expect.objectContaining({
           port,
-          hostname: "launch-dev-p0--feature-renamed--example-project.localhost",
-          proxyUrl: "http://launch-dev-p0--feature-renamed--example-project.localhost:6767",
+          hostname: "paseo-launch-ws-dev-p0--feature-renamed--app.localhost",
+          proxyUrl: "http://paseo-launch-ws-dev-p0--feature-renamed--app.localhost:6767",
         }),
       ]);
     } finally {
