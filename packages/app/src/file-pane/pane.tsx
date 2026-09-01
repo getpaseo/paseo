@@ -34,6 +34,8 @@ import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } fro
 import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
 import { FileSourceView } from "./source/view";
+import { useGoToDefinition } from "./source/use-go-to-definition";
+import type { GoToDefinitionCallbacks } from "./source/go-to-definition";
 import type { FileConflictAlertState } from "./conflict-alert";
 import type { LiveFileModel } from "./live-file/model";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -54,6 +56,7 @@ interface FilePreviewBodyProps {
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  definitions: GoToDefinitionCallbacks | null;
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
@@ -81,11 +84,13 @@ function ReadonlySource({
   filename,
   location,
   navigationRevision,
+  definitions,
 }: {
   preview: ExplorerFile;
   filename: string;
   location: WorkspaceFileLocation;
   navigationRevision: number;
+  definitions: GoToDefinitionCallbacks | null;
 }) {
   const theme = UnistylesRuntime.getTheme();
   const { t } = useTranslation();
@@ -113,6 +118,7 @@ function ReadonlySource({
       size={preview.size}
       theme={visualTheme}
       tooLargeMessage={t("panels.file.tooLargeToDisplay")}
+      definitions={definitions}
     />
   );
 }
@@ -135,6 +141,7 @@ function FilePreviewBody({
   location,
   navigationRevision,
   imagePreviewUri,
+  definitions,
 }: FilePreviewBodyProps) {
   const { t } = useTranslation();
   const filePath = location.path;
@@ -194,6 +201,7 @@ function FilePreviewBody({
         filename={filePath}
         location={location}
         navigationRevision={navigationRevision}
+        definitions={definitions}
       />
     );
   }
@@ -221,11 +229,13 @@ function FilePreviewBody({
 
 export function FilePane({
   serverId,
+  workspaceId,
   workspaceRoot,
   location,
   navigationRevision,
 }: {
   serverId: string;
+  workspaceId: string;
   workspaceRoot: string;
   location: WorkspaceFileLocation;
   navigationRevision: number;
@@ -297,6 +307,7 @@ export function FilePane({
   return (
     <FilePanePresentation
       serverId={serverId}
+      workspaceId={workspaceId}
       client={client}
       readTarget={readTarget}
       preview={preview}
@@ -338,6 +349,7 @@ function isEditableTextFile(input: {
 
 function FilePanePresentation({
   serverId,
+  workspaceId,
   client,
   readTarget,
   preview,
@@ -359,6 +371,7 @@ function FilePanePresentation({
   imagePreviewUri,
 }: {
   serverId: string;
+  workspaceId: string;
   client: DaemonClient | null;
   readTarget: { cwd: string; path: string } | null;
   preview: ExplorerFile | null;
@@ -379,6 +392,13 @@ function FilePanePresentation({
   navigationRevision: number;
   imagePreviewUri: string | null;
 }) {
+  const definitions = useGoToDefinition({
+    serverId,
+    workspaceId,
+    cwd: readTarget?.cwd ?? "",
+    path: readTarget?.path ?? "",
+  });
+
   if (!client && readTarget) {
     return (
       <View style={styles.container} testID="workspace-file-pane">
@@ -394,6 +414,7 @@ function FilePanePresentation({
       <EditableFilePane
         key={`${serverId}:${readTarget.cwd}:${readTarget.path}`}
         client={client}
+        definitions={definitions}
         cwd={readTarget.cwd}
         path={readTarget.path}
         preview={preview as TextExplorerFile}
@@ -449,6 +470,7 @@ function FilePanePresentation({
         location={location}
         navigationRevision={navigationRevision}
         imagePreviewUri={imagePreviewUri}
+        definitions={definitions}
       />
     </View>
   );
@@ -456,6 +478,7 @@ function FilePanePresentation({
 
 function EditableFilePane({
   client,
+  definitions,
   cwd,
   path,
   preview,
@@ -471,6 +494,7 @@ function EditableFilePane({
   navigationRevision,
 }: {
   client: DaemonClient;
+  definitions: GoToDefinitionCallbacks | null;
   cwd: string;
   path: string;
   preview: TextExplorerFile;
@@ -604,6 +628,9 @@ function EditableFilePane({
       />
       {showSource ? (
         <FileEditorView
+          // The daemon resolves against the file on disk, so a buffer with unsaved edits would
+          // send positions the language server cannot match. No link beats a wrong jump.
+          definitions={snapshot.modified ? null : definitions}
           model={model}
           filename={filename}
           location={location}
@@ -622,6 +649,7 @@ function EditableFilePane({
           location={location}
           navigationRevision={navigationRevision}
           imagePreviewUri={null}
+          definitions={definitions}
         />
       )}
     </View>

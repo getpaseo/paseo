@@ -6,6 +6,7 @@ import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
 import { selectSourcePresentation } from "./presentation";
+import type { GoToDefinitionCallbacks } from "./go-to-definition";
 
 interface FileSourceViewProps {
   content: string;
@@ -15,6 +16,8 @@ interface FileSourceViewProps {
   size: number;
   theme: EditorVisualTheme;
   tooLargeMessage: string;
+  /** Web-only: native has no pointer to hold a modifier over. */
+  definitions?: GoToDefinitionCallbacks | null;
 }
 
 interface SourceLine {

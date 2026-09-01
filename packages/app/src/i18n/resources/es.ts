@@ -1801,6 +1801,9 @@ export const es: TranslationResources = {
       loading: "Cargando archivo...",
       noPreview: "No hay vista previa disponible",
       binaryPreviewUnavailable: "Vista previa binaria no disponible",
+      goToDefinition: {
+        serverMissing: "Instala {{command}} para ir a las definiciones en este archivo.",
+      },
       tooLargeToDisplay: "Este archivo es demasiado grande para mostrarlo",
       failedToLoad: "No se pudo cargar el archivo",
       failedToLoadPreview: "No se pudo cargar la vista previa del archivo",

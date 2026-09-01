@@ -77,6 +77,7 @@ import {
   WorkspaceLabelStorageUncertainError,
   type WorkspaceLabelService,
 } from "./workspace-labels/index.js";
+import type { LspHost } from "./lsp/host.js";
 
 import { AgentManager, AgentRunCancellationError } from "./agent/agent-manager.js";
 import { buildTimelinePromptIndex } from "./agent/timeline-prompt-index.js";
@@ -457,6 +458,7 @@ export interface SessionOptions {
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
   workspaceLabelService?: WorkspaceLabelService;
+  lspHost?: LspHost;
   filesystem?: SessionFileSystem;
   scheduleService: ScheduleService;
   checkoutDiffManager: CheckoutDiffManager;
@@ -763,6 +765,7 @@ export class Session {
       workspaceRegistry,
       directorySync,
       workspaceLabelService,
+      lspHost,
       filesystem,
       scheduleService,
       checkoutDiffManager,
@@ -829,6 +832,7 @@ export class Session {
       downloadTokenStore,
       paseoHome,
       logger: this.sessionLogger,
+      lspHost,
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
@@ -2547,6 +2551,8 @@ export class Session {
         return this.workspaceFilesSession.handleFileEntryDeleteRequest(msg);
       case "project_icon_request":
         return this.workspaceFilesSession.handleProjectIconRequest(msg);
+      case "code.definition.request":
+        return this.workspaceFilesSession.handleCodeDefinitionRequest(msg);
       case "project.icon.get.request":
         return this.handleProjectIconGetRequest(msg.projectId, msg.requestId);
       case "file_download_token_request":

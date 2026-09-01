@@ -7,6 +7,8 @@ import { isRenderedMarkdownFile } from "@/components/file-pane-render-mode";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { FileEditorModel } from "./model";
 import { editorBaseExtensions, editorTheme, type EditorVisualTheme } from "./extensions.web";
+import { useGoToDefinitionExtension } from "../source/go-to-definition.web";
+import type { GoToDefinitionCallbacks } from "../source/go-to-definition";
 
 interface FileEditorViewProps {
   model: FileEditorModel;
@@ -15,6 +17,8 @@ interface FileEditorViewProps {
   navigationRevision: number;
   vimEnabled: boolean;
   theme: EditorVisualTheme;
+  /** Absent when the host cannot resolve definitions; the affordance stays off entirely. */
+  definitions?: GoToDefinitionCallbacks | null;
   onCursorChange(position: { line: number; column: number }): void;
   onVimModeChange(mode: string | null): void;
 }
@@ -37,11 +41,20 @@ export function FileEditorView({
   theme,
   onCursorChange,
   onVimModeChange,
+  definitions,
 }: FileEditorViewProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const goToDefinitionExtension = useGoToDefinitionExtension(definitions ?? null);
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
-  const initial = useRef({ filename, model, theme, vimEnabled, content: snapshot.content });
+  const initial = useRef({
+    filename,
+    model,
+    theme,
+    vimEnabled,
+    content: snapshot.content,
+    goToDefinitionExtension,
+  });
   const onCursorChangeRef = useRef(onCursorChange);
   onCursorChangeRef.current = onCursorChange;
 
@@ -58,6 +71,7 @@ export function FileEditorView({
           languageCompartment.of(getLanguageForFile(values.filename)?.extension ?? []),
           wrappingCompartment.of(wrappingForFile(values.filename)),
           themeCompartment.of(editorTheme(values.theme)),
+          initial.current.goToDefinitionExtension,
           EditorView.updateListener.of((update) => {
             if (
               update.docChanged &&

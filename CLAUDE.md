@@ -37,6 +37,7 @@ At the start of non-trivial work, list `docs/` and skim anything relevant to the
 | [docs/menus.md](docs/menus.md)                                       | The menu engine — popover vs sheet, submenu pages, hover intent, when a decision earns a submenu                               |
 | [docs/expo-router.md](docs/expo-router.md)                           | Expo Router route ownership, startup restore, and native blank-screen gotchas                                                  |
 | [docs/file-icons.md](docs/file-icons.md)                             | Material icon theme integration for the file explorer                                                                          |
+| [docs/code-navigation.md](docs/code-navigation.md)                   | Go to Definition — language server host, the project-ready gate, installing and overriding servers                             |
 | [docs/providers.md](docs/providers.md)                               | Adding a new agent provider end-to-end                                                                                         |
 | [docs/forge-providers.md](docs/forge-providers.md)                   | Adding a git forge: registry/manifest, drop-in checklist, self-host/GHES, the two facts tiers                                  |
 | [docs/custom-providers.md](docs/custom-providers.md)                 | Custom provider config: Z.AI, Alibaba/Qwen, ACP agents, profiles, custom binaries                                              |

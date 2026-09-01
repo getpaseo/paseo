@@ -1772,6 +1772,9 @@ export const ja: TranslationResources = {
       loading: "ファイルを読み込み中...",
       noPreview: "プレビューが利用できません",
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
+      goToDefinition: {
+        serverMissing: "このファイルで定義へ移動するには {{command}} をインストールしてください。",
+      },
       tooLargeToDisplay: "このファイルは大きすぎて表示できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",

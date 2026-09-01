@@ -261,6 +261,16 @@ export const PersistedConfigSchema = z
           })
           .strict()
           .optional(),
+        /**
+         * Point Go to Definition at a language server Paseo cannot find on PATH, keyed by
+         * server id ("typescript", "python", "go", "rust"). Paseo ships no binaries.
+         */
+        codeNavigation: z
+          .object({
+            servers: z.record(z.string(), z.string()).optional(),
+          })
+          .strict()
+          .optional(),
         autoArchiveAfterMerge: z.boolean().optional(),
         enableTerminalAgentHooks: z.boolean().optional(),
         appendSystemPrompt: z.string().optional(),

@@ -1785,6 +1785,9 @@ export const ru: TranslationResources = {
       loading: "Загрузка файла...",
       noPreview: "Предварительный просмотр недоступен",
       binaryPreviewUnavailable: "Предварительный просмотр двоичного файла недоступен.",
+      goToDefinition: {
+        serverMissing: "Установите {{command}}, чтобы переходить к определениям в этом файле.",
+      },
       tooLargeToDisplay: "Этот файл слишком велик для отображения",
       failedToLoad: "Не удалось загрузить файл",
       failedToLoadPreview: "Не удалось загрузить предварительный просмотр файла.",

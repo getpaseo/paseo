@@ -1787,6 +1787,9 @@ export const ptBR: TranslationResources = {
       loading: "Carregando arquivo...",
       noPreview: "Nenhuma prévia disponível",
       binaryPreviewUnavailable: "Prévia binária indisponível",
+      goToDefinition: {
+        serverMissing: "Instale {{command}} para ir até as definições neste arquivo.",
+      },
       tooLargeToDisplay: "Este arquivo é grande demais para exibir",
       failedToLoad: "Falha ao carregar arquivo",
       failedToLoadPreview: "Falha ao carregar prévia do arquivo",

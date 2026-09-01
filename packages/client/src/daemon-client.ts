@@ -105,6 +105,8 @@ import type {
   WorkspaceCreateRequest,
   WorkspaceRecoveryState,
   PluginListItem,
+  CodeDefinitionResponse,
+  CodePosition,
   PluginLogEntry,
   PluginSourceStatusItem,
   PluginSourceUpdateItem,
@@ -4891,6 +4893,30 @@ export class DaemonClient {
       responseType: "plugin.list.response",
     });
     return payload.plugins;
+  }
+
+  /**
+   * Resolve the symbol at a position to where it is declared. Gate calls on
+   * `server_info.features.codeNavigation`; an older daemon has no handler for this.
+   */
+  async getCodeDefinition(input: {
+    cwd: string;
+    path: string;
+    position: CodePosition;
+  }): Promise<CodeDefinitionResponse["payload"]["result"]> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "code.definition.request",
+        requestId,
+        cwd: input.cwd,
+        path: input.path,
+        position: input.position,
+      },
+      responseType: "code.definition.response",
+    });
+    return payload.result;
   }
 
   async getPluginLogs(pluginId: string): Promise<PluginLogEntry[]> {

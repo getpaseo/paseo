@@ -1755,6 +1755,9 @@ export const ar: TranslationResources = {
       loading: "جارٍ تحميل الملف...",
       noPreview: "لا تتوفر معاينة",
       binaryPreviewUnavailable: "المعاينة الثنائية غير متاحة",
+      goToDefinition: {
+        serverMissing: "ثبّت {{command}} للانتقال إلى التعريفات في هذا الملف.",
+      },
       tooLargeToDisplay: "هذا الملف كبير جدًا بحيث لا يمكن عرضه",
       failedToLoad: "فشل تحميل الملف",
       failedToLoadPreview: "فشل تحميل معاينة الملف",
