@@ -5175,51 +5175,40 @@ describe("provider MCP tools", () => {
   });
 });
 
-describe("speak MCP tool", () => {
+describe("agent tool extensions", () => {
   const logger = createTestLogger();
 
-  it("invokes registered speak handler for caller agent", async () => {
+  it("registers provider-owned tools for the caller agent", async () => {
     const { agentManager, agentStorage } = createTestDeps();
-    const speak = vi.fn().mockResolvedValue(undefined);
+    const handler = vi.fn().mockResolvedValue({ content: [], structuredContent: { ok: true } });
     const server = await createAgentMcpServer({
       agentManager,
       agentStorage,
       providerSnapshotManager: createOpenCodeManager().manager,
       callerAgentId: "voice-agent-1",
-      enableVoiceTools: true,
-      resolveSpeakHandler: () => speak,
+      resolveToolExtension: () => ({
+        tools: [
+          {
+            name: "speak",
+            description: "Speak",
+            inputSchema: z.object({ text: z.string() }),
+            handler,
+          },
+        ],
+      }),
       logger,
     });
     const tool = registeredTool(server, "speak");
     expect(tool).toBeDefined();
 
     await tool.handler({ text: "Hello from voice agent." });
-    expect(speak).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: "Hello from voice agent.",
-        callerAgentId: "voice-agent-1",
-      }),
+    expect(handler).toHaveBeenCalledWith(
+      { text: "Hello from voice agent." },
+      expect.objectContaining({}),
     );
   });
 
-  it("fails when no speak handler exists", async () => {
-    const { agentManager, agentStorage } = createTestDeps();
-    const server = await createAgentMcpServer({
-      agentManager,
-      agentStorage,
-      providerSnapshotManager: createOpenCodeManager().manager,
-      callerAgentId: "voice-agent-2",
-      enableVoiceTools: true,
-      resolveSpeakHandler: () => null,
-      logger,
-    });
-    const tool = registeredTool(server, "speak");
-    await expect(tool.handler({ text: "Hello." })).rejects.toThrow(
-      "No speak handler registered for your session",
-    );
-  });
-
-  it("does not register speak tool unless voice tools are enabled", async () => {
+  it("does not register provider tools without an extension", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const server = await createAgentMcpServer({
       agentManager,

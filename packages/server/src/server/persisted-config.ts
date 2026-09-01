@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { ManualVoicePersistedConfigSchema } from "./voice-chat/providers/manual/config.js";
 
 import {
   AgentProviderRuntimeSettingsMapSchema,
@@ -113,43 +114,6 @@ const FeatureDictationSchema = z
         model: z.string().min(1).optional(),
         language: z.string().trim().min(1).optional(),
         confidenceThreshold: z.number().optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
-
-const FeatureVoiceModeSchema = z
-  .object({
-    enabled: z.boolean().optional(),
-    llm: z
-      .object({
-        provider: z.string().optional(),
-        model: z.string().min(1).optional(),
-      })
-      .strict()
-      .optional(),
-    stt: z
-      .object({
-        provider: SpeechProviderIdSchema.optional(),
-        model: z.string().min(1).optional(),
-        language: z.string().trim().min(1).optional(),
-      })
-      .strict()
-      .optional(),
-    turnDetection: z
-      .object({
-        provider: SpeechProviderIdSchema.optional(),
-      })
-      .strict()
-      .optional(),
-    tts: z
-      .object({
-        provider: SpeechProviderIdSchema.optional(),
-        model: z.string().min(1).optional(),
-        voice: z.enum(["alloy", "echo", "fable", "onyx", "nova", "shimmer"]).optional(),
-        speakerId: z.number().int().optional(),
-        speed: z.number().optional(),
       })
       .strict()
       .optional(),
@@ -310,6 +274,7 @@ export const PersistedConfigSchema = z
       .optional(),
 
     providers: ProvidersSchema.optional(),
+    manualVoice: ManualVoicePersistedConfigSchema.optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
     worktrees: WorktreesConfigSchema.optional(),
@@ -325,7 +290,6 @@ export const PersistedConfigSchema = z
     features: z
       .object({
         dictation: FeatureDictationSchema.optional(),
-        voiceMode: FeatureVoiceModeSchema.optional(),
         webUi: FeatureWebUiSchema.optional(),
       })
       .strict()
@@ -374,15 +338,23 @@ function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
 }
 
 // Removed config fields are stripped before parsing so the strict schema does not
-// reject a config written by an older release. The stripped values are discarded,
-// not migrated — there is no back-compat for the removed `providers.openai.voice`
-// block (use `providers.openai.stt` / `providers.openai.tts`).
+// reject a config written by an older release. The values are discarded, not
+// migrated; this only keeps removed settings from preventing daemon startup.
 function stripRemovedConfigFields(parsed: unknown): unknown {
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     return parsed;
   }
 
   const root = { ...(parsed as Record<string, unknown>) };
+
+  const features = root.features;
+  if (features && typeof features === "object" && !Array.isArray(features)) {
+    const featuresRecord = { ...(features as Record<string, unknown>) };
+    // COMPAT(removedVoiceModeConfig): added in v0.7.0, remove after 2027-02-28.
+    delete featuresRecord.voiceMode;
+    root.features = featuresRecord;
+  }
+
   const providers = root.providers;
   if (!providers || typeof providers !== "object" || Array.isArray(providers)) {
     return root;

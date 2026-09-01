@@ -29,6 +29,7 @@ interface SupportedMutableConfigPatch {
   terminalProfiles?: MutableDaemonConfig["terminalProfiles"];
   agentProfiles?: MutableDaemonConfig["agentProfiles"];
   skills?: MutableDaemonConfig["skills"];
+  manualVoice?: MutableDaemonConfigPatch["manualVoice"];
   pluginsEnabled?: boolean;
   plugins?: MutableDaemonConfig["plugins"];
 }
@@ -188,6 +189,7 @@ const RELOADABLE_PATHS = [
   "agents.catalogRefreshTimeoutMs",
   "agents.metadataGeneration",
   "agents.skills.selection",
+  "manualVoice.orchestrator",
   "pluginsEnabled",
 ] as const;
 
@@ -211,6 +213,7 @@ const PERSISTED_TO_MUTABLE_PATH = new Map<string, string>([
   ["agents.catalogRefreshTimeoutMs", "catalogRefreshTimeoutMs"],
   ["agents.metadataGeneration", "metadataGeneration"],
   ["agents.skills.selection", "skills.selection"],
+  ["manualVoice.orchestrator", "manualVoice.orchestrator"],
   ["pluginsEnabled", "pluginsEnabled"],
 ]);
 
@@ -274,6 +277,9 @@ function pickSupportedPatchFields(patch: MutableDaemonConfigPatch): SupportedMut
       : {}),
     ...(patch.terminalProfiles !== undefined ? { terminalProfiles: patch.terminalProfiles } : {}),
     ...(patch.agentProfiles !== undefined ? { agentProfiles: patch.agentProfiles } : {}),
+    ...(patch.manualVoice?.orchestrator !== undefined
+      ? { manualVoice: { orchestrator: patch.manualVoice.orchestrator } }
+      : {}),
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
   };
@@ -584,13 +590,32 @@ function mergeMutablePatchIntoPersistedConfig(params: {
   const { persisted, patch, removeProviders, persistRelayEnabled } = params;
   const daemon = mergeMutableDaemonPatch(persisted.daemon, patch, persistRelayEnabled);
   const agents = mergeMutableAgentPatch(persisted.agents, patch, removeProviders);
+  const manualVoice = mergeMutableManualVoicePatch(persisted.manualVoice, patch);
   return {
     ...persisted,
     ...(patch.pluginsEnabled !== undefined ? { pluginsEnabled: patch.pluginsEnabled } : {}),
     ...(patch.plugins !== undefined ? { plugins: patch.plugins } : {}),
     ...(daemon ? { daemon } : { daemon: undefined }),
     ...(agents ? { agents } : { agents: undefined }),
+    ...(manualVoice ? { manualVoice } : { manualVoice: undefined }),
   } as PersistedConfig;
+}
+
+function mergeMutableManualVoicePatch(
+  persistedManualVoice: PersistedConfig["manualVoice"],
+  patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
+): PersistedConfig["manualVoice"] {
+  const orchestrator = patch.manualVoice?.orchestrator;
+  if (!orchestrator) return persistedManualVoice;
+  const nextOrchestrator = { ...persistedManualVoice?.orchestrator };
+  for (const [key, value] of Object.entries(orchestrator)) {
+    if (value === null) delete nextOrchestrator[key as keyof typeof nextOrchestrator];
+    else if (value !== undefined) Object.assign(nextOrchestrator, { [key]: value });
+  }
+  return {
+    ...persistedManualVoice,
+    orchestrator: nextOrchestrator,
+  };
 }
 
 function mergeMutableAgentPatch(

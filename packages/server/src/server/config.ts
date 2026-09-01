@@ -12,7 +12,6 @@ import {
   LogLevelSchema,
   type PersistedConfig,
 } from "./persisted-config.js";
-import type { AgentProvider } from "./agent/agent-sdk-types.js";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -24,6 +23,7 @@ import { resolveSpeechConfig } from "./speech/speech-config-resolver.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { mergeHostnames, parseHostnamesEnv, type HostnamesConfig } from "./hostnames.js";
 import { resolveGitProcessPolicy } from "../utils/git-process-scheduler.js";
+import { resolveManualVoiceConfig } from "./voice-chat/providers/manual/config.js";
 
 const DEFAULT_PORT = 6767;
 const DEFAULT_RELAY_ENDPOINT = "relay.paseo.sh:443";
@@ -193,18 +193,6 @@ function parsePositiveIntegerEnv(value: string | undefined): number | undefined 
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-const OptionalVoiceLlmProviderSchema = z
-  .union([z.string(), z.null(), z.undefined()])
-  .transform((value): string | null =>
-    typeof value === "string" ? value.trim().toLowerCase() : null,
-  )
-  .pipe(z.union([AgentProviderSchema, z.null()]));
-
-function parseOptionalVoiceLlmProvider(value: unknown): AgentProvider | null {
-  const parsed = OptionalVoiceLlmProviderSchema.safeParse(value);
-  return parsed.success ? parsed.data : null;
-}
-
 function extractProviderOverrides(
   providers: Record<string, unknown> | undefined,
 ): Record<string, ProviderOverride> | undefined {
@@ -326,12 +314,6 @@ function resolveRelayConfig(input: ResolveRelayInput): ResolvedRelay {
   };
 }
 
-interface ResolvedVoiceLlm {
-  provider: AgentProvider | null;
-  providerExplicit: boolean;
-  model: string | null;
-}
-
 function resolveServiceProxyPublicBaseUrl(value: string | null): string | null {
   if (value === null) {
     return null;
@@ -391,21 +373,6 @@ function resolveWebUiConfig(
   return {
     enabled,
     distDir,
-  };
-}
-
-function resolveVoiceLlmConfig(
-  env: NodeJS.ProcessEnv,
-  persisted: ReturnType<typeof loadPersistedConfig>,
-): ResolvedVoiceLlm {
-  const envVoiceLlmProvider = parseOptionalVoiceLlmProvider(env.PASEO_VOICE_LLM_PROVIDER);
-  const persistedVoiceLlmProvider = parseOptionalVoiceLlmProvider(
-    persisted.features?.voiceMode?.llm?.provider,
-  );
-  return {
-    provider: envVoiceLlmProvider ?? persistedVoiceLlmProvider ?? null,
-    providerExplicit: envVoiceLlmProvider !== null || persistedVoiceLlmProvider !== null,
-    model: persisted.features?.voiceMode?.llm?.model ?? null,
   };
 }
 
@@ -589,7 +556,11 @@ export function resolveConfigFromPersisted(
     persisted,
   });
 
-  const voiceLlm = resolveVoiceLlmConfig(env, persisted);
+  const manualVoice = resolveManualVoiceConfig({
+    paseoHome,
+    persisted: persisted.manualVoice,
+    providers: persisted.providers,
+  });
   const providerOverrides = extractProviderOverrides(
     persisted.agents?.providers as Record<string, unknown> | undefined,
   );
@@ -633,9 +604,7 @@ export function resolveConfigFromPersisted(
     auth: resolveAuthConfig(env, persisted),
     openai,
     speech,
-    voiceLlmProvider: voiceLlm.provider,
-    voiceLlmProviderExplicit: voiceLlm.providerExplicit,
-    voiceLlmModel: voiceLlm.model,
+    manualVoice,
     agentProviderSettings: extractAgentProviderSettings(providerOverrides),
     providerCatalogRefreshTimeoutMs: persisted.agents?.catalogRefreshTimeoutMs,
     metadataGeneration: persisted.agents?.metadataGeneration,
@@ -808,42 +777,13 @@ function resolveSpeechOverrideControlledPaths(
     paths.push("features.dictation.stt.model");
   }
   add("PASEO_DICTATION_LANGUAGE", "features.dictation.stt.language");
-  add("PASEO_VOICE_MODE_ENABLED", "features.voiceMode.enabled");
-  add("PASEO_VOICE_LLM_PROVIDER", "features.voiceMode.llm.provider");
-  add("PASEO_VOICE_STT_PROVIDER", "features.voiceMode.stt.provider");
-  if (
-    env.PASEO_VOICE_LOCAL_STT_MODEL !== undefined &&
-    isEnabledSpeechProvider(providers.voiceStt, "local")
-  ) {
-    paths.push("features.voiceMode.stt.model");
-  }
-  add("PASEO_VOICE_LANGUAGE", "features.voiceMode.stt.language");
-  add("PASEO_VOICE_TURN_DETECTION_PROVIDER", "features.voiceMode.turnDetection.provider");
-  add("PASEO_VOICE_TTS_PROVIDER", "features.voiceMode.tts.provider");
-  if (
-    env.PASEO_VOICE_LOCAL_TTS_MODEL !== undefined &&
-    isEnabledSpeechProvider(providers.voiceTts, "local")
-  ) {
-    paths.push("features.voiceMode.tts.model");
-  }
-  add("PASEO_VOICE_LOCAL_TTS_SPEAKER_ID", "features.voiceMode.tts.speakerId");
-  add("PASEO_VOICE_LOCAL_TTS_SPEED", "features.voiceMode.tts.speed");
   add("PASEO_LOCAL_MODELS_DIR", "providers.local.modelsDir");
   const openAiDictationStt = isEnabledSpeechProvider(providers.dictationStt, "openai");
-  const openAiVoiceStt = isEnabledSpeechProvider(providers.voiceStt, "openai");
-  if (env.STT_CONFIDENCE_THRESHOLD !== undefined && (openAiDictationStt || openAiVoiceStt)) {
+  if (env.STT_CONFIDENCE_THRESHOLD !== undefined && openAiDictationStt) {
     paths.push("features.dictation.stt.confidenceThreshold");
   }
   if (env.STT_MODEL !== undefined) {
     if (openAiDictationStt) paths.push("features.dictation.stt.model");
-    if (openAiVoiceStt) paths.push("features.voiceMode.stt.model");
-  }
-  if (isEnabledSpeechProvider(providers.voiceTts, "openai")) {
-    add("TTS_MODEL", "features.voiceMode.tts.model");
-    add("TTS_VOICE", "features.voiceMode.tts.voice");
-  }
-  if (env.PASEO_DICTATION_LANGUAGE !== undefined && env.PASEO_VOICE_LANGUAGE === undefined) {
-    paths.push("features.voiceMode.stt.language");
   }
   return paths;
 }

@@ -75,6 +75,8 @@ not retain non-Git directories.
 | `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                          |
 | `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation  |
 | `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK        |
+| `server/voice-chat/`            | App-level voice calls, provider orchestration, and semantic call events        |
+| `server/session/dictation/`     | Composer dictation stream lifetime and speech-readiness gating                 |
 | `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                                |
 | `server/orchestration-skills/`  | Bundled catalog, host selection, convergence, and skill-directory transactions |
 | `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                  |
@@ -111,7 +113,25 @@ Cross-platform React Native app that connects to one or more daemons.
 - Composer UI and submit/draft behavior live in `packages/app/src/composer/`; screens and panels should integrate it from there instead of dropping composer internals into `components/`, `hooks/`, or `screens/workspace/`
 - Timeline reducers in `timeline/session-stream-reducers.ts` handle compaction, gap detection, sequence-based deduplication
 - Timeline sync correctness is documented in [docs/timeline-sync.md](timeline-sync.md): live streams are for immediacy, `fetch_agent_timeline_request` is authoritative, and catch-up is paged but complete.
-- Voice features: dictation (STT) and voice agent (realtime)
+- App `VoiceRuntime` owns the app-level call UX, current route context, and semantic transcript. It
+  prepares installed client transports and accepts the server's selected answer without inspecting
+  transport kind. Each transport owns capture, playback, its data plane, mute, volume, and media
+  state; `transports/daemon-audio.ts` is the production transport in this slice. A WebRTC transport
+  adds another factory at app composition and does not change `VoiceRuntime`.
+- Server `VoiceChat` serializes start/stop, cancels startup, routes provider-neutral state/events,
+  forwards opaque transport data, and reacts to the provider's terminal signal. It knows only the
+  `VoiceCallProvider` contract; concrete data-plane validation and serialization stay in the
+  provider and matching client transport. Providers own prompts, credentials, hidden resources,
+  tools, media integration, and cleanup. The manual provider creates a hidden orchestrator through
+  the atomic required-Paseo-tools capability with an authoritative provider prompt, and owns a
+  separate speech runtime configured from the top-level `manualVoice` block. Dictation keeps its own
+  speech runtime. A complete manual orchestrator provider and mode selection is required; partial
+  configuration does not fall back to another provider or mode. Cleanup detaches work delegated by
+  the hidden orchestrator before archiving it.
+- Voice calls end as soon as the final client socket disconnects. The containing client session may
+  remain reconnectable, but calls are not replayed or rehydrated in this protocol slice. The sidebar
+  footer starts the call and hosts its controls; routes and visible agents do not own its lifetime.
+  Dictation remains a separate composer feature.
 
 Consumers request directory or timeline data without choosing memory, cache, or network. The owner
 publishes an accepted cache hit and then reconciles it over the existing network path. A miss or an
@@ -264,7 +284,8 @@ optionally carry the same `turnId`. New clients use these fields when present an
 status once at the directory boundary rather than maintaining a second activity model.
 
 - Terminal subscribe/input/capture commands
-- Voice/dictation streaming events (`dictation_stream_*`, `assistant_chunk`, `audio_output`, `transcription_result`)
+- App-level voice call commands and events (`voice.call.*`) and independent dictation streams
+  (`dictation_stream_*`)
 - Request/response pairs for fetch, list, create, etc., correlated by `requestId`; failures use `rpc_error`
 
 `directory_suggestions_request` is one daemon-owned filesystem search capability. The daemon

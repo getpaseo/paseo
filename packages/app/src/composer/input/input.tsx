@@ -24,7 +24,6 @@ import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { ArrowUp, Mic, MicOff, CornerDownLeft, Plus, Square } from "lucide-react-native";
 import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "@/components/dictation-controls";
-import { RealtimeVoiceOverlay } from "@/components/realtime-voice-overlay";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { useSessionStore } from "@/stores/session-store";
 import { useVoiceOptional } from "@/contexts/voice-context";
@@ -144,6 +143,7 @@ export interface MessageInputProps {
   /** Primary action to render when the agent is active and the composer has no sendable content. */
   activeActionContent?: React.ReactNode;
   voiceServerId?: string;
+  voiceWorkspaceId?: string;
   voiceAgentId?: string;
   /** When true and there's sendable content, calls onQueue instead of onSubmit */
   isAgentRunning?: boolean;
@@ -594,16 +594,9 @@ function MessageInputOverlay({
       />
     );
   }
-  if (showRealtimeOverlay && voice) {
-    return (
-      <RealtimeVoiceOverlay
-        isMuted={voice.isMuted}
-        isSwitching={voice.isVoiceSwitching}
-        onToggleMute={voice.toggleMute}
-        onStop={onRealtimeVoiceStop}
-      />
-    );
-  }
+  void showRealtimeOverlay;
+  void voice;
+  void onRealtimeVoiceStop;
   return null;
 }
 
@@ -830,41 +823,50 @@ interface ToggleRealtimeVoiceContext {
   voice:
     | {
         isVoiceSwitching: boolean;
-        isVoiceModeForAgent: (serverId: string, agentId: string) => boolean;
-        startVoice: (serverId: string, agentId: string) => Promise<unknown>;
+        isCallActiveOnServer: (serverId: string) => boolean;
+        startCall: (
+          serverId: string,
+          context: { workspaceId: string | null; agentId: string | null },
+        ) => Promise<unknown>;
       }
     | null
     | undefined;
   voiceServerId: string | undefined;
+  voiceWorkspaceId: string | undefined;
   voiceAgentId: string | undefined;
   isConnected: boolean;
   disabled: boolean;
-  isAgentRunning: boolean;
   handleStopRealtimeVoice: () => Promise<unknown> | void;
   toast: { error: (msg: string) => void };
-  interruptBeforeVoiceMessage: string;
 }
 
 function toggleRealtimeVoiceImpl(ctx: ToggleRealtimeVoiceContext): void {
-  if (!ctx.voice || !ctx.voiceServerId || !ctx.voiceAgentId || !ctx.isConnected || ctx.disabled) {
+  if (
+    !ctx.voice ||
+    !ctx.voiceServerId ||
+    !ctx.voiceWorkspaceId ||
+    !ctx.isConnected ||
+    ctx.disabled
+  ) {
     return;
   }
   if (ctx.voice.isVoiceSwitching) return;
-  if (ctx.voice.isVoiceModeForAgent(ctx.voiceServerId, ctx.voiceAgentId)) {
+  if (ctx.voice.isCallActiveOnServer(ctx.voiceServerId)) {
     void ctx.handleStopRealtimeVoice();
     return;
   }
-  if (ctx.isAgentRunning) {
-    ctx.toast.error(ctx.interruptBeforeVoiceMessage);
-    return;
-  }
-  void ctx.voice.startVoice(ctx.voiceServerId, ctx.voiceAgentId).catch((error) => {
-    console.error("[MessageInput] Failed to start realtime voice", error);
-    const message = extractErrorMessage(error);
-    if (message && message.trim().length > 0) {
-      ctx.toast.error(message);
-    }
-  });
+  void ctx.voice
+    .startCall(ctx.voiceServerId, {
+      workspaceId: ctx.voiceWorkspaceId,
+      agentId: ctx.voiceAgentId ?? null,
+    })
+    .catch((error) => {
+      console.error("[MessageInput] Failed to start realtime voice", error);
+      const message = extractErrorMessage(error);
+      if (message && message.trim().length > 0) {
+        ctx.toast.error(message);
+      }
+    });
 }
 
 interface StartDictationContext {
@@ -959,12 +961,11 @@ function queueMessageImpl(ctx: QueueMessageContext): void {
 }
 
 function computeIsRealtimeVoiceForAgent(
-  voice: { isVoiceModeForAgent: (serverId: string, agentId: string) => boolean } | null | undefined,
+  voice: { isCallActiveOnServer: (serverId: string) => boolean } | null | undefined,
   voiceServerId: string | undefined,
-  voiceAgentId: string | undefined,
 ): boolean {
-  if (!voice || !voiceServerId || !voiceAgentId) return false;
-  return voice.isVoiceModeForAgent(voiceServerId, voiceAgentId);
+  if (!voice || !voiceServerId) return false;
+  return voice.isCallActiveOnServer(voiceServerId);
 }
 
 function computeShouldShowDictationOverlay(
@@ -1068,6 +1069,7 @@ interface ResolvedMessageInputProps {
   rightContent: React.ReactNode;
   activeActionContent: React.ReactNode;
   voiceServerId: string | undefined;
+  voiceWorkspaceId: string | undefined;
   voiceAgentId: string | undefined;
   isAgentRunning: boolean;
   defaultSendBehavior: "interrupt" | "steer" | "queue";
@@ -1115,6 +1117,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     rightContent: props.rightContent,
     activeActionContent: props.activeActionContent,
     voiceServerId: props.voiceServerId,
+    voiceWorkspaceId: props.voiceWorkspaceId,
     voiceAgentId: props.voiceAgentId,
     isAgentRunning: props.isAgentRunning ?? false,
     defaultSendBehavior: props.defaultSendBehavior,
@@ -1170,6 +1173,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       rightContent,
       activeActionContent,
       voiceServerId,
+      voiceWorkspaceId,
       voiceAgentId,
       isAgentRunning,
       defaultSendBehavior,
@@ -1375,11 +1379,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       enableDuration: true,
     });
 
-    const isRealtimeVoiceForCurrentAgent = computeIsRealtimeVoiceForAgent(
-      voice,
-      voiceServerId,
-      voiceAgentId,
-    );
+    const isRealtimeVoiceForCurrentAgent = computeIsRealtimeVoiceForAgent(voice, voiceServerId);
     const showDictationOverlay = computeShouldShowDictationOverlay(
       isDictating,
       isDictationProcessing,
@@ -1452,9 +1452,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         await stopRealtimeVoice({
           voice,
           isRealtimeVoiceForCurrentAgent,
-          isAgentRunning,
-          client,
-          voiceAgentId,
         });
       } catch (error) {
         console.error("[MessageInput] Failed to stop realtime voice", error);
@@ -1463,30 +1460,28 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           toast.error(message);
         }
       }
-    }, [client, isAgentRunning, isRealtimeVoiceForCurrentAgent, toast, voice, voiceAgentId]);
+    }, [isRealtimeVoiceForCurrentAgent, toast, voice]);
 
     const handleToggleRealtimeVoiceShortcut = useCallback(() => {
       toggleRealtimeVoiceImpl({
         voice,
         voiceServerId,
+        voiceWorkspaceId,
         voiceAgentId,
         isConnected,
         disabled,
-        isAgentRunning,
         handleStopRealtimeVoice,
         toast,
-        interruptBeforeVoiceMessage: t("composer.voice.interruptBeforeVoice"),
       });
     }, [
       disabled,
       handleStopRealtimeVoice,
-      isAgentRunning,
       isConnected,
-      t,
       toast,
       voice,
       voiceAgentId,
       voiceServerId,
+      voiceWorkspaceId,
     ]);
 
     const minimizeInputHeight = useCallback(() => {

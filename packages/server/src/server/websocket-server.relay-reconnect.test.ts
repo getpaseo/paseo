@@ -47,6 +47,7 @@ const sessionMock = vi.hoisted(() => {
 
   class MockSession {
     cleanup = vi.fn(async () => {});
+    handleTransportDisconnect = vi.fn(async () => {});
     handleMessage = vi.fn(async () => {});
     handleBinaryFrame = vi.fn((_frame: unknown) => {});
     supports = vi.fn((capability: string) => this.args.clientCapabilities?.[capability] === true);
@@ -468,6 +469,19 @@ function holdSessionCleanup(session: (typeof sessionMock.instances)[number]): {
   return {
     finish: () => finish(),
   };
+}
+
+function holdTransportDisconnect(session: (typeof sessionMock.instances)[number]): {
+  finish: () => void;
+} {
+  let finish = () => {};
+  session.handleTransportDisconnect.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  return { finish: () => finish() };
 }
 
 describe("relay external socket reconnect behavior", () => {
@@ -930,6 +944,25 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("does not schedule stale cleanup when reconnect wins voice disconnect cleanup", async () => {
+    const server = createServer();
+    const clientId = "cid-reconnect-during-voice-cleanup";
+    const socket1 = new MockSocket();
+    await attachDirectAndHello({ server, socket: socket1, clientId });
+    const session = sessionMock.instances[0];
+    const disconnect = holdTransportDisconnect(session);
+
+    socket1.emit("close", 1006, "");
+    await vi.waitFor(() => expect(session.handleTransportDisconnect).toHaveBeenCalledOnce());
+    const socket2 = new MockSocket();
+    await attachDirectAndHello({ server, socket: socket2, clientId });
+    disconnect.finish();
+    await vi.advanceTimersByTimeAsync(20_000);
+
+    expect(session.cleanup).not.toHaveBeenCalled();
+    await server.close();
+  });
+
   test("reuses one session when switching from direct to relay with the same clientId", async () => {
     const server = createServer();
     const clientId = "cid-switch-path";
@@ -1015,7 +1048,7 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
-  test("includes voice capabilities in initial server_info when speech readiness exists", async () => {
+  test("keeps legacy voice disabled while advertising app-level voice chat", async () => {
     const speechReadiness = createReadySpeechReadinessSnapshot();
     const server = createServer({ speechReadiness });
 
@@ -1032,16 +1065,16 @@ describe("relay external socket reconnect behavior", () => {
           voice?: { enabled?: unknown; reason?: unknown };
         };
       };
+      features?: { voiceChat?: unknown };
     };
     expect(serverInfo.version).toBe(TEST_DAEMON_VERSION);
     expect(serverInfo.capabilities?.voice?.dictation?.enabled).toBe(
       speechReadiness.dictation.enabled,
     );
     expect(serverInfo.capabilities?.voice?.dictation?.reason).toBe("");
-    expect(serverInfo.capabilities?.voice?.voice?.enabled).toBe(
-      speechReadiness.realtimeVoice.enabled,
-    );
-    expect(serverInfo.capabilities?.voice?.voice?.reason).toBe("");
+    expect(serverInfo.capabilities?.voice?.voice?.enabled).toBe(false);
+    expect(serverInfo.capabilities?.voice?.voice?.reason).toBe("Update Paseo to use voice chat.");
+    expect(serverInfo.features?.voiceChat).toBe(true);
 
     await server.close();
   });
@@ -1064,7 +1097,7 @@ describe("relay external socket reconnect behavior", () => {
     const secondEnvelope = sentServerInfoEnvelopes(socket)[1];
     const secondPayload = parseServerInfoStatusPayload(secondEnvelope.message?.payload);
     expect(secondPayload?.capabilities?.voice?.dictation.enabled).toBe(true);
-    expect(secondPayload?.capabilities?.voice?.voice.enabled).toBe(true);
+    expect(secondPayload?.capabilities?.voice?.voice.enabled).toBe(false);
 
     // Same readiness should not produce another server_info broadcast.
     server.publishSpeechReadiness(speechReadiness);
@@ -1089,9 +1122,9 @@ describe("relay external socket reconnect behavior", () => {
     const envelope = sentServerInfoEnvelopes(socket)[1];
     const payload = parseServerInfoStatusPayload(envelope.message?.payload);
     expect(payload?.capabilities?.voice?.dictation.enabled).toBe(true);
-    expect(payload?.capabilities?.voice?.voice.enabled).toBe(true);
+    expect(payload?.capabilities?.voice?.voice.enabled).toBe(false);
     expect(payload?.capabilities?.voice?.dictation.reason).toContain("Try again in a few minutes.");
-    expect(payload?.capabilities?.voice?.voice.reason).toContain("Try again in a few minutes.");
+    expect(payload?.capabilities?.voice?.voice.reason).toBe("Update Paseo to use voice chat.");
 
     await server.close();
   });

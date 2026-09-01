@@ -3110,6 +3110,141 @@ test("keeps the global Paseo-tools gate outside provider policy and MCP injectio
   rmSync(workdir, { recursive: true, force: true });
 });
 
+test.each([true, false])(
+  "createAgent injects required Paseo tools with ordinary tools enabled=%s",
+  async (paseoToolsEnabled) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+    class CaptureClient extends TestAgentClient {
+      lastConfig: AgentSessionConfig | null = null;
+
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        this.lastConfig = config;
+        return new McpCapableTestAgentSession(config);
+      }
+    }
+
+    const client = new CaptureClient();
+    const manager = new AgentManager({
+      clients: { codex: client },
+      registry: storage,
+      logger,
+      paseoToolsEnabled,
+      resolvePaseoToolPolicy: () => ({ enabled: false }),
+      requiredPaseoToolsBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+      mcpAuthToken: "voice-capability-token",
+      idFactory: () => "00000000-0000-4000-8000-000000000117",
+    });
+
+    try {
+      const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+        paseoTools: "required",
+      });
+
+      expect(client.lastConfig?.mcpServers?.paseo).toEqual({
+        type: "http",
+        url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+        headers: { Authorization: "Bearer voice-capability-token" },
+      });
+      expect(snapshot.config.mcpServers).toBeUndefined();
+      expect(manager.getPaseoToolPolicy(snapshot.id)).toBeUndefined();
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("internal-agent capability owns tool context and preserves delegated children on cleanup", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-internal-agent-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const parentId = "00000000-0000-4000-8000-000000000119";
+  const childId = "00000000-0000-4000-8000-000000000120";
+  const client = new McpCapableTestAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    appendSystemPrompt: "Ordinary daemon instructions.",
+    requiredPaseoToolsBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+  });
+  const tools = {
+    caller: { allowCustomCwd: false },
+    extension: { tools: [] },
+  };
+
+  try {
+    const internal = await manager.launchInternalAgentWithRequiredPaseoTools({
+      agentId: parentId,
+      config: {
+        provider: "codex",
+        cwd: workdir,
+        internal: true,
+        systemPrompt: "Authoritative internal instructions.",
+      },
+      workspaceId: undefined,
+      tools,
+      systemPromptBehavior: "authoritative",
+    });
+    await manager.createAgent({ provider: "codex", cwd: workdir }, childId, {
+      workspaceId: undefined,
+      labels: { [PARENT_AGENT_ID_LABEL]: parentId },
+    });
+
+    expect(manager.getInternalAgentPaseoTools(parentId)).toBe(tools);
+    expect(client.createdConfigs[0]?.systemPrompt).toBe("Authoritative internal instructions.");
+    expect(client.createdConfigs[0]).not.toHaveProperty("daemonAppendSystemPrompt");
+    await Promise.all([internal.dispose(), internal.dispose()]);
+
+    expect(manager.getInternalAgentPaseoTools(parentId)).toBeNull();
+    expect((await storage.get(parentId))?.archivedAt).toBeTruthy();
+    const child = await storage.get(childId);
+    expect(child?.archivedAt).toBeUndefined();
+    expect(child?.labels[PARENT_AGENT_ID_LABEL]).toBeUndefined();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("createAgent rejects a voice orchestrator that cannot receive required Paseo tools", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let sessionClosed = false;
+
+  class RequiredToolsSession extends TestAgentSession {
+    override async close(): Promise<void> {
+      sessionClosed = true;
+    }
+  }
+
+  class RequiredToolsClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new RequiredToolsSession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new RequiredToolsClient() },
+    registry: storage,
+    logger,
+    requiredPaseoToolsBaseUrl: "http://127.0.0.1:6767/mcp/agents",
+    idFactory: () => "00000000-0000-4000-8000-000000000118",
+  });
+
+  try {
+    await expect(
+      manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+        paseoTools: "required",
+      }),
+    ).rejects.toThrow("cannot receive required Paseo tools");
+    expect(sessionClosed).toBe(true);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("resumeAgentFromPersistence replaces stored internal paseo MCP with current runtime URL", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

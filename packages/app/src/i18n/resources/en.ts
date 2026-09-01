@@ -1989,6 +1989,7 @@ export const en = {
       projects: "Projects",
       connections: "Connections",
       agents: "Agents",
+      voice: "Voice",
       metadata: "Metadata",
       workspaces: "Workspaces",
       providers: "Providers",

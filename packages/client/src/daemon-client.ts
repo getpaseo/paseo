@@ -111,6 +111,10 @@ import type {
   AgentSkillSelection,
   AgentSkillsStatus,
   AgentSkillsSaveResult,
+  VoiceAppContext,
+  VoiceCallClientTransportMessage,
+  VoiceCallTransport,
+  VoiceCallTransportOffer,
 } from "@getpaseo/protocol/messages";
 import type {
   AgentPermissionRequest,
@@ -3394,6 +3398,84 @@ export class DaemonClient {
   // ============================================================================
   // Audio / Voice
   // ============================================================================
+
+  async startVoiceCall(
+    context: VoiceAppContext,
+    transports: VoiceCallTransportOffer[],
+  ): Promise<{ callId: string; transport: VoiceCallTransport }> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "voice.call.start.request",
+      requestId,
+      context,
+      transports,
+    });
+    const response = await this.sendRequest({
+      requestId,
+      message,
+      select: (candidate) => {
+        if (candidate.type !== "voice.call.start.response") return null;
+        if (candidate.payload.requestId !== requestId) return null;
+        return candidate.payload;
+      },
+    });
+    if (!response.accepted || !response.callId || !response.transport) {
+      throw new Error(response.error ?? "Failed to start voice chat");
+    }
+    return { callId: response.callId, transport: response.transport };
+  }
+
+  async stopVoiceCall(callId: string): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "voice.call.stop.request",
+      requestId,
+      callId,
+    });
+    const response = await this.sendRequest({
+      requestId,
+      message,
+      select: (candidate) => {
+        if (candidate.type !== "voice.call.stop.response") return null;
+        if (candidate.payload.requestId !== requestId) return null;
+        return candidate.payload;
+      },
+    });
+    if (!response.accepted) {
+      throw new Error(response.error ?? "Failed to stop voice chat");
+    }
+  }
+
+  async updateVoiceCallContext(callId: string, context: VoiceAppContext): Promise<void> {
+    const requestId = this.createRequestId();
+    const message = SessionInboundMessageSchema.parse({
+      type: "voice.call.context.update.request",
+      requestId,
+      callId,
+      context,
+    });
+    const response = await this.sendRequest({
+      requestId,
+      message,
+      select: (candidate) => {
+        if (candidate.type !== "voice.call.context.update.response") return null;
+        if (candidate.payload.requestId !== requestId) return null;
+        return candidate.payload;
+      },
+    });
+    if (!response.accepted) {
+      throw new Error(response.error ?? "Failed to update voice chat context");
+    }
+  }
+
+  sendVoiceCallTransportMessage(callId: string, data: unknown): void {
+    const message: VoiceCallClientTransportMessage = {
+      type: "voice.call.transport.client",
+      callId,
+      data,
+    };
+    this.sendSessionMessageStrict(message);
+  }
 
   async setVoiceMode(enabled: boolean, agentId?: string): Promise<SetVoiceModePayload> {
     const requestId = this.createRequestId();

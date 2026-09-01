@@ -37,9 +37,7 @@ interface TestPaseoDaemonOptions {
   cleanup?: boolean;
   openai?: PaseoOpenAIConfig;
   speech?: PaseoSpeechConfig;
-  voiceLlmProvider?: PaseoDaemonConfig["voiceLlmProvider"];
-  voiceLlmProviderExplicit?: boolean;
-  voiceLlmModel?: string | null;
+  manualVoice?: PaseoDaemonConfig["manualVoice"];
   dictationFinalTimeoutMs?: number;
   auth?: PaseoDaemonConfig["auth"];
   pushNotificationSender?: PushNotificationSender;
@@ -194,9 +192,7 @@ async function prepareTestDaemonConfig(
     trustedProxies: options.trustedProxies,
     openai: options.openai,
     speech: options.speech,
-    voiceLlmProvider: options.voiceLlmProvider ?? null,
-    voiceLlmProviderExplicit: options.voiceLlmProviderExplicit ?? false,
-    voiceLlmModel: options.voiceLlmModel ?? null,
+    manualVoice: options.manualVoice,
     dictationFinalTimeoutMs: options.dictationFinalTimeoutMs,
     downloadTokenTtlMs: options.downloadTokenTtlMs,
     agentProfiles: options.agentProfiles,

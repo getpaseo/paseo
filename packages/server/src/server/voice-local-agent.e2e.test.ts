@@ -14,32 +14,28 @@ type SessionMessage<T extends SessionOutboundMessage["type"]> = Extract<
   { type: T }
 >;
 
-function makeTranscriptionHandler(resolve: (value: string) => void) {
-  return (msg: SessionMessage<"transcription_result">) => {
-    if (msg.type !== "transcription_result") return;
-    const text = (msg.payload.text ?? "").trim();
+function makeTranscriptionHandler(callId: string, resolve: (value: string) => void) {
+  return (msg: SessionMessage<"voice.call.event">) => {
+    if (msg.payload.callId !== callId || msg.payload.event.type !== "transcript") return;
+    if (msg.payload.event.speaker !== "user") return;
+    const text = msg.payload.event.text.trim();
     if (!text) return;
     resolve(text);
   };
 }
 
-function makeErrorHandler(reject: (error: Error) => void) {
-  return (msg: SessionMessage<"activity_log">) => {
-    if (msg.type !== "activity_log") return;
-    if (msg.payload.type !== "error") return;
-    reject(new Error(msg.payload.content));
+function makeErrorHandler(callId: string, reject: (error: Error) => void) {
+  return (msg: SessionMessage<"voice.call.event">) => {
+    if (msg.payload.callId !== callId || msg.payload.event.type !== "error") return;
+    reject(new Error(msg.payload.event.message));
   };
 }
 
-function makeSpeakToolHandler(resolve: (value: string) => void) {
-  return (msg: SessionMessage<"agent_stream">) => {
-    if (msg.type !== "agent_stream") return;
-    if (msg.payload.event.type !== "timeline") return;
-    const item = msg.payload.event.item;
-    if (item.type !== "tool_call") return;
-    const name = item.name ?? "";
-    if (!name.toLowerCase().includes("speak")) return;
-    resolve(name);
+function makeSpokenReplyHandler(callId: string, resolve: (value: string) => void) {
+  return (msg: SessionMessage<"voice.call.event">) => {
+    if (msg.payload.callId !== callId || msg.payload.event.type !== "transcript") return;
+    if (msg.payload.event.speaker !== "assistant") return;
+    resolve(msg.payload.event.text);
   };
 }
 
@@ -87,9 +83,24 @@ function waitForSignal<T>(
           voiceTts: { provider: "openai", explicit: true },
         },
       },
-      voiceLlmProvider: "codex",
-      voiceLlmProviderExplicit: true,
-      voiceLlmModel: "gpt-5.4-mini",
+      manualVoice: {
+        orchestrator: {
+          provider: "codex",
+          model: "gpt-5.4-mini",
+          modeId: "full-access",
+          thinkingOptionId: null,
+        },
+        openai: { stt: { apiKey: openaiApiKey! }, tts: { apiKey: openaiApiKey! } },
+        speech: {
+          providers: {
+            dictationStt: { provider: "openai", explicit: false, enabled: false },
+            voiceTurnDetection: { provider: "local", explicit: true },
+            voiceStt: { provider: "openai", explicit: true },
+            voiceTts: { provider: "openai", explicit: true },
+          },
+          sttLanguages: { dictation: "en", voice: "en" },
+        },
+      },
     });
   }, 120000);
 
@@ -109,30 +120,49 @@ function waitForSignal<T>(
     );
 
     const voiceCwd = mkdtempSync(path.join(tmpdir(), "voice-local-agent-"));
+    const workspaceResult = await ctx.client.createWorkspace({
+      source: { kind: "directory", path: voiceCwd },
+      title: "Voice local agent",
+    });
+    if (!workspaceResult.workspace) {
+      throw new Error(workspaceResult.error ?? "Failed to create voice test workspace");
+    }
     const targetAgent = await ctx.client.createAgent({
       config: {
         ...getFullAccessConfig("codex"),
         cwd: voiceCwd,
       },
+      workspaceId: workspaceResult.workspace.workspaceId,
     });
-    const voiceMode = await ctx.client.setVoiceMode(true, targetAgent.id);
-    expect(voiceMode.accepted).toBe(true);
+    const voiceCall = await ctx.client.startVoiceCall(
+      { workspaceId: workspaceResult.workspace.workspaceId, agentId: targetAgent.id },
+      [{ kind: "daemon-audio" }],
+    );
 
     const transcriptionPromise = waitForSignal<string>(120000, (resolve, reject) => {
       const offTranscript = ctx.client.on(
-        "transcription_result",
-        makeTranscriptionHandler(resolve),
+        "voice.call.event",
+        makeTranscriptionHandler(voiceCall.callId, resolve),
       );
-      const offError = ctx.client.on("activity_log", makeErrorHandler(reject));
+      const offError = ctx.client.on(
+        "voice.call.event",
+        makeErrorHandler(voiceCall.callId, reject),
+      );
       return () => {
         offTranscript();
         offError();
       };
     });
 
-    const speakToolPromise = waitForSignal<string>(120000, (resolve, reject) => {
-      const offStream = ctx.client.on("agent_stream", makeSpeakToolHandler(resolve));
-      const offError = ctx.client.on("activity_log", makeErrorHandler(reject));
+    const spokenReplyPromise = waitForSignal<string>(120000, (resolve, reject) => {
+      const offStream = ctx.client.on(
+        "voice.call.event",
+        makeSpokenReplyHandler(voiceCall.callId, resolve),
+      );
+      const offError = ctx.client.on(
+        "voice.call.event",
+        makeErrorHandler(voiceCall.callId, reject),
+      );
       return () => {
         offStream();
         offError();
@@ -150,21 +180,20 @@ function waitForSignal<T>(
     const chunkBytes = 4800;
     for (let offset = 0; offset < pcm.length; offset += chunkBytes) {
       const chunk = pcm.subarray(offset, Math.min(pcm.length, offset + chunkBytes));
-      const isLast = offset + chunkBytes >= pcm.length;
-      await ctx.client.sendVoiceAudioChunk(
-        chunk.toString("base64"),
-        "audio/pcm;rate=24000;bits=16",
-        isLast,
-      );
+      ctx.client.sendVoiceCallTransportMessage(voiceCall.callId, {
+        type: "append",
+        audio: chunk.toString("base64"),
+        format: "audio/pcm;rate=24000;bits=16",
+      });
     }
 
-    const [transcript, speakToolName] = await Promise.all([transcriptionPromise, speakToolPromise]);
+    const [transcript, spokenReply] = await Promise.all([transcriptionPromise, spokenReplyPromise]);
 
-    await ctx.client.setVoiceMode(false).catch(() => undefined);
+    await ctx.client.stopVoiceCall(voiceCall.callId).catch(() => undefined);
     rmSync(voiceCwd, { recursive: true, force: true });
 
     expect(transcript.length).toBeGreaterThan(0);
-    expect(speakToolName.toLowerCase()).toContain("speak");
+    expect(spokenReply.toLowerCase()).toContain("local agent check");
 
     const agents = await ctx.client.fetchAgents();
     expect(agents.some((agent) => String(agent.labels?.surface ?? "") === "voice")).toBe(false);

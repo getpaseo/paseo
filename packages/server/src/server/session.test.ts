@@ -314,6 +314,7 @@ interface SessionForTestOptions {
   hubExecutionAgents?: SessionOptions["hubExecutionAgents"];
   stt?: SessionOptions["stt"];
   voice?: SessionOptions["voice"];
+  voiceChat?: SessionOptions["voiceChat"];
   paseoHome?: string;
   serverId?: SessionOptions["serverId"];
   daemonVersion?: SessionOptions["daemonVersion"];
@@ -425,6 +426,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     getDaemonTcpPort: options.getDaemonTcpPort,
     getDaemonTcpHost: options.getDaemonTcpHost,
     voice: options.voice,
+    voiceChat: options.voiceChat,
     serverId: options.serverId,
     daemonVersion: options.daemonVersion,
     daemonRuntimeConfig: options.daemonRuntimeConfig,
@@ -432,6 +434,20 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   };
   return new Session(sessionOptions);
 }
+
+test("transport disconnect terminates voice without cleaning up the reconnectable session", async () => {
+  const close = vi.fn().mockResolvedValue(undefined);
+  const session = createSessionForTest({
+    voiceChat: {
+      openClientSession: vi.fn(() => ({ handle: vi.fn(), disconnect: close, close: vi.fn() })),
+      close: vi.fn(),
+    },
+  });
+
+  await session.handleTransportDisconnect();
+
+  expect(close).toHaveBeenCalledOnce();
+});
 
 test("routes host-scoped agent skills requests through the daemon owner", async () => {
   const messages: SessionOutboundMessage[] = [];

@@ -1,5 +1,13 @@
-import { router } from "expo-router";
-import { FolderPlus, GitBranch, Import, Server, Settings, X } from "lucide-react-native";
+import { router, useGlobalSearchParams } from "expo-router";
+import {
+  AudioLines,
+  FolderPlus,
+  GitBranch,
+  Import,
+  Server,
+  Settings,
+  X,
+} from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -42,7 +50,9 @@ import { RetainedPanelActivity } from "@/components/retained-panel";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
-import { useHosts } from "@/runtime/host-runtime";
+import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
+import { useVoiceOptional } from "@/contexts/voice-context";
+import { useToast } from "@/contexts/toast-context";
 import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
@@ -52,6 +62,11 @@ import { openHostOverview } from "@/navigation/settings-navigation";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+import { VoiceCallSurface } from "./voice-call-surface";
+import {
+  useActiveWorkspaceSelection,
+  useLastWorkspaceSelection,
+} from "@/stores/navigation-active-workspace-store";
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
 
@@ -268,6 +283,7 @@ function sidebarHostOptionTestID(serverId: string): string {
 function FooterIconButton({
   buttonRef,
   onPress,
+  disabled = false,
   testID,
   label,
   icon: Icon,
@@ -276,6 +292,7 @@ function FooterIconButton({
   theme,
 }: {
   onPress: () => void;
+  disabled?: boolean;
   testID: string;
   label: string;
   icon: typeof FolderPlus;
@@ -289,19 +306,20 @@ function FooterIconButton({
       <TooltipTrigger asChild>
         <Pressable
           ref={buttonRef}
-          style={styles.footerIconButton}
           testID={testID}
           nativeID={testID}
           collapsable={false}
           accessible
           accessibilityLabel={label}
           accessibilityRole="button"
+          disabled={disabled}
           onPress={onPress}
+          style={[styles.footerIconButton, disabled && styles.footerIconButtonDisabled]}
         >
           {({ hovered }) => (
             <Icon
               size={iconSize ?? theme.iconSize.md}
-              color={hovered ? theme.colors.foreground : theme.colors.foregroundMuted}
+              color={hovered && !disabled ? theme.colors.foreground : theme.colors.foregroundMuted}
             />
           )}
         </Pressable>
@@ -312,6 +330,68 @@ function FooterIconButton({
     </Tooltip>
   );
 }
+
+function firstSearchParam(value: string | string[] | undefined): string | null {
+  return Array.isArray(value) ? (value[0] ?? null) : (value ?? null);
+}
+
+function SidebarVoiceChatButton({ theme }: { theme: SidebarTheme }) {
+  const { t } = useTranslation();
+  const toast = useToast();
+  const voice = useVoiceOptional();
+  const activeWorkspace = useActiveWorkspaceSelection();
+  const lastWorkspace = useLastWorkspaceSelection();
+  const workspace = activeWorkspace ?? lastWorkspace;
+  const params = useGlobalSearchParams<{
+    serverId?: string | string[];
+    workspaceId?: string | string[];
+    agentId?: string | string[];
+  }>();
+  const isConnected = useHostRuntimeIsConnected(workspace?.serverId ?? "");
+  const isActiveRoute =
+    workspace?.serverId === firstSearchParam(params.serverId) &&
+    workspace?.workspaceId === firstSearchParam(params.workspaceId);
+  const agentId = isActiveRoute ? firstSearchParam(params.agentId) : null;
+  const disabled = !voice || voice.isVoiceSwitching;
+
+  const handlePress = useCallback(() => {
+    if (!voice || disabled) return;
+    if (!workspace) {
+      toast.error("Open a workspace before starting voice chat.");
+      return;
+    }
+    if (!isConnected) {
+      toast.error("Connect to the host before starting voice chat.");
+      return;
+    }
+    void voice
+      .startCall(workspace.serverId, { workspaceId: workspace.workspaceId, agentId })
+      .catch((error) => {
+        console.error("[Sidebar] Failed to start voice chat", error);
+        toast.error(error instanceof Error ? error.message : "Unable to start voice chat");
+      });
+  }, [agentId, disabled, isConnected, toast, voice, workspace]);
+
+  if (voice?.isVoiceMode) return null;
+
+  return (
+    <FooterIconButton
+      onPress={handlePress}
+      disabled={disabled}
+      testID="sidebar-voice-chat"
+      label={t("composer.voice.voiceMode")}
+      icon={AudioLines}
+      theme={theme}
+    />
+  );
+}
+
+function VoiceWorkspaceListClearance() {
+  const voice = useVoiceOptional();
+  return voice?.isVoiceMode ? <View style={styles.voiceWorkspaceListClearance} /> : null;
+}
+
+const voiceWorkspaceListClearance = <VoiceWorkspaceListClearance />;
 
 function footerAddProjectButtonStyle({
   hovered,
@@ -489,6 +569,7 @@ function SidebarFooter({
           icon={Import}
           theme={theme}
         />
+        <SidebarVoiceChatButton theme={theme} />
         <SidebarHelpMenu />
         <FooterIconButton
           onPress={handleSettings}
@@ -596,12 +677,14 @@ function MobileSidebar({
             onWorkspacePress={handleWorkspacePress}
             onAddProject={handleOpenProject}
             onImportSession={handleImportSession}
+            listFooterComponent={voiceWorkspaceListClearance}
             parentGestureRef={closeGestureRef}
             dragGestureHostActive={active}
             listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
 
+        <VoiceCallSurface />
         <SidebarFooter
           theme={theme}
           handleOpenProject={handleOpenProject}
@@ -773,12 +856,14 @@ function DesktopSidebar({
             onRefresh={handleRefresh}
             onAddProject={handleOpenProject}
             onImportSession={handleImportSession}
+            listFooterComponent={voiceWorkspaceListClearance}
             listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
 
         <SidebarCalloutSlot />
 
+        <VoiceCallSurface />
         <SidebarFooter
           theme={theme}
           handleOpenProject={handleOpenProject}
@@ -975,6 +1060,12 @@ const styles = StyleSheet.create((theme) => ({
     justifyContent: "center",
     paddingVertical: theme.spacing[1],
     paddingHorizontal: theme.spacing[1],
+  },
+  footerIconButtonDisabled: {
+    opacity: theme.opacity[50],
+  },
+  voiceWorkspaceListClearance: {
+    height: theme.spacing[12],
   },
   tooltipRow: {
     flexDirection: "row",

@@ -2,19 +2,19 @@ import { EventEmitter } from "node:events";
 import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 
-import { VoiceSession, type VoiceSessionHost } from "./voice-session.js";
-import type { ManagedAgent } from "../../agent/agent-manager.js";
-import type { SessionOutboundMessage } from "../../messages.js";
+import { ManualVoiceCall, type ManualVoiceCallHost } from "./index.js";
+import type { ManagedAgent } from "../../../agent/agent-manager.js";
+import type { SessionOutboundMessage } from "../../../messages.js";
 import type {
   SpeechToTextProvider,
   StreamingTranscriptionCommittedEvent,
   StreamingTranscriptionEvent,
   StreamingTranscriptionSession,
-} from "../../speech/speech-provider.js";
+} from "../../../speech/speech-provider.js";
 import type {
   TurnDetectionProvider,
   TurnDetectionSession,
-} from "../../speech/turn-detection-provider.js";
+} from "../../../speech/turn-detection-provider.js";
 
 const VOICE_AGENT_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -54,7 +54,7 @@ class FakeVoiceSttSession extends EventEmitter implements StreamingTranscription
   }
 }
 
-interface FakeVoiceHost extends VoiceSessionHost {
+interface FakeVoiceHost extends ManualVoiceCallHost {
   readonly emitted: SessionOutboundMessage[];
   readonly spokenInput: Array<{ agentId: string; text: string }>;
 }
@@ -70,7 +70,6 @@ function createFakeHost(): FakeVoiceHost {
     },
     loadAgent: async (agentId) =>
       ({ id: agentId, config: { systemPrompt: undefined } }) as unknown as ManagedAgent,
-    reloadAgentSession: async (agentId) => ({ id: agentId }) as unknown as ManagedAgent,
     sendSpokenInput: async (agentId, text) => {
       spokenInput.push({ agentId, text });
     },
@@ -91,7 +90,7 @@ function createVoiceSession() {
     createSession: vi.fn(() => detector),
   };
   const host = createFakeHost();
-  const voiceSession = new VoiceSession({
+  const voiceSession = new ManualVoiceCall({
     host,
     logger: pino({ level: "silent" }),
     sessionId: "voice-session-test",
@@ -109,14 +108,14 @@ async function settle(): Promise<void> {
   await Promise.resolve();
 }
 
-describe("VoiceSession streaming transcription", () => {
+describe("manual voice call streaming transcription", () => {
   test("surfaces a refused voice-mode agent interruption", async () => {
     const { voiceSession, host } = createVoiceSession();
     host.interruptAgentIfRunning = vi.fn(async () => {
       throw new Error("active run cancellation was not acknowledged");
     });
 
-    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    await voiceSession.start(VOICE_AGENT_ID);
 
     await expect(voiceSession.handleAbort()).rejects.toThrow(
       "active run cancellation was not acknowledged",
@@ -139,7 +138,7 @@ describe("VoiceSession streaming transcription", () => {
   test("delivers the streaming final transcript to the agent exactly once", async () => {
     const { voiceSession, detector, sttSession, host } = createVoiceSession();
 
-    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    await voiceSession.start(VOICE_AGENT_ID);
     detector.emit("speech_started");
     await settle();
     detector.emit("speech_stopped");
@@ -178,7 +177,7 @@ describe("VoiceSession streaming transcription", () => {
     try {
       const { voiceSession, detector, sttSession, host } = createVoiceSession();
 
-      await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+      await voiceSession.start(VOICE_AGENT_ID);
       detector.emit("speech_started");
       await settle();
       detector.emit("speech_stopped");
@@ -205,7 +204,7 @@ describe("VoiceSession streaming transcription", () => {
   test("filters a low-confidence streaming final without submitting to the agent", async () => {
     const { voiceSession, detector, sttSession, host } = createVoiceSession();
 
-    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    await voiceSession.start(VOICE_AGENT_ID);
     detector.emit("speech_started");
     await settle();
     detector.emit("speech_stopped");

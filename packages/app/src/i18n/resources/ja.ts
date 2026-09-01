@@ -1962,6 +1962,7 @@ export const ja: TranslationResources = {
       projects: "プロジェクト",
       connections: "接続",
       agents: "エージェント",
+      voice: "音声",
       metadata: "メタデータ",
       workspaces: "ワークスペース",
       providers: "プロバイダー",

@@ -1975,6 +1975,7 @@ export const ru: TranslationResources = {
       projects: "Проекты",
       connections: "Подключения",
       agents: "Агенты",
+      voice: "Голос",
       metadata: "Метаданные",
       workspaces: "Рабочие пространства",
       providers: "Провайдеры",

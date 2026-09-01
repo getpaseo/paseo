@@ -8,7 +8,6 @@ import { formatPluginSourceReference } from "@getpaseo/protocol/plugin-source-re
 import {
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
-  type AgentAttachment,
   type FirstAgentContext,
   type SessionInboundMessage,
   type SessionOutboundMessage,
@@ -33,8 +32,7 @@ import type { BinaryFrame } from "@getpaseo/protocol/binary-frames/index";
 import { CursorError } from "./pagination/cursor.js";
 import { SortablePager, type SortSpec } from "./pagination/sortable-pager.js";
 import { describeAgentHistoryMatches, rankAgentHistoryCandidates } from "./agent-history-search.js";
-import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech-provider.js";
-import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
+import type { SpeechToTextProvider } from "./speech/speech-provider.js";
 import {
   buildConfigOverrides,
   isStoredAgentProviderAvailable,
@@ -51,7 +49,6 @@ import {
   resolveFirstAgentPromptTitle,
 } from "./agent/create-agent-title.js";
 import { respondToAgentPermission } from "./agent/permission-response.js";
-import type { VoiceCallerContext, VoiceSpeakHandler } from "./voice-types.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -127,7 +124,6 @@ import {
   getAgentStreamEventTurnId,
   type AgentPersistenceHandle,
   type AgentPermissionResponse,
-  type AgentRunOptions,
   type AgentSessionConfig,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
@@ -155,14 +151,20 @@ import {
   type WorkspaceMutation,
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
-import { wrapSpokenInput } from "./voice-config.js";
-import { isVoicePermissionAllowed } from "./voice-permission-policy.js";
+import {
+  rejectLegacyVoiceMode,
+  type VoiceChat,
+  type VoiceChatClientSession,
+} from "./voice-chat/index.js";
 import {
   ProjectIconReader,
   removeProjectCustomIcon,
   setProjectCustomIcon,
 } from "../utils/project-custom-icon.js";
-import { VoiceSession } from "./session/voice/voice-session.js";
+import {
+  createDictationSession,
+  type DictationSession,
+} from "./session/dictation/dictation-session.js";
 import { CheckoutSession } from "./session/checkout/checkout-session.js";
 import {
   createWorkspaceGitObserverService,
@@ -505,9 +507,6 @@ export interface SessionOptions {
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
-  stt: Resolvable<SpeechToTextProvider | null>;
-  sttLanguage?: string;
-  tts: Resolvable<TextToSpeechProvider | null>;
   terminalManager: TerminalManager | null;
   providerSnapshotManager: ProviderSnapshotManager;
   providerUsageService: ProviderUsageService;
@@ -526,15 +525,7 @@ export interface SessionOptions {
   getDaemonTcpHost?: () => string | null;
   serviceProxyPublicBaseUrl?: string | null;
   resolveScriptHealth?: (hostname: string) => ScriptHealthState | null;
-  voice?: {
-    turnDetection?: Resolvable<TurnDetectionProvider | null>;
-  };
-  voiceBridge?: {
-    registerVoiceSpeakHandler?: (agentId: string, handler: VoiceSpeakHandler) => void;
-    unregisterVoiceSpeakHandler?: (agentId: string) => void;
-    registerVoiceCallerContext?: (agentId: string, context: VoiceCallerContext) => void;
-    unregisterVoiceCallerContext?: (agentId: string) => void;
-  };
+  voiceChat?: VoiceChat | null;
   dictation?: {
     finalTimeoutMs?: number;
     stt?: Resolvable<SpeechToTextProvider | null>;
@@ -560,6 +551,31 @@ export type SessionLifecycleIntent =
       requestId: string;
       reason: string;
     };
+
+function createClientDictationSession(input: {
+  options: SessionOptions["dictation"];
+  logger: pino.Logger;
+  sessionId: string;
+  emit(message: SessionOutboundMessage): void;
+}): DictationSession {
+  return createDictationSession({
+    logger: input.logger,
+    sessionId: input.sessionId,
+    emit: input.emit,
+    stt: input.options?.stt ?? null,
+    language: input.options?.sttLanguage,
+    finalTimeoutMs: input.options?.finalTimeoutMs,
+    getSpeechReadiness: input.options?.getSpeechReadiness,
+  });
+}
+
+function openVoiceChatSession(
+  voiceChat: VoiceChat | null | undefined,
+  input: { emit(message: SessionOutboundMessage): void },
+): VoiceChatClientSession | null {
+  if (!voiceChat) return null;
+  return voiceChat.openClientSession(input);
+}
 
 function parseClientCapabilities(
   capabilities: Record<string, unknown> | null | undefined,
@@ -735,7 +751,8 @@ export class Session {
   private readonly workspaceSetupRuntime: WorkspaceSetupRuntime;
   private readonly workspaceGitObserver: WorkspaceGitObserverService;
   private readonly workspaceDirectory: WorkspaceDirectory;
-  private readonly voiceSession: VoiceSession;
+  private readonly dictationSession: DictationSession;
+  private readonly voiceChatSession: VoiceChatClientSession | null;
   private readonly checkoutSession: CheckoutSession;
   private readonly scheduleSession: ScheduleSession;
   private readonly providerCatalogSession: ProviderCatalogSession;
@@ -781,9 +798,6 @@ export class Session {
       daemonConfigStore,
       pluginRuntime,
       orchestrationSkills,
-      stt,
-      sttLanguage,
-      tts,
       terminalManager,
       providerSnapshotManager,
       providerUsageService,
@@ -796,8 +810,7 @@ export class Session {
       getDaemonTcpHost,
       serviceProxyPublicBaseUrl,
       resolveScriptHealth,
-      voice,
-      voiceBridge,
+      voiceChat,
       dictation,
       serverId,
       daemonVersion,
@@ -1075,39 +1088,14 @@ export class Session {
       buildWorkspaceDescriptor: (input) => this.buildWorkspaceDescriptor(input),
     });
 
-    this.voiceSession = new VoiceSession({
-      host: {
-        emit: (msg) => this.emit(msg),
-        loadAgent: (agentId) =>
-          ensureAgentLoaded(agentId, {
-            agentManager: this.agentManager,
-            agentStorage: this.agentStorage,
-            logger: this.sessionLogger,
-          }),
-        reloadAgentSession: (agentId, overrides) =>
-          this.agentManager.reloadAgentSession(agentId, overrides),
-        sendSpokenInput: async (agentId, text) => {
-          await this.handleSendAgentMessage(
-            agentId,
-            text,
-            undefined,
-            undefined,
-            undefined,
-            undefined,
-            { spokenInput: true },
-          );
-        },
-        interruptAgentIfRunning: (agentId) => this.interruptAgentIfRunning(agentId),
-        hasActiveAgentRun: (agentId) => this.hasActiveAgentRun(agentId),
-      },
+    this.dictationSession = createClientDictationSession({
+      options: dictation,
       logger: this.sessionLogger,
       sessionId: this.sessionId,
-      sttLanguage,
-      tts,
-      stt,
-      voice,
-      voiceBridge,
-      dictation,
+      emit: (message) => this.emit(message),
+    });
+    this.voiceChatSession = openVoiceChatSession(voiceChat, {
+      emit: (message) => this.emit(message),
     });
 
     this.subscribeToAgentEvents();
@@ -1467,13 +1455,6 @@ export class Session {
     }
   }
 
-  private hasActiveAgentRun(agentId: string | null): boolean {
-    if (!agentId) {
-      return false;
-    }
-    return this.agentManager.hasInFlightRun(agentId);
-  }
-
   private handleAgentRunError(agentId: string, error: unknown, context: string): void {
     const message = errorToFriendlyMessage(error);
     this.sessionLogger.error({ err: error, agentId, context }, `${context} for agent ${agentId}`);
@@ -1717,28 +1698,6 @@ export class Session {
           this.emitProviderSubagentWorkspaceUpdate(event.event);
           this.forwardProviderSubagentUpdate(event.event);
           return;
-        }
-
-        if (
-          this.voiceSession.isActiveForAgent(event.agentId) &&
-          event.event.type === "permission_requested" &&
-          isVoicePermissionAllowed(event.event.request)
-        ) {
-          const requestId = event.event.request.id;
-          void this.agentManager
-            .respondToPermission(event.agentId, requestId, {
-              behavior: "allow",
-            })
-            .catch((error) => {
-              this.sessionLogger.warn(
-                {
-                  err: error,
-                  agentId: event.agentId,
-                  requestId,
-                },
-                "Failed to auto-allow speak tool permission in voice mode",
-              );
-            });
         }
 
         const serializedEvent = serializeAgentStreamEvent(event.event);
@@ -2222,28 +2181,37 @@ export class Session {
 
   private dispatchVoiceAndControlMessage(msg: SessionInboundMessage): Promise<void> | undefined {
     switch (msg.type) {
+      case "voice.call.start.request":
+      case "voice.call.stop.request":
+      case "voice.call.context.update.request":
+      case "voice.call.transport.client":
+        if (!this.voiceChatSession) {
+          throw new Error("Voice chat is unavailable");
+        }
+        return this.voiceChatSession.handle(msg);
       case "voice_audio_chunk":
-        return this.voiceSession.handleAudioChunk(msg);
+        return undefined;
       case "abort_request":
-        return this.voiceSession.handleAbort();
+        return undefined;
       case "audio_played":
-        this.voiceSession.handleAudioPlayed(msg.id);
         return undefined;
       case "set_voice_mode":
-        return this.voiceSession.handleSetVoiceMode(msg.enabled, msg.agentId, msg.requestId);
+        // COMPAT(legacyVoiceMode): added in v0.7.0, remove after 2027-08-29.
+        rejectLegacyVoiceMode({ requestId: msg.requestId, emit: (message) => this.emit(message) });
+        return undefined;
       case "dictation_stream_start":
-        return this.voiceSession.handleDictationStreamStart(msg);
+        return this.dictationSession.start(msg);
       case "dictation_stream_chunk":
-        return this.voiceSession.handleDictationChunk({
+        return this.dictationSession.append({
           dictationId: msg.dictationId,
           seq: msg.seq,
           audioBase64: msg.audio,
           format: msg.format,
         });
       case "dictation_stream_finish":
-        return this.voiceSession.handleDictationFinish(msg.dictationId, msg.finalSeq);
+        return this.dictationSession.finish(msg.dictationId, msg.finalSeq);
       case "dictation_stream_cancel":
-        this.voiceSession.handleDictationCancel(msg.dictationId);
+        this.dictationSession.cancel(msg.dictationId);
         return undefined;
       case "restart_server_request":
         return this.handleRestartServerRequest(msg.requestId, msg.reason);
@@ -3464,60 +3432,6 @@ export class Session {
           error: message,
         },
       });
-    }
-  }
-
-  /**
-   * Handle text message to agent (with optional image attachments)
-   */
-  private async handleSendAgentMessage(
-    agentId: string,
-    text: string,
-    messageId?: string,
-    images?: Array<{ data: string; mimeType: string }>,
-    attachments?: AgentAttachment[],
-    runOptions?: AgentRunOptions,
-    options?: { spokenInput?: boolean },
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
-    this.sessionLogger.info(
-      {
-        agentId,
-        textPreview: text.substring(0, 50),
-        imageCount: images?.length ?? 0,
-        attachmentCount: attachments?.length ?? 0,
-      },
-      `Sending text to agent ${agentId}${
-        images && images.length > 0 ? ` with ${images.length} image attachment(s)` : ""
-      }${
-        attachments && attachments.length > 0
-          ? ` and ${attachments.length} structured attachment(s)`
-          : ""
-      }`,
-    );
-
-    const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
-    const prompt = buildAgentPrompt(promptText, images, attachments);
-
-    try {
-      await sendPromptToAgent({
-        agentManager: this.agentManager,
-        agentStorage: this.agentStorage,
-        agentId,
-        prompt,
-        messageId,
-        runOptions,
-        // A typed or spoken message from the human answers any permission the
-        // agent is blocked on.
-        clearPendingPermissions: true,
-        logger: this.sessionLogger,
-      });
-      return { ok: true };
-    } catch (error) {
-      this.handleAgentRunError(agentId, error, "Failed to send agent message");
-      return {
-        ok: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
     }
   }
 
@@ -7740,7 +7654,8 @@ export class Session {
     }
     this.providerCatalogSession.dispose();
 
-    await this.voiceSession.cleanup();
+    await this.dictationSession.close();
+    await this.voiceChatSession?.close();
 
     this.terminalController.dispose();
 
@@ -7748,6 +7663,10 @@ export class Session {
 
     this.workspaceGitObserver.dispose();
     this.workspaceFilesSession.dispose();
+  }
+
+  public async handleTransportDisconnect(): Promise<void> {
+    await this.voiceChatSession?.disconnect();
   }
 }
 

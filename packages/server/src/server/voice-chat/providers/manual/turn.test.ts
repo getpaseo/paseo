@@ -7,12 +7,12 @@ import type {
   StreamingTranscriptionCommittedEvent,
   StreamingTranscriptionEvent,
   StreamingTranscriptionSession,
-} from "../../speech/speech-provider.js";
+} from "../../../speech/speech-provider.js";
 import type {
   TurnDetectionProvider,
   TurnDetectionSession,
-} from "../../speech/turn-detection-provider.js";
-import { createVoiceTurnController } from "./voice-turn-controller.js";
+} from "../../../speech/turn-detection-provider.js";
+import { createVoiceTurnController } from "./turn.js";
 
 class FakeTurnDetectionSession extends EventEmitter implements TurnDetectionSession {
   public readonly requiredSampleRate = 16000;
@@ -515,7 +515,7 @@ describe("voice turn controller", () => {
     }
   });
 
-  it("reports STT errors and attempts one reconnect", async () => {
+  it("reports an STT failure only after its one reconnect is exhausted", async () => {
     const harness = createControllerHarness();
 
     await harness.controller.start();
@@ -523,12 +523,17 @@ describe("voice turn controller", () => {
     firstSession?.emitError(new Error("stream failed"));
     await settleSerialQueue();
 
-    expect(harness.onError).toHaveBeenCalledTimes(1);
-    expect(harness.onError).toHaveBeenCalledWith(
-      expect.objectContaining({ message: "stream failed" }),
-    );
+    expect(harness.onError).not.toHaveBeenCalled();
     expect(firstSession?.closeCount).toBe(1);
     expect(harness.sttSessions).toHaveLength(2);
     expect(harness.sttSessions[1]?.connectCount).toBe(1);
+
+    harness.sttSessions[1]?.emitError(new Error("replacement stream failed"));
+    await settleSerialQueue();
+
+    expect(harness.onError).toHaveBeenCalledOnce();
+    expect(harness.onError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "replacement stream failed" }),
+    );
   });
 });

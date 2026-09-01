@@ -32,7 +32,6 @@ import {
   type ArchiveDependencies,
 } from "../../workspace-archive-service.js";
 import { createAgentCommand, type CreateAgentFromMcpInput } from "../create-agent/create.js";
-import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
 import type { FirstAgentContext } from "../../messages.js";
 import { everyMsToFiveFieldCron } from "@getpaseo/protocol/schedule/cadence";
 import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../../path-utils.js";
@@ -86,10 +85,12 @@ import {
 import { registerBrowserTools } from "../../browser-tools/tools.js";
 import type { BrowserToolsBroker } from "../../browser-tools/broker.js";
 import type {
+  PaseoCallerContext,
   PaseoToolCatalog,
   PaseoToolConfig,
   PaseoToolDefinition,
   PaseoToolExecutionContext,
+  PaseoToolExtension,
   PaseoToolResult,
 } from "./types.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
@@ -138,14 +139,8 @@ export interface PaseoToolHostDependencies {
    * Used for cwd/mode inheritance when agents spawn child agents.
    */
   callerAgentId?: string;
-  /**
-   * Optional resolver for session-bound speak handlers.
-   * Used by hidden voice agents to narrate through daemon-managed TTS.
-   */
-  resolveSpeakHandler?: (callerAgentId: string) => VoiceSpeakHandler | null;
-  resolveCallerContext?: (callerAgentId: string) => VoiceCallerContext | null;
-  enableVoiceTools?: boolean;
-  voiceOnly?: boolean;
+  resolveCallerContext?: (callerAgentId: string) => PaseoCallerContext | null;
+  resolveToolExtension?: (callerAgentId: string) => PaseoToolExtension | null;
   logger: Logger;
 }
 
@@ -551,8 +546,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     providerSnapshotManager,
     daemonConfigStore,
     callerAgentId,
-    resolveSpeakHandler,
     resolveCallerContext,
+    resolveToolExtension,
     logger,
   } = options;
   const childLogger = logger.child({ module: "agent", component: "paseo-tool-catalog" });
@@ -608,6 +603,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return tool.handler(await parseToolInput(tool, input), context);
     },
   });
+
+  if (callerAgentId) {
+    const extension = resolveToolExtension?.(callerAgentId) ?? null;
+    for (const tool of extension?.tools ?? []) {
+      tools.set(tool.name, tool);
+    }
+  }
 
   const buildCronScheduleCadence = (input: {
     cron: string | undefined;
@@ -1161,49 +1163,6 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   type LegacyAgentToAgentCreateAgentArgs = z.infer<typeof legacyAgentToAgentCreateAgentArgsSchema>;
   type TopLevelCreateAgentArgs = z.infer<typeof canonicalTopLevelCreateAgentArgsSchema>;
   type LegacyTopLevelCreateAgentArgs = z.infer<typeof legacyTopLevelCreateAgentArgsSchema>;
-
-  if (options.voiceOnly || options.enableVoiceTools || callerContext?.enableVoiceTools) {
-    registerTool(
-      "speak",
-      {
-        title: "Speak",
-        description:
-          "Speak text to the user via daemon-managed voice output. Blocks until playback completes.",
-        inputSchema: {
-          text: z
-            .string()
-            .trim()
-            .min(1, "text is required")
-            .max(4000, "text must be 4000 characters or fewer"),
-        },
-        outputSchema: {
-          ok: z.boolean(),
-        },
-      },
-      async (args, context) => {
-        if (!callerAgentId) {
-          throw new Error("speak is only available to agent-scoped tool sessions");
-        }
-        const handler = resolveSpeakHandler?.(callerAgentId) ?? null;
-        if (!handler) {
-          throw new Error(`No speak handler registered for your session '${callerAgentId}'`);
-        }
-        await handler({
-          text: args.text,
-          callerAgentId,
-          signal: context?.signal,
-        });
-        return {
-          content: [],
-          structuredContent: ensureValidJson({ ok: true }),
-        };
-      },
-    );
-  }
-
-  if (options.voiceOnly) {
-    return toCatalog();
-  }
 
   if (options.browserToolsEnabled && options.browserToolsBroker) {
     registerBrowserTools({

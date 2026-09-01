@@ -4,7 +4,13 @@ import { PortalProvider } from "@gorhom/portal";
 import { QueryClientProvider } from "@tanstack/react-query";
 import * as Linking from "expo-linking";
 import * as Notifications from "expo-notifications";
-import { Stack, useNavigationContainerRef, usePathname, useRouter } from "expo-router";
+import {
+  Stack,
+  useGlobalSearchParams,
+  useNavigationContainerRef,
+  usePathname,
+  useRouter,
+} from "expo-router";
 import {
   createContext,
   type ReactNode,
@@ -63,7 +69,7 @@ import { HorizontalScrollProvider } from "@/contexts/horizontal-scroll-context";
 import { SessionProvider } from "@/contexts/session-context";
 import { SidebarCalloutProvider } from "@/contexts/sidebar-callout-context";
 import { ToastProvider } from "@/contexts/toast-context";
-import { VoiceProvider } from "@/contexts/voice-context";
+import { useVoiceOptional, VoiceProvider } from "@/contexts/voice-context";
 import {
   resolveStartupBlocker,
   resolveStartupNavigationReady,
@@ -667,9 +673,33 @@ function ProvidersWrapper({ children }: { children: ReactNode }) {
         <HostSessionManager />
         <FaviconStatusSync />
         <AppearanceStyleBoundary>{children}</AppearanceStyleBoundary>
+        <VoiceCallContextSync />
       </VoiceProvider>
     </AppearanceProvider>
   );
+}
+
+function VoiceCallContextSync() {
+  const voice = useVoiceOptional();
+  const params = useGlobalSearchParams<{
+    serverId?: string | string[];
+    workspaceId?: string | string[];
+    agentId?: string | string[];
+  }>();
+  const serverId = Array.isArray(params.serverId) ? params.serverId[0] : params.serverId;
+  const workspaceId = Array.isArray(params.workspaceId)
+    ? params.workspaceId[0]
+    : params.workspaceId;
+  const agentId = Array.isArray(params.agentId) ? params.agentId[0] : params.agentId;
+
+  useEffect(() => {
+    if (!voice?.isVoiceMode || voice.activeServerId !== serverId) return;
+    void voice
+      .updateCallContext({ workspaceId: workspaceId ?? null, agentId: agentId ?? null })
+      .catch((error) => console.warn("[VoiceCall] Failed to update app context", error));
+  }, [agentId, serverId, voice, workspaceId]);
+
+  return null;
 }
 
 function DesktopWindowControlsSync() {

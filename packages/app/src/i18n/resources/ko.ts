@@ -1954,6 +1954,7 @@ export const ko: TranslationResources = {
       projects: "프로젝트",
       connections: "연결",
       agents: "에이전트",
+      voice: "음성",
       metadata: "메타데이터",
       workspaces: "워크스페이스",
       providers: "프로바이더",

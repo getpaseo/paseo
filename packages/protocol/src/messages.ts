@@ -61,6 +61,19 @@ import {
 } from "./browser-automation/rpc-schemas.js";
 import { BrowserAutomationHostCapabilitySchema } from "./browser-automation/capabilities.js";
 import {
+  VoiceCallClientTransportMessageSchema,
+  VoiceCallContextUpdateRequestSchema,
+  VoiceCallContextUpdateResponseSchema,
+  VoiceCallEventMessageSchema,
+  VoiceCallStartRequestSchema,
+  VoiceCallStartResponseSchema,
+  VoiceCallStateMessageSchema,
+  VoiceCallStopRequestSchema,
+  VoiceCallStopResponseSchema,
+  VoiceCallServerTransportMessageSchema,
+} from "./voice-chat.js";
+export * from "./voice-chat.js";
+import {
   PaseoConfigRawSchema,
   PaseoLifecycleCommandRawSchema,
   PaseoMetadataGenerationEntrySchema,
@@ -211,6 +224,18 @@ export const AgentSkillSelectionSchema = z.discriminatedUnion("mode", [
 ]);
 export type AgentSkillSelection = z.infer<typeof AgentSkillSelectionSchema>;
 
+export const MutableManualVoiceOrchestratorConfigSchema = z
+  .object({
+    provider: z.string().nullable(),
+    model: z.string().nullable(),
+    modeId: z.string().nullable(),
+    thinkingOptionId: z.string().nullable(),
+  })
+  .strict();
+export type MutableManualVoiceOrchestratorConfig = z.infer<
+  typeof MutableManualVoiceOrchestratorConfigSchema
+>;
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -246,6 +271,10 @@ export const MutableDaemonConfigSchema = z
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
     skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
+    manualVoice: z
+      .object({ orchestrator: MutableManualVoiceOrchestratorConfigSchema })
+      .strict()
+      .optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
   })
@@ -266,6 +295,10 @@ export const MutableDaemonConfigPatchSchema = z
     appendSystemPrompt: z.string().optional(),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
+    manualVoice: z
+      .object({ orchestrator: MutableManualVoiceOrchestratorConfigSchema.partial() })
+      .strict()
+      .optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
   })
@@ -3040,6 +3073,10 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentValidateRequestSchema,
   HubExecutionControlRequestSchema,
   BrowserAutomationExecuteResponseSchema,
+  VoiceCallStartRequestSchema,
+  VoiceCallStopRequestSchema,
+  VoiceCallContextUpdateRequestSchema,
+  VoiceCallClientTransportMessageSchema,
   VoiceAudioChunkMessageSchema,
   AbortRequestMessageSchema,
   AudioPlayedMessageSchema,
@@ -3399,6 +3436,8 @@ export const ServerInfoStatusPayloadSchema = z
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z
       .object({
+        // COMPAT(voiceChat): added in v0.7.0, remove gate after 2027-08-29.
+        voiceChat: z.boolean().optional(),
         providersSnapshot: z.boolean().optional(),
         // COMPAT(providersSnapshotCwd): added in v0.3.2, remove gate after 2027-02-10.
         providersSnapshotCwd: z.boolean().optional(),
@@ -6402,6 +6441,12 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentUpdateSchema,
   HubExecutionAgentStreamSchema,
   BrowserAutomationExecuteRequestSchema,
+  VoiceCallStartResponseSchema,
+  VoiceCallStopResponseSchema,
+  VoiceCallContextUpdateResponseSchema,
+  VoiceCallStateMessageSchema,
+  VoiceCallEventMessageSchema,
+  VoiceCallServerTransportMessageSchema,
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,
   PluginLogsGetResponseSchema,

@@ -93,29 +93,15 @@ function buildOpenAiSttInput(params: {
     ]),
     sttModel: firstDefined<string>([
       env.STT_MODEL,
-      pickIfOpenAi(providers.voiceStt, persisted.features?.voiceMode?.stt?.model),
       pickIfOpenAi(providers.dictationStt, persisted.features?.dictation?.stt?.model),
     ]),
   };
 }
 
-function buildOpenAiTtsInput(params: {
-  env: NodeJS.ProcessEnv;
-  persisted: PersistedConfig;
-  providers: RequestedSpeechProviders;
-}): Record<string, unknown> {
-  const { env, persisted, providers } = params;
+function buildOpenAiTtsInput(env: NodeJS.ProcessEnv): Record<string, unknown> {
   return {
-    ttsVoice: firstDefined<string>([
-      env.TTS_VOICE,
-      pickIfOpenAi(providers.voiceTts, persisted.features?.voiceMode?.tts?.voice),
-      "alloy",
-    ]),
-    ttsModel: firstDefined<string>([
-      env.TTS_MODEL,
-      pickIfOpenAi(providers.voiceTts, persisted.features?.voiceMode?.tts?.model),
-      DEFAULT_OPENAI_TTS_MODEL,
-    ]),
+    ttsVoice: firstDefined<string>([env.TTS_VOICE, "alloy"]),
+    ttsModel: firstDefined<string>([env.TTS_MODEL, DEFAULT_OPENAI_TTS_MODEL]),
   };
 }
 
@@ -152,7 +138,7 @@ function buildOpenAiResolutionInput(params: {
       env.OPENAI_BASE_URL,
     ]),
     ...buildOpenAiSttInput(params),
-    ...buildOpenAiTtsInput(params),
+    ...buildOpenAiTtsInput(params.env),
   };
 }
 
