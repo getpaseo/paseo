@@ -96,10 +96,10 @@ describe("Mermaid sandbox runtime", () => {
       source: "flowchart LR\n    a[x (y)] --> b[ok]",
     });
 
-    expect(response.type).toBe("renderError");
-    if (response.type === "renderError") {
-      expect(response.error).toContain("Parse error");
-    }
+    expect(response).toMatchObject({
+      type: "renderError",
+      error: expect.stringContaining("Parse error"),
+    });
   });
 
   it("coalesces queued input and never reports an obsolete result", async () => {
