@@ -224,7 +224,7 @@ function renderListEmptyComponent(input: {
 // CellRenderer with a fresh ref and, in a newest-first list, a shifted index). This boundary is
 // what stops that churn: a row renders again only when its stream item identity, its layout item
 // identity, or the renderer itself changes. Item identity is the revision signal the strategy
-// already uses (`historyRowRevision` clones items whose content or display state changed).
+// already uses (`useRevisedHistoryRows` clones items whose content or display state changed).
 const HistoryStreamRow = memo(function HistoryStreamRow({
   layoutItem,
   renderStreamItem,
