@@ -14,7 +14,7 @@ on:
 
 concurrency:
   group: apk-local-${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.tag || github.ref) || github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   SOURCE_TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
@@ -74,6 +74,17 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+            ~/.m2
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
 
       - name: Install JS dependencies
         run: node scripts/npm-retry.mjs ci
@@ -137,11 +148,25 @@ jobs:
         run: |
           set -euo pipefail
           cd packages/app/android
-          ./gradlew assembleRelease \
-            -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease \
-            -x generateReleaseLintModel -x generateReleaseLintVitalModel \
-            --no-daemon --max-workers=1 -Dorg.gradle.parallel=false \
-            -PreactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64
+          # Retry on Maven Central 429 with exponential backoff
+          for attempt in 1 2 3 4; do
+            echo "Gradle attempt $attempt/4..."
+            if ./gradlew assembleRelease \
+              -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease \
+              -x generateReleaseLintModel -x generateReleaseLintVitalModel \
+              --no-daemon --max-workers=1 -Dorg.gradle.parallel=false \
+              -PreactNativeArchitectures=arm64-v8a,armeabi-v7a,x86_64; then
+              echo "Gradle succeeded on attempt $attempt"
+              break
+            fi
+            ec=$?
+            if [ $attempt -eq 4 ]; then
+              echo "Gradle failed after 4 attempts"
+              exit $ec
+            fi
+            sleep $((attempt * 30))
+            echo "Retrying..."
+          done
 
       - name: Locate APK
         id: apk
