@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { execFileSync } from "child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "fs";
+import { chmodSync, mkdtempSync, realpathSync, rmSync, writeFileSync, mkdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 
@@ -665,6 +665,50 @@ describe("runAsyncWorktreeBootstrap", () => {
     expect(createTerminalCalls[1]?.env).toMatchObject({ PASEO_PORT: "39123" });
     expect(createTerminalCalls[1]?.env?.PASEO_PORT_BASE).toBeUndefined();
     expect(createTerminalCalls[1]?.env?.COMPOSE_PROJECT_NAME).toBeUndefined();
+  });
+
+  it("keeps service allocation outside active launch blocks", async () => {
+    const reservedPort = 45_678;
+    const portScript = join(repoDir, "portmake");
+    writeFileSync(portScript, `#!/bin/sh\necho ${reservedPort}\n`);
+    chmodSync(portScript, 0o755);
+    commitPaseoConfig({
+      worktree: {
+        servicePorts: { portScript },
+      },
+      scripts: {
+        api: {
+          type: "service",
+          command: "npm run api",
+        },
+      },
+    });
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const workspaceRuntimeEnvironment = {
+      ensure: async () => {
+        throw new Error("Legacy service scripts must not request a workspace port block");
+      },
+      getReservedPorts: () => new Set([reservedPort]),
+    };
+
+    await expect(
+      spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId: "workspace-service-after-launch",
+        projectSlug: "repo",
+        branchName: "feature-service-after-launch",
+        scriptName: "api",
+        daemonPort: null,
+        serviceProxy: routeStore,
+        runtimeStore,
+        terminalManager: createStubTerminalManager(createTerminalCalls),
+        workspaceRuntimeEnvironment,
+      }),
+    ).rejects.toThrow(`returned reserved port ${reservedPort}`);
+    expect(createTerminalCalls).toEqual([]);
   });
 
   it("records plain script exit codes from shell command completion without terminal exit", async () => {

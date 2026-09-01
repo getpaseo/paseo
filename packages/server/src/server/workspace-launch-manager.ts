@@ -161,7 +161,7 @@ export class WorkspaceLaunchManager {
       cwd: context.workspaceDirectory,
       branchName: context.branchName,
       allocation: configResult.config?.worktree?.servicePorts ?? this.deps.globalServicePorts,
-      excludedPorts: this.getExcludedServicePorts(context, configResult.config),
+      excludedPorts: () => this.getExcludedServicePorts(context, configResult.config),
     });
     const terminal = await this.deps.terminalManager.createTerminal({
       cwd: context.workspaceDirectory,
@@ -187,16 +187,32 @@ export class WorkspaceLaunchManager {
     this.runtimes.set(context.workspaceId, workspaceRuntimes);
     this.activeLaunches.set(context.workspaceId, launchName);
 
-    runtime.stopListener = terminal.onExit((info) => {
-      this.markStopped(runtime, info.exitCode);
+    let unsubscribeExit: (() => void) | null = null;
+    let unsubscribeCommandFinished: (() => void) | null = null;
+    runtime.stopListener = () => {
+      unsubscribeExit?.();
+      unsubscribeExit = null;
+      unsubscribeCommandFinished?.();
+      unsubscribeCommandFinished = null;
+    };
+    const stopRuntime = (exitCode: number | null) => {
+      this.markStopped(runtime, exitCode);
       void this.emitWorkspaceUpdate(context.workspaceId);
+    };
+    unsubscribeExit = terminal.onExit((info) => {
+      stopRuntime(info.exitCode);
+    });
+    unsubscribeCommandFinished = terminal.onCommandFinished((info) => {
+      stopRuntime(info.exitCode);
     });
 
     try {
       await waitForTerminalBootstrapReadiness(terminal);
       terminal.send({ type: "input", data: `${config.command}\r` });
-      this.startEndpointMonitor(runtime);
-      void this.scanEndpoints(runtime);
+      if (this.isCurrentRunningRuntime(runtime)) {
+        this.startEndpointMonitor(runtime);
+        void this.scanEndpoints(runtime);
+      }
       await this.emitWorkspaceUpdate(context.workspaceId);
       return this.toPayload(context, launchName);
     } catch (error) {

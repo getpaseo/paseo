@@ -438,6 +438,121 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
+  it("waits for an in-flight service plan before leasing a launch port block", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-service-race-"));
+    tempDirs.push(directory);
+    const plannedServicePort = 44_000;
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: "44000-44200" } },
+        scripts: { api: { type: "service", command: "./bin/api" } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+
+    const context = {
+      workspaceId: "workspace-launch-service-race",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+    };
+    const serviceWorkspaceId = "workspace-launch-service-race-service";
+    const servicePlanStarted = createDeferred();
+    const allowServicePlan = createDeferred();
+    const servicePlan = ensureWorkspaceServicePortPlan({
+      workspaceId: serviceWorkspaceId,
+      services: [{ scriptName: "api" }],
+      allocatePort: async () => {
+        servicePlanStarted.resolve();
+        await allowServicePlan.promise;
+        return plannedServicePort;
+      },
+    });
+    await servicePlanStarted.promise;
+
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: createTerminalManager().manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService({
+        random: () => 0,
+        checkPortAvailable: async () => true,
+      }),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      emitWorkspaceUpdates: async () => {},
+      endpointProbe: {
+        probeTcp: async () => false,
+        probeHttp: async () => false,
+      },
+      logger: pino({ level: "silent" }),
+    });
+
+    try {
+      const launch = manager.start(context, "dev");
+      await flushAsyncWork();
+      allowServicePlan.resolve();
+      await servicePlan;
+
+      await expect(launch).resolves.toMatchObject({
+        portBase: plannedServicePort + 1,
+        portEnd: plannedServicePort + 100,
+      });
+    } finally {
+      allowServicePlan.resolve();
+      await manager.disposeWorkspace(context.workspaceId);
+      releaseWorkspaceServicePortPlan(serviceWorkspaceId);
+    }
+  });
+
+  it("marks a launch stopped when its foreground command finishes", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-command-finished-"));
+    tempDirs.push(directory);
+    const port = await getFreePort();
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+
+    const terminalManager = createTerminalManager();
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: terminalManager.manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      emitWorkspaceUpdates: async () => {},
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "workspace-launch-command-finished",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+    };
+
+    try {
+      await manager.start(context, "dev");
+      terminalManager.created[0]?.triggerCommandFinished(17);
+
+      expect(manager.buildSnapshot(context)).toEqual([
+        expect.objectContaining({
+          launchName: "dev",
+          lifecycle: "stopped",
+          active: false,
+          exitCode: 17,
+        }),
+      ]);
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
+
   it("does not register endpoints after a launch stops while probes are pending", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-stop-race-"));
     tempDirs.push(directory);
@@ -561,17 +676,24 @@ async function flushAsyncWork(): Promise<void> {
 
 function createTerminalManager(): {
   manager: TerminalManager;
-  created: Array<{ env: Record<string, string> | undefined }>;
+  created: Array<{
+    env: Record<string, string> | undefined;
+    triggerCommandFinished: (exitCode: number | null) => void;
+  }>;
   killed: string[];
 } {
   const sessions = new Map<string, TerminalSession>();
-  const created: Array<{ env: Record<string, string> | undefined }> = [];
+  const created: Array<{
+    env: Record<string, string> | undefined;
+    triggerCommandFinished: (exitCode: number | null) => void;
+  }> = [];
   const killed: string[] = [];
   let nextId = 0;
   const manager = {
     createTerminal: async (options: { env?: Record<string, string> }) => {
       const id = `terminal-${++nextId}`;
       let exitListener: ((info: { exitCode: number | null }) => void) | null = null;
+      let commandFinishedListener: ((info: { exitCode: number | null }) => void) | null = null;
       const terminal = {
         id,
         name: id,
@@ -585,10 +707,21 @@ function createTerminalManager(): {
             exitListener = null;
           };
         },
+        onCommandFinished: (listener: (info: { exitCode: number | null }) => void) => {
+          commandFinishedListener = listener;
+          return () => {
+            if (commandFinishedListener === listener) {
+              commandFinishedListener = null;
+            }
+          };
+        },
         send: vi.fn(),
       } as unknown as TerminalSession;
       sessions.set(id, terminal);
-      created.push({ env: options.env });
+      created.push({
+        env: options.env,
+        triggerCommandFinished: (exitCode) => commandFinishedListener?.({ exitCode }),
+      });
       // Keep the exit callback with the fake terminal rather than exposing an
       // implementation-only method through the production interface.
       Object.assign(terminal, {
