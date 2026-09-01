@@ -59,6 +59,11 @@ interface LaunchEndpointRuntime {
   scriptName: string | null;
 }
 
+export interface WorkspaceLaunchEndpointProbe {
+  probeTcp(port: number): Promise<boolean>;
+  probeHttp(port: number): Promise<boolean>;
+}
+
 export interface WorkspaceLaunchManagerDependencies {
   terminalManager: TerminalManager | null;
   serviceProxy: ServiceProxySubsystem | null;
@@ -69,6 +74,8 @@ export interface WorkspaceLaunchManagerDependencies {
   globalServicePorts?: PaseoServicePortAllocation;
   resolveScriptHealth: ((hostname: string) => ScriptHealthState | null) | null;
   emitWorkspaceUpdates?: (workspaceIds: Iterable<string>) => Promise<void>;
+  /** Injected by tests so listener lifecycle races can be reproduced deterministically. */
+  endpointProbe?: WorkspaceLaunchEndpointProbe;
   logger: Logger;
 }
 
@@ -82,8 +89,11 @@ export class WorkspaceLaunchManager {
   private readonly runtimes = new Map<string, Map<string, WorkspaceLaunchRuntime>>();
   private readonly activeLaunches = new Map<string, string>();
   private readonly operationChains = new Map<string, Promise<unknown>>();
+  private readonly endpointProbe: WorkspaceLaunchEndpointProbe;
 
-  constructor(private readonly deps: WorkspaceLaunchManagerDependencies) {}
+  constructor(private readonly deps: WorkspaceLaunchManagerDependencies) {
+    this.endpointProbe = deps.endpointProbe ?? { probeTcp, probeHttp };
+  }
 
   buildSnapshot(context: WorkspaceLaunchContext): WorkspaceLaunchPayload[] {
     const configuredNames = new Set(this.readLaunchConfigNames(this.getConfigDirectory(context)));
@@ -210,6 +220,17 @@ export class WorkspaceLaunchManager {
     });
   }
 
+  updateWorkspaceBranch(workspaceId: string, branchName: string | null): void {
+    const runtimes = this.runtimes.get(workspaceId);
+    if (!runtimes) return;
+    for (const runtime of runtimes.values()) {
+      runtime.context = { ...runtime.context, branchName };
+      if (runtime.lifecycle === "running") {
+        void this.scanEndpoints(runtime);
+      }
+    }
+  }
+
   private async disposeWorkspaceInternal(workspaceId: string): Promise<void> {
     const runtimes = this.runtimes.get(workspaceId);
     if (runtimes) {
@@ -285,12 +306,8 @@ export class WorkspaceLaunchManager {
   }
 
   private async scanEndpoints(runtime: WorkspaceLaunchRuntime): Promise<void> {
-    if (
-      runtime.lifecycle !== "running" ||
-      runtime.scanInFlight ||
-      !this.deps.serviceProxy ||
-      this.runtimes.get(runtime.context.workspaceId)?.get(runtime.launchName) !== runtime
-    ) {
+    const serviceProxy = this.deps.serviceProxy;
+    if (!this.isCurrentRunningRuntime(runtime) || runtime.scanInFlight || !serviceProxy) {
       return;
     }
     runtime.scanInFlight = true;
@@ -300,7 +317,7 @@ export class WorkspaceLaunchManager {
         (_, offset) => runtime.environment.portBase + offset,
       );
       const listeningPortCandidates = await Promise.all(
-        ports.map(async (port) => ((await probeTcp(port)) ? port : null)),
+        ports.map(async (port) => ((await this.endpointProbe.probeTcp(port)) ? port : null)),
       );
       const listeningPorts = new Set(
         listeningPortCandidates.filter((port): port is number => port !== null),
@@ -308,10 +325,15 @@ export class WorkspaceLaunchManager {
       const httpPorts = new Set(
         (
           await Promise.all(
-            Array.from(listeningPorts, async (port) => ((await probeHttp(port)) ? port : null)),
+            Array.from(listeningPorts, async (port) =>
+              (await this.endpointProbe.probeHttp(port)) ? port : null,
+            ),
           )
         ).filter((port): port is number => port !== null),
       );
+      if (!this.isCurrentRunningRuntime(runtime) || this.deps.serviceProxy !== serviceProxy) {
+        return;
+      }
       let changed = false;
 
       for (const port of listeningPorts) {
@@ -321,7 +343,7 @@ export class WorkspaceLaunchManager {
           continue;
         }
         if (existing?.scriptName) {
-          this.deps.serviceProxy.removeWorkspaceService({
+          serviceProxy.removeWorkspaceService({
             workspaceId: runtime.context.workspaceId,
             scriptName: existing.scriptName,
           });
@@ -336,7 +358,7 @@ export class WorkspaceLaunchManager {
         const offset = port - runtime.environment.portBase;
         const scriptName = `launch-${runtime.launchName}-p${offset}`;
         try {
-          this.deps.serviceProxy.registerWorkspaceService({
+          serviceProxy.registerWorkspaceService({
             workspaceId: runtime.context.workspaceId,
             projectSlug: runtime.context.projectSlug,
             branchName: runtime.context.branchName,
@@ -366,7 +388,7 @@ export class WorkspaceLaunchManager {
           continue;
         }
         if (endpoint.scriptName) {
-          this.deps.serviceProxy.removeWorkspaceService({
+          serviceProxy.removeWorkspaceService({
             workspaceId: runtime.context.workspaceId,
             scriptName: endpoint.scriptName,
           });
@@ -381,6 +403,13 @@ export class WorkspaceLaunchManager {
     } finally {
       runtime.scanInFlight = false;
     }
+  }
+
+  private isCurrentRunningRuntime(runtime: WorkspaceLaunchRuntime): boolean {
+    return (
+      runtime.lifecycle === "running" &&
+      this.runtimes.get(runtime.context.workspaceId)?.get(runtime.launchName) === runtime
+    );
   }
 
   private toPayload(context: WorkspaceLaunchContext, launchName: string): WorkspaceLaunchPayload {

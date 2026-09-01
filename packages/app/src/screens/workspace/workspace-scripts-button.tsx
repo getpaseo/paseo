@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactElement } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 import type { GestureResponderEvent } from "react-native";
 import { Pressable, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
@@ -42,6 +42,7 @@ import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/cont
 import { extraMutedIconColorMapping } from "@/components/ui/icon-color";
 import {
   WorkspaceLaunchesSection,
+  type WorkspaceLaunchError,
   type WorkspaceLaunchesSectionProps,
 } from "@/screens/workspace/workspace-launches-button";
 
@@ -70,6 +71,7 @@ const ThemedRotateCw = withUnistyles(RotateCw);
 const ThemedSquare = withUnistyles(Square);
 
 const GHOST_TRIGGER_ICON_SIZE = 16;
+const EMPTY_LAUNCH_ERRORS: Readonly<Record<string, WorkspaceLaunchError | undefined>> = {};
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -636,6 +638,40 @@ export function WorkspaceScriptsButton({
   );
   const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
   const pendingRestartRef = useRef<Set<string>>(new Set());
+  const [launchErrorsByWorkspace, setLaunchErrorsByWorkspace] = useState<
+    Record<string, Record<string, WorkspaceLaunchError | undefined>>
+  >({});
+  const launchErrors = launchErrorsByWorkspace[workspaceId] ?? EMPTY_LAUNCH_ERRORS;
+
+  const handleLaunchError = useCallback(
+    (launchName: string, error: WorkspaceLaunchError) => {
+      setLaunchErrorsByWorkspace((current) => ({
+        ...current,
+        [workspaceId]: { ...current[workspaceId], [launchName]: error },
+      }));
+    },
+    [workspaceId],
+  );
+  const handleClearLaunchError = useCallback(
+    (launchName: string) => {
+      setLaunchErrorsByWorkspace((current) => {
+        const workspaceErrors = current[workspaceId];
+        if (!workspaceErrors?.[launchName]) {
+          return current;
+        }
+        const nextWorkspaceErrors = { ...workspaceErrors };
+        delete nextWorkspaceErrors[launchName];
+        const next = { ...current };
+        if (Object.keys(nextWorkspaceErrors).length === 0) {
+          delete next[workspaceId];
+        } else {
+          next[workspaceId] = nextWorkspaceErrors;
+        }
+        return next;
+      });
+    },
+    [workspaceId],
+  );
 
   const startScriptMutation = useMutation({
     mutationFn: async (scriptName: string) => {
@@ -749,6 +785,9 @@ export function WorkspaceScriptsButton({
     () => ({
       serverId,
       workspaceId,
+      launchErrors,
+      onLaunchError: handleLaunchError,
+      onClearLaunchError: handleClearLaunchError,
       liveTerminalIds,
       onLaunchTerminalStarted: onScriptTerminalStarted,
       onViewTerminal,
@@ -757,6 +796,9 @@ export function WorkspaceScriptsButton({
     [
       serverId,
       workspaceId,
+      launchErrors,
+      handleLaunchError,
+      handleClearLaunchError,
       liveTerminalIds,
       onScriptTerminalStarted,
       onViewTerminal,

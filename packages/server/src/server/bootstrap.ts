@@ -698,13 +698,21 @@ export async function createPaseoDaemon(
       serviceProxyPublicBaseUrl,
     }),
   });
-  const handleBranchChange = createBranchChangeRouteHandler({
+  const handleServiceProxyBranchChange = createBranchChangeRouteHandler({
     serviceProxy,
     onRoutesChanged: (workspaceId) => {
       scriptHealthMonitor.invalidateWorkspace(workspaceId);
     },
     logger,
   });
+  const handleBranchChange = (
+    workspaceId: string,
+    oldBranch: string | null,
+    newBranch: string | null,
+  ): void => {
+    handleServiceProxyBranchChange(workspaceId, oldBranch, newBranch);
+    workspaceLaunchManager?.updateWorkspaceBranch(workspaceId, newBranch);
+  };
 
   // Service proxy classifies service hosts before daemon auth/route fallthrough.
   // Registered service hosts proxy directly; known service namespaces without a

@@ -262,7 +262,127 @@ describe("WorkspaceLaunchManager", () => {
       await close(thirdServer);
     }
   });
+
+  it("does not register endpoints after a launch stops while probes are pending", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-stop-race-"));
+    tempDirs.push(directory);
+    const port = await getFreePort();
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+
+    const probeStarted = createDeferred();
+    const continueProbe = createDeferred();
+    const serviceProxy = createServiceProxySubsystem({ logger: pino({ level: "silent" }) });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: createTerminalManager().manager,
+      serviceProxy,
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      emitWorkspaceUpdates: async () => {},
+      endpointProbe: {
+        probeTcp: async () => {
+          probeStarted.resolve();
+          await continueProbe.promise;
+          return true;
+        },
+        probeHttp: async () => true,
+      },
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "workspace-launch-stop-race",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+    };
+
+    try {
+      await manager.start(context, "dev");
+      await probeStarted.promise;
+      await manager.stop(context, "dev");
+      continueProbe.resolve();
+      await flushAsyncWork();
+
+      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([]);
+      expect(serviceProxy.getWorkspaceHealthTargets(context.workspaceId)).toEqual([]);
+    } finally {
+      continueProbe.resolve();
+      await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
+
+  it("uses the latest branch when it discovers a launch endpoint after a rename", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-branch-"));
+    tempDirs.push(directory);
+    const port = await getFreePort();
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: `${port}-${port}`, blockSize: 1 } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+
+    let portIsListening = false;
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: createTerminalManager().manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService(),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      emitWorkspaceUpdates: async () => {},
+      endpointProbe: {
+        probeTcp: async (candidate) => candidate === port && portIsListening,
+        probeHttp: async () => true,
+      },
+      logger: pino({ level: "silent" }),
+    });
+    const context = {
+      workspaceId: "workspace-launch-branch",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/original",
+    };
+
+    try {
+      await manager.start(context, "dev");
+      await flushAsyncWork();
+      portIsListening = true;
+      manager.updateWorkspaceBranch(context.workspaceId, "feature/renamed");
+      await flushAsyncWork();
+
+      expect(manager.buildSnapshot(context)[0]?.endpoints).toEqual([
+        expect.objectContaining({
+          port,
+          hostname: "launch-dev-p0--feature-renamed--example-project.localhost",
+          proxyUrl: "http://launch-dev-p0--feature-renamed--example-project.localhost:6767",
+        }),
+      ]);
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
 });
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+async function flushAsyncWork(): Promise<void> {
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
 
 function createTerminalManager(): {
   manager: TerminalManager;
