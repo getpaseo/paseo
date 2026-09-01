@@ -143,7 +143,7 @@ See the [SDK quickstart](https://paseo.sh/docs/sdk/quickstart), [recipes](https:
 
 ## Skills
 
-Skills teach your agent to use Paseo to orchestrate other agents.
+Skills teach your agent to use Paseo for orchestration and browser automation.
 
 ```bash
 npx skills add getpaseo/paseo
@@ -154,6 +154,7 @@ Then use them in any agent conversation:
 - `/paseo-handoff` — hand off work between agents. I use this to plan with Claude and then handoff to Codex to implement.
 - `/paseo-advisor` — spin up a single agent as an advisor for a second opinion, without delegating the work itself.
 - `/paseo-committee` — form a committee of two contrasting agents to step back, do root cause analysis, and produce a plan.
+- `/paseo-browser` — drive real browser tabs through the `paseo browser` CLI without loading the browser MCP tool catalog into every session.
 
 ## Development
 
