@@ -111,6 +111,32 @@ describe("ensureAgentIsInitialized", () => {
     expect(getInitDeferred(getInitKey(serverId, agentId))?.requestDirection).toBe("tail");
   });
 
+  it("rejects initialization when the bounded projected timeline response is an error", async () => {
+    const client = new FakeDaemonClient();
+    const runtime = new FakeTimelineRuntime();
+    const failure = new Error(
+      "Projected timeline lifecycle exceeds the bounded legacy history window",
+    );
+    runtime.fetchAgentTimeline = async () => {
+      throw failure;
+    };
+    useSessionStore.getState().initializeSession(serverId, client as never);
+
+    const initialization = ensureAgentIsInitialized({
+      serverId,
+      agentId,
+      client: client as never,
+      runtime,
+      setAgentInitializing: bindSetAgentInitializing(),
+    });
+
+    await expect(initialization).rejects.toBe(failure);
+    expect(getInitDeferred(getInitKey(serverId, agentId))).toBeUndefined();
+    expect(useSessionStore.getState().sessions[serverId]?.initializingAgents.get(agentId)).toBe(
+      false,
+    );
+  });
+
   it("requests a bounded projected tail after restoring painted replica items", () => {
     const client = new FakeDaemonClient();
     const runtime = new FakeTimelineRuntime();

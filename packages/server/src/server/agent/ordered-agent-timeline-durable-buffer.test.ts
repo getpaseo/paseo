@@ -238,7 +238,27 @@ describe("OrderedAgentTimelineDurableBuffer", () => {
     await expect(buffer.insert("agent-1", row(1))).resolves.toBeUndefined();
   });
 
-  it("splits batches by encoded bytes while allowing one oversized row", async () => {
+  it("does not reopen a discarded buffer when an abandoned reservation is canceled", async () => {
+    const buffer = new OrderedAgentTimelineDurableBuffer({
+      bulkInsert: async () => undefined,
+      updateCommittedRow: async () => undefined,
+    });
+    const reservation = buffer.reserveInsertOrThrow("agent-1", row(1));
+    await buffer.discard("agent-1");
+
+    reservation.cancel();
+
+    expect(buffer.metrics("agent-1")).toMatchObject({
+      pendingRows: 0,
+      pendingBytes: 0,
+      discardedAgents: 1,
+    });
+    await expect(buffer.insert("agent-1", row(2))).rejects.toMatchObject({
+      name: "TimelineDurableBufferDiscardedError",
+    });
+  });
+
+  it("splits batches by encoded bytes without admitting a row larger than the durable limit", async () => {
     const writes: number[][] = [];
     const first = textRow(1, "😀".repeat(40));
     const second = textRow(2, "😀".repeat(40));
@@ -253,15 +273,105 @@ describe("OrderedAgentTimelineDurableBuffer", () => {
     const buffer = new OrderedAgentTimelineDurableBuffer(sink, {
       maxBatchRows: 10,
       maxBatchBytes,
+      maxRowBytes: Buffer.byteLength(JSON.stringify(second), "utf8"),
     });
 
-    await Promise.all([
-      buffer.insert("agent-1", first),
-      buffer.insert("agent-1", second),
-      buffer.insert("agent-1", huge),
-    ]);
+    await Promise.all([buffer.insert("agent-1", first), buffer.insert("agent-1", second)]);
+    await expect(buffer.insert("agent-1", huge)).rejects.toMatchObject({
+      name: "TimelineDurableRowTooLargeError",
+    });
 
-    expect(writes).toEqual([[1], [2], [3]]);
+    expect(writes).toEqual([[1], [2]]);
+    expect(buffer.metrics()).toMatchObject({ agents: 0, pendingRows: 0, pendingBytes: 0 });
+  });
+
+  it("rejects a row limit that exceeds either pending or batch byte budgets", () => {
+    const sink: TimelineDurableSink = {
+      bulkInsert: async () => undefined,
+      updateCommittedRow: async () => undefined,
+    };
+
+    expect(
+      () =>
+        new OrderedAgentTimelineDurableBuffer(sink, {
+          maxBatchBytes: 100,
+          maxPendingBytes: 200,
+          maxRowBytes: 101,
+        }),
+    ).toThrow("maxRowBytes must not exceed maxBatchBytes or maxPendingBytes");
+    expect(
+      () =>
+        new OrderedAgentTimelineDurableBuffer(sink, {
+          maxBatchBytes: 200,
+          maxPendingBytes: 100,
+          maxRowBytes: 101,
+        }),
+    ).toThrow("maxRowBytes must not exceed maxBatchBytes or maxPendingBytes");
+  });
+
+  it("schedules a ready follower when an unready head reservation is canceled", async () => {
+    const writes: number[][] = [];
+    const buffer = new OrderedAgentTimelineDurableBuffer({
+      bulkInsert: async (_agentId, rows) => writes.push(rows.map(({ seq }) => seq)),
+      updateCommittedRow: async () => undefined,
+    });
+    const head = buffer.reserveInsertOrThrow("agent-1", row(1));
+    const follower = buffer.reserveInsertOrThrow("agent-1", row(2));
+    const completed = follower.commit();
+    const flushed = buffer.flush("agent-1");
+
+    head.cancel();
+    await expect(Promise.all([completed, flushed])).resolves.toEqual([undefined, undefined]);
+    expect(writes).toEqual([[2]]);
+  });
+
+  it("waits for every reservation readiness before writing a later batch", async () => {
+    const writes: number[][] = [];
+    const firstWrite = deferred<void>();
+    const firstStarted = deferred<void>();
+    const buffer = new OrderedAgentTimelineDurableBuffer(
+      {
+        bulkInsert: async (_agentId, rows) => {
+          writes.push(rows.map(({ seq }) => seq));
+          if (rows[0]?.seq === 1) {
+            firstStarted.resolve();
+            await firstWrite.promise;
+          }
+        },
+        updateCommittedRow: async () => undefined,
+      },
+      { maxBatchRows: 1 },
+    );
+    const first = buffer.reserveInsertOrThrow("agent-1", row(1));
+    const held = buffer.reserveInsertOrThrow("agent-1", row(2));
+    const follower = buffer.reserveInsertOrThrow("agent-1", row(3));
+    const firstCompletion = first.commit();
+    const followerCompletion = follower.commit();
+    await firstStarted.promise;
+    firstWrite.resolve();
+    await firstCompletion;
+    await Promise.resolve();
+    expect(writes).toEqual([[1]]);
+
+    held.cancel();
+    await followerCompletion;
+    expect(writes).toEqual([[1], [3]]);
+  });
+
+  it("reports per-agent pending metrics without including another agent", async () => {
+    const release = deferred<void>();
+    const buffer = new OrderedAgentTimelineDurableBuffer({
+      bulkInsert: async () => await release.promise,
+      updateCommittedRow: async () => undefined,
+    });
+    const first = buffer.insert("agent-a", row(1));
+    const second = buffer.insert("agent-b", row(1));
+    await Promise.resolve();
+
+    expect(buffer.metrics("agent-a")).toMatchObject({ agents: 1, pendingRows: 1 });
+    expect(buffer.metrics("agent-b")).toMatchObject({ agents: 1, pendingRows: 1 });
+    release.resolve();
+    await Promise.all([first, second]);
   });
 
   it.each([
@@ -346,6 +456,8 @@ describe("OrderedAgentTimelineDurableBuffer", () => {
       failedAgents: 0,
       acknowledgementFailures: 1,
     });
+    expect(buffer.metrics("agent-1").acknowledgementFailures).toBe(0);
+    expect(buffer.metrics("agent-2").acknowledgementFailures).toBe(0);
   });
 
   it("hard-bounds admitted work and coalesces backpressure and flush waiters", async () => {

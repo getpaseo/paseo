@@ -47,6 +47,14 @@ interface DiagnosticAgentRuntimeMetrics {
     totalItems: number;
     maxItemsPerAgent: number;
   };
+  timelineCache?: {
+    residentRows: number;
+    residentBytes: number;
+    pendingRows: number;
+    pendingBytes: number;
+    backpressuredAgents: number;
+    failedAgents: number;
+  };
 }
 
 export type DaemonWebSocketRuntimeDiagnosticSnapshot = WebSocketRuntimeDiagnosticSnapshot<
@@ -336,6 +344,21 @@ function collectWebSocketRuntimeEntries(options: DaemonDiagnosticsOptions): Diag
         `maxPerAgent=${formatNumberMetric(agents.timelineStats?.maxItemsPerAgent)}`,
       ].join(", "),
     },
+    ...(agents.timelineCache
+      ? [
+          {
+            label: "Agent timeline cache",
+            value: [
+              `residentRows=${formatNumberMetric(agents.timelineCache.residentRows)}`,
+              `residentBytes=${formatNumberMetric(agents.timelineCache.residentBytes)}`,
+              `pendingRows=${formatNumberMetric(agents.timelineCache.pendingRows)}`,
+              `pendingBytes=${formatNumberMetric(agents.timelineCache.pendingBytes)}`,
+              `backpressuredAgents=${formatNumberMetric(agents.timelineCache.backpressuredAgents)}`,
+              `failedAgents=${formatNumberMetric(agents.timelineCache.failedAgents)}`,
+            ].join(", "),
+          },
+        ]
+      : []),
   ];
 }
 

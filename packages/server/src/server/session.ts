@@ -129,6 +129,7 @@ import {
   type AgentPermissionResponse,
   type AgentRunOptions,
   type AgentSessionConfig,
+  type AgentTimelineItem,
 } from "./agent/agent-sdk-types.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentStorage } from "./agent/agent-storage.js";
@@ -7041,8 +7042,7 @@ export class Session {
       timeline: input.controlTimeline,
       pageLimit: input.pageLimit,
     })
-      ? (input.fullTimeline ??
-        this.agentManager.fetchTimeline(input.agentId, { direction: "tail", limit: 0 }))
+      ? (input.fullTimeline ?? input.controlTimeline)
       : input.controlTimeline;
     const page = selectProjectedTimelinePage({
       rows: selectedTimeline.rows,
@@ -7079,6 +7079,91 @@ export class Session {
     return this.selectProjectedTimelineProjection(input);
   }
 
+  private async expandProjectedTimelineWindow(input: {
+    agentId: string;
+    control: AgentTimelineFetchResult;
+    direction: AgentTimelineFetchDirection;
+    pageLimit: number;
+  }): Promise<AgentTimelineFetchResult> {
+    // Legacy provider history has no turn identity to prove a lifecycle boundary. Keep paging
+    // bounded; if no user boundary is visible, the response remains an honest partial window.
+    const maxLegacyToolExpansionPages = 4;
+    const rowsBySeq = new Map(input.control.rows.map((row) => [row.seq, row]));
+    let hasOlder = input.control.hasOlder;
+    let hasNewer = input.control.hasNewer;
+    let legacyToolExpansionPages = 0;
+    const pageSize = Math.max(50, Math.min(200, input.pageLimit || 200));
+    const expandOlderTextBoundary = isTextProjectionBoundary(input.control.rows[0]);
+    const expandNewerTextBoundary = isTextProjectionBoundary(input.control.rows.at(-1));
+
+    while (true) {
+      const rows = [...rowsBySeq.values()].sort((left, right) => left.seq - right.seq);
+      const first = rows[0];
+      const last = rows.at(-1);
+      if (!first || !last) break;
+      const { needOlder, needNewer } = projectedTimelineExpansionNeeds({
+        rows,
+        hasOlder,
+        hasNewer,
+        direction: input.direction,
+        pageLimit: input.pageLimit,
+        expandOlderTextBoundary,
+        expandNewerTextBoundary,
+        allowLegacyToolExpansion: legacyToolExpansionPages < maxLegacyToolExpansionPages,
+      });
+      if (!needOlder && !needNewer) break;
+
+      let added = false;
+      if (needOlder) {
+        const older = await this.agentManager.fetchTimelinePage(input.agentId, {
+          direction: "before",
+          cursor: { epoch: input.control.epoch, seq: first.seq },
+          limit: pageSize,
+        });
+        hasOlder = older.hasOlder;
+        if (containsLegacyToolRows(rows)) {
+          legacyToolExpansionPages += 1;
+        }
+        for (const row of older.rows) {
+          added = !rowsBySeq.has(row.seq) || added;
+          rowsBySeq.set(row.seq, row);
+        }
+      }
+      if (needNewer) {
+        const newer = await this.agentManager.fetchTimelinePage(input.agentId, {
+          direction: "after",
+          cursor: { epoch: input.control.epoch, seq: last.seq },
+          limit: pageSize,
+        });
+        hasNewer = newer.hasNewer;
+        for (const row of newer.rows) {
+          added = !rowsBySeq.has(row.seq) || added;
+          rowsBySeq.set(row.seq, row);
+        }
+      }
+      if (!added) break;
+    }
+
+    const rows = [...rowsBySeq.values()].sort((left, right) => left.seq - right.seq);
+    const exceedsLegacyProjectionBound =
+      hasOlder &&
+      rows.some(
+        (row) =>
+          isToolCallRow(row) &&
+          row.turnId === undefined &&
+          !hasVisibleToolCallStartBoundary(rows, row),
+      );
+    if (exceedsLegacyProjectionBound) {
+      throw new Error("Projected timeline lifecycle exceeds the bounded legacy history window");
+    }
+    return {
+      ...input.control,
+      hasOlder,
+      hasNewer,
+      rows,
+    };
+  }
+
   private async handleFetchAgentTimelineRequest(
     msg: Extract<SessionInboundMessage, { type: "fetch_agent_timeline_request" }>,
     source?: object,
@@ -7086,7 +7171,7 @@ export class Session {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     const projection: TimelineProjectionMode = msg.projection ?? "projected";
     const requestedLimit = msg.limit;
-    const pageLimit = requestedLimit ?? (direction === "after" ? 0 : 200);
+    const pageLimit = requestedLimit ?? 200;
     const cursor: AgentTimelineCursor | undefined = msg.cursor
       ? {
           epoch: msg.cursor.epoch,
@@ -7102,11 +7187,25 @@ export class Session {
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
-      const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const fetchedControlTimeline = await this.agentManager.fetchTimelinePage(msg.agentId, {
         direction,
         cursor,
         limit: pageLimit,
       });
+      const fullTimeline =
+        projection === "projected" &&
+        pageLimit > 0 &&
+        this.shouldUseFullTimelineForProjectedPage({
+          timeline: fetchedControlTimeline,
+          pageLimit,
+        })
+          ? await this.expandProjectedTimelineWindow({
+              agentId: msg.agentId,
+              control: fetchedControlTimeline,
+              direction,
+              pageLimit,
+            })
+          : undefined;
       const selectedTimeline = this.selectTimelineProjection({
         agentId: msg.agentId,
         projection,
@@ -7114,6 +7213,7 @@ export class Session {
         direction,
         ...(cursor ? { cursor } : {}),
         pageLimit,
+        ...(fullTimeline ? { fullTimeline } : {}),
       });
       const startCursor =
         selectedTimeline.startSeq !== null
@@ -7389,10 +7489,11 @@ export class Session {
         logger: this.sessionLogger,
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
-      const timeline = this.agentManager.fetchTimeline(msg.agentId, {
-        direction: "tail",
-        limit: 0,
-      });
+      const rows = await this.agentManager.getTimelineRows(msg.agentId);
+      const timeline = {
+        epoch: this.agentManager.fetchTimeline(msg.agentId, { direction: "tail", limit: 1 }).epoch,
+        rows,
+      };
       const forkContext = buildAgentForkContextAttachment({
         rows: timeline.rows,
         cursorBoundary: msg.boundaryCursor
@@ -7749,6 +7850,100 @@ export class Session {
     this.workspaceGitObserver.dispose();
     this.workspaceFilesSession.dispose();
   }
+}
+
+function projectedTimelineExpansionNeeds(input: {
+  rows: AgentTimelineFetchResult["rows"];
+  hasOlder: boolean;
+  hasNewer: boolean;
+  direction: AgentTimelineFetchDirection;
+  pageLimit: number;
+  expandOlderTextBoundary: boolean;
+  expandNewerTextBoundary: boolean;
+  allowLegacyToolExpansion: boolean;
+}): { needOlder: boolean; needNewer: boolean } {
+  const first = input.rows[0]!;
+  const last = input.rows.at(-1)!;
+  const toolRows = input.rows.filter(
+    (row): row is typeof row & { item: Extract<AgentTimelineItem, { type: "tool_call" }> } =>
+      row.item.type === "tool_call",
+  );
+  const needsOlderTool = toolRows.some(
+    (row) =>
+      (row.turnId !== undefined || input.allowLegacyToolExpansion) &&
+      !hasVisibleToolCallStartBoundary(input.rows, row),
+  );
+  const needsNewerTool = toolRows.some(
+    ({ item, turnId }) =>
+      !toolRows.some(
+        (candidate) =>
+          candidate.item.callId === item.callId &&
+          candidate.turnId === turnId &&
+          candidate.item.status !== "running",
+      ),
+  );
+  const projectedCount = projectTimelineRows({ rows: input.rows, mode: "projected" }).length;
+  return {
+    needOlder:
+      input.hasOlder &&
+      (needsOlderTool ||
+        (input.expandOlderTextBoundary &&
+          (first.item.type === "assistant_message" || first.item.type === "reasoning")) ||
+        (input.direction !== "after" && projectedCount < input.pageLimit)),
+    needNewer:
+      input.hasNewer &&
+      (needsNewerTool ||
+        (input.expandNewerTextBoundary &&
+          (last.item.type === "assistant_message" || last.item.type === "reasoning")) ||
+        (input.direction === "after" && projectedCount < input.pageLimit)),
+  };
+}
+
+function containsLegacyToolRows(rows: AgentTimelineFetchResult["rows"]): boolean {
+  return rows.some((row) => row.item.type === "tool_call" && row.turnId === undefined);
+}
+
+function isToolCallRow(
+  row: AgentTimelineFetchResult["rows"][number],
+): row is AgentTimelineFetchResult["rows"][number] & {
+  item: Extract<AgentTimelineItem, { type: "tool_call" }>;
+} {
+  return row.item.type === "tool_call";
+}
+
+function isTextProjectionBoundary(row: AgentTimelineFetchResult["rows"][number] | undefined) {
+  return row?.item.type === "assistant_message" || row?.item.type === "reasoning";
+}
+
+function hasVisibleToolCallStartBoundary(
+  rows: AgentTimelineFetchResult["rows"],
+  toolRow: AgentTimelineFetchResult["rows"][number] & {
+    item: Extract<AgentTimelineItem, { type: "tool_call" }>;
+  },
+): boolean {
+  const firstCallIndex = rows.findIndex(
+    (candidate) =>
+      candidate.item.type === "tool_call" &&
+      candidate.item.callId === toolRow.item.callId &&
+      candidate.turnId === toolRow.turnId,
+  );
+  if (firstCallIndex < 0) return false;
+  const preceding = rows.slice(0, firstCallIndex);
+  if (toolRow.turnId === undefined) {
+    const hasRunningRow = rows.some(
+      (candidate) =>
+        candidate.item.type === "tool_call" &&
+        candidate.item.callId === toolRow.item.callId &&
+        candidate.turnId === undefined &&
+        candidate.item.status === "running",
+    );
+    return hasRunningRow && preceding.some(({ item }) => item.type === "user_message");
+  }
+  return preceding.some(
+    (candidate) =>
+      (candidate.item.type === "user_message" && candidate.turnId === toolRow.turnId) ||
+      (candidate.turnId !== undefined && candidate.turnId !== toolRow.turnId),
+  );
 }
 
 interface CloneRepositoryInput {

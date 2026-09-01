@@ -28,6 +28,7 @@ export interface OrderedAgentTimelineDurableBufferOptions {
   maxBatchBytes?: number;
   maxPendingRows?: number;
   maxPendingBytes?: number;
+  maxRowBytes?: number;
   onDurable?: (acknowledgement: TimelineDurableAcknowledgement) => void;
 }
 
@@ -37,8 +38,14 @@ interface PendingOperation {
   revision: HotTimelineRevision | undefined;
   bytes: number;
   settled: boolean;
+  ready: boolean;
   resolve(): void;
   reject(error: unknown): void;
+}
+
+export interface TimelineDurableBufferReservation {
+  commit(revision?: HotTimelineRevision): Promise<void>;
+  cancel(): void;
 }
 
 interface Deferred<T> {
@@ -65,6 +72,7 @@ const DEFAULT_MAX_BATCH_ROWS = 64;
 const DEFAULT_MAX_BATCH_BYTES = 256 * 1024;
 const DEFAULT_MAX_PENDING_ROWS = 512;
 const DEFAULT_MAX_PENDING_BYTES = 2 * 1024 * 1024;
+export const DEFAULT_TIMELINE_DURABLE_MAX_ROW_BYTES = 240 * 1024;
 
 export class TimelineDurableBufferDiscardedError extends Error {
   constructor(agentId: string) {
@@ -80,6 +88,17 @@ export class TimelineDurableBufferBackpressureError extends Error {
   ) {
     super(`Timeline durable buffer is full for agent '${agentId}'; retry when writable`);
     this.name = "TimelineDurableBufferBackpressureError";
+  }
+}
+
+export class TimelineDurableRowTooLargeError extends Error {
+  constructor(
+    agentId: string,
+    readonly bytes: number,
+    readonly maxBytes: number,
+  ) {
+    super(`Timeline row for agent '${agentId}' is ${bytes} bytes; maximum is ${maxBytes}`);
+    this.name = "TimelineDurableRowTooLargeError";
   }
 }
 
@@ -104,6 +123,7 @@ export class OrderedAgentTimelineDurableBuffer {
   private readonly maxBatchBytes: number;
   private readonly maxPendingRows: number;
   private readonly maxPendingBytes: number;
+  private readonly maxRowBytes: number;
   private readonly onDurable?: (acknowledgement: TimelineDurableAcknowledgement) => void;
   private acknowledgementFailures = 0;
 
@@ -115,19 +135,58 @@ export class OrderedAgentTimelineDurableBuffer {
     this.maxBatchBytes = options?.maxBatchBytes ?? DEFAULT_MAX_BATCH_BYTES;
     this.maxPendingRows = options?.maxPendingRows ?? DEFAULT_MAX_PENDING_ROWS;
     this.maxPendingBytes = options?.maxPendingBytes ?? DEFAULT_MAX_PENDING_BYTES;
+    this.maxRowBytes =
+      options?.maxRowBytes ??
+      Math.min(DEFAULT_TIMELINE_DURABLE_MAX_ROW_BYTES, this.maxBatchBytes, this.maxPendingBytes);
     this.onDurable = options?.onDurable;
     validatePositiveInteger(this.maxBatchRows, "maxBatchRows");
     validatePositiveInteger(this.maxBatchBytes, "maxBatchBytes");
     validatePositiveInteger(this.maxPendingRows, "maxPendingRows");
     validatePositiveInteger(this.maxPendingBytes, "maxPendingBytes");
+    validatePositiveInteger(this.maxRowBytes, "maxRowBytes");
+    if (this.maxRowBytes > this.maxBatchBytes || this.maxRowBytes > this.maxPendingBytes) {
+      throw new Error("maxRowBytes must not exceed maxBatchBytes or maxPendingBytes");
+    }
   }
 
   insert(agentId: string, row: AgentTimelineRow, revision?: HotTimelineRevision): Promise<void> {
-    return this.enqueue(agentId, "insert", row, revision);
+    try {
+      return this.insertOrThrow(agentId, row, revision);
+    } catch (error) {
+      return Promise.reject(error);
+    }
   }
 
   update(agentId: string, row: AgentTimelineRow, revision?: HotTimelineRevision): Promise<void> {
-    return this.enqueue(agentId, "update", row, revision);
+    try {
+      return this.updateOrThrow(agentId, row, revision);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+  }
+
+  insertOrThrow(
+    agentId: string,
+    row: AgentTimelineRow,
+    revision?: HotTimelineRevision,
+  ): Promise<void> {
+    return this.enqueueOrThrow(agentId, "insert", row, revision);
+  }
+
+  reserveInsertOrThrow(agentId: string, row: AgentTimelineRow): TimelineDurableBufferReservation {
+    return this.reserveOrThrow(agentId, "insert", row);
+  }
+
+  reserveUpdateOrThrow(agentId: string, row: AgentTimelineRow): TimelineDurableBufferReservation {
+    return this.reserveOrThrow(agentId, "update", row);
+  }
+
+  updateOrThrow(
+    agentId: string,
+    row: AgentTimelineRow,
+    revision?: HotTimelineRevision,
+  ): Promise<void> {
+    return this.enqueueOrThrow(agentId, "update", row, revision);
   }
 
   async discard(agentId: string): Promise<void> {
@@ -173,7 +232,7 @@ export class OrderedAgentTimelineDurableBuffer {
     await Promise.all([...this.states.keys()].map(async (agentId) => await this.flush(agentId)));
   }
 
-  metrics(): TimelineDurableBufferMetrics {
+  metrics(agentId?: string): TimelineDurableBufferMetrics {
     const result: TimelineDurableBufferMetrics = {
       agents: this.states.size,
       pendingRows: 0,
@@ -181,51 +240,101 @@ export class OrderedAgentTimelineDurableBuffer {
       writableSignals: 0,
       failedAgents: 0,
       discardedAgents: 0,
-      acknowledgementFailures: this.acknowledgementFailures,
+      // Acknowledgement failures are an aggregate process counter. Per-agent state is removed
+      // once its durable queue drains, so attributing the aggregate to any queried agent would
+      // make unrelated agents appear unhealthy.
+      acknowledgementFailures: agentId === undefined ? this.acknowledgementFailures : 0,
     };
-    for (const state of this.states.values()) {
+    const states =
+      agentId === undefined
+        ? this.states.values()
+        : [this.states.get(agentId)].filter(
+            (state): state is AgentBufferState => state !== undefined,
+          );
+    for (const state of states) {
       result.pendingRows += state.pendingRows;
       result.pendingBytes += state.pendingBytes;
       if (state.writableSignal) result.writableSignals += 1;
       if (state.status === "failed") result.failedAgents += 1;
       if (state.status === "discarded") result.discardedAgents += 1;
     }
+    if (agentId !== undefined) result.agents = this.states.has(agentId) ? 1 : 0;
     return result;
   }
 
-  private enqueue(
+  private enqueueOrThrow(
     agentId: string,
     kind: PendingOperation["kind"],
     row: AgentTimelineRow,
     revision: HotTimelineRevision | undefined,
   ): Promise<void> {
-    const state = this.state(agentId);
-    if (state.status === "failed") return Promise.reject(state.failure);
-    if (state.status === "discarded") {
-      return Promise.reject(new TimelineDurableBufferDiscardedError(agentId));
-    }
+    const reservation = this.reserveOrThrow(agentId, kind, row);
+    return reservation.commit(revision!);
+  }
+
+  private reserveOrThrow(
+    agentId: string,
+    kind: PendingOperation["kind"],
+    row: AgentTimelineRow,
+  ): TimelineDurableBufferReservation {
     const bytes = encodedRowBytes(row);
+    if (bytes > this.maxRowBytes) {
+      throw new TimelineDurableRowTooLargeError(agentId, bytes, this.maxRowBytes);
+    }
+    const state = this.state(agentId);
+    if (state.status === "failed") throw state.failure;
+    if (state.status === "discarded") {
+      throw new TimelineDurableBufferDiscardedError(agentId);
+    }
     if (!this.canAdmit(state, bytes)) {
       state.writableSignal ??= promiseWithResolvers<void>();
-      return Promise.reject(
-        new TimelineDurableBufferBackpressureError(agentId, state.writableSignal.promise),
-      );
+      throw new TimelineDurableBufferBackpressureError(agentId, state.writableSignal.promise);
     }
     const deferred = promiseWithResolvers<void>();
+    // Reservations may be invalidated before commit exposes their completion to a caller.
+    // Observe that hidden rejection while preserving rejection for a later committed promise.
+    void deferred.promise.catch(() => undefined);
     const cloned = cloneRow(row);
-    state.queue.push({
+    const operation: PendingOperation = {
       kind,
       row: cloned,
-      revision,
+      revision: undefined,
       bytes,
       settled: false,
+      ready: false,
       resolve: () => deferred.resolve(),
       reject: deferred.reject,
-    });
+    };
+    state.queue.push(operation);
     state.pendingRows += 1;
     state.pendingBytes += bytes;
-    this.schedule(agentId, state);
-    return deferred.promise;
+    let finalized = false;
+    return {
+      commit: (revision) => {
+        if (finalized) throw new Error("Timeline durable reservation was already finalized");
+        finalized = true;
+        operation.revision = revision;
+        operation.ready = true;
+        this.schedule(agentId, state);
+        return deferred.promise;
+      },
+      cancel: () => {
+        if (finalized) return;
+        finalized = true;
+        const index = state.queue.indexOf(operation);
+        if (index < 0) return;
+        state.queue.splice(index, 1);
+        state.pendingRows -= 1;
+        state.pendingBytes -= bytes;
+        settleResolved(operation);
+        this.resolveWritableSignal(state);
+        this.schedule(agentId, state);
+        if (state.status === "healthy" && isIdle(state)) {
+          this.settleFlushWaiter(state);
+          if (this.states.get(agentId) === state) this.states.delete(agentId);
+        }
+      },
+    };
   }
 
   private state(agentId: string): AgentBufferState {
@@ -250,7 +359,8 @@ export class OrderedAgentTimelineDurableBuffer {
   }
 
   private schedule(agentId: string, state: AgentBufferState): void {
-    if (state.queue.length === 0 || state.running || state.scheduled) return;
+    if (state.queue.length === 0 || !state.queue[0]!.ready || state.running || state.scheduled)
+      return;
     state.scheduled = true;
     queueMicrotask(() => {
       state.scheduled = false;
@@ -262,7 +372,7 @@ export class OrderedAgentTimelineDurableBuffer {
     if (state.running || this.states.get(agentId) !== state || state.status !== "healthy") return;
     state.running = true;
     try {
-      while (state.queue.length > 0 && state.status === "healthy") {
+      while (state.queue[0]?.ready && state.status === "healthy") {
         state.active = this.takeBatch(state.queue);
         try {
           await this.write(agentId, state.active);
@@ -329,7 +439,7 @@ export class OrderedAgentTimelineDurableBuffer {
     let bytes = 0;
     while (count < queue.length && count < this.maxBatchRows) {
       const operation = queue[count]!;
-      if (operation.kind !== "insert") break;
+      if (operation.kind !== "insert" || !operation.ready) break;
       if (count > 0 && bytes + operation.bytes > this.maxBatchBytes) break;
       bytes += operation.bytes;
       count += 1;

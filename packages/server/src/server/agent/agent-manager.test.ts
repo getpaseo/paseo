@@ -15,6 +15,7 @@ import {
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
 import { InMemoryAgentTimelineStore } from "./agent-timeline-store.js";
+import { SegmentedFileAgentTimelineStore } from "./segmented-file-agent-timeline-store.js";
 import { toAgentPayload } from "./agent-projections.js";
 import { projectTimelineRows } from "./timeline-projection.js";
 import { getOpenAgentTabLabel, PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
@@ -3794,6 +3795,48 @@ test("importProviderSession imports the selected session without listing and pub
   expect((await storage.get(imported.id))?.title).toBe("Trace provider imports");
 });
 
+test("failed registration discards a partially admitted explicit bounded timeline seed", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-seed-rollback-"));
+  const durable = new RecordingTimelineStore();
+  const manager = new AgentManager({
+    clients: {},
+    durableTimelineStore: durable,
+    boundedTimeline: { hot: { maxRows: 1, maxBytes: 10_000 } },
+    logger,
+  });
+  const failure = new Error("snapshot persistence failed");
+  const agentId = randomUUID();
+  const internals = manager as unknown as {
+    persistSnapshot: (...args: unknown[]) => Promise<void>;
+    registerSession: (
+      session: AgentSession,
+      config: AgentSessionConfig,
+      agentId: string,
+      options: { timelineRows: AgentTimelineRow[] },
+    ) => Promise<ManagedAgent>;
+    boundedTimeline: { has(agentId: string): boolean };
+    timelineStore: InMemoryAgentTimelineStore;
+  };
+  vi.spyOn(internals, "persistSnapshot").mockRejectedValue(failure);
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+
+  await expect(
+    internals.registerSession(session, { provider: "codex", cwd: workdir }, agentId, {
+      timelineRows: [
+        {
+          seq: 1,
+          timestamp: "2026-01-02T00:00:00.000Z",
+          item: { type: "user_message", text: "seed" },
+        },
+      ],
+    }),
+  ).rejects.toBe(failure);
+
+  await expect(durable.getCommittedRows(agentId)).resolves.toEqual([]);
+  expect(internals.boundedTimeline.has(agentId)).toBe(false);
+  expect(internals.timelineStore.has(agentId)).toBe(false);
+});
+
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-context-"));
   const storagePath = join(workdir, "agents");
@@ -6090,6 +6133,431 @@ test("does not trim committed history", async () => {
   expect(fetched.rows).toHaveLength(3);
   expect(fetched.window.minSeq).toBe(1);
   expect(fetched.window.maxSeq).toBe(3);
+});
+
+test("bounds the live root timeline while paging 600 durable rows in both directions", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-root-timeline-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durable = new SegmentedFileAgentTimelineStore(join(workdir, "timeline-cache"), {
+    maxRowsPerSegment: 8,
+  });
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    durableTimelineStore: durable,
+    boundedTimeline: {
+      hot: { maxRows: 4, maxBytes: 10_000 },
+      buffer: { maxBatchRows: 16, maxPendingRows: 32, maxPendingBytes: 100_000 },
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000600",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    for (let seq = 1; seq <= 600; seq += 1) {
+      await manager.appendTimelineItem(snapshot.id, {
+        type: "user_message",
+        text: `row-${seq}`,
+      });
+    }
+    await manager.flush();
+
+    expect(manager.getTimeline(snapshot.id)).toHaveLength(4);
+    const tail = await manager.fetchTimelinePage(snapshot.id, { direction: "tail", limit: 10 });
+    expect(tail.rows.map(({ seq }) => seq)).toEqual([
+      591, 592, 593, 594, 595, 596, 597, 598, 599, 600,
+    ]);
+    const before = await manager.fetchTimelinePage(snapshot.id, {
+      direction: "before",
+      cursor: { epoch: tail.epoch, seq: 591 },
+      limit: 2,
+    });
+    expect(before.rows.map(({ seq }) => seq)).toEqual([589, 590]);
+    const after = await manager.fetchTimelinePage(snapshot.id, {
+      direction: "after",
+      cursor: { epoch: tail.epoch, seq: 590 },
+      limit: 2,
+    });
+    expect(after.rows.map(({ seq }) => seq)).toEqual([591, 592]);
+    expect(manager.getMetricsSnapshot().timelineCache).toMatchObject({
+      residentRows: 4,
+      residentBytes: expect.any(Number),
+      pendingRows: 0,
+      pendingBytes: 0,
+      backpressuredAgents: 0,
+      failedAgents: 0,
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+}, 30_000);
+
+test("force hydration clears the disposable cache before provider history repopulates it", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-provider-replay-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durable = new SegmentedFileAgentTimelineStore(join(workdir, "timeline-cache"));
+
+  class ProviderHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      for (let seq = 1; seq <= 6; seq += 1) {
+        yield {
+          type: "timeline",
+          provider: this.provider,
+          item: { type: "assistant_message", text: `provider-${seq}` },
+        };
+      }
+    }
+  }
+
+  class ProviderHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new ProviderHistorySession(config);
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ProviderHistoryClient() },
+    registry: storage,
+    durableTimelineStore: durable,
+    boundedTimeline: { hot: { maxRows: 2, maxBytes: 10_000 } },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000601",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "assistant_message",
+      text: "discard this stale cache row",
+    });
+    await manager.flush();
+
+    await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
+    await manager.flush();
+
+    const replayed = await manager.fetchTimelinePage(snapshot.id, {
+      direction: "tail",
+      limit: 10,
+    });
+    expect(replayed.rows.map(({ item }) => item)).toEqual(
+      Array.from({ length: 6 }, (_, index) => ({
+        type: "assistant_message",
+        text: `provider-${index + 1}`,
+      })),
+    );
+    expect(manager.getTimeline(snapshot.id)).toHaveLength(2);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("surfaces bounded timeline durability failure while retaining the pending live row", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-durable-failure-"));
+  const durable = new SegmentedFileAgentTimelineStore(join(workdir, "timeline-cache"));
+  const failure = new Error("timeline cache write failed");
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    durableTimelineStore: durable,
+    boundedTimeline: {
+      durableSink: {
+        bulkInsert: async () => {
+          throw failure;
+        },
+        updateCommittedRow: async () => {
+          throw failure;
+        },
+      },
+      hot: { maxRows: 1, maxBytes: 10_000 },
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000602",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "assistant_message",
+      text: "keep pending",
+    });
+
+    await expect(manager.flush()).rejects.toBe(failure);
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "assistant_message", text: "keep pending" },
+    ]);
+    expect(manager.getTimelineCacheMetrics(snapshot.id)).toMatchObject({
+      hot: { retainedRows: 1, pinnedRows: 1, pendingRows: 1 },
+      durabilityError: failure,
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("archive completes when the disposable timeline cache write failed", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-archive-failure-"));
+  const failure = new Error("timeline cache write failed");
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    durableTimelineStore: new SegmentedFileAgentTimelineStore(join(workdir, "timeline-cache")),
+    boundedTimeline: {
+      durableSink: {
+        bulkInsert: async () => {
+          throw failure;
+        },
+        updateCommittedRow: async () => {
+          throw failure;
+        },
+      },
+      hot: { maxRows: 1, maxBytes: 10_000 },
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000603",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "assistant_message",
+      text: "provider remains authoritative",
+    });
+    await expect(manager.archiveAgent(snapshot.id)).resolves.toMatchObject({
+      archivedAt: expect.any(String),
+    });
+    expect(manager.getAgent(snapshot.id)).toBeNull();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("close completes after a coalesced timeline row latches a disposable cache failure", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-close-coalescer-failure-"));
+  const failure = new Error("timeline cache write failed");
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    durableTimelineStore: new SegmentedFileAgentTimelineStore(join(workdir, "timeline-cache")),
+    boundedTimeline: {
+      durableSink: {
+        bulkInsert: async () => {
+          throw failure;
+        },
+        updateCommittedRow: async () => {
+          throw failure;
+        },
+      },
+      hot: { maxRows: 1, maxBytes: 10_000 },
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000604",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "coalesced cache failure" },
+    });
+    await expect(manager.flush()).rejects.toBe(failure);
+    expect(manager.getAgent(snapshot.id)).not.toBeNull();
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "queued after cache failure" },
+    });
+
+    await expect(manager.closeAgent(snapshot.id)).resolves.toBeUndefined();
+    expect(manager.getAgent(snapshot.id)).toBeNull();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a latched coalescer cache failure does not swallow a terminal event", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-terminal-cache-failure-"));
+  const failure = new Error("timeline cache write failed");
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    durableTimelineStore: new SegmentedFileAgentTimelineStore(join(workdir, "timeline-cache")),
+    boundedTimeline: {
+      durableSink: {
+        bulkInsert: async () => {
+          throw failure;
+        },
+        updateCommittedRow: async () => {
+          throw failure;
+        },
+      },
+      hot: { maxRows: 1, maxBytes: 10_000 },
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000605",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    session.pushEvent({ type: "turn_started", provider: "codex", turnId: "turn-cache-failure" });
+    await waitForAgentLifecycle(manager, snapshot.id, "running");
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      turnId: "turn-cache-failure",
+      item: { type: "assistant_message", text: "fails cache" },
+    });
+    await expect(manager.flush()).rejects.toBe(failure);
+    session.pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "turn-cache-failure",
+    });
+
+    await expect(waitForAgentLifecycle(manager, snapshot.id, "idle")).resolves.toBeUndefined();
+    expect(manager.getAgent(snapshot.id)?.lastError).toBeUndefined();
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("turn_failed settles the foreground run after system-error timeline persistence fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-turn-failed-cache-"));
+  const cacheFailure = new Error("timeline cache write failed");
+  const cacheFailureObserved = deferred<void>();
+
+  class CacheFailingTurnSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "turn-cache-failed";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  const session = new CacheFailingTurnSession({ provider: "codex", cwd: workdir });
+  let writes = 0;
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    durableTimelineStore: new SegmentedFileAgentTimelineStore(join(workdir, "timeline-cache")),
+    boundedTimeline: {
+      durableSink: {
+        bulkInsert: async () => {
+          writes += 1;
+          if (writes > 1) {
+            cacheFailureObserved.resolve();
+            throw cacheFailure;
+          }
+        },
+        updateCommittedRow: async () => undefined,
+      },
+      hot: { maxRows: 4, maxBytes: 10_000 },
+      buffer: { maxBatchRows: 1 },
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000606",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const run = manager.runAgent(agent.id, "hello", { clientMessageId: "client-cache-failed" });
+    await waitForAgentLifecycle(manager, agent.id, "running");
+    await vi.waitFor(() => {
+      expect(manager.getTimelineCacheMetrics(agent.id)?.hot).toMatchObject({
+        pinnedRows: 1,
+        pendingRows: 0,
+      });
+    });
+    await manager.flush();
+    await manager.appendTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "cache this",
+    });
+    await expect(manager.flush()).rejects.toBe(cacheFailure);
+    await cacheFailureObserved.promise;
+    session.pushEvent({
+      type: "permission_requested",
+      provider: session.provider,
+      turnId: "turn-cache-failed",
+      request: {
+        id: "permission-cache-failed",
+        provider: session.provider,
+        kind: "tool",
+        name: "Read file",
+      },
+    });
+    await vi.waitFor(() => {
+      expect(manager.getAgent(agent.id)?.pendingPermissions.size).toBe(1);
+    });
+    expect(manager.getTimelineCacheMetrics(agent.id)?.hot).toMatchObject({
+      pinnedRows: 2,
+      pendingRows: 1,
+    });
+    session.pushEvent({
+      type: "turn_failed",
+      provider: session.provider,
+      turnId: "turn-cache-failed",
+      error: "provider turn failed",
+    });
+
+    await expect(
+      Promise.race([
+        run,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("foreground run did not settle")), 1_000),
+        ),
+      ]),
+    ).rejects.toThrow("provider turn failed");
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "error",
+      activeTurnId: null,
+      lastError: "provider turn failed",
+    });
+    expect(manager.getAgent(agent.id)?.pendingPermissions.size).toBe(0);
+    expect(manager.getTimelineCacheMetrics(agent.id)?.hot).toMatchObject({
+      pinnedRows: 1,
+      pendingRows: 1,
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("hydrateTimeline preserves assistant chunk, reasoning, and tool timeline history", async () => {

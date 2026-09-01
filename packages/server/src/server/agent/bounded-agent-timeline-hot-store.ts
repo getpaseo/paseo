@@ -8,6 +8,7 @@ export interface BoundedAgentTimelineHotStoreOptions {
 export interface HotTimelineInitializeOptions {
   epoch: string;
   window: AgentTimelineWindow;
+  rows?: readonly AgentTimelineRow[];
 }
 
 export interface HotTimelineRowOptions {
@@ -48,6 +49,7 @@ interface HotRow {
 }
 
 interface HotState {
+  version: number;
   epoch: string;
   logicalMinSeq: number;
   logicalMaxSeq: number;
@@ -75,15 +77,40 @@ export class BoundedAgentTimelineHotStore {
       throw new Error("epoch must be a non-empty string");
     }
     validateWindow(options.window);
-    this.states.set(agentId, {
+    const rows = (options.rows ?? []).map((row, index, source): HotRow => {
+      if (
+        row.seq < options.window.minSeq ||
+        row.seq > options.window.maxSeq ||
+        (index > 0 && row.seq !== source[index - 1]!.seq + 1)
+      ) {
+        throw new Error(
+          "Initial hot timeline rows must be an ordered suffix of the logical window",
+        );
+      }
+      const cloned = cloneRow(row);
+      return {
+        row: cloned,
+        bytes: encodedRowBytes(cloned),
+        durable: true,
+        mutable: false,
+        revision: index + 1,
+      };
+    });
+    if (rows.length > 0 && rows.at(-1)!.row.seq !== options.window.maxSeq) {
+      throw new Error("Initial hot timeline rows must end at the logical window maximum");
+    }
+    const state: HotState = {
+      version: 0,
       epoch: options.epoch,
       logicalMinSeq: options.window.minSeq,
       logicalMaxSeq: options.window.maxSeq,
       nextSeq: options.window.nextSeq,
-      encodedBytes: 0,
-      rows: [],
-      nextRevision: 1,
-    });
+      encodedBytes: rows.reduce((total, row) => total + row.bytes, 0),
+      rows,
+      nextRevision: rows.length + 1,
+    };
+    this.evict(state);
+    this.states.set(agentId, state);
   }
 
   append(
@@ -110,6 +137,7 @@ export class BoundedAgentTimelineHotStore {
     state.rows.push(entry);
     state.encodedBytes += entry.bytes;
     this.evict(state);
+    state.version += 1;
     return { seq: row.seq, revision: entry.revision };
   }
 
@@ -119,6 +147,7 @@ export class BoundedAgentTimelineHotStore {
     if (!entry || entry.revision !== revision.revision) return false;
     entry.durable = true;
     this.evict(state);
+    state.version += 1;
     return true;
   }
 
@@ -140,11 +169,21 @@ export class BoundedAgentTimelineHotStore {
     entry.revision = state.nextRevision;
     state.nextRevision += 1;
     this.evict(state);
+    state.version += 1;
     return { seq: row.seq, revision: entry.revision };
   }
 
   snapshot(agentId: string): HotTimelineSnapshot {
     const state = this.requireState(agentId);
+    return this.snapshotState(state);
+  }
+
+  versionedSnapshot(agentId: string): { version: number; snapshot: HotTimelineSnapshot } {
+    const state = this.requireState(agentId);
+    return { version: state.version, snapshot: this.snapshotState(state) };
+  }
+
+  private snapshotState(state: HotState): HotTimelineSnapshot {
     return {
       epoch: state.epoch,
       logicalWindow: {
@@ -159,6 +198,34 @@ export class BoundedAgentTimelineHotStore {
       encodedBytes: state.encodedBytes,
       rows: state.rows.map(({ row }) => cloneRow(row)),
     };
+  }
+
+  getRow(agentId: string, seq: number): AgentTimelineRow | null {
+    const entry = this.requireState(agentId).rows.find((candidate) => candidate.row.seq === seq);
+    return entry ? cloneRow(entry.row) : null;
+  }
+
+  getVersion(agentId: string): number {
+    return this.requireState(agentId).version;
+  }
+
+  getPendingRows(agentId: string): AgentTimelineRow[] {
+    return this.requireState(agentId)
+      .rows.filter(({ durable }) => !durable)
+      .map(({ row }) => cloneRow(row));
+  }
+
+  unpinMutableRows(agentId: string, turnId: string | undefined): void {
+    const state = this.requireState(agentId);
+    let changed = false;
+    for (const entry of state.rows) {
+      if (entry.row.turnId === turnId && entry.mutable) {
+        entry.mutable = false;
+        changed = true;
+      }
+    }
+    this.evict(state);
+    if (changed) state.version += 1;
   }
 
   metrics(agentId: string): HotTimelineMetrics {

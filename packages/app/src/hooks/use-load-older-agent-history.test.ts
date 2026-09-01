@@ -158,10 +158,14 @@ describe("loadOlderAgentHistory", () => {
     expect(started).toBe(true);
   });
 
-  it("shows a panel toast, warns, and clears in-flight on failure", async () => {
-    const error = new Error("network");
+  it("preserves retryability after a bounded projected-history failure", async () => {
+    const error = new Error(
+      "Projected timeline lifecycle exceeds the bounded legacy history window",
+    );
+    let attempts = 0;
     const client = createClient(async () => {
-      throw error;
+      attempts += 1;
+      if (attempts === 1) throw error;
     });
     const inFlight = createInFlight();
     const toast = createToast();
@@ -188,5 +192,19 @@ describe("loadOlderAgentHistory", () => {
       ["[Timeline] failed to load older agent history", agentId, error],
     ]);
     expect(inFlight.values).toEqual([false, true, false]);
+
+    await expect(
+      loadOlderAgentHistory(agentId, {
+        client,
+        cursor: someCursor,
+        hasOlder: true,
+        isLoadingOlder: false,
+        setInFlight: inFlight.setInFlight,
+        toast,
+        logger,
+      }),
+    ).resolves.toBe(true);
+    expect(client.calls).toHaveLength(2);
+    expect(inFlight.values).toEqual([false, true, false, true, false]);
   });
 });

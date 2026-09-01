@@ -524,6 +524,52 @@ describe("AgentStreamCoalescer", () => {
     ]);
   });
 
+  test("retains later chunks while an asynchronous flush is backpressured", async () => {
+    const flushes: string[] = [];
+    const releaseFirst = Promise.withResolvers<void>();
+    let first = true;
+    const coalescer = new AgentStreamCoalescer({
+      timers: { setTimeout, clearTimeout },
+      onFlush: async ({ item }) => {
+        if (first) {
+          first = false;
+          await releaseFirst.promise;
+        }
+        if (item.type === "assistant_message") flushes.push(item.text);
+      },
+    });
+
+    coalescer.handle("agent-1", assistant("first"));
+    coalescer.handle("agent-1", assistant("second"));
+    const flush = coalescer.flushFor("agent-1");
+    await Promise.resolve();
+    expect(flushes).toEqual([]);
+
+    releaseFirst.resolve();
+    await flush;
+    expect(flushes).toEqual(["first", "second"]);
+  });
+
+  test("latches a permanent flush failure without scheduling timer retries", async () => {
+    const failure = new Error("durable cache failed");
+    let attempts = 0;
+    const coalescer = new AgentStreamCoalescer({
+      windowMs: 10,
+      timers: { setTimeout, clearTimeout },
+      onFlush: async () => {
+        attempts += 1;
+        throw failure;
+      },
+    });
+
+    await expect(coalescer.handleAsync("agent-1", assistant("failed"))).rejects.toBe(failure);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(attempts).toBe(1);
+    await expect(coalescer.flushFor("agent-1")).rejects.toBe(failure);
+    await expect(coalescer.flushAll()).rejects.toBe(failure);
+    expect(attempts).toBe(1);
+  });
+
   test("manual flush prevents late duplicate output after timers advance", async () => {
     const { coalescer, flushes } = createHarness();
 
