@@ -279,6 +279,18 @@ export class InMemoryAgentTimelineStore {
     return cloneRow(row);
   }
 
+  appendRow(agentId: string, row: AgentTimelineRow): AgentTimelineRow {
+    const state = this.requireState(agentId);
+    if (row.seq !== state.nextSeq) {
+      throw new Error(
+        `Timeline row sequence ${row.seq} does not follow ${state.nextSeq - 1} for agent '${agentId}'`,
+      );
+    }
+    state.nextSeq = row.seq + 1;
+    state.rows.push(cloneRow(row));
+    return cloneRow(row);
+  }
+
   getLastItem(agentId: string): AgentTimelineItem | null {
     const state = this.requireState(agentId);
     return state.rows[state.rows.length - 1]?.item ?? null;

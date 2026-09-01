@@ -165,10 +165,7 @@ class RecordingTimelineStore implements AgentTimelineStore {
     this.writes.push(rows.map((row) => ({ ...row })));
     this.ensure(agentId);
     for (const row of rows) {
-      this.memory.append(agentId, row.item, {
-        timestamp: row.timestamp,
-        turnId: row.turnId,
-      });
+      this.memory.appendRow(agentId, row);
     }
   }
 
@@ -180,6 +177,21 @@ class RecordingTimelineStore implements AgentTimelineStore {
       rows[index] = row;
       this.memory.initialize(agentId, { rows });
     }
+  }
+}
+
+class BlockingTimelineStore extends RecordingTimelineStore {
+  readonly bulkInsertStarted = deferred<void>();
+  readonly releaseBulkInsert = deferred<void>();
+  private bulkInsertCount = 0;
+
+  override async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+    this.bulkInsertCount += 1;
+    if (this.bulkInsertCount === 1) {
+      this.bulkInsertStarted.resolve();
+      await this.releaseBulkInsert.promise;
+    }
+    await super.bulkInsert(agentId, rows);
   }
 }
 
@@ -684,6 +696,108 @@ test("uses an injected timeline store without making it a production requirement
   }
 });
 
+test("updates runtime timeline only after an accepted durable replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-replacement-"));
+  const durable = new RecordingTimelineStore();
+  const historyItem: AgentTimelineItem = {
+    type: "assistant_message",
+    text: "provider history",
+  };
+
+  class HistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield { type: "timeline", provider: this.provider, item: historyItem };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+          return new HistorySession(config);
+        }
+      })(),
+    },
+    durableTimelineStore: durable,
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await manager.appendTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "stale runtime row",
+    });
+
+    await manager.hydrateTimelineFromProvider(agent.id, { force: true });
+
+    expect(manager.getTimeline(agent.id)).toEqual([historyItem]);
+    await expect(durable.getCommittedRows(agent.id)).resolves.toEqual([
+      expect.objectContaining({ item: historyItem }),
+    ]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("fences a queued timeline append before either memory or durable commit", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-timeline-append-fence-"));
+  const durable = new BlockingTimelineStore();
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    durableTimelineStore: durable,
+    logger,
+  });
+  let agentId: string | null = null;
+  let firstAppend: Promise<void> | undefined;
+  let secondAppend: Promise<void> | undefined;
+  let reload: Promise<ManagedAgent> | undefined;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+
+    firstAppend = manager.appendTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "committed before successor",
+    });
+    await durable.bulkInsertStarted.promise;
+    secondAppend = manager.appendTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "fenced successor",
+    });
+    reload = manager.reloadAgentSession(agent.id);
+    expect(manager.getTimeline(agent.id)).toEqual([]);
+    await expect(durable.getCommittedRows(agent.id)).resolves.toEqual([]);
+    durable.releaseBulkInsert.resolve();
+
+    await firstAppend;
+    await expect(secondAppend).rejects.toThrow("Turn start was canceled");
+    await reload;
+
+    expect(manager.getTimeline(agent.id)).toEqual([
+      { type: "assistant_message", text: "committed before successor" },
+    ]);
+    await expect(durable.getCommittedRows(agent.id)).resolves.toEqual([
+      expect.objectContaining({
+        item: { type: "assistant_message", text: "committed before successor" },
+      }),
+    ]);
+  } finally {
+    durable.releaseBulkInsert.resolve();
+    if (firstAppend) await firstAppend.catch(() => undefined);
+    if (secondAppend) await secondAppend.catch(() => undefined);
+    if (reload) await reload.catch(() => undefined);
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("retries provider history hydration after a stream failure", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-retry-"));
   let attempts = 0;
@@ -828,6 +942,78 @@ test("orders an accepted steer before output emitted while acknowledgement is pe
     ]);
   } finally {
     release.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("preserves the turn token for tokenless events drained from the steer barrier", async () => {
+  const session = new (class extends SteeringTestSession {
+    override async steerActiveTurn(
+      _prompt: AgentPromptInput,
+      _options: import("./agent-sdk-types.js").SteerActiveTurnOptions,
+    ): Promise<import("./agent-sdk-types.js").SteerResult> {
+      this.pushEvent({
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "assistant_message", text: "tokenless barrier event" },
+      });
+      return { status: "accepted" };
+    }
+  })({ provider: "codex", cwd: process.cwd() });
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-steer-token-"));
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const initial = manager.streamAgent(agent.id, "initial");
+    void (async () => {
+      for await (const _event of initial) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    const enqueueSessionEvent = vi.spyOn(
+      manager as unknown as {
+        enqueueSessionEvent: (...args: unknown[]) => void;
+      },
+      "enqueueSessionEvent",
+    );
+    await expect(
+      manager.steerAgentRun(agent.id, "hello", { clientMessageId: "hello-client" }),
+    ).resolves.toEqual({ status: "accepted" });
+
+    const barrierCalls = enqueueSessionEvent.mock.calls.filter(
+      ([, event]) =>
+        event &&
+        typeof event === "object" &&
+        "type" in event &&
+        event.type === "timeline" &&
+        "item" in event &&
+        event.item &&
+        typeof event.item === "object" &&
+        "text" in event.item &&
+        event.item.text === "tokenless barrier event",
+    );
+    expect(barrierCalls).toHaveLength(2);
+    expect(barrierCalls.at(-1)?.[3]).toEqual(expect.any(String));
+    expect(manager.getTimeline(agent.id)).toContainEqual({
+      type: "assistant_message",
+      text: "tokenless barrier event",
+    });
+  } finally {
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }

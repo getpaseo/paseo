@@ -748,7 +748,21 @@ export class AgentManager {
           sessionGeneration: generation,
           turnToken,
         });
-        this.notifyForegroundTurnWaiters(agentId, event, generation, turnToken);
+        if (event instanceof Promise) {
+          void event
+            .then((committedEvent) => {
+              this.notifyForegroundTurnWaiters(agentId, committedEvent, generation, turnToken);
+              return undefined;
+            })
+            .catch((error) => {
+              this.logger.error(
+                { err: error, agentId, itemType: item.type },
+                "Failed to commit coalesced timeline item",
+              );
+            });
+        } else {
+          this.notifyForegroundTurnWaiters(agentId, event, generation, turnToken);
+        }
       },
     });
     this.updateProviderRegistry({
@@ -2158,17 +2172,19 @@ export class AgentManager {
       // for live subscribers. Other event types are broadcast only.
       if (event.type === "timeline") {
         this.touchUpdatedAt(agent);
-        const row = this.recordTimeline(agent.id, event.item, undefined, generation);
-        this.dispatchStream(
+        const recorded = this.recordAndDispatchTimelineItem(
           agent.id,
-          event,
-          {
-            seq: row.seq,
-            epoch: this.timelineStore.getEpoch(agent.id),
-            timestamp: row.timestamp,
-          },
-          generation,
+          event.item,
+          event.provider,
+          undefined,
+          { sessionGeneration: generation },
         );
+        void Promise.resolve(recorded).catch((error) => {
+          this.logger.error(
+            { err: error, agentId: agent.id, itemType: event.item.type },
+            "Failed to commit out-of-band timeline item",
+          );
+        });
         return;
       }
       this.dispatchStream(agent.id, event, { timestamp: new Date().toISOString() }, generation);
@@ -2192,7 +2208,12 @@ export class AgentManager {
     const agent = this.requireAgent(agentId);
     item = limitAgentTimelineItemContent(item);
     this.touchUpdatedAt(agent);
-    const row = this.recordTimeline(agentId, item);
+    const row = await this.recordTimeline(
+      agentId,
+      item,
+      undefined,
+      this.sessionGenerationTokens.get(agentId),
+    );
     this.dispatchStream(
       agentId,
       {
@@ -2370,7 +2391,7 @@ export class AgentManager {
           )
         : undefined;
       if (options?.clientMessageId) {
-        this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
+        await this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
           messageId: options.clientMessageId,
           turnId,
           providerMessageId:
@@ -2635,7 +2656,12 @@ export class AgentManager {
           this.steerEventBarriers.delete(agent.id);
         }
         for (const queuedEvent of barrier.events) {
-          this.enqueueSessionEvent(agent.id, queuedEvent.event, queuedEvent.generation);
+          this.enqueueSessionEvent(
+            agent.id,
+            queuedEvent.event,
+            queuedEvent.generation,
+            queuedEvent.turnToken,
+          );
         }
         await this.drainSessionEvents(agent.id);
       }
@@ -2692,7 +2718,7 @@ export class AgentManager {
     if (!clientMessageId) {
       return;
     }
-    this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
+    await this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
       messageId: clientMessageId,
       turnId: expectedTurnId,
       sessionGeneration: this.sessionGenerationTokens.get(agent.id),
@@ -4686,13 +4712,13 @@ export class AgentManager {
     if (
       event.item.type === "user_message" &&
       event.item.clientMessageId &&
-      this.reconcileSubmittedPromptEcho(
+      (await this.reconcileSubmittedPromptEcho(
         agent,
         event.item,
         event.turnId,
         options?.sessionGeneration,
         options?.turnToken,
-      )
+      ))
     ) {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
@@ -4700,18 +4726,19 @@ export class AgentManager {
     }
 
     if (options?.fromHistory) {
-      this.recordTimeline(
+      await this.recordTimeline(
         agent.id,
         event.item,
         event.timestamp ? { timestamp: event.timestamp } : undefined,
         options?.sessionGeneration,
+        options?.turnToken,
       );
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
     }
 
-    this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId, {
+    await this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId, {
       sessionGeneration: options?.sessionGeneration,
       turnToken: options?.turnToken,
     });
@@ -4966,14 +4993,14 @@ export class AgentManager {
       sessionGeneration?: symbol;
       turnToken?: string;
     },
-  ): AgentStreamEvent {
+  ): AgentStreamEvent | Promise<AgentStreamEvent> {
     if (
       options?.turnToken !== undefined &&
       !this.isLatestTurnTokenCurrent(agentId, options.turnToken)
     ) {
       throw new TurnStartCanceledError();
     }
-    const row = this.recordTimeline(
+    const recorded = this.recordTimeline(
       agentId,
       item,
       { providerMessageId: options?.providerMessageId, turnId },
@@ -4986,35 +5013,39 @@ export class AgentManager {
       provider,
       ...(turnId !== undefined ? { turnId } : {}),
     };
-    this.dispatchStream(
-      agentId,
-      event,
-      {
-        seq: row.seq,
-        epoch: this.timelineStore.getEpoch(agentId),
-        timestamp: row.timestamp,
-      },
-      options?.sessionGeneration,
-      options?.turnToken,
-    );
-
-    if (
-      item.type === "tool_call" &&
-      item.status === "completed" &&
-      item.detail?.type === "shell" &&
-      commandMayHaveChangedExternalState(item.detail.command)
-    ) {
-      const agent = this.agents.get(agentId);
+    const commit = (row: AgentTimelineRow): AgentStreamEvent => {
+      this.dispatchStream(
+        agentId,
+        event,
+        {
+          seq: row.seq,
+          epoch: this.timelineStore.getEpoch(agentId),
+          timestamp: row.timestamp,
+        },
+        options?.sessionGeneration,
+        options?.turnToken,
+      );
       if (
-        agent &&
-        (options?.sessionGeneration === undefined ||
-          this.isSessionGenerationCurrent(agent, options.sessionGeneration))
+        item.type === "tool_call" &&
+        item.status === "completed" &&
+        item.detail?.type === "shell" &&
+        commandMayHaveChangedExternalState(item.detail.command)
       ) {
-        this.onWorkspaceStateMayHaveChanged?.({ cwd: agent.cwd });
+        const agent = this.agents.get(agentId);
+        if (
+          agent &&
+          (options?.sessionGeneration === undefined ||
+            this.isSessionGenerationCurrent(agent, options.sessionGeneration))
+        ) {
+          this.onWorkspaceStateMayHaveChanged?.({ cwd: agent.cwd });
+        }
       }
+      return event;
+    };
+    if (recorded instanceof Promise) {
+      return recorded.then(commit);
     }
-
-    return event;
+    return commit(recorded);
   }
 
   private recordSubmittedPrompt(
@@ -5028,7 +5059,7 @@ export class AgentManager {
       sessionGeneration?: symbol;
       turnToken?: string;
     },
-  ): void {
+  ): void | Promise<void> {
     const currentAgent = this.agents.get(agent.id);
     if (currentAgent !== undefined && currentAgent !== agent) {
       return;
@@ -5056,10 +5087,19 @@ export class AgentManager {
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
     };
-    this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, {
-      ...options,
-      ...(generation !== undefined ? { sessionGeneration: generation } : {}),
-    });
+    const recorded = this.recordAndDispatchTimelineItem(
+      agent.id,
+      item,
+      agent.provider,
+      options?.turnId,
+      {
+        ...options,
+        ...(generation !== undefined ? { sessionGeneration: generation } : {}),
+      },
+    );
+    if (recorded instanceof Promise) {
+      return recorded.then(() => undefined);
+    }
   }
 
   private reconcileSubmittedPromptEcho(
@@ -5068,18 +5108,23 @@ export class AgentManager {
     turnId?: string,
     generation?: symbol,
     turnToken?: string,
-  ): AgentTimelineRow | null {
+  ): AgentTimelineRow | null | Promise<AgentTimelineRow | null> {
     const { clientMessageId, messageId } = item;
     if (!clientMessageId) return null;
     let existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     if (!existing) {
-      this.recordSubmittedPrompt(agent, item.text, clientMessageId, {
+      const recorded = this.recordSubmittedPrompt(agent, item.text, clientMessageId, {
         messageId: clientMessageId,
         ...(messageId ? { providerMessageId: messageId } : {}),
         ...(turnId ? { turnId } : {}),
         ...(generation ? { sessionGeneration: generation } : {}),
         ...(turnToken ? { turnToken } : {}),
       });
+      if (recorded instanceof Promise) {
+        return recorded.then(() =>
+          this.reconcileSubmittedPromptEcho(agent, item, turnId, generation, turnToken),
+        );
+      }
       existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
     }
     if (!existing || existing.item.type !== "user_message") return null;
@@ -5128,7 +5173,7 @@ export class AgentManager {
     }
 
     const item: AgentTimelineItem = { type: "assistant_message", text };
-    const row = this.recordTimeline(
+    const row = await this.recordTimeline(
       agent.id,
       item,
       undefined,
@@ -5268,7 +5313,7 @@ export class AgentManager {
     },
     generation?: symbol,
     turnToken?: string,
-  ): AgentTimelineRow {
+  ): AgentTimelineRow | Promise<AgentTimelineRow> {
     if (generation !== undefined && !this.isSessionGenerationCurrentById(agentId, generation)) {
       throw new TurnStartCanceledError();
     }
@@ -5276,9 +5321,42 @@ export class AgentManager {
       throw new TurnStartCanceledError();
     }
     item = limitAgentTimelineItemContent(item);
-    const row = this.timelineStore.append(agentId, item, options);
-    this.enqueueDurableTimelineAppend(agentId, row, generation, turnToken);
-    return row;
+    const store = this.durableTimelineStore;
+    if (!store) {
+      return this.timelineStore.append(agentId, item, options);
+    }
+
+    const commit = this.queueDurableTimelineMutation(
+      agentId,
+      generation,
+      async () => {
+        const nextSeq = this.timelineStore.fetch(agentId, { limit: 0 }).window.nextSeq;
+        const row: AgentTimelineRow = {
+          seq: nextSeq,
+          timestamp: options?.timestamp ?? new Date().toISOString(),
+          item,
+          ...(options?.turnId ? { turnId: options.turnId } : {}),
+          ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
+        };
+        await store.bulkInsert(agentId, [row]);
+        this.timelineStore.appendRow(agentId, row);
+        return row;
+      },
+      turnToken,
+    );
+    const result = commit.then((row) => {
+      if (!row) {
+        throw new TurnStartCanceledError();
+      }
+      return row;
+    });
+    this.trackBackgroundTask(
+      result.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return result;
   }
 
   private canEmitState(agent: ManagedAgent, generation?: symbol, turnToken?: string): boolean {
@@ -5404,30 +5482,6 @@ export class AgentManager {
     this.trackBackgroundTask(task);
   }
 
-  private enqueueDurableTimelineAppend(
-    agentId: string,
-    row: AgentTimelineRow,
-    generation?: symbol,
-    turnToken?: string,
-  ): void {
-    const store = this.durableTimelineStore;
-    if (!store) {
-      return;
-    }
-    const task = this.queueDurableTimelineMutation(
-      agentId,
-      generation,
-      () => store.bulkInsert(agentId, [row]),
-      turnToken,
-    ).catch((err) => {
-      this.logger.error(
-        { err, agentId, seq: row.seq, itemType: row.item.type },
-        "Failed to append timeline row to durable store",
-      );
-    });
-    this.trackBackgroundTask(task);
-  }
-
   private enqueueDurableTimelineBulkInsert(
     agentId: string,
     rows: readonly AgentTimelineRow[],
@@ -5502,8 +5556,7 @@ export class AgentManager {
         ) {
           return;
         }
-        await mutation();
-        return undefined;
+        return await mutation();
       });
     const tail = operation.then(
       () => undefined,
