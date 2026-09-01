@@ -64,6 +64,14 @@ describe("desktop window owner", () => {
     expect(h.owner.takePendingProject(2)).toBe("/project/b");
   });
 
+  it("opens an additional window at an explicit route", async () => {
+    const h = harness();
+
+    await h.owner.openAdditional({ initialRoute: "/new?q=Start" });
+
+    expect(h.launches).toEqual([{ initialRoute: "/new?q=Start", restoreWindowState: false }]);
+  });
+
   it("focuses an existing window and delivers agent routing through its inbox", async () => {
     const h = harness();
     await h.owner.openPrimary();

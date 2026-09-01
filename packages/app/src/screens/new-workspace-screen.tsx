@@ -182,6 +182,21 @@ interface NewWorkspaceScreenProps {
   projectId?: string;
   displayName?: string;
   draftId?: string;
+  initialPrompt?: string;
+}
+
+function useSeedNewWorkspacePrompt(
+  chatDraft: ReturnType<typeof useAgentInputDraft>,
+  initialPrompt: string | undefined,
+): void {
+  const seededPromptRef = useRef(false);
+  useEffect(() => {
+    if (seededPromptRef.current || !chatDraft.isHydrated || initialPrompt === undefined) {
+      return;
+    }
+    seededPromptRef.current = true;
+    chatDraft.replaceText(initialPrompt);
+  }, [chatDraft, initialPrompt]);
 }
 
 // A terminal launch sends argv, not a message: there is nothing to attach and
@@ -1542,6 +1557,7 @@ export function NewWorkspaceScreen({
   projectId,
   displayName: displayNameProp,
   draftId,
+  initialPrompt,
 }: NewWorkspaceScreenProps) {
   const queryClient = useQueryClient();
   const { theme } = useUnistyles();
@@ -1613,7 +1629,7 @@ export function NewWorkspaceScreen({
     () => resolveLaunchTarget(manualLaunchTarget ?? formPreferences.launchTarget, terminalProfiles),
     [manualLaunchTarget, formPreferences.launchTarget, terminalProfiles],
   );
-  const [terminalPromptText, setTerminalPromptText] = useState("");
+  const [terminalPromptText, setTerminalPromptText] = useState(() => initialPrompt ?? "");
   const {
     isTerminalLaunch,
     selectedTerminalProfile,
@@ -1677,6 +1693,8 @@ export function NewWorkspaceScreen({
       initialSetup: forkDraftSetup?.setup,
     }),
   });
+  const clearChatDraft = chatDraft.clear;
+  useSeedNewWorkspacePrompt(chatDraft, initialPrompt);
   const composerState = chatDraft.composerState;
   const [pickerSelection, dispatchPickerSelection] = useReducer(
     reducePickerSelection,
@@ -2060,7 +2078,7 @@ export function NewWorkspaceScreen({
           forkDraftSetup,
           ensureWorkspace,
           serverId: selectedServerId,
-          clearDraft: chatDraft.clear,
+          clearDraft: clearChatDraft,
           draftId,
           supportsForgeSearch,
           labels: {
@@ -2078,7 +2096,7 @@ export function NewWorkspaceScreen({
     [
       composerState,
       draftId,
-      chatDraft.clear,
+      clearChatDraft,
       ensureWorkspace,
       forkDraftSetup,
       launchTarget,
@@ -2127,6 +2145,7 @@ export function NewWorkspaceScreen({
         sendTerminalInput: (terminalId, data) => {
           withConnectedClient().sendTerminalInput(terminalId, { type: "input", data });
         },
+        clearDraft: () => clearChatDraft("sent"),
         serverId: selectedServerId,
         navigate: (targetServerId, workspaceId, target) =>
           navigateToWorkspace({ serverId: targetServerId, workspaceId, target }),
@@ -2138,6 +2157,7 @@ export function NewWorkspaceScreen({
       toast.error(message);
     }
   }, [
+    clearChatDraft,
     ensureWorkspace,
     launchTarget,
     queryClient,

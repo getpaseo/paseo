@@ -22,6 +22,7 @@ import { Route as PiRouteImport } from "./routes/pi";
 import { Route as OpencodeRouteImport } from "./routes/opencode";
 import { Route as OmpRouteImport } from "./routes/omp";
 import { Route as NovaRouteImport } from "./routes/nova";
+import { Route as NewRouteImport } from "./routes/new";
 import { Route as MistralVibeRouteImport } from "./routes/mistral-vibe";
 import { Route as MinionCodeRouteImport } from "./routes/minion-code";
 import { Route as KimiRouteImport } from "./routes/kimi";
@@ -133,6 +134,11 @@ const OmpRoute = OmpRouteImport.update({
 const NovaRoute = NovaRouteImport.update({
   id: "/nova",
   path: "/nova",
+  getParentRoute: () => rootRouteImport,
+} as any);
+const NewRoute = NewRouteImport.update({
+  id: "/new",
+  path: "/new",
   getParentRoute: () => rootRouteImport,
 } as any);
 const MistralVibeRoute = MistralVibeRouteImport.update({
@@ -410,6 +416,7 @@ export interface FileRoutesByFullPath {
   "/kimi": typeof KimiRoute;
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
+  "/new": typeof NewRoute;
   "/nova": typeof NovaRoute;
   "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
@@ -470,6 +477,7 @@ export interface FileRoutesByTo {
   "/kimi": typeof KimiRoute;
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
+  "/new": typeof NewRoute;
   "/nova": typeof NovaRoute;
   "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
@@ -533,6 +541,7 @@ export interface FileRoutesById {
   "/kimi": typeof KimiRoute;
   "/minion-code": typeof MinionCodeRoute;
   "/mistral-vibe": typeof MistralVibeRoute;
+  "/new": typeof NewRoute;
   "/nova": typeof NovaRoute;
   "/omp": typeof OmpRoute;
   "/opencode": typeof OpencodeRoute;
@@ -597,6 +606,7 @@ export interface FileRouteTypes {
     | "/kimi"
     | "/minion-code"
     | "/mistral-vibe"
+    | "/new"
     | "/nova"
     | "/omp"
     | "/opencode"
@@ -657,6 +667,7 @@ export interface FileRouteTypes {
     | "/kimi"
     | "/minion-code"
     | "/mistral-vibe"
+    | "/new"
     | "/nova"
     | "/omp"
     | "/opencode"
@@ -719,6 +730,7 @@ export interface FileRouteTypes {
     | "/kimi"
     | "/minion-code"
     | "/mistral-vibe"
+    | "/new"
     | "/nova"
     | "/omp"
     | "/opencode"
@@ -782,6 +794,7 @@ export interface RootRouteChildren {
   KimiRoute: typeof KimiRoute;
   MinionCodeRoute: typeof MinionCodeRoute;
   MistralVibeRoute: typeof MistralVibeRoute;
+  NewRoute: typeof NewRoute;
   NovaRoute: typeof NovaRoute;
   OmpRoute: typeof OmpRoute;
   OpencodeRoute: typeof OpencodeRoute;
@@ -895,6 +908,13 @@ declare module "@tanstack/react-router" {
       path: "/nova";
       fullPath: "/nova";
       preLoaderRoute: typeof NovaRouteImport;
+      parentRoute: typeof rootRouteImport;
+    };
+    "/new": {
+      id: "/new";
+      path: "/new";
+      fullPath: "/new";
+      preLoaderRoute: typeof NewRouteImport;
       parentRoute: typeof rootRouteImport;
     };
     "/mistral-vibe": {
@@ -1290,6 +1310,7 @@ const rootRouteChildren: RootRouteChildren = {
   KimiRoute: KimiRoute,
   MinionCodeRoute: MinionCodeRoute,
   MistralVibeRoute: MistralVibeRoute,
+  NewRoute: NewRoute,
   NovaRoute: NovaRoute,
   OmpRoute: OmpRoute,
   OpencodeRoute: OpencodeRoute,
