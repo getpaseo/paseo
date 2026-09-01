@@ -30,8 +30,10 @@ The UI worklet owns transient motion:
 - the active gesture's starting revision
 - the last settled target
 
-React also owns presentation lifecycle: whether an overlay is mounted/displayed and whether it may
-receive pointer events. Worklets never own `display` or `pointerEvents`.
+React publishes the active panel only after its motion reaches the final anchor. Retained content
+never observes gesture previews, progress, or an unsettled target. The gesture hosts stay mounted;
+worklets reveal their retained overlays through native styles while React owns pointer events and
+accessibility.
 
 ## Why one position
 
@@ -85,8 +87,8 @@ definition, no longer eligible to begin.
 - Animated panel nodes use React Native static styles plus inline theme values. Do not attach
   Unistyles-generated styles to those nodes; Unistyles and Reanimated patching the same Fabric node
   has caused native crashes.
-- The plain React wrapper owns `display: none` after settlement. This prevents a stale Fabric animated
-  prop commit from resurrecting a closed overlay.
+- Gesture start and progress must not update React state. The retained overlay is already mounted and
+  offscreen; only the shared position and its derived native styles move during a drag.
 - Hidden tabs and workspaces use `RetainedPanel`. It owns a non-collapsible native root, visibility,
   pointer events, and the active signal consumed by `useRetainedPanelActive`.
 - Panels whose gesture wrapper already owns visibility use `RetainedPanelActivity` to provide the
@@ -98,8 +100,8 @@ definition, no longer eligible to begin.
 - Retention order and render order are separate concerns. LRU metadata may change on every switch;
   keyed retained roots must keep a stable sibling order. Moving large retained roots triggered Fabric
   Differ failures (`addViewAt` / `removeViewAt` view reuse) on Android.
-- The newly active panel must be included in the same render that changes selection. Adding it from an
-  effect creates a committed frame where every retained panel is hidden, which is a real blank screen.
+- `useIsMobilePanelActive` follows the settled target, not the requested target. Activation work may
+  begin only after the finishing animation completes; cancellation publishes nothing.
 - Do not suspend retained native subtrees with `Suspense`/`react-freeze`. Suspension changes native
   ownership and can detach descendants. Keep the tree mounted, stabilize its subscriptions/selectors,
   and use the retained-panel active signal to stop timers, polling, and other genuine background work.

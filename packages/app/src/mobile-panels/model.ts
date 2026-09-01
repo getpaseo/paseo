@@ -143,6 +143,13 @@ export function isMobilePanelGestureCurrent(
   return state.revision === startedRevision && state.gesture?.startedRevision === startedRevision;
 }
 
+export function isMobilePanelActive(
+  state: MobilePanelMotionState,
+  panel: MobilePanelView,
+): boolean {
+  return state.settledTarget === panel;
+}
+
 export function getMobilePanelFrame(position: number, width: number) {
   "worklet";
   const clampedPosition = Math.max(-1, Math.min(1, position));
