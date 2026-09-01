@@ -171,6 +171,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     const resized = canvas.width !== pixelWidth || canvas.height !== pixelHeight;
     if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
     if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+    canvas.style.width = `${currentModel.viewportWidth}px`;
     canvas.style.top = `${canvasTop}px`;
     canvas.style.height = `${canvasHeight}px`;
     const context = canvas.getContext("2d");
@@ -535,11 +536,10 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const canvasStyle = useMemo<React.CSSProperties>(
     () => ({
       ...CANVAS_STYLE,
-      width: model.viewportWidth,
       fontFamily: (loadedTypography ?? desiredTypography).family,
       fontSize: (loadedTypography ?? desiredTypography).size,
     }),
-    [desiredTypography, loadedTypography, model.viewportWidth],
+    [desiredTypography, loadedTypography],
   );
 
   return (

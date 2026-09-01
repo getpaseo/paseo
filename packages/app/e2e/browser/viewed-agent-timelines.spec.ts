@@ -185,7 +185,12 @@ test.describe("Viewed agent timelines", () => {
       await expect(
         page.getByText("Committed while the chat reconnects.", { exact: true }),
       ).toHaveCount(0);
+      // Hold the first authoritative catch-up response so the assertion observes
+      // the reconnect boundary instead of racing a socket that has not reopened yet.
+      gate.holdNextServerMessage("fetch_agent_timeline_response");
       gate.restore();
+      await gate.waitForHeldServerMessage("fetch_agent_timeline_response");
+      gate.releaseHeldServerMessage("fetch_agent_timeline_response");
       await expectReconnectingToastGone(page);
       const recoveredMessage = page.getByText("Committed while the chat reconnects.", {
         exact: true,

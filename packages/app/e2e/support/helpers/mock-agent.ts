@@ -1,7 +1,6 @@
 import type { Page } from "@playwright/test";
 import { seedWorkspace, type SeedDaemonClient } from "./seed-client";
 import { getServerId } from "./server-id";
-import { waitForWorkspaceInSidebar } from "./workspace-ui";
 import { buildHostAgentDetailRoute } from "../../../src/utils/host-routes";
 
 export interface MockAgentWorkspace {
@@ -90,15 +89,7 @@ export async function openAgentRoute(
   page: Page,
   input: { workspaceId: string; agentId: string },
 ): Promise<void> {
-  const route = buildAgentRoute(input.workspaceId, input.agentId);
-  if (page.url() === "about:blank") {
-    await page.goto("/", { waitUntil: "commit" });
-  }
-  await waitForWorkspaceInSidebar(page, {
-    serverId: getServerId(),
-    workspaceId: input.workspaceId,
-  });
-  await page.goto(route, { waitUntil: "commit" });
+  await page.goto(buildAgentRoute(input.workspaceId, input.agentId), { waitUntil: "commit" });
   await page.waitForURL(
     (url) => url.pathname.includes("/workspace/") && !url.searchParams.has("open"),
     { timeout: 60_000, waitUntil: "commit" },
