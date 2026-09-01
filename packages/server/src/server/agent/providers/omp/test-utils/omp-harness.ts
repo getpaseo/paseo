@@ -466,8 +466,8 @@ export class OmpHarness {
     await promptStarted;
   }
 
-  async interrupt(): Promise<void> {
-    await this.requireSession().interrupt();
+  async interrupt(expectedTurnId?: string): Promise<void> {
+    await this.requireSession().interrupt(expectedTurnId);
   }
 
   wasAborted(): boolean {

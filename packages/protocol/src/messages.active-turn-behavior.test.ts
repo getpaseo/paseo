@@ -3,6 +3,7 @@ import {
   AgentTimelineEntryPayloadSchema,
   CancelAgentRequestMessageSchema,
   CancelAgentResponseMessageSchema,
+  ServerInfoStatusPayloadSchema,
   SendAgentMessageRequestSchema,
 } from "./messages";
 import { describe, expect, it } from "vitest";
@@ -32,6 +33,24 @@ describe("send_agent_message_request active-turn behavior", () => {
 });
 
 describe("cancel_agent_request exact-turn behavior", () => {
+  it("accepts the independently gated exact-turn cancellation capability", () => {
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "server-1",
+        features: { agentTurnIdentity: true },
+      }).features,
+    ).toEqual({ agentTurnIdentity: true });
+
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "server-2",
+        features: { agentTurnIdentity: true, exactTurnCancellation: true },
+      }).features,
+    ).toEqual({ agentTurnIdentity: true, exactTurnCancellation: true });
+  });
+
   it("accepts an optional expected turn and an explicit cancellation status", () => {
     expect(
       CancelAgentRequestMessageSchema.parse({

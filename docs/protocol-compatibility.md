@@ -38,7 +38,9 @@ The app checks for the capability and either runs the feature or tells the user 
 
 Existing functionality keeps working across versions because of the protocol contract. Gating a new feature never substitutes for that.
 
-Exact-turn cancellation is gated by `server_info.features.agentTurnIdentity`.
+Exact-turn cancellation is gated by `server_info.features.exactTurnCancellation`.
+`agentTurnIdentity` only says that snapshots may identify the active turn; it does not
+promise that cancellation is safe at the provider boundary.
 Its `expectedTurnId` request field and response `status` are optional on the wire,
 so older peers still parse the cancel messages. The public SDK does not fall back
 to the stale unsafe operation: it requires the feature and rejects a response

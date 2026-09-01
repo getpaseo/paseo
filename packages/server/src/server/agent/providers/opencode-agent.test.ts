@@ -2657,6 +2657,32 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("does not let a late exact-turn stop abort a replacement OpenCode turn", async () => {
+    const { parent: session, openCode } = await createParentSession("ses_stale_stop");
+    const events: AgentStreamEvent[] = [];
+    openCode.sessionPromptAsyncEvents = [];
+    session.subscribe((event) => events.push(event));
+
+    try {
+      const first = await session.startTurn("first");
+      for (const event of assistantTurnEvents({ sessionId: "ses_stale_stop" })) {
+        openCode.emitEvent(event);
+      }
+      await vi.waitFor(() =>
+        expect(events).toContainEqual(
+          expect.objectContaining({ type: "turn_completed", turnId: first.turnId }),
+        ),
+      );
+
+      await session.startTurn("replacement");
+      await session.interrupt(first.turnId);
+
+      expect(openCode.calls.sessionAbort).toHaveLength(0);
+    } finally {
+      await session.close();
+    }
+  });
+
   test("does not acknowledge cancellation when both abort attempts fail", async () => {
     const { parent: session, openCode } = await createParentSession("ses_failed_idle_abort");
     const events: AgentStreamEvent[] = [];

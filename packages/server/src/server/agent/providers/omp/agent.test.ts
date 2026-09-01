@@ -280,6 +280,16 @@ describe("OMP agent client and session", () => {
     expect(scheduler.activePollCount()).toBe(0);
   });
 
+  test("does not abort OMP when the expected turn is stale", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("first");
+
+    await omp.interrupt("turn-that-is-not-active");
+
+    expect(omp.wasAborted()).toBe(false);
+  });
+
   test("does not accept a follow-up until OMP reports stable idle", async () => {
     const omp = new OmpHarness();
     await omp.start();

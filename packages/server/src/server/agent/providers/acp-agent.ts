@@ -105,6 +105,7 @@ import {
   isDefaultAgentCreateConfigUnattended,
   resolveDefaultAgentCreateConfig,
 } from "../create-agent-mode.js";
+import { TurnCancellationGate } from "../turn-cancellation-gate.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
@@ -1454,6 +1455,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
+  private readonly turnCancellationGate = new TurnCancellationGate();
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -1607,6 +1609,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
+    await this.turnCancellationGate.waitForQuiescence();
     if (this.closed) {
       throw new Error(`${this.provider} session is closed`);
     }
@@ -2144,8 +2147,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       turnId: pending.turnId ?? undefined,
     });
 
-    if (response.behavior === "deny" && response.interrupt && this.connection && this.sessionId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
+    if (response.behavior === "deny" && response.interrupt) {
+      await this.interrupt(pending.turnId ?? undefined);
     }
   }
 
@@ -2164,19 +2167,33 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     };
   }
 
-  async interrupt(): Promise<void> {
-    if (!this.connection || !this.sessionId) {
+  async interrupt(expectedTurnId?: string): Promise<void> {
+    const activeTurnId = this.activeForegroundTurnId;
+    if (expectedTurnId !== undefined && activeTurnId !== expectedTurnId) {
       return;
     }
 
-    for (const pending of this.pendingPermissions.values()) {
-      pending.resolve({ outcome: { outcome: "cancelled" } });
+    if (!activeTurnId) {
+      for (const pending of this.pendingPermissions.values()) {
+        pending.resolve({ outcome: { outcome: "cancelled" } });
+      }
+      this.pendingPermissions.clear();
+      return;
     }
-    this.pendingPermissions.clear();
 
-    if (this.activeForegroundTurnId) {
-      await this.connection.cancel({ sessionId: this.sessionId });
-    }
+    await this.turnCancellationGate.interrupt(
+      expectedTurnId,
+      () => this.activeForegroundTurnId,
+      async () => {
+        for (const pending of this.pendingPermissions.values()) {
+          pending.resolve({ outcome: { outcome: "cancelled" } });
+        }
+        this.pendingPermissions.clear();
+        if (this.connection && this.sessionId) {
+          await this.connection.cancel({ sessionId: this.sessionId });
+        }
+      },
+    );
   }
 
   async close(): Promise<void> {

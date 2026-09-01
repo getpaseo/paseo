@@ -42,10 +42,15 @@ into that contract; lifecycle callers do not interpret provider-specific errors.
 
 The public `cancel_agent_request` may carry `expectedTurnId`, taken from the
 daemon-owned `activeTurn.turnId` snapshot. The manager checks that ID inside the
-per-agent foreground mutation before it invokes provider interruption. A mismatch,
-including a request for a turn that has already ended, returns `stale_turn` and
-does not interrupt the current turn. Without an expected ID, cancellation targets
-the turn current when the daemon evaluates the request.
+per-agent foreground mutation before it invokes provider interruption, and the
+provider checks it again in the same cancellation boundary immediately before its
+native abort. A mismatch, including a request for a turn that has already ended,
+returns `stale_turn` and does not interrupt the current turn. Without an expected ID,
+cancellation targets the turn current when the daemon evaluates the request.
+
+Provider adapters serialize a cancellation's in-flight native abort with the next
+foreground start. A manager timeout does not release that provider boundary; a late
+abort must settle or fail before the session can accept a replacement turn.
 
 After an acknowledged interrupt, the manager settles the captured run even when no terminal event
 arrives or the run was still waiting for its provider turn id. The captured run token prevents an

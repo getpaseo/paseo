@@ -99,6 +99,7 @@ import {
   resolveBinaryVersion,
 } from "./diagnostic-utils.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
+import { TurnCancellationGate } from "../turn-cancellation-gate.js";
 import {
   MODE_APPLIES_NEXT_TURN_NOTICE,
   THINKING_APPLIES_NEXT_TURN_NOTICE,
@@ -138,6 +139,7 @@ function isCodexAlreadyUnarchivedError(error: unknown, threadId: string): boolea
 const TURN_START_TIMEOUT_MS = 90 * 1000;
 const INTERRUPT_TIMEOUT_MS = 2_000;
 const CODEX_PROVIDER = "codex" as const;
+const CODEX_PENDING_INTERRUPT_TARGET = "__paseo_pending_interrupt__";
 // Codex treats most app-server client names as the model-request originator.
 // This reserved Codex name is non-originating, so requests keep Codex's default
 // CLI identity instead of showing up as Paseo in provider usage logs.
@@ -3280,6 +3282,7 @@ export class CodexAppServerAgentSession implements AgentSession {
   readonly capabilities = CODEX_APP_SERVER_CAPABILITIES;
 
   private readonly logger: Logger;
+  private readonly turnCancellationGate = new TurnCancellationGate();
   private readonly config: AgentSessionConfig;
   private currentMode: string;
   private hasWorkflowModeOverride: boolean;
@@ -4140,6 +4143,7 @@ export class CodexAppServerAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
+    await this.turnCancellationGate.waitForQuiescence();
     if (this.activeForegroundTurnId || this.pendingForegroundStart) {
       throw new Error("A foreground turn is already active");
     }
@@ -4712,18 +4716,58 @@ export class CodexAppServerAgentSession implements AgentSession {
     });
   }
 
-  async interrupt(): Promise<void> {
+  async interrupt(expectedTurnId?: string): Promise<void> {
+    const observedTurnId = this.activeForegroundTurnId;
+    if (!this.isExpectedForegroundTurn(expectedTurnId)) {
+      return;
+    }
+    const target = observedTurnId ?? this.getInterruptTarget();
+    if (!target) {
+      return;
+    }
+    await this.turnCancellationGate.interrupt(
+      expectedTurnId,
+      () => this.activeForegroundTurnId ?? this.getInterruptTarget(),
+      async (targetTurnId) => {
+        await this.interruptCurrentTurn(
+          targetTurnId === CODEX_PENDING_INTERRUPT_TARGET ? undefined : targetTurnId,
+        );
+      },
+    );
+  }
+
+  private getInterruptTarget(): string | null {
+    if (
+      this.pendingForegroundStart ||
+      this.pendingForegroundTurnIdentification ||
+      this.currentTurnId
+    ) {
+      return CODEX_PENDING_INTERRUPT_TARGET;
+    }
+    return null;
+  }
+
+  private isExpectedForegroundTurn(expectedTurnId: string | undefined): boolean {
+    return expectedTurnId === undefined || this.activeForegroundTurnId === expectedTurnId;
+  }
+
+  private hasInterruptState(): boolean {
+    return Boolean(
+      this.activeForegroundTurnId || this.currentTurnId || this.pendingForegroundTurnIdentification,
+    );
+  }
+
+  private async interruptCurrentTurn(expectedTurnId?: string): Promise<void> {
     const pendingStart = this.pendingForegroundStart;
     if (pendingStart) {
       pendingStart.cancelRequested = true;
       await pendingStart.promise;
     }
+    if (!this.isExpectedForegroundTurn(expectedTurnId)) {
+      return;
+    }
     if (!this.client || !this.currentThreadId) {
-      if (
-        !this.activeForegroundTurnId &&
-        !this.currentTurnId &&
-        !this.pendingForegroundTurnIdentification
-      ) {
+      if (!this.hasInterruptState()) {
         return;
       }
       throw new Error("Cannot interrupt Codex before the active thread is initialized");
@@ -4740,11 +4784,17 @@ export class CodexAppServerAgentSession implements AgentSession {
     ) {
       turnId = await pendingIdentification.promise;
     }
-    if (!turnId && !this.activeForegroundTurnId && !this.currentTurnId) {
+    if (!this.isExpectedForegroundTurn(expectedTurnId)) {
+      return;
+    }
+    if (!turnId && !this.hasInterruptState()) {
       return;
     }
     if (!turnId || (foregroundTurnId && this.activeForegroundTurnId !== foregroundTurnId)) {
       throw new Error("Cannot interrupt Codex before turn/started identifies the active turn");
+    }
+    if (!this.isExpectedForegroundTurn(expectedTurnId)) {
+      return;
     }
     try {
       await this.client.request(

@@ -998,7 +998,10 @@ export class MockLoadTestAgentSession implements AgentSession {
     };
   }
 
-  async interrupt(): Promise<void> {
+  async interrupt(expectedTurnId?: string): Promise<void> {
+    if (expectedTurnId !== undefined && this.activeTurn?.turnId !== expectedTurnId) {
+      return;
+    }
     const turn = this.activeTurn;
     if (!turn) {
       return;

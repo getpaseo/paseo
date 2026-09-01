@@ -610,6 +610,25 @@ function createWorkspaceHandleFactory(
   };
 }
 
+function adoptAgentSnapshot(
+  current: PaseoAgent | null,
+  candidate: PaseoAgent | null,
+): PaseoAgent | null {
+  if (!current || !candidate) {
+    return candidate;
+  }
+
+  const currentUpdatedAt = Date.parse(current.updatedAt);
+  const candidateUpdatedAt = Date.parse(candidate.updatedAt);
+  if (!Number.isFinite(currentUpdatedAt)) {
+    return candidate;
+  }
+  if (!Number.isFinite(candidateUpdatedAt)) {
+    return current;
+  }
+  return candidateUpdatedAt >= currentUpdatedAt ? candidate : current;
+}
+
 function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactory {
   return (agent) => {
     const id = typeof agent === "string" ? agent : agent.id;
@@ -700,9 +719,9 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
         return result;
       },
       cancelTurn: async (expectedTurnId) => {
-        if (daemonClient.getLastServerInfoMessage()?.features?.agentTurnIdentity !== true) {
+        if (daemonClient.getLastServerInfoMessage()?.features?.exactTurnCancellation !== true) {
           throw new Error(
-            "Exact-turn cancellation requires a daemon with the agentTurnIdentity capability",
+            "Exact-turn cancellation requires a daemon with the exactTurnCancellation capability",
           );
         }
         const result: CancelAgentResponseMessage["payload"] = await daemonClient.cancelAgent(
@@ -712,8 +731,9 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
         if (result.status === undefined) {
           throw new Error("Daemon cancellation response did not include a cancellation status");
         }
-        current = result.agent;
-        return { status: result.status, agent: result.agent };
+        const adoptedAgent = adoptAgentSnapshot(current, result.agent);
+        current = adoptedAgent;
+        return { status: result.status, agent: adoptedAgent };
       },
       commands: (options) => daemonClient.listCommands({ agentId: id, ...options }),
       archive: async () => {

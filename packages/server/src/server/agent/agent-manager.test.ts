@@ -1194,6 +1194,7 @@ class McpCapableTestAgentClient extends TestAgentClient {
 
 class ControlledInterruptSession extends TestAgentSession {
   interruptCalled = false;
+  readonly interruptTurnIds: Array<string | undefined> = [];
 
   constructor(
     config: AgentSessionConfig,
@@ -1210,8 +1211,9 @@ class ControlledInterruptSession extends TestAgentSession {
     return { turnId: this.turnId };
   }
 
-  override async interrupt(): Promise<void> {
+  override async interrupt(expectedTurnId?: string): Promise<void> {
     this.interruptCalled = true;
+    this.interruptTurnIds.push(expectedTurnId);
     await this.interruptBehavior(this);
   }
 }
@@ -1271,6 +1273,32 @@ async function createControlledInterruptFixture(options: {
     },
   };
 }
+
+test("cancelAgentRun passes the expected turn identity to the provider interrupt", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "expected-turn-id",
+    agentId: "00000000-0000-4000-8000-000000000138",
+    turnId: "turn-a",
+    interrupt: async (session) => {
+      session.pushEvent({
+        type: "turn_canceled",
+        provider: session.provider,
+        reason: "Interrupted",
+        turnId: "turn-a",
+      });
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId, "turn-a")).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.session.interruptTurnIds).toEqual(["turn-a"]);
+  } finally {
+    await fixture.cleanup();
+  }
+});
 
 class HeldRuntimeInfoSession extends TestAgentSession {
   private readonly runtimeInfoRequested = deferred<void>();

@@ -40,6 +40,7 @@ import type { PaseoToolCatalog } from "../../tools/types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
+import { TurnCancellationGate } from "../../turn-cancellation-gate.js";
 import {
   checkProviderLaunchAvailable,
   resolveProviderLaunch,
@@ -876,6 +877,7 @@ export class OmpAgentSession implements AgentSession {
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
+  private readonly turnCancellationGate = new TurnCancellationGate();
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -950,6 +952,7 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<StartTurnResult> {
+    await this.turnCancellationGate.waitForQuiescence();
     if (this.activeTurnId) {
       throw new Error("An OMP turn is already active");
     }
@@ -1119,26 +1122,39 @@ export class OmpAgentSession implements AgentSession {
     };
   }
 
-  async interrupt(): Promise<void> {
+  async interrupt(expectedTurnId?: string): Promise<void> {
     const turnId = this.activeTurnId;
-    await this.runtimeSession.abort();
-    if (turnId && this.activeTurnId === turnId) {
-      this.terminalizeActiveWork();
-      this.usagePoller.stopTurn();
-      this.activeTurnId = null;
-      this.activeClientMessageId = null;
-      this.activeTurnStarted = false;
-      this.activeTurnHasUserMessage = false;
-      this.activeAssistantMessageId = null;
-      this.activeTurnTerminalAssistantMessage = null;
-      this.clearNoTurnBuffers();
-      this.emit({
-        type: "turn_canceled",
-        provider: this.provider,
-        reason: "interrupted",
-        turnId,
-      });
+    if (expectedTurnId !== undefined && turnId !== expectedTurnId) {
+      return;
     }
+    if (!turnId) {
+      return;
+    }
+    await this.turnCancellationGate.interrupt(
+      expectedTurnId,
+      () => this.activeTurnId,
+      async (targetTurnId) => {
+        await this.runtimeSession.abort();
+        if (this.activeTurnId !== targetTurnId) {
+          return;
+        }
+        this.terminalizeActiveWork();
+        this.usagePoller.stopTurn();
+        this.activeTurnId = null;
+        this.activeClientMessageId = null;
+        this.activeTurnStarted = false;
+        this.activeTurnHasUserMessage = false;
+        this.activeAssistantMessageId = null;
+        this.activeTurnTerminalAssistantMessage = null;
+        this.clearNoTurnBuffers();
+        this.emit({
+          type: "turn_canceled",
+          provider: this.provider,
+          reason: "interrupted",
+          turnId: targetTurnId,
+        });
+      },
+    );
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {

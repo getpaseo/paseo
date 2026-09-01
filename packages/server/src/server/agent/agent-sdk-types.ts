@@ -658,7 +658,7 @@ export interface AgentSession {
    * Calling while already idle is a successful no-op. Reject only when foreground ownership is
    * still uncertain.
    */
-  interrupt(): Promise<void>;
+  interrupt(expectedTurnId?: string): Promise<void>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;
   listCommands?(): Promise<AgentSlashCommand[]>;

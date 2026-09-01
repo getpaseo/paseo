@@ -2742,7 +2742,11 @@ export class AgentManager {
       return { status: "not_running" };
     }
 
-    const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
+    const interruptAcknowledged = await this.interruptSession(
+      agent.session,
+      agentId,
+      expectedTurnId,
+    );
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
       timeoutMs: interruptAcknowledged
@@ -2808,10 +2812,14 @@ export class AgentManager {
     }
   }
 
-  private async interruptSession(session: AgentSession, agentId: string): Promise<boolean> {
+  private async interruptSession(
+    session: AgentSession,
+    agentId: string,
+    expectedTurnId?: string,
+  ): Promise<boolean> {
     try {
       const result = await this.waitWithTimeout({
-        operation: session.interrupt(),
+        operation: session.interrupt(expectedTurnId),
         timeoutMs: this.rescueTimeouts.interruptSessionMs,
         onLateError: (error) => {
           this.logger.warn(

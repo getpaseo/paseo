@@ -709,6 +709,37 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  test("does not start a replacement while Claude's exact-turn interrupt is still pending", async () => {
+    const { queryFactory, queryMock } = createQueryMock();
+    let resolveInterrupt!: () => void;
+    const interruptSettled = new Promise<void>((resolve) => {
+      resolveInterrupt = resolve;
+    });
+    const interrupt = vi.fn(async () => interruptSettled);
+    Object.assign(queryMock, { interrupt });
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd(), modeId: "default" });
+
+    try {
+      const first = await session.startTurn("first");
+      const cancellation = session.interrupt(first.turnId);
+      await vi.waitFor(() => expect(interrupt).toHaveBeenCalledOnce());
+
+      const replacement = session.startTurn("second");
+      await Promise.resolve();
+      expect(queryFactory).toHaveBeenCalledOnce();
+
+      resolveInterrupt();
+      await cancellation;
+      await replacement;
+    } finally {
+      await session.close();
+    }
+  });
+
   test("passes exact configured Fable 5 IDs through to Claude Code", async () => {
     const { queryFactory, queryMock } = createQueryMock();
     const client = new ClaudeAgentClient({

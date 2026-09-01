@@ -3482,6 +3482,8 @@ export const ServerInfoStatusPayloadSchema = z
         canonicalSubmittedPrompts: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
         agentTurnIdentity: z.boolean().optional(),
+        // COMPAT(exactTurnCancellation): added in v0.7.1, remove after 2027-03-01 once daemon floor >= v0.7.1.
+        exactTurnCancellation: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
         stableProjectIdentity: z.boolean().optional(),
         // COMPAT(workspaceScriptManagement): added in v0.1.105, remove gate after 2027-01-10.

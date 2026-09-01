@@ -66,7 +66,8 @@ authoritative and includes the refreshed snapshot:
 Omit the ID only when you mean “cancel whichever turn is current when the daemon
 handles this request”; the response status and snapshot remain authoritative.
 The method rejects on transport, timeout, provider, or incompatible-daemon
-errors. It requires the daemon's `agentTurnIdentity` capability.
+errors. It requires the daemon's `exactTurnCancellation` capability. A daemon
+that only advertises `agentTurnIdentity` cannot be used for this operation.
 
 ## Keep a session alive for follow-ups
 

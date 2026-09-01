@@ -105,7 +105,7 @@ Creation options include `config`, `cwd`, `parent`, `title`, `prompt`, `env`, `o
 `PaseoAgentCancelTurnResult` contains `status` (`settled`, `not_running`, or
 `stale_turn`) and the authoritative `agent` snapshot, which may be `null` if the
 agent disappeared. `cancelTurn(expectedTurnId?)` requires the daemon's
-`agentTurnIdentity` capability and rejects when the daemon cannot acknowledge
+`exactTurnCancellation` capability and rejects when the daemon cannot acknowledge
 the operation.
 
 `PaseoAgentCommandsResult` contains `agentId`, `commands`, and `error`. Each command has `name`, `description`, `argumentHint`, and an optional `kind` of `"command"` or `"skill"`. A provider that cannot answer reports it in `error` rather than rejecting; providers that expose no command list at all return an empty array.

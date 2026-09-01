@@ -453,7 +453,7 @@ interface AgentSession {
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
-  interrupt(): Promise<void>;
+  interrupt(expectedTurnId?: string): Promise<void>;
   close(): Promise<void>;
   // Optional:
   listCommands?(): Promise<AgentSlashCommand[]>;
@@ -526,10 +526,11 @@ Tests use `isProviderAvailable(provider)` to skip when the binary or credentials
 
 **Runtime settings can override the command.** Users can configure custom binary paths or environment variables per provider via `ProviderRuntimeSettings`. Your factory in the registry should pass `runtimeSettings?.["your-provider"]` through to the constructor.
 
-**Session-scoped cancellation needs a stop boundary inside the provider.** Some agents cancel the whole session rather than one turn — OpenCode's `session.abort` is the example. A cancel that is still in flight when the next run starts will kill that replacement run, which is what makes "stop, then immediately prompt again" (`replaceRunning`, `notifyOnFinish` wakes, schedules) flaky. Own this in the provider session, not in `AgentManager`:
+**Every cancellation needs a target check and a stop boundary inside the provider.** Some agents cancel the whole session rather than one turn — OpenCode's `session.abort` is the example. A cancel that is still in flight when the next run starts will kill that replacement run, which is what makes "stop, then immediately prompt again" (`replaceRunning`, `notifyOnFinish` wakes, schedules) flaky. Own this in the provider session, not in `AgentManager`:
 
 - Model the stop as an explicit `stopping` turn-state variant carrying the canceled run's terminal and the cancellation the caller is still owed. Pressing Stop again retries the stop already in progress rather than opening a second one; never fire a detached retry, it will outlive its boundary.
 - **Scope the cancel settlement the way the provider scopes the cancel.** If cancellation is session-scoped, so is its settlement: track it on the session, accumulating every request issued, and let it outlive the stop that issued it. A request still in flight lands on the runner whenever the server gets to it — however many stops have come and gone since. Scoping it to the current stop looks right and quietly drops older requests from the gate. Only the newest may hold the gate closed, since recovering from a failed cancel is what pressing Stop again is for.
 - Gate the operations **the daemon issues** (prompt, slash command, summarize) on both the terminal and cancel settlement. Permission and question responses are not runner operations and must stay outside the gate, or an auto-approve deadlocks the stop. Runs the _provider_ starts on its own — plugin or autonomous wakes — are observed, not gated: the daemon does not choose when they begin, and holding their events back does not protect them from a cancel already in flight, it only hides a run that may already be dead.
+- Recheck the expected Paseo turn inside the provider immediately before the native interrupt or cancel call. Pass the target identity to the primitive when the upstream supports it; otherwise serialize the adapter's pre-abort work and abort under the same gate. A timeout at the manager boundary must not detach a native abort that can later reach a replacement turn.
 - Fail closed: if the cancel never succeeded you never proved the run stopped, so refuse new runs until the next Stop issues a fresh cancel. `AgentManager` already turns a rejected `interrupt()` into a refused cancel.
 - Suppress the canceled run's residue only until its authoritative terminal. Anything the provider publishes after that terminal is a new run by construction and must take the normal live path — buffering it and replaying it later is how autonomous/plugin wakes get lost.

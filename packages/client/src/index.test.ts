@@ -768,6 +768,7 @@ test("agent handles cancel the expected turn and adopt the authoritative snapsho
   const { client, ws } = await connectClient({
     providersSnapshotCwd: true,
     agentTurnIdentity: true,
+    exactTurnCancellation: true,
   });
   const runningAgent = createAgent({
     status: "running",
@@ -809,6 +810,7 @@ test("agent handles report stale cancellation and refresh to the daemon snapshot
   const { client, ws } = await connectClient({
     providersSnapshotCwd: true,
     agentTurnIdentity: true,
+    exactTurnCancellation: true,
   });
   const firstAgent = createAgent({
     status: "running",
@@ -846,10 +848,57 @@ test("agent handles report stale cancellation and refresh to the daemon snapshot
   await client.close();
 });
 
+test("agent handles keep a newer live snapshot when a cancellation response arrives late", async () => {
+  const { client, ws } = await connectClient({
+    providersSnapshotCwd: true,
+    agentTurnIdentity: true,
+    exactTurnCancellation: true,
+  });
+  const firstAgent = createAgent({
+    status: "running",
+    updatedAt: "2026-05-16T00:01:00.000Z",
+    activeTurn: { turnId: "turn-a", startedAt: "2026-05-16T00:01:00.000Z" },
+  });
+  const newerAgent = createAgent({
+    status: "running",
+    updatedAt: "2026-05-16T00:02:00.000Z",
+    activeTurn: { turnId: "turn-b", startedAt: "2026-05-16T00:02:00.000Z" },
+  });
+  const agent = client.agents.ref(firstAgent);
+  const unsubscribe = agent.subscribe(() => {});
+
+  const cancelPromise = agent.cancelTurn("turn-a");
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "agent_update",
+      payload: { kind: "upsert", agent: newerAgent, project: null },
+    }),
+  );
+  ws.message(
+    sessionMessage({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        agent: firstAgent,
+        status: "stale_turn",
+        error: null,
+      },
+    }),
+  );
+
+  await expect(cancelPromise).resolves.toEqual({ status: "stale_turn", agent: newerAgent });
+  expect(agent.current()).toEqual(newerAgent);
+  unsubscribe();
+  await client.close();
+});
+
 test("agent handles use daemon current-turn semantics when no turn is supplied", async () => {
   const { client, ws } = await connectClient({
     providersSnapshotCwd: true,
     agentTurnIdentity: true,
+    exactTurnCancellation: true,
   });
   const agent = client.agents.ref(createAgent({ status: "running" }));
 
@@ -876,10 +925,13 @@ test("agent handles use daemon current-turn semantics when no turn is supplied",
 });
 
 test("agent handles require the exact-turn cancellation capability and explicit status", async () => {
-  const legacy = await connectClient();
+  const legacy = await connectClient({
+    providersSnapshotCwd: true,
+    agentTurnIdentity: true,
+  });
   const legacyAgent = legacy.client.agents.ref(createAgent());
   await expect(legacyAgent.cancelTurn("turn-a")).rejects.toThrow(
-    /agentTurnIdentity|update the host/i,
+    /exactTurnCancellation|update the host/i,
   );
   expect(legacy.ws.sent).toHaveLength(1);
   await legacy.client.close();
@@ -888,6 +940,7 @@ test("agent handles require the exact-turn cancellation capability and explicit 
   const { client, ws } = await connectClient({
     providersSnapshotCwd: true,
     agentTurnIdentity: true,
+    exactTurnCancellation: true,
   });
   const agent = client.agents.ref(createAgent());
   const before = agent.current();

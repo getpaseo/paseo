@@ -263,8 +263,10 @@ New session RPCs use dotted names with `.request` and `.response` suffixes, such
 Agent snapshots optionally carry the daemon-owned active turn identity, and turn lifecycle stream events
 optionally carry the same `turnId`. New clients use these fields when present and normalize an old daemon's
 status once at the directory boundary rather than maintaining a second activity model. Clients with the
-`agentTurnIdentity` server feature may send `expectedTurnId` with cancellation requests; the response reports
-the authoritative `settled`, `not_running`, or `stale_turn` status and refreshed snapshot.
+`exactTurnCancellation` server feature may send `expectedTurnId` with cancellation requests; the response
+reports the authoritative `settled`, `not_running`, or `stale_turn` status and refreshed snapshot. The
+provider boundary rechecks the target turn immediately before its native abort and holds the next foreground
+start until that abort settles.
 
 - Terminal subscribe/input/capture commands
 - Voice/dictation streaming events (`dictation_stream_*`, `assistant_chunk`, `audio_output`, `transcription_result`)

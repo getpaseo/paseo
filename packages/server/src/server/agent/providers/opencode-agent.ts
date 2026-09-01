@@ -3445,8 +3445,17 @@ class OpenCodeAgentSession implements AgentSession {
     });
   }
 
-  async interrupt(): Promise<void> {
+  async interrupt(expectedTurnId?: string): Promise<void> {
     const turnId = this.activeForegroundTurnId;
+    const stoppingTurnId =
+      this.turnState.status === "stopping" ? this.turnState.stop.pendingCancellationTurnId : null;
+    if (
+      expectedTurnId !== undefined &&
+      turnId !== expectedTurnId &&
+      stoppingTurnId !== expectedTurnId
+    ) {
+      return;
+    }
     this.abortController?.abort();
     const abort = this.issueStop(turnId);
     // COMPAT(opencodeSlowAbort): OpenCode 1.14.42+ blocks session.abort until

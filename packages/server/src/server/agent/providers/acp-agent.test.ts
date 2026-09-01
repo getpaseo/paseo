@@ -86,7 +86,10 @@ describe("buildACPClientCapabilities", () => {
 
 interface ACPSessionInternals {
   sessionId: string | null;
-  connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
+  connection: {
+    prompt: (...args: unknown[]) => Promise<PromptResponse>;
+    cancel?: (args: { sessionId: string }) => Promise<void>;
+  };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
@@ -2794,6 +2797,33 @@ describe("ACPAgentSession", () => {
       turnId,
     });
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("waits for a late ACP cancel to settle before accepting a replacement turn", async () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+    let resolveCancel!: () => void;
+    const cancelSettled = new Promise<void>((resolve) => {
+      resolveCancel = resolve;
+    });
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+    const cancel = vi.fn(async () => cancelSettled);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt, cancel };
+
+    const first = await session.startTurn("first");
+    const cancellation = session.interrupt(first.turnId);
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledOnce());
+
+    internals.activeForegroundTurnId = null;
+    const replacement = session.startTurn("second");
+    await Promise.resolve();
+    expect(prompt).toHaveBeenCalledOnce();
+
+    resolveCancel();
+    await cancellation;
+    await replacement;
+    expect(prompt).toHaveBeenCalledTimes(2);
   });
 
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {

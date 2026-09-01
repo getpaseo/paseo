@@ -43,6 +43,7 @@ import {
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
+import { TurnCancellationGate } from "../../turn-cancellation-gate.js";
 import {
   checkProviderLaunchAvailable,
   resolveProviderLaunch,
@@ -1250,6 +1251,7 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly currentModeId: string | null;
   private readonly logger: Logger;
   private readonly usagePoller: PiUsagePoller;
+  private readonly turnCancellationGate = new TurnCancellationGate();
   private closed = false;
   // Pi reports an aborted OpenAI Responses stream before the abort RPC resolves.
   // Keep the turn active until that RPC acknowledges the user-requested cancellation.
@@ -1314,6 +1316,7 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<StartTurnResult> {
+    await this.turnCancellationGate.waitForQuiescence();
     if (this.activeTurnId) {
       throw new Error("A Pi turn is already active");
     }
@@ -1529,8 +1532,22 @@ export class PiRpcAgentSession implements AgentSession {
     };
   }
 
-  async interrupt(): Promise<void> {
+  async interrupt(expectedTurnId?: string): Promise<void> {
     const turnId = this.activeTurnId;
+    if (expectedTurnId !== undefined && turnId !== expectedTurnId) {
+      return;
+    }
+    if (!turnId) {
+      return;
+    }
+    await this.turnCancellationGate.interrupt(
+      expectedTurnId,
+      () => this.activeTurnId,
+      async (targetTurnId) => this.interruptTurn(targetTurnId),
+    );
+  }
+
+  private async interruptTurn(turnId: string): Promise<void> {
     if (turnId) {
       this.interruptingTurnId = turnId;
       this.lastInterruptedTurnId = turnId;
@@ -1544,6 +1561,12 @@ export class PiRpcAgentSession implements AgentSession {
         if (!isPiMissingClearQueueRpc(error)) {
           throw error;
         }
+      }
+      if (this.activeTurnId !== turnId) {
+        if (this.interruptingTurnId === turnId) {
+          this.interruptingTurnId = null;
+        }
+        return;
       }
       await this.runtimeSession.abort();
     } catch (error) {

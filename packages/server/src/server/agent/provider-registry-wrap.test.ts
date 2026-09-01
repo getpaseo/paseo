@@ -114,8 +114,8 @@ class FakeSession implements AgentSession {
     return null;
   }
 
-  async interrupt() {
-    this.recordedCalls.push("interrupt");
+  async interrupt(expectedTurnId?: string) {
+    this.recordedCalls.push(`interrupt:${expectedTurnId ?? "none"}`);
   }
 
   async close() {
@@ -193,5 +193,14 @@ describe("wrapSessionProvider", () => {
       "tryHandleOutOfBand",
       "tryHandleOutOfBand.run",
     ]);
+  });
+
+  test("forwards the expected turn identity to interrupt", async () => {
+    const session = new FakeSession();
+    const wrapped = wrapSessionProvider("custom-claude", session);
+
+    await wrapped.interrupt("turn-a");
+
+    expect(session.recordedCalls).toContain("interrupt:turn-a");
   });
 });

@@ -17,6 +17,7 @@ import { pathToFileURL } from "node:url";
 import { describe, expect, onTestFinished, test } from "vitest";
 
 import type { AgentSession, AgentSessionConfig, AgentStreamEvent } from "../../agent-sdk-types.js";
+import { asInternals } from "../../../test-utils/class-mocks.js";
 import {
   PiProviderParamsSchema,
   PiRpcAgentClient,
@@ -950,6 +951,42 @@ describe("PiRpcAgentSession", () => {
     await session.interrupt();
 
     expect(fakeSession.controlRequests).toEqual(["clear_queue", "abort"]);
+  });
+
+  test("waits for Pi's pre-abort cancellation step before accepting a replacement turn", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    let resolveClearQueue!: () => void;
+    const clearQueueSettled = new Promise<void>((resolve) => {
+      resolveClearQueue = resolve;
+    });
+    let clearQueueStarted!: () => void;
+    const clearQueueStartedPromise = new Promise<void>((resolve) => {
+      clearQueueStarted = resolve;
+    });
+    fakeSession.clearQueue = async () => {
+      fakeSession.controlRequests.push("clear_queue");
+      clearQueueStarted();
+      await clearQueueSettled;
+    };
+
+    const first = await session.startTurn("first");
+    const cancellation = session.interrupt(first.turnId);
+    await clearQueueStartedPromise;
+    asInternals<{ activeTurnId: string | null }>(session).activeTurnId = null;
+
+    const replacement = session.startTurn("second");
+    await waitForImmediate();
+    expect(fakeSession.prompts).toEqual([{ message: "first", imageCount: 0 }]);
+
+    resolveClearQueue();
+    await cancellation;
+    await replacement;
+    expect(fakeSession.prompts).toEqual([
+      { message: "first", imageCount: 0 },
+      { message: "second", imageCount: 0 },
+    ]);
+    expect(fakeSession.controlRequests).toEqual(["clear_queue"]);
   });
 
   test("still interrupts when an older Pi binary lacks clear_queue", async () => {
