@@ -15,6 +15,7 @@ import type { GestureType } from "react-native-gesture-handler";
 import {
   cancelAnimation,
   Easing,
+  useAnimatedReaction,
   useSharedValue,
   withTiming,
   type SharedValue,
@@ -104,6 +105,22 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
     setActivePanel(panel);
   }, []);
 
+  useAnimatedReaction(
+    () => ({ motionState: motionState.value, position: position.value }),
+    ({ motionState: currentState, position: currentPosition }) => {
+      const settled = transitionMobilePanel(currentState, {
+        type: "position.changed",
+        position: currentPosition,
+      });
+      if (settled.state === currentState) {
+        return;
+      }
+      motionState.value = settled.state;
+      scheduleOnRN(publishActivePanel, settled.state.settledTarget, settled.state.revision);
+    },
+    [motionState, position, publishActivePanel],
+  );
+
   const animateTransition = useCallback(
     (transition: MobilePanelTransition) => {
       "worklet";
@@ -111,29 +128,12 @@ export function MobilePanelsProvider({ children }: { children: ReactNode }) {
         return;
       }
       const target = transition.animationTarget;
-      const revision = transition.state.revision;
-      position.value = withTiming(
-        getMobilePanelAnchor(target),
-        { duration: ANIMATION_DURATION, easing: ANIMATION_EASING },
-        (finished) => {
-          if (!finished) {
-            return;
-          }
-          const currentState = motionState.value;
-          const settled = transitionMobilePanel(currentState, {
-            type: "animation.finished",
-            revision,
-            target,
-          });
-          if (settled.state === currentState) {
-            return;
-          }
-          motionState.value = settled.state;
-          scheduleOnRN(publishActivePanel, target, revision);
-        },
-      );
+      position.value = withTiming(getMobilePanelAnchor(target), {
+        duration: ANIMATION_DURATION,
+        easing: ANIMATION_EASING,
+      });
     },
-    [motionState, position, publishActivePanel],
+    [position],
   );
 
   const applySelection = useCallback(

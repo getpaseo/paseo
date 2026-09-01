@@ -30,10 +30,10 @@ The UI worklet owns transient motion:
 - the active gesture's starting revision
 - the last settled target
 
-React publishes the active panel only after its motion reaches the final anchor. Retained content
-never observes gesture previews, progress, or an unsettled target. The gesture hosts stay mounted;
-worklets reveal their retained overlays through native styles while React owns pointer events and
-accessibility.
+React publishes the active panel only when the canonical target and the UI-thread position agree at
+the final anchor. Retained content never observes gesture previews, progress, or an unsettled target.
+The gesture hosts stay mounted; worklets reveal their retained overlays through native styles while
+React owns pointer events and accessibility.
 
 ## Why one position
 
@@ -57,8 +57,10 @@ while that revision still owns the gesture.
 
 When a React command arrives during a drag, its newer revision clears gesture ownership and starts
 motion toward the new target. The older gesture's remaining updates and finish callback are ignored.
-Canceled gestures return to the latest canonical target. Animation completion is accepted only when
-its target and revision still match the canonical command.
+Canceled gestures return to the latest canonical target. A successful gesture starts its finishing
+motion immediately; the matching React command adopts that motion instead of restarting it. Position
+settlement and command acceptance may arrive in either order. Activity changes after both agree on
+the same target.
 
 Manual gesture arbitration has two phases:
 
@@ -100,8 +102,9 @@ definition, no longer eligible to begin.
 - Retention order and render order are separate concerns. LRU metadata may change on every switch;
   keyed retained roots must keep a stable sibling order. Moving large retained roots triggered Fabric
   Differ failures (`addViewAt` / `removeViewAt` view reuse) on Android.
-- `useIsMobilePanelActive` follows the settled target, not the requested target. Activation work may
-  begin only after the finishing animation completes; cancellation publishes nothing.
+- `useIsMobilePanelActive` follows the settled target, not the requested target. Position at the
+  canonical target's anchor is the settlement signal; animation duration and completion callbacks
+  do not own activity. Cancellation publishes nothing.
 - Do not suspend retained native subtrees with `Suspense`/`react-freeze`. Suspension changes native
   ownership and can detach descendants. Keep the tree mounted, stabilize its subscriptions/selectors,
   and use the retained-panel active signal to stop timers, polling, and other genuine background work.
@@ -109,5 +112,5 @@ definition, no longer eligible to begin.
 ## Tests
 
 `packages/app/src/mobile-panels/model.test.ts` exercises command, drag, cancellation, interruption,
-rapid-command, stale-completion, and width-projection sequences through the transition model. Add a
-sequence there whenever ownership or ordering changes.
+rapid-command, position-settlement, and width-projection sequences through the transition model. Add
+a sequence there whenever ownership or ordering changes.
