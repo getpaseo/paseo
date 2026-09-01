@@ -2707,6 +2707,7 @@ export const ptBR: TranslationResources = {
         nameAccessibility: "Nome da inicialização",
         commandAccessibility: "Comando da inicialização",
         nameRequired: "O nome é obrigatório",
+        nameDuplicate: "Cada inicialização precisa de um nome exclusivo",
         commandRequired: "O comando é obrigatório",
         newLaunch: "Nova inicialização",
         editLaunch: "Editar {{name}}",

@@ -2665,6 +2665,7 @@ export const ar: TranslationResources = {
         nameAccessibility: "اسم التشغيل",
         commandAccessibility: "أمر التشغيل",
         nameRequired: "الاسم مطلوب",
+        nameDuplicate: "يجب أن يكون لكل عملية تشغيل اسم فريد",
         commandRequired: "الأمر مطلوب",
         newLaunch: "تشغيل جديد",
         editLaunch: "تعديل {{name}}",
