@@ -18,6 +18,7 @@ export interface ForegroundTurnWaiter {
 export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
+  readonly generation: symbol;
   stagedEvents: PendingAgentSessionEvent[];
   start:
     | { status: "pending" }
@@ -31,6 +32,7 @@ export interface PendingForegroundRun {
 export interface AutonomousAgentRun {
   token: string;
   kind: "autonomous";
+  readonly generation: symbol;
   turnId: string | null;
   started: true;
   settled: boolean;
@@ -48,8 +50,8 @@ export interface ForegroundRunAgentState {
 export class AgentRunState {
   private readonly runs = new Map<string, TrackedAgentRun>();
 
-  createPendingRun(agentId: string): PendingForegroundRun {
-    const pendingRun = createPendingForegroundRun();
+  createPendingRun(agentId: string, generation: symbol): PendingForegroundRun {
+    const pendingRun = createPendingForegroundRun(generation);
     this.runs.set(agentId, pendingRun);
     return pendingRun;
   }
@@ -78,7 +80,7 @@ export class AgentRunState {
     return run.start.status === "started" ? run.start.turnId : null;
   }
 
-  trackAutonomousRun(agentId: string, turnId: string | null): TrackedAgentRun {
+  trackAutonomousRun(agentId: string, turnId: string | null, generation: symbol): TrackedAgentRun {
     const current = this.runs.get(agentId);
     if (current) {
       return current;
@@ -87,6 +89,7 @@ export class AgentRunState {
     const run: AutonomousAgentRun = {
       ...createTrackedRunState(),
       kind: "autonomous",
+      generation,
       turnId,
       started: true,
     };
@@ -281,10 +284,11 @@ export class ForegroundTurnStream {
   }
 }
 
-function createPendingForegroundRun(): PendingForegroundRun {
+function createPendingForegroundRun(generation: symbol): PendingForegroundRun {
   return {
     ...createTrackedRunState(),
     kind: "foreground",
+    generation,
     start: { status: "pending" },
     stagedEvents: [],
   };

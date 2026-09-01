@@ -2738,15 +2738,12 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("keeps a waiting replacement behind an abort issued while it waits", async () => {
+  test("does not dynamically extend a waiting replacement behind a second abort", async () => {
     const { parent: session, openCode } = await createParentSession("ses_stop_during_wait");
     const settleFirstAbort = createTestDeferred<void>();
-    const settleSecondAbort = createTestDeferred<void>();
     openCode.sessionPromptAsyncEvents = [];
     openCode.sessionAbortImplementation = async () => {
-      await (openCode.calls.sessionAbort.length === 1
-        ? settleFirstAbort.promise
-        : settleSecondAbort.promise);
+      await settleFirstAbort.promise;
       return { data: true };
     };
 
@@ -2770,16 +2767,13 @@ describe("OpenCode adapter startTurn error handling", () => {
       settleFirstAbort.resolve();
       await firstStop;
       await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
-      await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(2));
-
-      settleSecondAbort.resolve();
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
       await secondStop;
       await replacement;
+      expect(openCode.calls.sessionAbort).toHaveLength(1);
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
     } finally {
       settleFirstAbort.resolve();
-      settleSecondAbort.resolve();
       await replacement?.catch(() => undefined);
       await session.close();
     }
@@ -2858,7 +2852,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("serializes overlapping Stops before admitting a replacement", async () => {
+  test("keeps overlapping Stops from extending a replacement's barrier", async () => {
     const { parent: session, openCode } = await createParentSession("ses_overlapping_stops");
     const settleFirstAbort = createTestDeferred<void>();
     openCode.sessionPromptAsyncEvents = [];
@@ -2891,8 +2885,8 @@ describe("OpenCode adapter startTurn error handling", () => {
       settleFirstAbort.resolve();
       await firstStop;
       await secondStop;
-      expect(openCode.calls.sessionAbort).toHaveLength(2);
       await replacement;
+      expect(openCode.calls.sessionAbort).toHaveLength(1);
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
     } finally {
       settleFirstAbort.resolve();

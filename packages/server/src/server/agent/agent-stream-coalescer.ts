@@ -20,6 +20,7 @@ export interface AgentStreamCoalescerFlush {
   item: CoalescableTimelineItem;
   provider: AgentProvider;
   turnId?: string;
+  generation?: symbol;
 }
 
 export interface AgentStreamCoalescerOptions {
@@ -35,6 +36,7 @@ interface PendingTextEntry {
   text: string;
   provider: AgentProvider;
   turnId?: string;
+  generation?: symbol;
 }
 
 interface PendingToolCallEntry {
@@ -42,6 +44,7 @@ interface PendingToolCallEntry {
   item: Extract<AgentTimelineItem, { type: "tool_call" }>;
   provider: AgentProvider;
   turnId?: string;
+  generation?: symbol;
 }
 
 type PendingAgentStreamEntry = PendingTextEntry | PendingToolCallEntry;
@@ -99,7 +102,7 @@ export class AgentStreamCoalescer {
     this.onFlush = options.onFlush;
   }
 
-  handle(agentId: string, event: AgentStreamEvent): boolean {
+  handle(agentId: string, event: AgentStreamEvent, generation?: symbol): boolean {
     if (!isCoalescableTimelineEvent(event)) {
       return false;
     }
@@ -109,7 +112,7 @@ export class AgentStreamCoalescer {
     }
 
     const buffer = this.getOrCreateBuffer(agentId);
-    this.appendToBuffer(buffer, event);
+    this.appendToBuffer(buffer, event, generation);
 
     if (isTerminalToolCall(event.item)) {
       this.flushBuffer(agentId);
@@ -170,7 +173,11 @@ export class AgentStreamCoalescer {
     return buffer;
   }
 
-  private appendToBuffer(buffer: PendingAgentStreamBuffer, event: CoalescableTimelineEvent): void {
+  private appendToBuffer(
+    buffer: PendingAgentStreamBuffer,
+    event: CoalescableTimelineEvent,
+    generation?: symbol,
+  ): void {
     if (isTextTimelineItem(event.item)) {
       buffer.entries.push({
         kind: "text",
@@ -178,6 +185,7 @@ export class AgentStreamCoalescer {
         text: event.item.text,
         provider: event.provider,
         ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+        ...(generation !== undefined ? { generation } : {}),
       });
       return;
     }
@@ -188,6 +196,7 @@ export class AgentStreamCoalescer {
       item: event.item,
       provider: event.provider,
       ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+      ...(generation !== undefined ? { generation } : {}),
     };
 
     if (existingIndex !== undefined) {
@@ -251,6 +260,7 @@ export class AgentStreamCoalescer {
               : entry.item,
           provider: entry.provider,
           ...(entry.turnId !== undefined ? { turnId: entry.turnId } : {}),
+          ...(entry.generation !== undefined ? { generation: entry.generation } : {}),
         });
       }
     } finally {

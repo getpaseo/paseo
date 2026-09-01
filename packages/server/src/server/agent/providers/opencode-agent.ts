@@ -98,7 +98,7 @@ import {
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
-import { TurnCancellationGate } from "../turn-cancellation-gate.js";
+import { TurnCancellationGate, type TurnStartToken } from "../turn-cancellation-gate.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
@@ -3702,29 +3702,34 @@ class OpenCodeAgentSession implements AgentSession {
         throw new Error("OpenCode is still stopping the previous turn");
       }
 
-      this.runningToolCalls.clear();
-      this.subAgentsByCallId.clear();
-      this.subAgentCallIdByChildSessionId.clear();
       const turnAbortController = new AbortController();
-      this.abortController = turnAbortController;
-      await this.ensureMcpServersConfigured();
+      await this.ensureMcpServersConfigured(start);
+      this.turnCancellationGate.assertCurrent(start);
       const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
-      this.accumulatedUsage =
+      const accumulatedUsage =
         contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
 
       const parts = buildOpenCodePromptParts(prompt);
-      this.pendingUserMessageText = buildOpenCodeUserTimelineText(prompt);
-      this.pendingClientMessageId = options?.clientMessageId ?? null;
-      this.suppressAssistantMessagesUntilIdle.active = false;
+      const pendingUserMessageText = buildOpenCodeUserTimelineText(prompt);
+      const pendingClientMessageId = options?.clientMessageId ?? null;
       const model = this.parseModel(this.config.model);
       const thinkingOptionId = this.config.thinkingOptionId;
       const effectiveVariant = thinkingOptionId ?? undefined;
       const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
+      this.abortController = turnAbortController;
       await this.awaitEventStreamReady(turnAbortController);
       this.turnCancellationGate.assertCurrent(start);
 
+      this.runningToolCalls.clear();
+      this.subAgentsByCallId.clear();
+      this.subAgentCallIdByChildSessionId.clear();
+      this.accumulatedUsage = accumulatedUsage;
+      this.pendingUserMessageText = pendingUserMessageText;
+      this.pendingClientMessageId = pendingClientMessageId;
+      this.suppressAssistantMessagesUntilIdle.active = false;
       const turnId = this.createTurnId();
+      this.turnCancellationGate.assertCurrent(start);
       this.materializedParts.clear();
       this.turnState = { status: "running", turnId };
       this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
@@ -3742,6 +3747,7 @@ class OpenCodeAgentSession implements AgentSession {
               ...(model ? { providerID: model.providerID, modelID: model.modelID } : {}),
             })
             .then((response) => {
+              if (!this.turnCancellationGate.isCurrent(start)) return;
               if (response.error) {
                 this.suppressAssistantMessagesUntilIdle.active = false;
                 this.finishForegroundTurn(
@@ -3756,6 +3762,7 @@ class OpenCodeAgentSession implements AgentSession {
               return;
             })
             .catch((error) => {
+              if (!this.turnCancellationGate.isCurrent(start)) return;
               this.suppressAssistantMessagesUntilIdle.active = false;
               this.finishForegroundTurn(
                 {
@@ -3785,6 +3792,7 @@ class OpenCodeAgentSession implements AgentSession {
             ...(effectiveVariant ? { variant: effectiveVariant } : {}),
           })
           .then((response) => {
+            if (!this.turnCancellationGate.isCurrent(start)) return;
             if (response.error) {
               if (isOpenCodeHeadersTimeoutFailure(response.error)) {
                 this.logger.warn(
@@ -3806,6 +3814,7 @@ class OpenCodeAgentSession implements AgentSession {
             return;
           })
           .catch((err) => {
+            if (!this.turnCancellationGate.isCurrent(start)) return;
             if (isOpenCodeHeadersTimeoutFailure(err)) {
               this.logger.warn(
                 {
@@ -3869,6 +3878,7 @@ class OpenCodeAgentSession implements AgentSession {
             });
             start.complete();
             const promptResponse = await promptRequest;
+            if (!this.turnCancellationGate.isCurrent(start)) return;
             this.traceOpenCode("provider.opencode.prompt_async.response", {
               turnId,
               hasError: promptResponse.error !== undefined,
@@ -3886,6 +3896,7 @@ class OpenCodeAgentSession implements AgentSession {
               );
             }
           } catch (error) {
+            if (!this.turnCancellationGate.isCurrent(start)) return;
             this.traceOpenCode("provider.opencode.prompt_async.throw", {
               turnId,
               error:
@@ -4531,31 +4542,37 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async startAutonomousTurn(): Promise<string | null> {
+    const start = this.turnCancellationGate.beginStart();
     try {
-      await this.turnCancellationGate.waitForQuiescence();
-    } catch (error) {
-      this.logger.warn(
-        { err: error, sessionId: this.sessionId },
-        "Dropping autonomous OpenCode activity after cancellation failure",
-      );
-      return null;
+      try {
+        await this.turnCancellationGate.waitForQuiescence(start);
+      } catch (error) {
+        this.logger.warn(
+          { err: error, sessionId: this.sessionId },
+          "Dropping autonomous OpenCode activity after cancellation failure",
+        );
+        return null;
+      }
+      if (this.closed || this.turnState.status !== "idle") {
+        return null;
+      }
+      this.turnCancellationGate.assertCurrent(start);
+      const turnId = this.createTurnId();
+      this.materializedParts.clear();
+      this.turnState = { status: "running", turnId };
+      this.runningToolCalls.clear();
+      this.subAgentsByCallId.clear();
+      this.subAgentCallIdByChildSessionId.clear();
+      this.pendingSteerSubmissions = [];
+      this.pendingUserMessageText = null;
+      this.pendingClientMessageId = null;
+      this.activeDispatchMessageId = null;
+      this.abortController = null;
+      this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
+      return turnId;
+    } finally {
+      start.complete();
     }
-    if (this.closed || this.turnState.status !== "idle") {
-      return null;
-    }
-    const turnId = this.createTurnId();
-    this.materializedParts.clear();
-    this.turnState = { status: "running", turnId };
-    this.runningToolCalls.clear();
-    this.subAgentsByCallId.clear();
-    this.subAgentCallIdByChildSessionId.clear();
-    this.pendingSteerSubmissions = [];
-    this.pendingUserMessageText = null;
-    this.pendingClientMessageId = null;
-    this.activeDispatchMessageId = null;
-    this.abortController = null;
-    this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
-    return turnId;
   }
 
   private finishForegroundTurn(
@@ -5018,13 +5035,15 @@ class OpenCodeAgentSession implements AgentSession {
     return { providerID: "opencode", modelID: model };
   }
 
-  private async ensureMcpServersConfigured(): Promise<void> {
+  private async ensureMcpServersConfigured(start: TurnStartToken): Promise<void> {
     if (this.mcpConfigured) {
+      this.turnCancellationGate.assertCurrent(start);
       return;
     }
 
     const mcpServers = this.config.mcpServers;
     if (!mcpServers || Object.keys(mcpServers).length === 0) {
+      this.turnCancellationGate.assertCurrent(start);
       this.mcpConfigured = true;
       return;
     }
@@ -5035,6 +5054,7 @@ class OpenCodeAgentSession implements AgentSession {
 
     try {
       await this.mcpSetupPromise;
+      this.turnCancellationGate.assertCurrent(start);
       this.mcpConfigured = true;
     } catch (error) {
       this.mcpSetupPromise = null;

@@ -3466,9 +3466,9 @@ describe("Codex app-server provider", () => {
       appServer.startsTurn({ threadId: "thread-1", turnId: "turn-waiting-for-child" });
 
       await expect(session.interrupt()).rejects.toThrow("A foreground turn is already active");
+      await expect(resultPromise).rejects.toMatchObject({ code: "TURN_START_CANCELED" });
 
       appServer.completeTurn();
-      await resultPromise;
       appServer.assertNoErrors();
     } finally {
       await session.close();
@@ -3494,9 +3494,9 @@ describe("Codex app-server provider", () => {
       appServer.startsTurn({ threadId: "thread-1", turnId: "turn-already-idle" });
 
       await expect(session.interrupt()).resolves.toBeUndefined();
+      await expect(resultPromise).rejects.toMatchObject({ code: "TURN_START_CANCELED" });
 
       appServer.completeTurn();
-      await resultPromise;
       appServer.assertNoErrors();
     } finally {
       await session.close();
@@ -3528,7 +3528,7 @@ describe("Codex app-server provider", () => {
 
       expect(interruptedTurns).toEqual([{ threadId: "thread-1", turnId: "turn-identified-late" }]);
       appServer.completeTurn();
-      await resultPromise;
+      await expect(resultPromise).rejects.toMatchObject({ code: "TURN_START_CANCELED" });
       appServer.assertNoErrors();
     } finally {
       await session.close();
@@ -3557,7 +3557,7 @@ describe("Codex app-server provider", () => {
       appServer.completeTurn();
 
       await expect(interruptPromise).resolves.toBeUndefined();
-      await resultPromise;
+      await expect(resultPromise).rejects.toMatchObject({ code: "TURN_START_CANCELED" });
       expect(interruptedTurns).toEqual([]);
       appServer.assertNoErrors();
     } finally {

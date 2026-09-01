@@ -67,6 +67,117 @@ describe("TurnCancellationGate", () => {
     second.complete();
   });
 
+  test("allows concurrent starts to wait only on starts admitted before them", async () => {
+    const gate = new TurnCancellationGate();
+    const first = gate.beginStart();
+    const second = gate.beginStart();
+    let firstReady = false;
+    let secondReady = false;
+
+    const firstWait = gate.waitForQuiescence(first).then(() => {
+      firstReady = true;
+      return undefined;
+    });
+    const secondWait = gate.waitForQuiescence(second).then(() => {
+      secondReady = true;
+      return undefined;
+    });
+
+    await firstWait;
+    expect(firstReady).toBe(true);
+    expect(secondReady).toBe(false);
+
+    first.complete();
+    await secondWait;
+    expect(secondReady).toBe(true);
+    await firstWait;
+    second.complete();
+  });
+
+  test("keeps interleaved starts acyclic while a prior cancellation is settling", async () => {
+    const gate = new TurnCancellationGate();
+    const releaseCancellation = deferred();
+    const cancellation = gate.interrupt(
+      "turn-a",
+      () => "turn-a",
+      async () => releaseCancellation.promise,
+    );
+    const first = gate.beginStart();
+    const second = gate.beginStart();
+    let firstReady = false;
+    let secondReady = false;
+    const firstWait = gate.waitForQuiescence(first).then(() => {
+      firstReady = true;
+      return undefined;
+    });
+    const secondWait = gate.waitForQuiescence(second).then(() => {
+      secondReady = true;
+      return undefined;
+    });
+
+    releaseCancellation.resolve();
+    await cancellation;
+    await firstWait;
+    expect(firstReady).toBe(true);
+    expect(secondReady).toBe(false);
+
+    first.complete();
+    await secondWait;
+    expect(secondReady).toBe(true);
+    second.complete();
+  });
+
+  test("does not let an older cancellation target a start from its newer generation", async () => {
+    const gate = new TurnCancellationGate();
+    const first = gate.beginStart();
+    const second = gate.beginStart();
+    let activeTurnId: string | null = "turn-a";
+    const canceledTurnIds: string[] = [];
+
+    const cancellation = gate.interrupt(
+      "turn-a",
+      () => activeTurnId,
+      async (turnId) => {
+        canceledTurnIds.push(turnId);
+      },
+    );
+    const newer = gate.beginStart();
+    const newerWait = gate.waitForQuiescence(newer);
+    activeTurnId = "turn-b";
+
+    first.complete();
+    second.complete();
+    await cancellation;
+    await newerWait;
+
+    expect(canceledTurnIds).toEqual([]);
+    expect(gate.isCurrent(newer)).toBe(true);
+    newer.complete();
+  });
+
+  test("does not let a repeated cancellation fence a successor start", async () => {
+    const gate = new TurnCancellationGate();
+    const first = gate.beginStart();
+    const firstCancellation = gate.interrupt(
+      undefined,
+      () => null,
+      async () => undefined,
+    );
+    const successor = gate.beginStart();
+    const repeatedCancellation = gate.interrupt(
+      undefined,
+      () => null,
+      async () => undefined,
+    );
+
+    expect(gate.isCurrent(successor)).toBe(true);
+    first.complete();
+    await firstCancellation;
+    await repeatedCancellation;
+    await gate.waitForQuiescence(successor);
+    successor.complete();
+  });
+
   test("close releases pending start bookkeeping and rejects its cancellation", async () => {
     const gate = new TurnCancellationGate();
     const start = gate.beginStart();

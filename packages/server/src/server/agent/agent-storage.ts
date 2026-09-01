@@ -161,7 +161,7 @@ export class AgentStorage {
 
   private queueRecordMutation(
     agentId: string,
-    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord,
+    mutate: (existing: StoredAgentRecord | null) => StoredAgentRecord | null,
   ): Promise<void> {
     const prev = this.pendingWrites.get(agentId) ?? Promise.resolve();
     const next = prev.then(async () => {
@@ -170,6 +170,9 @@ export class AgentStorage {
       }
 
       const record = mutate(this.cache.get(agentId) ?? null);
+      if (!record) {
+        return undefined;
+      }
       await this.writeRecord(record);
       return undefined;
     });
@@ -240,18 +243,27 @@ export class AgentStorage {
   async applySnapshot(
     agent: ManagedAgent,
     options?: { title?: string | null; internal?: boolean },
+    shouldCommit?: () => boolean,
   ): Promise<void> {
+    // Project before entering the asynchronous load/write queue. Callers may replace the live
+    // agent object while this write is waiting; the queued record must remain an immutable
+    // snapshot of the generation that requested it.
+    const projected = toStoredAgentRecord(agent, options);
     await this.load();
     const hasTitleOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "title");
     const hasInternalOverride =
       options !== undefined && Object.prototype.hasOwnProperty.call(options, "internal");
     await this.queueRecordMutation(agent.id, (existing) => {
-      const record = toStoredAgentRecord(agent, {
+      if (shouldCommit && !shouldCommit()) {
+        return null;
+      }
+      const record: StoredAgentRecord = {
+        ...projected,
         title: hasTitleOverride ? (options?.title ?? null) : (existing?.title ?? null),
-        createdAt: existing?.createdAt,
-        internal: hasInternalOverride ? options?.internal : (agent.internal ?? existing?.internal),
-      });
+        createdAt: existing?.createdAt ?? projected.createdAt,
+        internal: hasInternalOverride ? options?.internal : projected.internal,
+      };
 
       // Preserve soft-delete/archive status across snapshot flushes. The
       // projection runs inside the per-agent write queue so it cannot commit a

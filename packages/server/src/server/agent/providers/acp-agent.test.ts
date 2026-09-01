@@ -2826,6 +2826,49 @@ describe("ACPAgentSession", () => {
     expect(prompt).toHaveBeenCalledTimes(2);
   });
 
+  test("ignores a late ACP prompt response after a replacement turn starts", async () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+    const events: Array<{ type: string; turnId?: string }> = [];
+    let resolveFirst!: (value: PromptResponse) => void;
+    let resolveSecond!: (value: PromptResponse) => void;
+    let promptCount = 0;
+    const prompt = vi.fn(
+      () =>
+        new Promise<PromptResponse>((resolve) => {
+          if (promptCount++ === 0) {
+            resolveFirst = resolve;
+          } else {
+            resolveSecond = resolve;
+          }
+        }),
+    );
+
+    internals.sessionId = "session-1";
+    internals.connection = { prompt };
+    session.subscribe((event) => {
+      events.push(event as { type: string; turnId?: string });
+    });
+
+    const first = await session.startTurn("first");
+    internals.activeForegroundTurnId = null;
+    const second = await session.startTurn("second");
+
+    resolveFirst({ stopReason: "end_turn", usage: { outputTokens: 99 } });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(internals.activeForegroundTurnId).toBe(second.turnId);
+    expect(events).not.toContainEqual({
+      type: "turn_completed",
+      turnId: first.turnId,
+    });
+
+    resolveSecond({ stopReason: "end_turn" });
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];

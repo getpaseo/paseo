@@ -1,15 +1,42 @@
 export interface TurnStartToken {
   readonly generation: number;
   readonly settled: Promise<void>;
+  readonly barrier: Promise<void>;
   complete(): void;
+}
+
+type CancellationTarget = { kind: "turn"; turnId: string } | { kind: "start"; generation: number };
+
+export class TurnStartCanceledError extends Error {
+  readonly code = "TURN_START_CANCELED" as const;
+
+  constructor() {
+    super("Turn start was canceled before prompt dispatch");
+    this.name = "TurnStartCanceledError";
+  }
+}
+
+function sameCancellationTarget(
+  left: CancellationTarget | null,
+  right: CancellationTarget,
+): boolean {
+  if (!left || left.kind !== right.kind) return false;
+  if (left.kind === "turn" && right.kind === "turn") {
+    return left.turnId === right.turnId;
+  }
+  if (left.kind === "start" && right.kind === "start") {
+    return left.generation === right.generation;
+  }
+  return false;
 }
 
 export class TurnCancellationGate {
   private quiescence: Promise<void> = Promise.resolve();
+  private startBarrier: Promise<void> = Promise.resolve();
   private failure: unknown = null;
   private closed = false;
   private generation = 0;
-  private lastCancellationTarget: string | null | undefined;
+  private lastCancellationTarget: CancellationTarget | null = null;
   private readonly pendingStarts = new Set<TurnStartToken>();
   private readonly closeSignal: Promise<void>;
   private resolveCloseSignal!: () => void;
@@ -22,6 +49,7 @@ export class TurnCancellationGate {
 
   beginStart(): TurnStartToken {
     this.assertUsable();
+    const barrier = Promise.all([this.quiescence, this.startBarrier]).then(() => undefined);
     let settled = false;
     let resolveSettled!: () => void;
     const settledPromise = new Promise<void>((resolve) => {
@@ -30,6 +58,7 @@ export class TurnCancellationGate {
     const token: TurnStartToken = {
       generation: this.generation,
       settled: settledPromise,
+      barrier,
       complete: () => {
         if (settled) return;
         settled = true;
@@ -38,6 +67,7 @@ export class TurnCancellationGate {
       },
     };
     this.pendingStarts.add(token);
+    this.startBarrier = Promise.all([this.startBarrier, settledPromise]).then(() => undefined);
     return token;
   }
 
@@ -48,32 +78,15 @@ export class TurnCancellationGate {
   assertCurrent(token: TurnStartToken): void {
     this.assertUsable();
     if (token.generation !== this.generation) {
-      const error = new Error("Turn start was canceled before prompt dispatch");
-      error.name = "TurnStartCanceledError";
-      throw Object.assign(error, { code: "TURN_START_CANCELED" as const });
+      throw new TurnStartCanceledError();
     }
   }
 
   async waitForQuiescence(exemptStart?: TurnStartToken): Promise<void> {
-    while (true) {
-      if (exemptStart) this.assertCurrent(exemptStart);
-      else this.assertUsable();
-      const observedQuiescence = this.quiescence;
-      const observedPendingStarts = this.pendingStartPromises(exemptStart);
-      const waits: Promise<void>[] = [observedQuiescence, this.closeSignal];
-      if (observedPendingStarts.length > 0) {
-        waits.push(Promise.all(observedPendingStarts).then(() => undefined));
-      }
-      await Promise.race(waits);
-      if (exemptStart) this.assertCurrent(exemptStart);
-      else this.assertUsable();
-      if (
-        observedQuiescence === this.quiescence &&
-        this.pendingStartPromises(exemptStart).length === 0
-      ) {
-        return;
-      }
-    }
+    const barrier = exemptStart?.barrier ?? Promise.all([this.quiescence, this.startBarrier]);
+    await Promise.race([barrier, this.closeSignal]);
+    if (exemptStart) this.assertCurrent(exemptStart);
+    else this.assertUsable();
   }
 
   close(): void {
@@ -105,15 +118,28 @@ export class TurnCancellationGate {
       return Promise.resolve();
     }
 
-    const invalidatesPendingStarts = this.lastCancellationTarget !== observedTurnId;
-    this.lastCancellationTarget = observedTurnId;
+    const target: CancellationTarget = observedTurnId
+      ? { kind: "turn", turnId: observedTurnId }
+      : {
+          kind: "start",
+          // The oldest still-pending start is the target that established this cancellation
+          // boundary. A repeated interrupt must not advance the generation again and cancel a
+          // successor admitted after that boundary.
+          generation: observedPendingStarts[0]?.generation ?? this.generation,
+        };
+    const invalidatesPendingStarts = !sameCancellationTarget(this.lastCancellationTarget, target);
+    this.lastCancellationTarget = target;
     if (invalidatesPendingStarts) {
       this.generation += 1;
     }
     const cancellation = this.quiescence.then(async () => {
       this.assertUsable();
       const activeTurnId = getActiveTurnId();
-      if (!activeTurnId || (expectedTurnId !== undefined && activeTurnId !== expectedTurnId)) {
+      if (
+        !activeTurnId ||
+        (expectedTurnId !== undefined && activeTurnId !== expectedTurnId) ||
+        (observedTurnId !== null && activeTurnId !== observedTurnId)
+      ) {
         if (invalidatesPendingStarts) {
           await this.waitForPendingStarts(observedPendingStarts);
         }
@@ -139,12 +165,6 @@ export class TurnCancellationGate {
   private assertUsable(): void {
     if (this.closed) throw this.closedError();
     if (this.failure !== null) throw this.failure;
-  }
-
-  private pendingStartPromises(exemptStart?: TurnStartToken): Promise<void>[] {
-    return [...this.pendingStarts]
-      .filter((start) => start !== exemptStart)
-      .map((start) => start.settled);
   }
 
   private async waitForPendingStarts(starts: TurnStartToken[]): Promise<void> {

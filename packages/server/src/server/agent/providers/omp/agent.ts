@@ -977,6 +977,9 @@ export class OmpAgentSession implements AgentSession {
       void (async () => {
         try {
           const ack = await this.runtimeSession.prompt(payload.text, payload.images);
+          if (this.activeTurnId !== turnId) {
+            return;
+          }
           this.activePromptRequestId = ack.requestId ?? null;
           const correlatedResult = ack.requestId
             ? this.pendingPromptResults.get(ack.requestId)

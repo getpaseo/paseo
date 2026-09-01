@@ -772,11 +772,7 @@ describe("ClaudeAgentSession features", () => {
       const cancellation = session.interrupt();
 
       releaseFlags();
-      const startOutcome = await Promise.race([
-        start,
-        new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 100)),
-      ]);
-      expect(startOutcome).not.toBe("timed_out");
+      await expect(start).rejects.toMatchObject({ code: "TURN_START_CANCELED" });
       const cancellationOutcome = await Promise.race([
         cancellation,
         new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 100)),

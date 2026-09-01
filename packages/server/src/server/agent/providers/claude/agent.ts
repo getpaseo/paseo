@@ -80,7 +80,7 @@ import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
-import { TurnCancellationGate } from "../../turn-cancellation-gate.js";
+import { TurnCancellationGate, TurnStartCanceledError } from "../../turn-cancellation-gate.js";
 import {
   isProviderImageMarkdown,
   materializeProviderImage,
@@ -2216,6 +2216,7 @@ class ClaudeAgentSession implements AgentSession {
       const slashCommand = this.resolveSlashCommandInvocation(prompt);
       if (slashCommand?.commandName === REWIND_COMMAND_NAME) {
         const turnId = this.createTurnId("foreground");
+        this.turnCancellationGate.assertCurrent(start);
         this.activeForegroundTurnId = turnId;
         this.transitionTurnState("foreground", "rewind command");
         void this.executeRewindTurn(turnId, slashCommand);
@@ -2223,14 +2224,17 @@ class ClaudeAgentSession implements AgentSession {
       }
 
       if (this.autonomousTurn) {
+        this.turnCancellationGate.assertCurrent(start);
         this.completeAutonomousTurn();
       }
 
       const sdkMessage = this.toSdkUserMessage(prompt);
       const sdkUserMessageId =
         typeof sdkMessage.uuid === "string" && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null;
+      this.turnCancellationGate.assertCurrent(start);
       this.rememberRewindUserAnchor(sdkUserMessageId);
       const turnId = this.createTurnId("foreground");
+      this.turnCancellationGate.assertCurrent(start);
       this.activeForegroundTurnId = turnId;
       this.foregroundHasVisibleActivity = false;
       this.activeTurnHasAssistantText = false;
@@ -2293,7 +2297,9 @@ class ClaudeAgentSession implements AgentSession {
         this.turnCancellationGate.assertCurrent(start);
         this.activeForegroundQuery = this.query;
         this.activeForegroundInput = this.input;
+        this.turnCancellationGate.assertCurrent(start);
         this.startQueryPump();
+        this.turnCancellationGate.assertCurrent(start);
         this.input.push(sdkMessage);
         setTimeout(() => {
           if (this.activeForegroundTurnId === turnId) {
@@ -2302,7 +2308,7 @@ class ClaudeAgentSession implements AgentSession {
         }, 0);
       } catch (error) {
         if (!this.turnCancellationGate.isCurrent(start)) {
-          return { turnId };
+          throw new TurnStartCanceledError();
         }
         this.finishForegroundTurn(
           this.buildTurnFailedEvent(
@@ -3668,27 +3674,33 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   private async startAutonomousTurn(): Promise<void> {
+    const start = this.turnCancellationGate.beginStart();
     try {
-      await this.turnCancellationGate.waitForQuiescence();
-    } catch (error) {
-      this.logger.warn(
-        { err: error, agentId: this.agentId },
-        "Dropping autonomous Claude activity after cancellation failure",
-      );
-      return;
+      try {
+        await this.turnCancellationGate.waitForQuiescence(start);
+      } catch (error) {
+        this.logger.warn(
+          { err: error, agentId: this.agentId },
+          "Dropping autonomous Claude activity after cancellation failure",
+        );
+        return;
+      }
+      if (this.closed || this.autonomousTurn || this.activeForegroundTurnId) {
+        return;
+      }
+      this.turnCancellationGate.assertCurrent(start);
+      this.autonomousTurn = {
+        id: this.createTurnId("autonomous"),
+      };
+      this.activeForegroundQuery = this.query;
+      this.activeForegroundInput = this.input;
+      this.activeTurnHasAssistantText = false;
+      this.contextUsage.beginTurn();
+      this.notifySubscribers({ type: "turn_started", provider: "claude" });
+      this.syncTurnState("autonomous turn started");
+    } finally {
+      start.complete();
     }
-    if (this.closed || this.autonomousTurn || this.activeForegroundTurnId) {
-      return;
-    }
-    this.autonomousTurn = {
-      id: this.createTurnId("autonomous"),
-    };
-    this.activeForegroundQuery = this.query;
-    this.activeForegroundInput = this.input;
-    this.activeTurnHasAssistantText = false;
-    this.contextUsage.beginTurn();
-    this.notifySubscribers({ type: "turn_started", provider: "claude" });
-    this.syncTurnState("autonomous turn started");
   }
 
   private completeAutonomousTurn(): void {

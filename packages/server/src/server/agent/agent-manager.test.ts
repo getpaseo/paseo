@@ -1362,6 +1362,21 @@ class HeldRuntimeInfoClient extends TestAgentClient {
   }
 }
 
+class DeferredRuntimeRefreshSession extends TestAgentSession {
+  readonly runtimeRefreshRequested = deferred<void>();
+  readonly allowRuntimeRefresh = deferred<AgentRuntimeInfo>();
+  private runtimeInfoCalls = 0;
+
+  override async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
+    this.runtimeInfoCalls += 1;
+    if (this.runtimeInfoCalls === 3) {
+      this.runtimeRefreshRequested.resolve();
+      return await this.allowRuntimeRefresh.promise;
+    }
+    return await super.getRuntimeInfo();
+  }
+}
+
 class StreamingAssistantSession implements AgentSession {
   readonly provider = "codex" as const;
   readonly capabilities = TEST_CAPABILITIES;
@@ -2356,6 +2371,94 @@ test("reloadAgentSession completes when the previous session close hangs", async
   }
 });
 
+test("does not let a detached old runtime refresh overwrite the replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-runtime-generation-"));
+  const agentId = "00000000-0000-4000-8000-000000000134";
+  const sessions: Array<DeferredRuntimeRefreshSession | TestAgentSession> = [];
+  let oldSession: DeferredRuntimeRefreshSession | undefined;
+
+  class ReplacementSession extends TestAgentSession {
+    override async getRuntimeInfo() {
+      return {
+        provider: this.provider,
+        sessionId: this.id,
+        model: "replacement-model",
+        modeId: null,
+      };
+    }
+  }
+
+  class RuntimeGenerationClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new DeferredRuntimeRefreshSession(config);
+      sessions.push(session);
+      return session;
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      const session = new ReplacementSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+        ...config,
+      });
+      sessions.push(session);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new RuntimeGenerationClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const agent = await manager.createAgent(
+      { provider: "codex", cwd: workdir, model: "initial-model" },
+      undefined,
+      { workspaceId: undefined },
+    );
+    oldSession = sessions[0]! as DeferredRuntimeRefreshSession;
+    oldSession.pushEvent({ type: "thread_started", provider: oldSession.provider });
+    await oldSession.runtimeRefreshRequested.promise;
+
+    const reload = manager.reloadAgentSession(agent.id);
+    await expect(reload).resolves.toMatchObject({ id: agent.id });
+    expect(sessions).toHaveLength(2);
+
+    oldSession.allowRuntimeRefresh.resolve({
+      provider: oldSession.provider,
+      sessionId: oldSession.id,
+      model: "stale-old-model",
+      modeId: null,
+    });
+    oldSession.pushEvent({
+      type: "usage_updated",
+      provider: oldSession.provider,
+      usage: { inputTokens: 999 },
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      runtimeInfo: { model: "replacement-model" },
+    });
+    expect(manager.getAgent(agent.id)?.lastUsage).not.toEqual({ inputTokens: 999 });
+  } finally {
+    oldSession?.allowRuntimeRefresh.resolve({
+      provider: oldSession.provider,
+      sessionId: oldSession.id,
+      model: "cleanup-model",
+      modeId: null,
+    });
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("drops an old queued tail before dispatching events from the replacement session", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-session-generation-"));
   const agentId = "00000000-0000-4000-8000-000000000312";
@@ -2435,6 +2538,7 @@ test("drops an old queued tail before dispatching events from the replacement se
     timelineStore.lastItemRead.resolve(null);
     await reload;
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(manager.getAgent(agent.id)?.lastError).toBeUndefined();
     expect(manager.getTimeline(agent.id)).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ text: expect.stringContaining("old generation failure") }),
@@ -7727,13 +7831,67 @@ test("acknowledged cancellation settles a pending run before it has a turn id", 
     expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
 
     rejectStart(new Error("released canceled start"));
-    await expect(firstRun).rejects.toThrow("released canceled start");
+    await expect(firstRun).rejects.toMatchObject({ code: "TURN_START_CANCELED" });
     expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
   } finally {
     rejectStart(new Error("test cleanup"));
     if (manager.getAgent("00000000-0000-4000-8000-000000000132")) {
       await manager.closeAgent("00000000-0000-4000-8000-000000000132");
     }
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("fences a late provider start completion after cancellation timeout", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-late-start-fence-"));
+  const startEntered = deferred<void>();
+  const allowStart = deferred<{ turnId: string }>();
+  const agentId = "00000000-0000-4000-8000-000000000133";
+
+  class LateStartSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      startEntered.resolve();
+      return await allowStart.promise;
+    }
+  }
+
+  const session = new LateStartSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10 },
+    idFactory: () => agentId,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const stream = manager.streamAgent(agent.id, "late start");
+    const firstEvent = stream.next();
+    await startEntered.promise;
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "settled" });
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+
+    allowStart.resolve({ turnId: "late-turn" });
+    await expect(firstEvent).rejects.toMatchObject({ code: "TURN_START_CANCELED" });
+    session.pushEvent({ type: "turn_started", provider: session.provider, turnId: "late-turn" });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    allowStart.resolve({ turnId: "cleanup-turn" });
+    await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });
@@ -10187,6 +10345,7 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
   const allowSecondRunToEnd = deferred<void>();
+  let totalTurns = 0;
 
   // Session where the first foreground turn never emits a terminal event
   // (simulates the claude-agent pendingInterruptAbort suppression bug),
@@ -10194,8 +10353,8 @@ test("replaceAgentRun succeeds when foreground turn terminal event is never deli
   class StaleForegroundSession extends TestAgentSession {
     override async startTurn(): Promise<{ turnId: string }> {
       this.interrupted = false;
-      const turnId = `turn-${++this.turnIdCounter}`;
-      const turnNum = this.turnIdCounter;
+      const turnNum = ++totalTurns;
+      const turnId = `turn-${turnNum}`;
 
       setTimeout(async () => {
         this.pushEvent({ type: "turn_started", provider: this.provider, turnId });

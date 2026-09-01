@@ -1624,6 +1624,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.turnCancellationGate.assertCurrent(start);
 
       this.deliverTranslatedEvents(this.flushPendingUserMessage());
+      this.turnCancellationGate.assertCurrent(start);
       const turnId = randomUUID();
       const messageId = options?.clientMessageId ?? randomUUID();
       this.activeForegroundTurnId = turnId;
@@ -2876,6 +2877,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
+    if (this.activeForegroundTurnId !== turnId) {
+      return;
+    }
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
 
     switch (response.stopReason) {
@@ -2969,6 +2973,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private finishTurn(
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
+    if (this.activeForegroundTurnId !== event.turnId) {
+      return;
+    }
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;

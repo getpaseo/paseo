@@ -99,7 +99,7 @@ import {
   resolveBinaryVersion,
 } from "./diagnostic-utils.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "./provider-runner.js";
-import { TurnCancellationGate } from "../turn-cancellation-gate.js";
+import { TurnCancellationGate, TurnStartCanceledError } from "../turn-cancellation-gate.js";
 import {
   MODE_APPLIES_NEXT_TURN_NOTICE,
   THINKING_APPLIES_NEXT_TURN_NOTICE,
@@ -4180,6 +4180,10 @@ export class CodexAppServerAgentSession implements AgentSession {
         }
 
         const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
+        this.turnCancellationGate.assertCurrent(start);
+        if (pendingStart.cancelRequested) {
+          throw new TurnStartCanceledError();
+        }
         const turnId = this.createTurnId();
         this.activeForegroundTurnId = turnId;
         this.activeClientMessageId = options?.clientMessageId ?? null;
@@ -4204,13 +4208,13 @@ export class CodexAppServerAgentSession implements AgentSession {
           hasDeveloperInstructions: turnStart.hasDeveloperInstructions,
           hasCodexConfig: turnStart.hasCodexConfig,
         });
-        this.turnCancellationGate.assertCurrent(start);
-        if (pendingStart.cancelRequested) {
-          throw new Error("Codex turn start was interrupted before reaching Codex");
-        }
         await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
+        this.turnCancellationGate.assertCurrent(start);
         return { turnId };
       } catch (error) {
+        if (!this.turnCancellationGate.isCurrent(start)) {
+          throw new TurnStartCanceledError();
+        }
         this.pendingForegroundTurnIdentification?.resolve(null);
         this.pendingForegroundTurnIdentification = null;
         this.activeForegroundTurnId = null;
