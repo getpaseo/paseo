@@ -37,6 +37,10 @@ function changesTree(page: Page) {
   return page.getByTestId("changes-file-tree").filter({ visible: true });
 }
 
+function diffHeaderForPath(panel: Locator, filePath: string): Locator {
+  return panel.locator(`[data-diff-header-path="${filePath}"]`).getByTestId(/^diff-file-\d+$/);
+}
+
 async function readFileIfPresent(filePath: string): Promise<string | null> {
   try {
     return await readFile(filePath, "utf8");
@@ -266,7 +270,7 @@ test("Changes opens the populated committed comparison for a clean checkout", as
   const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
   const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
   await expect(tree.getByTestId("changes-diff-status-trigger")).toContainText("Committed");
-  await expect(panel.getByText("committed-only.ts", { exact: true })).toBeVisible();
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 });
 
 test("Changes expires a manual comparison when checkout dirtiness changes", async ({ page }) => {
@@ -302,7 +306,7 @@ test("an empty Changes comparison links to the populated comparison", async ({ p
   const mode = tree.getByTestId("changes-diff-status-trigger");
   await mode.click();
   await page.getByTestId("changes-diff-mode-committed").click();
-  await expect(panel.getByText("committed-only.ts", { exact: true })).toBeVisible();
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 
   await mode.click();
   await page.getByTestId("changes-diff-mode-uncommitted").click();
@@ -312,7 +316,7 @@ test("an empty Changes comparison links to the populated comparison", async ({ p
   await expect(seeCommitted).toBeVisible();
   await seeCommitted.click();
   await expect(mode).toContainText("Committed");
-  await expect(panel.getByText("committed-only.ts", { exact: true })).toBeVisible();
+  await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
 });
 
 test("changes file actions open below the right-click without a reserved kebab", async ({
@@ -324,7 +328,6 @@ test("changes file actions open below the right-click without a reserved kebab",
 
   const deletedFileName = page.getByTestId("diff-file-1");
   await expect(deletedFileName).toHaveAccessibleName(/zz-deleted\.ts/);
-  await expect(page.getByTestId("git-diff-header-canvas")).toHaveCSS("user-select", "none");
   await deletedFileName.dblclick();
   expect(await page.evaluate(() => window.getSelection()?.toString() ?? "")).toBe("");
   await expect(page.getByTestId(/diff-file-\d+-actions/)).toHaveCount(0);
@@ -535,7 +538,8 @@ test("the scrolling diff lists files in changes tree order", async ({ page }) =>
 
   const tree = changesTree(page);
   const treeNames = tree.locator('[data-testid^="diff-tree-file-"][data-testid$="-name"]');
-  const diffNames = page.locator('[data-testid^="diff-file-"][data-testid$="-name"]');
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  const diffHeaders = panel.getByTestId(/^diff-file-\d+$/);
 
   // Directories sort before files at every level, so the root note lands last
   // even though "a-root-note.txt" compares below "src/..." as a whole string.
@@ -545,9 +549,17 @@ test("the scrolling diff lists files in changes tree order", async ({ page }) =>
   // descendants of a collapsed folder, which would make the tree a subsequence
   // of the diff rather than a match, and mask a real ordering difference.
   await expect(treeNames).toHaveCount(expected.length);
-  await expect(diffNames).toHaveCount(expected.length);
+  await expect(diffHeaders).toHaveCount(expected.length);
   await expect(treeNames).toHaveText(expected);
-  await expect(diffNames).toHaveText(expected);
+  const expectedHeaderNames = [
+    "src/zz-folder/nested/changed.ts, +1, -1",
+    "src/zz-folder/root.ts, +1, -1",
+    "src/use-mounted-tab-set.ts, +37, -1",
+    "a-root-note.txt, +1, -0",
+  ];
+  for (const [index, accessibleName] of expectedHeaderNames.entries()) {
+    await expect(diffHeaders.nth(index)).toHaveAccessibleName(accessibleName);
+  }
 });
 
 test("changes context menu recursively collapses descendant folders", async ({ page }) => {
@@ -646,9 +658,10 @@ test("discarding a staged rename restores its source path", async ({ page }) => 
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
 
-  const renamedToggle = page
-    .getByTestId(/^diff-file-\d+-toggle$/)
-    .filter({ hasText: "zz-renamed.ts" });
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  const renamedHeader = diffHeaderForPath(panel, "src/zz-renamed.ts");
+  await expect(renamedHeader).toHaveAccessibleName("src/zz-renamed.ts, +1, -0");
+  const renamedToggle = renamedHeader.getByTestId(/^diff-file-\d+-toggle$/);
   const toggleTestId = await renamedToggle.getAttribute("data-testid");
   expect(toggleTestId).not.toBeNull();
   const rowTestId = toggleTestId!.slice(0, -"-toggle".length);
@@ -675,9 +688,10 @@ test("discarding an untracked file removes it from the working tree", async ({ p
   await useUnwrappedDiffLines(page);
   await openWorkspaceChanges(page, workspace);
 
-  const untrackedToggle = page
-    .getByTestId(/^diff-file-\d+-toggle$/)
-    .filter({ hasText: "zz-untracked.txt" });
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  const untrackedHeader = diffHeaderForPath(panel, "zz-untracked.txt");
+  await expect(untrackedHeader).toHaveAccessibleName("zz-untracked.txt, +1, -0");
+  const untrackedToggle = untrackedHeader.getByTestId(/^diff-file-\d+-toggle$/);
   const toggleTestId = await untrackedToggle.getAttribute("data-testid");
   expect(toggleTestId).not.toBeNull();
   const rowTestId = toggleTestId!.slice(0, -"-toggle".length);
@@ -736,8 +750,12 @@ test("Changes keeps review navigation and controls inside its workspace tab", as
   await expect(visiblePanel.getByTestId("changes-diff-status-trigger")).toHaveCount(0);
   await expect(visiblePanel.getByTestId("changes-selected-diff-stat")).toHaveCount(0);
   await expect(visiblePanel.getByTestId("changes-header")).toHaveCount(1);
-  await expect(visiblePanel.getByText("use-mounted-tab-set.ts", { exact: true })).toBeVisible();
-  await expect(visiblePanel).toContainText("zz-deleted.ts");
+  await expect(diffHeaderForPath(visiblePanel, "src/use-mounted-tab-set.ts")).toHaveAccessibleName(
+    "src/use-mounted-tab-set.ts, +37, -1",
+  );
+  await expect(diffHeaderForPath(visiblePanel, "src/zz-deleted.ts")).toHaveAccessibleName(
+    "src/zz-deleted.ts, +0, -1",
+  );
   await expect(visiblePanel.getByTestId("changes-primary-cta")).toHaveCount(0);
   await expect(page.getByTestId("changes-primary-cta")).toHaveCount(1);
   await expect(page.getByTestId("changes-primary-cta")).toContainText("Commit");
@@ -772,16 +790,18 @@ test("Changes keeps review navigation and controls inside its workspace tab", as
   await expect(page.getByTestId(/^workspace-working-diff-close-/)).toHaveCount(1);
 
   await writeFile(path.join(workspace.repoPath, "src/use-mounted-tab-set.ts"), BEFORE);
-  await expect(visiblePanel.getByText("use-mounted-tab-set.ts", { exact: true })).toHaveCount(0, {
-    timeout: 30_000,
-  });
-  await expect(visiblePanel).toContainText("zz-deleted.ts");
+  await expect(
+    visiblePanel.locator('[data-diff-header-path="src/use-mounted-tab-set.ts"]'),
+  ).toHaveCount(0, { timeout: 30_000 });
+  await expect(visiblePanel.locator('[data-diff-header-path="src/zz-deleted.ts"]')).toBeVisible();
   await writeFile(path.join(workspace.repoPath, "src/use-mounted-tab-set.ts"), AFTER);
-  await expect(visiblePanel.getByText("use-mounted-tab-set.ts", { exact: true })).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect(visiblePanel.getByText("zz-deleted.ts", { exact: true })).toBeVisible();
-  await expect(visiblePanel.getByRole("img", { name: "Deleted" })).toBeVisible();
+  await expect(diffHeaderForPath(visiblePanel, "src/use-mounted-tab-set.ts")).toHaveAccessibleName(
+    "src/use-mounted-tab-set.ts, +37, -1",
+    { timeout: 30_000 },
+  );
+  await expect(diffHeaderForPath(visiblePanel, "src/zz-deleted.ts")).toHaveAccessibleName(
+    "src/zz-deleted.ts, +0, -1",
+  );
 });
 
 test("compact Changes keeps its actions compact and menu-only", async ({ page }) => {
