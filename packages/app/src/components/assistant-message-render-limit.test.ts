@@ -21,10 +21,10 @@ describe("assistant message render limit", () => {
     });
   });
 
-  it("does not leave a dangling UTF-16 surrogate at the boundary", () => {
+  it("does not split a grapheme cluster at the boundary", () => {
     const prefix = "a".repeat(ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT - 1);
 
-    expect(capAssistantMessageForRender(`${prefix}😀tail`)).toEqual({
+    expect(capAssistantMessageForRender(`${prefix}étail`)).toEqual({
       text: prefix,
       capped: true,
     });

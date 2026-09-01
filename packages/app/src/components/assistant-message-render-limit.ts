@@ -1,3 +1,5 @@
+import { clampToSafeRevealBoundary } from "@/agent-stream/text-reveal";
+
 export const ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT = 32_000;
 
 export interface CappedAssistantMessage {
@@ -36,11 +38,7 @@ export function capAssistantMessageForRender(message: string): CappedAssistantMe
     return { text: message, capped: false };
   }
 
-  let end = ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT;
-  const finalCodeUnit = message.charCodeAt(end - 1);
-  if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {
-    end -= 1;
-  }
+  const end = clampToSafeRevealBoundary(message, ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT);
 
   return { text: message.slice(0, end), capped: true };
 }
