@@ -31,8 +31,29 @@ function workspace(input: {
   projectId: string;
   projectRoot: string;
   worktreeRoot: string;
+  mainRepoRoot?: string;
   remote: string;
 }): WorkspaceDescriptor {
+  const checkout = input.mainRepoRoot
+    ? {
+        cwd: input.projectRoot,
+        isGit: true as const,
+        currentBranch: "main",
+        remoteUrl: null,
+        worktreeRoot: input.worktreeRoot,
+        isPaseoOwnedWorktree: true as const,
+        mainRepoRoot: input.mainRepoRoot,
+      }
+    : {
+        cwd: input.projectRoot,
+        isGit: true as const,
+        currentBranch: "main",
+        remoteUrl: null,
+        worktreeRoot: input.worktreeRoot,
+        isPaseoOwnedWorktree: false as const,
+        mainRepoRoot: null,
+      };
+
   return {
     id: input.id,
     projectId: input.projectId,
@@ -52,15 +73,7 @@ function workspace(input: {
     project: {
       projectKey: "legacy-key",
       projectName: "acme/app",
-      checkout: {
-        cwd: input.projectRoot,
-        isGit: true,
-        currentBranch: "main",
-        remoteUrl: null,
-        worktreeRoot: input.worktreeRoot,
-        isPaseoOwnedWorktree: false,
-        mainRepoRoot: null,
-      },
+      checkout,
     },
   };
 }
@@ -160,7 +173,7 @@ describe("local project links", () => {
     });
   });
 
-  test("uses Windows path semantics when deriving a subdirectory", () => {
+  test("uses case-insensitive Windows ancestry checks while preserving subdirectory casing", () => {
     expect(
       deriveProjectGitIdentity({
         projectRootPath: "C:\\Repos\\App\\Packages\\Web",
@@ -169,6 +182,29 @@ describe("local project links", () => {
       }),
     ).toMatchObject({
       repository: "git.example.test/team/app",
+      subdirectory: "Packages/Web",
+    });
+  });
+
+  test("uses the main checkout when resolving a managed worktree project", () => {
+    const descriptor = project({ id: "prj-managed", root: "/repos/app/packages/web" });
+    expect(
+      resolveProjectGitIdentity({
+        project: descriptor,
+        workspaces: [
+          workspace({
+            id: "ws-managed",
+            projectId: descriptor.projectId,
+            projectRoot: descriptor.projectRootPath,
+            worktreeRoot: "/repos/.paseo/worktrees/feature",
+            mainRepoRoot: "/repos/app",
+            remote: "https://github.com/acme/app.git",
+          }),
+        ],
+      }),
+    ).toEqual({
+      repository: "github.com/acme/app",
+      remoteDisplay: "github.com/acme/app",
       subdirectory: "packages/web",
     });
   });
