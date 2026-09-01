@@ -113,3 +113,41 @@ async function ensureDir(path: string): Promise<string> {
   await mkdir(path, { recursive: true });
   return path;
 }
+
+import { rmSync, writeFileSync } from "node:fs";
+
+describe("claudeProjectDir Windows drive-letter case fallback", () => {
+  it("resolves a transcript folder stored with a different drive-letter case", async () => {
+    if (process.platform !== "win32") return;
+
+    const configDir = mkdtempSync(join(tmpdir(), "paseo-project-dir-case-"));
+    try {
+      const projectsRoot = join(configDir, "projects");
+      // Claude Code encodes the cwd verbatim; VS Code launches folders with a lowercase drive.
+      await mkdir(join(projectsRoot, "d--foo-bar"), { recursive: true });
+      const sessionFile = join(projectsRoot, "d--foo-bar", "session.jsonl");
+      await writeFile(sessionFile, "{}\n");
+
+      // paseo canonicalizes the drive letter to uppercase before encoding.
+      const resolved = claudeProjectDirSync("D:\\foo\\bar", { configDir });
+      expect(resolved.toLowerCase()).toBe(sessionFile.slice(0, -"\\session.jsonl".length).toLowerCase());
+
+      await expect(claudeProjectDir("D:\\foo\\bar", { configDir })).resolves.toBe(resolved);
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the canonical encoding when no case-insensitive match exists", async () => {
+    if (process.platform !== "win32") return;
+
+    const configDir = mkdtempSync(join(tmpdir(), "paseo-project-dir-nomatch-"));
+    try {
+      await mkdir(join(configDir, "projects"), { recursive: true });
+      const resolved = claudeProjectDirSync("D:\\nope\\here", { configDir });
+      expect(resolved).toBe(join(configDir, "projects", "D--nope-here"));
+    } finally {
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+});

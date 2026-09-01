@@ -150,13 +150,20 @@ export async function searchDirectoryEntries(
       : null;
   if (exact && input.limit === 1) return [exact];
 
+  const exactName =
+    !exact && !input.plan.isPathQuery && isExactFileNameQuery(input.plan.normalizedQuery)
+      ? await findEntryByExactName(input)
+      : null;
+  if (exactName && input.limit === 1) return [exactName];
+
   const browsesRoot = input.plan.isPathQuery && !input.plan.normalizedQuery;
   const browsesAbsoluteParent = input.plan.browseExactPath === true;
   const ranked =
     browsesRoot || browsesAbsoluteParent ? await searchChildren(input) : await searchTree(input);
   const results = sortAndFormat(ranked, input.root, input.pathFormat).slice(0, input.limit);
-  return exact
-    ? [exact, ...results.filter((entry) => !sameEntry(entry, exact))].slice(0, input.limit)
+  const pinned = exact ?? exactName;
+  return pinned
+    ? [pinned, ...results.filter((entry) => !sameEntry(entry, pinned))].slice(0, input.limit)
     : results;
 }
 
@@ -211,6 +218,67 @@ async function findExactEntry(input: SearchInput): Promise<DirectorySuggestionEn
   )
     return null;
   return formatEntry({ path: visiblePath, kind }, input.root, input.pathFormat);
+}
+
+/**
+ * True when the query names a single file exactly — a basename with an extension and no path
+ * separators. Such a query is a retrieval request for a known file rather than open-ended
+ * discovery, so a match should surface even when discovery filters would hide it.
+ */
+function isExactFileNameQuery(query: string): boolean {
+  const trimmed = query.trim();
+  if (!trimmed || trimmed.includes("/") || trimmed.includes("\\")) return false;
+  if (/^[.*]+$/.test(trimmed)) return false;
+  const dot = trimmed.lastIndexOf(".");
+  return dot > 0 && dot < trimmed.length - 1 && !trimmed.slice(dot + 1).includes(".");
+}
+
+/**
+ * Locate the unique entry whose basename equals the query, applying containment only. Discovery
+ * filters (gitignore, hidden, ignored directory names) deliberately do not run here: the caller
+ * named this exact file, which makes it retrieval, per the same rule findExactEntry applies to
+ * full-path queries.
+ */
+async function findEntryByExactName(
+  input: SearchInput,
+): Promise<DirectorySuggestionEntry | null> {
+  const wanted = input.plan.normalizedQuery.toLowerCase();
+  const includeFiles = input.includeFiles;
+  const includeDirectories = input.includeDirectories;
+  const visited = new Set<string>([input.root]);
+  let found: string | null = null;
+  let foundKind: DirectorySuggestionKind | null = null;
+
+  async function walk(directory: string, depth: number): Promise<boolean> {
+    if (depth > input.maxDepth) return false;
+    visited.add(directory);
+    const children = await readdir(directory, { withFileTypes: true }).catch(
+      () => [] as Dirent[],
+    );
+    for (const child of children) {
+      const resolvedPath = path.join(directory, child.name);
+      if (!isPathInsideRoot(input.root, resolvedPath)) continue;
+      if (child.isDirectory() && visited.has(resolvedPath)) continue;
+      if (child.name.toLowerCase() === wanted) {
+        const info = await stat(resolvedPath).catch(() => null);
+        const kind = getEntryKind(info);
+        if (!kind) continue;
+        if ((kind === "directory" && !includeDirectories) || (kind === "file" && !includeFiles))
+          continue;
+        found = resolvedPath;
+        foundKind = kind;
+        return true;
+      }
+      if (child.isDirectory()) {
+        if (await walk(resolvedPath, depth + 1)) return true;
+      }
+    }
+    return false;
+  }
+
+  await walk(input.root, 0);
+  if (!found || !foundKind) return null;
+  return formatEntry({ path: found, kind: foundKind }, input.root, input.pathFormat);
 }
 
 interface SearchInput {

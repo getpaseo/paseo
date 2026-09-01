@@ -1,3 +1,4 @@
+import { existsSync, readdirSync } from "node:fs";
 import { realpathSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -21,13 +22,58 @@ export async function claudeProjectDir(
 ): Promise<string> {
   const canonical = await canonicalize(cwd);
   const projectsRoot = join(resolveConfigDir(options), "projects");
-  return join(projectsRoot, encode(canonical));
+  return resolveProjectDir(projectsRoot, encode(canonical));
 }
 
 export function claudeProjectDirSync(cwd: string, options?: ClaudeProjectDirOptions): string {
   const canonical = canonicalizeSync(cwd);
   const projectsRoot = join(resolveConfigDir(options), "projects");
-  return join(projectsRoot, encode(canonical));
+  return resolveProjectDirSync(projectsRoot, encode(canonical));
+}
+
+/**
+ * On Windows, Claude Code encodes the cwd verbatim, so the encoded folder's drive-letter case
+ * depends on which tool launched it (VS Code opens folders with a lowercase drive; paths derived
+ * from %USERPROFILE% come out uppercase). paseo canonicalizes the drive letter to uppercase, so an
+ * exact-path miss can still be a real match. Fall back to a case-insensitive directory scan — on
+ * Windows only, where case-insensitive filesystems make that unambiguous.
+ */
+function resolveProjectDir(projectsRoot: string, encoded: string): Promise<string> {
+  const exact = join(projectsRoot, encoded);
+  if (
+    process.platform !== "win32" ||
+    existsSync(exact) ||
+    !existsSync(projectsRoot)
+  ) {
+    return Promise.resolve(exact);
+  }
+  const wanted = encoded.toLowerCase();
+  try {
+    return import("node:fs/promises").then((fs) =>
+      fs.readdir(projectsRoot).then((entries) => {
+        const match = entries.find((entry) => entry.toLowerCase() === wanted);
+        return match ? join(projectsRoot, match) : exact;
+      }),
+    );
+  } catch {
+    return Promise.resolve(exact);
+  }
+}
+
+function resolveProjectDirSync(projectsRoot: string, encoded: string): string {
+  const exact = join(projectsRoot, encoded);
+  if (process.platform !== "win32" || existsSync(exact) || !existsSync(projectsRoot)) {
+    return exact;
+  }
+  const wanted = encoded.toLowerCase();
+  try {
+    const match = readdirSync(projectsRoot).find(
+      (entry) => entry.toLowerCase() === wanted,
+    );
+    return match ? join(projectsRoot, match) : exact;
+  } catch {
+    return exact;
+  }
 }
 
 async function canonicalize(input: string): Promise<string> {
