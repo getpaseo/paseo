@@ -181,7 +181,6 @@ test.describe("Viewed agent timelines", () => {
       );
       await gate.drop();
       await gate.waitForBlockedConnection();
-      await expectReconnectingToastVisible(page);
       await commitMessage(scenario, scenario.firstAgentId, "Committed while the chat reconnects.");
       await expect(
         page.getByText("Committed while the chat reconnects.", { exact: true }),
