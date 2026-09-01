@@ -14,12 +14,21 @@ import type { Theme } from "@/styles/theme";
 
 type WorkspaceLaunches = NonNullable<WorkspaceDescriptor["launches"]>;
 type LaunchActionIcon = "open" | "start" | "stop" | "terminal";
+export type WorkspaceLaunchAction = "start" | "stop";
+
+export interface WorkspaceLaunchError {
+  action: WorkspaceLaunchAction;
+  message: string;
+}
 
 export interface WorkspaceLaunchesSectionProps {
   serverId: string;
   workspaceId: string;
   launches: WorkspaceLaunches;
+  launchErrors: Readonly<Record<string, WorkspaceLaunchError | undefined>>;
   liveTerminalIds?: readonly string[];
+  onLaunchError: (launchName: string, error: WorkspaceLaunchError) => void;
+  onClearLaunchError: (launchName: string) => void;
   onLaunchTerminalStarted?: (terminalId: string) => void;
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
@@ -73,7 +82,7 @@ function LaunchActionButton({
 }: {
   accessibilityLabel: string;
   disabled?: boolean;
-  icon: LaunchActionIcon;
+  icon?: LaunchActionIcon;
   label?: string;
   onPress: () => void;
   testID: string;
@@ -93,7 +102,7 @@ function LaunchActionButton({
         >
           {({ hovered }) => (
             <>
-              <LaunchActionIconElement hovered={hovered} icon={icon} />
+              {icon ? <LaunchActionIconElement hovered={hovered} icon={icon} /> : null}
               {label ? <Text style={styles.actionLabel}>{label}</Text> : null}
             </>
           )}
@@ -154,8 +163,10 @@ interface LaunchRowProps {
   liveTerminalIdSet: Set<string>;
   isStartPending: boolean;
   isStopPending: boolean;
+  launchError: WorkspaceLaunchError | null;
   onStart: (launchName: string) => void;
   onStop: (launchName: string) => void;
+  onClearLaunchError: (launchName: string) => void;
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
 }
@@ -165,8 +176,10 @@ function LaunchRow({
   liveTerminalIdSet,
   isStartPending,
   isStopPending,
+  launchError,
   onStart,
   onStop,
+  onClearLaunchError,
   onViewTerminal,
   onOpenUrlInBrowserTab,
 }: LaunchRowProps): ReactElement {
@@ -176,6 +189,17 @@ function LaunchRow({
     launch.terminalId && liveTerminalIdSet.has(launch.terminalId) ? launch.terminalId : null;
   const handleStart = useCallback(() => onStart(launch.launchName), [launch.launchName, onStart]);
   const handleStop = useCallback(() => onStop(launch.launchName), [launch.launchName, onStop]);
+  const handleRetry = useCallback(() => {
+    if (launchError?.action === "start") {
+      onStart(launch.launchName);
+    } else if (launchError?.action === "stop") {
+      onStop(launch.launchName);
+    }
+  }, [launch.launchName, launchError?.action, onStart, onStop]);
+  const handleDismissError = useCallback(
+    () => onClearLaunchError(launch.launchName),
+    [launch.launchName, onClearLaunchError],
+  );
   const handleViewTerminal = useCallback(() => {
     if (liveTerminalId) onViewTerminal?.(liveTerminalId);
   }, [liveTerminalId, onViewTerminal]);
@@ -238,6 +262,32 @@ function LaunchRow({
           />
         )}
       </View>
+      {launchError ? (
+        <View
+          testID={`workspace-launches-error-${launch.launchName}`}
+          style={styles.launchError}
+          accessibilityRole="alert"
+        >
+          <Text style={styles.launchErrorText}>{launchError.message}</Text>
+          <View style={styles.launchErrorActions}>
+            <LaunchActionButton
+              accessibilityLabel={t("common.actions.retry")}
+              disabled={launchError.action === "start" ? isStartPending : isStopPending}
+              label={t("common.actions.retry")}
+              onPress={handleRetry}
+              testID={`workspace-launches-retry-${launch.launchName}`}
+              tooltipLabel={t("common.actions.retry")}
+            />
+            <LaunchActionButton
+              accessibilityLabel={t("common.actions.dismiss")}
+              label={t("common.actions.dismiss")}
+              onPress={handleDismissError}
+              testID={`workspace-launches-dismiss-error-${launch.launchName}`}
+              tooltipLabel={t("common.actions.dismiss")}
+            />
+          </View>
+        </View>
+      ) : null}
       {isRunning && launch.endpoints.length > 0 ? (
         <View style={styles.endpointList}>
           {launch.endpoints.map((endpoint) => (
@@ -258,7 +308,10 @@ export function WorkspaceLaunchesSection({
   serverId,
   workspaceId,
   launches,
+  launchErrors,
   liveTerminalIds = [],
+  onLaunchError,
+  onClearLaunchError,
   onLaunchTerminalStarted,
   onViewTerminal,
   onOpenUrlInBrowserTab,
@@ -290,15 +343,17 @@ export function WorkspaceLaunchesSection({
       }
       return result;
     },
+    onMutate: (launchName) => onClearLaunchError(launchName),
     onError: (error, launchName) => {
-      toast.show(
+      const message =
         error instanceof Error
           ? error.message
-          : t("workspace.launches.states.startFailed", { launchName }),
-        { variant: "error" },
-      );
+          : t("workspace.launches.states.startFailed", { launchName });
+      onLaunchError(launchName, { action: "start", message });
+      toast.show(message, { variant: "error" });
     },
-    onSuccess: (result) => {
+    onSuccess: (result, launchName) => {
+      onClearLaunchError(launchName);
       if (result.launch?.terminalId) {
         onLaunchTerminalStarted?.(result.launch.terminalId);
       }
@@ -315,14 +370,16 @@ export function WorkspaceLaunchesSection({
       }
       return result;
     },
+    onMutate: (launchName) => onClearLaunchError(launchName),
     onError: (error, launchName) => {
-      toast.show(
+      const message =
         error instanceof Error
           ? error.message
-          : t("workspace.launches.states.stopFailed", { launchName }),
-        { variant: "error" },
-      );
+          : t("workspace.launches.states.stopFailed", { launchName });
+      onLaunchError(launchName, { action: "stop", message });
+      toast.show(message, { variant: "error" });
     },
+    onSuccess: (_result, launchName) => onClearLaunchError(launchName),
   });
 
   const handleStart = useCallback(
@@ -355,8 +412,10 @@ export function WorkspaceLaunchesSection({
           liveTerminalIdSet={liveTerminalIdSet}
           isStartPending={startMutation.isPending}
           isStopPending={stopMutation.isPending}
+          launchError={launchErrors[launch.launchName] ?? null}
           onStart={handleStart}
           onStop={handleStop}
+          onClearLaunchError={onClearLaunchError}
           onViewTerminal={onViewTerminal}
           onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
         />
@@ -387,6 +446,21 @@ const styles = StyleSheet.create((theme) => ({
   },
   launchNameActive: {
     color: theme.colors.foreground,
+  },
+  launchError: {
+    gap: theme.spacing[2],
+    marginHorizontal: theme.spacing[3],
+    marginBottom: theme.spacing[2],
+  },
+  launchErrorText: {
+    color: theme.colors.destructive,
+    fontSize: theme.fontSize.sm,
+    lineHeight: 14,
+  },
+  launchErrorActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
   },
   portRangeHeader: {
     paddingHorizontal: theme.spacing[3],

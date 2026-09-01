@@ -90,7 +90,78 @@ describe("WorkspaceRuntimeEnvironmentService", () => {
     service.release("workspace-concurrent-one");
     service.release("workspace-concurrent-two");
   });
+
+  it("does not resurrect a released environment after allocation is already in flight", async () => {
+    const allocationStarted = createDeferred();
+    const continueAllocation = createDeferred();
+    let waitForFirstAvailabilityCheck = true;
+    const service = new WorkspaceRuntimeEnvironmentService({
+      checkPortAvailable: async () => {
+        if (waitForFirstAvailabilityCheck) {
+          waitForFirstAvailabilityCheck = false;
+          allocationStarted.resolve();
+          await continueAllocation.promise;
+        }
+        return true;
+      },
+    });
+    const allocation = { range: "41000-41000", blockSize: 1 };
+    const released = service.ensure({
+      workspaceId: "workspace-released-during-allocation",
+      cwd: process.cwd(),
+      branchName: "feature/released",
+      allocation,
+    });
+
+    await allocationStarted.promise;
+    service.release("workspace-released-during-allocation");
+    continueAllocation.resolve();
+
+    await expect(released).rejects.toThrow("released during allocation");
+    expect(service.get("workspace-released-during-allocation")).toBeNull();
+
+    const replacement = await service.ensure({
+      workspaceId: "workspace-reuses-released-block",
+      cwd: process.cwd(),
+      branchName: "feature/replacement",
+      allocation,
+    });
+    expect(replacement.portBase).toBe(41000);
+    service.release("workspace-reuses-released-block");
+  });
+
+  it("skips ephemeral candidates that cannot contain the requested port block", async () => {
+    const candidates = [65500, 42000];
+    const service = new WorkspaceRuntimeEnvironmentService({
+      findFreePort: async () => {
+        const candidate = candidates.shift();
+        if (candidate === undefined) {
+          throw new Error("Expected another ephemeral port candidate");
+        }
+        return candidate;
+      },
+      checkPortAvailable: async () => true,
+    });
+
+    const environment = await service.ensure({
+      workspaceId: "workspace-ephemeral-retry",
+      cwd: process.cwd(),
+      branchName: "feature/ephemeral-retry",
+      allocation: { blockSize: 100 },
+    });
+
+    expect(environment).toMatchObject({ portBase: 42000, portEnd: 42099, portCount: 100 });
+    service.release("workspace-ephemeral-retry");
+  });
 });
+
+function createDeferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 async function getFreePortPair(): Promise<[number, number]> {
   for (let attempt = 0; attempt < 50; attempt += 1) {
