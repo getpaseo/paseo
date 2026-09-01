@@ -95,6 +95,8 @@ export function ChatEntryMotion({
   const previousRevision = useRef(revision);
   const settleRef = useRef(settle);
   settleRef.current = settle;
+  const animateOnMountRef = useRef(animateOnMount);
+  animateOnMountRef.current = animateOnMount;
   const progress = useSharedValue(animateOnMount && !settle ? 0 : 1);
 
   // A row superseded before or during its entry snaps to rest. The ref guards
@@ -110,7 +112,7 @@ export function ChatEntryMotion({
     let cancelled = false;
 
     function play() {
-      if (!cancelled && !settleRef.current) {
+      if (!cancelled && !settleRef.current && animateOnMountRef.current) {
         playEntry(progress);
         hasPlayedEntry.current = true;
       }
@@ -138,11 +140,23 @@ export function ChatEntryMotion({
       };
     }
 
+    // Eligibility can end while the row is still waiting for the chat viewport.
+    // Disconnecting that observer without this snap leaves progress at 0, so a
+    // completed off-screen row stays transparent after the user scrolls to it.
+    if (!animateOnMount) {
+      if (!hasPlayedEntry.current) {
+        cancelAnimation(progress);
+        progress.value = 1;
+        hasPlayedEntry.current = true;
+      }
+      return;
+    }
+
     // A row can mount a render before its own eligibility catches up — e.g. a
     // just-sent user message whose optimistic-pending bookkeeping lands a tick
     // behind the row itself. Give it one chance to play once `animateOnMount`
     // turns true instead of locking it out based on what it measured at mount.
-    if (animateOnMount && !hasPlayedEntry.current) {
+    if (!hasPlayedEntry.current) {
       play();
       return () => {
         cancelled = true;

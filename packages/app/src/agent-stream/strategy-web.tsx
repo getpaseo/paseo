@@ -96,6 +96,16 @@ const streamRowStyle: CSSProperties = {
   width: "100%",
 };
 
+const timelineClipStyle: CSSProperties = {
+  display: "flex",
+  flexDirection: "column",
+  width: "100%",
+  // Clip the rise to the untransformed layout box. A downward translateY
+  // would otherwise paint new tokens over the live footer; padding the
+  // layout instead would resize the content and re-enter stick/rise.
+  overflow: "hidden",
+};
+
 function isScrollContainerNearBottom(
   scrollContainer: Pick<HTMLElement, "scrollTop" | "clientHeight" | "scrollHeight">,
   thresholdPx = AUTO_SCROLL_BOTTOM_THRESHOLD_PX,
@@ -1353,39 +1363,41 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
       >
         <div ref={handleContentRef} data-testid="agent-chat-content" style={contentContainerStyle}>
           {historyStartSlot}
-          <div
-            ref={handleTimelineRef}
-            data-testid="agent-chat-timeline"
-            style={timelineContainerStyle}
-          >
-            {shouldUseVirtualizer ? (
-              <div style={virtualRowsContainerStyle}>
-                {virtualRows.map((virtualRow) => {
-                  const item = segments.historyVirtualized[virtualRow.index];
-                  if (!item) {
-                    return null;
-                  }
-                  return (
-                    <div
-                      key={virtualRow.key}
-                      data-index={virtualRow.index}
-                      data-history-row-id={item.id}
-                      ref={measureVirtualizedRowElement}
-                      style={renderVirtualRowStyle(virtualRow.start)}
-                    >
-                      {renderHistoryVirtualizedRow(
-                        item,
-                        virtualRow.index,
-                        segments.historyVirtualized,
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            ) : null}
-            {mountedRows}
-            {liveAuxiliary}
+          <div data-testid="agent-chat-timeline-clip" style={timelineClipStyle}>
+            <div
+              ref={handleTimelineRef}
+              data-testid="agent-chat-timeline"
+              style={timelineContainerStyle}
+            >
+              {shouldUseVirtualizer ? (
+                <div style={virtualRowsContainerStyle}>
+                  {virtualRows.map((virtualRow) => {
+                    const item = segments.historyVirtualized[virtualRow.index];
+                    if (!item) {
+                      return null;
+                    }
+                    return (
+                      <div
+                        key={virtualRow.key}
+                        data-index={virtualRow.index}
+                        data-history-row-id={item.id}
+                        ref={measureVirtualizedRowElement}
+                        style={renderVirtualRowStyle(virtualRow.start)}
+                      >
+                        {renderHistoryVirtualizedRow(
+                          item,
+                          virtualRow.index,
+                          segments.historyVirtualized,
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : null}
+              {mountedRows}
+            </div>
           </div>
+          {liveAuxiliary}
           {shouldRenderEmpty ? listEmptyComponent : null}
         </div>
       </div>

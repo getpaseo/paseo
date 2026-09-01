@@ -1398,6 +1398,8 @@ describe("createWebStreamStrategy", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    const renderers = createRenderers(vi.fn());
+    renderers.renderLiveAuxiliary = () => <div data-testid="live-auxiliary" />;
 
     act(() => {
       root?.render(
@@ -1413,7 +1415,7 @@ describe("createWebStreamStrategy", () => {
             hasMountedHistory: false,
             hasLiveHead: true,
           },
-          renderers: createRenderers(vi.fn()),
+          renderers,
           listEmptyComponent: null,
           viewportRef: React.createRef<StreamViewportHandle>(),
           routeBottomAnchorRequest: null,
@@ -1433,14 +1435,23 @@ describe("createWebStreamStrategy", () => {
 
     const scrollContainer = container.querySelector('[data-testid="agent-chat-scroll"]');
     const contentNode = container.querySelector('[data-testid="agent-chat-content"]');
+    const timelineClip = container.querySelector('[data-testid="agent-chat-timeline-clip"]');
     const timeline = container.querySelector('[data-testid="agent-chat-timeline"]');
+    const liveAuxiliary = container.querySelector('[data-testid="live-auxiliary"]');
     if (
       !(scrollContainer instanceof HTMLElement) ||
       !(contentNode instanceof HTMLElement) ||
-      !(timeline instanceof HTMLElement)
+      !(timelineClip instanceof HTMLElement) ||
+      !(timeline instanceof HTMLElement) ||
+      !(liveAuxiliary instanceof HTMLElement)
     ) {
-      throw new Error("Expected followed chat scroll, content, and timeline");
+      throw new Error("Expected followed chat scroll, clipped timeline, and live footer");
     }
+    expect(timeline.contains(liveAuxiliary)).toBe(false);
+    expect(timelineClip.contains(timeline)).toBe(true);
+    expect(timelineClip.contains(liveAuxiliary)).toBe(false);
+    expect(timelineClip.style.overflow).toBe("hidden");
+    expect(timelineClip.nextElementSibling).toBe(liveAuxiliary);
 
     Object.defineProperty(scrollContainer, "clientHeight", { configurable: true, value: 400 });
     Object.defineProperty(scrollContainer, "scrollHeight", { configurable: true, value: 800 });
