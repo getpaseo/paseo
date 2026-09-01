@@ -8,14 +8,10 @@ import { DocumentFileHeader } from "./document-file-header";
 import { hitTestDiffDocument, selectedSourceText } from "./hit-testing";
 import { retainHorizontalOffsetMapForPaths } from "./horizontal-offsets";
 import { HorizontalScroll } from "./horizontal-scroll.web";
-import {
-  buildDiffDocumentModel,
-  FILE_HEADER_HEIGHT,
-  resolveRelayoutScrollTop,
-  retainReusableModels,
-} from "./model";
+import { buildDiffDocumentModel, FILE_HEADER_HEIGHT, resolveRelayoutScrollTop } from "./model";
 import { paintWebViewport } from "./paint.web";
 import { hasPointerDragStarted } from "./pointer-gesture";
+import { createMeasuredAdvances } from "./text-measurement";
 import { retainDiffViewport } from "./viewport";
 import type {
   DiffHit,
@@ -24,22 +20,20 @@ import type {
   DiffTypography,
   TextMeasurer,
 } from "./types";
+import { useDiffDocumentWorkspaceCache } from "./workspace-cache";
 
 const DEFAULT_MONO_STACK = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 const RESIZE_SETTLE_DELAY_MS = 120;
 
 export function DiffSurface(props: DiffSurfaceProps) {
   const { t } = useTranslation();
+  const workspaceCache = useDiffDocumentWorkspaceCache();
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasScratchRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const modelRef = useRef<ReturnType<typeof buildDiffDocumentModel> | null>(null);
   const previousModelRef = useRef<ReturnType<typeof buildDiffDocumentModel> | null>(null);
-  const reusableModelRef = useRef<{
-    dependencies: readonly unknown[];
-    models: ReturnType<typeof buildDiffDocumentModel>[];
-  } | null>(null);
   const consumedFocusRef = useRef<string | null>(null);
   const scrollTopRef = useRef(0);
   const horizontalOffsetsRef = useRef(new Map<string, number>());
@@ -59,7 +53,6 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const forcePaintRef = useRef(true);
   const canvasWindowRef = useRef({ top: 0, height: 0 });
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
-  const [loadedTypography, setLoadedTypography] = useState<DiffTypography | null>(null);
   const [hoveredAffordance, setHoveredAffordance] = useState<{
     hit: Extract<DiffHit, { kind: "cell" }>;
     left: number;
@@ -80,10 +73,28 @@ export function DiffSurface(props: DiffSurfaceProps) {
     }),
     [family, props.displayPreferences.codeFontSize],
   );
-  const measurement = useMemo(
-    () => (loadedTypography ? createWebTextMeasurer(loadedTypography) : null),
-    [loadedTypography],
+  const typographyResource = useMemo(
+    () =>
+      workspaceCache.typography({
+        typography: desiredTypography,
+        load: async () => {
+          await Promise.all([
+            document.fonts.load(`400 ${desiredTypography.size}px ${desiredTypography.family}`),
+            document.fonts.load(`600 ${desiredTypography.size}px ${desiredTypography.family}`),
+          ]);
+          await document.fonts.ready;
+        },
+        createMeasurer: () => createWebTextMeasurer(desiredTypography),
+      }),
+    [desiredTypography, workspaceCache],
   );
+  const [readyTypographyResource, setReadyTypographyResource] = useState<ReturnType<
+    typeof workspaceCache.typography
+  > | null>(() => (typographyResource.isReady() ? typographyResource : null));
+  const loadedTypography =
+    readyTypographyResource === typographyResource ? typographyResource.typography : null;
+  const measurement =
+    readyTypographyResource === typographyResource ? typographyResource.measureText : null;
   const reviewActions = props.mode.kind === "working" ? props.mode.reviewActions : undefined;
   const model = useMemo(() => {
     if (!loadedTypography || !measurement) {
@@ -94,22 +105,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         lineHeight: desiredTypography.lineHeight,
       });
     }
-    const dependencies = [
-      props.files,
-      props.displayPreferences.layout,
-      props.displayPreferences.wrapLines,
-      viewport.width,
-      loadedTypography,
-      measurement,
-      props.palette,
-      t,
-    ] as const;
-    const previous = reusableModelRef.current;
-    const canReuse = previous?.dependencies.every(
-      (dependency, index) => dependency === dependencies[index],
-    );
-    const reuseFrom = canReuse ? previous?.models : undefined;
-    const next = buildDiffDocumentModel({
+    return workspaceCache.buildModel({
       files: props.files,
       collapsedFilePaths: props.collapsedFilePaths,
       layout: props.displayPreferences.layout,
@@ -123,13 +119,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         binary: t("workspace.git.diff.binaryFile"),
         tooLarge: t("workspace.git.diff.tooLarge"),
       },
-      reuseFrom,
     });
-    reusableModelRef.current = {
-      dependencies,
-      models: retainReusableModels(reuseFrom, next),
-    };
-    return next;
   }, [
     measurement,
     props.collapsedFilePaths,
@@ -142,6 +132,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     desiredTypography.lineHeight,
     loadedTypography,
     viewport.width,
+    workspaceCache,
   ]);
   modelRef.current = model;
 
@@ -279,18 +270,19 @@ export function DiffSurface(props: DiffSurfaceProps) {
   }, []);
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
-      await Promise.all([
-        document.fonts.load(`400 ${desiredTypography.size}px ${desiredTypography.family}`),
-        document.fonts.load(`600 ${desiredTypography.size}px ${desiredTypography.family}`),
-      ]);
-      await document.fonts.ready;
-      if (!cancelled) setLoadedTypography(desiredTypography);
-    })();
+    if (typographyResource.isReady()) {
+      setReadyTypographyResource(typographyResource);
+      return;
+    }
+    setReadyTypographyResource(null);
+    void typographyResource.load().then(() => {
+      if (!cancelled) setReadyTypographyResource(typographyResource);
+      return undefined;
+    });
     return () => {
       cancelled = true;
     };
-  }, [desiredTypography]);
+  }, [typographyResource]);
   useLayoutEffect(() => {
     const previous = previousModelRef.current;
     const scroll = scrollRef.current;
@@ -494,7 +486,14 @@ export function DiffSurface(props: DiffSurfaceProps) {
         schedulePaint();
         return;
       }
-      if (drag && !moved && hit?.kind === "cell" && hit.target && reviewActions) {
+      if (
+        event.pointerType === "touch" &&
+        drag &&
+        !moved &&
+        hit?.kind === "cell" &&
+        hit.target &&
+        reviewActions
+      ) {
         selectionRef.current = null;
         reviewActions.onStartComment(hit.target);
         schedulePaint();
@@ -816,18 +815,11 @@ function createWebTextMeasurer(typography: DiffTypography): TextMeasurer {
   const canvas = document.createElement("canvas");
   const context = canvas.getContext("2d");
   if (!context) return { measure: () => 0 };
-  return {
-    measure(text, weight = "regular") {
-      context.font = `${weight === "semibold" ? 600 : 400} ${typography.size}px ${typography.family}`;
-      return context.measureText(text).width;
-    },
-    measureAdvances(graphemes) {
-      context.font = `${typography.size}px ${typography.family}`;
-      let prefix = "";
-      return graphemes.map((grapheme) => {
-        prefix += grapheme;
-        return context.measureText(prefix).width;
-      });
-    },
+  const measure = (text: string, weight: "regular" | "semibold" = "regular") => {
+    context.font = `${weight === "semibold" ? 600 : 400} ${typography.size}px ${typography.family}`;
+    return context.measureText(text).width;
   };
+  // Canvas exposes no glyph coverage, so `requiresShaping` alone decides which
+  // runs a shaper has to see -- there is no `glyphIds` to fall back on.
+  return { measure, measureAdvances: createMeasuredAdvances((text) => measure(text)) };
 }

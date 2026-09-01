@@ -66,6 +66,7 @@ function createBaseInput(): AgentScreenMachineInput {
     isHistorySyncing: false,
     needsAuthoritativeSync: false,
     visibilityCatchUpStatus: "ready",
+    visibilityCatchUpError: null,
     hasHydratedHistoryBefore: false,
   };
 }
@@ -246,6 +247,24 @@ describe("deriveAgentScreenViewState", () => {
     const ready = expectReadyState(result.state);
 
     expectSyncErrorSync(ready);
+  });
+
+  it("shows the owner error when the first timeline load fails", () => {
+    const result = deriveAgentScreenViewState({
+      input: {
+        ...createBaseInput(),
+        agent: createAgent("agent-1"),
+        visibilityCatchUpStatus: "error",
+        visibilityCatchUpError: "already has an active writer",
+      },
+      memory: createBaseMemory(),
+    });
+
+    expect(result.state).toEqual({
+      tag: "error",
+      message: "already has an active writer",
+    });
+    expect(result.memory.hadInitialSyncFailure).toBe(true);
   });
 
   it("keeps sync errors non-blocking once the screen was ready", () => {

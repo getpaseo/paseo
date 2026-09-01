@@ -117,6 +117,31 @@ async function waitForRead(
 }
 
 describe("LiveFileModel", () => {
+  it("reports initial and read-pending work before any terminal observation", async () => {
+    const session = new TestLiveFileSession();
+    const model = new LiveFileModel();
+    model.open({ session, target: { cwd: "/workspace", path: "file.ts" }, liveUpdates: false });
+    await waitForRead(session, 1);
+    expect(model.getSnapshot()).toEqual({
+      observation: null,
+      read: { status: "pending", requested: false },
+    });
+  });
+
+  it("reports read error as terminal and recovers on refresh", async () => {
+    const session = new TestLiveFileSession();
+    const model = new LiveFileModel();
+    model.open({ session, target: { cwd: "/workspace", path: "file.ts" }, liveUpdates: false });
+    await waitForRead(session, 1);
+    session.reads[0].reject(new Error("read failed"));
+    await vi.waitFor(() =>
+      expect(model.getSnapshot().read).toEqual({ status: "error", error: "read failed" }),
+    );
+    model.refresh();
+    await waitForRead(session, 2);
+    session.reads[1].resolve(file("revision-2"));
+    await vi.waitFor(() => expect(model.getObservation()?.status).toBe("ready"));
+  });
   it("does not publish a missing candidate when the following read succeeds", async () => {
     const session = new TestLiveFileSession();
     const model = new LiveFileModel();

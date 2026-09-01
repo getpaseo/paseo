@@ -4,17 +4,11 @@ export async function revalidateSessionAfterResume(input: {
   awayMs: number;
   serverId: string;
   bumpHistorySyncGeneration: (serverId: string) => void;
-  refreshDirectories: () => Promise<unknown>;
 }): Promise<boolean> {
   if (input.awayMs < SESSION_STALE_AFTER_MS) {
     return false;
   }
 
-  try {
-    input.bumpHistorySyncGeneration(input.serverId);
-    await input.refreshDirectories();
-    return true;
-  } catch {
-    return false;
-  }
+  input.bumpHistorySyncGeneration(input.serverId);
+  return true;
 }

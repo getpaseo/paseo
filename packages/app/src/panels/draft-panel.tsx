@@ -1,8 +1,7 @@
 import { AgentConversationPanel, useDraftPanelDescriptor } from "@/panels/agent-panel";
-import type { PanelRegistration } from "@/panels/panel-registry";
+import { definePanel } from "@/panels/panel-registry";
 
-export const draftPanelRegistration: PanelRegistration<"draft"> = {
-  kind: "draft",
+export const draftPanelRegistration = definePanel("draft", {
   component: AgentConversationPanel,
   useDescriptor: useDraftPanelDescriptor,
-};
+});

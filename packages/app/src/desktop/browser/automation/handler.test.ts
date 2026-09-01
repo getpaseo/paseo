@@ -291,9 +291,11 @@ describe("mountBrowserAutomationHandler", () => {
     if (!workspaceKey) {
       throw new Error("Expected workspace key");
     }
-    const previousFocusedTabId = useWorkspaceLayoutStore
-      .getState()
-      .openTabFocused(workspaceKey, { kind: "draft", draftId: "human-draft" });
+    const previousFocusedTabId = useWorkspaceLayoutStore.getState().openTab({
+      workspaceKey: workspaceKey,
+      target: { kind: "draft", draftId: "human-draft" },
+      intent: "reveal",
+    });
     browser.mount({ serverId: "server-1" });
 
     browser.receive(browserNewTabRequest());

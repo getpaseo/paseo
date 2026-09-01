@@ -365,6 +365,8 @@ const CLAUDE_ROOT_ONLY_COMMANDS = new Set([
 const INTERRUPT_TOOL_USE_PLACEHOLDER = "[Request interrupted by user for tool use]";
 const INTERRUPT_PLACEHOLDER_PATTERN = /^\[Request interrupted by user(?:[^\]]*)\]$/;
 const NO_RESPONSE_REQUESTED_PLACEHOLDER = "No response requested.";
+const STEER_SUPERSEDED_PERMISSION_MESSAGE =
+  "The user answered with a message instead of approving. Their message follows.";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 interface SlashCommandInvocation {
@@ -914,7 +916,7 @@ function isTruthyEnvValue(value: string | undefined): boolean {
   );
 }
 
-function detectIneligibleAutoModeTransport(env: NodeJS.ProcessEnv): "Bedrock" | "Vertex" | null {
+function claudeAutoModeUnavailableOn(env: NodeJS.ProcessEnv): "Bedrock" | "Vertex" | null {
   if (isTruthyEnvValue(env.CLAUDE_CODE_USE_BEDROCK)) {
     return "Bedrock";
   }
@@ -924,17 +926,27 @@ function detectIneligibleAutoModeTransport(env: NodeJS.ProcessEnv): "Bedrock" | 
   return null;
 }
 
-function assertClaudeAutoModeEligible(mode: PermissionMode, env: NodeJS.ProcessEnv): void {
+function assertClaudeModeCanRun(mode: PermissionMode, env: NodeJS.ProcessEnv): void {
   if (mode !== "auto") {
     return;
   }
-  const transport = detectIneligibleAutoModeTransport(env);
+  const transport = claudeAutoModeUnavailableOn(env);
   if (transport === null) {
     return;
   }
   throw new Error(
     `Claude Auto mode requires the Anthropic API and is not supported when Claude Code uses ${transport}. Select another permission mode or unset the ${transport === "Bedrock" ? "CLAUDE_CODE_USE_BEDROCK" : "CLAUDE_CODE_USE_VERTEX"} environment variable.`,
   );
+}
+
+function claudeModeCatalog(env: NodeJS.ProcessEnv): {
+  modes: AgentMode[];
+  defaultModeId: PermissionMode;
+} {
+  if (claudeAutoModeUnavailableOn(env)) {
+    return { modes: DEFAULT_MODES.filter((mode) => mode.id !== "auto"), defaultModeId: "default" };
+  }
+  return { modes: DEFAULT_MODES, defaultModeId: "auto" };
 }
 
 function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<AgentSessionConfig> {
@@ -973,6 +985,7 @@ function coerceSessionMetadata(metadata: AgentMetadata | undefined): Partial<Age
 }
 
 export function toClaudeSdkMcpConfig(config: McpServerConfig): ClaudeSdkMcpServerConfig {
+  const eagerTools = config.alwaysLoad === true ? { alwaysLoad: true } : {};
   switch (config.type) {
     case "stdio":
       return {
@@ -980,21 +993,21 @@ export function toClaudeSdkMcpConfig(config: McpServerConfig): ClaudeSdkMcpServe
         command: config.command,
         args: config.args,
         env: config.env,
-        alwaysLoad: config.alwaysLoad,
+        ...eagerTools,
       };
     case "http":
       return {
         type: "http",
         url: config.url,
         headers: config.headers,
-        alwaysLoad: config.alwaysLoad,
+        ...eagerTools,
       };
     case "sse":
       return {
         type: "sse",
         url: config.url,
         headers: config.headers,
-        alwaysLoad: config.alwaysLoad,
+        ...eagerTools,
       };
   }
   throw new Error("Unhandled MCP server config type");
@@ -1561,15 +1574,12 @@ export class ClaudeAgentClient implements AgentClient {
     const models = await runProviderRefreshActivity(context, "settings", () =>
       getClaudeModelsWithSettings(this.logger, this.configDir, claudeCodeVersion),
     );
-    const modes = detectIneligibleAutoModeTransport(
+    const modeCatalog = claudeModeCatalog(
       createProviderEnv({ baseEnv: process.env, runtimeSettings: this.runtimeSettings }),
-    )
-      ? DEFAULT_MODES.filter((mode) => mode.id !== "auto")
-      : DEFAULT_MODES;
+    );
     return {
       models,
-      modes,
-      defaultModeId: modes.some((mode) => mode.id === "auto") ? "auto" : "default",
+      ...modeCatalog,
     };
   }
 
@@ -1579,7 +1589,7 @@ export class ClaudeAgentClient implements AgentClient {
       runtimeSettings: this.runtimeSettings,
       overlays: [launchEnv],
     });
-    return detectIneligibleAutoModeTransport(env) ? "default" : "auto";
+    return claudeModeCatalog(env).defaultModeId;
   }
 
   async listFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
@@ -2032,6 +2042,8 @@ class ClaudeAgentSession implements AgentSession {
    * UUIDs are provider-private; never let them escape the adapter boundary.
    */
   private readonly queuedSteerUuids = new Set<string>();
+  /** Human steers whose text has not reached Claude yet and therefore supersede blocking cards. */
+  private readonly permissionClearingSteerUuids = new Set<string>();
   private claudeSessionId: string | null;
   private persistence: AgentPersistenceHandle | null;
   private currentMode: PermissionMode;
@@ -2228,7 +2240,7 @@ class ClaudeAgentSession implements AgentSession {
       if (this.cancelCurrentTurn === requestCancel) {
         this.cancelCurrentTurn = null;
       }
-      this.rejectAllPendingPermissions(new Error("Permission request aborted"));
+      this.rejectAllPendingPermissions(new Error("Permission request canceled"));
       this.finishForegroundTurn({
         type: "turn_canceled",
         provider: "claude",
@@ -2295,11 +2307,32 @@ class ClaudeAgentSession implements AgentSession {
     ) {
       return { status: "unavailable" };
     }
-    if (message.uuid) {
-      this.queuedSteerUuids.add(message.uuid);
-    }
-    input.push(message);
+    this.enqueueSteer(input, message, options.clearPendingPermissions === true);
     return { status: "accepted" };
+  }
+
+  private enqueueSteer(
+    input: AsyncMessageInput<SDKUserMessage>,
+    message: SDKUserMessage,
+    clearPendingPermissions: boolean,
+  ): void {
+    const uuid = message.uuid;
+    if (uuid) this.queuedSteerUuids.add(uuid);
+    if (uuid && clearPendingPermissions) {
+      this.permissionClearingSteerUuids.add(uuid);
+    }
+    try {
+      input.push(message);
+      if (clearPendingPermissions) {
+        this.denyPendingPermissionsSupersededBySteer();
+      }
+    } catch (error) {
+      if (uuid) {
+        this.queuedSteerUuids.delete(uuid);
+        this.permissionClearingSteerUuids.delete(uuid);
+      }
+      throw error;
+    }
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -2364,7 +2397,7 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const normalized = isPermissionMode(modeId) ? modeId : "default";
-    assertClaudeAutoModeEligible(normalized, this.buildSdkEnv());
+    assertClaudeModeCanRun(normalized, this.buildSdkEnv());
     const previousMode = this.currentMode;
     const activeQuery = await this.ensureQuery();
     await activeQuery.setPermissionMode(normalized);
@@ -2469,6 +2502,83 @@ class ClaudeAgentSession implements AgentSession {
     return Array.from(this.pendingPermissions.values()).map((entry) => entry.request);
   }
 
+  /**
+   * A denied request is the only record the transcript gets. Plans especially:
+   * the pending card is the only place the plan text lives, so losing it means
+   * the user can no longer read what they just declined.
+   */
+  private recordDeniedPermissionTimeline(
+    request: AgentPermissionRequest,
+    response: Extract<AgentPermissionResponse, { behavior: "deny" }>,
+  ): void {
+    if (request.kind === "tool") {
+      this.pushToolCall(
+        mapClaudeFailedToolCall({
+          name: request.name,
+          callId:
+            (typeof request.metadata?.toolUseId === "string" ? request.metadata.toolUseId : null) ??
+            request.id,
+          input: request.input ?? null,
+          output: null,
+          error: { message: response.message ?? "Permission denied" },
+        }),
+      );
+      return;
+    }
+    if (request.kind === "plan") {
+      let planText: string | null = null;
+      if (typeof request.metadata?.planText === "string") {
+        planText = request.metadata.planText;
+      } else if (typeof request.input?.plan === "string") {
+        planText = request.input.plan;
+      }
+      if (!planText) return;
+      this.pushToolCall({
+        type: "tool_call",
+        name: "plan_approval",
+        callId: request.id,
+        status: "completed",
+        error: null,
+        detail: { type: "plan", text: planText },
+        metadata: {
+          approved: false,
+          actionId: response.selectedActionId ?? "reject",
+        },
+      });
+    }
+  }
+
+  private resolveDeniedPermission(
+    request: AgentPermissionRequest,
+    response: Extract<AgentPermissionResponse, { behavior: "deny" }>,
+  ): PermissionResult {
+    this.recordDeniedPermissionTimeline(request, response);
+    this.pushEvent({
+      type: "permission_resolved",
+      provider: "claude",
+      requestId: request.id,
+      resolution: response,
+    });
+    return {
+      behavior: "deny",
+      message: response.message ?? "Permission request denied",
+      interrupt: response.interrupt,
+    };
+  }
+
+  private denyPendingPermissionsSupersededBySteer(): void {
+    for (const [requestId, pending] of this.pendingPermissions) {
+      this.pendingPermissions.delete(requestId);
+      pending.cleanup?.();
+      pending.resolve(
+        this.resolveDeniedPermission(pending.request, {
+          behavior: "deny",
+          message: STEER_SUPERSEDED_PERMISSION_MESSAGE,
+        }),
+      );
+    }
+  }
+
   async respondToPermission(requestId: string, response: AgentPermissionResponse): Promise<void> {
     const pending = this.pendingPermissions.get(requestId);
     if (!pending) {
@@ -2512,26 +2622,8 @@ class ClaudeAgentSession implements AgentSession {
       };
       pending.resolve(result);
     } else {
-      if (pending.request.kind === "tool") {
-        this.pushToolCall(
-          mapClaudeFailedToolCall({
-            name: pending.request.name,
-            callId:
-              (typeof pending.request.metadata?.toolUseId === "string"
-                ? pending.request.metadata.toolUseId
-                : null) ?? pending.request.id,
-            input: pending.request.input ?? null,
-            output: null,
-            error: { message: response.message ?? "Permission denied" },
-          }),
-        );
-      }
-      const result: PermissionResult = {
-        behavior: "deny",
-        message: response.message ?? "Permission request denied",
-        interrupt: response.interrupt,
-      };
-      pending.resolve(result);
+      pending.resolve(this.resolveDeniedPermission(pending.request, response));
+      return;
     }
 
     this.pushEvent({
@@ -3151,7 +3243,7 @@ class ClaudeAgentSession implements AgentSession {
     );
     const settingsOptions = this.buildSettingsOptions(providerOptions, { ultracode });
     const sdkEnv = this.buildSdkEnv();
-    assertClaudeAutoModeEligible(this.currentMode, sdkEnv);
+    assertClaudeModeCanRun(this.currentMode, sdkEnv);
 
     const claudeBinary = await this.resolveBinary();
     this.logger.debug(
@@ -3917,6 +4009,7 @@ class ClaudeAgentSession implements AgentSession {
   private async discardQueuedSteers(query: Query): Promise<void> {
     const uuids = [...this.queuedSteerUuids];
     this.queuedSteerUuids.clear();
+    this.permissionClearingSteerUuids.clear();
     if (uuids.length === 0) return;
     // The SDK runtime supports this, but its public Query type has not caught up. Keep the
     // compatibility escape hatch inside the Claude adapter.
@@ -4020,6 +4113,7 @@ class ClaudeAgentSession implements AgentSession {
     const lifecycle = readClaudeCommandLifecycle(message);
     if (!lifecycle || lifecycle.state === "queued") return;
     this.queuedSteerUuids.delete(lifecycle.commandUuid);
+    this.permissionClearingSteerUuids.delete(lifecycle.commandUuid);
   }
 
   private appendTaskStateEvent(message: SDKMessage, events: AgentStreamEvent[]): void {
@@ -4526,6 +4620,13 @@ class ClaudeAgentSession implements AgentSession {
       request,
     });
 
+    if (this.permissionClearingSteerUuids.size > 0) {
+      return this.resolveDeniedPermission(request, {
+        behavior: "deny",
+        message: STEER_SUPERSEDED_PERMISSION_MESSAGE,
+      });
+    }
+
     return await new Promise<PermissionResult>((resolve, reject) => {
       const cleanupFns: Array<() => void> = [];
       const cleanup = () => {
@@ -4542,6 +4643,12 @@ class ClaudeAgentSession implements AgentSession {
       const abortHandler = () => {
         this.pendingPermissions.delete(requestId);
         cleanup();
+        this.pushEvent({
+          type: "permission_resolved",
+          provider: "claude",
+          requestId,
+          resolution: { behavior: "deny", message: "Permission request canceled" },
+        });
         reject(new Error("Permission request aborted"));
       };
 
@@ -4682,6 +4789,12 @@ class ClaudeAgentSession implements AgentSession {
       pending.cleanup?.();
       pending.reject(error);
       this.pendingPermissions.delete(id);
+      this.pushEvent({
+        type: "permission_resolved",
+        provider: "claude",
+        requestId: id,
+        resolution: { behavior: "deny", message: error.message },
+      });
     }
   }
 

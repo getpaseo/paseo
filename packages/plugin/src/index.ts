@@ -1,9 +1,17 @@
+import type { ComponentType } from "react";
+import type { PluginIconProps } from "./contracts.js";
+
 export {
   PluginAttachmentItemSchema,
   PluginAttachmentSearchPayloadSchema,
+  defineAttachmentSource,
+  defineRpc,
   type PluginAttachmentItem,
   type PluginAttachmentSearchPayload,
-} from "./attachments.js";
+  type PluginRpcContract,
+} from "./server.js";
+
+export declare const Icon: ComponentType<PluginIconProps>;
 export type {
   PluginAttachmentSourceContribution,
   PluginAgentCommandContext,
@@ -12,14 +20,31 @@ export type {
   PluginCleanup,
   PluginCommandCapabilities,
   PluginCommandCenterItemContribution,
+  PluginClientContext,
+  PluginClientContribution,
+  PluginClientOpenPanelOptions,
+  PluginComposerPillContribution,
+  PluginComposerPillProps,
   PluginContribution,
   PluginContext,
   PluginGlobalCommandContext,
   PluginHandlerContext,
   PluginHostProps,
+  PluginOpenPanelOptions,
+  PluginIconProps,
+  PluginPanelLocation,
+  PluginTheme,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginSurfaceProps,
+  PluginThemeColors,
+  PluginThemeContribution,
+  PluginTimelineData,
+  PluginTimelineItem,
+  PluginTimelineItemProps,
+  PluginTimelineRendererContribution,
+  PluginTimelineTransformerContribution,
+  PluginTimelineTransformResult,
   PluginWorkspaceCommandContext,
   PluginWorkspacePanelContribution,
   PluginWorkspacePanelProps,
@@ -27,12 +52,4 @@ export type {
 } from "./contracts.js";
 export { usePaseo } from "./paseo-context.js";
 export { useAgent, useWorkspace } from "./client-state.js";
-import type { PluginAttachmentSourceContribution } from "./contracts.js";
 export { useRpc } from "./rpc-context.js";
-export { defineRpc, type PluginRpcContract } from "./rpc.js";
-
-export function defineAttachmentSource<Definition extends PluginAttachmentSourceContribution>(
-  definition: Definition,
-): Definition {
-  return definition;
-}

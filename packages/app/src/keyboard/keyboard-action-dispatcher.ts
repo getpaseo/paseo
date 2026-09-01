@@ -1,5 +1,8 @@
 export type KeyboardActionScope = "global" | "message-input" | "sidebar" | "workspace";
 
+export type WorkspacePanelTarget = "changes" | "files" | "pull-request";
+export type WorkspacePanelPlacement = "supporting" | "side-pane" | "focused-pane";
+
 export type KeyboardActionId =
   | "agent.interrupt"
   | "message-input.focus"
@@ -19,6 +22,15 @@ export type KeyboardActionId =
   | "workspace.tab.close-current"
   | "workspace.tab.navigate-index"
   | "workspace.tab.navigate-relative"
+  | "workspace.tab.open"
+  | "workspace.tab.rename-current"
+  | "workspace.tab.reload-current"
+  | "workspace.tab.copy-resume-command"
+  | "workspace.tab.copy-id"
+  | "workspace.tab.copy-file-path"
+  | "workspace.tab.close-left"
+  | "workspace.tab.close-right"
+  | "workspace.tab.close-others"
   | "workspace.pane.split.right"
   | "workspace.pane.split.down"
   | "workspace.pane.focus.left"
@@ -30,16 +42,19 @@ export type KeyboardActionId =
   | "workspace.pane.move-tab.up"
   | "workspace.pane.move-tab.down"
   | "workspace.pane.close"
-  | "workspace.explorer.maximize.toggle"
   | "workspace.focus.toggle"
   | "workspace.terminal.new"
   | "workspace.browser.new"
   | "sidebar.toggle.right"
+  | "sidebar.toggle.both"
   | "workspace.new"
   | "workspace.project.pick"
   | "worktree.new"
   | "workspace.archive"
-  | "workspace.pin";
+  | "workspace.pin"
+  // Command-center only: no keybind, so these are absent from route-shortcut.ts.
+  | "workspace.rename"
+  | "workspace.setup.show";
 
 export type KeyboardActionDefinition =
   | { id: "agent.interrupt"; scope: KeyboardActionScope }
@@ -60,6 +75,20 @@ export type KeyboardActionDefinition =
   | { id: "workspace.tab.close-current"; scope: KeyboardActionScope }
   | { id: "workspace.tab.navigate-index"; scope: KeyboardActionScope; index: number }
   | { id: "workspace.tab.navigate-relative"; scope: KeyboardActionScope; delta: 1 | -1 }
+  | {
+      id: "workspace.tab.open";
+      scope: KeyboardActionScope;
+      target: WorkspacePanelTarget;
+      placement: WorkspacePanelPlacement;
+    }
+  | { id: "workspace.tab.rename-current"; scope: KeyboardActionScope }
+  | { id: "workspace.tab.reload-current"; scope: KeyboardActionScope }
+  | { id: "workspace.tab.copy-resume-command"; scope: KeyboardActionScope }
+  | { id: "workspace.tab.copy-id"; scope: KeyboardActionScope }
+  | { id: "workspace.tab.copy-file-path"; scope: KeyboardActionScope }
+  | { id: "workspace.tab.close-left"; scope: KeyboardActionScope }
+  | { id: "workspace.tab.close-right"; scope: KeyboardActionScope }
+  | { id: "workspace.tab.close-others"; scope: KeyboardActionScope }
   | { id: "workspace.pane.split.right"; scope: KeyboardActionScope }
   | { id: "workspace.pane.split.down"; scope: KeyboardActionScope }
   | { id: "workspace.pane.focus.left"; scope: KeyboardActionScope }
@@ -71,16 +100,18 @@ export type KeyboardActionDefinition =
   | { id: "workspace.pane.move-tab.up"; scope: KeyboardActionScope }
   | { id: "workspace.pane.move-tab.down"; scope: KeyboardActionScope }
   | { id: "workspace.pane.close"; scope: KeyboardActionScope }
-  | { id: "workspace.explorer.maximize.toggle"; scope: KeyboardActionScope }
   | { id: "workspace.focus.toggle"; scope: KeyboardActionScope }
   | { id: "workspace.terminal.new"; scope: KeyboardActionScope }
   | { id: "workspace.browser.new"; scope: KeyboardActionScope }
   | { id: "sidebar.toggle.right"; scope: KeyboardActionScope }
+  | { id: "sidebar.toggle.both"; scope: KeyboardActionScope }
   | { id: "workspace.new"; scope: KeyboardActionScope }
   | { id: "workspace.project.pick"; scope: KeyboardActionScope }
   | { id: "worktree.new"; scope: KeyboardActionScope }
   | { id: "workspace.archive"; scope: KeyboardActionScope }
-  | { id: "workspace.pin"; scope: KeyboardActionScope };
+  | { id: "workspace.pin"; scope: KeyboardActionScope }
+  | { id: "workspace.rename"; scope: KeyboardActionScope }
+  | { id: "workspace.setup.show"; scope: KeyboardActionScope };
 
 export interface KeyboardActionHandler {
   handlerId: string;

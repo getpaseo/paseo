@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { DaemonClient } from "../test-utils/daemon-client.js";
 import { createTestPaseoDaemon } from "../test-utils/paseo-daemon.js";
+import { createTestAgentClient, createTestAgentClients } from "../test-utils/fake-agent-client.js";
 
 const roots: string[] = [];
 
@@ -21,13 +22,19 @@ test("plugin handlers create workspaces and agents through their Paseo API", asy
   );
   await writeFile(
     path.join(pluginDirectory, "index.tsx"),
-    `import { defineRpc, type PluginContext } from "@paseo/plugin";
+    `import { defineRpc, type PluginContext } from "@getpaseo/plugin";
 import { z } from "zod";
 
 const create = defineRpc({
   name: "create",
   input: z.object({ path: z.string() }),
   output: z.object({ workspaceId: z.string(), agentId: z.string() }),
+});
+
+const list = defineRpc({
+  name: "list",
+  input: z.object({}),
+  output: z.object({ agentIds: z.array(z.string()) }),
 });
 
 export default function contribute(plugin: PluginContext) {
@@ -37,16 +44,22 @@ export default function contribute(plugin: PluginContext) {
       title: "Plugin workspace",
     });
     const agent = await workspace.agents.create({
-      config: { provider: "codex/test" },
+      config: { provider: "pi/test" },
       prompt: "Created by a plugin handler",
     });
     return { workspaceId: workspace.id, agentId: agent.id };
+  });
+  plugin.handle(list, async (_input, { paseo }) => {
+    const result = await paseo.agents.list({ page: { limit: 100 } });
+    return { agentIds: result.entries.map((entry) => entry.agent.id) };
   });
   return () => undefined;
 }`,
   );
 
-  const daemon = await createTestPaseoDaemon();
+  const daemon = await createTestPaseoDaemon({
+    agentClients: { ...createTestAgentClients(), pi: createTestAgentClient("pi") },
+  });
   const client = new DaemonClient({
     url: `ws://127.0.0.1:${daemon.port}/ws`,
     appVersion: "0.4.0",
@@ -71,6 +84,10 @@ export default function contribute(plugin: PluginContext) {
     if (typeof created !== "object" || created === null) {
       throw new Error("Plugin returned an invalid creation result");
     }
+    const listed = await client.invokePluginRpc("paseo-api", "list", {});
+    expect(listed).toEqual({
+      agentIds: expect.arrayContaining([Reflect.get(created, "agentId")]),
+    });
     await client.removePlugin("paseo-api");
     const workspaces = await client.fetchWorkspaces();
     const agents = await client.fetchAgents();
