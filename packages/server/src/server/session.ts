@@ -2330,7 +2330,7 @@ export class Session {
       case "refresh_agent_request":
         return this.handleRefreshAgentRequest(msg);
       case "cancel_agent_request":
-        return this.handleCancelAgentRequest(msg.agentId, msg.requestId);
+        return this.handleCancelAgentRequest(msg.agentId, msg.expectedTurnId, msg.requestId);
       case "agent_permission_response":
         return this.handleAgentPermissionResponse(msg.agentId, msg.requestId, msg.response);
       case "clear_agent_attention":
@@ -3904,13 +3904,18 @@ export class Session {
     }
   }
 
-  private async handleCancelAgentRequest(agentId: string, requestId?: string): Promise<void> {
+  private async handleCancelAgentRequest(
+    agentId: string,
+    expectedTurnId?: string,
+    requestId?: string,
+  ): Promise<void> {
     this.sessionLogger.info({ agentId }, `Cancel request received for agent ${agentId}`);
 
     try {
-      await cancelAgentRunCommand(
+      const result = await cancelAgentRunCommand(
         { agentManager: this.agentManager, logger: this.sessionLogger },
         agentId,
+        expectedTurnId,
       );
       if (requestId) {
         const agent = this.agentManager.getAgent(agentId);
@@ -3921,6 +3926,7 @@ export class Session {
             requestId,
             agentId,
             agent: payload,
+            status: result.cancellation.status,
             error: null,
           },
         });

@@ -40,11 +40,22 @@ foreground turn can no longer run, including when the provider reports that it i
 rejects only when the provider may still own the turn. Provider adapters translate native errors
 into that contract; lifecycle callers do not interpret provider-specific errors.
 
+The public `cancel_agent_request` may carry `expectedTurnId`, taken from the
+daemon-owned `activeTurn.turnId` snapshot. The manager checks that ID inside the
+per-agent foreground mutation before it invokes provider interruption. A mismatch,
+including a request for a turn that has already ended, returns `stale_turn` and
+does not interrupt the current turn. Without an expected ID, cancellation targets
+the turn current when the daemon evaluates the request.
+
 After an acknowledged interrupt, the manager settles the captured run even when no terminal event
 arrives or the run was still waiting for its provider turn id. The captured run token prevents an
 older cancellation from settling a newer turn. If interruption is rejected or times out, the agent
 keeps its active foreground turn and replacement, reload, rewind, and Stop report the failure.
 Accepting new work after an ambiguous interruption would create a split-brain session.
+
+The request response reports `settled`, `not_running`, or `stale_turn` and carries
+the current agent snapshot. The public SDK does not synthesize a snapshot after a
+cancellation error or a response without a status.
 
 ## Relationships
 

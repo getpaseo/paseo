@@ -1,6 +1,8 @@
 import {
   AgentStreamEventPayloadSchema,
   AgentTimelineEntryPayloadSchema,
+  CancelAgentRequestMessageSchema,
+  CancelAgentResponseMessageSchema,
   SendAgentMessageRequestSchema,
 } from "./messages";
 import { describe, expect, it } from "vitest";
@@ -26,6 +28,37 @@ describe("send_agent_message_request active-turn behavior", () => {
         text: "Keep the old behavior",
       }).activeTurnBehavior,
     ).toBeUndefined();
+  });
+});
+
+describe("cancel_agent_request exact-turn behavior", () => {
+  it("accepts an optional expected turn and an explicit cancellation status", () => {
+    expect(
+      CancelAgentRequestMessageSchema.parse({
+        type: "cancel_agent_request",
+        agentId: "agent-1",
+        requestId: "cancel-1",
+        expectedTurnId: "turn-a",
+      }),
+    ).toEqual({
+      type: "cancel_agent_request",
+      agentId: "agent-1",
+      requestId: "cancel-1",
+      expectedTurnId: "turn-a",
+    });
+
+    expect(
+      CancelAgentResponseMessageSchema.parse({
+        type: "cancel_agent_response",
+        payload: {
+          requestId: "cancel-1",
+          agentId: "agent-1",
+          agent: null,
+          error: null,
+          status: "stale_turn",
+        },
+      }).payload.status,
+    ).toBe("stale_turn");
   });
 });
 

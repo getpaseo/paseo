@@ -26,6 +26,11 @@ await client.close();
 
 The public API is the package root. Imports under `@getpaseo/client/internal/*` are unsupported implementation details used by Paseo's own packages.
 
+The supported agent handle also exposes exact-turn cancellation. Pass the
+`activeTurn.turnId` you observed to prevent a delayed request from affecting a
+newer turn; omit it only for daemon current-turn semantics. The returned status
+and snapshot are authoritative.
+
 Read the [SDK documentation](https://paseo.sh/docs/sdk) for agents, workspaces, provider discovery, events, recipes, and the API reference. Runnable TypeScript patterns also live in [`examples/`](./examples/README.md).
 
 ## Runtime

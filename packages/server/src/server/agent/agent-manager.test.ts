@@ -2339,6 +2339,79 @@ test("cancelAgentRun preserves running state when the provider interrupt hangs",
   }
 });
 
+test("cancelAgentRun cancels the exact active turn", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-exact-turn",
+    agentId: "00000000-0000-4000-8000-000000000307",
+    turnId: "exact-turn",
+    interrupt: async (session) => {
+      session.pushEvent({
+        type: "turn_canceled",
+        provider: session.provider,
+        turnId: "exact-turn",
+        reason: "interrupted",
+      });
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId, "exact-turn")).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.session.interruptCalled).toBe(true);
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("cancelAgentRun refuses a stale turn without interrupting the newer turn", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-stale-turn",
+    agentId: "00000000-0000-4000-8000-000000000308",
+    turnId: "new-turn",
+    interrupt: async () => {},
+  });
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId, "old-turn")).resolves.toEqual({
+      status: "stale_turn",
+    });
+    expect(fixture.session.interruptCalled).toBe(false);
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: "new-turn",
+    });
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("cancelAgentRun treats an expected turn with no active turn as stale", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-missing-turn",
+    agentId: "00000000-0000-4000-8000-000000000309",
+    turnId: "never-started-turn",
+    interrupt: async () => {},
+  });
+
+  try {
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId, "old-turn")).resolves.toEqual({
+      status: "stale_turn",
+    });
+    expect(fixture.session.interruptCalled).toBe(false);
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
 test("cancelAgentRun preserves the active turn when the provider rejects the interrupt", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-rejected",

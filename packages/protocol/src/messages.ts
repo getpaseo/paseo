@@ -1730,9 +1730,14 @@ export const RefreshAgentRequestMessageSchema = z.object({
   requestId: z.string(),
 });
 
+export const AgentCancellationStatusSchema = z.enum(["settled", "not_running", "stale_turn"]);
+export type AgentCancellationStatus = z.infer<typeof AgentCancellationStatusSchema>;
+
 export const CancelAgentRequestMessageSchema = z.object({
   type: z.literal("cancel_agent_request"),
   agentId: z.string(),
+  // COMPAT(exactTurnCancellation): added in v0.7.1, remove after 2027-03-01 once daemon floor >= v0.7.1.
+  expectedTurnId: z.string().optional(),
   requestId: z.string().optional(),
 });
 
@@ -4506,6 +4511,8 @@ export const CancelAgentResponseMessageSchema = z.object({
     requestId: z.string(),
     agentId: z.string(),
     agent: AgentSnapshotPayloadSchema.nullable(),
+    // COMPAT(exactTurnCancellation): added in v0.7.1, remove after 2027-03-01 once daemon floor >= v0.7.1.
+    status: AgentCancellationStatusSchema.optional(),
     error: z.string().nullable().optional(),
   }),
 });

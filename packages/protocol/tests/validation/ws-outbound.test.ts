@@ -138,6 +138,27 @@ const SourceSchema = z.object({
     );
   });
 
+  it("accepts an exact-turn cancellation response envelope", () => {
+    const envelope = {
+      type: "session",
+      message: {
+        type: "cancel_agent_response",
+        payload: {
+          requestId: "cancel-request",
+          agentId: "agent-1",
+          agent: null,
+          status: "stale_turn",
+          error: null,
+        },
+      },
+    };
+
+    expect(GeneratedWSOutboundMessageSchema.safeParse(envelope)).toEqual({
+      success: true,
+      data: envelope,
+    });
+  });
+
   it("accepts project config responses with and without setup commit status", () => {
     const payload = {
       requestId: "project-config-read",

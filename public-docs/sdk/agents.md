@@ -37,6 +37,37 @@ console.log(result.status, result.lastMessage);
 
 A timeout does not cancel the agent.
 
+## Cancel a turn
+
+Use the `activeTurn.turnId` from the snapshot you observed when cancellation must
+target that exact turn:
+
+```ts
+const expectedTurnId = agent.activeTurn?.turnId;
+const cancellation = await agent.cancelTurn(expectedTurnId);
+
+if (cancellation.status === "stale_turn") {
+  console.log("The observed turn was already replaced or finished.");
+}
+const agentSnapshot = cancellation.agent;
+```
+
+`cancelTurn(expectedTurnId)` is an exact-turn compare-and-cancel operation. The
+daemon checks the expected ID immediately before interrupting the provider, so a
+delayed request for an older turn cannot cancel a newer one. The result is
+authoritative and includes the refreshed snapshot:
+
+| Status        | Meaning                                                   |
+| ------------- | --------------------------------------------------------- |
+| `settled`     | The daemon acknowledged that the active turn was settled. |
+| `not_running` | No turn was running when the cancellation was evaluated.  |
+| `stale_turn`  | The supplied turn ID was not the daemon's current turn.   |
+
+Omit the ID only when you mean “cancel whichever turn is current when the daemon
+handles this request”; the response status and snapshot remain authoritative.
+The method rejects on transport, timeout, provider, or incompatible-daemon
+errors. It requires the daemon's `agentTurnIdentity` capability.
+
 ## Keep a session alive for follow-ups
 
 Create an idle session when prompts arrive later:

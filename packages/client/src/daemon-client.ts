@@ -88,6 +88,7 @@ import type {
   DaemonConfigReloadResponse,
   DiagnosticsResponse,
   AgentRewindResponseMessage,
+  CancelAgentResponseMessage,
   ListTerminalsResponse,
   CreateTerminalResponse,
   SubscribeTerminalResponse,
@@ -915,6 +916,7 @@ function toTimeoutError(error: unknown, label: string, timeoutMs: number): Error
 const DEFAULT_RECONNECT_BASE_DELAY_MS = 1500;
 const DEFAULT_RECONNECT_MAX_DELAY_MS = 30000;
 const DEFAULT_SESSION_RPC_TIMEOUT_MS = 60_000;
+const CANCEL_AGENT_TIMEOUT_MS = 10_000;
 const PUSH_TOKEN_REVOCATION_TIMEOUT_MS = 2_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIVENESS_TIMEOUT_MS = 5000;
@@ -3110,16 +3112,21 @@ export class DaemonClient {
     return payload;
   }
 
-  async cancelAgent(agentId: string): Promise<void> {
+  async cancelAgent(
+    agentId: string,
+    expectedTurnId?: string,
+  ): Promise<CancelAgentResponseMessage["payload"]> {
     const requestId = this.createRequestId();
     const message = SessionInboundMessageSchema.parse({
       type: "cancel_agent_request",
       agentId,
+      ...(expectedTurnId === undefined ? {} : { expectedTurnId }),
       requestId,
     });
     const payload = await this.sendRequest({
       requestId,
       message,
+      timeout: CANCEL_AGENT_TIMEOUT_MS,
       options: { skipQueue: true },
       select: (msg) => {
         if (msg.type !== "cancel_agent_response") {
@@ -3134,6 +3141,7 @@ export class DaemonClient {
     if (payload.error) {
       throw new Error(payload.error);
     }
+    return payload;
   }
 
   async setAgentMode(agentId: string, modeId: string): Promise<AgentProviderNotice | null> {

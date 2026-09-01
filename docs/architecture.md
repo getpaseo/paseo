@@ -257,11 +257,14 @@ New session RPCs use dotted names with `.request` and `.response` suffixes, such
 - `workspace_update`, `script_status_update`, `workspace_setup_progress` — Workspace state
 - `agent_permission_request` / `agent_permission_resolved` — Tool-call permission flow
 - `agent_deleted`, `agent_archived`, `agent_status`, `agent_list`
+- `cancel_agent_request` / `cancel_agent_response` — Optional exact-turn cancellation, correlated by `requestId`
 - `checkout_status_update`, `checkout_diff_update`, and the full `checkout_*` request/response set for git operations
 
 Agent snapshots optionally carry the daemon-owned active turn identity, and turn lifecycle stream events
 optionally carry the same `turnId`. New clients use these fields when present and normalize an old daemon's
-status once at the directory boundary rather than maintaining a second activity model.
+status once at the directory boundary rather than maintaining a second activity model. Clients with the
+`agentTurnIdentity` server feature may send `expectedTurnId` with cancellation requests; the response reports
+the authoritative `settled`, `not_running`, or `stale_turn` status and refreshed snapshot.
 
 - Terminal subscribe/input/capture commands
 - Voice/dictation streaming events (`dictation_stream_*`, `assistant_chunk`, `audio_output`, `transcription_result`)

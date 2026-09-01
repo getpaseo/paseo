@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
+  CancelAgentRequestMessageSchema,
+  CancelAgentResponseMessageSchema,
   ServerInfoStatusPayloadSchema,
   SessionOutboundMessageSchema,
   WSHelloMessageSchema,
@@ -44,6 +46,40 @@ const LegacyAgentSnapshotPayloadSchema = AgentSnapshotPayloadSchema.extend({
 });
 
 describe("wire schema compatibility", () => {
+  test("cancel requests and responses remain compatible without exact-turn fields", () => {
+    expect(
+      CancelAgentRequestMessageSchema.parse({
+        type: "cancel_agent_request",
+        agentId: "agent-legacy",
+        requestId: "cancel-legacy",
+      }),
+    ).toEqual({
+      type: "cancel_agent_request",
+      agentId: "agent-legacy",
+      requestId: "cancel-legacy",
+    });
+
+    expect(
+      CancelAgentResponseMessageSchema.parse({
+        type: "cancel_agent_response",
+        payload: {
+          requestId: "cancel-legacy",
+          agentId: "agent-legacy",
+          agent: null,
+          error: null,
+        },
+      }),
+    ).toEqual({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: "cancel-legacy",
+        agentId: "agent-legacy",
+        agent: null,
+        error: null,
+      },
+    });
+  });
+
   test("hello parses with and without the project update capability", () => {
     const legacy = WSHelloMessageSchema.parse({
       type: "hello",

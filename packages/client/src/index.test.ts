@@ -55,6 +55,7 @@ function parseSentSessionMessage(data: string | ArrayBuffer | Uint8Array | undef
   type: string;
   requestId?: string;
   agentId?: string;
+  expectedTurnId?: string;
   workspaceId?: string;
   provider?: string;
   providers?: string[];
@@ -760,6 +761,151 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   expect(agent.archivedAt).toBe("2026-05-16T01:00:00.000Z");
 
   unsubscribe();
+  await client.close();
+});
+
+test("agent handles cancel the expected turn and adopt the authoritative snapshot", async () => {
+  const { client, ws } = await connectClient({
+    providersSnapshotCwd: true,
+    agentTurnIdentity: true,
+  });
+  const runningAgent = createAgent({
+    status: "running",
+    activeTurn: {
+      turnId: "turn-a",
+      startedAt: "2026-05-16T00:01:00.000Z",
+    },
+  });
+  const settledAgent = createAgent({ status: "idle", activeTurn: null });
+  const agent = client.agents.ref(runningAgent);
+
+  const cancelPromise = agent.cancelTurn("turn-a");
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "cancel_agent_request",
+    agentId: "agent_sdk",
+    expectedTurnId: "turn-a",
+  });
+
+  ws.message(
+    sessionMessage({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        agent: settledAgent,
+        status: "settled",
+        error: null,
+      },
+    }),
+  );
+
+  await expect(cancelPromise).resolves.toEqual({ status: "settled", agent: settledAgent });
+  expect(agent.current()).toEqual(settledAgent);
+  await client.close();
+});
+
+test("agent handles report stale cancellation and refresh to the daemon snapshot", async () => {
+  const { client, ws } = await connectClient({
+    providersSnapshotCwd: true,
+    agentTurnIdentity: true,
+  });
+  const firstAgent = createAgent({
+    status: "running",
+    activeTurn: {
+      turnId: "turn-a",
+      startedAt: "2026-05-16T00:01:00.000Z",
+    },
+  });
+  const newerAgent = createAgent({
+    status: "running",
+    activeTurn: {
+      turnId: "turn-b",
+      startedAt: "2026-05-16T00:02:00.000Z",
+    },
+  });
+  const agent = client.agents.ref(firstAgent);
+
+  const cancelPromise = agent.cancelTurn("turn-a");
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        agent: newerAgent,
+        status: "stale_turn",
+        error: null,
+      },
+    }),
+  );
+
+  await expect(cancelPromise).resolves.toEqual({ status: "stale_turn", agent: newerAgent });
+  expect(agent.current()).toEqual(newerAgent);
+  await client.close();
+});
+
+test("agent handles use daemon current-turn semantics when no turn is supplied", async () => {
+  const { client, ws } = await connectClient({
+    providersSnapshotCwd: true,
+    agentTurnIdentity: true,
+  });
+  const agent = client.agents.ref(createAgent({ status: "running" }));
+
+  const cancelPromise = agent.cancelTurn();
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).not.toHaveProperty("expectedTurnId");
+  const refreshedAgent = createAgent({ status: "idle" });
+  ws.message(
+    sessionMessage({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        agent: refreshedAgent,
+        status: "not_running",
+        error: null,
+      },
+    }),
+  );
+
+  await expect(cancelPromise).resolves.toEqual({ status: "not_running", agent: refreshedAgent });
+  expect(agent.current()).toEqual(refreshedAgent);
+  await client.close();
+});
+
+test("agent handles require the exact-turn cancellation capability and explicit status", async () => {
+  const legacy = await connectClient();
+  const legacyAgent = legacy.client.agents.ref(createAgent());
+  await expect(legacyAgent.cancelTurn("turn-a")).rejects.toThrow(
+    /agentTurnIdentity|update the host/i,
+  );
+  expect(legacy.ws.sent).toHaveLength(1);
+  await legacy.client.close();
+  FakeWebSocket.instances.length = 0;
+
+  const { client, ws } = await connectClient({
+    providersSnapshotCwd: true,
+    agentTurnIdentity: true,
+  });
+  const agent = client.agents.ref(createAgent());
+  const before = agent.current();
+  const cancelPromise = agent.cancelTurn("turn-a");
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        agent: createAgent({ status: "idle" }),
+        error: null,
+      },
+    }),
+  );
+  await expect(cancelPromise).rejects.toThrow(/cancellation status/i);
+  expect(agent.current()).toEqual(before);
   await client.close();
 });
 

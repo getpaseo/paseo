@@ -45,6 +45,7 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
   inFlightAgentIds = new Set<string>();
   readonly settledDuringCancellationAgentIds = new Set<string>();
   readonly rejectedCancellationAgentIds = new Set<string>();
+  readonly cancellationExpectedTurnIds: Array<string | undefined> = [];
 
   constructor(private readonly storage: FakeLifecycleAgentStorage) {}
 
@@ -56,7 +57,11 @@ class FakeLifecycleAgentManager implements LifecycleAgentManager {
     return this.inFlightAgentIds.has(agentId);
   }
 
-  async cancelAgentRun(agentId: string) {
+  async cancelAgentRun(agentId: string, expectedTurnId?: string) {
+    this.cancellationExpectedTurnIds.push(expectedTurnId);
+    if (expectedTurnId === "old-turn") {
+      return { status: "stale_turn" } as const;
+    }
     this.cancelledAgentIds.push(agentId);
     if (this.settledDuringCancellationAgentIds.delete(agentId)) {
       this.inFlightAgentIds.delete(agentId);
@@ -175,8 +180,26 @@ describe("agent lifecycle commands", () => {
     expect(result).toEqual({
       agent: manager.liveAgents.get("agent-1"),
       cancelled: true,
+      cancellation: { status: "settled" },
     });
     expect(manager.cancelledAgentIds).toEqual(["agent-1"]);
+  });
+
+  test("forwards the expected turn and returns a stale result without canceling", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    const manager = new FakeLifecycleAgentManager(storage);
+    manager.liveAgents.set("agent-1", managedAgent("agent-1", "running"));
+    manager.inFlightAgentIds.add("agent-1");
+
+    await expect(
+      cancelAgentRunCommand({ agentManager: manager, logger }, "agent-1", "old-turn"),
+    ).resolves.toEqual({
+      agent: manager.liveAgents.get("agent-1"),
+      cancelled: false,
+      cancellation: { status: "stale_turn" },
+    });
+    expect(manager.cancellationExpectedTurnIds).toEqual(["old-turn"]);
+    expect(manager.cancelledAgentIds).toEqual([]);
   });
 
   test("accepts a stop when the run settles during cancellation", async () => {
@@ -191,6 +214,7 @@ describe("agent lifecycle commands", () => {
     ).resolves.toEqual({
       agent: manager.liveAgents.get("agent-1"),
       cancelled: false,
+      cancellation: { status: "not_running" },
     });
   });
 

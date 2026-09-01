@@ -127,6 +127,7 @@ export class AgentRunCancellationError extends Error {
 export type AgentRunCancellationResult =
   | { status: "not_running" }
   | { status: "settled" }
+  | { status: "stale_turn" }
   | { status: "refused" };
 
 interface PreparedSessionConfig {
@@ -2717,12 +2718,23 @@ export class AgentManager {
     }
   }
 
-  async cancelAgentRun(agentId: string): Promise<AgentRunCancellationResult> {
-    return this.runForegroundMutation(agentId, () => this.cancelAgentRunNow(agentId));
+  async cancelAgentRun(
+    agentId: string,
+    expectedTurnId?: string,
+  ): Promise<AgentRunCancellationResult> {
+    return this.runForegroundMutation(agentId, () =>
+      this.cancelAgentRunNow(agentId, expectedTurnId),
+    );
   }
 
-  private async cancelAgentRunNow(agentId: string): Promise<AgentRunCancellationResult> {
+  private async cancelAgentRunNow(
+    agentId: string,
+    expectedTurnId?: string,
+  ): Promise<AgentRunCancellationResult> {
     const agent = this.requireSessionAgent(agentId);
+    if (expectedTurnId !== undefined && agent.activeTurnId !== expectedTurnId) {
+      return { status: "stale_turn" };
+    }
     const run =
       this.runs.getRun(agentId) ??
       (agent.lifecycle === "running" ? this.runs.trackAutonomousRun(agentId, null) : null);

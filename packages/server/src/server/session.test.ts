@@ -152,6 +152,46 @@ test("cancel_agent_request reports refusal only through its response", async () 
   ]);
 });
 
+test("cancel_agent_request returns stale_turn and the authoritative snapshot", async () => {
+  const agentId = "11111111-1111-4111-8111-111111111111";
+  const messages: SessionOutboundMessage[] = [];
+  const snapshot = { id: agentId, provider: "codex", lifecycle: "running" as const };
+  const getAgent = vi.fn().mockReturnValueOnce(snapshot).mockReturnValueOnce(null);
+  const cancelAgentRun = vi.fn(async (_agentId: string, expectedTurnId?: string) => {
+    expect(expectedTurnId).toBe("old-turn");
+    return { status: "stale_turn" as const };
+  });
+  const session = createSessionForTest({
+    messages,
+    agentManager: {
+      getAgent,
+      hasInFlightRun: vi.fn(() => true),
+      cancelAgentRun,
+    },
+  });
+
+  await session.handleMessage({
+    type: "cancel_agent_request",
+    agentId,
+    requestId: "cancel-stale",
+    expectedTurnId: "old-turn",
+  });
+
+  expect(cancelAgentRun).toHaveBeenCalledWith(agentId, "old-turn");
+  expect(messages).toEqual([
+    {
+      type: "cancel_agent_response",
+      payload: {
+        requestId: "cancel-stale",
+        agentId,
+        agent: null,
+        status: "stale_turn",
+        error: null,
+      },
+    },
+  ]);
+});
+
 test("legacy cancel_agent_request reports refusal through the activity log", async () => {
   const agentId = "11111111-1111-4111-8111-111111111111";
   const messages: SessionOutboundMessage[] = [];

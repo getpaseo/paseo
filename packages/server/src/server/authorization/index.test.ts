@@ -54,6 +54,14 @@ describe("SessionAuthorization", () => {
     ).toBe(false);
   });
 
+  test("exact-turn cancellation keeps the existing workspace write permission", () => {
+    const readOnly = new SessionAuthorization(["workspace.read"]);
+    const writer = new SessionAuthorization(["workspace.write"]);
+
+    expect(readOnly.allowsInbound(inboundMessage("cancel_agent_request"))).toBe(false);
+    expect(writer.allowsInbound(inboundMessage("cancel_agent_request"))).toBe(true);
+  });
+
   test("correlated authorization errors can always be emitted", () => {
     const authorization = new SessionAuthorization([]);
 

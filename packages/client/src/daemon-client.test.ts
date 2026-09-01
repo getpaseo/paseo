@@ -2009,6 +2009,129 @@ test("a connection loss rejects an in-flight file context action", async () => {
   await expect(pending).rejects.toThrow(/network lost|disconnected|closed/i);
 });
 
+test("cancelAgent sends the expected turn and returns the daemon cancellation response", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_cancel_turn",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const cancelPromise = client.cancelAgent("agent-1", "turn-a");
+  const request = parseSentFrame(mock.sent.at(-1));
+  expect(request).toMatchObject({
+    type: "cancel_agent_request",
+    agentId: "agent-1",
+    expectedTurnId: "turn-a",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent-1",
+        agent: null,
+        status: "stale_turn",
+        error: null,
+      },
+    }),
+  );
+
+  await expect(cancelPromise).resolves.toMatchObject({
+    agentId: "agent-1",
+    status: "stale_turn",
+    agent: null,
+  });
+});
+
+test("cancelAgent rejects an in-flight request when the connection closes", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_cancel_disconnect",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const pending = client.cancelAgent("agent-1", "turn-a");
+  mock.triggerClose({ code: 1006, reason: "network lost" });
+
+  await expect(pending).rejects.toThrow(/network lost|disconnected|closed/i);
+});
+
+test("cancelAgent rejects a daemon cancellation error", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_cancel_error",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const pending = client.cancelAgent("agent-1", "turn-a");
+  const request = parseSentFrame(mock.sent.at(-1));
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent-1",
+        agent: null,
+        error: "active run cancellation was not acknowledged",
+      },
+    }),
+  );
+
+  await expect(pending).rejects.toThrow("active run cancellation was not acknowledged");
+});
+
+test("cancelAgent uses a bounded request timeout", async () => {
+  vi.useFakeTimers();
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_cancel_timeout",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const pending = client.cancelAgent("agent-1", "turn-a");
+  await vi.advanceTimersByTimeAsync(9_999);
+  let settled = false;
+  void pending.catch(() => {
+    settled = true;
+  });
+  expect(settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(pending).rejects.toThrow(/Timeout waiting for message \(10000ms\)/);
+});
+
 test("listDirectory sends a list file explorer request and returns directory entries", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

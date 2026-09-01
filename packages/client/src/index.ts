@@ -1,5 +1,7 @@
 import type {
   AgentSnapshotPayload,
+  AgentCancellationStatus,
+  CancelAgentResponseMessage,
   CreateAgentRequestMessage,
   FetchWorkspacesRequestMessage,
   FetchWorkspacesResponseMessage,
@@ -80,6 +82,11 @@ export interface PaseoClientConfig {
 
 export type PaseoWorkspace = WorkspaceDescriptorPayload;
 export type PaseoAgent = AgentSnapshotPayload;
+export type PaseoAgentCancelTurnStatus = AgentCancellationStatus;
+export interface PaseoAgentCancelTurnResult {
+  status: PaseoAgentCancelTurnStatus;
+  agent: PaseoAgent | null;
+}
 export type PaseoAgentListOptions = FetchAgentsOptions;
 export type PaseoProject = WorkspaceProjectDescriptorPayload;
 export type PaseoProjectListOptions = Omit<ProjectListRequestMessage, "type" | "requestId"> & {
@@ -293,6 +300,11 @@ export interface PaseoAgentHandle {
   run(text: string, options?: PaseoAgentRunOptions): Promise<PaseoAgentRunResult>;
   /** Waits for the current turn, including one started with `prompt`. */
   waitForFinish(timeoutMs?: number): Promise<PaseoAgentRunResult>;
+  /**
+   * Cancels the daemon's current turn, optionally using an exact-turn
+   * compare-and-cancel guard. The returned snapshot is authoritative.
+   */
+  cancelTurn(expectedTurnId?: string): Promise<PaseoAgentCancelTurnResult>;
   /**
    * Asks the running session for the slash commands and skills it actually
    * loaded. Providers answer from the live session, so this sees built-in and
@@ -686,6 +698,22 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
           current = result.final;
         }
         return result;
+      },
+      cancelTurn: async (expectedTurnId) => {
+        if (daemonClient.getLastServerInfoMessage()?.features?.agentTurnIdentity !== true) {
+          throw new Error(
+            "Exact-turn cancellation requires a daemon with the agentTurnIdentity capability",
+          );
+        }
+        const result: CancelAgentResponseMessage["payload"] = await daemonClient.cancelAgent(
+          id,
+          expectedTurnId,
+        );
+        if (result.status === undefined) {
+          throw new Error("Daemon cancellation response did not include a cancellation status");
+        }
+        current = result.agent;
+        return { status: result.status, agent: result.agent };
       },
       commands: (options) => daemonClient.listCommands({ agentId: id, ...options }),
       archive: async () => {

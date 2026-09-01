@@ -38,6 +38,12 @@ The app checks for the capability and either runs the feature or tells the user 
 
 Existing functionality keeps working across versions because of the protocol contract. Gating a new feature never substitutes for that.
 
+Exact-turn cancellation is gated by `server_info.features.agentTurnIdentity`.
+Its `expectedTurnId` request field and response `status` are optional on the wire,
+so older peers still parse the cancel messages. The public SDK does not fall back
+to the stale unsafe operation: it requires the feature and rejects a response
+that has no explicit cancellation status.
+
 ## Every shim is tagged and dated
 
 A shim that exists for old-app or old-daemon support carries a comment naming it, the version it arrived in, and when it can go:
