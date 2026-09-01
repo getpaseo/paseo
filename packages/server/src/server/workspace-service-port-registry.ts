@@ -69,11 +69,18 @@ export function requirePlannedWorkspaceServicePort(
   return port;
 }
 
-/** Returns every dynamic or configured service port already leased by a workspace. */
-export function getReservedWorkspaceServicePorts(workspaceId: string): ReadonlySet<number> {
-  const ports = new Set(workspaceServicePortPlans.get(workspaceId)?.values());
-  for (const port of dynamicPortsByWorkspace.get(workspaceId)?.values() ?? []) {
-    ports.add(port);
+/** Returns every dynamic or configured service port already leased by the daemon. */
+export function getAllReservedWorkspaceServicePorts(): ReadonlySet<number> {
+  const ports = new Set<number>();
+  for (const plan of workspaceServicePortPlans.values()) {
+    for (const port of plan.values()) {
+      ports.add(port);
+    }
+  }
+  for (const workspacePorts of dynamicPortsByWorkspace.values()) {
+    for (const port of workspacePorts.values()) {
+      ports.add(port);
+    }
   }
   return ports;
 }

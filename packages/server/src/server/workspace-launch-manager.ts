@@ -18,7 +18,7 @@ import {
 } from "../utils/worktree.js";
 import type { ScriptHealthState } from "./script-health-monitor.js";
 import type { ServiceProxySubsystem } from "./service-proxy.js";
-import { getReservedWorkspaceServicePorts } from "./workspace-service-port-registry.js";
+import { getAllReservedWorkspaceServicePorts } from "./workspace-service-port-registry.js";
 import { waitForTerminalBootstrapReadiness } from "./worktree-bootstrap.js";
 import type { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import type {
@@ -463,7 +463,7 @@ export class WorkspaceLaunchManager {
     projectConfig: PaseoConfig | null,
   ): Set<number> {
     const ports = getExplicitWorkspaceServicePorts(projectConfig);
-    for (const port of getReservedWorkspaceServicePorts(context.workspaceId)) {
+    for (const port of getAllReservedWorkspaceServicePorts()) {
       ports.add(port);
     }
     if (this.getConfigDirectory(context) === context.workspaceDirectory) {
