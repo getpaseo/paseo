@@ -621,16 +621,18 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
 
   useEffect(() => {
     return () => {
-      if (pendingPreferenceUpdateRef.current.timer) {
-        clearTimeout(pendingPreferenceUpdateRef.current.timer);
-        pendingPreferenceUpdateRef.current.timer = null;
+      // oxlint-disable-next-line eslint-plugin-react-hooks/exhaustive-deps
+      const pending = pendingPreferenceUpdateRef.current;
+      if (pending.timer) {
+        clearTimeout(pending.timer);
+        pending.timer = null;
       }
       // Flush synchronously on unmount if needed — best-effort, ignore promise
-      if (pendingPreferenceUpdateRef.current.queued.length > 0) {
-        const queued = pendingPreferenceUpdateRef.current.queued;
-        pendingPreferenceUpdateRef.current.queued = [];
-        const toPersist: (current: FormPreferences) => FormPreferences = (current) => {
-          let next = current;
+      if (pending.queued.length > 0) {
+        const queued = pending.queued;
+        pending.queued = [];
+        const toPersist: (prefs: FormPreferences) => FormPreferences = (prefs) => {
+          let next = prefs;
           for (const u of queued) {
             next =
               typeof u === "function"
