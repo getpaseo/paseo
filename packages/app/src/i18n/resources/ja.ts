@@ -203,6 +203,15 @@ export const ja: TranslationResources = {
     empty: "このエージェントとチャットを始めましょう...",
     scrollToBottom: "下にスクロール",
     historyLoadFailed: "エージェントの履歴を読み込めませんでした",
+    completedResponse: {
+      messages: {
+        one: "{{count}}件のメッセージ",
+        other: "{{count}}件のメッセージ",
+      },
+      workDetails: "作業の詳細",
+      showSummary: "{{summary}}を表示",
+      hideSummary: "{{summary}}を非表示",
+    },
     permission: {
       plan: "プラン",
       required: "権限が必要です",
@@ -1830,6 +1839,12 @@ export const ja: TranslationResources = {
     output: "出力",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}}件のツール呼び出し",
+      other: "{{count}}件のツール呼び出し",
+    },
+    showSummary: "{{summary}}を表示",
+    hideSummary: "{{summary}}を非表示",
     editedFiles: {
       one: "{{count}}個のファイルを編集",
       other: "{{count}}個のファイルを編集",
@@ -2007,6 +2022,10 @@ export const ja: TranslationResources = {
       autoExpandReasoning: {
         label: "常に思考プロセスを展開",
         description: "デフォルトでAIのエージェント思考・推論ブロックを完全に展開して表示します",
+      },
+      collapseCompletedResponses: {
+        label: "完了した応答を折りたたむ",
+        description: "エージェントの完了後に作業の概要と最終回答を表示します",
       },
       toolCallDetail: {
         label: "ツール呼び出しの表示",

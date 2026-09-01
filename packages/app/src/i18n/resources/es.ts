@@ -203,6 +203,15 @@ export const es: TranslationResources = {
     empty: "Comience a chatear con este agente...",
     scrollToBottom: "Desplazarse hacia abajo",
     historyLoadFailed: "No se pudo cargar el historial del agente",
+    completedResponse: {
+      messages: {
+        one: "{{count}} mensaje",
+        other: "{{count}} mensajes",
+      },
+      workDetails: "Detalles del trabajo",
+      showSummary: "Mostrar {{summary}}",
+      hideSummary: "Ocultar {{summary}}",
+    },
     permission: {
       plan: "Plan",
       required: "Permiso requerido",
@@ -1858,6 +1867,12 @@ export const es: TranslationResources = {
     output: "Producción",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} llamada a herramienta",
+      other: "{{count}} llamadas a herramientas",
+    },
+    showSummary: "Mostrar {{summary}}",
+    hideSummary: "Ocultar {{summary}}",
     editedFiles: {
       one: "editó {{count}} archivo",
       other: "editó {{count}} archivos",
@@ -2040,6 +2055,10 @@ export const es: TranslationResources = {
         label: "Siempre expandir razonamiento",
         description:
           "Mostrar los bloques de pensamiento y razonamiento del agente totalmente expandidos de forma predeterminada",
+      },
+      collapseCompletedResponses: {
+        label: "Contraer respuestas completadas",
+        description: "Mostrar un resumen del trabajo y la respuesta final cuando termine el agente",
       },
       toolCallDetail: {
         label: "Visualización de llamadas a herramientas",

@@ -148,7 +148,11 @@ test.describe("Composer attachments", () => {
       await clickNewChat(page);
       await expectComposerVisible(page);
 
-      await selectGithubOption(page, "attach-pr-unique-beta", `pr:${ghRepo.prs[0].number}`);
+      await selectGithubOption(
+        page,
+        "attach-pr-unique-beta",
+        `change_request:${ghRepo.prs[0].number}`,
+      );
 
       await expectGithubAttachmentPill(page, {
         number: ghRepo.prs[0].number,

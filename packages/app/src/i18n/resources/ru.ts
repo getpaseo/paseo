@@ -203,6 +203,15 @@ export const ru: TranslationResources = {
     empty: "Начните общаться с этим агентом...",
     scrollToBottom: "Прокрутить вниз",
     historyLoadFailed: "Не удалось загрузить историю агента",
+    completedResponse: {
+      messages: {
+        one: "{{count}} сообщение",
+        other: "сообщений: {{count}}",
+      },
+      workDetails: "Подробности работы",
+      showSummary: "Показать: {{summary}}",
+      hideSummary: "Скрыть: {{summary}}",
+    },
     permission: {
       plan: "План",
       required: "Требуется разрешение",
@@ -1843,6 +1852,12 @@ export const ru: TranslationResources = {
     output: "Выходные данные",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} вызов инструмента",
+      other: "вызовов инструментов: {{count}}",
+    },
+    showSummary: "Показать: {{summary}}",
+    hideSummary: "Скрыть: {{summary}}",
     editedFiles: {
       one: "изменён {{count}} файл",
       other: "изменены файлы ({{count}})",
@@ -2024,6 +2039,10 @@ export const ru: TranslationResources = {
         label: "Всегда разворачивать размышления",
         description:
           "По умолчанию полностью разворачивать блоки размышлений и хода рассуждений агента",
+      },
+      collapseCompletedResponses: {
+        label: "Сворачивать завершённые ответы",
+        description: "Показывать сводку работы и итоговый ответ после завершения работы агента",
       },
       toolCallDetail: {
         label: "Отображение вызовов инструментов",

@@ -203,6 +203,15 @@ export const ko: TranslationResources = {
     empty: "이 에이전트와 대화를 시작하세요...",
     scrollToBottom: "맨 아래로 스크롤",
     historyLoadFailed: "에이전트 기록을 로드할 수 없습니다.",
+    completedResponse: {
+      messages: {
+        one: "메시지 {{count}}개",
+        other: "메시지 {{count}}개",
+      },
+      workDetails: "작업 세부 정보",
+      showSummary: "{{summary}} 보기",
+      hideSummary: "{{summary}} 숨기기",
+    },
     permission: {
       plan: "계획",
       required: "권한 필요",
@@ -1822,6 +1831,12 @@ export const ko: TranslationResources = {
     output: "출력",
   },
   toolCallGroup: {
+    calls: {
+      one: "도구 호출 {{count}}회",
+      other: "도구 호출 {{count}}회",
+    },
+    showSummary: "{{summary}} 보기",
+    hideSummary: "{{summary}} 숨기기",
     editedFiles: {
       one: "{{count}} 파일을 편집했습니다.",
       other: "{{count}} 파일을 편집했습니다.",
@@ -2001,6 +2016,10 @@ export const ko: TranslationResources = {
       autoExpandReasoning: {
         label: "추론 항상 펼치기",
         description: "에이전트의 사고 및 추론 블록을 기본적으로 모두 펼쳐 표시합니다.",
+      },
+      collapseCompletedResponses: {
+        label: "완료된 응답 접기",
+        description: "에이전트가 완료되면 작업 요약과 최종 답변을 표시합니다.",
       },
       toolCallDetail: {
         label: "도구 호출 표시",

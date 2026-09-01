@@ -68,7 +68,11 @@ import {
 import { OverviewToolCallGroupView } from "@/tool-calls/detail-level/overview/view";
 import { type AgentStreamRenderModel, buildAgentStreamRenderModel } from "./model";
 import { resolveStreamRenderStrategy } from "./strategy-resolver";
-import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
+import {
+  type AssistantResponseContentScope,
+  type StreamSegmentRenderers,
+  type StreamViewportHandle,
+} from "./strategy";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
 import { getHostRuntimeStore } from "@/runtime/host-runtime";
@@ -106,6 +110,8 @@ import { isWeb } from "@/constants/platform";
 import type { Theme } from "@/styles/theme";
 import { recordRenderProfileReasons } from "@/utils/render-profiler";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import { projectCompletedResponseFolds } from "./completed-response-fold";
+import { CompletedResponseFoldRow } from "./completed-response-fold-row";
 import { useStreamHistoryWindow } from "./use-stream-history-window";
 import { PluginTimelineItemView } from "@/plugins/timeline";
 
@@ -157,6 +163,7 @@ function renderStreamItemWithTurnFooter(input: {
   content: ReactNode;
   layoutItem: StreamLayoutItem;
   strategy: TurnContentStrategy;
+  copyContentScope: AssistantResponseContentScope;
   supportsTimelineCursor: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }): ReactNode {
@@ -172,6 +179,7 @@ function renderStreamItemWithTurnFooter(input: {
       timing={footerHost.timing}
       startIndex={footerHost.startIndex}
       supportsTimelineCursor={input.supportsTimelineCursor}
+      copyContentScope={input.copyContentScope}
       onForkAssistantTurn={input.onForkAssistantTurn}
     />
   ) : null;
@@ -327,6 +335,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
   ) {
     const { t } = useTranslation();
     const autoExpandReasoning = useSettings((settings) => settings.autoExpandReasoning);
+    const collapseCompletedResponses = useSettings(
+      (settings) => settings.collapseCompletedResponses,
+    );
     const toolCallDetailLevel = useSettings((settings) => settings.toolCallDetailLevel);
     const chatOutlineEnabled = useSettings((settings) => settings.chatOutlineEnabled);
     const viewportRef = useRef<StreamViewportHandle | null>(null);
@@ -348,6 +359,9 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       new Set(),
     );
     const [expandedToolCallGroupIds, setExpandedToolCallGroupIds] = useState<Set<string>>(
+      new Set(),
+    );
+    const [expandedCompletedResponseIds, setExpandedCompletedResponseIds] = useState<Set<string>>(
       new Set(),
     );
 
@@ -413,6 +427,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       setIsNearBottom(true);
       setExpandedInlineToolCallIds(new Set());
       setExpandedToolCallGroupIds(new Set());
+      setExpandedCompletedResponseIds(new Set());
     }, [agentId]);
 
     const handleInlinePathPress = useStableEvent(
@@ -548,24 +563,50 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const isLoadingOlder = remoteIsLoadingOlder;
     const hasOlder = hasLocalHistory || remoteHasOlder;
     const progressKey = `${remoteProgressKey ?? "local"}:${historyWindowStart}`;
+    const mountedToolCallTail = useMemo(
+      () =>
+        historyWindowStart > 0
+          ? projectedToolCalls.tail.slice(historyWindowStart)
+          : projectedToolCalls.tail,
+      [historyWindowStart, projectedToolCalls.tail],
+    );
+    const completedResponseProjection = useMemo(
+      () =>
+        projectCompletedResponseFolds({
+          enabled: collapseCompletedResponses,
+          tail: mountedToolCallTail,
+          head: projectedToolCalls.head,
+          isTurnActive,
+          expandedResponseIds: expandedCompletedResponseIds,
+          preserveLeadingResponse: hasOlder,
+          toolCallGroupsByHostId: projectedToolCalls.groupsByHostId,
+        }),
+      [
+        expandedCompletedResponseIds,
+        collapseCompletedResponses,
+        hasOlder,
+        isTurnActive,
+        mountedToolCallTail,
+        projectedToolCalls.head,
+        projectedToolCalls.groupsByHostId,
+      ],
+    );
 
     const baseRenderModel = useMemo(() => {
       return buildAgentStreamRenderModel({
         isTurnActive,
         activeTurnStartedAt: effectiveTurnPresentation.startedAt,
-        tail: projectedToolCalls.tail,
-        head: projectedToolCalls.head,
+        tail: completedResponseProjection.tail,
+        head: completedResponseProjection.head,
         platform: isWeb ? "web" : "native",
         isMobileBreakpoint: isMobile,
-        historyStart: historyWindowStart,
       });
     }, [
       isMobile,
       isTurnActive,
-      projectedToolCalls.head,
-      projectedToolCalls.tail,
+      completedResponseProjection.head,
+      completedResponseProjection.tail,
       effectiveTurnPresentation.startedAt,
-      historyWindowStart,
     ]);
     const streamLayout = useMemo(
       () =>
@@ -665,6 +706,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       });
     }, []);
 
+    const toggleCompletedResponse = useCallback((responseId: string) => {
+      setExpandedCompletedResponseIds((previous) => {
+        const next = new Set(previous);
+        if (next.has(responseId)) {
+          next.delete(responseId);
+        } else {
+          next.add(responseId);
+        }
+        return next;
+      });
+    }, []);
+
     const renderUserMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "user_message" }>) => {
         return (
@@ -692,6 +745,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     const renderAssistantMessageItem = useCallback(
       (layoutItem: StreamLayoutItem, item: Extract<StreamItem, { kind: "assistant_message" }>) => {
+        let presentationRole: "default" | "intermediate" | "final" = "default";
+        if (completedResponseProjection.intermediateAssistantItemIds.has(item.id)) {
+          presentationRole = "intermediate";
+        } else if (completedResponseProjection.finalAssistantItemIds.has(item.id)) {
+          presentationRole = "final";
+        }
         return (
           <AssistantFileLinkResolverProvider
             client={client}
@@ -709,11 +768,25 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
               client={client}
               spacing={layoutItem.assistantSpacing}
               phase={layoutItem.phase}
+              presentationRole={presentationRole}
+              startsFinalAnswer={completedResponseProjection.finalAssistantAnchorItemIds.has(
+                item.id,
+              )}
             />
           </AssistantFileLinkResolverProvider>
         );
       },
-      [agentId, client, handleInlinePathPress, resolvedServerId, toast, workspaceRoot],
+      [
+        agentId,
+        client,
+        completedResponseProjection.finalAssistantAnchorItemIds,
+        completedResponseProjection.finalAssistantItemIds,
+        completedResponseProjection.intermediateAssistantItemIds,
+        handleInlinePathPress,
+        resolvedServerId,
+        toast,
+        workspaceRoot,
+      ],
     );
 
     const renderThoughtItem = useCallback(
@@ -828,21 +901,27 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const renderStreamItemContent = useCallback(
       (layoutItem: StreamLayoutItem) => {
         const item = layoutItem.item;
+        const fold = completedResponseProjection.foldsByAnchorItemId.get(item.id);
+        let content: ReactNode;
         switch (item.kind) {
           case "user_message":
-            return renderUserMessageItem(layoutItem, item);
+            content = renderUserMessageItem(layoutItem, item);
+            break;
 
           case "assistant_message":
-            return renderAssistantMessageItem(layoutItem, item);
+            content = renderAssistantMessageItem(layoutItem, item);
+            break;
 
           case "thought":
-            return renderThoughtItem(layoutItem, item);
+            content = renderThoughtItem(layoutItem, item);
+            break;
 
           case "tool_call":
-            return renderToolCallItem(layoutItem, item);
+            content = renderToolCallItem(layoutItem, item);
+            break;
 
           case "activity_log":
-            return (
+            content = (
               <ActivityLog
                 type={item.activityType}
                 message={item.message}
@@ -850,35 +929,50 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
                 metadata={item.metadata}
               />
             );
+            break;
 
           case "todo_list":
-            return <TodoListCard items={item.items} activity={item.activity} />;
+            content = <TodoListCard items={item.items} activity={item.activity} />;
+            break;
 
           case "compaction":
-            return (
+            content = (
               <CompactionMarker
                 status={item.status}
                 trigger={item.trigger}
                 preTokens={item.preTokens}
               />
             );
+            break;
 
           case "plugin":
-            return (
+            content = (
               <PluginTimelineItemView agentId={agentId} item={item} serverId={resolvedServerId} />
             );
+            break;
 
           default:
-            return null;
+            content = null;
         }
+
+        if (!fold) {
+          return content;
+        }
+        return (
+          <CompletedResponseFoldRow fold={fold} onToggle={toggleCompletedResponse}>
+            {content}
+          </CompletedResponseFoldRow>
+        );
       },
       [
         agentId,
+        completedResponseProjection.foldsByAnchorItemId,
         renderUserMessageItem,
         renderAssistantMessageItem,
         renderThoughtItem,
         renderToolCallItem,
         resolvedServerId,
+        toggleCompletedResponse,
       ],
     );
 
@@ -891,12 +985,14 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           content,
           layoutItem,
           strategy: streamRenderStrategy,
+          copyContentScope: collapseCompletedResponses ? "terminal-message" : "response",
           supportsTimelineCursor: supportsAgentForkContextCursor,
           onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
         });
       },
       [
         handleForkAssistantTurn,
+        collapseCompletedResponses,
         readOnly,
         renderStreamItemContent,
         streamRenderStrategy,
@@ -925,6 +1021,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             inFlightTurnStartedAt={baseRenderModel.turnTiming.runningStartedAt}
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
+            copyContentScope={collapseCompletedResponses ? "terminal-message" : "response"}
             supportsTimelineCursor={supportsAgentForkContextCursor}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
             onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
@@ -933,6 +1030,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       [
         handleForkAssistantTurn,
         handleForkInFlightTurn,
+        collapseCompletedResponses,
         readOnly,
         isTurnActive,
         baseRenderModel.turnTiming.runningStartedAt,

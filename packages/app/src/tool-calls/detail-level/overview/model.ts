@@ -1,10 +1,14 @@
 import { isPaseoToolName } from "@getpaseo/protocol/tool-name-normalization";
+import {
+  summarizeToolCallActivity,
+  type ToolCallActivitySummary,
+} from "@/tool-calls/activity-summary";
 import { describeToolCall, type ToolCallRun } from "../grouping";
 
 const DIRECT_PASEO_TOOL_PREFIX = "paseo_";
 const DIRECT_SEARCH_TOOL_SUFFIX_PATTERN = /(?:^|[_.:/])(?:web_search|llm_context)$/;
 
-export interface OverviewSummary {
+export interface OverviewSummary extends ToolCallActivitySummary {
   editedFileCount: number;
   commandCount: number;
   readFileCount: number;
@@ -57,6 +61,7 @@ export function buildOverviewGroup(run: ToolCallRun): OverviewToolCallGroup {
   }
 
   const summary = {
+    ...summarizeToolCallActivity(run.calls),
     editedFileCount: editedFiles.size,
     commandCount,
     readFileCount: readFiles.size,

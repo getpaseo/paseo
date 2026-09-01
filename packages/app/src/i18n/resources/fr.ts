@@ -205,6 +205,15 @@ export const fr: TranslationResources = {
     empty: "Commencez à discuter avec cet agent...",
     scrollToBottom: "Faire défiler vers le bas",
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
+    completedResponse: {
+      messages: {
+        one: "{{count}} message",
+        other: "{{count}} messages",
+      },
+      workDetails: "Détails du travail",
+      showSummary: "Afficher {{summary}}",
+      hideSummary: "Masquer {{summary}}",
+    },
     permission: {
       plan: "Plan",
       required: "Autorisation requise",
@@ -1863,6 +1872,12 @@ export const fr: TranslationResources = {
     output: "Sortir",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} appel d’outil",
+      other: "{{count}} appels d’outils",
+    },
+    showSummary: "Afficher {{summary}}",
+    hideSummary: "Masquer {{summary}}",
     editedFiles: {
       one: "a modifié {{count}} fichier",
       other: "a modifié {{count}} fichiers",
@@ -2043,6 +2058,10 @@ export const fr: TranslationResources = {
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",
         description: "Afficher le raisonnement de l'agent entièrement développé par défaut",
+      },
+      collapseCompletedResponses: {
+        label: "Replier les réponses terminées",
+        description: "Afficher un résumé du travail et la réponse finale une fois l’agent terminé",
       },
       toolCallDetail: {
         label: "Affichage des appels d’outils",

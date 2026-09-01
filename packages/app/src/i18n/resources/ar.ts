@@ -203,6 +203,15 @@ export const ar: TranslationResources = {
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
+    completedResponse: {
+      messages: {
+        one: "{{count}} رسالة",
+        other: "{{count}} رسائل",
+      },
+      workDetails: "تفاصيل العمل",
+      showSummary: "إظهار {{summary}}",
+      hideSummary: "إخفاء {{summary}}",
+    },
     permission: {
       plan: "يخطط",
       required: "الإذن مطلوب",
@@ -1812,6 +1821,12 @@ export const ar: TranslationResources = {
     output: "الإخراج",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} استدعاء أداة",
+      other: "{{count}} استدعاءات أدوات",
+    },
+    showSummary: "إظهار {{summary}}",
+    hideSummary: "إخفاء {{summary}}",
     editedFiles: {
       one: "حرّر {{count}} ملفًا",
       other: "حرّر {{count}} ملفات",
@@ -1990,6 +2005,10 @@ export const ar: TranslationResources = {
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
         description: "إظهار تفكير الوكيل وخطوات الاستدلال بشكل كامل بشكل افتراضي",
+      },
+      collapseCompletedResponses: {
+        label: "طيّ الردود المكتملة",
+        description: "عرض ملخص للعمل والإجابة النهائية بعد انتهاء الوكيل",
       },
       toolCallDetail: {
         label: "عرض استدعاءات الأدوات",

@@ -911,6 +911,12 @@ test.describe("Agent message submission", () => {
   test("keeps one prompt when its provider echo crosses the bounded tail", async ({
     page,
   }, testInfo) => {
+    await page.addInitScript(() => {
+      localStorage.setItem(
+        "@paseo:app-settings",
+        JSON.stringify({ collapseCompletedResponses: true }),
+      );
+    });
     const workspace = await seedWorkspace({
       repoPrefix: `submission-echo-past-tail-${testInfo.workerIndex}-`,
     });

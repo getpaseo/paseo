@@ -190,8 +190,18 @@ remain a separate pre-turn registry and retire on canonical acknowledgement.
 
 Canonical turns and visible responses are different boundaries. System-injected prompts are absent from
 the Paseo timeline, so one visible response can span several canonical turns without a user message
-between them. Layout and copy group that response together; lifecycle, timing, tool sequences, and exact
-fork positions retain the canonical `turnId` boundaries.
+between them. Layout groups that response together. With folding disabled, the turn copy action includes
+all assistant messages in the response. Lifecycle, timing, tool sequences, and exact fork positions
+retain the canonical `turnId` boundaries.
+
+Completed-response folding is an app-only projection over those visible response boundaries. It keeps
+the canonical tail and live head intact for sync, persistence, and provider context. A settled response
+folds only when tool work is followed by a final assistant message; the active response, errors, and
+still-running tools remain visible. The opt-in appearance setting replaces folded work with deterministic
+tool-call and intermediate-message counts plus the tool categories used; it does not generate another
+model summary. While the setting is on, the turn copy action copies only the terminal assistant
+message, including all of its streamed blocks, even when the folded work is expanded. Expansion state
+is local to the open agent view.
 
 The compatibility boundary for older daemons is snapshot normalization: running/idle status becomes an
 anonymous active turn or idle state once, and downstream code consumes the same activity shape. The app

@@ -203,6 +203,15 @@ export const ptBR: TranslationResources = {
     empty: "Comece a conversar com este agente...",
     scrollToBottom: "Rolar para o fim",
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
+    completedResponse: {
+      messages: {
+        one: "{{count}} mensagem",
+        other: "{{count}} mensagens",
+      },
+      workDetails: "Detalhes do trabalho",
+      showSummary: "Mostrar {{summary}}",
+      hideSummary: "Ocultar {{summary}}",
+    },
     permission: {
       plan: "Plano",
       required: "Permissão necessária",
@@ -1844,6 +1853,12 @@ export const ptBR: TranslationResources = {
     output: "Saída",
   },
   toolCallGroup: {
+    calls: {
+      one: "{{count}} chamada de ferramenta",
+      other: "{{count}} chamadas de ferramentas",
+    },
+    showSummary: "Mostrar {{summary}}",
+    hideSummary: "Ocultar {{summary}}",
     editedFiles: {
       one: "editou {{count}} arquivo",
       other: "editou {{count}} arquivos",
@@ -2024,6 +2039,10 @@ export const ptBR: TranslationResources = {
         label: "Sempre expandir raciocínio",
         description:
           "Mostrar os blocos de pensamento e raciocínio do agente totalmente expandidos por padrão",
+      },
+      collapseCompletedResponses: {
+        label: "Recolher respostas concluídas",
+        description: "Mostrar um resumo do trabalho e a resposta final quando o agente terminar",
       },
       toolCallDetail: {
         label: "Exibição de chamadas de ferramentas",

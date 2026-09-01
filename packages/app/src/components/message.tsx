@@ -576,6 +576,7 @@ export const UserMessage = memo(function UserMessage({
 
 interface AssistantTurnFooterProps {
   getContent: () => string;
+  copyMessageOnly?: boolean;
   completedAt?: Date;
   durationMs?: number;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
@@ -621,10 +622,12 @@ const TIMESTAMP_REVEAL_MS = 3000;
  */
 export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   getContent,
+  copyMessageOnly = false,
   completedAt,
   durationMs,
   onFork,
 }: AssistantTurnFooterProps) {
+  const { t } = useTranslation();
   const [hovered, setHovered] = useState(false);
   const [pressedReveal, setPressedReveal] = useState(false);
   const revealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -676,6 +679,7 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
       <TurnCopyButton
         getContent={getContent}
         containerStyle={assistantTurnFooterStylesheet.copyButton}
+        accessibilityLabel={copyMessageOnly ? t("message.actions.copyMessage") : undefined}
       />
       {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
       {durationLabel ? (
@@ -750,6 +754,8 @@ interface AssistantMessageProps {
   client?: DaemonClient | null;
   spacing?: "default" | "compactTop" | "compactBottom" | "compactBoth";
   phase: MarkdownPhase;
+  presentationRole?: "default" | "intermediate" | "final";
+  startsFinalAnswer?: boolean;
 }
 
 export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
@@ -762,6 +768,9 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
   containerCompactBottom: {
     paddingBottom: 0,
+  },
+  containerFinalAnswerStart: {
+    marginTop: theme.spacing[2],
   },
   imageFrame: {
     width: "100%",
@@ -1380,6 +1389,7 @@ interface MemoizedMarkdownBlockProps {
   rules: RenderRules;
   parser: MarkdownIt;
   onLinkPress: (url: string) => boolean;
+  tone: "default" | "muted";
 }
 
 const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
@@ -1387,6 +1397,7 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
   rules,
   parser,
   onLinkPress,
+  tone,
 }: MemoizedMarkdownBlockProps) {
   return (
     <MarkdownRenderer
@@ -1395,6 +1406,7 @@ const MemoizedMarkdownBlock = React.memo(function MemoizedMarkdownBlock({
       rules={rules}
       markdownit={parser}
       onLinkPress={onLinkPress}
+      tone={tone}
       allowedImageHandlers={MARKDOWN_ALLOWED_IMAGE_HANDLERS}
       topLevelMaxExceededItem={MARKDOWN_TOP_LEVEL_MAX_EXCEEDED_ITEM}
     />
@@ -1487,6 +1499,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   client,
   spacing = "default",
   phase,
+  presentationRole = "default",
+  startsFinalAnswer = false,
 }: AssistantMessageProps) {
   const markdownParser = useMemo(createAssistantMarkdownParser, []);
   // Paint a paced prefix while the turn is streaming so text arrives at a steady
@@ -1943,19 +1957,23 @@ export const AssistantMessage = memo(function AssistantMessage({
         assistantMessageStylesheet.containerCompactTop,
       (spacing === "compactBottom" || spacing === "compactBoth") &&
         assistantMessageStylesheet.containerCompactBottom,
+      startsFinalAnswer && assistantMessageStylesheet.containerFinalAnswerStart,
     ],
-    [spacing],
+    [spacing, startsFinalAnswer],
   );
-  const revealDataSet = useMemo(
-    () =>
-      isRenderProfileEnabled()
+  const tone = presentationRole === "intermediate" ? "muted" : "default";
+  const messageDataSet = useMemo(
+    () => ({
+      presentationRole,
+      ...(isRenderProfileEnabled()
         ? { revealKey: occurrenceKey, revealLength: String(revealedMessage.length) }
-        : undefined,
-    [occurrenceKey, revealedMessage.length],
+        : {}),
+    }),
+    [occurrenceKey, presentationRole, revealedMessage.length],
   );
 
   return (
-    <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
+    <View testID="assistant-message" dataSet={messageDataSet} style={assistantContainerStyle}>
       {keyedBlocks.map(({ key, block }, index) => (
         <AssistantMessageBlockContainer
           key={key}
@@ -1967,6 +1985,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             rules={markdownRules}
             parser={markdownParser}
             onLinkPress={handleMarkdownLinkPress}
+            tone={tone}
           />
         </AssistantMessageBlockContainer>
       ))}
@@ -2360,7 +2379,9 @@ export const TodoListCard = memo(function TodoListCard({
 
 interface ExpandableBadgeProps {
   label: string;
+  accessibilityLabel?: string;
   secondaryLabel?: string;
+  trailingContent?: ReactNode;
   icon?: ComponentType<{ size?: number; color?: string }>;
   isExpanded: boolean;
   style?: StyleProp<ViewStyle>;
@@ -2373,6 +2394,7 @@ interface ExpandableBadgeProps {
   isLastInSequence?: boolean;
   disableOuterSpacing?: boolean;
   borderlessWhenExpanded?: boolean;
+  alwaysShowChevron?: boolean;
   testID?: string;
 }
 
@@ -2444,6 +2466,7 @@ interface ExpandableBadgeLabelRowProps {
   label: string;
   labelStyle: StyleProp<TextStyle>;
   secondaryLabel?: string;
+  trailingContent?: ReactNode;
   secondaryLabelStyle: StyleProp<TextStyle>;
   shouldMeasureWebShimmer: boolean;
   shouldMeasureNativeShimmer: boolean;
@@ -2470,6 +2493,7 @@ function ExpandableBadgeLabelRow({
   label,
   labelStyle,
   secondaryLabel,
+  trailingContent,
   secondaryLabelStyle,
   shouldMeasureWebShimmer,
   shouldMeasureNativeShimmer,
@@ -2510,6 +2534,7 @@ function ExpandableBadgeLabelRow({
         shouldMeasureWebShimmer={shouldMeasureWebShimmer}
         onSecondaryLayout={onSecondaryLayout}
       />
+      {trailingContent}
       {showOpenFileButton ? (
         <Pressable
           onPress={onOpenFilePress}
@@ -2604,15 +2629,20 @@ function renderExpandableBadgeIconSlot({
   showChevron,
   chevronStyle,
   iconNode,
+  isActive,
 }: {
   showChevron: boolean;
   chevronStyle: StyleProp<ViewStyle>;
   iconNode: ReactNode;
+  isActive: boolean;
 }): ReactNode {
   if (showChevron) {
     return (
       <View style={chevronStyle}>
-        <ThemedChevronRightIcon size={12} uniProps={foregroundColorMapping} />
+        <ThemedChevronRightIcon
+          size={12}
+          uniProps={isActive ? foregroundColorMapping : foregroundMutedColorMapping}
+        />
       </View>
     );
   }
@@ -2723,8 +2753,10 @@ function buildShimmerTextStyle(input: {
 
 export const ExpandableBadge = memo(function ExpandableBadge({
   label,
+  accessibilityLabel,
   style,
   secondaryLabel,
+  trailingContent,
   icon,
   isExpanded,
   onToggle,
@@ -2736,6 +2768,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   isLastInSequence = false,
   disableOuterSpacing,
   borderlessWhenExpanded = false,
+  alwaysShowChevron = false,
   testID,
 }: ExpandableBadgeProps) {
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
@@ -2976,9 +3009,10 @@ export const ExpandableBadge = memo(function ExpandableBadge({
   const ThemedIcon = useMemo(() => (icon ? withUnistyles(icon) : null), [icon]);
   const iconNode = renderExpandableBadgeIcon({ isError, isActive, ThemedIcon });
   const iconSlotNode = renderExpandableBadgeIconSlot({
-    showChevron: isInteractive && (isHovered || isExpanded),
+    showChevron: isInteractive && (alwaysShowChevron || isHovered || isExpanded),
     chevronStyle,
     iconNode,
+    isActive,
   });
 
   const pressHandlers = isInteractive
@@ -3000,6 +3034,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
       <Pressable
         {...pressHandlers}
         disabled={!isInteractive}
+        accessibilityLabel={accessibilityLabel}
         accessibilityState={accessibilityState}
         style={pressableStyle}
       >
@@ -3009,6 +3044,7 @@ export const ExpandableBadge = memo(function ExpandableBadge({
             label={label}
             labelStyle={labelStyle}
             secondaryLabel={secondaryLabel}
+            trailingContent={trailingContent}
             secondaryLabelStyle={secondaryLabelStyle}
             shouldMeasureWebShimmer={shouldMeasureWebShimmer}
             shouldMeasureNativeShimmer={shouldMeasureNativeShimmer}
@@ -3048,7 +3084,9 @@ export const ExpandableBadge = memo(function ExpandableBadge({
 
 function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: ExpandableBadgeProps) {
   if (previous.label !== next.label) return false;
+  if (previous.accessibilityLabel !== next.accessibilityLabel) return false;
   if (previous.secondaryLabel !== next.secondaryLabel) return false;
+  if (previous.trailingContent !== next.trailingContent) return false;
   if (previous.icon !== next.icon) return false;
   if (previous.isExpanded !== next.isExpanded) return false;
   if (previous.style !== next.style) return false;
@@ -3057,6 +3095,7 @@ function areExpandableBadgePropsEqual(previous: ExpandableBadgeProps, next: Expa
   if (previous.isLastInSequence !== next.isLastInSequence) return false;
   if (previous.disableOuterSpacing !== next.disableOuterSpacing) return false;
   if (previous.borderlessWhenExpanded !== next.borderlessWhenExpanded) return false;
+  if (previous.alwaysShowChevron !== next.alwaysShowChevron) return false;
   if (previous.testID !== next.testID) return false;
   if (previous.onToggle !== next.onToggle) return false;
   if (previous.onOpenFile !== next.onOpenFile) return false;
