@@ -25,6 +25,23 @@ function projectFor(serverId: string, key = "project"): HostProjectListItem {
   };
 }
 
+function projectOnHosts(serverIds: string[], key = "project"): HostProjectListItem {
+  return {
+    viewKey: `view:${key}`,
+    projectKey: key,
+    projectName: key,
+    projectKind: "git",
+    iconWorkingDir: `/work/${key}`,
+    hosts: serverIds.map((serverId) => ({
+      serverId,
+      projectId: key,
+      iconWorkingDir: `/work/${key}`,
+      worktreeSupport: "supported" as const,
+    })),
+    workspaceKeys: [],
+  };
+}
+
 function statuses(
   entries: Record<string, HostRuntimeConnectionStatus>,
 ): ReadonlyMap<string, HostRuntimeConnectionStatus> {
@@ -184,6 +201,94 @@ describe("resolveNewWorkspaceInitialServerId", () => {
       }),
     ).toBe("connected");
   });
+
+  it("uses the remembered host when the last active project spans several hosts", () => {
+    const shared = projectOnHosts(["local", "remote"], "shared");
+    expect(
+      resolveNewWorkspaceInitialServerId({
+        allServerIds: ["local", "remote"],
+        routeServerId: null,
+        preferredServerId: "remote",
+        lastActiveProject: shared,
+        projects: [shared],
+        hostConnectionStatusByServerId: statuses({ local: "online", remote: "online" }),
+        workspaceMultiplicityByServerId: multiplicity(),
+      }),
+    ).toBe("remote");
+  });
+
+  it("falls back to the local-first walk when no host is remembered", () => {
+    const shared = projectOnHosts(["local", "remote"], "shared");
+    expect(
+      resolveNewWorkspaceInitialServerId({
+        allServerIds: ["local", "remote"],
+        routeServerId: null,
+        preferredServerId: null,
+        lastActiveProject: shared,
+        projects: [shared],
+        hostConnectionStatusByServerId: statuses({ local: "online", remote: "online" }),
+        workspaceMultiplicityByServerId: multiplicity(),
+      }),
+    ).toBe("local");
+  });
+
+  it("lets an explicit route host override the remembered host", () => {
+    expect(
+      resolveNewWorkspaceInitialServerId({
+        allServerIds: ["local", "remote"],
+        routeServerId: "local",
+        preferredServerId: "remote",
+        lastActiveProject: null,
+        projects: [projectFor("local"), projectFor("remote")],
+        hostConnectionStatusByServerId: statuses({ local: "online", remote: "online" }),
+        workspaceMultiplicityByServerId: multiplicity(),
+      }),
+    ).toBe("local");
+  });
+
+  it("ignores a remembered host that is offline", () => {
+    const shared = projectOnHosts(["local", "remote"], "shared");
+    expect(
+      resolveNewWorkspaceInitialServerId({
+        allServerIds: ["local", "remote"],
+        routeServerId: null,
+        preferredServerId: "remote",
+        lastActiveProject: shared,
+        projects: [shared],
+        hostConnectionStatusByServerId: statuses({ local: "online", remote: "offline" }),
+        workspaceMultiplicityByServerId: multiplicity(),
+      }),
+    ).toBe("local");
+  });
+
+  it("ignores a remembered host that is no longer registered", () => {
+    expect(
+      resolveNewWorkspaceInitialServerId({
+        allServerIds: ["local"],
+        routeServerId: null,
+        preferredServerId: "removed",
+        lastActiveProject: projectFor("local"),
+        projects: [projectFor("local")],
+        hostConnectionStatusByServerId: statuses({ local: "online" }),
+        workspaceMultiplicityByServerId: multiplicity(),
+      }),
+    ).toBe("local");
+  });
+
+  it("ignores a remembered host that has not settled online yet", () => {
+    const shared = projectOnHosts(["local", "remote"], "shared");
+    expect(
+      resolveNewWorkspaceInitialServerId({
+        allServerIds: ["local", "remote"],
+        routeServerId: null,
+        preferredServerId: "remote",
+        lastActiveProject: shared,
+        projects: [shared],
+        hostConnectionStatusByServerId: statuses({ local: "online", remote: "connecting" }),
+        workspaceMultiplicityByServerId: multiplicity(),
+      }),
+    ).toBe("local");
+  });
 });
 
 describe("resolveNewWorkspaceAutomaticServerId", () => {
@@ -287,5 +392,38 @@ describe("resolveNewWorkspaceAutomaticServerId", () => {
         nextServerId: "offline-project",
       }),
     ).toBe("online-empty");
+  });
+  it("switches to the remembered host once it hydrates online", () => {
+    const shared = projectOnHosts(["local", "remote"], "shared");
+    expect(
+      resolveNewWorkspaceAutomaticServerId({
+        allServerIds: ["local", "remote"],
+        routeServerId: null,
+        preferredServerId: "remote",
+        lastActiveProject: shared,
+        projects: [shared],
+        hostConnectionStatusByServerId: statuses({ local: "online", remote: "online" }),
+        workspaceMultiplicityByServerId: multiplicity(),
+        currentServerId: "local",
+        nextServerId: "remote",
+      }),
+    ).toBe("remote");
+  });
+
+  it("keeps the current host when the remembered host is still offline", () => {
+    const shared = projectOnHosts(["local", "remote"], "shared");
+    expect(
+      resolveNewWorkspaceAutomaticServerId({
+        allServerIds: ["local", "remote"],
+        routeServerId: null,
+        preferredServerId: "remote",
+        lastActiveProject: shared,
+        projects: [shared],
+        hostConnectionStatusByServerId: statuses({ local: "online", remote: "offline" }),
+        workspaceMultiplicityByServerId: multiplicity(),
+        currentServerId: "local",
+        nextServerId: "remote",
+      }),
+    ).toBe("local");
   });
 });

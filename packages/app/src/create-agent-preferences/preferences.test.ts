@@ -276,4 +276,32 @@ describe("create agent preferences", () => {
   it("rejects an unknown launch target kind as invalid stored preferences", () => {
     expect(parseFormPreferences({ launchTarget: { kind: "shell" } })).toEqual({});
   });
+
+  it("persists and reloads the selected host without disturbing other choices", async () => {
+    const storage = new FakeCreateAgentPreferenceStorage();
+    const preferences = new CreateAgentPreferencesService(storage);
+
+    const saveIsolation = preferences.update({ isolation: "worktree" });
+    await storage.nextWrite();
+    storage.finishOldestWrite();
+    await saveIsolation;
+
+    const saveHost = preferences.update({ serverId: "srv_remote" });
+    await storage.nextWrite();
+    storage.finishOldestWrite();
+    await saveHost;
+
+    expect(storage.savedPreferences()).toEqual({
+      isolation: "worktree",
+      serverId: "srv_remote",
+    });
+    expect(await new CreateAgentPreferencesService(storage).load()).toEqual({
+      isolation: "worktree",
+      serverId: "srv_remote",
+    });
+  });
+
+  it("treats stored preferences without a host as undefined", () => {
+    expect(parseFormPreferences({ provider: "codex" }).serverId).toBeUndefined();
+  });
 });
