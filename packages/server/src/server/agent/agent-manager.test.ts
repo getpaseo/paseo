@@ -195,6 +195,18 @@ class BlockingTimelineStore extends RecordingTimelineStore {
   }
 }
 
+class RejectingFirstTimelineStore extends RecordingTimelineStore {
+  private shouldReject = true;
+
+  override async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
+    if (this.shouldReject) {
+      this.shouldReject = false;
+      throw new Error("durable timeline unavailable");
+    }
+    await super.bulkInsert(agentId, rows);
+  }
+}
+
 class HangingTimelineReadStore extends RecordingTimelineStore {
   readonly lastItemRead = deferred<AgentTimelineItem | null>();
   getLastItemCalls = 0;
@@ -793,6 +805,342 @@ test("fences a queued timeline append before either memory or durable commit", a
     if (firstAppend) await firstAppend.catch(() => undefined);
     if (secondAppend) await secondAppend.catch(() => undefined);
     if (reload) await reload.catch(() => undefined);
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("admits a submitted prompt durably before activation and fences close during the append", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-prompt-admission-"));
+  const durable = new BlockingTimelineStore();
+  const events: AgentManagerEvent[] = [];
+
+  class CompletingSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "prompt-admission-turn";
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      return { turnId };
+    }
+  }
+
+  const session = new CompletingSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    durableTimelineStore: durable,
+    logger,
+  });
+  manager.subscribe((event) => events.push(event), { replayState: false });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.runAgent(agent.id, "admit me", { clientMessageId: "admission-client" });
+    await durable.bulkInsertStarted.promise;
+
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      activeForegroundTurnId: null,
+      lifecycle: "idle",
+    });
+    expect(
+      events.filter(
+        (event): event is Extract<AgentManagerEvent, { type: "agent_stream" }> =>
+          event.type === "agent_stream",
+      ),
+    ).toEqual([]);
+
+    const closing = manager.closeAgent(agent.id);
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)).toBeNull());
+    durable.releaseBulkInsert.resolve();
+
+    await expect(run).rejects.toThrow("Turn start was canceled");
+    await closing;
+    expect(
+      events.some((event) => event.type === "agent_stream" && event.event.type === "turn_started"),
+    ).toBe(false);
+  } finally {
+    durable.releaseBulkInsert.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("awaits coalesced durable commits before publishing a later turn completion", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-coalesced-order-"));
+  const durable = new BlockingTimelineStore();
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    durableTimelineStore: durable,
+    logger,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { replayState: false });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.runAgent(agent.id, "stream");
+    await manager.waitForAgentRunStart(agent.id);
+
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "durable first" },
+    });
+    await durable.bulkInsertStarted.promise;
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-1" });
+
+    expect(
+      events.some(
+        (event) => event.type === "agent_stream" && event.event.type === "turn_completed",
+      ),
+    ).toBe(false);
+    durable.releaseBulkInsert.resolve();
+    await run;
+
+    const streamTypes = events
+      .filter(
+        (event): event is Extract<AgentManagerEvent, { type: "agent_stream" }> =>
+          event.type === "agent_stream",
+      )
+      .map((event) => (event.event.type === "timeline" ? event.event.item.type : event.event.type));
+    expect(streamTypes).toEqual(["turn_started", "assistant_message", "turn_completed"]);
+    await expect(durable.getCommittedRows(agent.id)).resolves.toEqual([
+      expect.objectContaining({ item: { type: "assistant_message", text: "durable first" } }),
+    ]);
+  } finally {
+    durable.releaseBulkInsert.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("handles a rejected coalesced commit before processing the next session event", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-coalesced-failure-"));
+  const durable = new RejectingFirstTimelineStore();
+  const session = new TestAgentSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    durableTimelineStore: durable,
+    logger,
+  });
+  const events: AgentManagerEvent[] = [];
+  manager.subscribe((event) => events.push(event), { replayState: false });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const run = manager.runAgent(agent.id, "stream");
+    await manager.waitForAgentRunStart(agent.id);
+
+    session.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "rejected" },
+    });
+    session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-1" });
+    await run;
+
+    expect(
+      events
+        .filter(
+          (event): event is Extract<AgentManagerEvent, { type: "agent_stream" }> =>
+            event.type === "agent_stream",
+        )
+        .map((event) => event.event.type),
+    ).toEqual(["turn_started", "turn_completed"]);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("serializes duplicate submitted prompt admission across provider echoes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-submitted-dedupe-"));
+  const durable = new BlockingTimelineStore();
+  const session = new SteeringTestSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    durableTimelineStore: durable,
+    logger,
+  });
+
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const initial = manager.streamAgent(agent.id, "initial");
+    void (async () => {
+      for await (const _event of initial) {
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    const first = manager.steerAgentRun(agent.id, "one", { clientMessageId: "same-client" });
+    const second = manager.steerAgentRun(agent.id, "two", { clientMessageId: "same-client" });
+    await durable.bulkInsertStarted.promise;
+    durable.releaseBulkInsert.resolve();
+    await Promise.all([first, second]);
+
+    const rows = manager.getTimeline(agent.id).filter((item) => item.type === "user_message");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      text: "one",
+      messageId: "same-client",
+      clientMessageId: "same-client",
+    });
+    await expect(durable.getCommittedRows(agent.id)).resolves.toHaveLength(1);
+  } finally {
+    durable.releaseBulkInsert.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("awaits and catches out-of-band submitted prompt persistence", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-out-of-band-timeline-"));
+  const durable = new BlockingTimelineStore();
+  const commandRan = deferred<void>();
+  const events: AgentManagerEvent[] = [];
+
+  class OutOfBandSession extends TestAgentSession {
+    override tryHandleOutOfBand(prompt: AgentPromptInput) {
+      if (prompt !== "/handled") return null;
+      return {
+        run: async ({ emit }: { emit: (event: AgentStreamEvent) => void }) => {
+          commandRan.resolve();
+          emit({
+            type: "timeline",
+            provider: this.provider,
+            item: { type: "assistant_message", text: "handled" },
+          });
+        },
+      };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return new OutOfBandSession({ provider: "codex", cwd: workdir });
+        }
+      })(),
+    },
+    durableTimelineStore: durable,
+    logger,
+  });
+  manager.subscribe((event) => events.push(event), { replayState: false });
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const handled = manager.tryRunOutOfBand(agent.id, "/handled", {
+      clientMessageId: "out-of-band-client",
+    });
+    await durable.bulkInsertStarted.promise;
+    let commandFinished = false;
+    void commandRan.promise.then(() => {
+      commandFinished = true;
+      return undefined;
+    });
+    await Promise.resolve();
+    expect(commandFinished).toBe(false);
+
+    durable.releaseBulkInsert.resolve();
+    await expect(handled).resolves.toBe(true);
+    await commandRan.promise;
+    await manager.flush();
+
+    const timelineItems = events.flatMap((event) =>
+      event.type === "agent_stream" && event.event.type === "timeline" ? [event.event.item] : [],
+    );
+    expect(timelineItems).toEqual([
+      { type: "user_message", text: "/handled", clientMessageId: "out-of-band-client" },
+      { type: "assistant_message", text: "handled" },
+    ]);
+  } finally {
+    durable.releaseBulkInsert.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not reject the out-of-band owner when submitted prompt persistence fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-out-of-band-failure-"));
+  const durable = new RejectingFirstTimelineStore();
+  const commandRan = deferred<void>();
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return new (class extends TestAgentSession {
+            override tryHandleOutOfBand(prompt: AgentPromptInput) {
+              if (prompt !== "/handled") return null;
+              return {
+                run: async () => {
+                  commandRan.resolve();
+                },
+              };
+            }
+          })({ provider: "codex", cwd: workdir });
+        }
+      })(),
+    },
+    durableTimelineStore: durable,
+    logger,
+  });
+
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await expect(
+      manager.tryRunOutOfBand(agent.id, "/handled", { clientMessageId: "failed-client" }),
+    ).resolves.toBe(true);
+    await commandRan.promise;
+  } finally {
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
