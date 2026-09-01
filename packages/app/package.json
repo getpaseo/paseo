@@ -162,5 +162,10 @@
     "vitest": "^4.1.6",
     "wrangler": "^4.105.0",
     "ws": "^8.20.0"
+  },
+  "reanimated": {
+    "staticFeatureFlags": {
+      "FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS": false
+    }
   }
 }

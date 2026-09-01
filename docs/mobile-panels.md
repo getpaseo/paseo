@@ -89,6 +89,12 @@ definition, no longer eligible to begin.
 - Animated panel nodes use React Native static styles plus inline theme values. Do not attach
   Unistyles-generated styles to those nodes; Unistyles and Reanimated patching the same Fabric node
   has caused native crashes.
+- `FORCE_REACT_RENDER_FOR_SETTLED_ANIMATIONS` stays off in `packages/app/package.json`. It is a
+  compile-time flag; changing it needs a native rebuild. With it on, Reanimated 4.3 hands settled
+  animated props back to React through a collector that forgets entries older than two seconds. A JS
+  stall across a panel settle loses the final position, and the next React commit reverts the overlay
+  to its last synced props: a backdrop over the workspace while the store says closed. Upstream fixed
+  the collector in 4.4.3, which needs React Native 0.83.
 - Gesture start and progress must not update React state. The retained overlay is already mounted and
   offscreen; only the shared position and its derived native styles move during a drag.
 - Hidden tabs and workspaces use `RetainedPanel`. It owns a non-collapsible native root, visibility,
