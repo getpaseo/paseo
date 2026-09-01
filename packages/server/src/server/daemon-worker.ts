@@ -1,9 +1,11 @@
 import { appendFileSync, mkdirSync } from "node:fs";
+import { userInfo } from "node:os";
 import path from "node:path";
 import { createPaseoDaemon } from "./bootstrap.js";
 import { loadConfig } from "./config.js";
 import { resolvePaseoHome } from "./paseo-home.js";
 import { createRootLogger } from "./logger.js";
+import { inheritLoginShellEnv } from "./login-shell-env.js";
 import type { DaemonLifecycleIntent } from "./bootstrap.js";
 import { getProcessDiagnostics } from "./process-diagnostics.js";
 
@@ -27,6 +29,16 @@ interface BootstrapResult {
   paseoHome: string;
   logger: ReturnType<typeof createRootLogger>;
   config: ReturnType<typeof loadConfig>;
+}
+
+// login-shell-env logs in (message, fields) order; pino logs in (fields, message) order.
+function createLoginShellEnvLogger(logger: ReturnType<typeof createRootLogger>) {
+  return {
+    info: (message: string, fields?: Record<string, unknown>) =>
+      fields ? logger.info(fields, message) : logger.info(message),
+    warn: (message: string, fields?: Record<string, unknown>) =>
+      fields ? logger.warn(fields, message) : logger.warn(message),
+  };
 }
 
 function isPidAlive(pid: number): boolean {
@@ -71,6 +83,25 @@ function bootstrapFromEnvironment(): BootstrapResult {
     const paseoHome = resolvePaseoHome();
     const config = loadConfig(paseoHome);
     const logger = createRootLogger({ log: config.log }, { paseoHome, file: false });
+    // The daemon inherits whatever environment its launcher had (launchd, a
+    // minimal shell, the desktop app). Resolve the user's login shell env so
+    // terminals and agent processes see the same SHELL/PATH as a normal
+    // terminal session. No-op on failure and on Windows.
+    //
+    // An inherited SHELL (e.g. launchd's default /bin/bash) reflects the
+    // launcher, not the user's login shell, so resolve against the account's
+    // registered login shell when one exists.
+    let loginShell: string | null = null;
+    try {
+      loginShell = userInfo().shell;
+    } catch {
+      // Not all systems have /etc/passwd entries for the current UID (e.g. Docker,
+      // minimal containers). Fall back to env.SHELL inside inheritLoginShellEnv.
+    }
+    inheritLoginShellEnv({
+      logger: createLoginShellEnvLogger(logger),
+      preferredShell: loginShell && loginShell !== "/bin/false" ? loginShell : undefined,
+    });
     return { paseoHome, logger, config };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
