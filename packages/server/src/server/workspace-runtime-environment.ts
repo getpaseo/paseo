@@ -32,6 +32,8 @@ export interface WorkspaceRuntimeEnvironmentServiceOptions {
   random?: () => number;
   /** Injectable only to make availability checks deterministic in tests. */
   checkPortAvailable?: (port: number) => Promise<boolean>;
+  /** Injectable only to make ephemeral allocation deterministic in tests. */
+  findFreePort?: () => Promise<number>;
 }
 
 interface StoredWorkspaceRuntimeEnvironment extends WorkspaceRuntimeEnvironment {
@@ -49,10 +51,12 @@ export class WorkspaceRuntimeEnvironmentService {
   private allocationChain: Promise<void> = Promise.resolve();
   private readonly random: () => number;
   private readonly checkPortAvailable: (port: number) => Promise<boolean>;
+  private readonly findFreePort: () => Promise<number>;
 
   constructor(options: WorkspaceRuntimeEnvironmentServiceOptions = {}) {
     this.random = options.random ?? Math.random;
     this.checkPortAvailable = options.checkPortAvailable ?? checkPortAvailable;
+    this.findFreePort = options.findFreePort ?? findFreePort;
   }
 
   async ensure(
@@ -65,12 +69,18 @@ export class WorkspaceRuntimeEnvironmentService {
 
     let pending = this.pending.get(input.workspaceId);
     if (!pending) {
-      pending = this.create(input);
+      let created!: Promise<StoredWorkspaceRuntimeEnvironment>;
+      created = this.create(input, () => this.pending.get(input.workspaceId) === created);
+      pending = created;
       this.pending.set(input.workspaceId, pending);
     }
 
     try {
-      return cloneEnvironment(await pending);
+      const environment = await pending;
+      if (this.environments.get(input.workspaceId) !== environment) {
+        throw new Error("Workspace runtime environment was released during allocation");
+      }
+      return cloneEnvironment(environment);
     } finally {
       if (this.pending.get(input.workspaceId) === pending) {
         this.pending.delete(input.workspaceId);
@@ -85,13 +95,21 @@ export class WorkspaceRuntimeEnvironmentService {
 
   release(workspaceId: string): void {
     this.environments.delete(workspaceId);
+    // A released workspace must not let an in-flight allocation commit after
+    // teardown. Deleting the pending promise also lets a later workspace with
+    // the same ID allocate a fresh environment.
+    this.pending.delete(workspaceId);
   }
 
   private async create(
     input: EnsureWorkspaceRuntimeEnvironmentInput,
+    isCurrent: () => boolean,
   ): Promise<StoredWorkspaceRuntimeEnvironment> {
     const releaseAllocationLock = await this.acquireAllocationLock();
     try {
+      if (!isCurrent()) {
+        throw new Error("Workspace runtime environment was released during allocation");
+      }
       const portCount = input.allocation?.blockSize ?? DEFAULT_WORKSPACE_PORT_BLOCK_SIZE;
       const base = await this.allocatePortBlock({ ...input, portCount });
       const portEnd = base + portCount - 1;
@@ -121,6 +139,9 @@ export class WorkspaceRuntimeEnvironmentService {
         },
         reservedPorts,
       };
+      if (!isCurrent()) {
+        throw new Error("Workspace runtime environment was released during allocation");
+      }
       this.environments.set(input.workspaceId, environment);
       return environment;
     } finally {
@@ -180,7 +201,10 @@ export class WorkspaceRuntimeEnvironmentService {
     }
 
     for (let attempt = 0; attempt < MAX_WORKSPACE_PORT_BLOCK_ALLOCATION_ATTEMPTS; attempt += 1) {
-      const base = await findFreePort();
+      const base = await this.findFreePort();
+      if (!isValidTcpBlock(base, portCount)) {
+        continue;
+      }
       if (await this.isAvailableBlock(base, portCount, input.excludedPorts)) {
         return base;
       }
@@ -197,7 +221,7 @@ export class WorkspaceRuntimeEnvironmentService {
     excludedPorts: ReadonlySet<number> | undefined,
   ): void {
     const end = base + portCount - 1;
-    if (!Number.isInteger(base) || base < MIN_TCP_PORT || end > MAX_TCP_PORT) {
+    if (!isValidTcpBlock(base, portCount)) {
       throw new Error(`Workspace port block ${base}-${end} is outside the TCP port range`);
     }
     if (range) {
@@ -250,6 +274,11 @@ export class WorkspaceRuntimeEnvironmentService {
     }
     return true;
   }
+}
+
+function isValidTcpBlock(base: number, portCount: number): boolean {
+  const end = base + portCount - 1;
+  return Number.isInteger(base) && base >= MIN_TCP_PORT && end <= MAX_TCP_PORT;
 }
 
 function cloneEnvironment(
