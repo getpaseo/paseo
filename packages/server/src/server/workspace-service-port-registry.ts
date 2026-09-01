@@ -1,3 +1,5 @@
+import { runWithWorkspacePortAllocationLock } from "./workspace-port-allocation-lock.js";
+
 interface WorkspaceServicePortDeclaration {
   scriptName: string;
   port?: number;
@@ -45,12 +47,14 @@ export async function ensureWorkspaceServicePortPlan(
   let pendingPlan = pendingWorkspaceServicePortPlans.get(options.workspaceId);
   if (!pendingPlan) {
     const token: PendingWorkspaceServicePortPlanToken = { isReleased: false };
-    pendingPlan = createPendingWorkspaceServicePortPlan({
-      workspaceId: options.workspaceId,
-      services: options.services,
-      allocatePort: options.allocatePort,
-      token,
-    });
+    pendingPlan = runWithWorkspacePortAllocationLock(() =>
+      createPendingWorkspaceServicePortPlan({
+        workspaceId: options.workspaceId,
+        services: options.services,
+        allocatePort: options.allocatePort,
+        token,
+      }),
+    );
     pendingWorkspaceServicePortPlans.set(options.workspaceId, pendingPlan);
     pendingWorkspaceServicePortPlanTokens.set(options.workspaceId, token);
   }
@@ -164,32 +168,34 @@ async function buildWorkspaceServicePortPlan(options: {
 export async function refreshWorkspaceServicePort(
   options: RefreshWorkspaceServicePortOptions,
 ): Promise<number> {
-  const plan = workspaceServicePortPlans.get(options.workspaceId) ?? new Map<string, number>();
+  return await runWithWorkspacePortAllocationLock(async () => {
+    const plan = workspaceServicePortPlans.get(options.workspaceId) ?? new Map<string, number>();
 
-  const reservedPorts = new Set(plan.values());
-  const previousPort = plan.get(options.service.scriptName);
-  if (previousPort !== undefined) {
-    reservedPorts.delete(previousPort);
-  }
-  const oldDynamicPort = dynamicPortsByWorkspace
-    .get(options.workspaceId)
-    ?.get(options.service.scriptName);
-  const port = await resolveServicePort({
-    service: options.service,
-    workspaceId: options.workspaceId,
-    allocatePort: options.allocatePort,
-    reservedPorts,
-  });
-  if (oldDynamicPort !== undefined && oldDynamicPort !== port) {
-    releaseDynamicPort({
+    const reservedPorts = new Set(plan.values());
+    const previousPort = plan.get(options.service.scriptName);
+    if (previousPort !== undefined) {
+      reservedPorts.delete(previousPort);
+    }
+    const oldDynamicPort = dynamicPortsByWorkspace
+      .get(options.workspaceId)
+      ?.get(options.service.scriptName);
+    const port = await resolveServicePort({
+      service: options.service,
       workspaceId: options.workspaceId,
-      scriptName: options.service.scriptName,
-      port: oldDynamicPort,
+      allocatePort: options.allocatePort,
+      reservedPorts,
     });
-  }
-  plan.set(options.service.scriptName, port);
-  workspaceServicePortPlans.set(options.workspaceId, plan);
-  return port;
+    if (oldDynamicPort !== undefined && oldDynamicPort !== port) {
+      releaseDynamicPort({
+        workspaceId: options.workspaceId,
+        scriptName: options.service.scriptName,
+        port: oldDynamicPort,
+      });
+    }
+    plan.set(options.service.scriptName, port);
+    workspaceServicePortPlans.set(options.workspaceId, plan);
+    return port;
+  });
 }
 
 async function resolveServicePort(options: {

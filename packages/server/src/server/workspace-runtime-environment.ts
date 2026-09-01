@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import net from "node:net";
 import type { PaseoServicePortAllocation } from "@getpaseo/protocol/paseo-config-schema";
 import { findFreePort } from "./service-proxy.js";
+import { runWithWorkspacePortAllocationLock } from "./workspace-port-allocation-lock.js";
 import { allocateWorkspaceServicePort } from "./workspace-service-port-allocator.js";
 
 const DEFAULT_WORKSPACE_PORT_BLOCK_SIZE = 100;
@@ -23,8 +24,8 @@ export interface EnsureWorkspaceRuntimeEnvironmentInput {
   cwd: string;
   branchName: string | null;
   allocation: PaseoServicePortAllocation | undefined;
-  /** Explicit individual-service ports must remain available outside the block. */
-  excludedPorts?: ReadonlySet<number>;
+  /** Service ports must remain available outside the block. */
+  excludedPorts?: ReadonlySet<number> | (() => ReadonlySet<number>);
 }
 
 export interface WorkspaceRuntimeEnvironmentServiceOptions {
@@ -48,7 +49,6 @@ interface StoredWorkspaceRuntimeEnvironment extends WorkspaceRuntimeEnvironment 
 export class WorkspaceRuntimeEnvironmentService {
   private readonly environments = new Map<string, StoredWorkspaceRuntimeEnvironment>();
   private readonly pending = new Map<string, Promise<StoredWorkspaceRuntimeEnvironment>>();
-  private allocationChain: Promise<void> = Promise.resolve();
   private readonly random: () => number;
   private readonly checkPortAvailable: (port: number) => Promise<boolean>;
   private readonly findFreePort: () => Promise<number>;
@@ -93,6 +93,16 @@ export class WorkspaceRuntimeEnvironmentService {
     return environment ? cloneEnvironment(environment) : null;
   }
 
+  getReservedPorts(): ReadonlySet<number> {
+    const ports = new Set<number>();
+    for (const environment of this.environments.values()) {
+      for (const port of environment.reservedPorts) {
+        ports.add(port);
+      }
+    }
+    return ports;
+  }
+
   release(workspaceId: string): void {
     this.environments.delete(workspaceId);
     // A released workspace must not let an in-flight allocation commit after
@@ -105,13 +115,13 @@ export class WorkspaceRuntimeEnvironmentService {
     input: EnsureWorkspaceRuntimeEnvironmentInput,
     isCurrent: () => boolean,
   ): Promise<StoredWorkspaceRuntimeEnvironment> {
-    const releaseAllocationLock = await this.acquireAllocationLock();
-    try {
+    return await runWithWorkspacePortAllocationLock(async () => {
       if (!isCurrent()) {
         throw new Error("Workspace runtime environment was released during allocation");
       }
       const portCount = input.allocation?.blockSize ?? DEFAULT_WORKSPACE_PORT_BLOCK_SIZE;
-      const base = await this.allocatePortBlock({ ...input, portCount });
+      const excludedPorts = resolveExcludedPorts(input.excludedPorts);
+      const base = await this.allocatePortBlock({ ...input, excludedPorts, portCount });
       const portEnd = base + portCount - 1;
       const reservedPorts = new Set<number>();
       for (let port = base; port <= portEnd; port += 1) {
@@ -144,23 +154,14 @@ export class WorkspaceRuntimeEnvironmentService {
       }
       this.environments.set(input.workspaceId, environment);
       return environment;
-    } finally {
-      releaseAllocationLock();
-    }
-  }
-
-  private async acquireAllocationLock(): Promise<() => void> {
-    const previous = this.allocationChain;
-    let release!: () => void;
-    this.allocationChain = new Promise<void>((resolve) => {
-      release = resolve;
     });
-    await previous;
-    return release;
   }
 
   private async allocatePortBlock(
-    input: EnsureWorkspaceRuntimeEnvironmentInput & { portCount: number },
+    input: Omit<EnsureWorkspaceRuntimeEnvironmentInput, "excludedPorts"> & {
+      excludedPorts?: ReadonlySet<number>;
+      portCount: number;
+    },
   ): Promise<number> {
     const { allocation, portCount } = input;
     if (allocation?.portScript) {
@@ -170,7 +171,7 @@ export class WorkspaceRuntimeEnvironmentService {
         scriptName: "@workspace",
         workspaceId: input.workspaceId,
         branchName: input.branchName,
-        reservedPorts: new Set([...this.reservedPorts(), ...(input.excludedPorts ?? [])]),
+        reservedPorts: new Set([...this.getReservedPorts(), ...(input.excludedPorts ?? [])]),
         portCount,
       });
       this.assertValidBlock(base, portCount, allocation.range, input.excludedPorts);
@@ -245,16 +246,6 @@ export class WorkspaceRuntimeEnvironmentService {
     return false;
   }
 
-  private reservedPorts(): Set<number> {
-    const ports = new Set<number>();
-    for (const environment of this.environments.values()) {
-      for (const port of environment.reservedPorts) {
-        ports.add(port);
-      }
-    }
-    return ports;
-  }
-
   private async isAvailableBlock(
     base: number,
     portCount: number,
@@ -319,6 +310,12 @@ function intersectsPorts(
     if (port >= base && port <= end) return true;
   }
   return false;
+}
+
+function resolveExcludedPorts(
+  source: ReadonlySet<number> | (() => ReadonlySet<number>) | undefined,
+): ReadonlySet<number> | undefined {
+  return typeof source === "function" ? source() : source;
 }
 
 async function checkPortAvailable(port: number): Promise<boolean> {
