@@ -31,6 +31,12 @@ So arrival sets a _target_ and the reveal rate is derived from the backlog inste
 - **First sight of a text is revealed whole.** Only growth is paced. This is what makes history hydration, timeline replay, a virtualized row remounting on scroll, and an already-finished message all render complete on first paint without a special case for each.
 - **Leaving `phase: "streaming"` snaps the reveal.** A completed turn must never be left holding characters. `layoutStream` sets the phase, so anything outside the live head with an active turn is already complete.
 - **The reducer queue commits on a frame, with a timer as the ceiling.** A frame callback never fires in a hidden tab, so a timer races it and wins when nothing is painting — the store has to keep advancing either way.
+- **A history row re-renders only when its layout item changes.** The inverted FlatList hands every
+  mounted cell a new `index` and `ref` whenever a row is prepended, so without a memo boundary each
+  coalesced tick re-rendered every mounted row (about 50 on a phone, 100–250 ms of JS per tick).
+  `layoutStream` keeps a layout item's identity when nothing about it changed and `HistoryStreamRow`
+  memoizes on that identity. A new field on `StreamLayoutItem` must be added to
+  `areLayoutItemsEquivalent`, or sharing silently stops.
 
 ## Measuring
 
