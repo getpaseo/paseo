@@ -1,4 +1,12 @@
-import { createContext, useCallback, useContext, useMemo, useReducer, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useDeferredValue,
+  useMemo,
+  useReducer,
+  useState,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   FlatList,
@@ -1079,6 +1087,16 @@ function IndependentModelList({
         contentContainerStyle={styles.virtualizedModelListContent}
         nestedScrollEnabled
         testID="compact-model-list"
+        initialNumToRender={16}
+        windowSize={7}
+        maxToRenderPerBatch={16}
+        updateCellsBatchingPeriod={40}
+        removeClippedSubviews={Platform.OS === "android"}
+        getItemLayout={(_data, index) => ({
+          length: DESKTOP_MODEL_ROW_HEIGHT,
+          offset: DESKTOP_MODEL_ROW_HEIGHT * index,
+          index,
+        })}
       />
     </IndependentScrollBoundary>
   );
@@ -1176,6 +1194,16 @@ function ModelRowList({
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
         contentContainerStyle={styles.virtualizedModelListContent}
+        initialNumToRender={16}
+        windowSize={7}
+        maxToRenderPerBatch={16}
+        updateCellsBatchingPeriod={40}
+        removeClippedSubviews
+        getItemLayout={(_data, index) => ({
+          length: DESKTOP_MODEL_ROW_HEIGHT,
+          offset: DESKTOP_MODEL_ROW_HEIGHT * index,
+          index,
+        })}
       />
     );
   }
@@ -1354,7 +1382,11 @@ function ModelBrowserContent({
   showProfilesSection = true,
 }: ModelBrowserContentProps) {
   const { t } = useTranslation();
-  const normalizedQuery = useMemo(() => normalizeSearchQuery(searchQuery), [searchQuery]);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const normalizedQuery = useMemo(
+    () => normalizeSearchQuery(deferredSearchQuery),
+    [deferredSearchQuery],
+  );
   const profiledLookup = useMemo(
     () => groupProfilesByProviderModel(profiles?.rows ?? []),
     [profiles],

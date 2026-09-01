@@ -235,6 +235,46 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     [updatePreferences],
   );
 
+  // Coalesce rapid model/mode switches into one persisted write to avoid
+  // repeated JSON.stringify + Zod + AsyncStorage flushes blocking the JS thread.
+  const pendingPreferenceUpdateRef = useRef<{
+    timer: ReturnType<typeof setTimeout> | null;
+    queued: Array<Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences>>;
+  }>({ timer: null, queued: [] });
+
+  const flushPendingPreferenceUpdates = useCallback(() => {
+    const queued = pendingPreferenceUpdateRef.current.queued;
+    if (queued.length === 0) return;
+    pendingPreferenceUpdateRef.current.queued = [];
+    const toPersist: (current: FormPreferences) => FormPreferences = (current) => {
+      let next = current;
+      for (const u of queued) {
+        next =
+          typeof u === "function"
+            ? (u as (c: FormPreferences) => FormPreferences)(next)
+            : ({ ...next, ...u } as FormPreferences);
+      }
+      return next;
+    };
+    void updateCurrentPreferences(toPersist).catch((error) => {
+      console.warn("[useAgentFormState] debounced preference persist failed", error);
+    });
+  }, [updateCurrentPreferences]);
+
+  const schedulePreferenceUpdate = useCallback(
+    (updates: Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences)) => {
+      pendingPreferenceUpdateRef.current.queued.push(updates);
+      if (pendingPreferenceUpdateRef.current.timer) {
+        clearTimeout(pendingPreferenceUpdateRef.current.timer);
+      }
+      pendingPreferenceUpdateRef.current.timer = setTimeout(() => {
+        pendingPreferenceUpdateRef.current.timer = null;
+        flushPendingPreferenceUpdates();
+      }, 250);
+    },
+    [flushPendingPreferenceUpdates],
+  );
+
   const daemons = useHosts();
 
   const validServerIds = useMemo(() => new Set(daemons.map((d) => d.serverId)), [daemons]);
@@ -439,7 +479,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         providerModels,
         providerPrefs,
       });
-      void updateCurrentPreferences((current) =>
+      schedulePreferenceUpdate((current) =>
         mergeSelectedComposerPreferences({
           preferences: current,
           provider,
@@ -449,7 +489,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         }),
       );
     },
-    [allProviderModels, selectableProviderDefinitionMap, updateCurrentPreferences],
+    [allProviderModels, schedulePreferenceUpdate, selectableProviderDefinitionMap],
   );
 
   const clearProviderSelectionFromUser = useCallback(() => {
@@ -515,7 +555,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       dispatch({ type: "SET_MODE_FROM_USER", modeId });
       const provider = formState.provider;
       if (provider) {
-        void updateCurrentPreferences((current) =>
+        schedulePreferenceUpdate((current) =>
           mergeSelectedComposerPreferences({
             preferences: current,
             provider,
@@ -526,7 +566,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         );
       }
     },
-    [formState.provider, updateCurrentPreferences],
+    [formState.provider, schedulePreferenceUpdate],
   );
 
   const setModelFromUser = useCallback(
@@ -544,7 +584,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       if (provider) {
         const normalizedModelId = normalizeSelectedModelId(modelId);
         const nextModelId = normalizedModelId || resolveDefaultModelId(availableModels);
-        void updateCurrentPreferences((current) =>
+        schedulePreferenceUpdate((current) =>
           mergeSelectedComposerPreferences({
             preferences: current,
             provider,
@@ -555,7 +595,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         );
       }
     },
-    [availableModels, formState.provider, updateCurrentPreferences],
+    [availableModels, formState.provider, schedulePreferenceUpdate],
   );
 
   const setThinkingOptionFromUser = useCallback(
@@ -563,7 +603,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       dispatch({ type: "SET_THINKING_OPTION_FROM_USER", thinkingOptionId });
       const { provider, model: modelId } = formState;
       if (provider && modelId) {
-        void updateCurrentPreferences((current) =>
+        schedulePreferenceUpdate((current) =>
           mergeSelectedComposerPreferences({
             preferences: current,
             provider,
@@ -576,8 +616,33 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         );
       }
     },
-    [formState, updateCurrentPreferences],
+    [formState, schedulePreferenceUpdate],
   );
+
+  useEffect(() => {
+    return () => {
+      if (pendingPreferenceUpdateRef.current.timer) {
+        clearTimeout(pendingPreferenceUpdateRef.current.timer);
+        pendingPreferenceUpdateRef.current.timer = null;
+      }
+      // Flush synchronously on unmount if needed — best-effort, ignore promise
+      if (pendingPreferenceUpdateRef.current.queued.length > 0) {
+        const queued = pendingPreferenceUpdateRef.current.queued;
+        pendingPreferenceUpdateRef.current.queued = [];
+        const toPersist: (current: FormPreferences) => FormPreferences = (current) => {
+          let next = current;
+          for (const u of queued) {
+            next =
+              typeof u === "function"
+                ? (u as (c: FormPreferences) => FormPreferences)(next)
+                : ({ ...next, ...u } as FormPreferences);
+          }
+          return next;
+        };
+        void updateCurrentPreferences(toPersist).catch(() => {});
+      }
+    };
+  }, [updateCurrentPreferences]);
 
   const setWorkingDir = useCallback((value: string) => {
     dispatch({ type: "SET_WORKING_DIR", value });

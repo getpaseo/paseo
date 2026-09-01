@@ -237,6 +237,8 @@ export function scoreModelRow(row: ProviderSelectionModelRow, normalizedQuery: s
   return scoreTextFields(normalizedQuery, getModelRowSearchFields(row));
 }
 
+const MAX_MODEL_SEARCH_RESULTS = 200;
+
 export function filterAndRankModelRows(
   rows: ProviderSelectionModelRow[],
   normalizedQuery: string,
@@ -254,9 +256,16 @@ export function filterAndRankModelRows(
   scored.sort((a, b) => {
     const cmp = compareMatchScores(a.score, b.score);
     if (cmp !== 0) return cmp;
-    return a.row.modelLabel.localeCompare(b.row.modelLabel);
+    // Avoid localeCompare on Android/Hermes hot path — simple codepoint compare
+    // is far cheaper and sufficient for deterministic ranking within the same tier.
+    if (a.row.modelLabel < b.row.modelLabel) return -1;
+    if (a.row.modelLabel > b.row.modelLabel) return 1;
+    return 0;
   });
 
+  if (scored.length > MAX_MODEL_SEARCH_RESULTS) {
+    scored.length = MAX_MODEL_SEARCH_RESULTS;
+  }
   return scored.map((entry) => entry.row);
 }
 
