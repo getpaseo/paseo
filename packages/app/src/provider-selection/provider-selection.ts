@@ -5,9 +5,9 @@ import type {
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
+import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import type { DraftCommandConfig } from "@/hooks/use-agent-commands-query";
 import { i18n } from "@/i18n/i18next";
-import { compareMatchScores, scoreTextFields } from "@getpaseo/protocol/search/text-match";
 import { filterSelectableModels } from "./model-catalog";
 
 export interface ProviderSelectionModelRow {
@@ -95,9 +95,15 @@ function buildModelSelection(
   }
   const selectableModels = filterSelectableModels(models) ?? [];
   if (selectableModels.length === 0) {
-    return { kind: "models", rows: [buildSyntheticDefaultRow(provider, providerLabel)] };
+    return {
+      kind: "models",
+      rows: [buildSyntheticDefaultRow(provider, providerLabel)],
+    };
   }
-  return { kind: "models", rows: buildModelRows(provider, providerLabel, selectableModels) };
+  return {
+    kind: "models",
+    rows: buildModelRows(provider, providerLabel, selectableModels),
+  };
 }
 
 function buildEntryModelSelection(
@@ -249,8 +255,10 @@ export function filterAndRankModelRows(
     .filter(
       (
         entry,
-      ): entry is { row: ProviderSelectionModelRow; score: NonNullable<typeof entry.score> } =>
-        Boolean(entry.score),
+      ): entry is {
+        row: ProviderSelectionModelRow;
+        score: NonNullable<typeof entry.score>;
+      } => Boolean(entry.score),
     );
 
   scored.sort((a, b) => {
@@ -336,26 +344,44 @@ export function resolveSubmissionReadiness(input: {
   hasClient: boolean;
 }): ProviderSelectionReadiness {
   if (!input.allowsEmptyAutoSubmit && !input.text.trim()) {
-    return { ok: false, reason: i18n.t("providerSelection.readiness.initialPromptRequired") };
+    return {
+      ok: false,
+      reason: i18n.t("providerSelection.readiness.initialPromptRequired"),
+    };
   }
   if (input.providerCount === 0) {
-    return { ok: false, reason: i18n.t("providerSelection.readiness.noProviders") };
+    return {
+      ok: false,
+      reason: i18n.t("providerSelection.readiness.noProviders"),
+    };
   }
   if (!(input.autoSubmitConfig?.provider ?? input.selection.provider)) {
     return { ok: false, reason: i18n.t("providerSelection.selectModel") };
   }
   if (input.selection.isModelLoading) {
-    return { ok: false, reason: i18n.t("providerSelection.readiness.modelDefaultsLoading") };
+    return {
+      ok: false,
+      reason: i18n.t("providerSelection.readiness.modelDefaultsLoading"),
+    };
   }
   const hasSelectedModel = Boolean(input.autoSubmitConfig?.model ?? input.selection.modelId);
   if (!hasSelectedModel && input.selection.availableModels.length > 0) {
-    return { ok: false, reason: i18n.t("providerSelection.readiness.noModelAvailable") };
+    return {
+      ok: false,
+      reason: i18n.t("providerSelection.readiness.noModelAvailable"),
+    };
   }
   if (!input.workspaceDirectory) {
-    return { ok: false, reason: i18n.t("providerSelection.readiness.workspaceDirectoryNotFound") };
+    return {
+      ok: false,
+      reason: i18n.t("providerSelection.readiness.workspaceDirectoryNotFound"),
+    };
   }
   if (!input.hasClient) {
-    return { ok: false, reason: i18n.t("providerSelection.readiness.hostDisconnected") };
+    return {
+      ok: false,
+      reason: i18n.t("providerSelection.readiness.hostDisconnected"),
+    };
   }
   return { ok: true };
 }

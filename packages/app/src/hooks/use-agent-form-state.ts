@@ -1,44 +1,44 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
-import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
 import type {
   AgentMode,
   AgentModelDefinition,
   AgentProvider,
   ProviderSnapshotEntry,
 } from "@getpaseo/protocol/agent-types";
-import { useHosts } from "@/runtime/host-runtime";
-import { buildProviderDefinitions } from "@/utils/provider-definitions";
+import type { AgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
+import { useCallback, useEffect, useMemo, useReducer, useRef } from "react";
+import type { MaterializedAgentProfile } from "@/agent-profiles";
+import { OptimisticFormPreferences } from "@/create-agent-preferences/optimistic-preferences";
+import { applyAgentProfilePreferences } from "@/create-agent-preferences/preferences";
+import { filterSelectableModels } from "@/provider-selection/model-catalog";
 import {
   buildSelectableProviderSelectorProviders,
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
-import { filterSelectableModels } from "@/provider-selection/model-catalog";
-import { OptimisticFormPreferences } from "@/create-agent-preferences/optimistic-preferences";
-import { applyAgentProfilePreferences } from "@/create-agent-preferences/preferences";
-import { useProvidersSnapshot } from "./use-providers-snapshot";
 import {
-  useFormPreferences,
-  mergeProviderPreferences,
-  type FormPreferences,
-} from "./use-form-preferences";
-import {
-  resolveAgentForm,
-  resolveEffectiveModel,
-  normalizeSelectedModelId,
-  resolveDefaultModelId,
-  mergeSelectedComposerPreferences,
-  combineInitialValues,
   buildProviderDefinitionMap,
   buildProviderDefinitionMapForStatuses,
-  INITIAL_AGENT_FORM_RESOLUTION,
-  INITIAL_USER_MODIFIED,
-  RESOLVABLE_PROVIDER_STATUSES,
-  SELECTABLE_PROVIDER_STATUSES,
+  combineInitialValues,
   type FormInitialValues,
   type FormState,
+  INITIAL_AGENT_FORM_RESOLUTION,
+  INITIAL_USER_MODIFIED,
+  mergeSelectedComposerPreferences,
+  normalizeSelectedModelId,
   type ProviderModelsByProvider,
+  RESOLVABLE_PROVIDER_STATUSES,
+  resolveAgentForm,
+  resolveDefaultModelId,
+  resolveEffectiveModel,
+  SELECTABLE_PROVIDER_STATUSES,
 } from "@/provider-selection/resolve-agent-form";
-import type { MaterializedAgentProfile } from "@/agent-profiles";
+import { useHosts } from "@/runtime/host-runtime";
+import { buildProviderDefinitions } from "@/utils/provider-definitions";
+import {
+  type FormPreferences,
+  mergeProviderPreferences,
+  useFormPreferences,
+} from "./use-form-preferences";
+import { useProvidersSnapshot } from "./use-providers-snapshot";
 
 export type { FormInitialValues } from "@/provider-selection/resolve-agent-form";
 
@@ -239,7 +239,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
   // repeated JSON.stringify + Zod + AsyncStorage flushes blocking the JS thread.
   const pendingPreferenceUpdateRef = useRef<{
     timer: ReturnType<typeof setTimeout> | null;
-    queued: Array<Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences>>;
+    queued: Array<Partial<FormPreferences> | ((current: FormPreferences) => FormPreferences)>;
   }>({ timer: null, queued: [] });
 
   const flushPendingPreferenceUpdates = useCallback(() => {
