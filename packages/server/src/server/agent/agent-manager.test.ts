@@ -4294,20 +4294,15 @@ test("reloadAgentSession aborts a stuck provider history load and releases waiti
   await manager.flush();
 
   const stuckFetch = manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
-  const stuckFetchRejection = expect(stuckFetch).rejects.toThrow(
-    "Provider subagent history load aborted for reload",
-  );
+  const stuckFetchRejection = stuckFetch.catch((error: unknown) => error);
   await stuckLoadStarted.promise;
   const reload = manager.reloadAgentSession(snapshot.id);
   const waitingFetch = manager.fetchProviderSubagentTimeline(snapshot.id, "lazy-child");
 
-  await expect(
-    Promise.race([
-      reload.then(() => "reloaded"),
-      new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 200)),
-    ]),
-  ).resolves.toBe("reloaded");
-  await stuckFetchRejection;
+  await reload;
+  await expect(stuckFetchRejection).resolves.toEqual(
+    expect.objectContaining({ message: "Provider subagent history load aborted for reload" }),
+  );
   await expect(waitingFetch).resolves.toMatchObject({
     rows: [
       expect.objectContaining({
