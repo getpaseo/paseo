@@ -47,6 +47,8 @@ export async function revertCodexConversation(input: {
   cwd?: string | null;
   model?: string | null;
   serviceTier?: string | null;
+  config?: Record<string, unknown> | null;
+  developerInstructions?: string | null;
   userMessageTurns: CodexUserMessageTurnIndex;
   setThreadId: (threadId: string) => void | Promise<void>;
 }): Promise<void> {
@@ -67,6 +69,8 @@ export async function revertCodexConversation(input: {
 
   // Fork is non-destructive: the old thread file stays on disk and remains
   // recoverable with `codex resume <old-uuid>` if the rewind target was wrong.
+  // Pass runtime-injected Codex config here: the forked thread stays loaded, so
+  // the later thread/resume path never re-applies mcp_servers (issue #3205).
   const forked = await forkCodexThread(input.client, {
     threadId: input.threadId,
     cwd: input.cwd ?? null,
@@ -74,6 +78,10 @@ export async function revertCodexConversation(input: {
     serviceTier: input.serviceTier ?? null,
     excludeTurns: false,
     persistExtendedHistory: true,
+    ...(input.config ? { config: input.config } : {}),
+    ...(input.developerInstructions
+      ? { developerInstructions: input.developerInstructions }
+      : {}),
   });
   const forkedThreadId = forked.thread.id;
 

@@ -147,4 +147,43 @@ describe("Codex Rewind", () => {
     expect(codex.recordedForks).toEqual([]);
     expect(codex.recordedRollbacks).toEqual([]);
   });
+
+  test("forwards runtime Codex config onto the forked thread", async () => {
+    const codex = new FakeCodex();
+    const userMessageTurns = new CodexMessageTurns(new Map([["codex-first", 0]]));
+    const runtimeConfig = {
+      mcp_servers: {
+        paseo: {
+          url: "http://127.0.0.1:6767/mcp/agents",
+          http_headers: { Authorization: "Bearer cap-token" },
+        },
+      },
+    };
+
+    await revertCodexConversation({
+      client: codex,
+      threadId: "source-thread",
+      messageId: "codex-first",
+      cwd: "/workspace/project",
+      model: "gpt-5.4-mini",
+      serviceTier: null,
+      config: runtimeConfig,
+      developerInstructions: "runtime instructions",
+      userMessageTurns,
+      setThreadId: () => undefined,
+    });
+
+    expect(codex.recordedForks).toEqual([
+      {
+        threadId: "source-thread",
+        cwd: "/workspace/project",
+        model: "gpt-5.4-mini",
+        serviceTier: null,
+        excludeTurns: false,
+        persistExtendedHistory: true,
+        config: runtimeConfig,
+        developerInstructions: "runtime instructions",
+      },
+    ]);
+  });
 });
