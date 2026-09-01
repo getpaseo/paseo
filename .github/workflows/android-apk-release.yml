@@ -20,7 +20,6 @@ env:
 
 jobs:
   publish-android-apk:
-    if: ${{ secrets.EXPO_TOKEN != '' }}
     permissions:
       contents: write
       packages: read
