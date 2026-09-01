@@ -145,6 +145,7 @@ export interface MessageInputProps {
   activeActionContent?: React.ReactNode;
   voiceServerId?: string;
   voiceAgentId?: string;
+  expectedTurnId?: string | null;
   /** When true and there's sendable content, calls onQueue instead of onSubmit */
   isAgentRunning?: boolean;
   /** Controls what the default send action (Enter, send button, dictation) does when the agent is
@@ -1069,6 +1070,7 @@ interface ResolvedMessageInputProps {
   activeActionContent: React.ReactNode;
   voiceServerId: string | undefined;
   voiceAgentId: string | undefined;
+  expectedTurnId: string | null | undefined;
   isAgentRunning: boolean;
   defaultSendBehavior: "interrupt" | "steer" | "queue";
   onQueue: ((payload: MessagePayload) => void) | undefined;
@@ -1116,6 +1118,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     activeActionContent: props.activeActionContent,
     voiceServerId: props.voiceServerId,
     voiceAgentId: props.voiceAgentId,
+    expectedTurnId: props.expectedTurnId,
     isAgentRunning: props.isAgentRunning ?? false,
     defaultSendBehavior: props.defaultSendBehavior,
     onQueue: props.onQueue,
@@ -1171,6 +1174,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       activeActionContent,
       voiceServerId,
       voiceAgentId,
+      expectedTurnId,
       isAgentRunning,
       defaultSendBehavior,
       onQueue,
@@ -1455,6 +1459,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           isAgentRunning,
           client,
           voiceAgentId,
+          expectedTurnId,
         });
       } catch (error) {
         console.error("[MessageInput] Failed to stop realtime voice", error);
@@ -1463,7 +1468,15 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
           toast.error(message);
         }
       }
-    }, [client, isAgentRunning, isRealtimeVoiceForCurrentAgent, toast, voice, voiceAgentId]);
+    }, [
+      client,
+      expectedTurnId,
+      isAgentRunning,
+      isRealtimeVoiceForCurrentAgent,
+      toast,
+      voice,
+      voiceAgentId,
+    ]);
 
     const handleToggleRealtimeVoiceShortcut = useCallback(() => {
       toggleRealtimeVoiceImpl({

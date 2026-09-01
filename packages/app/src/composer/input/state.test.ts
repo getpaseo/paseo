@@ -276,6 +276,26 @@ describe("composer send behavior", () => {
 });
 
 describe("stopRealtimeVoice", () => {
+  it("stops the captured exact turn before stopping voice", async () => {
+    const cancelAgent = vi.fn().mockResolvedValue(undefined);
+    const stopVoice = vi.fn().mockResolvedValue(undefined);
+
+    await stopRealtimeVoice({
+      voice: { stopVoice },
+      isRealtimeVoiceForCurrentAgent: true,
+      isAgentRunning: true,
+      client: {
+        cancelAgent,
+        getLastServerInfoMessage: () => ({ features: { exactTurnCancellation: true } }),
+      },
+      voiceAgentId: "agent-1",
+      expectedTurnId: "turn-a",
+    });
+
+    expect(cancelAgent).toHaveBeenCalledWith("agent-1", "turn-a");
+    expect(stopVoice).toHaveBeenCalled();
+  });
+
   it("keeps voice mode active when the running agent refuses cancellation", async () => {
     const cancellationError = new Error("active run cancellation was not acknowledged");
     const cancelAgent = vi.fn().mockRejectedValue(cancellationError);

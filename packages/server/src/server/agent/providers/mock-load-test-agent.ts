@@ -32,6 +32,7 @@ import type {
 } from "../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import { getAgentProviderDefinition } from "@getpaseo/protocol/provider-manifest";
+import { TurnCancellationGate } from "../turn-cancellation-gate.js";
 
 export const MOCK_LOAD_TEST_PROVIDER_ID = "mock";
 export const MOCK_LOAD_TEST_DEFAULT_MODEL_ID = "five-minute-stream";
@@ -732,6 +733,9 @@ export class MockLoadTestAgentSession implements AgentSession {
   private readonly rewindError: string | null;
   private remainingPromptRejections: number;
   private remainingSteerFailures: number;
+  private readonly turnCancellationGate = new TurnCancellationGate();
+  private closed = false;
+  private closePromise: Promise<void> | null = null;
 
   constructor(options: { config: AgentSessionConfig; sessionId: string; logger?: Logger }) {
     this.id = options.sessionId;
@@ -783,6 +787,10 @@ export class MockLoadTestAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
+    await this.turnCancellationGate.waitForQuiescence();
+    if (this.closed) {
+      throw new Error("Mock load-test session is closed");
+    }
     if (this.activeTurn) {
       throw new Error("Mock load-test provider already has an active turn");
     }
@@ -1002,25 +1010,29 @@ export class MockLoadTestAgentSession implements AgentSession {
     if (expectedTurnId !== undefined && this.activeTurn?.turnId !== expectedTurnId) {
       return;
     }
-    const turn = this.activeTurn;
-    if (!turn) {
-      return;
-    }
-    this.clearTurnTimer(turn);
-    this.activeTurn = null;
-    const event: AgentStreamEvent = {
-      type: "turn_canceled",
-      provider: this.provider,
-      reason: "Interrupted",
-      turnId: turn.turnId,
-    };
-    this.emit(event);
-    turn.resolve({
-      sessionId: this.id,
-      finalText: "",
-      timeline: [],
-      canceled: true,
-    });
+    await this.turnCancellationGate.interrupt(
+      expectedTurnId,
+      () => this.activeTurn?.turnId ?? null,
+      async (turnId) => {
+        const turn = this.activeTurn;
+        if (!turn || turn.turnId !== turnId) return;
+        this.clearTurnTimer(turn);
+        this.activeTurn = null;
+        const event: AgentStreamEvent = {
+          type: "turn_canceled",
+          provider: this.provider,
+          reason: "Interrupted",
+          turnId: turn.turnId,
+        };
+        this.emit(event);
+        turn.resolve({
+          sessionId: this.id,
+          finalText: "",
+          timeline: [],
+          canceled: true,
+        });
+      },
+    );
   }
 
   async steerActiveTurn(
@@ -1038,8 +1050,20 @@ export class MockLoadTestAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {
-    await this.interrupt();
-    this.listeners.clear();
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    this.turnCancellationGate.close();
+    this.closePromise = Promise.resolve().then(() => {
+      const turn = this.activeTurn;
+      if (turn) {
+        this.clearTurnTimer(turn);
+        this.activeTurn = null;
+        turn.resolve({ sessionId: this.id, finalText: "", timeline: [], canceled: true });
+      }
+      this.listeners.clear();
+      return undefined;
+    });
+    return this.closePromise;
   }
 
   async revertConversation(input: { messageId: string }): Promise<void> {

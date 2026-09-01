@@ -689,6 +689,7 @@ export class AgentManager {
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly quarantinedAgentIds = new Set<string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
@@ -1352,7 +1353,7 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
-    if (this.hasInFlightRun(agentId)) {
+    if (this.hasInFlightRun(agentId) && !this.quarantinedAgentIds.has(agentId)) {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
     }
@@ -1373,9 +1374,25 @@ export class AgentManager {
     const launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
-    const session = handle
-      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
-      : await client.createSession(providerLaunchConfig, launchContext);
+    const wasQuarantined = this.quarantinedAgentIds.has(agentId);
+    let existingSessionClosed = false;
+    if (wasQuarantined) {
+      this.cancelRunningProviderSubagents(agentId);
+      if (existing.unsubscribeSession) {
+        existing.unsubscribeSession();
+        existing.unsubscribeSession = null;
+      }
+      existingSessionClosed = await this.closeReloadedSession(existing.session, agentId);
+    }
+
+    // A quarantined provider session may still own the canceled turn even after close timed out.
+    // Never resume its native handle: a fresh provider session is the only safe replacement.
+    let session: AgentSession;
+    if (wasQuarantined || !handle) {
+      session = await client.createSession(providerLaunchConfig, launchContext);
+    } else {
+      session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
+    }
     await this.requireExternalMcpSupport(session, storedConfig);
 
     let handedToRegistration = false;
@@ -1387,7 +1404,9 @@ export class AgentManager {
       try {
         await this.persistSnapshot(closedExisting);
       } finally {
-        await this.closeReloadedSession(existing.session, agentId);
+        if (!existingSessionClosed) {
+          await this.closeReloadedSession(existing.session, agentId);
+        }
       }
 
       if (rehydrateFromDisk) {
@@ -1420,7 +1439,7 @@ export class AgentManager {
     }
   }
 
-  private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
+  private async closeReloadedSession(session: AgentSession, agentId: string): Promise<boolean> {
     try {
       const result = await this.waitWithTimeout({
         operation: session.close(),
@@ -1438,9 +1457,12 @@ export class AgentManager {
           { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
           "Timed out closing previous session during refresh",
         );
+        return false;
       }
+      return true;
     } catch (error) {
       this.logger.warn({ err: error, agentId }, "Failed to close previous session during refresh");
+      return false;
     }
   }
 
@@ -1510,7 +1532,22 @@ export class AgentManager {
     const closedAgent = this.prepareAgentForClosure(agent, "agent closed");
     let closeError: unknown;
     try {
-      await agent.session.close();
+      const result = await this.waitWithTimeout({
+        operation: agent.session.close(),
+        timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+        onLateError: (error) => {
+          this.logger.warn(
+            { err: error, agentId },
+            "Closed agent session failed after close timeout",
+          );
+        },
+      });
+      if (result === "timed_out") {
+        this.logger.warn(
+          { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
+          "Timed out closing agent session",
+        );
+      }
     } catch (error) {
       closeError = error;
     }
@@ -2184,6 +2221,9 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
+    if (this.quarantinedAgentIds.has(agentId)) {
+      throw new Error(`Agent ${agentId} session is quarantined and must be recreated`);
+    }
     this.logger.trace(
       {
         agentId,
@@ -2742,20 +2782,20 @@ export class AgentManager {
       return { status: "not_running" };
     }
 
-    const interruptAcknowledged = await this.interruptSession(
-      agent.session,
-      agentId,
-      expectedTurnId,
-    );
+    const interruptResult = await this.interruptSession(agent.session, agentId, expectedTurnId);
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
-      timeoutMs: interruptAcknowledged
+      timeoutMs: interruptResult.acknowledged
         ? INTERRUPT_SESSION_TIMEOUT_MS
         : this.rescueTimeouts.interruptSessionMs,
     });
 
-    if (!interruptAcknowledged) {
-      return { status: settlement === "completed" ? "settled" : "refused" };
+    if (!interruptResult.acknowledged) {
+      if (settlement === "completed") {
+        return { status: "settled" };
+      }
+      await this.quarantineAgentSession(agent, interruptResult.error);
+      return { status: "refused" };
     }
 
     const runTurnId = this.runs.getTurnId(agentId);
@@ -2816,7 +2856,7 @@ export class AgentManager {
     session: AgentSession,
     agentId: string,
     expectedTurnId?: string,
-  ): Promise<boolean> {
+  ): Promise<{ acknowledged: boolean; error?: unknown }> {
     try {
       const result = await this.waitWithTimeout({
         operation: session.interrupt(expectedTurnId),
@@ -2834,12 +2874,44 @@ export class AgentManager {
           { agentId, timeoutMs: this.rescueTimeouts.interruptSessionMs },
           "Timed out interrupting session during cancel",
         );
-        return false;
+        return { acknowledged: false };
       }
-      return true;
+      return { acknowledged: true };
     } catch (error) {
       this.logger.error({ err: error, agentId }, "Failed to interrupt session");
-      return false;
+      return { acknowledged: false, error };
+    }
+  }
+
+  private async quarantineAgentSession(agent: ActiveManagedAgent, reason?: unknown): Promise<void> {
+    this.quarantinedAgentIds.add(agent.id);
+    this.logger.error(
+      { err: reason, agentId: agent.id, provider: agent.provider },
+      "Quarantining agent session after cancellation failure",
+    );
+    const close = Promise.resolve().then(() => agent.session.close());
+    try {
+      const result = await this.waitWithTimeout({
+        operation: close,
+        timeoutMs: this.rescueTimeouts.interruptSessionMs,
+        onLateError: (error) => {
+          this.logger.error(
+            { err: error, agentId: agent.id },
+            "Quarantined agent session close failed after timeout",
+          );
+        },
+      });
+      if (result === "timed_out") {
+        this.logger.error(
+          { agentId: agent.id, timeoutMs: this.rescueTimeouts.interruptSessionMs },
+          "Quarantined agent session close timed out",
+        );
+      }
+    } catch (error) {
+      this.logger.error(
+        { err: error, agentId: agent.id },
+        "Failed to close quarantined agent session",
+      );
     }
   }
 
@@ -3211,6 +3283,7 @@ export class AgentManager {
 
       this.assertAcceptingAgentRegistrations();
       this.agents.set(resolvedAgentId, managed);
+      this.quarantinedAgentIds.delete(resolvedAgentId);
       registered = true;
       // Initialize previousStatus to track transitions
       this.previousStatuses.set(resolvedAgentId, managed.lifecycle);

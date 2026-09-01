@@ -1194,6 +1194,7 @@ class McpCapableTestAgentClient extends TestAgentClient {
 
 class ControlledInterruptSession extends TestAgentSession {
   interruptCalled = false;
+  closeCalled = false;
   readonly interruptTurnIds: Array<string | undefined> = [];
 
   constructor(
@@ -1215,6 +1216,11 @@ class ControlledInterruptSession extends TestAgentSession {
     this.interruptCalled = true;
     this.interruptTurnIds.push(expectedTurnId);
     await this.interruptBehavior(this);
+  }
+
+  override async close(): Promise<void> {
+    this.closeCalled = true;
+    await super.close();
   }
 }
 
@@ -2361,9 +2367,96 @@ test("cancelAgentRun preserves running state when the provider interrupt hangs",
       status: "refused",
     });
     expect(fixture.session.interruptCalled).toBe(true);
+    expect(fixture.session.closeCalled).toBe(true);
     expect(fixture.manager.getAgent(fixture.agentId)?.lifecycle).toBe("running");
+    expect(() => fixture.manager.streamAgent(fixture.agentId, "unsafe replacement")).toThrow(
+      /quarantined/i,
+    );
   } finally {
     await fixture.cleanup();
+  }
+});
+
+test("recreates a session after cancellation quarantines the old one", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cancel-recreate-"));
+  const agentId = "00000000-0000-4000-8000-000000000310";
+  const sessions: ControlledInterruptSession[] = [];
+  class HangingCloseSession extends ControlledInterruptSession {
+    override async close(): Promise<void> {
+      this.closeCalled = true;
+      await new Promise<void>(() => {});
+    }
+  }
+
+  class RecreatingClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const isFirstSession = sessions.length === 0;
+      if (!isFirstSession) {
+        expect(sessions[0]?.closeCalled).toBe(true);
+      }
+      const Session = isFirstSession ? HangingCloseSession : ControlledInterruptSession;
+      const session = new Session(
+        config,
+        isFirstSession ? "turn-a" : "turn-b",
+        isFirstSession
+          ? async () => {
+              await new Promise<void>(() => {});
+            }
+          : async (current) => {
+              current.pushEvent({
+                type: "turn_canceled",
+                provider: current.provider,
+                turnId: "turn-b",
+                reason: "interrupted",
+              });
+            },
+      );
+      sessions.push(session);
+      return session;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      throw new Error("quarantined sessions must not be resumed");
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new RecreatingClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10, reloadSessionCloseMs: 10 },
+    idFactory: () => agentId,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const firstSession = sessions[0]!;
+    const initialRun = manager.streamAgent(agent.id, "first");
+    void (async () => {
+      for await (const _event of initialRun) {
+        // Keep the foreground run subscribed until cancellation quarantines its session.
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "refused" });
+    expect(firstSession.closeCalled).toBe(true);
+
+    const reloaded = await manager.reloadAgentSession(agent.id);
+    expect(reloaded.id).toBe(agent.id);
+    expect(sessions).toHaveLength(2);
+    expect(sessions[1]).not.toBe(firstSession);
+
+    const replacement = manager.streamAgent(agent.id, "replacement");
+    await expect(replacement.next()).resolves.toMatchObject({
+      value: { type: "turn_started", turnId: "turn-b" },
+    });
+    await replacement.return(undefined);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
   }
 });
 
@@ -2456,6 +2549,7 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
     await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
       status: "refused",
     });
+    expect(fixture.session.closeCalled).toBe(true);
     expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
       lifecycle: "running",
       activeForegroundTurnId: "provider-still-active-turn",

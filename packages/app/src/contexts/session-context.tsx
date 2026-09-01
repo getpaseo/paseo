@@ -37,9 +37,11 @@ import { useVoiceAudioEngineOptional, useVoiceRuntimeOptional } from "@/contexts
 import type { AudioPlaybackSource } from "@/voice/audio-engine-types";
 import {
   selectAgentTimelineState,
+  selectAgentTurnPresentation,
   useSessionStore,
   type SessionState,
 } from "@/stores/session-store";
+import { requestComposerAgentCancellation } from "@/composer/cancellation";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { sendOsNotification } from "@/utils/os-notifications";
 import { getIsAppActivelyVisible, getIsAppVisible } from "@/utils/app-visibility";
@@ -825,11 +827,19 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         console.warn("[Session] cancelAgent skipped: daemon unavailable");
         return;
       }
-      void client.cancelAgent(agentId).catch((error) => {
+      const expectedTurnId = selectAgentTurnPresentation(
+        useSessionStore.getState().sessions[serverId],
+        agentId,
+      ).turnId;
+      void requestComposerAgentCancellation({
+        client,
+        agentId,
+        expectedTurnId,
+      }).catch((error) => {
         console.error("[Session] Failed to cancel agent:", error);
       });
     },
-    [client],
+    [client, serverId],
   );
 
   const _deleteAgent = useCallback(

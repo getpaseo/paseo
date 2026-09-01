@@ -764,7 +764,7 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   await client.close();
 });
 
-test("agent handles cancel the expected turn and adopt the authoritative snapshot", async () => {
+test("agent handles cancel the expected turn without adopting its response snapshot", async () => {
   const { client, ws } = await connectClient({
     providersSnapshotCwd: true,
     agentTurnIdentity: true,
@@ -802,11 +802,11 @@ test("agent handles cancel the expected turn and adopt the authoritative snapsho
   );
 
   await expect(cancelPromise).resolves.toEqual({ status: "settled", agent: settledAgent });
-  expect(agent.current()).toEqual(settledAgent);
+  expect(agent.current()).toEqual(runningAgent);
   await client.close();
 });
 
-test("agent handles report stale cancellation and refresh to the daemon snapshot", async () => {
+test("agent handles report stale cancellation and returns its daemon snapshot", async () => {
   const { client, ws } = await connectClient({
     providersSnapshotCwd: true,
     agentTurnIdentity: true,
@@ -844,11 +844,11 @@ test("agent handles report stale cancellation and refresh to the daemon snapshot
   );
 
   await expect(cancelPromise).resolves.toEqual({ status: "stale_turn", agent: newerAgent });
-  expect(agent.current()).toEqual(newerAgent);
+  expect(agent.current()).toEqual(firstAgent);
   await client.close();
 });
 
-test("agent handles keep a newer live snapshot when a cancellation response arrives late", async () => {
+test("agent handles keep a live update when a cancellation response arrives late", async () => {
   const { client, ws } = await connectClient({
     providersSnapshotCwd: true,
     agentTurnIdentity: true,
@@ -861,7 +861,7 @@ test("agent handles keep a newer live snapshot when a cancellation response arri
   });
   const newerAgent = createAgent({
     status: "running",
-    updatedAt: "2026-05-16T00:02:00.000Z",
+    updatedAt: "2026-05-16T00:01:00.000Z",
     activeTurn: { turnId: "turn-b", startedAt: "2026-05-16T00:02:00.000Z" },
   });
   const agent = client.agents.ref(firstAgent);
@@ -888,8 +888,48 @@ test("agent handles keep a newer live snapshot when a cancellation response arri
     }),
   );
 
-  await expect(cancelPromise).resolves.toEqual({ status: "stale_turn", agent: newerAgent });
+  await expect(cancelPromise).resolves.toEqual({ status: "stale_turn", agent: firstAgent });
   expect(agent.current()).toEqual(newerAgent);
+  unsubscribe();
+  await client.close();
+});
+
+test("agent handles do not resurrect a removed agent from a late cancellation response", async () => {
+  const { client, ws } = await connectClient({
+    providersSnapshotCwd: true,
+    agentTurnIdentity: true,
+    exactTurnCancellation: true,
+  });
+  const runningAgent = createAgent({
+    status: "running",
+    activeTurn: { turnId: "turn-a", startedAt: "2026-05-16T00:01:00.000Z" },
+  });
+  const agent = client.agents.ref(runningAgent);
+  const unsubscribe = agent.subscribe(() => {});
+
+  const cancelPromise = agent.cancelTurn("turn-a");
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "agent_update",
+      payload: { kind: "remove", agentId: "agent_sdk" },
+    }),
+  );
+  ws.message(
+    sessionMessage({
+      type: "cancel_agent_response",
+      payload: {
+        requestId: request.requestId,
+        agentId: "agent_sdk",
+        agent: createAgent({ status: "idle" }),
+        status: "settled",
+        error: null,
+      },
+    }),
+  );
+
+  await expect(cancelPromise).resolves.toMatchObject({ status: "settled" });
+  expect(agent.current()).toBeNull();
   unsubscribe();
   await client.close();
 });
@@ -920,7 +960,7 @@ test("agent handles use daemon current-turn semantics when no turn is supplied",
   );
 
   await expect(cancelPromise).resolves.toEqual({ status: "not_running", agent: refreshedAgent });
-  expect(agent.current()).toEqual(refreshedAgent);
+  expect(agent.current()).toEqual(createAgent({ status: "running" }));
   await client.close();
 });
 

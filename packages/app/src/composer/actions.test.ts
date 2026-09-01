@@ -322,6 +322,51 @@ describe("cancelComposerAgent", () => {
     expect(input.client.canceledIds).toEqual(["agent"]);
   });
 
+  it("uses the captured turn identity when the daemon advertises exact cancellation", async () => {
+    const cancelAgent = vi.fn().mockResolvedValue(undefined);
+    const input = {
+      ...baseInput(),
+      expectedTurnId: "turn-a",
+      client: {
+        cancelAgent,
+        getLastServerInfoMessage: () => ({ features: { exactTurnCancellation: true } }),
+      },
+    };
+
+    await cancelComposerAgent(input);
+
+    expect(cancelAgent).toHaveBeenCalledWith("agent", "turn-a");
+  });
+
+  it("does not fall back to an unscoped stop when exact cancellation lacks an identity", async () => {
+    const cancelAgent = vi.fn().mockResolvedValue(undefined);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const input = {
+      ...baseInput(),
+      client: {
+        cancelAgent,
+        getLastServerInfoMessage: () => ({ features: { exactTurnCancellation: true } }),
+      },
+    };
+
+    await expect(cancelComposerAgent(input)).rejects.toThrow(/turn identity/i);
+
+    expect(cancelAgent).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("makes legacy fallback explicit when the host lacks exact cancellation", async () => {
+    const input = baseInput();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await cancelComposerAgent(input);
+
+    expect(input.client.canceledIds).toEqual(["agent"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("legacy current-turn stop"));
+    warn.mockRestore();
+  });
+
   it("returns a rejected cancel request to the composer", async () => {
     const cancellationError = new Error("Provider rejected the interrupt");
     const input = baseInput();

@@ -299,6 +299,48 @@ test("interrupt only calls query.interrupt and leaves the query open", async () 
   await session.close();
 });
 
+test("does not publish cancellation until query.interrupt settles successfully", async () => {
+  const logger = createTestLogger();
+  const queries: ScriptedQuery[] = [];
+  let resolveInterrupt!: () => void;
+  const interruptSettled = new Promise<void>((resolve) => {
+    resolveInterrupt = resolve;
+  });
+
+  queryFactory.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
+    const scriptedQuery = createScriptedQuery({
+      prompt,
+      sessionId: "interrupt-settlement-order-session",
+    });
+    scriptedQuery.interrupt.mockImplementation(() => interruptSettled);
+    queries.push(scriptedQuery);
+    return scriptedQuery;
+  });
+
+  const session = await new ClaudeAgentClient({
+    logger,
+    queryFactory,
+    resolveBinary: async () => "/test/claude/bin",
+  }).createSession({ provider: "claude", cwd: process.cwd() });
+  const observed: AgentStreamEvent[] = [];
+  const unsubscribe = session.subscribe((event) => observed.push(event));
+  const turn = streamSession(session, "delayed interrupt");
+  await turn.next();
+  await waitFor(() => queries[0]?.prompts.length === 1);
+
+  const cancellation = session.interrupt();
+  await waitFor(() => queries[0]?.interrupt.mock.calls.length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  expect(observed.some((event) => event.type === "turn_canceled")).toBe(false);
+  resolveInterrupt();
+  await cancellation;
+  await waitFor(() => observed.some((event) => event.type === "turn_canceled"));
+
+  unsubscribe();
+  await session.close();
+});
+
 async function startSteeredTurn(sessionId: string): Promise<{
   session: AgentSession;
   query: () => ScriptedQuery | null;
@@ -347,7 +389,7 @@ test("interrupt discards a queued steer so it cannot resume the stopped turn", a
   // Nothing is queued any more, so a second interrupt has no steer left to discard.
   query()?.cancelAsyncMessage.mockClear();
   await session.interrupt();
-  await waitFor(() => query()?.interrupt.mock.calls.length === 2);
+  expect(query()?.interrupt).toHaveBeenCalledTimes(1);
   expect(query()?.cancelAsyncMessage).not.toHaveBeenCalled();
 
   await session.close();

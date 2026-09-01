@@ -17,6 +17,12 @@ import { createUserMessage, generateMessageId, type UserMessageItem } from "@/ty
 import type { MessageSubmissionRejectionOutcome } from "@/composer/submission/model";
 import type { PickedImageAttachmentInput } from "@/hooks/image-attachment-picker";
 import { i18n } from "@/i18n/i18next";
+import {
+  requestComposerAgentCancellation,
+  type ComposerCancelClient,
+} from "@/composer/cancellation";
+
+export type { ComposerCancelClient } from "@/composer/cancellation";
 
 export interface QueuedComposerMessage {
   id: string;
@@ -66,10 +72,6 @@ export interface ComposerSendClient {
     } | null;
     error: string | null;
   }>;
-}
-
-export interface ComposerCancelClient {
-  cancelAgent: (agentId: string) => Promise<unknown> | void;
 }
 
 export interface MessageSubmissionWriter {
@@ -153,6 +155,7 @@ export function removeComposerAttachmentAtIndex<T extends ComposerAttachment>(in
 export interface CancelComposerAgentInput {
   client: ComposerCancelClient | null;
   agentId: string;
+  expectedTurnId?: string | null;
   isAgentRunning: boolean;
   isCancellingAgent: boolean;
   isConnected: boolean;
@@ -162,7 +165,11 @@ export function cancelComposerAgent(input: CancelComposerAgentInput): Promise<vo
   if (!input.isAgentRunning || input.isCancellingAgent) return null;
   if (!input.isConnected || !input.client) return null;
   try {
-    return Promise.resolve(input.client.cancelAgent(input.agentId)).then(() => undefined);
+    return requestComposerAgentCancellation({
+      client: input.client,
+      agentId: input.agentId,
+      expectedTurnId: input.expectedTurnId,
+    }).then(() => undefined);
   } catch (error) {
     return Promise.reject(error);
   }

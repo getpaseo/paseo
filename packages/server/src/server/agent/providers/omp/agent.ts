@@ -1175,6 +1175,7 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.turnCancellationGate.close();
     this.usagePoller.close();
     this.cancelNoTurnPromptCompletion();
     try {

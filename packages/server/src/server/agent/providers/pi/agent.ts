@@ -1652,6 +1652,7 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.turnCancellationGate.close();
     this.usagePoller.close();
     try {
       await this.runtimeSession.close();

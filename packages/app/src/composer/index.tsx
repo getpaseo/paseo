@@ -1474,6 +1474,9 @@ function ComposerContentImpl({
   const isCancellingAgent = useSessionStore(
     (state) => selectAgentTurnPresentation(state.sessions[serverId], agentId).isCancelling,
   );
+  const activeTurnId = useSessionStore(
+    (state) => selectAgentTurnPresentation(state.sessions[serverId], agentId).turnId,
+  );
   const beginAgentCancellation = useSessionStore((state) => state.beginAgentCancellation);
   const settleAgentCancellation = useSessionStore((state) => state.settleAgentCancellation);
   const isAgentRunning = hasActiveTurn;
@@ -1768,6 +1771,7 @@ function ComposerContentImpl({
     const cancellation = cancelComposerAgent({
       client,
       agentId: targetAgentId,
+      expectedTurnId: activeTurnId,
       isAgentRunning,
       isCancellingAgent,
       isConnected,
@@ -1788,6 +1792,7 @@ function ComposerContentImpl({
   }, [
     beginAgentCancellation,
     client,
+    activeTurnId,
     isAgentRunning,
     isCancellingAgent,
     isConnected,
@@ -2320,6 +2325,7 @@ function ComposerContentImpl({
                   activeActionContent={activeActionContent}
                   voiceServerId={serverId}
                   voiceAgentId={agentId}
+                  expectedTurnId={activeTurnId}
                   isAgentRunning={isAgentRunning}
                   defaultSendBehavior={activeSendBehavior}
                   onQueue={handleQueue}

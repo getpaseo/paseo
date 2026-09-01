@@ -3,6 +3,7 @@ import { getParentAgentIdFromLabels, PARENT_AGENT_ID_LABEL } from "@getpaseo/pro
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type { StoredAgentRecord } from "./agent-storage.js";
+import { AgentRunCancellationError } from "./agent-manager.js";
 import {
   archiveAgentCommand,
   cancelAgentRunCommand,
@@ -216,6 +217,18 @@ describe("agent lifecycle commands", () => {
       cancelled: false,
       cancellation: { status: "not_running" },
     });
+  });
+
+  test("propagates a refused cancellation as a typed failure", async () => {
+    const storage = new FakeLifecycleAgentStorage();
+    const manager = new FakeLifecycleAgentManager(storage);
+    manager.liveAgents.set("agent-1", managedAgent("agent-1", "running"));
+    manager.inFlightAgentIds.add("agent-1");
+    manager.rejectedCancellationAgentIds.add("agent-1");
+
+    await expect(
+      cancelAgentRunCommand({ agentManager: manager, logger }, "agent-1"),
+    ).rejects.toThrow(AgentRunCancellationError);
   });
 
   test("archives a live agent after canceling and clearing attention", async () => {

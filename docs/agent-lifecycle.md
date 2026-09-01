@@ -48,9 +48,10 @@ native abort. A mismatch, including a request for a turn that has already ended,
 returns `stale_turn` and does not interrupt the current turn. Without an expected ID,
 cancellation targets the turn current when the daemon evaluates the request.
 
-Provider adapters serialize a cancellation's in-flight native abort with the next
-foreground start. A manager timeout does not release that provider boundary; a late
-abort must settle or fail before the session can accept a replacement turn.
+Provider adapters serialize a cancellation's in-flight native abort with every later
+runner start, including provider-owned autonomous starts. A manager timeout does not release
+that provider boundary. If the abort rejects or times out, the manager quarantines and closes
+the session; the agent must be recreated before another turn can start.
 
 After an acknowledged interrupt, the manager settles the captured run even when no terminal event
 arrives or the run was still waiting for its provider turn id. The captured run token prevents an

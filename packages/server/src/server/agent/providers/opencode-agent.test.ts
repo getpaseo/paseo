@@ -2429,6 +2429,8 @@ describe("OpenCode adapter startTurn error handling", () => {
         type: "session.idle",
         properties: { sessionID: "ses_wake_after_terminal" },
       });
+      settleAbort.resolve();
+      await interrupt;
       openCode.emitEvent({
         type: "session.status",
         properties: {
@@ -2467,8 +2469,6 @@ describe("OpenCode adapter startTurn error handling", () => {
         }),
       );
 
-      settleAbort.resolve();
-      await interrupt;
       openCode.emitEvent({
         type: "session.idle",
         properties: { sessionID: "ses_wake_after_terminal" },
@@ -2583,10 +2583,15 @@ describe("OpenCode adapter startTurn error handling", () => {
           },
         },
       });
-      await wakeEventsConsumed.promise;
-
+      expect(events).not.toContainEqual({
+        type: "turn_started",
+        provider: "opencode",
+        turnId: "opencode-turn-1",
+      });
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
       settleAbort.resolve();
       await interrupt;
+      await wakeEventsConsumed.promise;
       await new Promise<void>((resolve) => setImmediate(resolve));
 
       expect(events).toContainEqual({
@@ -2705,7 +2710,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("acknowledges the canceled turn when a repeated Stop finally aborts", async () => {
+  test("keeps the session poisoned when repeated aborts fail", async () => {
     const { parent: session, openCode } = await createParentSession("ses_retried_stop");
     const events: AgentStreamEvent[] = [];
     openCode.sessionPromptAsyncEvents = [];
@@ -2722,24 +2727,12 @@ describe("OpenCode adapter startTurn error handling", () => {
       await expect(session.interrupt()).rejects.toThrow("abort failed");
       expect(events.map((event) => event.type)).toEqual(["turn_started"]);
 
-      await session.interrupt();
+      await expect(session.interrupt()).rejects.toThrow("abort failed");
 
-      expect(openCode.calls.sessionAbort).toHaveLength(3);
-      expect(events).toContainEqual({
-        type: "turn_canceled",
-        provider: "opencode",
-        reason: "interrupted",
-        turnId: "opencode-turn-0",
-      });
-
-      openCode.emitEvent({
-        type: "session.idle",
-        properties: { sessionID: "ses_retried_stop" },
-      });
-      await expect(session.startTurn("replacement")).resolves.toEqual({
-        turnId: "opencode-turn-1",
-      });
-      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
+      expect(openCode.calls.sessionAbort).toHaveLength(2);
+      await expect(session.startTurn("unsafe replacement")).rejects.toThrow("abort failed");
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+      expect(events.map((event) => event.type)).toEqual(["turn_started"]);
     } finally {
       await session.close();
     }
@@ -2772,12 +2765,13 @@ describe("OpenCode adapter startTurn error handling", () => {
 
       const secondStop = session.interrupt();
       void secondStop.catch(() => undefined);
-      await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(2));
+      expect(openCode.calls.sessionAbort).toHaveLength(1);
 
       settleFirstAbort.resolve();
       await firstStop;
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+      await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(2));
 
       settleSecondAbort.resolve();
       await secondStop;
@@ -2791,7 +2785,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("keeps a replacement behind an abort left in flight by an earlier stop", async () => {
+  test("keeps an autonomous wake behind an abort left in flight by an earlier stop", async () => {
     const { parent: session, openCode } = await createParentSession("ses_carried_abort");
     const settleFirstAbort = createTestDeferred<void>();
     openCode.sessionPromptAsyncEvents = [];
@@ -2829,6 +2823,14 @@ describe("OpenCode adapter startTurn error handling", () => {
       })) {
         openCode.emitEvent(event);
       }
+      expect(events).not.toContainEqual({
+        type: "turn_started",
+        provider: "opencode",
+        turnId: "opencode-turn-1",
+      });
+
+      settleFirstAbort.resolve();
+      await firstStop;
       await vi.waitFor(() =>
         expect(events).toContainEqual({
           type: "turn_started",
@@ -2836,7 +2838,6 @@ describe("OpenCode adapter startTurn error handling", () => {
           turnId: "opencode-turn-1",
         }),
       );
-
       await session.interrupt();
       expect(openCode.calls.sessionAbort).toHaveLength(2);
       openCode.emitEvent({
@@ -2846,10 +2847,8 @@ describe("OpenCode adapter startTurn error handling", () => {
 
       replacement = session.startTurn("replacement");
       await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
 
-      settleFirstAbort.resolve();
-      await firstStop;
       await replacement;
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
     } finally {
@@ -2859,7 +2858,7 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
-  test("keeps a replacement behind an earlier Stop's abort that is still in flight", async () => {
+  test("serializes overlapping Stops before admitting a replacement", async () => {
     const { parent: session, openCode } = await createParentSession("ses_overlapping_stops");
     const settleFirstAbort = createTestDeferred<void>();
     openCode.sessionPromptAsyncEvents = [];
@@ -2877,8 +2876,9 @@ describe("OpenCode adapter startTurn error handling", () => {
       void firstStop.catch(() => undefined);
       await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(1));
 
-      await session.interrupt();
-      expect(openCode.calls.sessionAbort).toHaveLength(2);
+      const secondStop = session.interrupt();
+      void secondStop.catch(() => undefined);
+      expect(openCode.calls.sessionAbort).toHaveLength(1);
       openCode.emitEvent({
         type: "session.idle",
         properties: { sessionID: "ses_overlapping_stops" },
@@ -2890,6 +2890,8 @@ describe("OpenCode adapter startTurn error handling", () => {
 
       settleFirstAbort.resolve();
       await firstStop;
+      await secondStop;
+      expect(openCode.calls.sessionAbort).toHaveLength(2);
       await replacement;
       expect(openCode.calls.sessionPromptAsync).toHaveLength(2);
     } finally {
@@ -3781,13 +3783,10 @@ describe("OpenCode adapter startTurn error handling", () => {
       await session.startTurn("first");
       const interrupt = session.interrupt();
       const replacement = session.startTurn("second");
-      await vi.waitFor(() => expect(openCode.calls.sessionStatus).toHaveLength(1));
 
       settleAbort.resolve();
       await interrupt;
-      await new Promise<void>((resolve) => setImmediate(resolve));
-
-      expect(openCode.calls.sessionStatus).toHaveLength(1);
+      await vi.waitFor(() => expect(openCode.calls.sessionStatus).toHaveLength(1));
 
       releaseIdle.resolve();
       await expect(replacement).resolves.toEqual({ turnId: "opencode-turn-1" });
@@ -3869,7 +3868,9 @@ describe("OpenCode adapter startTurn error handling", () => {
       firstStreamEnd.resolve();
       await session.close();
 
-      await expect(replacement).rejects.toThrow("OpenCode session is closed");
+      await expect(replacement).rejects.toMatchObject({
+        code: "TURN_CANCELLATION_SESSION_CLOSED",
+      });
       expect(openCode.calls.globalEvent).toHaveLength(0);
     } finally {
       for (const signal of streamSignals) {

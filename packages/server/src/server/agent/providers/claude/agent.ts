@@ -2099,6 +2099,7 @@ class ClaudeAgentSession implements AgentSession {
   private pendingFreshSessionId: string | null = null;
   private recentStderr = "";
   private closed = false;
+  private closePromise: Promise<void> | null = null;
 
   constructor(config: ClaudeAgentConfig, options: ClaudeAgentSessionOptions) {
     this.config = config;
@@ -2247,11 +2248,6 @@ class ClaudeAgentSession implements AgentSession {
       const queryToInterrupt = this.activeForegroundQuery ?? this.query;
       this.interruptingTurnId = turnId;
       this.rejectAllPendingPermissions(new Error("Permission request canceled"));
-      this.finishForegroundTurn({
-        type: "turn_canceled",
-        provider: "claude",
-        reason: "Interrupted",
-      });
       return this.turnCancellationGate
         .interrupt(
           turnId,
@@ -2260,6 +2256,16 @@ class ClaudeAgentSession implements AgentSession {
             await this.interruptActiveTurn(queryToInterrupt, targetTurnId);
           },
         )
+        .then(() => {
+          if (this.activeForegroundTurnId === turnId) {
+            this.finishForegroundTurn({
+              type: "turn_canceled",
+              provider: "claude",
+              reason: "Interrupted",
+            });
+          }
+          return undefined;
+        })
         .finally(() => {
           if (this.interruptingTurnId === turnId) {
             this.interruptingTurnId = null;
@@ -2372,10 +2378,6 @@ class ClaudeAgentSession implements AgentSession {
     if (targetTurnId) {
       this.interruptingTurnId = targetTurnId;
     }
-    if (this.autonomousTurn) {
-      this.flushPendingToolCalls();
-      this.completeAutonomousTurn();
-    }
     try {
       await this.turnCancellationGate.interrupt(
         expectedTurnId,
@@ -2384,6 +2386,19 @@ class ClaudeAgentSession implements AgentSession {
           await this.interruptActiveTurn(queryToInterrupt, currentTurnId);
         },
       );
+      if (targetTurnId && this.autonomousTurn?.id === targetTurnId) {
+        this.flushPendingToolCalls();
+        this.notifySubscribers({
+          type: "turn_canceled",
+          provider: "claude",
+          reason: "Interrupted",
+        });
+        this.autonomousTurn = null;
+        this.activeForegroundQuery = null;
+        this.activeForegroundInput = null;
+        this.activeTurnHasAssistantText = false;
+        this.syncTurnState("autonomous turn canceled");
+      }
     } finally {
       if (targetTurnId && this.interruptingTurnId === targetTurnId) {
         this.interruptingTurnId = null;
@@ -2686,6 +2701,14 @@ class ClaudeAgentSession implements AgentSession {
   }
 
   async close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
+    this.closed = true;
+    this.turnCancellationGate.close();
+    this.closePromise = this.closeInternal();
+    return this.closePromise;
+  }
+
+  private async closeInternal(): Promise<void> {
     this.logger.trace(
       {
         agentId: this.agentId,
@@ -2699,9 +2722,11 @@ class ClaudeAgentSession implements AgentSession {
       },
       "provider.claude.session_close.start",
     );
-    this.closed = true;
     this.rejectAllPendingPermissions(new Error("Claude session closed"));
-    await this.cancelCurrentTurn?.();
+    const cancellation = this.cancelCurrentTurn?.();
+    await cancellation?.catch((error) => {
+      this.logger.warn({ err: error }, "Claude cancellation failed while closing session");
+    });
     this.subscribers.clear();
     this.activeForegroundTurnId = null;
     this.activeForegroundQuery = null;
@@ -3624,8 +3649,17 @@ class ClaudeAgentSession implements AgentSession {
     }
   }
 
-  private startAutonomousTurn(): void {
-    if (this.autonomousTurn) {
+  private async startAutonomousTurn(): Promise<void> {
+    try {
+      await this.turnCancellationGate.waitForQuiescence();
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId: this.agentId },
+        "Dropping autonomous Claude activity after cancellation failure",
+      );
+      return;
+    }
+    if (this.closed || this.autonomousTurn || this.activeForegroundTurnId) {
       return;
     }
     this.autonomousTurn = {
@@ -3870,7 +3904,7 @@ class ClaudeAgentSession implements AgentSession {
 
     const isForeground = Boolean(this.activeForegroundTurnId);
     if (this.shouldStartAutonomousTurn(message)) {
-      this.startAutonomousTurn();
+      await this.startAutonomousTurn();
     }
     if (!isForeground && !this.autonomousTurn && message.type === "result") {
       return;
@@ -4035,13 +4069,10 @@ class ClaudeAgentSession implements AgentSession {
       this.pendingInterruptAbort = false;
       return;
     }
-    try {
-      // Keep the cancellation gate held until the SDK operation itself settles. A timeout here
-      // would let a replacement turn start while a late query.interrupt() could still cancel it.
-      await queryToInterrupt.interrupt();
-    } catch (error) {
-      this.logger.warn({ err: error }, "Failed to interrupt active turn");
-    }
+    // Keep the stale-result fence armed after the SDK operation settles. The query can still
+    // publish the interrupted result and trailing tool output after query.interrupt resolves;
+    // routeSdkMessageFromPump clears this fence at that provider boundary.
+    await queryToInterrupt.interrupt();
   }
 
   private canInterruptTarget(targetTurnId: string | null): boolean {

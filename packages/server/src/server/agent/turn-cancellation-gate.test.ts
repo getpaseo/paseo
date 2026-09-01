@@ -56,4 +56,39 @@ describe("TurnCancellationGate", () => {
 
     expect(canceledTurnIds).toEqual([]);
   });
+
+  test("poisons the gate after cancellation fails", async () => {
+    const gate = new TurnCancellationGate();
+    const failure = new Error("native interrupt failed");
+
+    await expect(
+      gate.interrupt(
+        "turn-a",
+        () => "turn-a",
+        async () => {
+          throw failure;
+        },
+      ),
+    ).rejects.toBe(failure);
+
+    await expect(gate.waitForQuiescence()).rejects.toBe(failure);
+  });
+
+  test("close unblocks a start waiting behind a hung cancellation and is idempotent", async () => {
+    const gate = new TurnCancellationGate();
+    const cancellation = gate.interrupt(
+      "turn-a",
+      () => "turn-a",
+      async () => {
+        await new Promise<void>(() => {});
+      },
+    );
+    const start = gate.waitForQuiescence();
+
+    (gate as TurnCancellationGate & { close: () => void }).close();
+    (gate as TurnCancellationGate & { close: () => void }).close();
+
+    await expect(start).rejects.toMatchObject({ code: "TURN_CANCELLATION_SESSION_CLOSED" });
+    expect(cancellation).toBeInstanceOf(Promise);
+  });
 });

@@ -2,6 +2,10 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { MessagePayload } from "@/composer/types";
 import type { MessageInputKeyboardActionKind } from "@/keyboard/actions";
+import {
+  requestComposerAgentCancellation,
+  type ComposerCancelClient,
+} from "@/composer/cancellation";
 
 export type SendBehavior = ActiveTurnBehavior | "queue";
 
@@ -42,8 +46,9 @@ interface StopRealtimeVoiceContext {
   voice: { stopVoice: () => Promise<unknown> } | null | undefined;
   isRealtimeVoiceForCurrentAgent: boolean;
   isAgentRunning: boolean;
-  client: { cancelAgent: (agentId: string) => Promise<unknown> } | null;
+  client: ComposerCancelClient | null;
   voiceAgentId: string | undefined;
+  expectedTurnId?: string | null;
 }
 
 interface SendActionContext {
@@ -187,7 +192,11 @@ export async function stopRealtimeVoice(ctx: StopRealtimeVoiceContext): Promise<
     if (!ctx.client || !ctx.voiceAgentId) {
       throw new Error("Cannot stop the running voice agent while the host is unavailable");
     }
-    await ctx.client.cancelAgent(ctx.voiceAgentId);
+    await requestComposerAgentCancellation({
+      client: ctx.client,
+      agentId: ctx.voiceAgentId,
+      expectedTurnId: ctx.expectedTurnId,
+    });
   }
 
   await ctx.voice.stopVoice();
