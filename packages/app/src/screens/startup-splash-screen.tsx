@@ -5,7 +5,6 @@ import Animated, {
   Easing,
   useAnimatedStyle,
   useSharedValue,
-  withRepeat,
   withTiming,
 } from "react-native-reanimated";
 import MaskedView from "@react-native-masked-view/masked-view";
@@ -32,9 +31,9 @@ interface StartupSplashScreenProps {
 const GITHUB_ISSUE_URL = "https://github.com/getpaseo/paseo/issues/new";
 const DOCS_URL = "https://paseo.sh/docs";
 
-const LOGO_SIZE = 96;
-const SHIMMER_PEAK_WIDTH = 120;
-const SHIMMER_DURATION_MS = 1800;
+const LOGO_SIZE = 128;
+const SHIMMER_PEAK_WIDTH = 140;
+const SHIMMER_DURATION_MS = 1200;
 
 function openGithubIssue(): void {
   void openExternalUrl(GITHUB_ISSUE_URL);
@@ -106,8 +105,9 @@ function WebLogoShimmer({ color }: { color: string }) {
       backgroundSize: `${LOGO_SIZE + SHIMMER_PEAK_WIDTH * 2}px ${LOGO_SIZE}px`,
       animationName: WEB_SPLASH_SHIMMER_ANIMATION_NAME,
       animationDuration: `${SHIMMER_DURATION_MS}ms`,
-      animationTimingFunction: "linear",
-      animationIterationCount: "infinite",
+      animationTimingFunction: "ease-out",
+      animationIterationCount: "1",
+      animationFillMode: "forwards",
     }),
     [color],
   );
@@ -120,14 +120,10 @@ function NativeLogoShimmer({ color }: { color: string }) {
 
   useEffect(() => {
     shimmerTranslateX.value = -SHIMMER_PEAK_WIDTH;
-    shimmerTranslateX.value = withRepeat(
-      withTiming(LOGO_SIZE + SHIMMER_PEAK_WIDTH, {
-        duration: SHIMMER_DURATION_MS,
-        easing: Easing.linear,
-      }),
-      -1,
-      false,
-    );
+    shimmerTranslateX.value = withTiming(LOGO_SIZE + SHIMMER_PEAK_WIDTH, {
+      duration: SHIMMER_DURATION_MS,
+      easing: Easing.out(Easing.ease),
+    });
     return () => {
       cancelAnimation(shimmerTranslateX);
     };
