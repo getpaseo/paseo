@@ -382,7 +382,7 @@ describe("WorkspaceLaunchManager", () => {
     }
   });
 
-  it("keeps existing dynamic service leases outside the launch port block", async () => {
+  it("keeps dynamic service leases from every workspace outside the launch port block", async () => {
     const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-planned-port-"));
     tempDirs.push(directory);
     const plannedServicePort = 44_000;
@@ -401,8 +401,9 @@ describe("WorkspaceLaunchManager", () => {
       projectSlug: "example-project",
       branchName: "feature/launch",
     };
+    const serviceWorkspaceId = "workspace-launch-planned-port-service";
     await ensureWorkspaceServicePortPlan({
-      workspaceId: context.workspaceId,
+      workspaceId: serviceWorkspaceId,
       services: [{ scriptName: "api" }],
       allocatePort: async () => plannedServicePort,
     });
@@ -433,7 +434,7 @@ describe("WorkspaceLaunchManager", () => {
       });
     } finally {
       await manager.disposeWorkspace(context.workspaceId);
-      releaseWorkspaceServicePortPlan(context.workspaceId);
+      releaseWorkspaceServicePortPlan(serviceWorkspaceId);
     }
   });
 
