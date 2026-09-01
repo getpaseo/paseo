@@ -340,6 +340,29 @@ describe("AgentStreamCoalescer", () => {
     ]);
   });
 
+  test("does not collapse across exact turn-token boundaries", async () => {
+    const { coalescer, flushes } = createHarness();
+
+    coalescer.handle("agent-1", assistant("one"), undefined, "turn-token-a");
+    coalescer.handle("agent-1", assistant("two"), undefined, "turn-token-b");
+
+    await vi.advanceTimersByTimeAsync(60);
+    expect(flushes).toEqual([
+      {
+        agentId: "agent-1",
+        item: { type: "assistant_message", text: "one" },
+        provider: "codex",
+        turnToken: "turn-token-a",
+      },
+      {
+        agentId: "agent-1",
+        item: { type: "assistant_message", text: "two" },
+        provider: "codex",
+        turnToken: "turn-token-b",
+      },
+    ]);
+  });
+
   test("does not splice concurrent assistant message ids together", async () => {
     const { coalescer, flushes } = createHarness();
 

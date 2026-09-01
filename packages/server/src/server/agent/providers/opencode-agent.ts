@@ -98,7 +98,11 @@ import {
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
-import { TurnCancellationGate, type TurnStartToken } from "../turn-cancellation-gate.js";
+import {
+  TurnCancellationGate,
+  TurnStartCanceledError,
+  type TurnStartToken,
+} from "../turn-cancellation-gate.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
@@ -3734,20 +3738,37 @@ class OpenCodeAgentSession implements AgentSession {
       this.turnState = { status: "running", turnId };
       this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
-      const slashCommand = await this.resolveSlashCommandInvocation(prompt);
-      this.turnCancellationGate.assertCurrent(start);
+      let slashCommand: { commandName: string; args?: string } | null;
+      try {
+        slashCommand = await this.resolveSlashCommandInvocation(prompt);
+      } catch (error) {
+        if (this.isCurrentForegroundTurn(start, turnId)) {
+          this.finishForegroundTurn(
+            {
+              type: "turn_failed",
+              provider: "opencode",
+              error: toDiagnosticErrorMessage(error),
+            },
+            turnId,
+          );
+        }
+        throw error;
+      }
+      if (!this.isCurrentForegroundTurn(start, turnId)) {
+        throw new TurnStartCanceledError();
+      }
       if (slashCommand) {
         if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
           this.activeDispatchMessageId = null;
           this.suppressAssistantMessagesUntilIdle.active = true;
-          void this.client.session
-            .summarize({
-              sessionID: this.sessionId,
-              directory: this.config.cwd,
-              ...(model ? { providerID: model.providerID, modelID: model.modelID } : {}),
-            })
-            .then((response) => {
-              if (!this.turnCancellationGate.isCurrent(start)) return;
+          void (async () => {
+            try {
+              const response = await this.client.session.summarize({
+                sessionID: this.sessionId,
+                directory: this.config.cwd,
+                ...(model ? { providerID: model.providerID, modelID: model.modelID } : {}),
+              });
+              if (!this.isCurrentForegroundTurn(start, turnId)) return;
               if (response.error) {
                 this.suppressAssistantMessagesUntilIdle.active = false;
                 this.finishForegroundTurn(
@@ -3759,10 +3780,8 @@ class OpenCodeAgentSession implements AgentSession {
                   turnId,
                 );
               }
-              return;
-            })
-            .catch((error) => {
-              if (!this.turnCancellationGate.isCurrent(start)) return;
+            } catch (error) {
+              if (!this.isCurrentForegroundTurn(start, turnId)) return;
               this.suppressAssistantMessagesUntilIdle.active = false;
               this.finishForegroundTurn(
                 {
@@ -3772,7 +3791,8 @@ class OpenCodeAgentSession implements AgentSession {
                 },
                 turnId,
               );
-            });
+            }
+          })();
           start.complete();
           return { turnId };
         }
@@ -3780,19 +3800,20 @@ class OpenCodeAgentSession implements AgentSession {
         // command() is only dispatch acknowledgement. OpenCode session events are
         // the source of truth for when the command turn becomes idle or fails.
         this.activeDispatchMessageId = createOpenCodeMessageId();
-        void this.client.session
-          .command({
-            sessionID: this.sessionId,
-            directory: this.config.cwd,
-            command: slashCommand.commandName,
-            arguments: slashCommand.args ?? "",
-            messageID: this.activeDispatchMessageId,
-            ...(this.config.model ? { model: this.config.model } : {}),
-            ...(effectiveMode ? { agent: effectiveMode } : {}),
-            ...(effectiveVariant ? { variant: effectiveVariant } : {}),
-          })
-          .then((response) => {
-            if (!this.turnCancellationGate.isCurrent(start)) return;
+        const commandMessageId = this.activeDispatchMessageId;
+        void (async () => {
+          try {
+            const response = await this.client.session.command({
+              sessionID: this.sessionId,
+              directory: this.config.cwd,
+              command: slashCommand.commandName,
+              arguments: slashCommand.args ?? "",
+              messageID: commandMessageId ?? undefined,
+              ...(this.config.model ? { model: this.config.model } : {}),
+              ...(effectiveMode ? { agent: effectiveMode } : {}),
+              ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+            });
+            if (!this.isCurrentForegroundTurn(start, turnId)) return;
             if (response.error) {
               if (isOpenCodeHeadersTimeoutFailure(response.error)) {
                 this.logger.warn(
@@ -3805,16 +3826,17 @@ class OpenCodeAgentSession implements AgentSession {
                 );
                 return;
               }
-              const errorMsg = toDiagnosticErrorMessage(response.error);
               this.finishForegroundTurn(
-                { type: "turn_failed", provider: "opencode", error: errorMsg },
+                {
+                  type: "turn_failed",
+                  provider: "opencode",
+                  error: toDiagnosticErrorMessage(response.error),
+                },
                 turnId,
               );
             }
-            return;
-          })
-          .catch((err) => {
-            if (!this.turnCancellationGate.isCurrent(start)) return;
+          } catch (err) {
+            if (!this.isCurrentForegroundTurn(start, turnId)) return;
             if (isOpenCodeHeadersTimeoutFailure(err)) {
               this.logger.warn(
                 {
@@ -3830,7 +3852,8 @@ class OpenCodeAgentSession implements AgentSession {
               { type: "turn_failed", provider: "opencode", error: toDiagnosticErrorMessage(err) },
               turnId,
             );
-          });
+          }
+        })();
         start.complete();
       } else {
         const dispatchMessageId = createOpenCodeMessageId();
@@ -3876,9 +3899,10 @@ class OpenCodeAgentSession implements AgentSession {
               ...(effectiveMode ? { agent: effectiveMode } : {}),
               ...(effectiveVariant ? { variant: effectiveVariant } : {}),
             });
+            if (!this.isCurrentForegroundTurn(start, turnId)) return;
             start.complete();
             const promptResponse = await promptRequest;
-            if (!this.turnCancellationGate.isCurrent(start)) return;
+            if (!this.isCurrentForegroundTurn(start, turnId)) return;
             this.traceOpenCode("provider.opencode.prompt_async.response", {
               turnId,
               hasError: promptResponse.error !== undefined,
@@ -3896,7 +3920,7 @@ class OpenCodeAgentSession implements AgentSession {
               );
             }
           } catch (error) {
-            if (!this.turnCancellationGate.isCurrent(start)) return;
+            if (!this.isCurrentForegroundTurn(start, turnId)) return;
             this.traceOpenCode("provider.opencode.prompt_async.throw", {
               turnId,
               error:
@@ -4600,6 +4624,14 @@ class OpenCodeAgentSession implements AgentSession {
     this.turnState = { status: "idle" };
     this.abortController = null;
     this.notifySubscribers(event, turnId);
+  }
+
+  private isCurrentForegroundTurn(start: TurnStartToken, turnId: string): boolean {
+    return (
+      this.turnCancellationGate.isCurrent(start) &&
+      this.turnState.status === "running" &&
+      this.turnState.turnId === turnId
+    );
   }
 
   private isStopping(stop: OpenCodeStop): boolean {

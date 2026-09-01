@@ -2799,6 +2799,31 @@ describe("ACPAgentSession", () => {
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
   });
 
+  test("cleans active state when ACP prompt throws synchronously", async () => {
+    const session = createSession();
+    const internals = asInternals<ACPSessionInternals>(session);
+    let shouldThrow = true;
+    const prompt = vi.fn((): Promise<PromptResponse> => {
+      if (shouldThrow) {
+        throw new Error("synchronous ACP prompt failure");
+      }
+      return Promise.resolve({ stopReason: "end_turn" });
+    });
+    internals.sessionId = "session-1";
+    internals.connection = { prompt };
+
+    await expect(session.startTurn("first")).rejects.toThrow("synchronous ACP prompt failure");
+    expect(internals.activeForegroundTurnId).toBeNull();
+
+    shouldThrow = false;
+    await expect(session.startTurn("second")).resolves.toMatchObject({
+      turnId: expect.any(String),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(internals.activeForegroundTurnId).toBeNull();
+  });
+
   test("waits for a late ACP cancel to settle before accepting a replacement turn", async () => {
     const session = createSession();
     const internals = asInternals<ACPSessionInternals>(session);

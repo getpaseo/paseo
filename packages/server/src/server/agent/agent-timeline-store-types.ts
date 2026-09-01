@@ -59,6 +59,12 @@ export interface AgentTimelineStore {
   getLastItem(agentId: string): Promise<AgentTimelineItem | null>;
   getLastAssistantMessage(agentId: string): Promise<string | null>;
   deleteAgent(agentId: string): Promise<void>;
+  /** Replace the canonical rows as one commit. The predicate is evaluated by the store at commit. */
+  replaceCommitted(
+    agentId: string,
+    rows: readonly AgentTimelineRow[],
+    options?: { epoch?: string; nextSeq?: number; shouldCommit?: () => boolean },
+  ): Promise<boolean>;
   bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void>;
   updateCommittedRow(agentId: string, row: AgentTimelineRow): Promise<void>;
 }

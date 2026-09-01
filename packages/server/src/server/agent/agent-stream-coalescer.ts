@@ -20,6 +20,7 @@ export interface AgentStreamCoalescerFlush {
   item: CoalescableTimelineItem;
   provider: AgentProvider;
   turnId?: string;
+  turnToken?: string;
   generation?: symbol;
 }
 
@@ -36,6 +37,7 @@ interface PendingTextEntry {
   text: string;
   provider: AgentProvider;
   turnId?: string;
+  turnToken?: string;
   generation?: symbol;
 }
 
@@ -44,6 +46,7 @@ interface PendingToolCallEntry {
   item: Extract<AgentTimelineItem, { type: "tool_call" }>;
   provider: AgentProvider;
   turnId?: string;
+  turnToken?: string;
   generation?: symbol;
 }
 
@@ -102,7 +105,12 @@ export class AgentStreamCoalescer {
     this.onFlush = options.onFlush;
   }
 
-  handle(agentId: string, event: AgentStreamEvent, generation?: symbol): boolean {
+  handle(
+    agentId: string,
+    event: AgentStreamEvent,
+    generation?: symbol,
+    turnToken?: string,
+  ): boolean {
     if (!isCoalescableTimelineEvent(event)) {
       return false;
     }
@@ -112,7 +120,7 @@ export class AgentStreamCoalescer {
     }
 
     const buffer = this.getOrCreateBuffer(agentId);
-    this.appendToBuffer(buffer, event, generation);
+    this.appendToBuffer(buffer, event, generation, turnToken);
 
     if (isTerminalToolCall(event.item)) {
       this.flushBuffer(agentId);
@@ -148,6 +156,10 @@ export class AgentStreamCoalescer {
 
   flushAndDiscard(agentId: string): void {
     this.flushBuffer(agentId);
+    this.discard(agentId);
+  }
+
+  discard(agentId: string): void {
     const buffer = this.buffers.get(agentId);
     if (buffer) {
       this.clearTimer(buffer);
@@ -177,6 +189,7 @@ export class AgentStreamCoalescer {
     buffer: PendingAgentStreamBuffer,
     event: CoalescableTimelineEvent,
     generation?: symbol,
+    turnToken?: string,
   ): void {
     if (isTextTimelineItem(event.item)) {
       buffer.entries.push({
@@ -185,6 +198,7 @@ export class AgentStreamCoalescer {
         text: event.item.text,
         provider: event.provider,
         ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+        ...(turnToken !== undefined ? { turnToken } : {}),
         ...(generation !== undefined ? { generation } : {}),
       });
       return;
@@ -196,6 +210,7 @@ export class AgentStreamCoalescer {
       item: event.item,
       provider: event.provider,
       ...(event.turnId !== undefined ? { turnId: event.turnId } : {}),
+      ...(turnToken !== undefined ? { turnToken } : {}),
       ...(generation !== undefined ? { generation } : {}),
     };
 
@@ -260,6 +275,7 @@ export class AgentStreamCoalescer {
               : entry.item,
           provider: entry.provider,
           ...(entry.turnId !== undefined ? { turnId: entry.turnId } : {}),
+          ...(entry.turnToken !== undefined ? { turnToken: entry.turnToken } : {}),
           ...(entry.generation !== undefined ? { generation: entry.generation } : {}),
         });
       }
@@ -279,7 +295,8 @@ export class AgentStreamCoalescer {
         entry.kind === "text" &&
         isSameTextStream(previous, entry) &&
         previous.provider === entry.provider &&
-        previous.turnId === entry.turnId
+        previous.turnId === entry.turnId &&
+        previous.turnToken === entry.turnToken
       ) {
         previous.text += entry.text;
         continue;

@@ -145,6 +145,22 @@ class RecordingTimelineStore implements AgentTimelineStore {
     this.memory.delete(agentId);
   }
 
+  async replaceCommitted(
+    agentId: string,
+    rows: readonly AgentTimelineRow[],
+    options?: { epoch?: string; nextSeq?: number; shouldCommit?: () => boolean },
+  ): Promise<boolean> {
+    if (options?.shouldCommit && !options.shouldCommit()) {
+      return false;
+    }
+    this.memory.initialize(agentId, {
+      rows,
+      epoch: options?.epoch,
+      nextSeq: options?.nextSeq,
+    });
+    return true;
+  }
+
   async bulkInsert(agentId: string, rows: readonly AgentTimelineRow[]): Promise<void> {
     this.writes.push(rows.map((row) => ({ ...row })));
     this.ensure(agentId);
@@ -1316,6 +1332,112 @@ test("cancelAgentRun passes the expected turn identity to the provider interrupt
   }
 });
 
+test("fences before forced cancellation publication can re-enter streamAgent", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "forced-cancel-reentrant",
+    agentId: "00000000-0000-4000-8000-000000000135",
+    turnId: "turn-reentrant",
+    interrupt: async () => {},
+  });
+  let reentrantError: unknown;
+  const unsubscribe = fixture.manager.subscribe((event) => {
+    if (
+      event.type === "agent_stream" &&
+      event.agentId === fixture.agentId &&
+      event.event.type === "turn_canceled"
+    ) {
+      try {
+        fixture.manager.streamAgent(fixture.agentId, "must not reuse canceled session");
+      } catch (error) {
+        reentrantError = error;
+      }
+    }
+  });
+
+  try {
+    await fixture.startForegroundRun();
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(reentrantError).toMatchObject({
+      message: expect.stringContaining("quarantined"),
+    });
+  } finally {
+    unsubscribe();
+    await fixture.cleanup();
+  }
+});
+
+test("cancellation during timeline hydration leaves memory and durable rows unchanged", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-hydration-transaction-"));
+  const agentId = "00000000-0000-4000-8000-000000000136";
+  const historyEntered = deferred<void>();
+  const releaseHistory = deferred<void>();
+  const durable = new RecordingTimelineStore();
+  const existingItem: AgentTimelineItem = { type: "assistant_message", text: "existing" };
+
+  class HeldHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      historyEntered.resolve();
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "assistant_message", text: "partial" },
+      };
+      await releaseHistory.promise;
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: { type: "assistant_message", text: "late" },
+      };
+    }
+  }
+
+  class HeldHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new HeldHistorySession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new TestAgentSession({ provider: "codex", cwd: config?.cwd ?? workdir });
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new HeldHistoryClient() },
+    durableTimelineStore: durable,
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    await manager.appendTimelineItem(agent.id, existingItem);
+    await manager.flush();
+    const beforeMemory = manager.fetchTimeline(agent.id, { limit: 0 });
+    const beforeDurable = await durable.getCommittedRows(agent.id);
+
+    const hydration = manager.hydrateTimelineFromProvider(agent.id, { force: true });
+    await historyEntered.promise;
+    await manager.reloadAgentSession(agent.id);
+    releaseHistory.resolve();
+    await hydration;
+
+    expect(manager.fetchTimeline(agent.id, { limit: 0 }).rows).toEqual(beforeMemory.rows);
+    expect(await durable.getCommittedRows(agent.id)).toEqual(beforeDurable);
+  } finally {
+    releaseHistory.resolve();
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 class HeldRuntimeInfoSession extends TestAgentSession {
   private readonly runtimeInfoRequested = deferred<void>();
   private readonly runtimeInfoAllowed = deferred<void>();
@@ -2451,6 +2573,95 @@ test("does not let a detached old runtime refresh overwrite the replacement", as
     oldSession?.allowRuntimeRefresh.resolve({
       provider: oldSession.provider,
       sessionId: oldSession.id,
+      model: "cleanup-model",
+      modeId: null,
+    });
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("does not let a delayed same-session refresh from turn A overwrite turn B", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-refresh-"));
+  const agentId = "00000000-0000-4000-8000-000000000137";
+
+  class SameSessionRefreshSession extends TestAgentSession {
+    readonly refreshStarted = deferred<void>();
+    readonly releaseRefresh = deferred<AgentRuntimeInfo>();
+    private delayNextRefresh = false;
+    private model = "initial-model";
+    private turnCount = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = `same-session-turn-${++this.turnCount}`;
+      this.model = `model-${this.turnCount}`;
+      if (this.turnCount === 1) this.delayNextRefresh = true;
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
+      if (this.delayNextRefresh) {
+        this.delayNextRefresh = false;
+        this.refreshStarted.resolve();
+        return await this.releaseRefresh.promise;
+      }
+      return {
+        provider: this.provider,
+        sessionId: this.id,
+        model: this.model,
+        modeId: null,
+      };
+    }
+  }
+
+  const session = new SameSessionRefreshSession({ provider: "codex", cwd: workdir });
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    idFactory: () => agentId,
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const first = manager.streamAgent(agent.id, "turn A");
+    const firstConsumed = (async () => {
+      for await (const _event of first) {
+      }
+    })();
+    void firstConsumed.catch(() => undefined);
+    await session.refreshStarted.promise;
+
+    const second = manager.streamAgent(agent.id, "turn B");
+    const secondConsumed = (async () => {
+      for await (const _event of second) {
+      }
+    })();
+    await secondConsumed;
+    session.releaseRefresh.resolve({
+      provider: session.provider,
+      sessionId: session.id,
+      model: "stale-A-model",
+      modeId: null,
+    });
+    await manager.flush();
+
+    expect(manager.getAgent(agent.id)?.runtimeInfo?.model).toBe("model-2");
+  } finally {
+    session.releaseRefresh.resolve({
+      provider: session.provider,
+      sessionId: session.id,
       model: "cleanup-model",
       modeId: null,
     });

@@ -40,7 +40,7 @@ import type { PaseoToolCatalog } from "../../tools/types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
-import { TurnCancellationGate } from "../../turn-cancellation-gate.js";
+import { TurnCancellationGate, type TurnStartToken } from "../../turn-cancellation-gate.js";
 import {
   checkProviderLaunchAvailable,
   resolveProviderLaunch,
@@ -878,6 +878,8 @@ export class OmpAgentSession implements AgentSession {
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
   private readonly turnCancellationGate = new TurnCancellationGate();
+  private activeTurnStartToken: TurnStartToken | null = null;
+  private stateMutationRevision = 0;
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -962,6 +964,8 @@ export class OmpAgentSession implements AgentSession {
 
       const payload = convertPromptInput(prompt, { model: this.state.model });
       const turnId = randomUUID();
+      this.stateMutationRevision += 1;
+      this.activeTurnStartToken = start;
       this.live = true;
       this.activeTurnId = turnId;
       this.activeClientMessageId = options?.clientMessageId ?? null;
@@ -977,7 +981,7 @@ export class OmpAgentSession implements AgentSession {
       void (async () => {
         try {
           const ack = await this.runtimeSession.prompt(payload.text, payload.images);
-          if (this.activeTurnId !== turnId) {
+          if (!this.isActiveTurn(turnId, start)) {
             return;
           }
           this.activePromptRequestId = ack.requestId ?? null;
@@ -989,17 +993,18 @@ export class OmpAgentSession implements AgentSession {
           }
           this.activePromptAgentInvoked = correlatedResult ?? ack.agentInvoked ?? null;
           if (correlatedResult === false) {
-            this.scheduleNoTurnPromptCompletion(turnId);
+            this.scheduleNoTurnPromptCompletion(turnId, start);
             return;
           }
           if (correlatedResult !== true && ack.agentInvoked === false) {
-            await this.completeNoTurnPrompt(turnId);
+            await this.completeNoTurnPrompt(turnId, start);
             return;
           }
         } catch (error) {
-          if (this.activeTurnId !== turnId) {
+          if (!this.isActiveTurn(turnId, start)) {
             return;
           }
+          this.stateMutationRevision += 1;
           this.usagePoller.stopTurn();
           this.activeTurnId = null;
           this.activeClientMessageId = null;
@@ -1007,6 +1012,7 @@ export class OmpAgentSession implements AgentSession {
           this.activeTurnHasUserMessage = false;
           this.activeAssistantMessageId = null;
           this.activeTurnTerminalAssistantMessage = null;
+          this.activeTurnStartToken = null;
           this.clearNoTurnBuffers();
           if (isOmpRequestAbortError(error)) {
             this.emit({
@@ -1152,9 +1158,11 @@ export class OmpAgentSession implements AgentSession {
         if (this.activeTurnId !== targetTurnId) {
           return;
         }
+        this.stateMutationRevision += 1;
         this.terminalizeActiveWork();
         this.usagePoller.stopTurn();
         this.activeTurnId = null;
+        this.activeTurnStartToken = null;
         this.activeClientMessageId = null;
         this.activeTurnStarted = false;
         this.activeTurnHasUserMessage = false;
@@ -1189,6 +1197,7 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.stateMutationRevision += 1;
     this.turnCancellationGate.close();
     this.usagePoller.close();
     this.cancelNoTurnPromptCompletion();
@@ -1288,7 +1297,9 @@ export class OmpAgentSession implements AgentSession {
       throw new Error(`OMP model id must include a provider: ${modelId}`);
     }
 
+    const revision = ++this.stateMutationRevision;
     const model = await this.runtimeSession.setModel(parsedReference.provider, parsedReference.id);
+    if (revision !== this.stateMutationRevision) return;
     this.state = {
       ...this.state,
       model,
@@ -1299,7 +1310,9 @@ export class OmpAgentSession implements AgentSession {
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
     const thinkingLevel =
       normalizeOmpThinkingOption(thinkingOptionId) ?? DEFAULT_OMP_THINKING_LEVEL;
+    const revision = ++this.stateMutationRevision;
     await this.runtimeSession.setThinkingLevel(thinkingLevel);
+    if (revision !== this.stateMutationRevision) return;
     this.lastKnownThinkingOptionId = thinkingLevel;
     this.config.thinkingOptionId = thinkingLevel;
     this.state = {
@@ -1318,7 +1331,7 @@ export class OmpAgentSession implements AgentSession {
     return this.activeTurnId ?? undefined;
   }
 
-  private scheduleNoTurnPromptCompletion(turnId: string): void {
+  private scheduleNoTurnPromptCompletion(turnId: string, start: TurnStartToken): void {
     this.cancelNoTurnPromptCompletion();
     const abort = new AbortController();
     this.pendingNoTurnCompletionAbort = abort;
@@ -1329,7 +1342,8 @@ export class OmpAgentSession implements AgentSession {
           return undefined;
         }
         this.pendingNoTurnCompletionAbort = null;
-        return await this.completeNoTurnPrompt(turnId);
+        if (!this.isActiveTurn(turnId, start)) return undefined;
+        return await this.completeNoTurnPrompt(turnId, start);
       })
       .catch((error: unknown) => {
         if (!abort.signal.aborted) {
@@ -1338,24 +1352,31 @@ export class OmpAgentSession implements AgentSession {
       });
   }
 
+  private scheduleActiveNoTurnPromptCompletion(): void {
+    const turnId = this.activeTurnId;
+    const start = this.activeTurnStartToken;
+    if (turnId && start) this.scheduleNoTurnPromptCompletion(turnId, start);
+  }
+
   private cancelNoTurnPromptCompletion(): void {
     this.pendingNoTurnCompletionAbort?.abort();
     this.pendingNoTurnCompletionAbort = null;
   }
 
-  private async completeNoTurnPrompt(turnId: string): Promise<void> {
+  private async completeNoTurnPrompt(turnId: string, start: TurnStartToken): Promise<void> {
     await waitForImmediate();
     if (
-      this.closed ||
-      this.activeTurnId !== turnId ||
+      !this.isActiveTurn(turnId, start) ||
       this.activeTurnStarted ||
       this.activePromptAgentInvoked === true ||
       this.activeTurnHasUserMessage
     ) {
       return;
     }
-    this.emitBufferedNoTurnOutputs(turnId);
-    this.completeTurn(turnId, []);
+    if (!this.isActiveTurn(turnId, start)) return;
+    this.emitBufferedNoTurnOutputs(turnId, start);
+    if (!this.isActiveTurn(turnId, start)) return;
+    this.completeTurn(turnId, [], start);
   }
 
   private clearNoTurnBuffers(): void {
@@ -1366,7 +1387,8 @@ export class OmpAgentSession implements AgentSession {
     this.pendingNoTurnOutputs.splice(0, this.pendingNoTurnOutputs.length);
   }
 
-  private emitBufferedNoTurnOutputs(turnId: string): void {
+  private emitBufferedNoTurnOutputs(turnId: string, start: TurnStartToken): void {
+    if (!this.isActiveTurn(turnId, start)) return;
     const promptText = this.activeNoTurnPromptText;
     const outputs = this.pendingNoTurnOutputs.filter((output) => output.turnId === turnId);
     this.clearNoTurnBuffers();
@@ -1382,7 +1404,9 @@ export class OmpAgentSession implements AgentSession {
         },
       });
     }
+    if (!this.isActiveTurn(turnId, start)) return;
     for (const output of outputs) {
+      if (!this.isActiveTurn(turnId, start)) return;
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -1468,6 +1492,13 @@ export class OmpAgentSession implements AgentSession {
     mode: string | undefined,
     emit: (event: AgentStreamEvent) => void,
   ): Promise<void> {
+    const turnId = this.activeTurnId;
+    const start = this.activeTurnStartToken;
+    const revision = ++this.stateMutationRevision;
+    const isCurrent = (): boolean =>
+      turnId !== null && start !== null
+        ? this.isActiveTurn(turnId, start)
+        : !this.closed && revision === this.stateMutationRevision;
     let enabled = parseAutoCompactMode(mode);
     if (enabled === "unknown") {
       emit({
@@ -1482,6 +1513,7 @@ export class OmpAgentSession implements AgentSession {
     }
     if (enabled === "toggle") {
       const state = await this.runtimeSession.getState();
+      if (!isCurrent()) return;
       if (typeof state.autoCompactionEnabled !== "boolean") {
         emit({
           type: "timeline",
@@ -1499,6 +1531,7 @@ export class OmpAgentSession implements AgentSession {
     try {
       await this.runtimeSession.setAutoCompaction(enabled);
     } catch (error) {
+      if (!isCurrent()) return;
       const message = error instanceof Error ? error.message : String(error);
       emit({
         type: "timeline",
@@ -1510,6 +1543,7 @@ export class OmpAgentSession implements AgentSession {
       });
       return;
     }
+    if (!isCurrent()) return;
     this.state = {
       ...this.state,
       autoCompactionEnabled: enabled,
@@ -1757,6 +1791,9 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleRuntimeEvent(event: OmpRuntimeEvent): void {
+    if (this.activeTurnStartToken && !this.isCurrentStart(this.activeTurnStartToken)) {
+      return;
+    }
     if (isExtensionUiRequestEvent(event)) {
       this.handleExtensionUiRequest(event);
       return;
@@ -1770,23 +1807,7 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     if (event.type === "prompt_result") {
-      const requestId = optionalString("id" in event ? event.id : undefined);
-      const agentInvoked =
-        "agentInvoked" in event && typeof event.agentInvoked === "boolean"
-          ? event.agentInvoked
-          : undefined;
-      if (requestId && agentInvoked !== undefined) {
-        if (requestId === this.activePromptRequestId && this.activeTurnId) {
-          this.activePromptAgentInvoked = agentInvoked;
-          if (agentInvoked === false) {
-            this.scheduleNoTurnPromptCompletion(this.activeTurnId);
-          } else {
-            this.cancelNoTurnPromptCompletion();
-          }
-        } else if (this.activePromptRequestId === null) {
-          this.pendingPromptResults.set(requestId, agentInvoked);
-        }
-      }
+      this.handlePromptResult(event);
       return;
     }
     if (this.handleExtraRuntimeEvent(event)) {
@@ -1807,7 +1828,32 @@ export class OmpAgentSession implements AgentSession {
     this.logger.debug({ event }, "Dropped unknown OMP runtime event");
   }
 
+  private handlePromptResult(event: Extract<OmpRuntimeEvent, { type: "prompt_result" }>): void {
+    const requestId = optionalString("id" in event ? event.id : undefined);
+    const agentInvoked =
+      "agentInvoked" in event && typeof event.agentInvoked === "boolean"
+        ? event.agentInvoked
+        : undefined;
+    if (!requestId || agentInvoked === undefined) return;
+    if (requestId === this.activePromptRequestId && this.activeTurnId) {
+      this.activePromptAgentInvoked = agentInvoked;
+      if (agentInvoked === false) {
+        this.scheduleActiveNoTurnPromptCompletion();
+      } else {
+        this.cancelNoTurnPromptCompletion();
+      }
+      return;
+    }
+    if (this.activePromptRequestId === null) {
+      this.pendingPromptResults.set(requestId, agentInvoked);
+    }
+  }
+
   private handleProcessExit(error: string): void {
+    if (this.activeTurnStartToken && !this.isCurrentStart(this.activeTurnStartToken)) {
+      return;
+    }
+    this.stateMutationRevision += 1;
     this.usagePoller.stopTurn();
     this.terminalizeActiveWork();
     this.subagentIndex.clear(this.runtimeSession);
@@ -1830,6 +1876,14 @@ export class OmpAgentSession implements AgentSession {
   }
 
   private handleSessionEvent(event: OmpAgentSessionEvent): void {
+    const activeStart = this.activeTurnStartToken;
+    if (activeStart && !this.isCurrentStart(activeStart)) {
+      return;
+    }
+    this.handleCurrentSessionEvent(event);
+  }
+
+  private handleCurrentSessionEvent(event: OmpAgentSessionEvent): void {
     const turnId = this.currentTurnIdForEvent();
 
     switch (event.type) {
@@ -2074,7 +2128,11 @@ export class OmpAgentSession implements AgentSession {
     const nativeMessage = event.message as OmpAgentMessage & { id?: unknown; entryId?: unknown };
     const messageId = readNativeMessageId(nativeMessage);
     const clientMessageId = this.activeClientMessageId;
+    const start = this.activeTurnStartToken;
     const emitUserMessage = (resolvedMessageId?: string): void => {
+      if (start && !this.isActiveTurn(turnId, start)) {
+        return;
+      }
       if (resolvedMessageId) {
         // OMP re-emits user message_end frames for entries it has already
         // surfaced (e.g. after steer or a resumed process); emit each native
@@ -2155,13 +2213,23 @@ export class OmpAgentSession implements AgentSession {
     });
   }
 
-  private completeTurn(turnId: string | undefined, messages: OmpAgentMessage[]): void {
+  private completeTurn(
+    turnId: string | undefined,
+    messages: OmpAgentMessage[],
+    startToken?: TurnStartToken,
+  ): void {
+    const start = startToken ?? this.activeTurnStartToken;
+    if (turnId !== undefined && start && !this.isActiveTurn(turnId, start)) {
+      return;
+    }
+    this.stateMutationRevision += 1;
     this.activeTurnId = null;
     this.activeClientMessageId = null;
     this.activeAssistantMessageId = null;
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
+    this.activeTurnStartToken = null;
     this.clearNoTurnBuffers();
     const errorMessage = latestOmpErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {
@@ -2180,34 +2248,62 @@ export class OmpAgentSession implements AgentSession {
       provider: this.provider,
       turnId,
     });
-    void this.refreshAfterTurn(finalUsage);
+    void this.refreshAfterTurn(finalUsage, start ?? undefined);
   }
 
   private async completeTurnAfterProviderIdle(
     turnId: string | undefined,
     messages: OmpAgentMessage[],
+    start: TurnStartToken | null = this.activeTurnStartToken,
   ): Promise<void> {
-    while (!this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId) {
+    const isCurrent = () =>
+      start
+        ? this.isActiveTurn(turnId, start)
+        : !this.closed && this.activeTurnStarted && this.currentTurnIdForEvent() === turnId;
+    while (isCurrent()) {
       try {
+        const revision = ++this.stateMutationRevision;
         const state = await this.runtimeSession.getState();
+        if (!isCurrent()) return;
+        if (revision !== this.stateMutationRevision) return;
         this.state = state;
+        if (!isCurrent() || revision !== this.stateMutationRevision) return;
         if (!state.isStreaming && !state.isCompacting) {
-          this.completeTurn(turnId, messages);
+          if (!isCurrent()) return;
+          this.completeTurn(turnId, messages, start ?? undefined);
           return;
         }
       } catch (error) {
         this.logger.debug({ err: error }, "OMP state unavailable while waiting for provider idle");
       }
       await this.providerIdleScheduler.waitForRetry();
+      if (!isCurrent()) return;
     }
   }
 
-  private async refreshState(): Promise<void> {
-    this.state = await this.runtimeSession.getState();
+  private async refreshState(start?: TurnStartToken): Promise<void> {
+    const revision = ++this.stateMutationRevision;
+    const state = await this.runtimeSession.getState();
+    if (start && !this.isCurrentStart(start)) return;
+    if (revision !== this.stateMutationRevision) return;
+    this.state = state;
   }
 
-  private async refreshAfterTurn(finalUsage: Promise<void>): Promise<void> {
-    await Promise.all([this.refreshState().catch(() => undefined), finalUsage]);
+  private async refreshAfterTurn(finalUsage: Promise<void>, start?: TurnStartToken): Promise<void> {
+    await Promise.all([this.refreshState(start).catch(() => undefined), finalUsage]);
+  }
+
+  private isCurrentStart(start: TurnStartToken): boolean {
+    return !this.closed && this.turnCancellationGate.isCurrent(start);
+  }
+
+  private isActiveTurn(turnId: string | undefined, start: TurnStartToken): boolean {
+    return (
+      turnId !== undefined &&
+      this.isCurrentStart(start) &&
+      this.activeTurnId === turnId &&
+      this.activeTurnStartToken === start
+    );
   }
 }
 

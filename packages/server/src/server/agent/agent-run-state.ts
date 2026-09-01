@@ -5,6 +5,7 @@ import { getAgentStreamEventTurnId, type AgentStreamEvent } from "./agent-sdk-ty
 export interface PendingAgentSessionEvent {
   readonly generation: symbol;
   readonly event: AgentStreamEvent;
+  readonly turnToken?: string;
 }
 
 export interface ForegroundTurnWaiter {

@@ -105,7 +105,7 @@ import {
   isDefaultAgentCreateConfigUnattended,
   resolveDefaultAgentCreateConfig,
 } from "../create-agent-mode.js";
-import { TurnCancellationGate } from "../turn-cancellation-gate.js";
+import { TurnCancellationGate, type TurnStartToken } from "../turn-cancellation-gate.js";
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
@@ -1456,6 +1456,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private readonly turnCancellationGate = new TurnCancellationGate();
+  private activeTurnStartToken: TurnStartToken | null = null;
   private fallbackAssistantMessageId: string | null = null;
   private closed = false;
   private historyPending = false;
@@ -1626,6 +1627,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.deliverTranslatedEvents(this.flushPendingUserMessage());
       this.turnCancellationGate.assertCurrent(start);
       const turnId = randomUUID();
+      this.activeTurnStartToken = start;
       const messageId = options?.clientMessageId ?? randomUUID();
       this.activeForegroundTurnId = turnId;
       this.fallbackAssistantMessageId = null;
@@ -1635,11 +1637,25 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
       this.turnCancellationGate.assertCurrent(start);
-      const promptRequest = this.connection.prompt({
-        sessionId: this.sessionId,
-        messageId,
-        prompt: toACPContentBlocks(prompt),
-      });
+      let promptRequest: Promise<PromptResponse>;
+      try {
+        promptRequest = this.connection.prompt({
+          sessionId: this.sessionId,
+          messageId,
+          prompt: toACPContentBlocks(prompt),
+        });
+      } catch (error) {
+        const summary = summarizeACPRequestError(error);
+        this.finishTurn({
+          type: "turn_failed",
+          provider: this.provider,
+          error: summary.message,
+          code: summary.code,
+          diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
+          turnId,
+        });
+        throw error;
+      }
       start.complete();
       void promptRequest
         .then((response) => {
@@ -2877,7 +2893,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   private handlePromptResponse(response: PromptResponse, turnId: string): void {
-    if (this.activeForegroundTurnId !== turnId) {
+    if (
+      this.activeForegroundTurnId !== turnId ||
+      (this.activeTurnStartToken !== null &&
+        !this.turnCancellationGate.isCurrent(this.activeTurnStartToken))
+    ) {
       return;
     }
     this.currentTurnUsage = mapACPUsage(response.usage) ?? this.currentTurnUsage;
@@ -2973,11 +2993,16 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private finishTurn(
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
-    if (this.activeForegroundTurnId !== event.turnId) {
+    if (
+      this.activeForegroundTurnId !== event.turnId ||
+      (this.activeTurnStartToken !== null &&
+        !this.turnCancellationGate.isCurrent(this.activeTurnStartToken))
+    ) {
       return;
     }
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.activeForegroundTurnId = null;
+    this.activeTurnStartToken = null;
     this.fallbackAssistantMessageId = null;
     if (this.submittedUserMessageTurnId === event.turnId) {
       this.submittedUserMessageTurnId = null;

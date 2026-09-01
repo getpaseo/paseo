@@ -43,7 +43,7 @@ import {
 import { importSessionFromPersistence } from "../../provider-session-import.js";
 import { runProviderRefreshActivity } from "../../provider-refresh-deadline.js";
 import { runProviderTurn } from "../provider-runner.js";
-import { TurnCancellationGate } from "../../turn-cancellation-gate.js";
+import { TurnCancellationGate, type TurnStartToken } from "../../turn-cancellation-gate.js";
 import {
   checkProviderLaunchAvailable,
   resolveProviderLaunch,
@@ -1252,6 +1252,8 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly logger: Logger;
   private readonly usagePoller: PiUsagePoller;
   private readonly turnCancellationGate = new TurnCancellationGate();
+  private activeTurnStartToken: TurnStartToken | null = null;
+  private stateMutationRevision = 0;
   private closed = false;
   // Pi reports an aborted OpenAI Responses stream before the abort RPC resolves.
   // Keep the turn active until that RPC acknowledges the user-requested cancellation.
@@ -1326,6 +1328,8 @@ export class PiRpcAgentSession implements AgentSession {
 
       const payload = convertPromptInput(prompt, { model: this.state.model });
       const turnId = randomUUID();
+      this.stateMutationRevision += 1;
+      this.activeTurnStartToken = start;
       this.activeTurnId = turnId;
       this.usagePoller.startTurn();
       this.lastInterruptedTurnId = null;
@@ -1343,7 +1347,7 @@ export class PiRpcAgentSession implements AgentSession {
       void (async () => {
         try {
           const ack = await this.runtimeSession.prompt(payload.text, payload.images);
-          if (this.activeTurnId !== turnId) {
+          if (!this.isActiveTurn(turnId, start)) {
             return;
           }
           this.activePromptRequestId = ack.requestId ?? null;
@@ -1355,16 +1359,17 @@ export class PiRpcAgentSession implements AgentSession {
           }
           const agentInvoked = correlatedResult ?? ack.agentInvoked;
           if (agentInvoked === false) {
-            await this.completeNoTurnPrompt(turnId);
+            await this.completeNoTurnPrompt(turnId, start);
             return;
           }
           if (agentInvoked === undefined && shouldProbeForNoTurnPrompt) {
-            await this.completePromptIfHandledWithoutTurn(turnId);
+            await this.completePromptIfHandledWithoutTurn(turnId, start);
           }
         } catch (error) {
-          if (this.activeTurnId !== turnId) {
+          if (!this.isActiveTurn(turnId, start)) {
             return;
           }
+          this.stateMutationRevision += 1;
           this.usagePoller.stopTurn();
           this.activeTurnId = null;
           this.activeClientMessageId = null;
@@ -1372,6 +1377,7 @@ export class PiRpcAgentSession implements AgentSession {
           this.activeTurnStartedEmitted = false;
           this.pendingSettledMessages = null;
           this.activeAssistantMessageId = null;
+          this.activeTurnStartToken = null;
           this.pendingSteerSubmissions.length = 0;
           this.clearNoTurnBuffers();
           if (isPiRequestAbortError(error)) {
@@ -1590,6 +1596,7 @@ export class PiRpcAgentSession implements AgentSession {
       if (this.interruptedTerminalError?.turnId === turnId) {
         const terminalError = this.interruptedTerminalError;
         this.interruptedTerminalError = null;
+        this.stateMutationRevision += 1;
         this.usagePoller.stopTurn();
         this.activeTurnId = null;
         this.activeClientMessageId = null;
@@ -1597,6 +1604,7 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeTurnStartedEmitted = false;
         this.pendingSettledMessages = null;
         this.activeAssistantMessageId = null;
+        this.activeTurnStartToken = null;
         this.pendingSteerSubmissions.length = 0;
         this.clearNoTurnBuffers();
         this.emit({
@@ -1609,6 +1617,7 @@ export class PiRpcAgentSession implements AgentSession {
       throw error;
     }
     if (turnId && this.activeTurnId === turnId) {
+      this.stateMutationRevision += 1;
       this.usagePoller.stopTurn();
       this.activeTurnId = null;
       this.activeClientMessageId = null;
@@ -1616,6 +1625,7 @@ export class PiRpcAgentSession implements AgentSession {
       this.activeTurnStartedEmitted = false;
       this.pendingSettledMessages = null;
       this.activeAssistantMessageId = null;
+      this.activeTurnStartToken = null;
       this.pendingSteerSubmissions.length = 0;
       this.clearNoTurnBuffers();
       this.emit({
@@ -1666,6 +1676,7 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.stateMutationRevision += 1;
     this.turnCancellationGate.close();
     this.usagePoller.close();
     try {
@@ -1722,7 +1733,9 @@ export class PiRpcAgentSession implements AgentSession {
       throw new Error(`Pi model id must include a provider: ${modelId}`);
     }
 
+    const revision = ++this.stateMutationRevision;
     const model = await this.runtimeSession.setModel(parsedReference.provider, parsedReference.id);
+    if (revision !== this.stateMutationRevision) return;
     this.state = {
       ...this.state,
       model,
@@ -1732,7 +1745,9 @@ export class PiRpcAgentSession implements AgentSession {
 
   async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
     const thinkingLevel = normalizePiThinkingOption(thinkingOptionId) ?? DEFAULT_PI_THINKING_LEVEL;
+    const revision = ++this.stateMutationRevision;
     await this.runtimeSession.setThinkingLevel(thinkingLevel);
+    if (revision !== this.stateMutationRevision) return;
     this.lastKnownThinkingOptionId = thinkingLevel;
     this.config.thinkingOptionId = thinkingLevel;
     this.state = {
@@ -1751,39 +1766,47 @@ export class PiRpcAgentSession implements AgentSession {
     return this.activeTurnId ?? undefined;
   }
 
-  private async completeNoTurnPrompt(turnId: string): Promise<void> {
+  private async completeNoTurnPrompt(turnId: string, start: TurnStartToken): Promise<void> {
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
-    if (this.activeTurnId !== turnId || this.activeTurnStarted) {
+    if (!this.isActiveTurn(turnId, start) || this.activeTurnStarted) {
       return;
     }
-    this.emitBufferedNoTurnOutputs(turnId);
-    this.completeTurn(turnId, []);
+    this.emitBufferedNoTurnOutputs(turnId, start);
+    if (!this.isActiveTurn(turnId, start)) return;
+    this.completeTurn(turnId, [], start);
   }
 
-  private async completePromptIfHandledWithoutTurn(turnId: string): Promise<void> {
+  private async completePromptIfHandledWithoutTurn(
+    turnId: string,
+    start: TurnStartToken,
+  ): Promise<void> {
     await new Promise<void>((resolve) => {
       setImmediate(resolve);
     });
 
+    if (!this.isActiveTurn(turnId, start)) return;
+    const revision = ++this.stateMutationRevision;
     let runtimeState: PiSessionState;
     try {
       runtimeState = await this.runtimeSession.getState();
     } catch (error) {
-      if (this.activeTurnId === turnId && !this.activeTurnStarted) {
+      if (this.isActiveTurn(turnId, start) && !this.activeTurnStarted) {
         throw error;
       }
       return;
     }
+    if (!this.isActiveTurn(turnId, start) || revision !== this.stateMutationRevision) return;
     this.state = runtimeState;
 
-    if (this.activeTurnId !== turnId || this.activeTurnStarted || runtimeState.isStreaming) {
+    if (!this.isActiveTurn(turnId, start) || this.activeTurnStarted || runtimeState.isStreaming) {
       return;
     }
 
-    this.emitBufferedNoTurnOutputs(turnId);
-    this.completeTurn(turnId, []);
+    this.emitBufferedNoTurnOutputs(turnId, start);
+    if (!this.isActiveTurn(turnId, start)) return;
+    this.completeTurn(turnId, [], start);
   }
 
   private clearNoTurnBuffers(): void {
@@ -1792,7 +1815,8 @@ export class PiRpcAgentSession implements AgentSession {
     this.pendingNoTurnOutputs.splice(0, this.pendingNoTurnOutputs.length);
   }
 
-  private emitBufferedNoTurnOutputs(turnId: string): void {
+  private emitBufferedNoTurnOutputs(turnId: string, start: TurnStartToken): void {
+    if (!this.isActiveTurn(turnId, start)) return;
     const promptText = this.activeNoTurnPromptText;
     const outputs = this.pendingNoTurnOutputs.filter((output) => output.turnId === turnId);
     this.clearNoTurnBuffers();
@@ -1808,7 +1832,9 @@ export class PiRpcAgentSession implements AgentSession {
         },
       });
     }
+    if (!this.isActiveTurn(turnId, start)) return;
     for (const output of outputs) {
+      if (!this.isActiveTurn(turnId, start)) return;
       this.emit({
         type: "timeline",
         provider: this.provider,
@@ -1894,6 +1920,13 @@ export class PiRpcAgentSession implements AgentSession {
     mode: string | undefined,
     emit: (event: AgentStreamEvent) => void,
   ): Promise<void> {
+    const turnId = this.activeTurnId;
+    const start = this.activeTurnStartToken;
+    const revision = ++this.stateMutationRevision;
+    const isCurrent = (): boolean =>
+      turnId !== null && start !== null
+        ? this.isActiveTurn(turnId, start)
+        : !this.closed && revision === this.stateMutationRevision;
     let enabled = parseAutoCompactMode(mode);
     if (enabled === "unknown") {
       emit({
@@ -1908,6 +1941,7 @@ export class PiRpcAgentSession implements AgentSession {
     }
     if (enabled === "toggle") {
       const state = await this.runtimeSession.getState();
+      if (!isCurrent()) return;
       if (typeof state.autoCompactionEnabled !== "boolean") {
         emit({
           type: "timeline",
@@ -1925,6 +1959,7 @@ export class PiRpcAgentSession implements AgentSession {
     try {
       await this.runtimeSession.setAutoCompaction(enabled);
     } catch (error) {
+      if (!isCurrent()) return;
       const message = error instanceof Error ? error.message : String(error);
       emit({
         type: "timeline",
@@ -1936,6 +1971,7 @@ export class PiRpcAgentSession implements AgentSession {
       });
       return;
     }
+    if (!isCurrent()) return;
     this.state = {
       ...this.state,
       autoCompactionEnabled: enabled,
@@ -2149,6 +2185,9 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private handleRuntimeEvent(event: PiRuntimeEvent): void {
+    if (this.activeTurnStartToken && !this.isCurrentStart(this.activeTurnStartToken)) {
+      return;
+    }
     if (isExtensionUiRequestEvent(event)) {
       this.handleExtensionUiRequest(event);
       return;
@@ -2173,7 +2212,8 @@ export class PiRpcAgentSession implements AgentSession {
           agentInvoked === false &&
           this.activeTurnId
         ) {
-          void this.completeNoTurnPrompt(this.activeTurnId);
+          const start = this.activeTurnStartToken;
+          if (start) void this.completeNoTurnPrompt(this.activeTurnId, start);
         } else if (this.activePromptRequestId === null) {
           this.pendingPromptResults.set(requestId, agentInvoked);
         }
@@ -2188,6 +2228,10 @@ export class PiRpcAgentSession implements AgentSession {
 
   private handleProcessExit(error: string): void {
     this.rejectAllExtensionResults(new Error(error));
+    if (this.activeTurnStartToken && !this.isCurrentStart(this.activeTurnStartToken)) {
+      return;
+    }
+    this.stateMutationRevision += 1;
     if (!this.activeTurnId) {
       return;
     }
@@ -2198,6 +2242,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
+    this.activeTurnStartToken = null;
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     this.emit({
@@ -2209,6 +2254,10 @@ export class PiRpcAgentSession implements AgentSession {
   }
 
   private handleSessionEvent(event: PiAgentSessionEvent): void {
+    const activeStart = this.activeTurnStartToken;
+    if (activeStart && !this.isCurrentStart(activeStart)) {
+      return;
+    }
     const turnId = this.currentTurnIdForEvent();
     if (event.type === "agent_end" || event.type === "agent_settled") {
       this.handleTurnBoundaryEvent({ event, turnId });
@@ -2478,7 +2527,16 @@ export class PiRpcAgentSession implements AgentSession {
     return mapToolDetail(toolCall, result);
   }
 
-  private completeTurn(turnId: string | undefined, messages: PiAgentMessage[]): void {
+  private completeTurn(
+    turnId: string | undefined,
+    messages: PiAgentMessage[],
+    startToken?: TurnStartToken,
+  ): void {
+    const start = startToken ?? this.activeTurnStartToken;
+    if (turnId !== undefined && start && !this.isActiveTurn(turnId, start)) {
+      return;
+    }
+    this.stateMutationRevision += 1;
     if (turnId && this.interruptingTurnId === turnId && isPiAbortedTerminalResponse(messages)) {
       this.interruptedTerminalError = {
         turnId,
@@ -2499,6 +2557,7 @@ export class PiRpcAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnStartedEmitted = false;
     this.pendingSettledMessages = null;
+    this.activeTurnStartToken = null;
     this.pendingSteerSubmissions.length = 0;
     this.clearNoTurnBuffers();
     const errorMessage = latestPiErrorMessage(messages);
@@ -2518,15 +2577,32 @@ export class PiRpcAgentSession implements AgentSession {
       provider: this.provider,
       turnId,
     });
-    void this.refreshAfterTurn(finalUsage);
+    void this.refreshAfterTurn(finalUsage, start ?? undefined);
   }
 
-  private async refreshState(): Promise<void> {
-    this.state = await this.runtimeSession.getState();
+  private async refreshState(start?: TurnStartToken): Promise<void> {
+    const revision = ++this.stateMutationRevision;
+    const state = await this.runtimeSession.getState();
+    if (start && !this.isCurrentStart(start)) return;
+    if (revision !== this.stateMutationRevision) return;
+    this.state = state;
   }
 
-  private async refreshAfterTurn(finalUsage: Promise<void>): Promise<void> {
-    await Promise.all([this.refreshState().catch(() => undefined), finalUsage]);
+  private async refreshAfterTurn(finalUsage: Promise<void>, start?: TurnStartToken): Promise<void> {
+    await Promise.all([this.refreshState(start).catch(() => undefined), finalUsage]);
+  }
+
+  private isCurrentStart(start: TurnStartToken): boolean {
+    return !this.closed && this.turnCancellationGate.isCurrent(start);
+  }
+
+  private isActiveTurn(turnId: string | undefined, start: TurnStartToken): boolean {
+    return (
+      turnId !== undefined &&
+      this.isCurrentStart(start) &&
+      this.activeTurnId === turnId &&
+      this.activeTurnStartToken === start
+    );
   }
 }
 
