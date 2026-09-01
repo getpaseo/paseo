@@ -634,12 +634,17 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     const timelineNode = timelineRef.current;
     if (
       !timelineNode ||
-      distance <= 0.5 ||
+      Math.abs(distance) <= 0.5 ||
       window.matchMedia("(prefers-reduced-motion: reduce)").matches
     ) {
       return;
     }
-    const startingOffset = Math.max(0, readElementTranslateY(timelineNode) + distance);
+    // Symmetric for both directions: a growing block (positive distance) rises
+    // from below into place, a shrinking one (negative distance, e.g. collapsing
+    // a tool-call group) settles from above. Clamping to 0 was fine when only
+    // growth reached this path; it would zero out and drop a legitimate negative
+    // starting offset for a shrink.
+    const startingOffset = readElementTranslateY(timelineNode) + distance;
     const previous = contentRiseAnimationRef.current;
     const animation = timelineNode.animate(
       [{ transform: `translateY(${startingOffset}px)` }, { transform: "translateY(0px)" }],

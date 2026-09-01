@@ -90,12 +90,12 @@ export function ChatEntryMotion({
   const setHostRef = useCallback((node: unknown) => {
     hostElementRef.current = isWeb && node instanceof HTMLElement ? node : null;
   }, []);
-  const initialAnimateOnMount = useRef(animateOnMount).current;
   const hasMounted = useRef(false);
+  const hasPlayedEntry = useRef(false);
   const previousRevision = useRef(revision);
   const settleRef = useRef(settle);
   settleRef.current = settle;
-  const progress = useSharedValue(initialAnimateOnMount && !settle ? 0 : 1);
+  const progress = useSharedValue(animateOnMount && !settle ? 0 : 1);
 
   // A row superseded before or during its entry snaps to rest. The ref guards
   // the async web play() path so a late IntersectionObserver can't replay it.
@@ -112,13 +112,14 @@ export function ChatEntryMotion({
     function play() {
       if (!cancelled && !settleRef.current) {
         playEntry(progress);
+        hasPlayedEntry.current = true;
       }
     }
 
     const isMount = !hasMounted.current;
     hasMounted.current = true;
     if (isMount) {
-      if (!initialAnimateOnMount) {
+      if (!animateOnMount) {
         return;
       }
       if (isWeb && typeof IntersectionObserver === "function") {
@@ -137,6 +138,17 @@ export function ChatEntryMotion({
       };
     }
 
+    // A row can mount a render before its own eligibility catches up — e.g. a
+    // just-sent user message whose optimistic-pending bookkeeping lands a tick
+    // behind the row itself. Give it one chance to play once `animateOnMount`
+    // turns true instead of locking it out based on what it measured at mount.
+    if (animateOnMount && !hasPlayedEntry.current) {
+      play();
+      return () => {
+        cancelled = true;
+      };
+    }
+
     if (Object.is(previousRevision.current, revision)) {
       return;
     }
@@ -148,7 +160,7 @@ export function ChatEntryMotion({
     return () => {
       cancelled = true;
     };
-  }, [initialAnimateOnMount, progress, revision]);
+  }, [animateOnMount, progress, revision]);
 
   const animatedStyle = useAnimatedStyle(() => ({
     opacity: progress.value,
