@@ -1,5 +1,11 @@
 export type PluginProcessRequest =
-  | { type: "initialize"; pluginId: string; bundle: string; appVersion: string }
+  | {
+      type: "initialize";
+      pluginId: string;
+      bundle: string;
+      appVersion: string;
+      daemonApi: boolean;
+    }
   | { type: "invoke"; requestId: string; method: string; input: unknown }
   | { type: "shutdown" }
   | { type: "paseo_frame"; data: string | Uint8Array; isBinary: boolean }

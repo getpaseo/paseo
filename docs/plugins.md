@@ -40,7 +40,7 @@ runtime-safe: run `paseo reload` after editing `config.json`. Enabling starts ev
 enabled plugin; disabling tears them all down without restarting the daemon. Plugin source entries
 remain lifecycle-owned and do not reload from manual config edits.
 
-The directory contains an identity-only manifest, one entry point, and local typechecking support:
+The directory contains a manifest, one entry point, and local typechecking support:
 
 ```text
 my-plugin/
@@ -59,9 +59,15 @@ SDK contract changes.
 
 ```json
 {
-  "id": "my-plugin"
+  "id": "my-plugin",
+  "daemonApi": false
 }
 ```
+
+Set `daemonApi` to `false` when server handlers do not use the handler context's `paseo` API.
+Paseo then skips the plugin's daemon session and global agent stream. The field defaults to `true`
+for compatibility. Client-side `usePaseo()` remains available; accessing `paseo` from a server
+handler while disabled fails that RPC explicitly.
 
 The config key is the runtime plugin ID. The manifest ID is the default selected during install;
 `--id` overrides it. Existing configuration is not renamed when the manifest changes, and the

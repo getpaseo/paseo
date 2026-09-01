@@ -4,7 +4,9 @@ import { z } from "zod";
 import { PluginIdSchema } from "@getpaseo/protocol/messages";
 
 const MANIFEST_FILENAME = "paseo-plugin.json";
-const PluginManifestSchema = z.object({ id: PluginIdSchema }).strict();
+const PluginManifestSchema = z
+  .object({ id: PluginIdSchema, daemonApi: z.boolean().default(true) })
+  .strict();
 
 export type PluginManifest = z.infer<typeof PluginManifestSchema>;
 
