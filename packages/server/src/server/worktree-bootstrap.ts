@@ -28,6 +28,7 @@ import {
 } from "./workspace-service-env.js";
 import {
   ensureWorkspaceServicePortPlan,
+  getAllReservedWorkspaceServicePorts,
   requirePlannedWorkspaceServicePort,
   refreshWorkspaceServicePort,
 } from "./workspace-service-port-registry.js";
@@ -899,7 +900,7 @@ async function resolveWorkspaceScriptRuntimeEnvironment(params: {
   cwd: string;
   branchName: string | null;
   allocation: PaseoServicePortAllocation | undefined;
-  excludedPorts: ReadonlySet<number>;
+  excludedPorts: ReadonlySet<number> | (() => ReadonlySet<number>);
 }): Promise<WorkspaceRuntimeEnvironment | null> {
   // Existing servicePorts range/portScript settings allocate individual
   // services. A block is an explicit opt-in for ordinary scripts and services;
@@ -1064,7 +1065,13 @@ export async function spawnWorkspaceScript(
       cwd: repoRoot,
       branchName,
       allocation: servicePortAllocation,
-      excludedPorts: getExplicitWorkspaceServicePorts(configResult.config),
+      excludedPorts: () => {
+        const ports = getExplicitWorkspaceServicePorts(configResult.config);
+        for (const reservedPort of getAllReservedWorkspaceServicePorts()) {
+          ports.add(reservedPort);
+        }
+        return ports;
+      },
     });
     let env: Record<string, string> | undefined = workspaceRuntime?.env;
     if (serviceScript) {

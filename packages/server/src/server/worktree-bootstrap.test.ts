@@ -6,7 +6,11 @@ import { tmpdir } from "os";
 
 import type { AgentTimelineItem } from "./agent/agent-sdk-types.js";
 import { runAsyncWorktreeBootstrap, spawnWorkspaceScript } from "./worktree-bootstrap.js";
-import { ensureWorkspaceServicePortPlan } from "./workspace-service-port-registry.js";
+import {
+  ensureWorkspaceServicePortPlan,
+  releaseWorkspaceServicePortPlan,
+} from "./workspace-service-port-registry.js";
+import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
 import { ScriptRouteStore } from "./script-proxy.js";
 import { createBranchChangeRouteHandler } from "./script-route-branch-handler.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
@@ -591,13 +595,19 @@ describe("runAsyncWorktreeBootstrap", () => {
       workspaceRuntimeEnvironment: { ensure },
     });
 
-    expect(ensure).toHaveBeenCalledWith({
-      workspaceId: "workspace-runtime-env",
-      cwd: repoDir,
-      branchName: "feature-runtime-env",
-      allocation: { range: "21000-21099", blockSize: 100 },
-      excludedPorts: new Set(),
-    });
+    expect(ensure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        workspaceId: "workspace-runtime-env",
+        cwd: repoDir,
+        branchName: "feature-runtime-env",
+        allocation: { range: "21000-21099", blockSize: 100 },
+        excludedPorts: expect.any(Function),
+      }),
+    );
+    const ensureInput = ensure.mock.calls[0]?.[0] as {
+      excludedPorts: () => ReadonlySet<number>;
+    };
+    expect(ensureInput.excludedPorts()).toEqual(new Set());
     expect(createTerminalCalls[0]?.env).toMatchObject({
       PASEO_PORT_BASE: "21000",
       PASEO_PORT_END: "21099",
@@ -709,6 +719,56 @@ describe("runAsyncWorktreeBootstrap", () => {
       }),
     ).rejects.toThrow(`returned reserved port ${reservedPort}`);
     expect(createTerminalCalls).toEqual([]);
+  });
+
+  it("keeps script port blocks outside planned service leases", async () => {
+    const plannedServicePort = 44_000;
+    commitPaseoConfig({
+      worktree: {
+        servicePorts: { range: "44000-44200", blockSize: 100 },
+      },
+      scripts: {
+        compose: {
+          command: "docker compose ps",
+        },
+      },
+    });
+
+    const serviceWorkspaceId = "workspace-script-block-planned-service";
+    await ensureWorkspaceServicePortPlan({
+      workspaceId: serviceWorkspaceId,
+      services: [{ scriptName: "api" }],
+      allocatePort: async () => plannedServicePort,
+    });
+    const runtimeEnvironment = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const workspaceId = "workspace-script-block";
+    const createTerminalCalls: CreateTerminalCall[] = [];
+
+    try {
+      await spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId,
+        projectSlug: "repo",
+        branchName: "feature-script-block",
+        scriptName: "compose",
+        daemonPort: null,
+        serviceProxy: new ScriptRouteStore(),
+        runtimeStore: new WorkspaceScriptRuntimeStore(),
+        terminalManager: createStubTerminalManager(createTerminalCalls),
+        workspaceRuntimeEnvironment: runtimeEnvironment,
+      });
+
+      expect(createTerminalCalls[0]?.env).toMatchObject({
+        PASEO_PORT_BASE: String(plannedServicePort + 1),
+        PASEO_PORT_END: String(plannedServicePort + 100),
+      });
+    } finally {
+      runtimeEnvironment.release(workspaceId);
+      releaseWorkspaceServicePortPlan(serviceWorkspaceId);
+    }
   });
 
   it("records plain script exit codes from shell command completion without terminal exit", async () => {

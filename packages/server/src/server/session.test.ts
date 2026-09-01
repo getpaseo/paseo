@@ -304,7 +304,7 @@ interface SessionForTestOptions {
     getWorkspaceGitMetadata?: ReturnType<typeof vi.fn>;
     getProjectSlug?: ReturnType<typeof vi.fn>;
   };
-  workspaceRegistry?: { get: ReturnType<typeof vi.fn> };
+  workspaceRegistry?: { get: ReturnType<typeof vi.fn>; list?: ReturnType<typeof vi.fn> };
   projectRegistry?: Partial<SessionOptions["projectRegistry"]>;
   terminalManager?: SessionOptions["terminalManager"];
   serviceProxy?: SessionOptions["serviceProxy"];
@@ -327,6 +327,7 @@ interface SessionForTestOptions {
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  emitWorkspaceUpdatesForExternalWorkspaceIds?: SessionOptions["emitWorkspaceUpdatesForExternalWorkspaceIds"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -425,6 +426,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     scriptRuntimeStore: options.scriptRuntimeStore,
     getDaemonTcpPort: options.getDaemonTcpPort,
     getDaemonTcpHost: options.getDaemonTcpHost,
+    emitWorkspaceUpdatesForExternalWorkspaceIds:
+      options.emitWorkspaceUpdatesForExternalWorkspaceIds,
     voice: options.voice,
     serverId: options.serverId,
     daemonVersion: options.daemonVersion,
@@ -1758,6 +1761,48 @@ describe("project config RPC authorization", () => {
           }),
         },
       },
+    ]);
+  });
+
+  test("fans out active project workspace updates after a config write", async () => {
+    const repoRoot = makeRoot();
+    const project = createProjectRecord(repoRoot);
+    const emitWorkspaceUpdatesForExternalWorkspaceIds = vi.fn(async () => undefined);
+    const session = createSessionForTest({
+      projectRegistry: { list: vi.fn().mockResolvedValue([project]) },
+      workspaceRegistry: {
+        get: vi.fn(),
+        list: vi.fn().mockResolvedValue([
+          {
+            workspaceId: "workspace-active",
+            projectId: project.projectId,
+            archivedAt: null,
+          },
+          {
+            workspaceId: "workspace-archived",
+            projectId: project.projectId,
+            archivedAt: "2026-09-01T00:00:00.000Z",
+          },
+          {
+            workspaceId: "workspace-other-project",
+            projectId: "project:other",
+            archivedAt: null,
+          },
+        ]),
+      },
+      emitWorkspaceUpdatesForExternalWorkspaceIds,
+    });
+
+    await session.handleMessage({
+      type: "write_project_config_request",
+      requestId: "write-project-launches",
+      repoRoot,
+      config: { launches: { dev: { command: "npm run dev" } } },
+      expectedRevision: null,
+    });
+
+    expect(emitWorkspaceUpdatesForExternalWorkspaceIds).toHaveBeenCalledExactlyOnceWith([
+      "workspace-active",
     ]);
   });
 
