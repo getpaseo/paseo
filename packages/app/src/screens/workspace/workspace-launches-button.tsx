@@ -1,27 +1,21 @@
 import { useCallback, useMemo, type ReactElement } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
-import { ChevronDown, Globe, Play, Square, SquareTerminal } from "lucide-react-native";
+import { Globe, Play, Square, SquareTerminal } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenuLabel } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
 import { openServiceUrl } from "@/utils/open-service-url";
 import type { Theme } from "@/styles/theme";
-import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
-import { extraMutedIconColorMapping } from "@/components/ui/icon-color";
 
 type WorkspaceLaunches = NonNullable<WorkspaceDescriptor["launches"]>;
 type LaunchActionIcon = "open" | "start" | "stop" | "terminal";
 
-interface WorkspaceLaunchesButtonProps {
+export interface WorkspaceLaunchesSectionProps {
   serverId: string;
   workspaceId: string;
   launches: WorkspaceLaunches;
@@ -29,19 +23,14 @@ interface WorkspaceLaunchesButtonProps {
   onLaunchTerminalStarted?: (terminalId: string) => void;
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
-  hideLabels?: boolean;
-  presentation?: "split" | "ghost";
 }
 
-const ThemedChevronDown = withUnistyles(ChevronDown);
 const ThemedGlobe = withUnistyles(Globe);
 const ThemedPlay = withUnistyles(Play);
 const ThemedSquare = withUnistyles(Square);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 
-const GHOST_TRIGGER_ICON_SIZE = 16;
 const playFillTransparent = { fill: "transparent" };
-const ghostPlayStroke = { strokeWidth: 1.5 };
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -265,7 +254,7 @@ function LaunchRow({
   );
 }
 
-export function WorkspaceLaunchesButton({
+export function WorkspaceLaunchesSection({
   serverId,
   workspaceId,
   launches,
@@ -273,9 +262,7 @@ export function WorkspaceLaunchesButton({
   onLaunchTerminalStarted,
   onViewTerminal,
   onOpenUrlInBrowserTab,
-  hideLabels,
-  presentation = "split",
-}: WorkspaceLaunchesButtonProps): ReactElement | null {
+}: WorkspaceLaunchesSectionProps): ReactElement | null {
   const { t } = useTranslation();
   const toast = useToast();
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
@@ -338,14 +325,6 @@ export function WorkspaceLaunchesButton({
     },
   });
 
-  const triggerStyle = useCallback(
-    ({ hovered, pressed, open }: { hovered: boolean; pressed: boolean; open: boolean }) => [
-      presentation === "ghost" ? styles.ghostButton : styles.splitButtonPrimary,
-      (hovered || pressed || open) &&
-        (presentation === "ghost" ? styles.ghostButtonHovered : styles.splitButtonPrimaryHovered),
-    ],
-    [presentation],
-  );
   const handleStart = useCallback(
     (launchName: string) => startMutation.mutate(launchName),
     [startMutation],
@@ -359,130 +338,34 @@ export function WorkspaceLaunchesButton({
     return null;
   }
 
-  const hasActiveLaunch = launches.some((launch) => launch.active);
-  const triggerIconSize = presentation === "ghost" ? GHOST_TRIGGER_ICON_SIZE : 14;
-  const triggerPlayProps =
-    presentation === "ghost" ? { ...playFillTransparent, ...ghostPlayStroke } : playFillTransparent;
-
   return (
-    <View style={styles.row}>
-      <View style={presentation === "ghost" ? styles.ghostButtonFrame : styles.splitButton}>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            testID="workspace-launches-button"
-            style={triggerStyle}
-            accessibilityRole="button"
-            accessibilityLabel={t("workspace.launches.accessibility.trigger")}
-          >
-            <View style={styles.splitButtonContent}>
-              <ThemedPlay
-                size={triggerIconSize}
-                uniProps={hasActiveLaunch ? blueColorMapping : mutedColorMapping}
-                {...triggerPlayProps}
-              />
-              {!hideLabels ? (
-                <Text style={styles.splitButtonText}>{t("workspace.launches.title")}</Text>
-              ) : null}
-              {presentation === "split" ? (
-                <ThemedChevronDown size={16} uniProps={extraMutedIconColorMapping} />
-              ) : null}
-            </View>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            minWidth={220}
-            maxWidth={320}
-            maxHeight={460}
-            scrollable
-            testID="workspace-launches-menu"
-          >
-            {portRange ? (
-              <View style={styles.portRangeHeader}>
-                <Text testID="workspace-launches-port-range" style={styles.portRangeText}>
-                  {portRange}
-                </Text>
-              </View>
-            ) : null}
-            {launches.map((launch) => (
-              <LaunchRow
-                key={launch.launchName}
-                launch={launch}
-                liveTerminalIdSet={liveTerminalIdSet}
-                isStartPending={startMutation.isPending}
-                isStopPending={stopMutation.isPending}
-                onStart={handleStart}
-                onStop={handleStop}
-                onViewTerminal={onViewTerminal}
-                onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
-              />
-            ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </View>
+    <View testID="workspace-launches-section">
+      <DropdownMenuLabel>{t("workspace.launches.title")}</DropdownMenuLabel>
+      {portRange ? (
+        <View style={styles.portRangeHeader}>
+          <Text testID="workspace-launches-port-range" style={styles.portRangeText}>
+            {portRange}
+          </Text>
+        </View>
+      ) : null}
+      {launches.map((launch) => (
+        <LaunchRow
+          key={launch.launchName}
+          launch={launch}
+          liveTerminalIdSet={liveTerminalIdSet}
+          isStartPending={startMutation.isPending}
+          isStopPending={stopMutation.isPending}
+          onStart={handleStart}
+          onStop={handleStop}
+          onViewTerminal={onViewTerminal}
+          onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
+        />
+      ))}
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
-  row: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    flexShrink: 0,
-  },
-  splitButton: {
-    height: {
-      xs: buttonControlHeight.xs,
-      md: HEADER_CONTROL_HEIGHT,
-    },
-    flexDirection: "row",
-    alignItems: "stretch",
-    borderRadius: theme.borderRadius.md,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.borderAccent,
-    overflow: "hidden",
-  },
-  ghostButtonFrame: {
-    flexDirection: "row",
-    alignItems: "stretch",
-  },
-  ghostButton: {
-    width: theme.spacing[8],
-    height: theme.spacing[8],
-    padding: 0,
-    borderRadius: theme.borderRadius.lg,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  ghostButtonHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  splitButtonPrimary: {
-    paddingHorizontal: {
-      xs: theme.spacing[3],
-      md: theme.spacing[2],
-    },
-    justifyContent: "center",
-  },
-  splitButtonPrimaryHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  splitButtonText: {
-    fontSize: theme.fontSize.base,
-    lineHeight: theme.fontSize.base * 1.5,
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.normal,
-  },
-  splitButtonContent: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: {
-      xs: theme.spacing[1.5],
-      md: theme.spacing[1],
-    },
-    minHeight: theme.fontSize.base * 1.5,
-  },
   launchHeader: {
     flexDirection: "row",
     alignItems: "center",

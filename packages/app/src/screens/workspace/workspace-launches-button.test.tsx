@@ -8,7 +8,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { WorkspaceLaunchPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
-import { WorkspaceLaunchesButton } from "@/screens/workspace/workspace-launches-button";
+import { WorkspaceLaunchesSection } from "@/screens/workspace/workspace-launches-button";
 
 void testI18n;
 
@@ -105,25 +105,7 @@ vi.mock("@/utils/open-service-url", () => ({
 }));
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuContent: ({ children, testID }: { children: React.ReactNode; testID?: string }) => (
-    <div data-testid={testID}>{children}</div>
-  ),
-  DropdownMenuTrigger: ({
-    children,
-    testID,
-  }: {
-    children:
-      | React.ReactNode
-      | ((state: { hovered: boolean; pressed: boolean; open: boolean }) => React.ReactNode);
-    testID?: string;
-  }) => (
-    <button type="button" data-testid={testID}>
-      {typeof children === "function"
-        ? children({ hovered: false, pressed: false, open: true })
-        : children}
-    </button>
-  ),
+  DropdownMenuLabel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 vi.mock("@/components/ui/tooltip", () => ({
@@ -177,7 +159,7 @@ function renderLaunches(launches: WorkspaceLaunchPayload[]) {
   act(() => {
     root.render(
       <QueryClientProvider client={queryClient}>
-        <WorkspaceLaunchesButton
+        <WorkspaceLaunchesSection
           serverId="test-server"
           workspaceId="workspace-1"
           launches={launches}
@@ -194,7 +176,7 @@ function renderLaunches(launches: WorkspaceLaunchPayload[]) {
   };
 }
 
-describe("WorkspaceLaunchesButton", () => {
+describe("WorkspaceLaunchesSection", () => {
   let unmount: (() => void) | null = null;
 
   beforeEach(() => {
