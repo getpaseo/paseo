@@ -57,13 +57,9 @@ export async function createIdleAgent(
   input: { cwd: string; workspaceId: string; title: string },
 ): Promise<ArchiveTabAgent> {
   const created = await client.createAgent({
-    provider: "opencode",
-    model: "opencode/gpt-5-nano",
-    // OpenCode has no "bypassPermissions" mode (that's Claude's). Use build with
-    // auto_accept for unattended full access — mode validation now rejects modes
-    // the provider doesn't define.
-    modeId: "build",
-    featureValues: { auto_accept: true },
+    provider: "mock",
+    model: "e2e-fast-stream",
+    modeId: "load-test",
     cwd: input.cwd,
     workspaceId: input.workspaceId,
     title: input.title,

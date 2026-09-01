@@ -180,6 +180,7 @@ test.describe("Workspace navigation regression", () => {
       await expectWorkspaceTabVisible(page, agent.id);
 
       await daemonGate.drop();
+      await daemonGate.waitForBlockedConnection();
       await expectReconnectingToastVisible(page);
       await expectWorkspaceHeader(page, {
         title: workspace.workspaceName,

@@ -13,7 +13,6 @@ import {
   expectTurnCopyButton,
 } from "../support/helpers/agent-stream";
 import {
-  expectReconnectingToastDebounced,
   expectReconnectingToastGone,
   expectReconnectingToastVisible,
 } from "../support/helpers/workspace-ui";
@@ -181,7 +180,7 @@ test.describe("Viewed agent timelines", () => {
         "true",
       );
       await gate.drop();
-      await expectReconnectingToastDebounced(page);
+      await gate.waitForBlockedConnection();
       await expectReconnectingToastVisible(page);
       await commitMessage(scenario, scenario.firstAgentId, "Committed while the chat reconnects.");
       await expect(
@@ -209,6 +208,7 @@ test.describe("Viewed agent timelines", () => {
       await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeVisible();
       await selectAgent(page, "First viewed chat");
       await gate.drop();
+      await gate.waitForBlockedConnection();
       await expectReconnectingToastVisible(page);
 
       await selectAgent(page, "Second viewed chat");

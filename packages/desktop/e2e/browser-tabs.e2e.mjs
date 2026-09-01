@@ -232,6 +232,20 @@ async function callBrowserTool(client, name, args = {}) {
   return mcpPayload(await client.callTool({ name, args }), name);
 }
 
+async function callBrowserToolUntilReady(client, name, args = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await client.callTool({ name, args });
+    const payload = result.structuredContent;
+    if (payload?.ok === true) return payload.result;
+    if (payload?.ok !== false || payload.error?.retryable !== true) {
+      return mcpPayload(result, name);
+    }
+    await delay(100);
+  }
+  throw new Error(`${name} remained unavailable for ${timeoutMs}ms`);
+}
+
 async function waitForGuestSelector(client, browserId) {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
@@ -568,7 +582,7 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
   await page.waitForTimeout(500);
   try {
-    await callBrowserTool(client, "browser_screenshot", { browserId });
+    await callBrowserToolUntilReady(client, "browser_screenshot", { browserId });
   } catch (error) {
     failures.push(`inactive browser remains captureable: ${String(error)}`);
   }

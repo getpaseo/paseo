@@ -1,4 +1,4 @@
-import { constants, promises as fs, type BigIntStats } from "fs";
+import { constants, promises as fs, type BigIntStats, type Stats } from "fs";
 import type { FileHandle } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
@@ -707,11 +707,10 @@ export async function renameExplorerEntry({
       }
       throw error;
     });
-    if (
-      targetStats &&
-      (targetStats.dev !== sourceStats.dev || targetStats.ino !== sourceStats.ino)
-    ) {
-      return { status: "error", error: `"${trimmedName}" already exists` };
+    if (targetStats) {
+      if (!(await isCaseOnlyRename(source, targetPath, sourceStats, targetStats))) {
+        return { status: "error", error: `"${trimmedName}" already exists` };
+      }
     }
 
     const sourcePath = normalizeRelativePath({ root, targetPath: source.requestedPath });
@@ -780,6 +779,25 @@ function isEntryExistsError(error: unknown): boolean {
     "code" in error &&
     (error as NodeJS.ErrnoException).code === "EEXIST"
   );
+}
+
+async function isCaseOnlyRename(
+  source: ScopedPath,
+  targetPath: string,
+  sourceStats: Stats,
+  targetStats: Stats,
+): Promise<boolean> {
+  const hasStableFileIds =
+    sourceStats.dev !== 0 ||
+    sourceStats.ino !== 0 ||
+    targetStats.dev !== 0 ||
+    targetStats.ino !== 0;
+  const isSameEntry = hasStableFileIds
+    ? targetStats.dev === sourceStats.dev && targetStats.ino === sourceStats.ino
+    : !sourceStats.isSymbolicLink() &&
+      !targetStats.isSymbolicLink() &&
+      (await fs.realpath(targetPath)) === source.resolvedPath;
+  return isSameEntry && source.requestedPath.toLowerCase() === targetPath.toLowerCase();
 }
 
 async function resolveScopedPath({
