@@ -235,7 +235,7 @@ describe("supervisor durable logging", () => {
       process.kill(descendantPid, "SIGKILL");
     }
 
-    expect(result.stdout).toContain("GRACEFUL_CLEANUP_RAN");
+    expect.soft(result.stdout).toContain("GRACEFUL_CLEANUP_RAN");
     expect(descendantSurvived).toBe(false);
   });
 
