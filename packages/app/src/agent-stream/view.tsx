@@ -50,7 +50,8 @@ import type {
   AgentPermissionResponse,
 } from "@getpaseo/protocol/agent-types";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
-import { useSessionStore } from "@/stores/session-store";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { useAgentStreamView, useServerFeature } from "@/stores/session-store-hooks";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { useFileExplorerActions } from "@/hooks/use-file-explorer-actions";
 import { useLoadOlderAgentHistory } from "@/hooks/use-load-older-agent-history";
@@ -71,7 +72,7 @@ import { resolveStreamRenderStrategy } from "./strategy-resolver";
 import { type StreamSegmentRenderers, type StreamViewportHandle } from "./strategy";
 import { ChatOutlineRail } from "@/agent-stream/chat-outline/rail";
 import { useChatOutline } from "@/agent-stream/chat-outline/use-chat-outline";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { loadAgentTimelineWindow } from "@/timeline/agent-timeline-service";
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import {
   CompletedTurnFooterRow,
@@ -378,26 +379,18 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const resolvedServerId = serverId ?? context.serverId ?? "";
     const transformTimelineItem = useInstalledTimelineTransform(resolvedServerId);
 
-    const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
-    const sessionStreamHead = useSessionStore((state) =>
-      state.sessions[resolvedServerId]?.agentStreamHead?.get(agentId),
-    );
+    const client = useHostRuntimeClient(resolvedServerId);
+    const sessionStream = useAgentStreamView(resolvedServerId, agentId);
+    const sessionStreamHead = sessionStream.head;
     const streamHead = providedStreamHead ?? sessionStreamHead;
     const forkAgent = useForkAgent({ serverId: resolvedServerId, toast, readOnly });
-    const supportsAgentForkContextCursor = useSessionStore(
-      (state) =>
-        state.sessions[resolvedServerId]?.serverInfo?.features?.agentForkContextCursor === true,
+    const supportsAgentForkContextCursor = useServerFeature(
+      resolvedServerId,
+      "agentForkContextCursor",
     );
-    const supportsChatOutline = useSessionStore(
-      (state) =>
-        state.sessions[resolvedServerId]?.serverInfo?.features?.agentTimelinePromptIndex === true,
-    );
-    const timelineEpoch = useSessionStore(
-      (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,
-    );
-    const isTimelineDetached = useSessionStore(
-      (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
-    );
+    const supportsChatOutline = useServerFeature(resolvedServerId, "agentTimelinePromptIndex");
+    const timelineEpoch = sessionStream.timelineEpoch;
+    const isTimelineDetached = sessionStream.hasNewerTimeline;
 
     const workspaceRoot = context.cwd?.trim() || "";
     const { requestDirectoryListing } = useFileExplorerActions({
@@ -658,7 +651,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       }
       void returnToTimelineTail({
         fetchTail: () =>
-          getHostRuntimeStore().fetchAgentTimeline(resolvedServerId, agentId, {
+          loadAgentTimelineWindow(resolvedServerId, agentId, {
             ...planTimelineTailFetch(),
           }),
         scrollToBottom: () => viewportRef.current?.scrollToBottom("jump-to-bottom"),

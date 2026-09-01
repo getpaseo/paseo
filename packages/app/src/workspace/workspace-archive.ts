@@ -2,7 +2,12 @@ import {
   clearWorkspaceArchivePending,
   markWorkspaceArchivePending,
 } from "@/contexts/session-workspace-upserts";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import type { WorkspaceDescriptor } from "@/stores/session-store-hooks";
+import {
+  acceptWorkspaceSnapshots,
+  getWorkspaceDirectorySnapshot,
+  removeWorkspaceSnapshot,
+} from "@/runtime/session-data";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 import { i18n } from "@/i18n/i18next";
 
@@ -40,7 +45,7 @@ function isWorkspaceArchiveFailure(error: unknown): error is WorkspaceArchiveFai
 function hideWorkspaceOptimistically(
   workspace: WorkspaceArchiveTarget,
 ): OptimisticWorkspaceArchiveSnapshot {
-  const workspaces = useSessionStore.getState().sessions[workspace.serverId]?.workspaces;
+  const workspaces = getWorkspaceDirectorySnapshot(workspace.serverId).workspaces;
   const workspaceKey = resolveWorkspaceMapKeyByIdentity({
     workspaces,
     workspaceId: workspace.workspaceId,
@@ -50,7 +55,7 @@ function hideWorkspaceOptimistically(
     serverId: workspace.serverId,
     workspaceId: workspace.workspaceId,
   });
-  useSessionStore.getState().removeWorkspace(workspace.serverId, workspace.workspaceId);
+  removeWorkspaceSnapshot(workspace.serverId, workspace.workspaceId);
   return { workspace: snapshot };
 }
 
@@ -64,7 +69,7 @@ function restoreOptimisticallyHiddenWorkspace(input: {
     workspaceId: input.workspaceId,
   });
   if (input.snapshot.workspace) {
-    useSessionStore.getState().mergeWorkspaces(input.serverId, [input.snapshot.workspace]);
+    acceptWorkspaceSnapshots(input.serverId, [input.snapshot.workspace]);
   }
 }
 

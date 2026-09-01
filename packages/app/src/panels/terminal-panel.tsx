@@ -12,8 +12,8 @@ import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { queryClient } from "@/data/query-client";
 import { buildTerminalsQueryKey } from "@/screens/workspace/terminals/state";
 import { usePanelStore } from "@/stores/panel-store";
-import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceDirectory, useWorkspaceFields } from "@/stores/session-store-hooks";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 
 type ListTerminalsPayload = ListTerminalsResponse["payload"];
 
@@ -37,7 +37,7 @@ function useTerminalPanelDescriptor(
   context: { serverId: string; workspaceId: string },
 ): PanelDescriptor {
   const { t } = useTranslation();
-  const client = useSessionStore((state) => state.sessions[context.serverId]?.client ?? null);
+  const client = useHostRuntimeClient(context.serverId);
   const workspaceDirectory = useWorkspaceDirectory(context.serverId, context.workspaceId);
   const terminalsQuery = useQuery(
     {
@@ -78,9 +78,9 @@ function useTerminalPanelDescriptor(
 function TerminalPanel() {
   const { serverId, workspaceId, target, openFileInWorkspace } = usePaneContext();
   const { isWorkspaceFocused, isPaneFocused } = usePaneFocus();
-  const workspaceFields = useWorkspaceFields(serverId, workspaceId, (w) => ({
-    workspaceDirectory: w.workspaceDirectory,
-    isGitCheckout: w.projectKind === "git",
+  const workspaceFields = useWorkspaceFields(serverId, workspaceId, (workspace) => ({
+    workspaceDirectory: workspace.workspaceDirectory,
+    isGitCheckout: workspace.projectKind === "git",
   }));
   const workspaceDirectory = workspaceFields?.workspaceDirectory || null;
   const isGitCheckout = workspaceFields?.isGitCheckout ?? false;

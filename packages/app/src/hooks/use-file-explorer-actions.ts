@@ -1,10 +1,8 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  useSessionStore,
-  type AgentFileExplorerState,
-  type ExplorerDirectory,
-} from "@/stores/session-store";
+import { type AgentFileExplorerState, type ExplorerDirectory } from "@/stores/session-store-hooks";
+import { publishFileExplorer as setFileExplorer } from "@/runtime/session-data";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
 import { parentExplorerPath } from "@/utils/explorer-paths";
 
@@ -59,8 +57,7 @@ export function buildWorkspaceExplorerStateKey(scope: FileExplorerWorkspaceScope
 export function useFileExplorerActions(params: { serverId: string } & FileExplorerWorkspaceScope) {
   const { t } = useTranslation();
   const { serverId, workspaceId, workspaceRoot } = params;
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
-  const setFileExplorer = useSessionStore((state) => state.setFileExplorer);
+  const client = useHostRuntimeClient(serverId);
   const normalizedWorkspaceRoot = useMemo(
     () => normalizeWorkspaceValue(workspaceRoot),
     [workspaceRoot],
@@ -86,7 +83,7 @@ export function useFileExplorerActions(params: { serverId: string } & FileExplor
         return next;
       });
     },
-    [serverId, setFileExplorer, workspaceStateKey],
+    [serverId, workspaceStateKey],
   );
 
   const requestDirectoryListing = useCallback(

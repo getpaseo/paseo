@@ -7,17 +7,13 @@ import {
   deriveAgentStateBucket,
   getWorkspaceStateBucketPriority,
 } from "@getpaseo/protocol/agent-state-bucket";
-import type {
-  Agent,
-  DaemonServerInfo,
-  ProjectDescriptor,
-  WorkspaceDescriptor,
-} from "@/stores/session-store";
-import { useSessionStore } from "@/stores/session-store";
+import type { Agent, DaemonServerInfo, WorkspaceDescriptor } from "@/stores/session-store-hooks";
 import {
-  buildAgentDirectoryState,
-  replaceFetchedAgentDirectory,
-} from "@/utils/agent-directory-sync";
+  getAgentSnapshot,
+  getWorkspaceDirectorySnapshot,
+  readServerInfo,
+} from "@/runtime/session-data";
+import { buildAgentDirectoryState } from "@/utils/agent-directory-sync";
 import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 export interface LegacyDaemonWorkspaceSnapshot {
@@ -25,21 +21,9 @@ export interface LegacyDaemonWorkspaceSnapshot {
   workspaces: Map<string, WorkspaceDescriptor>;
 }
 
-export interface LegacyDaemonWorkspaceFetchResult extends LegacyDaemonWorkspaceSnapshot {
-  subscriptionId: string | null;
-}
-
 interface LegacyDaemonWorkspaceDirectoryReadResult {
   entries: FetchAgentsEntry[];
   subscriptionId: string | null;
-}
-
-interface LegacyDaemonWorkspaceBackfillInput {
-  client: Pick<DaemonClient, "fetchAgents">;
-  serverId: string;
-  workspaces: ReadonlyMap<unknown, unknown>;
-  projects: ReadonlyMap<unknown, unknown>;
-  isCancelled?: () => boolean;
 }
 
 const LEGACY_AGENT_DIRECTORY_SORT: NonNullable<FetchAgentsOptions["sort"]> = [
@@ -80,50 +64,6 @@ function shouldBackfillLegacyDaemonWorkspaceDirectory(
   serverInfo: DaemonServerInfo | null | undefined,
 ): boolean {
   return serverInfo?.features?.workspaceMultiplicity !== true;
-}
-
-export async function fetchLegacyDaemonWorkspaceDirectory(input: {
-  client: Pick<DaemonClient, "fetchAgents">;
-  serverId: string;
-  subscribe?: FetchAgentsOptions["subscribe"];
-  page?: FetchAgentsOptions["page"];
-}): Promise<LegacyDaemonWorkspaceFetchResult> {
-  const directory = await readLegacyDaemonWorkspaceDirectory(input);
-  if (!directory) {
-    throw new Error("Legacy daemon workspace directory fetch was cancelled.");
-  }
-  const snapshot = replaceLegacyDaemonWorkspaceDirectory({
-    serverId: input.serverId,
-    entries: directory.entries,
-  });
-  return { ...snapshot, subscriptionId: directory.subscriptionId };
-}
-
-export async function backfillLegacyDaemonWorkspaceDirectoryIfEmpty(
-  input: LegacyDaemonWorkspaceBackfillInput,
-): Promise<boolean> {
-  if (input.workspaces.size > 0 || input.projects.size > 0) {
-    return false;
-  }
-  const serverInfo = useSessionStore.getState().sessions[input.serverId]?.serverInfo;
-  if (!shouldBackfillLegacyDaemonWorkspaceDirectory(serverInfo)) {
-    return false;
-  }
-  if (input.isCancelled?.()) {
-    return true;
-  }
-  const directory = await readLegacyDaemonWorkspaceDirectory({
-    client: input.client,
-    isCancelled: input.isCancelled,
-  });
-  if (!directory || input.isCancelled?.()) {
-    return true;
-  }
-  replaceLegacyDaemonWorkspaceDirectory({
-    serverId: input.serverId,
-    entries: directory.entries,
-  });
-  return true;
 }
 
 export async function readLegacyDaemonWorkspaceDirectory(input: {
@@ -176,16 +116,15 @@ export function applyLegacyDaemonWorkspaceOwnership(input: {
     return input.agent;
   }
 
-  const session = useSessionStore.getState().sessions[input.serverId];
-  if (!shouldBackfillLegacyDaemonWorkspaceDirectory(session?.serverInfo)) {
+  if (!shouldBackfillLegacyDaemonWorkspaceDirectory(readServerInfo(input.serverId))) {
     return input.agent;
   }
 
-  const existingAgent =
-    session?.agents.get(input.agent.id) ?? session?.agentDetails.get(input.agent.id) ?? null;
+  const existingAgent = getAgentSnapshot(input.serverId, input.agent.id);
+  const workspaces = getWorkspaceDirectorySnapshot(input.serverId).workspaces;
   const workspaceId =
     existingAgent?.workspaceId ??
-    resolveLegacyWorkspaceIdFromAgent(input.agent, session?.workspaces) ??
+    resolveLegacyWorkspaceIdFromAgent(input.agent, workspaces) ??
     null;
   if (!workspaceId) {
     return input.agent;
@@ -195,37 +134,6 @@ export function applyLegacyDaemonWorkspaceOwnership(input: {
     ...input.agent,
     workspaceId,
     projectPlacement: input.agent.projectPlacement ?? existingAgent?.projectPlacement,
-  };
-}
-
-export function replaceLegacyDaemonWorkspaceDirectory(input: {
-  serverId: string;
-  entries: FetchAgentsEntry[];
-}): LegacyDaemonWorkspaceSnapshot {
-  const entries = stampLegacyWorkspaceIds(input.entries);
-  const { agents } = replaceFetchedAgentDirectory({
-    serverId: input.serverId,
-    entries,
-  });
-  const workspaces = buildLegacyWorkspaces(entries);
-  const store = useSessionStore.getState();
-  store.setWorkspaces(input.serverId, workspaces);
-  store.setProjects(
-    input.serverId,
-    Array.from(workspaces.values(), legacyProjectDescriptorFromWorkspace),
-  );
-  store.setHasHydratedWorkspaces(input.serverId, true);
-  return { agents, workspaces };
-}
-
-function legacyProjectDescriptorFromWorkspace(workspace: WorkspaceDescriptor): ProjectDescriptor {
-  return {
-    projectId: workspace.projectId,
-    projectKey: null,
-    projectDisplayName: workspace.projectDisplayName,
-    projectCustomName: workspace.projectCustomName ?? null,
-    projectRootPath: workspace.projectRootPath,
-    projectKind: workspace.projectKind,
   };
 }
 
@@ -369,7 +277,7 @@ function resolveLegacyWorkspaceId(entry: FetchAgentsEntry): string {
 
 function resolveLegacyWorkspaceIdFromAgent(
   agent: Agent,
-  workspaces: Map<string, WorkspaceDescriptor> | undefined,
+  workspaces: ReadonlyMap<string, WorkspaceDescriptor> | undefined,
 ): string | null {
   const cwd = normalizeWorkspacePath(agent.cwd);
   if (!cwd) {

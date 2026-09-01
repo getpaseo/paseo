@@ -1,11 +1,18 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceDirectoryServerIds } from "@/stores/session-store-hooks";
+import {
+  useWorkspaceDirectories,
+  useWorkspaceDirectoryServerIds,
+} from "@/stores/session-store-hooks";
 import { workspaceEqualityFns } from "@/stores/session-store-hooks/selectors";
 import { useHostProjects } from "@/projects/host-projects";
-import { getHostRuntimeStore, useHostRegistryLoaded, useHosts } from "@/runtime/host-runtime";
+import {
+  acquireDirectoryDemand,
+  refreshHostDirectories,
+  useHostRegistryLoaded,
+  useHosts,
+} from "@/runtime/host-runtime";
 import { useSidebarOrderStore } from "@/stores/sidebar-order-store";
 import { useSidebarViewStore } from "@/stores/sidebar-view-store";
 import {
@@ -64,19 +71,30 @@ export function useSidebarProjectStatusBucket(input: {
     workspaceEqualityFns.deep,
   );
 
-  const selector = useCallback(
-    (state: { sessions: Record<string, ProjectStatusSession | undefined> }) => {
-      if (!enabled) return null;
-      return deriveProjectStatusBucket({
-        workspaces,
-        sessions: state.sessions,
-        pendingCreateAttempts,
-      });
-    },
-    [enabled, pendingCreateAttempts, workspaces],
+  const serverIds = useMemo(
+    () => Array.from(new Set(workspaces.map((workspace) => workspace.serverId))),
+    [workspaces],
   );
-
-  return useStoreWithEqualityFn(useSessionStore, selector, Object.is);
+  return useWorkspaceDirectories(
+    serverIds,
+    (directories) => {
+      if (!enabled) return null;
+      const sessions = Object.fromEntries(
+        serverIds.map((serverId) => {
+          const directory = directories.get(serverId);
+          return [
+            serverId,
+            {
+              workspaces: directory?.workspaces ?? new Map(),
+              workspaceAgentActivity: directory?.workspaceAgentActivity ?? new Map(),
+            } satisfies ProjectStatusSession,
+          ];
+        }),
+      );
+      return deriveProjectStatusBucket({ workspaces, sessions, pendingCreateAttempts });
+    },
+    Object.is,
+  );
 }
 
 const EMPTY_ORDER: string[] = [];
@@ -98,7 +116,6 @@ export function useSidebarWorkspacesList(options?: {
   hostFilters?: readonly string[];
   enabled?: boolean;
 }): SidebarWorkspacesListResult {
-  const runtime = getHostRuntimeStore();
   const allHosts = useHosts();
   const hostRegistryLoaded = useHostRegistryLoaded();
   const allServerIds = useMemo(() => allHosts.map((h) => h.serverId), [allHosts]);
@@ -123,9 +140,9 @@ export function useSidebarWorkspacesList(options?: {
   }, [allServerIds, hostFilters, hostRegistryLoaded]);
   useEffect(() => {
     if (!isActive) return;
-    const releases = serverIds.map((serverId) => runtime.acquireDirectoryDemand(serverId));
+    const releases = serverIds.map(acquireDirectoryDemand);
     return () => releases.forEach((release) => release());
-  }, [isActive, runtime, serverIds]);
+  }, [isActive, serverIds]);
 
   useEffect(() => {
     if (!hostRegistryLoaded) {
@@ -176,14 +193,14 @@ export function useSidebarWorkspacesList(options?: {
   const refreshAll = useCallback(() => {
     if (!isActive) return;
     for (const serverId of serverIds) {
-      void runtime.refreshDirectories(serverId).catch((error) => {
+      void refreshHostDirectories(serverId).catch((error) => {
         console.error("[WorkspaceFetch][sidebar-refresh] failed", {
           serverId,
           error,
         });
       });
     }
-  }, [isActive, runtime, serverIds]);
+  }, [isActive, serverIds]);
 
   const loadingState = deriveSidebarLoadingState({
     isActive,

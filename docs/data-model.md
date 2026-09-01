@@ -574,8 +574,8 @@ Right-sidebar client state splits on whether it is determined by the directory o
 
 The durable client replica uses IndexedDB on browser/Electron and expo-sqlite on native. Rows use the
 compound key `(serverId, kind, id)`; kinds are `agent`, `workspace`, `project`, `timeline`, and
-`checkpoint`. Directory entities have individual rows. Timeline and checkpoint use the singleton id
-and have at most one row per host.
+`checkpoint`. Directory entities have individual rows, timelines use the agent id, and the checkpoint
+uses the singleton id.
 
 The store is a typed persistence boundary. It returns values to directory and timeline owners and
 accepts their explicit commits; it never reads or writes UI state. Reads are scoped to the requested
@@ -584,6 +584,10 @@ directory scan. One invalid row is deleted and returned as a miss without affect
 An invalid directory row and its affected checkpoint cursor are repaired in one transaction, so a
 later launch cannot accept a checkpoint for a partial baseline. Directory changes and their
 checkpoint are also applied in one transaction.
+
+Owners submit keyed values and tombstones, not directory snapshots. The cache coalesces each key while
+the value remains structured, then serializes only the surviving changed rows during the deferred
+write. App backgrounding flushes immediately; the ordinary write window is one second.
 
 The cache is capped at 32 MiB and evicts whole hosts in least-recently-written order. Budget
 bookkeeping may scan opaque row sizes during a deferred write, never during host registry startup or

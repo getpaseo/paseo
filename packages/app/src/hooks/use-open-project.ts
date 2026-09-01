@@ -1,6 +1,10 @@
 import { useCallback } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
+import { useServerFeature } from "@/stores/session-store-hooks";
+import {
+  acceptProjectSnapshot as upsertProject,
+  publishWorkspaceHydration as setHasHydratedWorkspaces,
+} from "@/runtime/session-data";
 import {
   cloneGithubProjectDirectly,
   openProjectDirectly,
@@ -14,14 +18,12 @@ export function useOpenProject(
   const normalizedServerId = serverId?.trim() ?? "";
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
-  const canAddProject = useSessionStore((state) =>
-    normalizedServerId
-      ? state.sessions[normalizedServerId]?.serverInfo?.features?.projectAdd === true &&
-        state.sessions[normalizedServerId]?.serverInfo?.features?.stableProjectIdentity === true
-      : false,
+  const supportsProjectAdd = useServerFeature(normalizedServerId, "projectAdd");
+  const supportsStableProjectIdentity = useServerFeature(
+    normalizedServerId,
+    "stableProjectIdentity",
   );
-  const upsertProject = useSessionStore((state) => state.upsertProject);
-  const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
+  const canAddProject = supportsProjectAdd && supportsStableProjectIdentity;
 
   return useCallback(
     async (path: string) => {
@@ -36,14 +38,7 @@ export function useOpenProject(
       });
       return result;
     },
-    [
-      upsertProject,
-      canAddProject,
-      client,
-      isConnected,
-      normalizedServerId,
-      setHasHydratedWorkspaces,
-    ],
+    [canAddProject, client, isConnected, normalizedServerId],
   );
 }
 
@@ -57,8 +52,6 @@ export function useCloneGithubProject(
   const normalizedServerId = serverId?.trim() ?? "";
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
-  const upsertProject = useSessionStore((state) => state.upsertProject);
-  const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
 
   return useCallback(
     async (repo: string, targetDirectory: string, cloneProtocol?: ProjectGithubCloneProtocol) => {
@@ -73,6 +66,6 @@ export function useCloneGithubProject(
         setHasHydratedWorkspaces,
       });
     },
-    [client, isConnected, normalizedServerId, setHasHydratedWorkspaces, upsertProject],
+    [client, isConnected, normalizedServerId],
   );
 }

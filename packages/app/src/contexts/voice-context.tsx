@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
-import { useSessionStore } from "@/stores/session-store";
+import { readServerInfo } from "@/runtime/session-data";
 import { createAudioEngine } from "@/voice/audio-engine";
 import type { AudioEngine } from "@/voice/audio-engine-types";
 import {
@@ -137,8 +137,7 @@ export function VoiceProvider({ children }: VoiceProviderProps) {
 
     runtime = createVoiceRuntime({
       engine,
-      getServerInfo: (serverId) =>
-        useSessionStore.getState().getSession(serverId)?.serverInfo ?? null,
+      getServerInfo: readServerInfo,
       activateKeepAwake: async (tag) => {
         await activateKeepAwakeAsync(tag);
       },

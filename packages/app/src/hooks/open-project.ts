@@ -4,7 +4,7 @@ import type {
   ProjectAddResponse,
   WorkspaceProjectDescriptorPayload,
 } from "@getpaseo/protocol/messages";
-import { normalizeProjectDescriptor, type ProjectDescriptor } from "@/stores/session-store";
+import { normalizeProjectDescriptor, type ProjectDescriptor } from "@/stores/session-store-hooks";
 
 type OpenProjectPayload = ProjectAddResponse["payload"];
 type OpenProjectErrorCode = NonNullable<OpenProjectPayload["errorCode"]>;

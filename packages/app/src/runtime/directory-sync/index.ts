@@ -36,7 +36,9 @@ import type {
   CachedWorkspace,
   DirectoryCheckpoint,
   DirectoryCursor,
-} from "@/runtime/replica-cache";
+  DirectoryReplicaMutation,
+} from "@/runtime/client-replica";
+import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
 
 const PAGE_LIMIT = 200;
 const AGENT_SORT: NonNullable<FetchAgentsOptions["sort"]> = [
@@ -69,6 +71,36 @@ interface AgentPageInfo {
   afterCursor?: string | null;
 }
 
+function applyWorkspaceSnapshotPage(
+  snapshot: WorkspaceDirectorySnapshot,
+  payload: Awaited<ReturnType<DaemonClient["fetchWorkspaces"]>>,
+  firstPage: boolean,
+): void {
+  if (firstPage && payload.sync?.mode !== "changes") snapshot.workspaces.clear();
+  if (firstPage) (snapshot.syncModes ??= {}).workspaces = payload.sync?.mode ?? "snapshot";
+  for (const entry of payload.entries) {
+    const workspace = normalizeWorkspaceDescriptor(entry);
+    snapshot.workspaces.set(workspace.id, workspace);
+    (snapshot.touchedWorkspaceIds ??= new Set()).add(workspace.id);
+    (snapshot.touchedProjectIds ??= new Set()).add(workspace.projectId);
+  }
+  for (const removal of payload.sync?.removals ?? []) {
+    snapshot.workspaces.delete(removal.id);
+    (snapshot.touchedWorkspaceIds ??= new Set()).add(removal.id);
+  }
+  if (payload.sync) {
+    (snapshot.syncCursors ??= {}).workspaces = {
+      generation: payload.sync.generation,
+      afterSeq: payload.sync.headSeq,
+    };
+  }
+  for (const entry of payload.emptyProjects ?? []) {
+    const project = normalizeProjectDescriptor(entry);
+    snapshot.projects.set(project.projectId, project);
+    (snapshot.touchedProjectIds ??= new Set()).add(project.projectId);
+  }
+}
+
 export interface DirectoryConnection {
   client: DaemonClient | null;
   status: "online" | "offline";
@@ -79,15 +111,12 @@ export interface DirectoryCheckpointStorage {
   readAgent(serverId: string, agentId: string): Promise<Agent | undefined>;
   readWorkspace(serverId: string, workspaceId: string): Promise<CachedWorkspace | undefined>;
   readDirectory(serverId: string): Promise<CachedDirectory>;
-  commitDirectory(
+  commitDirectoryMutations(
     serverId: string,
-    directory: {
-      agents: Map<string, Agent>;
-      workspaces: Map<string, WorkspaceDescriptor>;
-      projects: Map<string, ProjectDescriptor>;
-      checkpoint?: DirectoryCheckpoint;
-    },
+    mutations: readonly DirectoryReplicaMutation[],
+    checkpoint?: DirectoryCheckpoint,
   ): void;
+  replaceDirectoryBaseline?(serverId: string, directory: CachedDirectory): void;
 }
 
 export interface RefreshAgentDirectoryInput {
@@ -139,7 +168,9 @@ export class DirectorySync {
     },
     private readonly checkpoints?: DirectoryCheckpointStorage,
   ) {
-    this.agents = new AgentDirectoryReplica(serverId, callbacks.onAgentStoppedRunning);
+    const persist = (mutations: readonly DirectoryReplicaMutation[]) =>
+      this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
+    this.agents = new AgentDirectoryReplica(serverId, callbacks.onAgentStoppedRunning, persist);
     this.workspaces = new WorkspaceDirectoryReplica(serverId);
   }
 
@@ -170,7 +201,7 @@ export class DirectorySync {
         if (!recorded) {
           this.agents.applyDelta(message.payload);
           this.noteLiveCursor("agents", message.payload);
-          this.persistDirectory();
+          this.persistCheckpoint();
         }
       }),
       client.on("workspace_update", (message) => {
@@ -179,9 +210,9 @@ export class DirectorySync {
         this.workspaceRevision += 1;
         const recorded = this.workspaceTransactions.record(source, message.payload);
         if (!recorded) {
-          this.workspaces.applyDelta(message.payload);
+          this.applyWorkspaceDelta(message.payload);
           this.noteLiveCursor("workspaces", message.payload);
-          this.persistDirectory();
+          this.persistCheckpoint();
         }
       }),
       client.on("project.update", (message) => {
@@ -190,9 +221,9 @@ export class DirectorySync {
         this.workspaceRevision += 1;
         const recorded = this.workspaceTransactions.record(source, message.payload);
         if (!recorded) {
-          this.workspaces.applyDelta(message.payload);
+          this.applyWorkspaceDelta(message.payload);
           this.noteLiveCursor("projects", message.payload);
-          this.persistDirectory();
+          this.persistCheckpoint();
         }
       }),
       client.on("script_status_update", (message) => {
@@ -205,22 +236,22 @@ export class DirectorySync {
         };
         const recorded = this.workspaceTransactions.record(source, delta);
         if (!recorded) {
-          this.workspaces.applyDelta(delta);
-          this.persistDirectory();
+          this.applyWorkspaceDelta(delta);
+          this.persistCheckpoint();
         }
       }),
       client.on("agent_deleted", (message) => {
         if (message.type === "agent_deleted" && this.isCurrent(client, source)) {
           this.revision += 1;
           this.agents.remove(message.payload.agentId);
-          this.persistDirectory();
+          this.persistCheckpoint();
         }
       }),
       client.on("agent_archived", (message) => {
         if (message.type === "agent_archived" && this.isCurrent(client, source)) {
           this.revision += 1;
           this.agents.archive(message.payload.agentId, message.payload.archivedAt);
-          this.persistDirectory();
+          this.persistCheckpoint();
         }
       }),
     ];
@@ -352,30 +383,30 @@ export class DirectorySync {
     if (!checkpoints) return Promise.resolve();
     this.cacheLoad ??= (async () => {
       const revision = this.revision;
-      const initial = useSessionStore.getState().sessions[this.serverId];
-      if (!initial) return;
-      const initialAgents = initial.agents;
-      const initialWorkspaces = initial.workspaces;
-      const initialProjects = initial.projects;
-      const pristine =
-        initialAgents.size === 0 && initialWorkspaces.size === 0 && initialProjects.size === 0;
       const cached = await checkpoints.readDirectory(this.serverId);
-      if (this.cacheAccepted || !pristine || this.revision !== revision) return;
-      const session = useSessionStore.getState().sessions[this.serverId];
-      if (
-        !session ||
-        session.agents !== initialAgents ||
-        session.workspaces !== initialWorkspaces ||
-        session.projects !== initialProjects
-      ) {
-        return;
-      }
+      if (this.cacheAccepted || this.revision !== revision) return;
+      if (!useSessionStore.getState().sessions[this.serverId]) return;
       this.agents.commitCached(cached.agents);
       this.workspaces.commitCached(cached);
       this.cursors = cached.checkpoint ?? {};
       this.cacheAccepted = true;
     })();
     return this.cacheLoad;
+  }
+
+  restoreCachedDirectory(): Promise<void> {
+    return this.loadCachedDirectory();
+  }
+
+  applyAgentTurnLiveness(
+    agentId: string,
+    transition: TurnLivenessTransition | readonly TurnLivenessTransition[],
+  ): void {
+    this.agents.applyTurnLiveness(agentId, transition);
+  }
+
+  acceptAgent(agent: Agent): Agent {
+    return this.agents.accept(agent);
   }
 
   async fetchTimeline(
@@ -387,7 +418,7 @@ export class DirectorySync {
     const page = await fetchAgentTimelineOnce(client, agentId, request);
     if (page.agent && this.agents.submitTimelineAgent(token, page.agent)) {
       this.revision += 1;
-      this.persistDirectory();
+      this.persistCheckpoint();
     }
     return page;
   }
@@ -452,14 +483,25 @@ export class DirectorySync {
         throw new DirectoryRefreshSupersededError("agent completion was superseded");
       }
       if (completion.snapshot.legacy) {
-        const store = useSessionStore.getState();
         const workspaces = buildLegacyWorkspaces(completion.snapshot.entries);
-        store.setWorkspaces(this.serverId, workspaces);
-        store.setProjects(
-          this.serverId,
-          Array.from(workspaces.values(), legacyProjectDescriptorFromWorkspace),
+        const previous = this.readWorkspaceState();
+        this.workspaces.commitSnapshot(
+          {
+            workspaces,
+            projects: new Map(
+              Array.from(workspaces.values(), legacyProjectDescriptorFromWorkspace).map(
+                (project) => [project.projectId, project],
+              ),
+            ),
+          },
+          [],
         );
-        store.setHasHydratedWorkspaces(this.serverId, true);
+        const next = this.workspaces.snapshot();
+        this.persistWorkspaceChanges(
+          previous,
+          new Set([...previous.workspaces.keys(), ...next.workspaces.keys()]),
+          new Set([...previous.projects.keys(), ...next.projects.keys()]),
+        );
       }
       const deltas = completion.snapshot.legacy
         ? completion.deltas.map((delta) =>
@@ -471,7 +513,7 @@ export class DirectorySync {
       this.revision += 1;
       const agents = this.commitAgentSnapshot(completion.snapshot, deltas);
       this.persistAgentCursors(completion.snapshot, completion.deltas);
-      this.persistDirectory();
+      this.persistCheckpoint();
       this.callbacks.markAgentReady();
       return { agents, subscriptionId: completion.snapshot.subscriptionId };
     } catch (error) {
@@ -500,13 +542,16 @@ export class DirectorySync {
       workspaces: new Map(useSessionStore.getState().sessions[this.serverId]?.workspaces),
       projects: new Map(useSessionStore.getState().sessions[this.serverId]?.projects),
       syncCursors: {},
+      syncModes: {},
+      touchedWorkspaceIds: new Set(),
+      touchedProjectIds: new Set(),
     }));
     try {
       await this.waitForSessionMetadata(client, source);
       const serverInfo = useSessionStore.getState().sessions[this.serverId]?.serverInfo;
       if (serverInfo?.features?.workspaceMultiplicity !== true) {
         const deltas = this.workspaceTransactions.fail(transaction);
-        if (deltas) for (const delta of deltas) this.workspaces.applyDelta(delta);
+        if (deltas) for (const delta of deltas) this.applyWorkspaceDelta(delta);
         return;
       }
       const supportsProjectList = serverInfo.features?.projectList === true;
@@ -521,11 +566,15 @@ export class DirectorySync {
         input?.subscribe === true,
         supportsDirectorySync,
       );
-      if (!supportsProjectList) this.buildLegacyProjectSnapshot(transaction.snapshot);
+      if (!supportsProjectList) {
+        this.buildLegacyProjectSnapshot(transaction.snapshot);
+        (transaction.snapshot.syncModes ??= {}).projects =
+          transaction.snapshot.syncModes?.workspaces;
+      }
       this.completeWorkspaceRefresh(client, source, transaction);
     } catch (error) {
       const deltas = this.workspaceTransactions.fail(transaction);
-      if (deltas) for (const delta of deltas) this.workspaces.applyDelta(delta);
+      if (deltas) for (const delta of deltas) this.applyWorkspaceDelta(delta);
       throw error;
     }
   }
@@ -547,26 +596,7 @@ export class DirectorySync {
         ...(supportsDirectorySync ? { sync: this.readCursors().workspaces ?? {} } : {}),
       });
       this.assertWorkspaceTransactionCurrent(client, source, transaction);
-      if (cursor === null && payload.sync?.mode !== "changes") {
-        transaction.snapshot.workspaces.clear();
-      }
-      for (const entry of payload.entries) {
-        const workspace = normalizeWorkspaceDescriptor(entry);
-        transaction.snapshot.workspaces.set(workspace.id, workspace);
-      }
-      for (const removal of payload.sync?.removals ?? []) {
-        transaction.snapshot.workspaces.delete(removal.id);
-      }
-      if (payload.sync) {
-        (transaction.snapshot.syncCursors ??= {}).workspaces = {
-          generation: payload.sync.generation,
-          afterSeq: payload.sync.headSeq,
-        };
-      }
-      for (const entry of payload.emptyProjects ?? []) {
-        const project = normalizeProjectDescriptor(entry);
-        transaction.snapshot.projects.set(project.projectId, project);
-      }
+      applyWorkspaceSnapshotPage(transaction.snapshot, payload, cursor === null);
       if (!payload.pageInfo.hasMore || !payload.pageInfo.nextCursor) return;
       cursor = payload.pageInfo.nextCursor;
       subscribe = false;
@@ -587,6 +617,11 @@ export class DirectorySync {
       this.refreshAgents({ subscribe: {} }),
       this.refreshWorkspaces({ subscribe: true }),
     ]);
+    this.checkpoints?.replaceDirectoryBaseline?.(this.serverId, {
+      agents: this.agents.snapshot(),
+      ...this.workspaces.snapshot(),
+      checkpoint: this.cursors,
+    });
     if (this.getOnlineConnection()) await this.connectWorkspaceLabels();
   }
 
@@ -598,6 +633,39 @@ export class DirectorySync {
       client,
       supportsWorkspaceLabels: serverInfo?.features?.workspaceLabels === true,
     });
+  }
+
+  acceptWorkspaces(workspaces: readonly WorkspaceDescriptor[]): void {
+    this.checkpoints?.commitDirectoryMutations(
+      this.serverId,
+      this.workspaces.acceptWorkspaces(workspaces),
+    );
+  }
+
+  archiveAgent(agentId: string, archivedAt: string): void {
+    this.agents.archive(agentId, archivedAt);
+  }
+
+  removeAgent(agentId: string): void {
+    this.agents.remove(agentId);
+  }
+
+  acceptProject(project: ProjectDescriptor): void {
+    this.checkpoints?.commitDirectoryMutations(
+      this.serverId,
+      this.workspaces.acceptProject(project),
+    );
+  }
+
+  removeWorkspace(workspaceId: string): void {
+    this.checkpoints?.commitDirectoryMutations(
+      this.serverId,
+      this.workspaces.removeWorkspaceSnapshot(workspaceId),
+    );
+  }
+
+  markWorkspacesHydrated(hydrated: boolean): void {
+    useSessionStore.getState().setHasHydratedWorkspaces(this.serverId, hydrated);
   }
 
   private async fetchAgents(
@@ -709,12 +777,15 @@ export class DirectorySync {
     );
     this.assertWorkspaceTransactionCurrent(client, source, transaction);
     if (payload.sync?.mode !== "changes") transaction.snapshot.projects.clear();
+    (transaction.snapshot.syncModes ??= {}).projects = payload.sync?.mode ?? "snapshot";
     for (const entry of payload.projects) {
       const project = normalizeProjectDescriptor(entry);
       transaction.snapshot.projects.set(project.projectId, project);
+      (transaction.snapshot.touchedProjectIds ??= new Set()).add(project.projectId);
     }
     for (const removal of payload.sync?.removals ?? []) {
       transaction.snapshot.projects.delete(removal.id);
+      (transaction.snapshot.touchedProjectIds ??= new Set()).add(removal.id);
     }
     if (payload.sync) {
       (transaction.snapshot.syncCursors ??= {}).projects = {
@@ -738,7 +809,22 @@ export class DirectorySync {
     }
     this.revision += 1;
     this.workspaceRevision += 1;
-    this.workspaces.commitSnapshot(completion.snapshot, completion.deltas);
+    const previous = this.readWorkspaceState();
+    const deltaMutations = this.workspaces.commitSnapshot(completion.snapshot, completion.deltas);
+    const next = this.workspaces.snapshot();
+    const workspaceIds =
+      completion.snapshot.syncModes?.workspaces === "changes"
+        ? new Set(completion.snapshot.touchedWorkspaceIds)
+        : new Set([...previous.workspaces.keys(), ...next.workspaces.keys()]);
+    const projectIds =
+      completion.snapshot.syncModes?.projects === "changes"
+        ? new Set(completion.snapshot.touchedProjectIds)
+        : new Set([...previous.projects.keys(), ...next.projects.keys()]);
+    for (const mutation of deltaMutations) {
+      if (mutation.kind === "workspace") workspaceIds.add(mutation.id);
+      if (mutation.kind === "project") projectIds.add(mutation.id);
+    }
+    this.persistWorkspaceChanges(previous, workspaceIds, projectIds);
     for (const [entity, cursor] of Object.entries(completion.snapshot.syncCursors ?? {})) {
       if (cursor) this.writeCursor(entity as "projects" | "workspaces", cursor);
     }
@@ -747,19 +833,41 @@ export class DirectorySync {
       const entity = "projectId" in delta || "project" in delta ? "projects" : "workspaces";
       this.noteLiveCursor(entity, delta);
     }
-    this.persistDirectory();
+    this.persistCheckpoint();
   }
 
-  private persistDirectory(): void {
-    if (!this.checkpoints) return;
-    const session = useSessionStore.getState().sessions[this.serverId];
-    if (!session) return;
-    this.checkpoints.commitDirectory(this.serverId, {
-      agents: session.agents,
-      workspaces: session.workspaces,
-      projects: session.projects,
-      checkpoint: this.cursors,
-    });
+  private persistCheckpoint(): void {
+    this.checkpoints?.commitDirectoryMutations(this.serverId, [], this.cursors);
+  }
+
+  private readWorkspaceState(): WorkspaceDirectorySnapshot {
+    return this.workspaces.snapshot();
+  }
+
+  private applyWorkspaceDelta(delta: WorkspaceDirectoryDelta): void {
+    const mutations = this.workspaces.applyDelta(delta);
+    this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
+  }
+
+  private persistWorkspaceChanges(
+    previous: WorkspaceDirectorySnapshot,
+    workspaceIds: Set<string>,
+    projectIds: Set<string>,
+  ): void {
+    const next = this.workspaces.snapshot();
+    const mutations: DirectoryReplicaMutation[] = [];
+    for (const id of workspaceIds) {
+      const value = next.workspaces.get(id);
+      if (value) mutations.push({ kind: "workspace", type: "upsert", id, value });
+      else if (previous.workspaces.has(id))
+        mutations.push({ kind: "workspace", type: "delete", id });
+    }
+    for (const id of projectIds) {
+      const value = next.projects.get(id);
+      if (value) mutations.push({ kind: "project", type: "upsert", id, value });
+      else if (previous.projects.has(id)) mutations.push({ kind: "project", type: "delete", id });
+    }
+    this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
   }
 
   private recordAgentSync(
@@ -858,7 +966,7 @@ export class DirectorySync {
 
   private flushAbortedTransactions(): void {
     for (const delta of this.agentTransactions.abort()) this.agents.applyDelta(delta);
-    for (const delta of this.workspaceTransactions.abort()) this.workspaces.applyDelta(delta);
+    for (const delta of this.workspaceTransactions.abort()) this.applyWorkspaceDelta(delta);
   }
 
   private abortPendingSessionWaits(): void {

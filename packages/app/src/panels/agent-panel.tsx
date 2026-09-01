@@ -18,8 +18,7 @@ import { StyleSheet as RNStyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
-import { shallow, useShallow } from "zustand/shallow";
-import { useStoreWithEqualityFn } from "zustand/traditional";
+import { useShallow } from "zustand/shallow";
 import { AgentStreamView, type AgentStreamViewHandle } from "@/agent-stream/view";
 import { ArchivedAgentCallout } from "@/components/archived-agent-callout";
 import { KeyboardDock } from "@/components/keyboard-dock";
@@ -79,6 +78,12 @@ import {
   useHosts,
 } from "@/runtime/host-runtime";
 import {
+  acceptAgentSnapshot,
+  getAgentSnapshot,
+  publishAgentDetails,
+  replaceAgentPendingPermissions,
+} from "@/runtime/session-data";
+import {
   deriveRouteBottomAnchorIntent,
   deriveRouteBottomAnchorRequest,
 } from "@/screens/agent/agent-ready-screen-bottom-anchor";
@@ -87,18 +92,19 @@ import { AgentTracks, hasAgentTracks } from "@/panels/agent-tracks";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { buildDraftStoreKey, generateDraftId } from "@/stores/draft-keys";
 import {
-  selectAgentTimelineState,
-  selectAgentTurnPresentation,
+  useAgentFields,
+  useAgentConversation,
+  useAgentTurn,
+  useConnection,
   type Agent,
-  useSessionStore,
-} from "@/stores/session-store";
+} from "@/stores/session-store-hooks";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
 import { useSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
 import type { PendingPermission } from "@/types/shared";
-import type { StreamItem, TodoEntry } from "@/types/stream";
+import type { StreamItem } from "@/types/stream";
 import type { ViewedTimelineStatus, ViewedTimelineUiBridge } from "@/timeline/viewed-timeline-sync";
 import { useArchiveFinishedSubagents, useSubagentsForParent } from "@/subagents";
 import { getInitDeferred, getInitKey } from "@/utils/agent-initialization";
@@ -134,16 +140,6 @@ interface ChatAgentSelectedState extends ChatAgentStateShape {
   attentionReason: Agent["attentionReason"] | null;
 }
 
-function resolveChatAgentFromSession(
-  state: ReturnType<typeof useSessionStore.getState>,
-  serverId: string,
-  agentId: string | undefined,
-): Agent | null {
-  if (!agentId) return null;
-  const session = state.sessions[serverId];
-  return session?.agents?.get(agentId) ?? session?.agentDetails?.get(agentId) ?? null;
-}
-
 function readViewedTimelineError(input: {
   agentId: string | undefined;
   status: ViewedTimelineStatus;
@@ -164,12 +160,7 @@ const EMPTY_CHAT_AGENT_STATE: ChatAgentSelectedState = {
   attentionReason: null,
 };
 
-function selectChatAgentState(
-  state: ReturnType<typeof useSessionStore.getState>,
-  serverId: string,
-  agentId: string | undefined,
-): ChatAgentSelectedState {
-  const agent = resolveChatAgentFromSession(state, serverId, agentId);
+function selectChatAgentState(agent: Agent | null): ChatAgentSelectedState {
   if (!agent) return EMPTY_CHAT_AGENT_STATE;
   return {
     serverId: agent.serverId,
@@ -189,6 +180,26 @@ function selectChatAgentState(
     requiresAttention: agent.requiresAttention ?? false,
     attentionReason: agent.attentionReason ?? null,
   };
+}
+
+function selectAgentProjectPlacement(agent: Agent | null) {
+  return agent ? (agent.projectPlacement ?? null) : null;
+}
+
+function selectReadyAgent(agent: Agent) {
+  return {
+    agentState: selectChatAgentState(agent),
+    projectPlacement: selectAgentProjectPlacement(agent),
+  };
+}
+
+const EMPTY_READY_AGENT = {
+  agentState: EMPTY_CHAT_AGENT_STATE,
+  projectPlacement: null,
+};
+
+function resolveReadyAgent(selected: ReturnType<typeof selectReadyAgent> | null) {
+  return selected ?? EMPTY_READY_AGENT;
 }
 
 function buildChatAgentFromState(
@@ -307,35 +318,24 @@ function storeFetchedAgentDetail(input: {
       projectPlacement: input.result.project,
     },
   });
-  const store = useSessionStore.getState();
-
   if (shouldStoreFetchedAgentInActiveDirectory(hydrated)) {
-    store.setAgents(input.serverId, (previous) => {
-      const next = new Map(previous);
-      next.set(hydrated.id, hydrated);
-      return next;
-    });
+    acceptAgentSnapshot(input.serverId, hydrated);
   } else {
-    store.setAgentDetails(input.serverId, (previous) => {
+    publishAgentDetails(input.serverId, (previous) => {
       const next = new Map(previous);
       next.set(hydrated.id, hydrated);
       return next;
     });
   }
 
-  store.setPendingPermissions(input.serverId, (previous) => {
-    const next = new Map(previous);
-    for (const [key, pending] of next.entries()) {
-      if (pending.agentId === hydrated.id) {
-        next.delete(key);
-      }
-    }
-    for (const request of hydrated.pendingPermissions) {
+  replaceAgentPendingPermissions(
+    input.serverId,
+    hydrated.id,
+    hydrated.pendingPermissions.map((request) => {
       const key = derivePendingPermissionKey(hydrated.id, request);
-      next.set(key, { key, agentId: hydrated.id, request });
-    }
-    return next;
-  });
+      return { key, agentId: hydrated.id, request };
+    }),
+  );
 
   return hydrated;
 }
@@ -344,24 +344,17 @@ function useAgentPanelDescriptor(
   target: { kind: "agent"; agentId: string },
   context: { serverId: string },
 ): PanelDescriptor {
-  const descriptorState = useSessionStore(
-    useShallow((state) => {
-      const session = state.sessions[context.serverId];
-      const agent =
-        session?.agents?.get(target.agentId) ?? session?.agentDetails?.get(target.agentId) ?? null;
-      return {
-        provider: agent?.provider ?? "codex",
-        title: agent?.title ?? null,
-        status: agent?.status ?? null,
-        pendingPermissionCount: agent?.pendingPermissions.length ?? 0,
-        requiresAttention: agent?.requiresAttention ?? false,
-        attentionReason: agent?.attentionReason ?? null,
-        isTurnActive: selectAgentTurnPresentation(session, target.agentId).isActive,
-      };
-    }),
-  );
-  const provider = descriptorState.provider;
-  const label = resolveWorkspaceAgentTabLabel(descriptorState.title);
+  const descriptorState = useAgentFields(context.serverId, target.agentId, (agent) => ({
+    provider: agent.provider,
+    title: agent.title,
+    status: agent.status,
+    pendingPermissionCount: agent.pendingPermissions.length,
+    requiresAttention: agent.requiresAttention ?? false,
+    attentionReason: agent.attentionReason ?? null,
+  }));
+  const isTurnActive = useAgentTurn(context.serverId, target.agentId, (turn) => turn.isActive);
+  const provider = descriptorState?.provider ?? "codex";
+  const label = resolveWorkspaceAgentTabLabel(descriptorState?.title ?? null);
   const icon = getProviderIcon(provider, context.serverId);
 
   return {
@@ -370,9 +363,9 @@ function useAgentPanelDescriptor(
     tooltip: label ?? `${formatProviderLabel(provider)} agent`,
     titleState: label ? "ready" : "loading",
     icon,
-    statusBucket: descriptorState.status
+    statusBucket: descriptorState?.status
       ? deriveSidebarStateBucket({
-          status: descriptorState.isTurnActive ? "running" : descriptorState.status,
+          status: isTurnActive ? "running" : descriptorState.status,
           pendingPermissionCount: descriptorState.pendingPermissionCount,
           requiresAttention: descriptorState.requiresAttention,
           attentionReason: descriptorState.attentionReason,
@@ -414,11 +407,7 @@ function DraftPanel() {
     (agentSnapshot: Parameters<typeof normalizeAgentSnapshot>[0]) => {
       const normalized = normalizeAgentSnapshot(agentSnapshot, serverId);
       const agent = applyLegacyDaemonWorkspaceOwnership({ serverId, agent: normalized });
-      useSessionStore.getState().setAgents(serverId, (prev) => {
-        const next = new Map(prev);
-        next.set(agentSnapshot.id, agent);
-        return next;
-      });
+      acceptAgentSnapshot(serverId, agent);
       retargetCurrentTab({ kind: "agent", agentId: agentSnapshot.id });
     },
     [retargetCurrentTab, serverId],
@@ -543,13 +532,14 @@ function AgentPanelContent({
   const runtimeIsConnected = useHostRuntimeIsConnected(runtimeServerId);
   const runtimeConnectionStatus = useHostRuntimeConnectionStatus(runtimeServerId);
   const runtimeLastError = useHostRuntimeLastError(runtimeServerId);
-  const hasCachedAgent = useSessionStore((state) => {
-    if (!resolvedServerId || !resolvedAgentId) return false;
-    const session = state.sessions[resolvedServerId];
-    return Boolean(
-      session?.agents.has(resolvedAgentId) || session?.agentDetails.has(resolvedAgentId),
-    );
-  });
+  const hasCachedAgent = Boolean(
+    useAgentFields(
+      resolvedServerId ?? null,
+      resolvedAgentId ?? null,
+      (agent) => agent.id,
+      Object.is,
+    ),
+  );
 
   const connectionServerId = resolvedServerId ?? null;
   const daemon = connectionServerId
@@ -611,25 +601,13 @@ function AgentPanelBody({
 }) {
   const { t } = useTranslation();
   const { isArchivingAgent: _isArchivingAgent } = useArchiveAgent();
-  const hasSession = useSessionStore((state) => Boolean(state.sessions[serverId]));
-  const projectPlacement = useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => {
-      if (!agentId) {
-        return null;
-      }
-      const session = state.sessions[serverId];
-      return (
-        session?.agents?.get(agentId)?.projectPlacement ??
-        session?.agentDetails?.get(agentId)?.projectPlacement ??
-        null
-      );
-    },
-    (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b),
-  );
-  const agentState = useSessionStore(
-    useShallow((state) => selectChatAgentState(state, serverId, agentId)),
-  );
+  const hasSession = useConnection(serverId, (connection) => connection.exists);
+  const selected = useAgentFields(serverId, agentId, (agent) => ({
+    projectPlacement: selectAgentProjectPlacement(agent),
+    agentState: selectChatAgentState(agent),
+  }));
+  const projectPlacement = selected?.projectPlacement ?? null;
+  const agentState = selected?.agentState ?? EMPTY_CHAT_AGENT_STATE;
   const [lookupState, setLookupState] = useState<AgentLookupState>({ tag: "idle" });
   const lookupAttemptTokenRef = useRef(0);
   const retryAgentLookup = useCallback(() => setLookupState({ tag: "idle" }), []);
@@ -804,42 +782,22 @@ function ChatAgentContent({
     routeKey: string;
     reason: "initial-entry" | "resume";
   } | null>(null);
-  const agentState = useSessionStore(
-    useShallow((state) => selectChatAgentState(state, serverId, agentId)),
+  const { agentState, projectPlacement } = resolveReadyAgent(
+    useAgentFields(serverId, agentId, selectReadyAgent),
   );
-  const projectPlacement = useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => {
-      if (!agentId) {
-        return null;
-      }
-      const session = state.sessions[serverId];
-      return (
-        session?.agents?.get(agentId)?.projectPlacement ??
-        session?.agentDetails?.get(agentId)?.projectPlacement ??
-        null
-      );
-    },
-    (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b),
-  );
-  const isInitializingFromMap = useSessionStore((state) =>
-    agentId ? (state.sessions[serverId]?.initializingAgents?.get(agentId) ?? false) : false,
-  );
-  const historySyncGeneration = useSessionStore(
-    (state) => state.sessions[serverId]?.historySyncGeneration ?? 0,
-  );
-  const replicaTimelineStatus = useSessionStore((state) =>
-    agentId
-      ? selectAgentTimelineState(state.sessions[serverId], agentId).status
-      : ("cold" as const),
-  );
+  const conversation = useAgentConversation(serverId, agentId, (value) => ({
+    isInitializing: value.isInitializing,
+    historySyncGeneration: value.historySyncGeneration,
+    agentHistorySyncGeneration: value.agentHistorySyncGeneration,
+    timelineStatus: value.timeline.status,
+    viewedTimelineSync: value.viewedTimelineSync,
+  }));
+  const isInitializingFromMap = conversation.isInitializing;
+  const historySyncGeneration = conversation.historySyncGeneration;
+  const replicaTimelineStatus = conversation.timelineStatus;
   const hasAppliedAuthoritativeHistory = replicaTimelineStatus === "synced";
-  const agentHistorySyncGeneration = useSessionStore((state) =>
-    agentId ? (state.sessions[serverId]?.agentHistorySyncGeneration?.get(agentId) ?? -1) : -1,
-  );
-  const viewedTimelineSync = useSessionStore(
-    (state) => state.sessions[serverId]?.viewedTimelineSync ?? null,
-  );
+  const agentHistorySyncGeneration = conversation.agentHistorySyncGeneration;
+  const viewedTimelineSync = conversation.viewedTimelineSync;
   const subscribeToVisibilityCatchUp = useCallback(
     (listener: () => void) => viewedTimelineSync?.subscribe(listener) ?? (() => {}),
     [viewedTimelineSync],
@@ -865,7 +823,7 @@ function ChatAgentContent({
   const hasActiveCreateHandoff = useCreateFlowStore((state) =>
     findActiveCreateHandoff({ pendingByDraftId: state.pendingByDraftId, serverId, agentId }),
   );
-  const hasSession = useSessionStore((state) => Boolean(state.sessions[serverId]));
+  const hasSession = useConnection(serverId, (connection) => connection.exists);
   const [missingAgentState, setMissingAgentState] = useState<AgentScreenMissingState>({
     kind: "idle",
   });
@@ -1117,9 +1075,7 @@ function ChatAgentContent({
         if (attemptToken !== initAttemptTokenRef.current) {
           return;
         }
-        const currentSession = useSessionStore.getState().sessions[serverId];
-        const currentAgent =
-          currentSession?.agents.get(agentId) ?? currentSession?.agentDetails.get(agentId);
+        const currentAgent = getAgentSnapshot(serverId, agentId);
         if (!currentAgent) {
           const result = await client.fetchAgent({ agentId });
           if (attemptToken !== initAttemptTokenRef.current) {
@@ -1270,9 +1226,7 @@ const ChatAgentReadyContent = memo(function ChatAgentReadyContent({
 }) {
   const { t } = useTranslation();
   const subagentRows = useSubagentsForParent({ serverId, parentAgentId: agentId });
-  const tasks = useSessionStore((state): TodoEntry[] | undefined =>
-    state.sessions[serverId]?.agentTasks.get(agentId),
-  );
+  const tasks = useAgentConversation(serverId, agentId, (value) => value.tasks, Object.is);
   const archiveFinishedSubagents = useArchiveFinishedSubagents({
     serverId,
     parentAgentId: agentId,
@@ -1485,44 +1439,21 @@ const AgentStreamSection = memo(function AgentStreamSection({
   const bottomOverlayControlClearance = hasVisibleComposerTracks
     ? resolveComposerTrackControlClearance(isCompactFormFactor)
     : 0;
-  const streamItemsRaw = useSessionStore((state) =>
-    agentId ? state.sessions[serverId]?.agentStreamTail?.get(agentId) : undefined,
-  );
-  const pendingMessageSubmissions = useSessionStore(
-    useShallow((state) =>
-      agentId
-        ? getActiveMessageSubmissions(state.sessions[serverId]?.messageSubmissions.get(agentId))
-        : EMPTY_MESSAGE_SUBMISSIONS,
-    ),
-  );
-  const turnPresentation = useSessionStore(
-    useShallow((state) =>
-      agentId
-        ? selectAgentTurnPresentation(state.sessions[serverId], agentId)
-        : { isActive: false, isCancelling: false, startedAt: null, turnId: null },
-    ),
-  );
+  const conversation = useAgentConversation(serverId, agentId, (value) => ({
+    streamItems: value.streamItems,
+    messageSubmissions: value.messageSubmissions,
+    pendingPermissions: value.pendingPermissions,
+    turn: value.turn,
+  }));
+  const streamItemsRaw = conversation.streamItems;
+  const pendingMessageSubmissions = agentId
+    ? getActiveMessageSubmissions(conversation.messageSubmissions)
+    : EMPTY_MESSAGE_SUBMISSIONS;
+  const turnPresentation = conversation.turn;
   const streamItems = streamItemsRaw ?? EMPTY_STREAM_ITEMS;
-  const pendingPermissionList = useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => {
-      if (!agentId) {
-        return EMPTY_PENDING_PERMISSION_LIST;
-      }
-      const allPendingPermissions = state.sessions[serverId]?.pendingPermissions;
-      if (!allPendingPermissions) {
-        return EMPTY_PENDING_PERMISSION_LIST;
-      }
-      const filtered: PendingPermission[] = [];
-      for (const permission of allPendingPermissions.values()) {
-        if (permission.agentId === agentId) {
-          filtered.push(permission);
-        }
-      }
-      return filtered.length > 0 ? filtered : EMPTY_PENDING_PERMISSION_LIST;
-    },
-    shallow,
-  );
+  const pendingPermissionList = agentId
+    ? conversation.pendingPermissions
+    : EMPTY_PENDING_PERMISSION_LIST;
   const pendingPermissions = useMemo(() => {
     if (pendingPermissionList.length === 0) {
       return EMPTY_PENDING_PERMISSIONS;
@@ -1665,7 +1596,7 @@ function ActiveAgentComposer({
 
   const handleClientSlashCommand = useCallback(
     async (command: ClientSlashCommand) => {
-      const agent = resolveChatAgentFromSession(useSessionStore.getState(), serverId, agentId);
+      const agent = getAgentSnapshot(serverId, agentId);
       if (!agent) {
         throw new Error("Agent not found");
       }

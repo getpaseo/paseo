@@ -1,5 +1,8 @@
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
-import { normalizeWorkspaceDescriptor, type WorkspaceDescriptor } from "@/stores/session-store";
+import {
+  normalizeWorkspaceDescriptor,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store-hooks";
 import { shouldSuppressWorkspaceForLocalArchive } from "./session-workspace-upserts";
 
 type WorkspaceDelta = Extract<SessionOutboundMessage, { type: "workspace_update" }>["payload"];

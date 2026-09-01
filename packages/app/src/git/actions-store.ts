@@ -1,7 +1,8 @@
 import type { CheckoutPrMergeMethod } from "@getpaseo/protocol/messages";
 import { create } from "zustand";
 import { queryClient as appQueryClient } from "@/data/query-client";
-import { useSessionStore } from "@/stores/session-store";
+import { getHostClient } from "@/runtime/host-runtime";
+import { hostSupports } from "@/runtime/session-data";
 import { invalidateCheckoutGitQueriesForClient } from "@/git/query-keys";
 import { i18n } from "@/i18n/i18next";
 
@@ -35,8 +36,7 @@ function checkoutKey(serverId: string, cwd: string): CheckoutKey {
 }
 
 function resolveClient(serverId: string) {
-  const session = useSessionStore.getState().sessions[serverId];
-  const client = session?.client ?? null;
+  const client = getHostClient(serverId);
   if (!client) {
     throw new Error(i18n.t("common.errors.daemonClientUnavailable"));
   }
@@ -46,14 +46,13 @@ function resolveClient(serverId: string) {
 type AutoMergeActionsRpc = "forge" | "github";
 
 function resolveAutoMergeActionsRpc(serverId: string): AutoMergeActionsRpc {
-  const session = useSessionStore.getState().sessions[serverId];
-  if (session?.serverInfo?.features?.checkoutForgeSetAutoMerge === true) {
+  if (hostSupports(serverId, "checkoutForgeSetAutoMerge")) {
     return "forge";
   }
   // COMPAT(githubAutoMergeRpc): use the legacy GitHub RPC with daemons that
   // predate checkout.forge.set_auto_merge.*. Remove after 2027-01-17 once the
   // supported daemon floor is >= v0.2.0.
-  if (session?.serverInfo?.features?.checkoutGithubSetAutoMerge === true) {
+  if (hostSupports(serverId, "checkoutGithubSetAutoMerge")) {
     return "github";
   }
   throw new Error("Update the host to use auto-merge actions.");

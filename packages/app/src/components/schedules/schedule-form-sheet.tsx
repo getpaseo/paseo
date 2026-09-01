@@ -14,7 +14,6 @@ import { Brain, Folder, GitBranch } from "lucide-react-native";
 import { StyleSheet } from "react-native-unistyles";
 import type { AgentProvider } from "@getpaseo/protocol/agent-types";
 import type { ScheduleCadence, ScheduleSummary } from "@getpaseo/protocol/schedule/types";
-import { useStoreWithEqualityFn } from "zustand/traditional";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { ComboboxItem } from "@/components/ui/combobox";
 import { Button } from "@/components/ui/button";
@@ -43,7 +42,7 @@ import { useScheduleMutations } from "@/hooks/use-schedule-mutations";
 import { useAggregatedAgents } from "@/hooks/use-aggregated-agents";
 import { useProjects } from "@/hooks/use-projects";
 import { useHosts } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
+import { useConnections, type ConnectionView } from "@/stores/session-store-hooks";
 import { buildScheduleProjectTargets } from "@/schedules/schedule-project-targets";
 import { useScheduleFormModel } from "@/schedules/use-schedule-form-model";
 import { useScheduleFormProviderSnapshot } from "@/schedules/use-schedule-form-provider-snapshot";
@@ -114,14 +113,14 @@ function openKey(props: ScheduleFormSheetProps): string {
 
 function selectScheduleHosts(
   hosts: readonly { serverId: string; label: string }[],
-): (state: ReturnType<typeof useSessionStore.getState>) => ScheduleFormHost[] {
-  return (state) =>
-    hosts.map((host) => ({
-      serverId: host.serverId,
-      label: host.label,
-      supportsWorkspaceMultiplicity:
-        state.sessions[host.serverId]?.serverInfo?.features?.workspaceMultiplicity === true,
-    }));
+  connections: ReadonlyMap<string, ConnectionView>,
+): ScheduleFormHost[] {
+  return hosts.map((host) => ({
+    serverId: host.serverId,
+    label: host.label,
+    supportsWorkspaceMultiplicity:
+      connections.get(host.serverId)?.serverInfo?.features?.workspaceMultiplicity === true,
+  }));
 }
 
 function buildSnapshot(input: {
@@ -242,9 +241,10 @@ function OpenScheduleFormSheet({
   const controlSize: FieldControlSize = useIsCompactFormFactor() ? "md" : "sm";
   const { projects } = useProjects();
   const hostProfiles = useHosts();
-  const hosts = useStoreWithEqualityFn(
-    useSessionStore,
-    useMemo(() => selectScheduleHosts(hostProfiles), [hostProfiles]),
+  const hostIds = useMemo(() => hostProfiles.map((host) => host.serverId), [hostProfiles]);
+  const hosts = useConnections(
+    hostIds,
+    (connections) => selectScheduleHosts(hostProfiles, connections),
     equal,
   );
   const { preferences, updatePreferences } = useFormPreferences();

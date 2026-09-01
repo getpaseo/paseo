@@ -2,7 +2,12 @@ import { useEffect, useMemo } from "react";
 import { usePendingArchiveAgentIds } from "@/hooks/use-archive-agent";
 import equal from "fast-deep-equal";
 import { useStoreWithEqualityFn } from "zustand/traditional";
-import { useSessionStore, type Agent } from "@/stores/session-store";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import {
+  useAgentDirectoryFields,
+  useServerFeature,
+  type Agent,
+} from "@/stores/session-store-hooks";
 import { refreshProviderSubagents, useProviderSubagentStore } from "./provider-store";
 import type { ProviderSubagentDescriptorPayload } from "@getpaseo/protocol/messages";
 
@@ -15,6 +20,7 @@ export interface PaseoSubagentRow {
   description: null;
   subtitle: null;
   status: Agent["status"];
+  turn: Agent["turn"];
   requiresAttention: Agent["requiresAttention"];
   createdAt: Agent["createdAt"];
 }
@@ -38,7 +44,9 @@ export interface ProviderSubagentRow {
 
 export type SubagentRow = PaseoSubagentRow | ProviderSubagentRow;
 
-type SessionStoreSnapshot = ReturnType<typeof useSessionStore.getState>;
+interface SessionStoreSnapshot {
+  sessions: Record<string, { agents: ReadonlyMap<string, Agent> }>;
+}
 type ProviderSubagentStoreSnapshot = ReturnType<typeof useProviderSubagentStore.getState>;
 
 interface SelectSubagentsParams {
@@ -60,6 +68,7 @@ function toSubagentRow(agent: Agent): SubagentRow {
     description: null,
     subtitle: null,
     status: agent.status,
+    turn: agent.turn,
     requiresAttention: agent.requiresAttention,
     createdAt: agent.createdAt,
   };
@@ -132,24 +141,24 @@ export function selectProviderSubagentsForParent(
 
 export function useSubagentsForParent(params: SelectSubagentsParams): SubagentRow[] {
   const pendingArchiveIds = usePendingArchiveAgentIds(params.serverId);
-  const paseoRows = useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => selectSubagentsForParent(state, params, pendingArchiveIds),
+  const paseoRows = useAgentDirectoryFields(
+    params.serverId,
+    (directory) =>
+      selectSubagentsForParent(
+        { sessions: { [params.serverId]: { agents: directory.agents } } },
+        params,
+        pendingArchiveIds,
+      ),
     equal,
   );
-  const supported = useSessionStore(
-    (state) => state.sessions[params.serverId]?.serverInfo?.features?.providerSubagents === true,
-  );
-  const nestingSupported = useSessionStore(
-    (state) =>
-      state.sessions[params.serverId]?.serverInfo?.features?.providerSubagentNesting === true,
-  );
+  const supported = useServerFeature(params.serverId, "providerSubagents");
+  const nestingSupported = useServerFeature(params.serverId, "providerSubagentNesting");
   const providerRows = useStoreWithEqualityFn(
     useProviderSubagentStore,
     (state) => selectProviderSubagentsForParent(state, params, supported, nestingSupported),
     equal,
   );
-  const client = useSessionStore((state) => state.sessions[params.serverId]?.client ?? null);
+  const client = useHostRuntimeClient(params.serverId);
 
   useEffect(() => {
     if (!client || !supported) return;

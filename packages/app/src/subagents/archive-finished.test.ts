@@ -11,6 +11,10 @@ function paseo(id: string, status: PaseoSubagentRow["status"] = "idle"): PaseoSu
     description: null,
     subtitle: null,
     status,
+    turn:
+      status === "running"
+        ? { phase: "open", turnId: null, startedAt: null, cancellationRequestId: null }
+        : { phase: "idle", cancellationRequestId: null },
     requiresAttention: false,
     createdAt: new Date(),
   };

@@ -7,7 +7,12 @@ import {
   type QueryKey,
 } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
-import { useSessionStore } from "@/stores/session-store";
+import { getActiveAgentSnapshot } from "@/runtime/session-data";
+import {
+  archiveAgentSnapshot,
+  restoreAgentSnapshot as restoreStoredAgent,
+} from "@/runtime/session-data";
+import { getHostClient } from "@/runtime/host-runtime";
 import { agentHistoryQueryKey, allAgentHistoryQueryRootKey } from "./agent-history-query-key";
 
 export const ARCHIVE_AGENT_PENDING_QUERY_KEY = ["archive-agent-pending"] as const;
@@ -241,33 +246,13 @@ interface ArchiveAgentMutationContext {
 }
 
 function getStoredAgentSnapshot(input: ArchiveAgentInput) {
-  return useSessionStore.getState().sessions[input.serverId]?.agents.get(input.agentId);
+  return getActiveAgentSnapshot(input.serverId, input.agentId) ?? undefined;
 }
 
 function restoreAgentSnapshot(
   input: ArchiveAgentInput & { agent: ReturnType<typeof getStoredAgentSnapshot> },
 ): void {
-  const setAgents = useSessionStore.getState().setAgents;
-  setAgents(input.serverId, (prev) => {
-    const hasAgent = prev.has(input.agentId);
-    if (!input.agent) {
-      if (!hasAgent) {
-        return prev;
-      }
-      const next = new Map(prev);
-      next.delete(input.agentId);
-      return next;
-    }
-
-    const current = prev.get(input.agentId);
-    if (current === input.agent) {
-      return prev;
-    }
-
-    const next = new Map(prev);
-    next.set(input.agentId, input.agent);
-    return next;
-  });
+  restoreStoredAgent(input.serverId, input.agentId, input.agent);
 }
 
 function getArchivedAgentListCacheSnapshot(
@@ -324,22 +309,7 @@ function markAgentArchivedInStore(input: ArchiveAgentInput & { archivedAt: strin
     return;
   }
 
-  const setAgents = useSessionStore.getState().setAgents;
-  setAgents(input.serverId, (prev) => {
-    const existing = prev.get(input.agentId);
-    if (!existing) {
-      return prev;
-    }
-    if (existing.archivedAt && existing.archivedAt.getTime() === archivedAt.getTime()) {
-      return prev;
-    }
-    const next = new Map(prev);
-    next.set(input.agentId, {
-      ...existing,
-      archivedAt,
-    });
-    return next;
-  });
+  archiveAgentSnapshot(input.serverId, input.agentId, archivedAt.toISOString());
 }
 
 interface ApplyArchivedAgentCloseResultsInput {
@@ -413,7 +383,7 @@ export function useArchiveAgent() {
 
   const archiveMutation = useMutation({
     mutationFn: async (input: ArchiveAgentInput): Promise<{ archivedAt: string }> => {
-      const client = useSessionStore.getState().sessions[input.serverId]?.client ?? null;
+      const client = getHostClient(input.serverId);
       if (!client) {
         throw new Error(t("common.errors.daemonClientUnavailable"));
       }

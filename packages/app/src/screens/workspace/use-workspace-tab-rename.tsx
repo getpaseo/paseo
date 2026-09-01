@@ -4,7 +4,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { ListTerminalsResponse } from "@getpaseo/protocol/messages";
 import { useTranslation } from "react-i18next";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
-import { useSessionStore } from "@/stores/session-store";
+import { getActiveAgentSnapshot } from "@/runtime/session-data";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
 interface RenamingTabState {
@@ -46,8 +46,7 @@ export function useWorkspaceTabRename(
       }
       if (tab.target.kind === "agent") {
         const { agentId } = tab.target;
-        const agent =
-          useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+        const agent = getActiveAgentSnapshot(normalizedServerId, agentId);
         const currentTitle = agent?.title ?? "";
         setRenamingTab({ kind: "agent", id: agentId, currentTitle });
       }

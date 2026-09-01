@@ -1,13 +1,13 @@
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { getHostClient } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import {
   confirmRiskyWorktreeArchive,
   DEFAULT_WORKTREE_ARCHIVE_WARNING_LABELS,
   type WorktreeArchiveWarningLabels,
 } from "@/git/worktree-archive-warning";
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { WorkspaceDescriptor } from "@/stores/session-store-hooks";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 import { archiveWorkspaceOptimistically } from "@/workspace/workspace-archive";
@@ -53,7 +53,7 @@ export function useWorkspaceArchive(input: ArchiveWorkspaceInput): WorkspaceArch
   const toast = useToast();
 
   const archiveWorkspaceRecord = useCallback(async () => {
-    const client = getHostRuntimeStore().getClient(serverId);
+    const client = getHostClient(serverId);
     if (!client) {
       toast.error(t("sidebar.workspace.toasts.hostDisconnected"));
       return;

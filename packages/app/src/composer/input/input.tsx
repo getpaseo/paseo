@@ -26,7 +26,7 @@ import { useDictation } from "@/hooks/use-dictation";
 import { DictationOverlay } from "@/components/dictation-controls";
 import { RealtimeVoiceOverlay } from "@/components/realtime-voice-overlay";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { useSessionStore } from "@/stores/session-store";
+import { useConnection } from "@/stores/session-store-hooks";
 import { useVoiceOptional } from "@/contexts/voice-context";
 import { useToast } from "@/contexts/toast-context";
 import { resolveVoiceUnavailableMessage } from "@/utils/server-info-capabilities";
@@ -1274,16 +1274,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       getNativeElement: () => (isWeb ? getTextInputNativeElement(textInputRef.current) : null),
     }));
     const sendAfterTranscriptRef = useRef(false);
-    const serverInfo = useSessionStore(
-      useCallback(
-        (state) => {
-          if (!voiceServerId) {
-            return null;
-          }
-          return state.sessions[voiceServerId]?.serverInfo ?? null;
-        },
-        [voiceServerId],
-      ),
+    const serverInfo = useConnection(
+      voiceServerId,
+      useCallback((connection) => {
+        return connection.serverInfo;
+      }, []),
     );
 
     useEffect(() => {

@@ -152,7 +152,7 @@ remaining page through the existing stream reducer. It must not append full proj
 live prefix.
 
 Every path that sends a message to an agent — composer send, dictation accept-and-send, queued
-send-now, and the automatic queue drain in `HostRuntime` — goes through
+send-now, and the session-data owner's automatic queue drain — goes through
 `dispatchComposerAgentMessage` with a submission writer. There is no second transport for the same
 product action: calling `client.sendAgentMessage` directly skips the submitted row and the pending
 footer, and permanently drops attachments because the daemon does not echo them back.
@@ -196,9 +196,9 @@ fork positions retain the canonical `turnId` boundaries.
 The compatibility boundary for older daemons is snapshot normalization: running/idle status becomes an
 anonymous active turn or idle state once, and downstream code consumes the same activity shape. The app
 does not combine anonymous lifecycle events, timestamps, timeline rows, and resume coverage to infer a
-second running state. Disconnect and replica removal remain destructive close boundaries. Elapsed time
-comes only from turn liveness, never from submission records or whichever timeline rows happen to be
-mounted.
+second running state. Disconnect preserves the last replicated turn until cache or network hydration
+advances it; replica removal remains the destructive close boundary. Elapsed time comes only from turn
+liveness, never from submission records or whichever timeline rows happen to be mounted.
 
 The daemon records one canonical submitted user row at acceptance. Its wire `messageId` is the
 submission's `clientMessageId`, so the row is born with its final identity and remains immutable on

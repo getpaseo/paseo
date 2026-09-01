@@ -41,7 +41,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     labels: {},
     archivedAt: null,
     ...overrides,
-    activeTurn: overrides.activeTurn ?? null,
+    turn: overrides.turn ?? { phase: "idle", cancellationRequestId: null },
   };
 }
 

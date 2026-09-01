@@ -179,10 +179,6 @@ export function useWorkspaceCommandCenterActions(): void {
   const activeTabIndex = focusedTabs.findIndex((tab) => tab.tabId === focusedPane?.focusedTabId);
   const activeTabKind =
     activeTabIndex >= 0 ? (focusedTabs[activeTabIndex]?.target.kind ?? null) : null;
-  // One narrow projection for the workspace management contribution fields. The registry's snapshot
-  // dedup is unreachable (registry.ts spreads a fresh object per contribution, then compares by
-  // reference), so the array-identity guard in registry.replace() is the only thing stopping a
-  // re-render — a churny subscription here rebuilds the list while the user is looking at it.
   const fields = useWorkspaceFields(serverId, workspaceId, (workspace) => ({
     id: workspace.id,
     workspaceDirectory: workspace.workspaceDirectory ?? null,

@@ -10,7 +10,7 @@ import {
 } from "./use-agent-commands-query";
 import { orderAutocompleteOptions } from "@/components/ui/autocomplete-utils";
 import { useAutocomplete } from "./use-autocomplete";
-import { useSessionStore } from "@/stores/session-store";
+import { useActiveAgentFields } from "@/stores/session-store-hooks";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { CLIENT_SLASH_COMMANDS, type ClientSlashCommand } from "@/client-slash-commands";
 import type { PluginClientSlashCommand } from "@/plugins/client-slash-commands";
@@ -389,9 +389,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   const queryDraftConfig = normalizedDraftConfig;
   const canLoadCommands = resolveCanLoadCommands({ serverId, agentId, isDraftContext });
 
-  const agentCwd = useSessionStore(
-    (state) => state.sessions[serverId]?.agents?.get(agentId)?.cwd ?? "",
-  );
+  const agentCwd = useActiveAgentFields(serverId, agentId, (agent) => agent.cwd, Object.is) ?? "";
   const autocompleteCwd = useMemo(() => {
     if (isDraftContext) {
       return queryDraftConfig?.cwd ?? "";

@@ -1,4 +1,4 @@
-import type { normalizeWorkspaceDescriptor } from "@/stores/session-store";
+import type { normalizeWorkspaceDescriptor } from "@/stores/session-store-hooks";
 import type { MessagePayload } from "@/composer/types";
 import type { AgentAttachment } from "@getpaseo/protocol/messages";
 

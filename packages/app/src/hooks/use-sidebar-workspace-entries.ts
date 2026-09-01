@@ -1,7 +1,6 @@
 import { useMemo, useRef } from "react";
-import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
-import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaceDirectories } from "@/stores/session-store-hooks";
 import {
   areSidebarWorkspaceSessionsEqual,
   buildSidebarWorkspaceEntries,
@@ -23,10 +22,26 @@ export function useSidebarWorkspaceEntries(
     () => Array.from(new Set(placements.map((placement) => placement.serverId))),
     [placements],
   );
-  const sessions = useStoreWithEqualityFn(
-    useSessionStore,
-    (state) =>
-      enabled ? selectSidebarWorkspaceSessions(state.sessions, serverIds) : EMPTY_SESSIONS,
+  const sessions = useWorkspaceDirectories(
+    serverIds,
+    (directories) =>
+      enabled
+        ? selectSidebarWorkspaceSessions(
+            Object.fromEntries(
+              serverIds.map((serverId) => {
+                const directory = directories.get(serverId);
+                return [
+                  serverId,
+                  {
+                    workspaces: directory?.workspaces ?? new Map(),
+                    workspaceAgentActivity: directory?.workspaceAgentActivity ?? new Map(),
+                  },
+                ];
+              }),
+            ),
+            serverIds,
+          )
+        : EMPTY_SESSIONS,
     areSidebarWorkspaceSessionsEqual,
   );
   const pendingCreateAttempts = useCreateFlowStore((state) =>

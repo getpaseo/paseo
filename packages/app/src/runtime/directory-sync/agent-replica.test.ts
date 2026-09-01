@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { DaemonClient, FetchAgentsEntry } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
-import { useSessionStore } from "@/stores/session-store";
+import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
+import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
+import type { DirectoryReplicaMutation } from "@/runtime/client-replica";
 import { AgentDirectoryReplica } from "./agent-replica";
 
 function payload(title: string): AgentSnapshotPayload {
@@ -51,11 +53,38 @@ function entry(agent: AgentSnapshotPayload): FetchAgentsEntry {
 }
 
 describe("AgentDirectoryReplica", () => {
+  it("does not let a late cache read replace newer live turn state", () => {
+    const serverId = "agent-replica-late-cache";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      () => undefined,
+      () => undefined,
+    );
+    replica.commitSnapshot([entry(payload("live"))], []);
+    replica.applyTurnLiveness("agent", {
+      type: "stream_open",
+      turn: { turnId: "turn-live", startedAt: null },
+    });
+
+    replica.commitCached(new Map([["agent", normalizeAgentSnapshot(payload("cached"), serverId)]]));
+
+    expect(selectAgentTurnPresentation(store.getSession(serverId), "agent").turnId).toBe(
+      "turn-live",
+    );
+    store.clearSession(serverId);
+  });
+
   it("accepts the requested agent from the authoritative timeline after a cache miss", () => {
     const serverId = "agent-replica-cache-miss";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
-    const replica = new AgentDirectoryReplica(serverId, () => undefined);
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      () => undefined,
+      () => undefined,
+    );
 
     expect(replica.submitTimelineAgent(replica.captureTimeline("agent"), payload("network"))).toBe(
       true,
@@ -66,11 +95,99 @@ describe("AgentDirectoryReplica", () => {
     store.clearSession(serverId);
   });
 
+  it("persists stream-only turn transitions through the agent owner", () => {
+    const serverId = "agent-replica-stream-turn";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const commits: DirectoryReplicaMutation[][] = [];
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      () => undefined,
+      (mutations) => commits.push([...mutations]),
+    );
+    replica.commitSnapshot([entry(payload("agent"))], []);
+    commits.length = 0;
+
+    replica.applyTurnLiveness("agent", {
+      type: "stream_open",
+      turn: { turnId: "turn-1", startedAt: new Date("2026-08-31T12:00:00.000Z") },
+    });
+
+    expect(commits).toEqual([
+      [
+        expect.objectContaining({
+          kind: "agent",
+          type: "upsert",
+          id: "agent",
+          value: expect.objectContaining({
+            status: "idle",
+            turn: {
+              phase: "open",
+              cancellationRequestId: null,
+              turnId: "turn-1",
+              startedAt: new Date("2026-08-31T12:00:00.000Z"),
+            },
+          }),
+        }),
+      ],
+    ]);
+    expect(selectAgentTurnPresentation(store.getSession(serverId), "agent").isActive).toBe(true);
+    store.clearSession(serverId);
+  });
+
+  it("uses turn liveness for stopped transitions even when protocol status disagrees", () => {
+    const serverId = "agent-replica-mismatched-status";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const stopped: string[] = [];
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      (agentId) => stopped.push(agentId),
+      () => undefined,
+    );
+    replica.commitSnapshot(
+      [
+        entry({
+          ...payload("open despite idle"),
+          activeTurn: { turnId: "turn-1", startedAt: null },
+        }),
+      ],
+      [],
+    );
+
+    expect(useSessionStore.getState().sessions[serverId]?.agents.get("agent")).toMatchObject({
+      status: "idle",
+      turn: { phase: "open", turnId: "turn-1" },
+    });
+
+    replica.applyDelta({
+      kind: "upsert",
+      agent: { ...payload("idle turn despite running"), status: "running", activeTurn: null },
+      project: entry(payload("project")).project,
+    });
+    replica.applyDelta({
+      kind: "upsert",
+      agent: { ...payload("status-only update"), status: "idle", activeTurn: null },
+      project: entry(payload("project")).project,
+    });
+
+    expect(useSessionStore.getState().sessions[serverId]?.agents.get("agent")).toMatchObject({
+      status: "idle",
+      turn: { phase: "idle" },
+    });
+    expect(stopped).toEqual(["agent"]);
+    store.clearSession(serverId);
+  });
+
   it("preserves an unchanged running agent's turn identity during catch-up", () => {
     const serverId = "agent-replica-catch-up";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
-    const replica = new AgentDirectoryReplica(serverId, () => undefined);
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      () => undefined,
+      () => undefined,
+    );
     replica.commitSnapshot(
       [
         entry({
@@ -84,9 +201,11 @@ describe("AgentDirectoryReplica", () => {
 
     replica.commitChanges([], [], []);
 
-    expect(useSessionStore.getState().sessions[serverId]?.agents.get("agent")?.activeTurn).toEqual({
+    expect(useSessionStore.getState().sessions[serverId]?.agents.get("agent")?.turn).toEqual({
+      phase: "open",
       turnId: "turn-1",
       startedAt: new Date("2026-07-17T00:01:00.000Z"),
+      cancellationRequestId: null,
     });
     store.clearSession(serverId);
   });
@@ -95,7 +214,11 @@ describe("AgentDirectoryReplica", () => {
     const serverId = "agent-replica";
     const store = useSessionStore.getState();
     store.initializeSession(serverId, null as unknown as DaemonClient);
-    const replica = new AgentDirectoryReplica(serverId, () => undefined);
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      () => undefined,
+      () => undefined,
+    );
     replica.commitSnapshot([entry(payload("directory"))], []);
     const directoryPlacement = useSessionStore
       .getState()

@@ -11,6 +11,7 @@ export function PluginCatalogSync({
   serverId: string;
   client: DaemonClient;
 }) {
+  const viewedTimeline = useViewedTimelineSync(serverId);
   const connected = useHostRuntimeIsConnected(serverId);
   const supported = useHostFeature(serverId, "plugins");
 
@@ -58,7 +59,7 @@ export function PluginCatalogSync({
       cancelled = true;
       unsubscribe();
     };
-  }, [client, connected, serverId, supported]);
+  }, [client, connected, serverId, supported, viewedTimeline]);
 
   useEffect(() => () => pluginRegistry.removeHost(serverId), [serverId]);
   return null;

@@ -4,7 +4,7 @@ import { useRetainedPanelActive } from "@/components/retained-panel";
 import { useFetchQuery } from "@/data/query";
 import { checkoutCommitsQueryKey } from "@/git/query-keys";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
+import { useServerFeature } from "@/stores/session-store-hooks";
 
 // Commits ahead of base change rarely while the section is open; this keeps a
 // collapse/re-expand cycle warm without leaving the fetch result stale for long.
@@ -80,11 +80,9 @@ export function useCheckoutCommitsQuery({
   // COMPAT(commitsList): added in v0.1.110, remove after 2027-01-16.
   // COMPAT(commitBaseClassification): added in v0.2.0, remove after 2027-01-23.
   // Single capability-detection site; downstream reads a clean load-state union.
-  const capabilityPresent = useSessionStore(
-    (state) =>
-      state.sessions[serverId]?.serverInfo?.features?.commitsList === true &&
-      state.sessions[serverId]?.serverInfo?.features?.commitBaseClassification === true,
-  );
+  const supportsCommitsList = useServerFeature(serverId, "commitsList");
+  const supportsBaseClassification = useServerFeature(serverId, "commitBaseClassification");
+  const capabilityPresent = supportsCommitsList && supportsBaseClassification;
 
   const canFetch = Boolean(cwd) && Boolean(client) && isConnected;
   const queryEnabled = queryEnabledByCaller && capabilityPresent && canFetch;

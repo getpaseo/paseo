@@ -20,7 +20,6 @@ import {
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { useShallow } from "zustand/shallow";
 import {
   ArrowUp,
   Square,
@@ -43,7 +42,18 @@ import {
 import { ContextWindowMeter } from "@/components/context-window-meter";
 import { KeyboardTranslateView } from "@/components/keyboard-translate-view";
 import { useImageAttachmentPicker } from "@/hooks/use-image-attachment-picker";
-import { selectAgentTurnPresentation, useSessionStore } from "@/stores/session-store";
+import {
+  useActiveAgentFields,
+  type Agent,
+  useAgentTurn,
+  useComposerSession,
+  useServerFeature,
+} from "@/stores/session-store-hooks";
+import {
+  getAgentTurnSnapshot,
+  getQueuedMessagesSnapshot,
+  publishQueuedMessages as setQueuedMessages,
+} from "@/runtime/session-data";
 import { useFilePicker } from "@/hooks/use-file-picker";
 import { useFileDrop } from "@/components/file-drop/use-file-drop";
 import type { DroppedItem } from "@/components/file-drop/types";
@@ -93,6 +103,7 @@ import {
   useHostRuntimeClient,
   useHostRuntimeIsConnected,
 } from "@/runtime/host-runtime";
+import { beginAgentCancellation, settleAgentCancellation } from "@/runtime/session-data";
 import {
   deleteAttachments,
   persistAttachmentFromBlob,
@@ -254,17 +265,14 @@ function buildRealtimeVoiceButtonStyle(
   );
 }
 
-function buildAgentStateSelector(serverId: string, agentId: string) {
-  return (state: ReturnType<typeof useSessionStore.getState>) => {
-    const agent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
-    return {
-      status: agent?.status ?? null,
-      contextWindowMaxTokens: agent?.lastUsage?.contextWindowMaxTokens ?? null,
-      contextWindowUsedTokens: agent?.lastUsage?.contextWindowUsedTokens ?? null,
-      totalCostUsd: agent?.lastUsage?.totalCostUsd ?? null,
-      model: agent?.model ?? null,
-      provider: agent?.provider ?? null,
-    };
+function buildAgentState(agent: Agent) {
+  return {
+    status: agent.status,
+    contextWindowMaxTokens: agent.lastUsage?.contextWindowMaxTokens ?? null,
+    contextWindowUsedTokens: agent.lastUsage?.contextWindowUsedTokens ?? null,
+    totalCostUsd: agent.lastUsage?.totalCostUsd ?? null,
+    model: agent.model,
+    provider: agent.provider,
   };
 }
 
@@ -981,7 +989,6 @@ interface ComposerProps {
 
 const MAX_FILE_SIZE_BYTES = 50 * 1024 * 1024;
 
-const EMPTY_ARRAY: readonly QueuedMessage[] = [];
 const StableMessageInput = memo(MessageInput);
 
 function resolveContextWindowValues(
@@ -1203,14 +1210,15 @@ function ComposerContentImpl({
 
   const { settings: appSettings } = useAppSettings();
 
-  const agentState = useSessionStore(useShallow(buildAgentStateSelector(serverId, agentId)));
-
-  const queuedMessagesRaw = useSessionStore((state) =>
-    state.sessions[serverId]?.queuedMessages?.get(agentId),
-  );
-  const queuedMessages = queuedMessagesRaw ?? EMPTY_ARRAY;
-
-  const setQueuedMessages = useSessionStore((state) => state.setQueuedMessages);
+  const agentState = useActiveAgentFields(serverId, agentId, buildAgentState) ?? {
+    status: null,
+    contextWindowMaxTokens: null,
+    contextWindowUsedTokens: null,
+    totalCostUsd: null,
+    model: null,
+    provider: null,
+  };
+  const { queuedMessages, hasPendingPermission } = useComposerSession(serverId, agentId);
 
   const isCompactFormFactor = useIsCompactFormFactor();
   const isCompactLayout = resolveCompactLayout(isCompactLayoutOverride, isCompactFormFactor);
@@ -1236,9 +1244,7 @@ function ComposerContentImpl({
   });
   const setSelectedAttachments = onChangeAttachments;
   const checkoutStatusQuery = useCheckoutStatusQuery({ serverId, cwd });
-  const supportsForgeSearch = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
-  );
+  const supportsForgeSearch = useServerFeature(serverId, "forgeSearch");
   const forgeAutoAttach = useComposerForgeAutoAttach({
     text: userInput,
     remoteUrl: resolveCheckoutRemoteUrl(checkoutStatusQuery.status),
@@ -1487,8 +1493,7 @@ function ComposerContentImpl({
         activeTurnBehavior,
         activeTurnId:
           activeTurnBehavior === "steer"
-            ? (useSessionStore.getState().sessions[serverId]?.agents.get(targetAgentId)?.activeTurn
-                ?.turnId ?? undefined)
+            ? (getAgentTurnSnapshot(serverId, targetAgentId).turnId ?? undefined)
             : undefined,
       });
       onAttentionPromptSend?.();
@@ -1499,25 +1504,11 @@ function ComposerContentImpl({
     onSubmitMessageRef.current = onSubmitMessage;
   }, [onSubmitMessage]);
 
-  const hasActiveTurn = useSessionStore(
-    (state) => selectAgentTurnPresentation(state.sessions[serverId], agentId).isActive,
-  );
-  const isCancellingAgent = useSessionStore(
-    (state) => selectAgentTurnPresentation(state.sessions[serverId], agentId).isCancelling,
-  );
-  const beginAgentCancellation = useSessionStore((state) => state.beginAgentCancellation);
-  const settleAgentCancellation = useSessionStore((state) => state.settleAgentCancellation);
+  const hasActiveTurn = useAgentTurn(serverId, agentId, (turn) => turn.isActive);
+  const isCancellingAgent = useAgentTurn(serverId, agentId, (turn) => turn.isCancelling);
   const isAgentRunning = hasActiveTurn;
   // Queueing behind a permission prompt would strand the message: the turn is
   // parked until the request is answered.
-  const hasPendingPermission = useSessionStore((state) => {
-    const pendingPermissions = state.sessions[serverId]?.pendingPermissions;
-    if (!pendingPermissions) return false;
-    for (const permission of pendingPermissions.values()) {
-      if (permission.agentId === agentId) return true;
-    }
-    return false;
-  });
   const activeSendBehavior = resolveActiveSendBehavior(
     appSettings.sendBehavior,
     hasPendingPermission,
@@ -1526,10 +1517,10 @@ function ComposerContentImpl({
 
   const queueWriter = useMemo<QueueWriter>(
     () => ({
-      read: (id) => useSessionStore.getState().sessions[serverId]?.queuedMessages?.get(id) ?? [],
+      read: (id) => getQueuedMessagesSnapshot(serverId, id),
       write: (updater) => setQueuedMessages(serverId, updater),
     }),
-    [serverId, setQueuedMessages],
+    [serverId],
   );
 
   const queueMessage = useCallback(
@@ -1824,15 +1815,7 @@ function ComposerContentImpl({
         settleAgentCancellation(serverId, targetAgentId, requestId);
       });
     messageInputRef.current?.focus();
-  }, [
-    beginAgentCancellation,
-    client,
-    isAgentRunning,
-    isCancellingAgent,
-    isConnected,
-    serverId,
-    settleAgentCancellation,
-  ]);
+  }, [client, isAgentRunning, isCancellingAgent, isConnected, serverId]);
 
   const focusMessageInputForKeyboardAction = useCallback(() => {
     focusMessageInputWithPlatformStrategy(messageInputRef);

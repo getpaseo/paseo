@@ -5,11 +5,17 @@ import type {
 } from "@getpaseo/client/internal/daemon-client";
 import type { AgentSearchMatch } from "@getpaseo/protocol/messages";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
-import { getHostRuntimeStore, isHostRuntimeConnected, useHosts } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
+import {
+  getHostClient,
+  isHostRuntimeConnected,
+  readHostRuntimeSnapshot,
+  useHostRuntimeVersion,
+  useHosts,
+} from "@/runtime/host-runtime";
+import { useConnections } from "@/stores/session-store-hooks";
 import { buildAgentDirectoryState } from "@/utils/agent-directory-sync";
 import { agentHistoryQueryKey, allAgentHistoryQueryKey } from "./agent-history-query-key";
 
@@ -134,6 +140,7 @@ export async function fetchAgentHistoryPage(input: {
       serverLabel: input.serverId,
       title: agent.title ?? null,
       status: agent.status,
+      turn: agent.turn,
       lastActivityAt: agent.lastActivityAt,
       cwd: agent.cwd,
       workspaceId: agent.workspaceId,
@@ -298,12 +305,7 @@ export function useAgentHistory(options: {
 }): AgentHistoryResult {
   const { t } = useTranslation();
   const daemons = useHosts();
-  const runtime = getHostRuntimeStore();
-  const runtimeVersion = useSyncExternalStore(
-    (onStoreChange) => runtime.subscribeAll(onStoreChange),
-    () => runtime.getVersion(),
-    () => runtime.getVersion(),
-  );
+  const runtimeVersion = useHostRuntimeVersion();
   const serverId = useMemo(() => {
     const value = options.serverId;
     return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -321,8 +323,8 @@ export function useAgentHistory(options: {
     const unreachable: AgentHistoryHostError[] = [];
 
     for (const targetServerId of serverIds) {
-      const snapshot = runtime.getSnapshot(targetServerId);
-      const client = runtime.getClient(targetServerId);
+      const snapshot = readHostRuntimeSnapshot(targetServerId);
+      const client = getHostClient(targetServerId);
       const serverName = serverLabelById.get(targetServerId) ?? targetServerId;
       if (!client || !isHostRuntimeConnected(snapshot)) {
         unreachable.push({ serverId: targetServerId, serverName });
@@ -332,17 +334,18 @@ export function useAgentHistory(options: {
     }
 
     return { targetHosts: hosts, unreachableHosts: unreachable };
-  }, [daemons, runtime, runtimeVersion, serverId]);
+  }, [daemons, runtimeVersion, serverId]);
   const targetServerIds = useMemo(() => targetHosts.map((host) => host.serverId), [targetHosts]);
   // One gate, checked before the field is offered: a fleet where any host
   // predates search has no search, rather than a list that silently omits that
   // host's sessions.
-  const isSearchSupported = useSessionStore(
+  const isSearchSupported = useConnections(
+    targetServerIds,
     useCallback(
-      (state) =>
+      (connections) =>
         targetServerIds.length > 0 &&
         targetServerIds.every(
-          (id) => state.sessions[id]?.serverInfo?.features?.agentHistorySearch === true,
+          (id) => connections.get(id)?.serverInfo?.features?.agentHistorySearch === true,
         ),
       [targetServerIds],
     ),

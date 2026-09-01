@@ -13,7 +13,8 @@ import { ScrollView as RNScrollView, Text, View } from "react-native";
 import { StyleSheet, UnistylesRuntime, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
+import { useServerFeature, type ExplorerFile } from "@/stores/session-store-hooks";
 import { filePreviewRenderKind } from "@/components/file-pane-render-mode";
 import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
 import { getFileNameFromPath } from "@/attachments/utils";
@@ -234,11 +235,9 @@ export function FilePane({
   const isMobile = useIsCompactFormFactor();
   const [previewMode, setPreviewMode] = useState<"preview" | "source">("preview");
 
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const client = useHostRuntimeClient(serverId);
   // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
-  const supportsEditing = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.features?.workspaceFileEditing === true,
-  );
+  const supportsEditing = useServerFeature(serverId, "workspaceFileEditing");
   const normalizedWorkspaceRoot = useMemo(() => workspaceRoot.trim(), [workspaceRoot]);
   const normalizedFilePath = useMemo(() => trimNonEmpty(location.path), [location.path]);
   const readTarget = useMemo(

@@ -1,4 +1,4 @@
-import type { WorkspaceDescriptor } from "@/stores/session-store";
+import type { WorkspaceDescriptor } from "@/stores/session-store-hooks";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
 
 type DiffStat = NonNullable<WorkspaceDescriptor["diffStat"]>;

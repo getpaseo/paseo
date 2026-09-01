@@ -21,7 +21,8 @@ import {
   type HostRuntimeControllerDeps,
   type HostRuntimeStorage,
 } from "./host-runtime";
-import type { ReplicaRow, ReplicaRowStore } from "./replica-cache/row-store";
+import type { ClientReplica } from "./client-replica";
+import { drainQueuedAgentMessage } from "./session-data";
 
 class FakeDaemonClient {
   private state: ConnectionState = { status: "idle" };
@@ -31,6 +32,8 @@ class FakeDaemonClient {
   private latencyMeasurementFailure: Error | null = null;
   private latencyMeasurementsRequested: Array<{ timeoutMs?: number }> = [];
   public connectCalls = 0;
+  public ensureConnectedCalls = 0;
+  public reconnectEnabledChanges: boolean[] = [];
   public fetchAgentsCalls: FetchAgentsOptions[] = [];
   public fetchAgentsResponses: Array<
     Awaited<ReturnType<DaemonClient["fetchAgents"]>> | ReturnType<DaemonClient["fetchAgents"]>
@@ -105,6 +108,7 @@ class FakeDaemonClient {
   }
 
   ensureConnected(): void {
+    this.ensureConnectedCalls += 1;
     if (this.state.status !== "connected") {
       this.setConnectionState({ status: "connected" });
     }
@@ -170,7 +174,9 @@ class FakeDaemonClient {
     return result.rttMs;
   }
 
-  setReconnectEnabled(_enabled: boolean): void {}
+  setReconnectEnabled(enabled: boolean): void {
+    this.reconnectEnabledChanges.push(enabled);
+  }
 
   getLastLivenessRttMs(): number | null {
     return this.heartbeatRttMs;
@@ -452,50 +458,6 @@ function createMemoryHostRuntimeStorage(entries: Record<string, string> = {}): H
     removeItem: async (key) => {
       values.delete(key);
     },
-  };
-}
-
-function createMemoryReplicaRowStore(): ReplicaRowStore {
-  const rows = new Map<string, ReplicaRow>();
-  const keyOf = (row: Pick<ReplicaRow, "serverId" | "kind" | "id">) =>
-    `${row.serverId}:${row.kind}:${row.id}`;
-  return {
-    open: async () => undefined,
-    read: async (serverId, kinds, ids) => {
-      const acceptedKinds = new Set(kinds);
-      const acceptedIds = ids ? new Set(ids) : null;
-      return [...rows.values()].filter(
-        (row) =>
-          row.serverId === serverId &&
-          acceptedKinds.has(row.kind) &&
-          (!acceptedIds || acceptedIds.has(row.id)),
-      );
-    },
-    readAll: async () => {
-      const hosts = new Map<string, ReplicaRow[]>();
-      for (const row of rows.values()) {
-        const hostRows = hosts.get(row.serverId) ?? [];
-        hostRows.push(row);
-        hosts.set(row.serverId, hostRows);
-      }
-      return [...hosts].map(([serverId, hostRows]) => ({ serverId, rows: hostRows }));
-    },
-    apply: async (changes) => {
-      for (const key of changes.deletes) rows.delete(keyOf(key));
-      for (const row of changes.upserts) rows.set(keyOf(row), row);
-    },
-    deleteHost: async (serverId) => {
-      for (const [key, row] of rows) if (row.serverId === serverId) rows.delete(key);
-    },
-    renameHost: async (oldServerId, newServerId) => {
-      for (const [key, row] of rows) {
-        if (row.serverId !== oldServerId) continue;
-        rows.delete(key);
-        const renamed = { ...row, serverId: newServerId };
-        rows.set(keyOf(renamed), renamed);
-      }
-    },
-    clear: async () => rows.clear(),
   };
 }
 
@@ -813,6 +775,52 @@ describe("HostRuntimeController", () => {
       latencyMs: 42,
     });
     expect(activeClient.latencyMeasurements()).toEqual([]);
+  });
+
+  it("does not create a probe client for the selected connection while it reconnects", async () => {
+    useHostRuntimeClock();
+    const relay: HostConnection = {
+      id: "relay:relay.paseo.sh:443",
+      type: "relay",
+      relayEndpoint: "relay.paseo.sh:443",
+      daemonPublicKeyB64: "pk_test",
+    };
+    const host = makeHost({ connections: [relay], preferredConnectionId: relay.id });
+    const activeClient = new FakeDaemonClient();
+    activeClient.setConnectionState({ status: "connected" });
+    const probeAttempts: string[] = [];
+    const controller = new HostRuntimeController({
+      host,
+      deps: {
+        createClient: () => {
+          throw new Error("the existing client owns the selected connection");
+        },
+        connectToDaemon: async ({ connection }) => {
+          probeAttempts.push(connection.id);
+          return {
+            client: makeConnectedProbeClient(10) as unknown as DaemonClient,
+            serverId: host.serverId,
+            hostname: host.label ?? null,
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    await controller.start({
+      autoProbe: false,
+      initialConnection: {
+        connectionId: relay.id,
+        existingClient: activeClient as unknown as DaemonClient,
+      },
+    });
+    activeClient.setConnectionState({ status: "disconnected", reason: "network lost" });
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    await controller.runProbeCycleNow();
+
+    expect(probeAttempts).toEqual([]);
+    expect(controller.getSnapshot().client).toBe(activeClient as unknown as DaemonClient);
   });
 
   it("rejects probes that resolve to a different server id", async () => {
@@ -1435,6 +1443,71 @@ describe("HostRuntimeController", () => {
 });
 
 describe("HostRuntimeStore", () => {
+  it("reconnects every registered host immediately on app resume", async () => {
+    const relay = (suffix: string): HostConnection => ({
+      id: `relay:relay-${suffix}.paseo.sh:443`,
+      type: "relay",
+      relayEndpoint: `relay-${suffix}.paseo.sh:443`,
+      daemonPublicKeyB64: `pk_${suffix}`,
+    });
+    const hostAConnection = relay("a");
+    const hostBConnection = relay("b");
+    const hostA = makeHost({
+      serverId: "srv_a",
+      connections: [hostAConnection],
+      preferredConnectionId: hostAConnection.id,
+    });
+    const hostB = makeHost({
+      serverId: "srv_b",
+      connections: [hostBConnection],
+      preferredConnectionId: hostBConnection.id,
+    });
+    const clientA = new FakeDaemonClient();
+    const clientB = new FakeDaemonClient();
+    clientA.setConnectionState({ status: "connected" });
+    clientB.setConnectionState({ status: "connected" });
+    const store = new HostRuntimeStore({
+      storage: createMemoryHostRuntimeStorage(),
+      deps: {
+        createClient: () => {
+          throw new Error("initial clients are supplied");
+        },
+        connectToDaemon: async () => {
+          throw new Error("single-connection hosts reuse their active clients");
+        },
+        getClientId: async () => "cid_test_runtime",
+      },
+    });
+
+    store.syncHosts([hostA, hostB], {
+      initialConnectionByServerId: new Map([
+        [
+          hostA.serverId,
+          { connectionId: hostAConnection.id, existingClient: clientA as unknown as DaemonClient },
+        ],
+        [
+          hostB.serverId,
+          { connectionId: hostBConnection.id, existingClient: clientB as unknown as DaemonClient },
+        ],
+      ]),
+    });
+    await waitForHostOnline(store, hostA.serverId);
+    await waitForHostOnline(store, hostB.serverId);
+    store.setAppVisible(false, null);
+    expect(clientA.reconnectEnabledChanges.at(-1)).toBe(false);
+    expect(clientB.reconnectEnabledChanges.at(-1)).toBe(false);
+    clientA.setConnectionState({ status: "disconnected", reason: "backgrounded" });
+    clientB.setConnectionState({ status: "disconnected", reason: "backgrounded" });
+
+    store.setAppVisible(true, hostA.serverId);
+    expect(clientA.reconnectEnabledChanges.at(-1)).toBe(true);
+    expect(clientB.reconnectEnabledChanges.at(-1)).toBe(true);
+    expect(clientA.ensureConnectedCalls).toBe(1);
+    expect(clientB.ensureConnectedCalls).toBe(1);
+
+    store.syncHosts([]);
+  });
+
   it("revokes push notifications before removing a host", async () => {
     const host = makeHost({ connections: [makeHost().connections[0]!] });
     const revocation = createDeferred<void>();
@@ -1483,16 +1556,29 @@ describe("HostRuntimeStore", () => {
     expect(store.getHosts()).toEqual([]);
   });
 
-  it("loads the host registry without scanning or installing replica rows", async () => {
+  it("loads the host registry and restores its cached directory", async () => {
     const host = makeHost();
     const storage = createMemoryHostRuntimeStorage();
-    const backingStore = createMemoryReplicaRowStore();
     let fullScans = 0;
-    const replicaRowStore: ReplicaRowStore = {
-      ...backingStore,
-      readAll: async () => {
-        fullScans += 1;
-        return backingStore.readAll();
+    const clientReplica: ClientReplica = {
+      hostLifecycle: {
+        setHosts: () => undefined,
+        reconcileServerId: () => undefined,
+        flush: async () => undefined,
+      },
+      directory: {
+        readAgent: async () => undefined,
+        readWorkspace: async () => undefined,
+        readDirectory: async () => {
+          fullScans += 1;
+          return { agents: new Map(), workspaces: new Map(), projects: new Map() };
+        },
+        commitDirectoryMutations: () => undefined,
+        replaceDirectoryBaseline: () => undefined,
+      },
+      timeline: {
+        readTimeline: async () => undefined,
+        commitTimeline: () => undefined,
       },
     };
     await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
@@ -1501,7 +1587,7 @@ describe("HostRuntimeStore", () => {
 
     const store = new HostRuntimeStore({
       storage,
-      replicaRowStore,
+      clientReplica,
       deps: {
         createClient: () => {
           throw new Error("createClient should not be called");
@@ -1516,7 +1602,7 @@ describe("HostRuntimeStore", () => {
     store.boot();
     await registryLoaded;
 
-    expect(fullScans).toBe(0);
+    expect(fullScans).toBe(1);
     expect(useSessionStore.getState().sessions[host.serverId]).toMatchObject({
       client: null,
       hasHydratedAgents: false,
@@ -2006,11 +2092,27 @@ describe("HostRuntimeStore", () => {
       new Map([
         [
           "legacy-snapshot",
-          { ...replicaAgent(snapshotAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(snapshotAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
         [
           "legacy-buffered",
-          { ...replicaAgent(bufferedAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(bufferedAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
       ]),
     );
@@ -2545,11 +2647,27 @@ describe("HostRuntimeStore", () => {
       new Map([
         [
           "snapshot-transition",
-          { ...replicaAgent(snapshotAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(snapshotAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
         [
           "buffered-transition",
-          { ...replicaAgent(bufferedAgent.agent, host.serverId), status: "running" },
+          {
+            ...replicaAgent(bufferedAgent.agent, host.serverId),
+            turn: {
+              phase: "open",
+              turnId: null,
+              startedAt: null,
+              cancellationRequestId: null,
+            },
+          },
         ],
       ]),
     );
@@ -2596,7 +2714,7 @@ describe("HostRuntimeStore", () => {
     const fakeClient = new FakeDaemonClient();
     const send = new Deferred<void>();
     fakeClient.sendAgentMessageResponses.push(send.promise);
-    const store = new HostRuntimeStore({
+    const _store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
         connectToDaemon: async () => ({
@@ -2637,7 +2755,7 @@ describe("HostRuntimeStore", () => {
       ]),
     );
 
-    store.drainQueuedAgentMessage(host.serverId, "agent");
+    drainQueuedAgentMessage(host.serverId, "agent");
     await fakeClient.waitForSentMessages(1);
 
     // The row and the pending submission must exist while the RPC is still in flight —
@@ -2661,7 +2779,7 @@ describe("HostRuntimeStore", () => {
     const host = makeHost({ serverId: "srv_failed_queue_drain" });
     const fakeClient = new FakeDaemonClient();
     fakeClient.sendAgentMessageFailures.push(new Error("connection lost"));
-    const store = new HostRuntimeStore({
+    const _store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
         connectToDaemon: async () => ({
@@ -2687,7 +2805,7 @@ describe("HostRuntimeStore", () => {
       ]),
     );
 
-    store.drainQueuedAgentMessage(host.serverId, "agent");
+    drainQueuedAgentMessage(host.serverId, "agent");
 
     await vi.waitFor(() => {
       expect(fakeClient.sentAgentMessages).toHaveLength(1);
@@ -2707,7 +2825,7 @@ describe("HostRuntimeStore", () => {
     const fakeClient = new FakeDaemonClient();
     const send = new Deferred<void>();
     fakeClient.sendAgentMessageResponses.push(send.promise);
-    const store = new HostRuntimeStore({
+    const _store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
         connectToDaemon: async () => ({
@@ -2725,8 +2843,8 @@ describe("HostRuntimeStore", () => {
       new Map([["agent", [{ id: "first", text: "send once", attachments: [] }]]]),
     );
 
-    store.drainQueuedAgentMessage(host.serverId, "agent");
-    store.drainQueuedAgentMessage(host.serverId, "agent");
+    drainQueuedAgentMessage(host.serverId, "agent");
+    drainQueuedAgentMessage(host.serverId, "agent");
     await fakeClient.waitForSentMessages(1);
     expect(fakeClient.sentAgentMessages).toHaveLength(1);
 
@@ -2742,7 +2860,7 @@ describe("HostRuntimeStore", () => {
   it("uses legacy GitHub attachments when draining a queue for an old daemon", async () => {
     const host = makeHost({ serverId: "srv_legacy_queue_attachment" });
     const fakeClient = new FakeDaemonClient();
-    const store = new HostRuntimeStore({
+    const _store = new HostRuntimeStore({
       deps: {
         createClient: () => fakeClient as unknown as DaemonClient,
         connectToDaemon: async () => ({
@@ -2792,7 +2910,7 @@ describe("HostRuntimeStore", () => {
       ]),
     );
 
-    store.drainQueuedAgentMessage(host.serverId, "agent");
+    drainQueuedAgentMessage(host.serverId, "agent");
     await fakeClient.waitForSentMessages(1);
 
     expect(fakeClient.sentAgentMessages[0]?.[2]?.attachments).toEqual([
@@ -3037,12 +3155,14 @@ describe("HostRuntimeStore", () => {
       }).agent;
       const staleAgent: Agent = {
         ...stale,
-        activeTurn: stale.activeTurn
+        turn: stale.activeTurn
           ? {
+              phase: "open",
               turnId: stale.activeTurn.turnId,
               startedAt: stale.activeTurn.startedAt ? new Date(stale.activeTurn.startedAt) : null,
+              cancellationRequestId: null,
             }
-          : null,
+          : { phase: "idle", cancellationRequestId: null },
         serverId: host.serverId,
         createdAt: new Date(stale.createdAt),
         updatedAt: new Date(stale.updatedAt),

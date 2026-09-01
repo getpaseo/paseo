@@ -12,7 +12,7 @@ import { useStableEvent } from "@/hooks/use-stable-event";
 import { useHostFeature } from "@/runtime/host-features";
 import { generateDraftId } from "@/stores/draft-keys";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
-import { useSessionStore } from "@/stores/session-store";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import {
   buildDraftWorkspaceAttachmentScopeKey,
   useWorkspaceAttachmentsStore,
@@ -129,7 +129,7 @@ export function useForkAgent(
   const { serverId, toast, readOnly = false } = input;
   const { t } = useTranslation();
   const router = useRouter();
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const client = useHostRuntimeClient(serverId);
   const supportsAgentForkContext = useHostFeature(serverId, "agentForkContext") && !readOnly;
 
   return useStableEvent(async ({ agentId, agent, workspaceId, target, boundary }) => {

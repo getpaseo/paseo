@@ -2,8 +2,6 @@ import { useCallback, useMemo, useRef, useState, type ReactElement } from "react
 import { useTranslation } from "react-i18next";
 import { Text, View } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { useShallow } from "zustand/shallow";
-import { useStoreWithEqualityFn } from "zustand/traditional";
 import { type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Combobox, ComboboxItem, type ComboboxOption } from "@/components/ui/combobox";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -17,7 +15,8 @@ import { resolveNextAgentModeId } from "@/composer/agent-controls/mode";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { useComposerControlLayout } from "@/composer/agent-controls/layout-context";
 import { AgentControlTrigger } from "@/composer/agent-controls/control";
-import { useSessionStore } from "@/stores/session-store";
+import { useActiveAgentFields } from "@/stores/session-store-hooks";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
@@ -238,31 +237,18 @@ export function AgentModeControl({
 
 const EMPTY_MODES: AgentMode[] = [];
 
-function compareAvailableModes(a: AgentMode[], b: AgentMode[]): boolean {
-  return a === b || JSON.stringify(a) === JSON.stringify(b);
-}
-
 export function useLiveAgentModeControl(
   serverId: string,
   agentId: string,
 ): AgentModeControlValue | null {
-  const slice = useSessionStore(
-    useShallow((state) => {
-      const agent = state.sessions[serverId]?.agents?.get(agentId);
-      if (!agent) return null;
-      return {
-        provider: agent.provider,
-        cwd: agent.cwd,
-        currentModeId: agent.currentModeId,
-      };
-    }),
-  );
-  const availableModes = useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => state.sessions[serverId]?.agents?.get(agentId)?.availableModes ?? EMPTY_MODES,
-    compareAvailableModes,
-  );
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const slice = useActiveAgentFields(serverId, agentId, (agent) => ({
+    provider: agent.provider,
+    cwd: agent.cwd,
+    currentModeId: agent.currentModeId,
+    availableModes: agent.availableModes,
+  }));
+  const availableModes = slice?.availableModes ?? EMPTY_MODES;
+  const client = useHostRuntimeClient(serverId);
   const { updatePreferences } = useFormPreferences();
   const toast = useToast();
   const { entries: snapshotEntries } = useProvidersSnapshot(serverId, { cwd: slice?.cwd });

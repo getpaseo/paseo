@@ -27,7 +27,7 @@ const FAVICON_IMAGES: Record<ColorScheme, Record<FaviconStatus, { uri: string } 
 function deriveFaviconStatus(
   agents: ReturnType<typeof useAggregatedAgents>["agents"],
 ): FaviconStatus {
-  const hasRunning = agents.some((agent) => agent.status === "running");
+  const hasRunning = agents.some((agent) => agent.turn.phase === "open");
   if (hasRunning) {
     return "running";
   }

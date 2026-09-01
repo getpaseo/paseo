@@ -1,6 +1,6 @@
 import { startDesktopDaemon, type DesktopDaemonStatus } from "@/desktop/daemon/desktop-daemon";
 import { connectionFromListen } from "@/types/host-connection";
-import type { HostRuntimeStore } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, type HostRuntimeStore } from "@/runtime/host-runtime";
 
 export type DaemonStartResult = { ok: true } | { ok: false; error: string };
 export type DaemonStartCondition = boolean | (() => boolean | Promise<boolean>);
@@ -44,6 +44,12 @@ export async function upsertDesktopDaemonConnection(
     hostname: daemon.hostname,
   });
   return { ok: true };
+}
+
+export function registerDesktopDaemonConnection(
+  daemon: DesktopDaemonStatus,
+): Promise<DaemonStartResult> {
+  return upsertDesktopDaemonConnection(getHostRuntimeStore(), daemon);
 }
 
 export class DaemonStartService {
@@ -165,4 +171,8 @@ export function getDaemonStartService(deps: DaemonStartServiceDeps): DaemonStart
   singletonDaemonStartService = new DaemonStartService(deps);
   runtimeGlobal[DAEMON_START_SERVICE_GLOBAL_KEY] = singletonDaemonStartService;
   return singletonDaemonStartService;
+}
+
+export function getManagedDaemonStartService(): DaemonStartService {
+  return getDaemonStartService({ store: getHostRuntimeStore() });
 }

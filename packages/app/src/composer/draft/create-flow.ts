@@ -7,7 +7,7 @@ import {
 } from "@/composer/attachments/submit";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { handoffCreatedAgentMessageSubmission } from "@/composer/submission/writer";
-import { useSessionStore } from "@/stores/session-store";
+import { hostSupports } from "@/runtime/session-data";
 import {
   createUserMessage,
   generateMessageId,
@@ -267,9 +267,7 @@ export function useDraftAgentCreateFlow<TDraftAgent, TCreateResult>({
         dispatch({ type: "DRAFT_SET_ERROR", message: error.message });
         throw error;
       }
-      const supportsForgeSearch =
-        useSessionStore.getState().sessions[pendingServerId]?.serverInfo?.features?.forgeSearch ===
-        true;
+      const supportsForgeSearch = hostSupports(pendingServerId, "forgeSearch");
       const wirePayload = splitComposerAttachmentsForSubmit(attachments, {
         format: resolveComposerAttachmentSubmitFormat({
           supportsForgeAttachments: supportsForgeSearch,

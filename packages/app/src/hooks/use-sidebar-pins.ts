@@ -1,12 +1,10 @@
 import { useMemo, useRef } from "react";
-import { shallow } from "zustand/shallow";
-import { useStoreWithEqualityFn } from "zustand/traditional";
 import type {
   SidebarProjectEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { applyStoredOrdering } from "@/hooks/sidebar-workspaces-view-model";
-import { useSessionStore } from "@/stores/session-store";
+import { useWorkspaceDirectories } from "@/stores/session-store-hooks";
 
 export interface PinnedSidebarKeys {
   pinnedWorkspaceKeys: string[];
@@ -83,30 +81,25 @@ export function usePinnedSidebarKeys(projects: SidebarProjectEntry[]): PinnedSid
       ),
     [projects],
   );
-  const workspaceMaps = useStoreWithEqualityFn(
-    useSessionStore,
-    (state) => serverIds.map((serverId) => state.sessions[serverId]?.workspaces ?? null),
-    shallow,
-  );
-  return useMemo(() => {
-    const workspaceMapByServerId = new Map<
-      string,
-      ReadonlyMap<string, { pinnedAt?: string | null }>
-    >();
-    for (let index = 0; index < serverIds.length; index += 1) {
-      const serverId = serverIds[index];
-      const workspaceMap = workspaceMaps[index];
-      if (serverId && workspaceMap) {
-        workspaceMapByServerId.set(serverId, workspaceMap);
+  return useWorkspaceDirectories(
+    serverIds,
+    (directories) => {
+      const workspaceMapByServerId = new Map<
+        string,
+        ReadonlyMap<string, { pinnedAt?: string | null }>
+      >();
+      for (const [serverId, directory] of directories) {
+        workspaceMapByServerId.set(serverId, directory.workspaces);
       }
-    }
-    const nextKeys = buildPinnedSidebarKeys(projects, workspaceMapByServerId);
-    if (arePinnedSidebarKeysEqual(previousKeysRef.current, nextKeys)) {
-      return previousKeysRef.current;
-    }
-    previousKeysRef.current = nextKeys;
-    return nextKeys;
-  }, [projects, serverIds, workspaceMaps]);
+      const nextKeys = buildPinnedSidebarKeys(projects, workspaceMapByServerId);
+      if (arePinnedSidebarKeysEqual(previousKeysRef.current, nextKeys)) {
+        return previousKeysRef.current;
+      }
+      previousKeysRef.current = nextKeys;
+      return nextKeys;
+    },
+    arePinnedSidebarKeysEqual,
+  );
 }
 
 // Splits the sidebar into a dedicated Pinned section (chats) and the regular list below.

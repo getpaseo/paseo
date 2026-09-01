@@ -19,7 +19,7 @@ import { useAppDiagnosticStore } from "@/diagnostics/store";
 import { useKeyboardShortcutsAvailable } from "@/keyboard/availability";
 import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
-import { useSessionStore } from "@/stores/session-store";
+import { useConnection } from "@/stores/session-store-hooks";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
 import { formatVersionWithPrefix } from "@/desktop/updates/desktop-updates";
@@ -58,8 +58,9 @@ const changelogLeadingIcon = (
 function HostVersionHint({ host }: { host: HostProfile }) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(host.serverId);
-  const daemonVersion = useSessionStore(
-    (state) => state.sessions[host.serverId]?.serverInfo?.version ?? null,
+  const daemonVersion = useConnection(
+    host.serverId,
+    ({ serverInfo }) => serverInfo?.version ?? null,
   );
   const version = isConnected
     ? formatVersionWithPrefix(daemonVersion)

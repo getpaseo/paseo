@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
-import type { CachedTimeline } from "@/runtime/replica-cache";
+import type { CachedTimeline } from "@/runtime/client-replica";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { StreamItem } from "@/types/stream";
 import {
@@ -171,6 +171,59 @@ describe("viewed timeline persistence", () => {
       ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
     ]).toMatchObject([{ kind: "assistant_message", text: complete }]);
     owner.dispose();
+  });
+
+  it("reopens painted live mutations without persisting authoritative coverage", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    let durable: CachedTimeline | undefined = cachedTimeline();
+    let pending: CachedTimeline | undefined;
+    const storage: TimelineReplicaStorage = {
+      readTimeline: async () => durable,
+      commitTimeline: (_serverId, _agentId, timeline) => {
+        pending = timeline;
+      },
+    };
+    const first = createOwner(storage);
+    first.replaceVisibleAgentIds("test", [AGENT_ID]);
+    await expect
+      .poll(() =>
+        selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID),
+      )
+      .toMatchObject({ status: "painted" });
+
+    first.enqueueStreamEvent(AGENT_ID, {
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "live", messageId: "live" },
+      } as AgentStreamEventPayload,
+      seq: 5,
+      epoch: "epoch-1",
+      timestamp: new Date("2026-08-26T10:00:01.000Z"),
+    });
+    first.flushStreamAgent(AGENT_ID);
+
+    expect(pending).toMatchObject({ range: null, hasOlder: false });
+    expect(pending?.items.map((entry) => entry.id)).toEqual(["cached", expect.any(String)]);
+    durable = pending;
+    first.dispose();
+    useSessionStore.getState().clearSession(SERVER_ID);
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+
+    const reopened = createOwner(storage);
+    reopened.replaceVisibleAgentIds("test", [AGENT_ID]);
+    await expect
+      .poll(() =>
+        selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID),
+      )
+      .toMatchObject({
+        status: "painted",
+        items: [
+          expect.objectContaining({ id: "cached" }),
+          expect.objectContaining({ text: "live" }),
+        ],
+      });
+    reopened.dispose();
   });
 
   it("does not let a late cache read overwrite newer network state", async () => {

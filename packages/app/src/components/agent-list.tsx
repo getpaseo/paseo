@@ -16,7 +16,7 @@ import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { formatTimeAgo } from "@/utils/time";
 import { type AggregatedAgent } from "@/hooks/use-aggregated-agents";
-import { useSessionStore } from "@/stores/session-store";
+import { getHostClient, useHostRuntimeClient } from "@/runtime/host-runtime";
 import { Archive, ChevronRight } from "lucide-react-native";
 import { getProviderIcon } from "@/components/provider-icons";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
@@ -390,9 +390,7 @@ export function AgentList({
   const isMobile = useIsCompactFormFactor();
   const { archiveAgent } = useArchiveAgent();
 
-  const actionClient = useSessionStore((state) =>
-    actionAgent?.serverId ? (state.sessions[actionAgent.serverId]?.client ?? null) : null,
-  );
+  const actionClient = useHostRuntimeClient(actionAgent?.serverId ?? "");
 
   const isActionSheetVisible = actionAgent !== null;
   const isActionDaemonUnavailable = Boolean(actionAgent?.serverId && !actionClient);
@@ -419,13 +417,13 @@ export function AgentList({
 
   const handleAgentLongPress = useCallback(
     (agent: AggregatedAgent) => {
-      const isRunning = agent.status === "running";
+      const isRunning = agent.turn.phase === "open";
       if (isRunning) {
         setActionAgent(agent);
         return;
       }
 
-      const client = useSessionStore.getState().sessions[agent.serverId]?.client ?? null;
+      const client = getHostClient(agent.serverId);
       if (!client) {
         setActionAgent(agent);
         return;

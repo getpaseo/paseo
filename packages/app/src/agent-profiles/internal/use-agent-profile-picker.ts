@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { mergeCreateAgentSelectionPreferences } from "@/create-agent-preferences/preferences";
 import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
-import { useSessionStore } from "@/stores/session-store";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { toErrorMessage } from "@/utils/error-messages";
 import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
@@ -73,7 +73,7 @@ export function useAgentProfilePicker(
   // so every composer on a host shares one query instead of adding its own.
   const { entries } = useProvidersSnapshot(serverId, { cwd: null });
   const { updatePreferences } = useFormPreferences();
-  const client = useSessionStore((state) => state.sessions[serverId ?? ""]?.client ?? null);
+  const client = useHostRuntimeClient(serverId ?? "");
   const toast = useToast();
 
   const applicableProfiles = useMemo(() => {

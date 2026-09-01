@@ -89,8 +89,11 @@ import {
   useHostRuntimeConnectionStatuses,
 } from "@/runtime/host-runtime";
 import { useHostFeatureMap } from "@/runtime/host-features";
-import { useSessionStore } from "@/stores/session-store";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
+import {
+  acceptProjectSnapshot as upsertProject,
+  publishWorkspaceHydration as setHasHydratedWorkspaces,
+} from "@/runtime/session-data";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
 import type { Theme } from "@/styles/theme";
 import { shortenPath } from "@/utils/shorten-path";
@@ -372,8 +375,6 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const recommendedPaths = useRecommendedProjectPaths(hostId);
   const openProject = useOpenProject(hostId);
   const cloneGithubProject = useCloneGithubProject(hostId);
-  const upsertProject = useSessionStore((store) => store.upsertProject);
-  const setHasHydratedWorkspaces = useSessionStore((store) => store.setHasHydratedWorkspaces);
   const inputRef = useRef<EditingTextInputHandle>(null);
   const submissionInFlightRef = useRef(false);
   const browseInFlightRef = useRef(false);
@@ -751,7 +752,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     } finally {
       submissionInFlightRef.current = false;
     }
-  }, [client, openNewWorkspaceForProject, page, setHasHydratedWorkspaces, upsertProject]);
+  }, [client, openNewWorkspaceForProject, page]);
 
   const submitActive = useCallback(() => {
     if (page.kind === "new-directory-name") {

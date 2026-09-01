@@ -47,8 +47,8 @@ import { PairDeviceModal } from "@/desktop/components/pair-device-modal";
 import { useDaemonConfig } from "@/hooks/use-daemon-config";
 import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import {
-  getHostRuntimeStore,
   isHostRuntimeConnected,
+  readHostRuntimeSnapshot,
   useHostMutations,
   useHostRuntimeClient,
   useHostRuntimeIsConnected,
@@ -60,7 +60,7 @@ import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section"
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
 import { HostAppearanceSection } from "@/screens/settings/host-appearance-section";
 import { SettingsSection } from "@/screens/settings/settings-section";
-import { useSessionStore } from "@/stores/session-store";
+import { useConnection, useServerFeature } from "@/stores/session-store-hooks";
 import { settingsStyles } from "@/styles/settings";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -173,9 +173,7 @@ function HostStatusBadges({ serverId }: { serverId: string }) {
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const snapshot = useHostRuntimeSnapshot(serverId);
-  const daemonVersion = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.version ?? null,
-  );
+  const daemonVersion = useConnection(serverId, ({ serverInfo }) => serverInfo?.version ?? null);
 
   const connectionStatus = snapshot?.connectionStatus ?? "connecting";
   const activeConnection = snapshot?.activeConnection ?? null;
@@ -563,7 +561,6 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
   const { theme } = useUnistyles();
   const daemonClient = useHostRuntimeClient(host.serverId);
   const isConnected = useHostRuntimeIsConnected(host.serverId);
-  const runtime = getHostRuntimeStore();
   const [isRestarting, setIsRestarting] = useState(false);
   const isMountedRef = useRef(true);
 
@@ -574,8 +571,8 @@ function RestartDaemonCard({ host }: { host: HostProfile }) {
   }, []);
 
   const isHostConnected = useCallback(
-    () => isHostRuntimeConnected(runtime.getSnapshot(host.serverId)),
-    [host.serverId, runtime],
+    () => isHostRuntimeConnected(readHostRuntimeSnapshot(host.serverId)),
+    [host.serverId],
   );
 
   const waitForCondition = useCallback(
@@ -730,19 +727,18 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
   const { theme } = useUnistyles();
   const daemonClient = useHostRuntimeClient(host.serverId);
   const isConnected = useHostRuntimeIsConnected(host.serverId);
-  const runtime = getHostRuntimeStore();
   const [updateState, setUpdateState] = useState<DaemonUpdateState>({ status: "idle" });
   const isMountedRef = useRef(true);
   const unsubscribeRef = useRef<(() => void) | null>(null);
 
-  const daemonVersion = useSessionStore(
-    (state) => state.sessions[host.serverId]?.serverInfo?.version ?? null,
+  const daemonVersion = useConnection(
+    host.serverId,
+    ({ serverInfo }) => serverInfo?.version ?? null,
   );
-  const supportsSelfUpdate = useSessionStore(
-    (state) => state.sessions[host.serverId]?.serverInfo?.features?.daemonSelfUpdate === true,
-  );
-  const desktopManaged = useSessionStore(
-    (state) => state.sessions[host.serverId]?.serverInfo?.desktopManaged === true,
+  const supportsSelfUpdate = useServerFeature(host.serverId, "daemonSelfUpdate");
+  const desktopManaged = useConnection(
+    host.serverId,
+    ({ serverInfo }) => serverInfo?.desktopManaged === true,
   );
 
   const appVersion = resolveAppVersion();
@@ -756,13 +752,13 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
   }, []);
 
   const isHostConnected = useCallback(
-    () => isHostRuntimeConnected(runtime.getSnapshot(host.serverId)),
-    [host.serverId, runtime],
+    () => isHostRuntimeConnected(readHostRuntimeSnapshot(host.serverId)),
+    [host.serverId],
   );
   const hasReconnectedAfter = useCallback(
     (startMarker: DaemonConnectionMarker | null) =>
-      hasDaemonReconnectedAfter(runtime.getSnapshot(host.serverId), startMarker),
-    [host.serverId, runtime],
+      hasDaemonReconnectedAfter(readHostRuntimeSnapshot(host.serverId), startMarker),
+    [host.serverId],
   );
 
   const waitForCondition = useCallback(
@@ -835,7 +831,7 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
     })
       .then((confirmed) => {
         if (!confirmed || !isMountedRef.current) return;
-        const startSnapshot = runtime.getSnapshot(host.serverId);
+        const startSnapshot = readHostRuntimeSnapshot(host.serverId);
         const startMarker = startSnapshot
           ? {
               clientGeneration: startSnapshot.clientGeneration,
@@ -919,7 +915,7 @@ function UpdateDaemonCard({ host }: { host: HostProfile }) {
           message: t("settings.host.daemon.update.dialogFailedMessage"),
         });
       });
-  }, [daemonClient, host.label, host.serverId, isHostConnected, runtime, t, waitForDaemonRestart]);
+  }, [daemonClient, host.label, host.serverId, isHostConnected, t, waitForDaemonRestart]);
 
   const updateIcon = useMemo(
     () => <ArrowUpToLine size={theme.iconSize.sm} color={theme.colors.foreground} />,

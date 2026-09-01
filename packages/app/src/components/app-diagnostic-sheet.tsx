@@ -17,7 +17,11 @@ import {
   redactAppDiagnosticReport,
 } from "@/diagnostics/app-diagnostic-report";
 import { collectDesktopDiagnosticSections } from "@/diagnostics/desktop-diagnostic-report";
-import { getHostRuntimeStore, useHosts, type HostRuntimeSnapshot } from "@/runtime/host-runtime";
+import {
+  readHostRuntimeSnapshot,
+  useHosts,
+  type HostRuntimeSnapshot,
+} from "@/runtime/host-runtime";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
 
@@ -108,11 +112,10 @@ export function AppDiagnosticSheet({
         updateRunProgress("desktop", desktopLabel, desktopResult.status);
       }
 
-      const store = getHostRuntimeStore();
       for (const host of hosts) {
         const hostProgressId = `host:${host.serverId}`;
         updateRunProgress(hostProgressId, host.label, "running");
-        const snapshot = store.getSnapshot(host.serverId);
+        const snapshot = readHostRuntimeSnapshot(host.serverId);
         const hostResult = await collectHostDiagnosticSections(host, snapshot);
         sections.push(...hostResult.sections);
         updateRunProgress(hostProgressId, host.label, hostResult.status);

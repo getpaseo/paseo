@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useMutation } from "@tanstack/react-query";
 import { useToast } from "@/contexts/toast-context";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { getHostClient } from "@/runtime/host-runtime";
 
 // Everything the pin toggle actually needs. Kept narrower than SidebarWorkspaceEntry so the
 // global keyboard handler can build one from the active route selection without a sidebar row.
@@ -30,7 +30,7 @@ export function useSidebarWorkspacePinController(): ToggleSidebarWorkspacePin {
       workspace: PinnableWorkspace;
       pinned: boolean;
     }) => {
-      const client = getHostRuntimeStore().getClient(workspace.serverId);
+      const client = getHostClient(workspace.serverId);
       if (!client) {
         throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
       }

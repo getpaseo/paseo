@@ -12,7 +12,6 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { useStoreWithEqualityFn } from "zustand/traditional";
 import { useIsFocused } from "@react-navigation/native";
 import { BackHandler, Keyboard, Pressable, Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
@@ -60,7 +59,19 @@ import {
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
 import { type ExplorerCheckoutContext } from "@/stores/explorer-checkout-context";
 import { traceInstant } from "@/performance/native-trace";
-import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import {
+  useAgentDirectoryFields,
+  useServerFeature,
+  useViewedTimelineSync,
+  useWorkspaceDirectoryStatus,
+  type WorkspaceDescriptor,
+} from "@/stores/session-store-hooks";
+import {
+  getActiveAgentSnapshot,
+  getAgentTimelineSnapshot,
+  publishFocusedAgent as setFocusedAgentId,
+  publishFocusedTerminal as setFocusedTerminalId,
+} from "@/runtime/session-data";
 import {
   canDismissPaneInLayout,
   collectAllTabs,
@@ -90,7 +101,11 @@ import { useCreateFlowStore } from "@/stores/create-flow-store";
 import { normalizeWorkspaceTabTarget, workspaceTabTargetsEqual } from "@/workspace-tabs/identity";
 import { useVisibleAgentIds } from "./visible-agent-ids";
 import {
-  getHostRuntimeStore,
+  prepareAgentTimeline,
+  prepareWorkspaceRoute,
+  probeHostConnections,
+  fetchAgentTimeline,
+  getHostClient,
   useHostRuntimeClient,
   useHostRuntimeIsConnected,
   useHostRuntimeSnapshot,
@@ -1211,7 +1226,7 @@ function useWorkspaceRouteActions(normalizedServerId: string): {
     if (!normalizedServerId) {
       return;
     }
-    void getHostRuntimeStore().runProbeCycleNow(normalizedServerId);
+    void probeHostConnections(normalizedServerId);
   }, [normalizedServerId]);
   const handleManageHost = useCallback(() => {
     if (!normalizedServerId) {
@@ -1548,9 +1563,7 @@ function WorkspaceScreenContent({
   const workspaceDescriptor = useWorkspace(normalizedServerId, normalizedWorkspaceId);
   useEffect(() => {
     if (!normalizedServerId || !normalizedWorkspaceId || workspaceDescriptor) return;
-    void getHostRuntimeStore()
-      .prepareWorkspaceRoute(normalizedServerId, normalizedWorkspaceId)
-      .catch(() => undefined);
+    void prepareWorkspaceRoute(normalizedServerId, normalizedWorkspaceId).catch(() => undefined);
   }, [normalizedServerId, normalizedWorkspaceId, workspaceDescriptor]);
   const workspaceScripts = getWorkspaceScripts(workspaceDescriptor);
   const { handleRetryHost, handleManageHost, handleDismissMissingWorkspace } =
@@ -1566,9 +1579,7 @@ function WorkspaceScreenContent({
 
   const client = useHostRuntimeClient(normalizedServerId);
   const isConnected = useHostRuntimeIsConnected(normalizedServerId);
-  const supportsProvidersSnapshot = useSessionStore(
-    (state) => state.sessions[normalizedServerId]?.serverInfo?.features?.providersSnapshot === true,
-  );
+  const supportsProvidersSnapshot = useServerFeature(normalizedServerId, "providersSnapshot");
   const workspaceDirectory = workspaceDescriptor?.workspaceDirectory || null;
   const isMissingWorkspaceDirectory = Boolean(workspaceDescriptor) && !workspaceDirectory;
   const [isImportSheetVisible, setIsImportSheetVisible] = useState(false);
@@ -1645,9 +1656,7 @@ function WorkspaceScreenContent({
     }));
   }, []);
   const focusWorkspacePane = useWorkspaceLayoutStore((state) => state.focusPane);
-  const hasHydratedWorkspaces = useSessionStore(
-    (state) => state.sessions[normalizedServerId]?.hasHydratedWorkspaces ?? false,
-  );
+  const { hasHydratedWorkspaces } = useWorkspaceDirectoryStatus(normalizedServerId);
   const workspaceRecovery = useWorkspaceRecovery({
     serverId: normalizedServerId,
     workspaceId: normalizedWorkspaceId,
@@ -1659,12 +1668,12 @@ function WorkspaceScreenContent({
     ),
   });
 
-  const workspaceAgentVisibility = useStoreWithEqualityFn(
-    useSessionStore,
-    (state) =>
+  const workspaceAgentVisibility = useAgentDirectoryFields(
+    normalizedServerId,
+    (directory) =>
       deriveWorkspaceAgentVisibility({
-        sessionAgents: state.sessions[normalizedServerId]?.agents,
-        agentDetails: state.sessions[normalizedServerId]?.agentDetails,
+        sessionAgents: directory.agents,
+        agentDetails: directory.agentDetails,
         workspaceId: normalizedWorkspaceId,
       }),
     workspaceAgentVisibilityEqual,
@@ -1727,8 +1736,9 @@ function WorkspaceScreenContent({
     normalizedWorkspaceId,
     workspaceDirectory,
   });
-  const hasHydratedAgents = useSessionStore(
-    (state) => state.sessions[normalizedServerId]?.hasHydratedAgents ?? false,
+  const hasHydratedAgents = useAgentDirectoryFields(
+    normalizedServerId,
+    (directory) => directory.hasHydratedAgents,
   );
   const workspaceRouteState = useResolvedWorkspaceRouteState({
     serverId: normalizedServerId,
@@ -1901,9 +1911,7 @@ function WorkspaceScreenContent({
       }),
     [uiTabs, workspaceLayout],
   );
-  const viewedTimelineSync = useSessionStore(
-    (state) => state.sessions[normalizedServerId]?.viewedTimelineSync ?? null,
-  );
+  const viewedTimelineSync = useViewedTimelineSync(normalizedServerId);
   const syncFocusedPaneOnly = useMemo(
     () => isMobile || isFocusModeEnabled || !supportsDesktopPaneSplits(),
     [isFocusModeEnabled, isMobile],
@@ -1916,9 +1924,7 @@ function WorkspaceScreenContent({
   });
   useEffect(() => {
     for (const agentId of visibleAgentIds) {
-      void getHostRuntimeStore()
-        .prepareAgentTimeline(normalizedServerId, agentId)
-        .catch(() => undefined);
+      void prepareAgentTimeline(normalizedServerId, agentId).catch(() => undefined);
     }
   }, [normalizedServerId, visibleAgentIds]);
   useLayoutEffect(() => {
@@ -1933,8 +1939,6 @@ function WorkspaceScreenContent({
     }
     return () => viewedTimelineSync.replaceVisibleAgentIds(persistenceKey, []);
   }, [persistenceKey, viewedTimelineSync]);
-  const setFocusedAgentId = useSessionStore((state) => state.setFocusedAgentId);
-  const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
   const focusedPaneAgentId = useMemo(() => {
     const target = focusedPaneTabState.activeTab?.descriptor.target;
     if (target?.kind !== "agent") {
@@ -1956,14 +1960,7 @@ function WorkspaceScreenContent({
     }
     setFocusedAgentId(normalizedServerId, focusedPaneAgentId);
     setFocusedTerminalId(normalizedServerId, focusedPaneTerminalId);
-  }, [
-    focusedPaneAgentId,
-    focusedPaneTerminalId,
-    isRouteFocused,
-    normalizedServerId,
-    setFocusedAgentId,
-    setFocusedTerminalId,
-  ]);
+  }, [focusedPaneAgentId, focusedPaneTerminalId, isRouteFocused, normalizedServerId]);
 
   useEffect(() => {
     if (!isRouteFocused) {
@@ -1973,7 +1970,7 @@ function WorkspaceScreenContent({
       setFocusedAgentId(normalizedServerId, null);
       setFocusedTerminalId(normalizedServerId, null);
     };
-  }, [isRouteFocused, normalizedServerId, setFocusedAgentId, setFocusedTerminalId]);
+  }, [isRouteFocused, normalizedServerId]);
 
   const openWorkspaceDraftTab = useCallback(
     function openWorkspaceDraftTab(input?: {
@@ -2530,10 +2527,9 @@ function WorkspaceScreenContent({
           return;
         }
 
-        const agent =
-          useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+        const agent = getActiveAgentSnapshot(normalizedServerId, agentId);
         let closePolicy = resolveCloseAgentTabPolicy(agent);
-        const isRunning = agent?.status === "running";
+        const isRunning = agent?.turn.phase === "open";
 
         if (isRunning && closePolicy.kind === "archive-on-close") {
           const confirmed = await confirmDialog({
@@ -2549,7 +2545,7 @@ function WorkspaceScreenContent({
         }
 
         if (closePolicy.kind === "layout-only") {
-          const sessionClient = useSessionStore.getState().sessions[normalizedServerId]?.client;
+          const sessionClient = getHostClient(normalizedServerId);
           if (!sessionClient) {
             toast.error(t("common.errors.daemonClientUnavailable"));
             return;
@@ -2559,8 +2555,7 @@ function WorkspaceScreenContent({
             await sessionClient.updateAgent(agentId, {
               labels: { [getOpenAgentTabLabel(clientId)]: "false" },
             });
-            const latestAgent =
-              useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+            const latestAgent = getActiveAgentSnapshot(normalizedServerId, agentId);
             closePolicy = resolveCloseAgentTabPolicy(latestAgent);
           } catch (error) {
             console.error("[WorkspaceScreen] Failed to close subagent tab", { error, agentId });
@@ -2698,8 +2693,7 @@ function WorkspaceScreenContent({
   const handleCopyResumeCommand = useCallback(
     async (agentId: string) => {
       if (!agentId) return;
-      const agent =
-        useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+      const agent = getActiveAgentSnapshot(normalizedServerId, agentId);
       const providerSessionId =
         agent?.runtimeInfo?.sessionId ?? agent?.persistence?.sessionId ?? null;
       if (!agent || !providerSessionId) {
@@ -2741,9 +2735,9 @@ function WorkspaceScreenContent({
         // returns reset:true. Without a cursor, the server returns reset:false
         // and the client takes the incremental path, where new-epoch rows are
         // dropped against the stale cursor.
-        const sessionState = useSessionStore.getState().sessions[normalizedServerId];
-        const currentCursor = sessionState?.agentTimelineCursor.get(agentId);
-        await getHostRuntimeStore().fetchAgentTimeline(normalizedServerId, agentId, {
+        const timeline = getAgentTimelineSnapshot(normalizedServerId, agentId);
+        const currentCursor = timeline.status === "synced" ? timeline.range : null;
+        await fetchAgentTimeline(normalizedServerId, agentId, {
           direction: "tail",
           projection: "projected",
           ...(currentCursor
@@ -2814,7 +2808,7 @@ function WorkspaceScreenContent({
       }
 
       const groups = classifyBulkClosableTabs(tabsToClose, (agentId) => {
-        const agent = useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId);
+        const agent = getActiveAgentSnapshot(normalizedServerId, agentId);
         return resolveCloseAgentTabPolicy(agent).kind === "layout-only" ? "layout-only" : "archive";
       });
       const modifiedCount = tabsToClose.filter(
@@ -2852,8 +2846,7 @@ function WorkspaceScreenContent({
           await client.updateAgent(agentId, {
             labels: { [getOpenAgentTabLabel(clientId)]: "false" },
           });
-          const latestAgent =
-            useSessionStore.getState().sessions[normalizedServerId]?.agents?.get(agentId) ?? null;
+          const latestAgent = getActiveAgentSnapshot(normalizedServerId, agentId);
           if (resolveCloseAgentTabPolicy(latestAgent).kind === "archive-on-close") {
             await archiveAgent({ serverId: normalizedServerId, agentId });
           }

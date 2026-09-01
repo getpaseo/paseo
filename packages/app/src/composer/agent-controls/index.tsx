@@ -22,7 +22,6 @@ import {
   type ViewStyle,
 } from "react-native";
 import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { useShallow } from "zustand/shallow";
 import { Settings2 } from "lucide-react-native";
 import { getAgentFeatureIcon, ThinkingIcon } from "@/agent-controls/icons";
 import { formatThinkingOptionLabel } from "@/agent-controls/labels";
@@ -34,7 +33,8 @@ import {
   type ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
-import { useSessionStore } from "@/stores/session-store";
+import { useActiveAgentFields, type Agent } from "@/stores/session-store-hooks";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import { resolveProviderDefinition } from "@/utils/provider-definitions";
 import { mergeProviderPreferences, useFormPreferences } from "@/hooks/use-form-preferences";
@@ -398,15 +398,7 @@ type AgentControlsSlice = {
   lastUsage: unknown;
 } | null;
 
-function selectAgentControlsSlice(
-  state: ReturnType<typeof useSessionStore.getState>,
-  serverId: string,
-  agentId: string,
-): AgentControlsSlice {
-  const currentAgent = state.sessions[serverId]?.agents?.get(agentId) ?? null;
-  if (!currentAgent) {
-    return null;
-  }
+function selectAgentControlsSlice(currentAgent: Agent): AgentControlsSlice {
   return {
     provider: currentAgent.provider,
     cwd: currentAgent.cwd,
@@ -1541,10 +1533,8 @@ export const AgentControls = memo(function AgentControls({
   isCompactLayout,
 }: AgentControlsProps) {
   const { updatePreferences } = useFormPreferences();
-  const agent = useSessionStore(
-    useShallow((state) => selectAgentControlsSlice(state, serverId, agentId)),
-  );
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const agent = useActiveAgentFields(serverId, agentId, selectAgentControlsSlice);
+  const client = useHostRuntimeClient(serverId);
   const toast = useToast();
   const modeControl = useLiveAgentModeControl(serverId, agentId);
   const commandCenterModes = toCommandCenterModes(modeControl);

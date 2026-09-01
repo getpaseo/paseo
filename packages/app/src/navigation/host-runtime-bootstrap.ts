@@ -10,6 +10,8 @@ import {
   buildHostWorkspaceRoute,
   buildOpenProjectRoute,
 } from "@/utils/host-routes";
+import { getHostRuntimeStore } from "@/runtime/host-runtime";
+import { getManagedDaemonStartService } from "@/runtime/daemon-start-service";
 
 export interface HostRuntimeBootstrapStore {
   boot: () => Promise<void>;
@@ -34,6 +36,14 @@ export function startHostRuntimeBootstrap(input: StartHostRuntimeBootstrapInput)
         ? input.shouldStartDaemon
         : input.shouldStartDaemon();
     },
+  });
+}
+
+export function startDefaultHostRuntimeBootstrap(shouldStartDaemon: DaemonStartCondition): void {
+  startHostRuntimeBootstrap({
+    store: getHostRuntimeStore(),
+    daemonStartService: getManagedDaemonStartService(),
+    shouldStartDaemon,
   });
 }
 

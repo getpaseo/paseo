@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { useFetchQuery } from "@/data/query";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
+import { useHasHostServerInfo, useServerFeature } from "@/stores/session-store-hooks";
 import { toErrorMessage } from "@/utils/error-messages";
 import {
   recoverWorkspaceSelection,
@@ -37,8 +37,8 @@ export function useWorkspaceRecovery(input: {
 }): WorkspaceRecoveryController {
   const client = useHostRuntimeClient(input.serverId);
   const isConnected = useHostRuntimeIsConnected(input.serverId);
-  const serverInfo = useSessionStore((store) => store.sessions[input.serverId]?.serverInfo ?? null);
-  const supportsRecovery = serverInfo?.features?.workspaceRecovery === true;
+  const supportsRecovery = useServerFeature(input.serverId, "workspaceRecovery");
+  const hasServerInfo = useHasHostServerInfo(input.serverId);
 
   const inspection = useFetchQuery({
     queryKey: ["workspaceRecovery", input.serverId, input.workspaceId],
@@ -75,7 +75,7 @@ export function useWorkspaceRecovery(input: {
         enabled: input.enabled,
         connected: isConnected,
         hasClient: client !== null,
-        hasServerInfo: serverInfo !== null,
+        hasServerInfo,
         supportsRecovery,
         inspection: {
           pending: inspection.isPending,
@@ -90,6 +90,7 @@ export function useWorkspaceRecovery(input: {
     [
       client,
       input.enabled,
+      hasServerInfo,
       inspection.data,
       inspection.error,
       inspection.isError,
@@ -98,7 +99,6 @@ export function useWorkspaceRecovery(input: {
       restoreMutation.error,
       restoreMutation.isError,
       restoreMutation.isPending,
-      serverInfo,
       supportsRecovery,
     ],
   );

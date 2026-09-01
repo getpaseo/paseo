@@ -17,8 +17,7 @@ import {
 } from "@/desktop/daemon/daemon-management-error";
 import { useDesktopIpcErrorReporter } from "@/desktop/hooks/desktop-ipc-error";
 import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
-import { getHostRuntimeStore } from "@/runtime/host-runtime";
-import { upsertDesktopDaemonConnection } from "@/runtime/daemon-start-service";
+import { registerDesktopDaemonConnection } from "@/runtime/daemon-start-service";
 import { confirmDialog } from "@/utils/confirm-dialog";
 
 type DesktopDaemonSettings = DesktopSettings["daemon"];
@@ -68,10 +67,7 @@ export function useBuiltInDaemonManagement(
           stopDaemon: () => stopDesktopDaemon("settings"),
         });
         if (result.kind === "enabled") {
-          const upsertResult = await upsertDesktopDaemonConnection(
-            getHostRuntimeStore(),
-            result.newStatus,
-          );
+          const upsertResult = await registerDesktopDaemonConnection(result.newStatus);
           if (!upsertResult.ok) {
             throw new DaemonConnectionRegistrationError(upsertResult.error);
           }

@@ -4,8 +4,13 @@ import { HostRouteBootstrapBoundary } from "@/components/host-route-bootstrap-bo
 import { useFetchQuery } from "@/data/query";
 import { resolveAgentRoute, type AgentRouteLookup } from "@/navigation/agent-route-resolution";
 import { AgentRouteResolutionView } from "@/navigation/agent-route-resolution-view";
-import { useSessionStore } from "@/stores/session-store";
-import { getHostRuntimeStore, useHostRuntimeSnapshot, useHosts } from "@/runtime/host-runtime";
+import { useAgentWorkspaceId } from "@/stores/session-store-hooks";
+import {
+  prepareAgentRoute,
+  probeHostConnections,
+  useHostRuntimeSnapshot,
+  useHosts,
+} from "@/runtime/host-runtime";
 import { buildHostRootRoute, buildSettingsHostRoute } from "@/utils/host-routes";
 import { toErrorMessage } from "@/utils/error-messages";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
@@ -32,17 +37,10 @@ function HostAgentReadyRouteContent() {
   const client = runtimeSnapshot?.client ?? null;
   const connectionStatus = runtimeSnapshot?.connectionStatus ?? "connecting";
   const hostName = hosts.find((host) => host.serverId === serverId)?.label ?? serverId;
-  const agentWorkspaceId = useSessionStore((state) => {
-    if (!serverId || !agentId) {
-      return null;
-    }
-    return state.sessions[serverId]?.agents?.get(agentId)?.workspaceId ?? null;
-  });
+  const agentWorkspaceId = useAgentWorkspaceId(serverId, agentId);
   useEffect(() => {
     if (!serverId || !agentId || agentWorkspaceId) return;
-    void getHostRuntimeStore()
-      .prepareAgentRoute(serverId, agentId)
-      .catch(() => undefined);
+    void prepareAgentRoute(serverId, agentId).catch(() => undefined);
   }, [agentId, agentWorkspaceId, serverId]);
   const shouldLookupAgent = Boolean(
     serverId && agentId && client && connectionStatus === "online" && !agentWorkspaceId,
@@ -118,7 +116,7 @@ function HostAgentReadyRouteContent() {
       return;
     }
     if (serverId) {
-      void getHostRuntimeStore().runProbeCycleNow(serverId);
+      void probeHostConnections(serverId);
     }
   }, [lookupQuery, resolution.kind, serverId]);
   const handleManageHost = useCallback(() => {

@@ -12,7 +12,12 @@ import { useToast } from "@/contexts/toast-context";
 import { useAgentInputDraft } from "@/composer/draft/input-draft";
 import { useProjectIcon } from "@/projects/icons";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
-import { normalizeWorkspaceDescriptor, useSessionStore } from "@/stores/session-store";
+import {
+  acceptAgentSnapshot,
+  acceptWorkspaceSnapshots as mergeWorkspaces,
+  publishWorkspaceHydration as setHasHydratedWorkspaces,
+} from "@/runtime/session-data";
+import { normalizeWorkspaceDescriptor, useServerFeature } from "@/stores/session-store-hooks";
 import { useWorkspaceSetupStore } from "@/stores/workspace-setup-store";
 import { normalizeAgentSnapshot } from "@/utils/agent-snapshots";
 import { applyLegacyDaemonWorkspaceOwnership } from "@/workspace/legacy-daemon-workspaces";
@@ -164,9 +169,6 @@ export function WorkspaceSetupDialog() {
   const toast = useToast();
   const pendingWorkspaceSetup = useWorkspaceSetupStore((state) => state.pendingWorkspaceSetup);
   const clearWorkspaceSetup = useWorkspaceSetupStore((state) => state.clearWorkspaceSetup);
-  const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
-  const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
-  const setAgents = useSessionStore((state) => state.setAgents);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
     typeof normalizeWorkspaceDescriptor
@@ -174,9 +176,7 @@ export function WorkspaceSetupDialog() {
   const [pendingAction, setPendingAction] = useState<"chat" | null>(null);
 
   const serverId = pendingWorkspaceSetup?.serverId ?? "";
-  const supportsForgeSearch = useSessionStore(
-    (state) => state.sessions[serverId]?.serverInfo?.features?.forgeSearch === true,
-  );
+  const supportsForgeSearch = useServerFeature(serverId, "forgeSearch");
   const sourceDirectory = pendingWorkspaceSetup?.sourceDirectory ?? "";
   const displayName = pendingWorkspaceSetup?.displayName?.trim() ?? "";
   const workspace = createdWorkspace;
@@ -278,14 +278,7 @@ export function WorkspaceSetupDialog() {
       setCreatedWorkspace(normalizedWorkspace);
       return normalizedWorkspace;
     },
-    [
-      createdWorkspace,
-      mergeWorkspaces,
-      pendingWorkspaceSetup,
-      setHasHydratedWorkspaces,
-      t,
-      withConnectedClient,
-    ],
+    [createdWorkspace, pendingWorkspaceSetup, t, withConnectedClient],
   );
 
   const getIsStillActive = useCallback(() => {
@@ -341,17 +334,13 @@ export function WorkspaceSetupDialog() {
           return;
         }
 
-        setAgents(serverId, (previous) => {
-          const next = new Map(previous);
-          next.set(
-            agent.id,
-            applyLegacyDaemonWorkspaceOwnership({
-              serverId,
-              agent: normalizeAgentSnapshot(agent, serverId),
-            }),
-          );
-          return next;
-        });
+        acceptAgentSnapshot(
+          serverId,
+          applyLegacyDaemonWorkspaceOwnership({
+            serverId,
+            agent: normalizeAgentSnapshot(agent, serverId),
+          }),
+        );
         navigateAfterCreation(ensuredWorkspace.id, { kind: "agent", agentId: agent.id });
       } catch (error) {
         const message = toErrorMessage(error);
@@ -368,7 +357,6 @@ export function WorkspaceSetupDialog() {
       getIsStillActive,
       navigateAfterCreation,
       serverId,
-      setAgents,
       ensureWorkspace,
       t,
       toast,

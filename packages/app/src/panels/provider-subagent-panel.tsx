@@ -14,7 +14,8 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import type { AgentScreenAgent } from "@/hooks/use-agent-screen-state-machine";
 import { usePaneContext } from "@/panels/pane-context";
 import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
-import { useSessionStore } from "@/stores/session-store";
+import { useActiveAgentFields, useAgentFields, useConnection } from "@/stores/session-store-hooks";
+import { useHostRuntimeClient } from "@/runtime/host-runtime";
 import { useSubagentsForParent } from "@/subagents/select";
 import { SubagentsTrack } from "@/subagents/track";
 import {
@@ -82,8 +83,11 @@ function useProviderSubagentDescriptor(
       providerSubagentKey(context.serverId, target.parentAgentId, target.subagentId),
     ),
   );
-  const parentProvider = useSessionStore(
-    (state) => state.sessions[context.serverId]?.agents.get(target.parentAgentId)?.provider,
+  const parentProvider = useActiveAgentFields(
+    context.serverId,
+    target.parentAgentId,
+    (agent) => agent.provider,
+    Object.is,
   );
   const provider = descriptor?.provider ?? parentProvider ?? "agent";
   // The task names the tab; the subagent type is supporting detail beside the provider.
@@ -118,14 +122,14 @@ function ProviderSubagentPanel() {
       timeline: state.timelines.get(key) ?? null,
     })),
   );
-  const parent = useSessionStore(
-    (state) =>
-      state.sessions[serverId]?.agents.get(target.parentAgentId) ??
-      state.sessions[serverId]?.agentDetails.get(target.parentAgentId) ??
-      null,
-  );
-  const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
-  const serverInfo = useSessionStore((state) => state.sessions[serverId]?.serverInfo ?? null);
+  const parent = useAgentFields(serverId, target.parentAgentId, (agent) => ({
+    provider: agent.provider,
+    cwd: agent.cwd,
+    workspaceId: agent.workspaceId,
+    projectPlacement: agent.projectPlacement,
+  }));
+  const client = useHostRuntimeClient(serverId);
+  const serverInfo = useConnection(serverId, (connection) => connection.serverInfo);
   // COMPAT(providerSubagents): added in v0.2.11, remove after 2027-01-12.
   const supported = serverInfo?.features?.providerSubagents === true;
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);

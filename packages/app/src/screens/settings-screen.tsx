@@ -61,7 +61,7 @@ import {
   type Settings as EffectiveSettings,
 } from "@/hooks/use-settings";
 import { useHostRuntimeIsConnected, useHosts } from "@/runtime/host-runtime";
-import { useSessionStore } from "@/stores/session-store";
+import { useConnection } from "@/stores/session-store-hooks";
 import {
   orderHostsLocalFirst,
   resolveActiveHostServerId,
@@ -654,8 +654,9 @@ function HostVersionRow({
 }) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(host.serverId);
-  const daemonVersion = useSessionStore(
-    (state) => state.sessions[host.serverId]?.serverInfo?.version ?? null,
+  const daemonVersion = useConnection(
+    host.serverId,
+    ({ serverInfo }) => serverInfo?.version ?? null,
   );
 
   const rowStyle = useMemo(
