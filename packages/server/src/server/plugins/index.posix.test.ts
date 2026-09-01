@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -278,12 +278,12 @@ describe("PluginService", () => {
     await service.start();
 
     await expect(
-      service.installSource({ source: repository, pluginPath: "plugins/review" }),
+      service.installSource({ source: `${repository}:plugins/review` }),
     ).resolves.toMatchObject({ id: "local-monorepo", path: pluginDirectory, status: "running" });
     await service.stopAllPlugins();
   }, 20_000);
 
-  it("keeps the running commit when a Git update fails validation", async () => {
+  it("keeps the running commit when a Git update build command fails", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);
     const repository = await mkdtemp(path.join(tmpdir(), "paseo-plugin-repository-"));
@@ -314,6 +314,15 @@ describe("PluginService", () => {
     const installedCommit = installed.commit;
 
     await writeFile(
+      path.join(repository, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "git-update",
+        build: [
+          [process.execPath, "-e", 'process.stderr.write("build exploded") ; process.exit(1)'],
+        ],
+      }),
+    );
+    await writeFile(
       path.join(repository, "index.ts"),
       'export default function contribute(plugin: unknown) { void plugin; throw new Error("broken update"); }',
     );
@@ -321,6 +330,7 @@ describe("PluginService", () => {
     await runGitCommand(["commit", "-m", "broken update"], { cwd: repository });
 
     await expect(service.updateSources("git-update")).rejects.toThrow();
+    expect(await readdir(path.join(home, "plugins", ".staging"))).toEqual([]);
     expect(service.catalog()).toEqual([
       expect.objectContaining({ id: "git-update", clientBundle: expect.any(String) }),
     ]);
@@ -332,6 +342,91 @@ describe("PluginService", () => {
         status: "running",
       }),
     ]);
+    await service.stopAllPlugins();
+  }, 30_000);
+
+  it("runs Git build commands in staging before validation and activation on install and update", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const repository = await mkdtemp(path.join(tmpdir(), "paseo-plugin-repository-"));
+    roots.push(repository);
+    await runGitCommand(["init", "-b", "main"], { cwd: repository });
+    await runGitCommand(["config", "user.name", "Paseo Tests"], { cwd: repository });
+    await runGitCommand(["config", "user.email", "paseo@example.test"], { cwd: repository });
+    await writeFile(
+      path.join(repository, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "prepared-git-plugin",
+        build: [
+          [
+            process.execPath,
+            "-e",
+            'require("node:fs").writeFileSync(process.argv[1], "prepared")',
+            "build-marker;touch shell-injection",
+          ],
+        ],
+      }),
+    );
+    await writeFile(path.join(repository, "index.ts"), "export default () => () => {};\n");
+    await runGitCommand(["add", "-A"], { cwd: repository });
+    await runGitCommand(["commit", "-m", "initial"], { cwd: repository });
+
+    const events: string[] = [];
+    const running = new Set<string>();
+    const runtime: TestPluginRuntime = {
+      catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
+      invoke: async () => undefined,
+      getLogs: () => [],
+      clearLogs: () => undefined,
+      validatePlugin: async (directory) => {
+        events.push(
+          `validate:${await readFile(path.join(directory, "build-marker;touch shell-injection"), "utf8")}`,
+        );
+      },
+      startPlugin: async (pluginId) => {
+        events.push("start");
+        running.add(pluginId);
+      },
+      stopPluginById: async (pluginId) => running.delete(pluginId),
+      stopAll: async () => running.clear(),
+      subscribe: () => () => undefined,
+      bindPaseoSessionHost: () => undefined,
+    };
+    const service = createService(
+      home,
+      {},
+      {
+        runtime,
+        managedSources: new ManagedPluginSources(home),
+      },
+    );
+    await service.start();
+
+    const installed = await service.installSource({ source: pathToFileURL(repository).href });
+
+    expect(events).toEqual(["validate:prepared", "start"]);
+    await expect(stat(path.join(installed.path, "shell-injection"))).rejects.toThrow();
+
+    await writeFile(
+      path.join(repository, "paseo-plugin.json"),
+      JSON.stringify({
+        id: "prepared-git-plugin",
+        build: [
+          [
+            process.execPath,
+            "-e",
+            'require("node:fs").writeFileSync("build-marker;touch shell-injection", "updated")',
+          ],
+        ],
+      }),
+    );
+    await runGitCommand(["add", "-A"], { cwd: repository });
+    await runGitCommand(["commit", "-m", "prepared update"], { cwd: repository });
+
+    await expect(service.updateSources("prepared-git-plugin")).resolves.toEqual([
+      expect.objectContaining({ id: "prepared-git-plugin", updated: true }),
+    ]);
+    expect(events).toEqual(["validate:prepared", "start", "validate:updated", "start"]);
     await service.stopAllPlugins();
   }, 30_000);
 
