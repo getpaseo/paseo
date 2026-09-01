@@ -80,6 +80,9 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Build workspace packages
+        run: npm run build:protocol && npm run build:app-deps
+
       - name: Generate release keystore (auto)
         shell: bash
         run: |
