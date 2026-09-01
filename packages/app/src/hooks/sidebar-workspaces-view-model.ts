@@ -10,7 +10,7 @@ import type {
 import { projectDisplayNameFromProjectId } from "@/utils/project-display-name";
 import { aggregateSidebarStateBuckets } from "@/utils/sidebar-agent-state";
 import { shortenPath } from "@/utils/shorten-path";
-import type { WorkspaceAgentActivity } from "@/utils/workspace-agent-activity";
+import type { WorkspaceAgentActivity, WorkspaceAgentEntry } from "@/utils/workspace-agent-activity";
 import { resolveWorkspaceMapKeyByIdentity } from "@/utils/workspace-identity";
 
 const EMPTY_PROJECTS: SidebarProjectEntry[] = [];
@@ -52,6 +52,12 @@ export interface SidebarWorkspaceEntry extends SidebarStatusWorkspacePlacement {
   archiveUnpushedCommitCount: number | null;
   scripts: WorkspaceDescriptor["scripts"];
   hasRunningScripts: boolean;
+  /**
+   * Active root agents in this workspace, most recently active first. `statusBucket` above is this
+   * list's head once the workspace itself is `done`, so a row and its agent sub-list never
+   * disagree. Empty for a workspace whose agents are all archived.
+   */
+  agents: readonly WorkspaceAgentEntry[];
 }
 
 export interface SidebarProjectEntry {
@@ -152,6 +158,8 @@ export function createSidebarWorkspaceEntry(input: {
 }): SidebarWorkspaceEntry {
   const projectViewKey = input.projectViewKey ?? input.workspace.projectId;
   const effectiveStatus = deriveEffectiveWorkspaceStatus(input);
+  const agents =
+    input.workspaceAgentActivity?.get(input.workspace.id)?.agents ?? EMPTY_WORKSPACE_AGENTS;
   return {
     workspaceKey: `${input.serverId}:${input.workspace.id}`,
     serverId: input.serverId,
@@ -181,10 +189,12 @@ export function createSidebarWorkspaceEntry(input: {
     archiveUnpushedCommitCount: input.workspace.gitRuntime?.aheadOfOrigin ?? null,
     scripts: input.workspace.scripts,
     hasRunningScripts: input.workspace.scripts.some((script) => script.lifecycle === "running"),
+    agents,
   };
 }
 
 const EMPTY_WORKSPACE_LABELS: string[] = [];
+const EMPTY_WORKSPACE_AGENTS: readonly WorkspaceAgentEntry[] = [];
 
 function deriveEffectiveWorkspaceStatus(input: {
   serverId: string;

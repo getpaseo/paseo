@@ -9,6 +9,7 @@ import {
   type SidebarGroupMode,
   type SidebarLabelFilter,
 } from "@/stores/sidebar-view-store";
+import { DEFAULT_SIDEBAR_AGENT_ROWS, type SidebarAgentRows } from "./agent-rows";
 import { DEFAULT_SIDEBAR_CHECKS_DISPLAY, type SidebarChecksDisplay } from "./checks-display";
 import { DEFAULT_SIDEBAR_ROW_ITEMS, type SidebarRowItem, type SidebarRowItems } from "./row-items";
 
@@ -24,6 +25,8 @@ export interface SidebarDisplayPreferences {
   toggleRowItem: (item: SidebarRowItem) => void;
   checksDisplay: SidebarChecksDisplay;
   setChecksDisplay: (display: SidebarChecksDisplay) => void;
+  agentRows: SidebarAgentRows;
+  setAgentRows: (mode: SidebarAgentRows) => void;
   trailing: SidebarWorkspaceTrailing;
   /** Picking the choice that is already showing clears the slot. */
   toggleTrailing: (choice: SidebarTrailingChoice) => void;
@@ -66,6 +69,7 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       sidebarWorkspaceTrailing,
       sidebarRowItems,
       sidebarChecksDisplay,
+      sidebarAgentRows,
     },
     updateSettings,
   } = useAppSettings();
@@ -93,6 +97,13 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
     [updateSettings],
   );
 
+  const setAgentRows = useCallback(
+    (mode: SidebarAgentRows) => {
+      void updateSettings({ sidebarAgentRows: mode });
+    },
+    [updateSettings],
+  );
+
   const toggleTrailing = useCallback(
     (choice: SidebarTrailingChoice) => {
       void updateSettings({
@@ -112,6 +123,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       toggleRowItem,
       checksDisplay: sidebarChecksDisplay,
       setChecksDisplay,
+      agentRows: sidebarAgentRows,
+      setAgentRows,
       trailing: sidebarWorkspaceTrailing,
       toggleTrailing,
       hostFilters,
@@ -133,6 +146,8 @@ export function useSidebarDisplayPreferences(): SidebarDisplayPreferences {
       toggleRowItem,
       sidebarChecksDisplay,
       setChecksDisplay,
+      sidebarAgentRows,
+      setAgentRows,
       sidebarWorkspaceTrailing,
       toggleTrailing,
       hostFilters,
@@ -178,4 +193,15 @@ export function useSidebarMetaPreferences(): {
     }),
     [sidebarRowItems, sidebarChecksDisplay],
   );
+}
+
+/**
+ * Just the agent-row mode, for the row renderers. Same reason as `useSidebarRowItems`: a row
+ * subscribes to the one preference it reads, not to the whole menu.
+ */
+export function useSidebarAgentRows(): SidebarAgentRows {
+  const {
+    settings: { sidebarAgentRows },
+  } = useAppSettings();
+  return sidebarAgentRows ?? DEFAULT_SIDEBAR_AGENT_ROWS;
 }

@@ -10,7 +10,10 @@ import { useTranslation } from "react-i18next";
 import { View, type PressableStateCallbackType } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import {
+  Bot,
   Captions,
+  ChevronDown,
+  ChevronRight,
   Circle,
   CircleCheck,
   CircleDashed,
@@ -52,6 +55,7 @@ import {
 } from "@/stores/sidebar-view-store";
 import { workspaceLabelKey, type WorkspaceLabelColor } from "@getpaseo/protocol/workspace-labels";
 import type { WorkspaceTitleSource } from "@/hooks/use-settings";
+import { SIDEBAR_AGENT_ROWS_MODES, type SidebarAgentRows } from "./agent-rows";
 import { SIDEBAR_CHECKS_DISPLAYS, type SidebarChecksDisplay } from "./checks-display";
 import { useSidebarDisplayPreferences, type SidebarTrailingChoice } from "./model";
 import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
@@ -109,9 +113,17 @@ const ROW_ITEM_ICONS: Record<SidebarRowItem, OptionIcon> = {
 
 // These mark how much of the row an option spends, not what CI is, so they are the shapes each
 // answer produces: a glyph with words beside it, the glyph on its own, nothing.
+const ThemedBot = withUnistyles(Bot);
+
 const CHECKS_DISPLAY_ICONS: Record<SidebarChecksDisplay, OptionIcon> = {
   iconAndText: withUnistyles(Captions),
   icon: ThemedCircleCheck,
+  none: withUnistyles(EyeOff),
+};
+
+const AGENT_ROWS_ICONS: Record<SidebarAgentRows, OptionIcon> = {
+  collapsed: withUnistyles(ChevronRight),
+  expanded: withUnistyles(ChevronDown),
   none: withUnistyles(EyeOff),
 };
 
@@ -147,6 +159,12 @@ const CHECKS_DISPLAY_LABEL_KEYS: Record<SidebarChecksDisplay, string> = {
   iconAndText: "sidebar.display.checks.iconAndText",
   icon: "sidebar.display.checks.icon",
   none: "sidebar.display.checks.none",
+};
+
+const AGENT_ROWS_LABEL_KEYS: Record<SidebarAgentRows, string> = {
+  collapsed: "sidebar.display.agents.collapsed",
+  expanded: "sidebar.display.agents.expanded",
+  none: "sidebar.display.agents.none",
 };
 
 const TRAILING_LABEL_KEYS: Record<SidebarTrailingChoice, string> = {
@@ -223,6 +241,20 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
         id: "show",
         title: t("sidebar.display.show.label"),
         content: <ShowPage preferences={preferences} />,
+      },
+      {
+        id: "agents",
+        title: t("sidebar.display.show.agents"),
+        content: (
+          <OptionList
+            values={SIDEBAR_AGENT_ROWS_MODES}
+            icons={AGENT_ROWS_ICONS}
+            labelKeys={AGENT_ROWS_LABEL_KEYS}
+            selectedValue={preferences.agentRows}
+            onSelect={preferences.setAgentRows}
+            testIDPrefix="sidebar-agent-rows"
+          />
+        ),
       },
       {
         id: "checks",
@@ -565,6 +597,7 @@ function ShowPage({ preferences }: { preferences: Preferences }): ReactElement {
         />
       ))}
       <ChecksSubTrigger />
+      <AgentRowsSubTrigger />
       <MenuSeparator />
       {TRAILING_CHOICES.map((choice) => (
         <OptionItem
@@ -596,6 +629,23 @@ function ChecksSubTrigger(): ReactElement {
   return (
     <MenuSubTrigger id="checks" leading={leading} testID="sidebar-display-checks">
       {t("sidebar.display.show.checks")}
+    </MenuSubTrigger>
+  );
+}
+
+/**
+ * Same shape as `ChecksSubTrigger`, and for the same reason: three answers too long to sit on the
+ * row as a value.
+ */
+function AgentRowsSubTrigger(): ReactElement {
+  const { t } = useTranslation();
+  const leading = useMemo(
+    () => <ThemedBot size={OPTION_ICON_SIZE} uniProps={mutedIconMapping} />,
+    [],
+  );
+  return (
+    <MenuSubTrigger id="agents" leading={leading} testID="sidebar-display-agents">
+      {t("sidebar.display.show.agents")}
     </MenuSubTrigger>
   );
 }

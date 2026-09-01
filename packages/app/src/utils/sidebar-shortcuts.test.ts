@@ -42,6 +42,7 @@ function workspace(input: {
     archiveUnpushedCommitCount: null,
     scripts: [],
     hasRunningScripts: false,
+    agents: [],
   };
 }
 
