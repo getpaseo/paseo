@@ -27,6 +27,7 @@ import type {
 
 const LAUNCH_ENDPOINT_SCAN_INTERVAL_MS = 2_000;
 const LAUNCH_ENDPOINT_PROBE_TIMEOUT_MS = 300;
+const LAUNCH_PROXY_NAMESPACE = "@paseo/launch";
 
 export interface WorkspaceLaunchContext {
   workspaceId: string;
@@ -97,9 +98,18 @@ export class WorkspaceLaunchManager {
 
   buildSnapshot(context: WorkspaceLaunchContext): WorkspaceLaunchPayload[] {
     const configuredNames = new Set(this.readLaunchConfigNames(this.getConfigDirectory(context)));
-    const runtimeNames = this.runtimes.get(context.workspaceId);
-    for (const name of runtimeNames?.keys() ?? []) {
-      configuredNames.add(name);
+    const workspaceRuntimes = this.runtimes.get(context.workspaceId);
+    for (const [name, runtime] of workspaceRuntimes ?? []) {
+      if (runtime.lifecycle === "running" || configuredNames.has(name)) {
+        configuredNames.add(name);
+        continue;
+      }
+      // Configuration is the source of truth for stopped launches. Keep an
+      // orphan visible only while it is still running so users can stop it.
+      workspaceRuntimes?.delete(name);
+    }
+    if (workspaceRuntimes?.size === 0) {
+      this.runtimes.delete(context.workspaceId);
     }
 
     return Array.from(configuredNames)
@@ -356,7 +366,10 @@ export class WorkspaceLaunchManager {
         }
 
         const offset = port - runtime.environment.portBase;
-        const scriptName = `launch-${runtime.launchName}-p${offset}`;
+        // This is an internal proxy identity, not a user-configured script
+        // name. Include the workspace ID so it cannot replace a service route
+        // with a friendly name such as "launch-dev-p0".
+        const scriptName = getLaunchEndpointScriptName(runtime, offset);
         try {
           serviceProxy.registerWorkspaceService({
             workspaceId: runtime.context.workspaceId,
@@ -571,6 +584,10 @@ export class WorkspaceLaunchManager {
       this.deps.logger.warn({ err: error, workspaceId }, "Failed to emit workspace launch update");
     }
   }
+}
+
+function getLaunchEndpointScriptName(runtime: WorkspaceLaunchRuntime, offset: number): string {
+  return `${LAUNCH_PROXY_NAMESPACE}:${runtime.context.workspaceId}:${runtime.launchName}:p${offset}`;
 }
 
 async function probeHttp(port: number): Promise<boolean> {
