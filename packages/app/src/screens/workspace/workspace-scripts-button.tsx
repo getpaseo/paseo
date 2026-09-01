@@ -22,6 +22,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
   useDropdownMenuClose,
 } from "@/components/ui/dropdown-menu";
@@ -38,6 +40,10 @@ import type { Theme } from "@/styles/theme";
 import { useWorkspaceServiceRoutePreferencesStore } from "@/workspace-service-routes/store";
 import { buttonControlHeight, HEADER_CONTROL_HEIGHT } from "@/components/ui/control-geometry";
 import { extraMutedIconColorMapping } from "@/components/ui/icon-color";
+import {
+  WorkspaceLaunchesSection,
+  type WorkspaceLaunchesSectionProps,
+} from "@/screens/workspace/workspace-launches-button";
 
 type RowActionIcon = "copy" | "open" | "restart" | "start" | "stop" | "terminal";
 
@@ -45,6 +51,7 @@ interface WorkspaceScriptsButtonProps {
   serverId: string;
   workspaceId: string;
   scripts: WorkspaceDescriptor["scripts"];
+  launches?: WorkspaceDescriptor["launches"];
   liveTerminalIds?: readonly string[];
   onScriptTerminalStarted?: (terminalId: string) => void;
   onViewTerminal?: (terminalId: string) => void;
@@ -534,10 +541,82 @@ function ScriptRow({
   );
 }
 
+interface WorkspaceScriptSectionProps {
+  label: string;
+  scripts: WorkspaceDescriptor["scripts"];
+  testID: string;
+  rowProps: Omit<ScriptRowProps, "script">;
+}
+
+function WorkspaceScriptSection({
+  label,
+  scripts,
+  testID,
+  rowProps,
+}: WorkspaceScriptSectionProps): ReactElement {
+  return (
+    <View testID={testID}>
+      <DropdownMenuLabel>{label}</DropdownMenuLabel>
+      {scripts.map((script) => (
+        <ScriptRow key={script.scriptName} script={script} {...rowProps} />
+      ))}
+    </View>
+  );
+}
+
+interface WorkspaceRunMenuContentProps {
+  launches: NonNullable<WorkspaceDescriptor["launches"]>;
+  launchSectionProps: Omit<WorkspaceLaunchesSectionProps, "launches">;
+  scripts: WorkspaceDescriptor["scripts"];
+  scriptRowProps: Omit<ScriptRowProps, "script">;
+  servicesLabel: string;
+  scriptsLabel: string;
+}
+
+function WorkspaceRunMenuContent({
+  launches,
+  launchSectionProps,
+  scripts,
+  scriptRowProps,
+  servicesLabel,
+  scriptsLabel,
+}: WorkspaceRunMenuContentProps): ReactElement {
+  const serviceScripts = scripts.filter((script) => (script.type ?? "service") === "service");
+  const plainScripts = scripts.filter((script) => (script.type ?? "service") === "script");
+  const hasScripts = serviceScripts.length > 0 || plainScripts.length > 0;
+
+  return (
+    <>
+      {launches.length > 0 ? (
+        <WorkspaceLaunchesSection launches={launches} {...launchSectionProps} />
+      ) : null}
+      {launches.length > 0 && hasScripts ? <DropdownMenuSeparator /> : null}
+      {serviceScripts.length > 0 ? (
+        <WorkspaceScriptSection
+          label={servicesLabel}
+          scripts={serviceScripts}
+          testID="workspace-scripts-services-section"
+          rowProps={scriptRowProps}
+        />
+      ) : null}
+      {serviceScripts.length > 0 && plainScripts.length > 0 ? <DropdownMenuSeparator /> : null}
+      {plainScripts.length > 0 ? (
+        <WorkspaceScriptSection
+          label={scriptsLabel}
+          scripts={plainScripts}
+          testID="workspace-scripts-scripts-section"
+          rowProps={scriptRowProps}
+        />
+      ) : null}
+    </>
+  );
+}
+
 export function WorkspaceScriptsButton({
   serverId,
   workspaceId,
   scripts,
+  launches = [],
   liveTerminalIds = [],
   onScriptTerminalStarted,
   onViewTerminal,
@@ -666,11 +745,63 @@ export function WorkspaceScriptsButton({
     [serverId, setPreferredRoute],
   );
 
-  if (scripts.length === 0) {
+  const launchSectionProps = useMemo(
+    () => ({
+      serverId,
+      workspaceId,
+      liveTerminalIds,
+      onLaunchTerminalStarted: onScriptTerminalStarted,
+      onViewTerminal,
+      onOpenUrlInBrowserTab,
+    }),
+    [
+      serverId,
+      workspaceId,
+      liveTerminalIds,
+      onScriptTerminalStarted,
+      onViewTerminal,
+      onOpenUrlInBrowserTab,
+    ],
+  );
+
+  const scriptRowProps = useMemo(
+    () => ({
+      liveTerminalIdSet,
+      activeConnection,
+      isStartPending: startScriptMutation.isPending,
+      isStopPending: stopScriptMutation.isPending,
+      onStartScript: handleStartScript,
+      onStopScript: handleStopScript,
+      onRestartScript: handleRestartScript,
+      onCopyUrl: handleCopyUrl,
+      preferredRouteKind,
+      onSelectRouteKind: handleSelectRouteKind,
+      onViewTerminal,
+      onOpenUrlInBrowserTab,
+    }),
+    [
+      liveTerminalIdSet,
+      activeConnection,
+      startScriptMutation.isPending,
+      stopScriptMutation.isPending,
+      handleStartScript,
+      handleStopScript,
+      handleRestartScript,
+      handleCopyUrl,
+      preferredRouteKind,
+      handleSelectRouteKind,
+      onViewTerminal,
+      onOpenUrlInBrowserTab,
+    ],
+  );
+
+  if (scripts.length === 0 && launches.length === 0) {
     return null;
   }
 
-  const hasAnyRunning = scripts.some((s) => s.lifecycle === "running");
+  const hasAnyRunning =
+    scripts.some((script) => script.lifecycle === "running") ||
+    launches.some((launch) => launch.lifecycle === "running");
   const triggerPlayMapping = hasAnyRunning ? blueColorMapping : mutedColorMapping;
   const triggerIconSize = presentation === "ghost" ? GHOST_TRIGGER_ICON_SIZE : 14;
   const triggerPlayProps =
@@ -702,28 +833,20 @@ export function WorkspaceScriptsButton({
           </DropdownMenuTrigger>
           <DropdownMenuContent
             align="end"
-            minWidth={200}
-            maxWidth={280}
+            minWidth={220}
+            maxWidth={320}
+            maxHeight={460}
+            scrollable
             testID="workspace-scripts-menu"
           >
-            {scripts.map((script) => (
-              <ScriptRow
-                key={script.scriptName}
-                script={script}
-                liveTerminalIdSet={liveTerminalIdSet}
-                activeConnection={activeConnection}
-                isStartPending={startScriptMutation.isPending}
-                isStopPending={stopScriptMutation.isPending}
-                onStartScript={handleStartScript}
-                onStopScript={handleStopScript}
-                onRestartScript={handleRestartScript}
-                onCopyUrl={handleCopyUrl}
-                preferredRouteKind={preferredRouteKind}
-                onSelectRouteKind={handleSelectRouteKind}
-                onViewTerminal={onViewTerminal}
-                onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
-              />
-            ))}
+            <WorkspaceRunMenuContent
+              launches={launches}
+              launchSectionProps={launchSectionProps}
+              scripts={scripts}
+              scriptRowProps={scriptRowProps}
+              servicesLabel={t("sidebar.display.show.services")}
+              scriptsLabel={t("workspace.scripts.title")}
+            />
           </DropdownMenuContent>
         </DropdownMenu>
       </View>

@@ -9,7 +9,7 @@ import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { getServerId } from "../support/helpers/server-id";
 import { buildHostWorkspaceRoute } from "../../src/utils/host-routes";
 
-test("configured launches expose their start control in a worktree", async ({ page }) => {
+test("configured launches appear in the shared workspace run menu", async ({ page }) => {
   const client = await connectWorkspaceSetupClient();
   const repo = await createTempGitRepo("workspace-launches-", {
     paseoConfig: {
@@ -31,11 +31,13 @@ test("configured launches expose their start control in a worktree", async ({ pa
     await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
     await waitForWorkspaceTabsVisible(page);
 
-    const launchesButton = page.getByTestId("workspace-launches-button");
-    await expect(launchesButton).toBeVisible({ timeout: 30_000 });
-    await launchesButton.click();
+    const runButton = page.getByTestId("workspace-scripts-button");
+    await expect(runButton).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("workspace-launches-button")).toHaveCount(0);
+    await runButton.click();
 
-    await expect(page.getByTestId("workspace-launches-menu")).toBeVisible();
+    await expect(page.getByTestId("workspace-scripts-menu")).toBeVisible();
+    await expect(page.getByTestId("workspace-launches-section")).toBeVisible();
     await expect(page.getByTestId("workspace-launches-item-dev")).toBeVisible();
     await expect(page.getByTestId("workspace-launches-start-dev")).toBeVisible();
   } finally {

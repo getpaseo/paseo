@@ -40,7 +40,6 @@ import { RetainedPanel } from "@/components/retained-panel";
 import { WorkspaceActions } from "@/git/workspace-actions";
 import { WorkspaceOpenInEditorButton } from "@/workspace/open-in-editor/button";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
-import { WorkspaceLaunchesButton } from "@/screens/workspace/workspace-launches-button";
 import { canManageWorkspaceLaunches } from "@/screens/workspace/workspace-launches-capability";
 import { ImportSessionSheet } from "@/components/import-session-sheet";
 import { useNavigateToImportedAgent } from "@/hooks/use-import-session";
@@ -1070,24 +1069,14 @@ function WorkspaceHeaderTitleBar({
             onOpenSetupTab={onOpenSetupTab}
           />
         )}
-        {isMobile && workspaceLaunchManagementAvailable && workspaceLaunches.length > 0 ? (
-          <WorkspaceLaunchesButton
-            serverId={normalizedServerId}
-            workspaceId={normalizedWorkspaceId}
-            launches={workspaceLaunches}
-            liveTerminalIds={liveTerminalIds}
-            onLaunchTerminalStarted={onScriptTerminalStarted}
-            onViewTerminal={onViewScriptTerminal}
-            onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
-            hideLabels
-            presentation="ghost"
-          />
-        ) : null}
-        {isMobile && workspaceScripts.length > 0 ? (
+        {isMobile &&
+        (workspaceScripts.length > 0 ||
+          (workspaceLaunchManagementAvailable && workspaceLaunches.length > 0)) ? (
           <WorkspaceScriptsButton
             serverId={normalizedServerId}
             workspaceId={normalizedWorkspaceId}
             scripts={workspaceScripts}
+            launches={workspaceLaunchManagementAvailable ? workspaceLaunches : []}
             liveTerminalIds={liveTerminalIds}
             onScriptTerminalStarted={onScriptTerminalStarted}
             onViewTerminal={onViewScriptTerminal}
@@ -3800,23 +3789,14 @@ function WorkspaceScreenContent({
     () => (
       <View style={styles.headerRight}>
         <PluginHeaderButtons serverId={normalizedServerId} workspaceId={normalizedWorkspaceId} />
-        {!isMobile && workspaceLaunchManagementAvailable && workspaceLaunches.length > 0 ? (
-          <WorkspaceLaunchesButton
-            serverId={normalizedServerId}
-            workspaceId={normalizedWorkspaceId}
-            launches={workspaceLaunches}
-            liveTerminalIds={liveTerminalIds}
-            onLaunchTerminalStarted={handleScriptTerminalStarted}
-            onViewTerminal={handleViewScriptTerminal}
-            onOpenUrlInBrowserTab={handleOpenUrlInBrowserTab}
-            hideLabels
-          />
-        ) : null}
-        {!isMobile && workspaceDescriptor && workspaceDescriptor.scripts.length > 0 ? (
+        {!isMobile &&
+        (workspaceScripts.length > 0 ||
+          (workspaceLaunchManagementAvailable && workspaceLaunches.length > 0)) ? (
           <WorkspaceScriptsButton
             serverId={normalizedServerId}
             workspaceId={normalizedWorkspaceId}
-            scripts={workspaceDescriptor.scripts}
+            scripts={workspaceScripts}
+            launches={workspaceLaunchManagementAvailable ? workspaceLaunches : []}
             liveTerminalIds={liveTerminalIds}
             onScriptTerminalStarted={handleScriptTerminalStarted}
             onViewTerminal={handleViewScriptTerminal}
@@ -3861,8 +3841,8 @@ function WorkspaceScreenContent({
     [
       isMobile,
       workspaceLaunchManagementAvailable,
-      workspaceDescriptor,
       workspaceLaunches,
+      workspaceScripts,
       normalizedServerId,
       normalizedWorkspaceId,
       workspaceDirectory,
