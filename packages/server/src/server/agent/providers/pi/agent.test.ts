@@ -942,6 +942,27 @@ describe("PiRpcAgentSession", () => {
     ).not.toContain("turn_failed");
   });
 
+  test("clears queued Pi messages before interrupting", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    await session.startTurn("work");
+    await session.interrupt();
+
+    expect(fakeSession.controlRequests).toEqual(["clear_queue", "abort"]);
+  });
+
+  test("still interrupts when an older Pi binary lacks clear_queue", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    fakeSession.clearQueueError = new Error("Unknown command: clear_queue");
+
+    await session.startTurn("work");
+    await session.interrupt();
+
+    expect(fakeSession.controlRequests).toEqual(["clear_queue", "abort"]);
+  });
+
   test("adds Pi assistant context to generic provider finish errors", async () => {
     const { pi, session, events } = await createSession();
 
@@ -1638,6 +1659,213 @@ describe("PiRpcAgentSession", () => {
       turnId: third.turnId,
       usage: { contextWindowUsedTokens: 160 },
     });
+  });
+});
+
+describe("PiRpcAgentSession steering", () => {
+  test("steers the active Pi turn and correlates the echoed user message", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+
+    const { turnId } = await session.startTurn("fix the tests", {
+      clientMessageId: "client-prompt-1",
+    });
+    const result = await session.steerActiveTurn("steer this turn", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(fakeSession.steerCalls).toEqual([{ message: "steer this turn", imageCount: 0 }]);
+
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer-1",
+      parentId: null,
+      text: "steer this turn",
+    });
+
+    const userMessages = events.timelineItems().filter((item) => item.type === "user_message");
+    expect(userMessages).toEqual([
+      {
+        type: "user_message",
+        text: "steer this turn",
+        messageId: "entry-steer-1",
+        clientMessageId: "client-steer-1",
+      },
+    ]);
+  });
+
+  test("does not reuse the foreground client ID for a steer without one", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("work", { clientMessageId: "client-prompt-1" });
+
+    await session.steerActiveTurn("steer without a client ID", { expectedTurnId: turnId });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-steer-1",
+      parentId: null,
+      text: "steer without a client ID",
+    });
+
+    expect(events.timelineItems()).toContainEqual({
+      type: "user_message",
+      text: "steer without a client ID",
+      messageId: "entry-steer-1",
+    });
+  });
+
+  test("keeps multiple steers correlated in admission order", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("work");
+
+    await session.steerActiveTurn("steer one", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-1",
+    });
+    await session.steerActiveTurn("steer two", {
+      expectedTurnId: turnId,
+      clientMessageId: "client-steer-2",
+    });
+
+    fakeSession.finishSubmittedUserMessage({ id: "entry-1", parentId: null, text: "steer one" });
+    fakeSession.finishSubmittedUserMessage({ id: "entry-2", parentId: null, text: "steer two" });
+
+    const userMessages = events.timelineItems().filter((item) => item.type === "user_message");
+    expect(userMessages).toEqual([
+      {
+        type: "user_message",
+        text: "steer one",
+        messageId: "entry-1",
+        clientMessageId: "client-steer-1",
+      },
+      {
+        type: "user_message",
+        text: "steer two",
+        messageId: "entry-2",
+        clientMessageId: "client-steer-2",
+      },
+    ]);
+  });
+
+  test("reports unavailable when the expected turn is not the active one", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("run");
+
+    const stale = await session.steerActiveTurn("steer", {
+      expectedTurnId: "turn-that-ended",
+    });
+    expect(stale).toEqual({ status: "unavailable" });
+
+    fakeSession.finishTurn();
+    await flushTurnScheduling();
+    const idle = await session.steerActiveTurn("steer", { expectedTurnId: turnId });
+    expect(idle).toEqual({ status: "unavailable" });
+    expect(fakeSession.steerCalls).toEqual([]);
+  });
+
+  test("keeps slash-command steers on the interrupt fallback", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("run");
+
+    const result = await session.steerActiveTurn("/model", { expectedTurnId: turnId });
+
+    expect(result).toEqual({ status: "unavailable" });
+    expect(fakeSession.steerCalls).toEqual([]);
+  });
+
+  test("falls back when the Pi binary lacks the steer RPC", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("run");
+    fakeSession.steerError = new Error("Unknown command: steer");
+
+    const result = await session.steerActiveTurn("steer", { expectedTurnId: turnId });
+
+    expect(result).toEqual({ status: "unavailable" });
+    expect(fakeSession.steerCalls).toEqual([{ message: "steer", imageCount: 0 }]);
+  });
+
+  test("surfaces an ambiguous steer failure without interrupting", async () => {
+    const { pi, session } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("run");
+    fakeSession.steerError = new Error("Pi RPC socket closed");
+
+    await expect(session.steerActiveTurn("steer", { expectedTurnId: turnId })).rejects.toThrow(
+      "Pi RPC socket closed",
+    );
+  });
+
+  test("denies pending permissions that block an accepted steer", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("work");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "perm-1",
+      method: "confirm",
+      title: "Allow command?",
+    });
+    await events.nextPermissionRequest();
+    expect(session.getPendingPermissions()).toHaveLength(1);
+
+    const result = await session.steerActiveTurn("answer instead", {
+      expectedTurnId: turnId,
+      clearPendingPermissions: true,
+    });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(fakeSession.extensionUiResponses).toEqual([
+      { id: "perm-1", response: { cancelled: true } },
+    ]);
+    expect(session.getPendingPermissions()).toEqual([]);
+  });
+
+  test("leaves permissions open for a steer without the clearing flag", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const { turnId } = await session.startTurn("work");
+    fakeSession.emit({
+      type: "extension_ui_request",
+      id: "perm-1",
+      method: "confirm",
+      title: "Allow command?",
+    });
+    await events.nextPermissionRequest();
+
+    const result = await session.steerActiveTurn("answer instead", { expectedTurnId: turnId });
+
+    expect(result).toEqual({ status: "accepted" });
+    expect(fakeSession.extensionUiResponses).toEqual([]);
+    expect(session.getPendingPermissions()).toHaveLength(1);
+  });
+
+  test("drops pending steer correlation once the turn completes", async () => {
+    const { pi, session, events } = await createSession();
+    const fakeSession = pi.latestSession();
+    const first = await session.startTurn("work");
+    await session.steerActiveTurn("stale steer", {
+      expectedTurnId: first.turnId,
+      clientMessageId: "client-steer-1",
+    });
+    fakeSession.finishTurn();
+    await flushTurnScheduling();
+
+    const second = await session.startTurn("next");
+    await session.steerActiveTurn("fresh steer", { expectedTurnId: second.turnId });
+    fakeSession.finishSubmittedUserMessage({
+      id: "entry-late",
+      parentId: null,
+      text: "stale steer",
+    });
+
+    const userMessages = events.timelineItems().filter((item) => item.type === "user_message");
+    expect(userMessages).toEqual([
+      { type: "user_message", text: "stale steer", messageId: "entry-late" },
+    ]);
   });
 });
 
