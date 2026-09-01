@@ -88,6 +88,10 @@ export class LspSession {
     const document = await this.syncDocument({ connection, uri, input });
 
     await withTimeout(document.ready, PROJECT_READY_TIMEOUT_MS);
+    // One wait is the bound. A server that never publishes diagnostics for this document —
+    // pull diagnostics, or a file outside the project — would otherwise pay the full timeout
+    // on every request rather than only the first.
+    document.markReady();
 
     const result = await connection.sendRequest(DefinitionRequest.type, {
       textDocument: { uri },
@@ -115,7 +119,7 @@ export class LspSession {
           connection.sendRequest(ShutdownRequest.type),
           GRACEFUL_SHUTDOWN_TIMEOUT_MS,
         );
-        connection.sendNotification(ExitNotification.type);
+        this.send(connection.sendNotification(ExitNotification.type));
       } catch (error) {
         this.logger.debug({ error }, "language server shutdown failed; killing process");
       }
@@ -131,12 +135,36 @@ export class LspSession {
     }
   }
 
+  /**
+   * A notification is fire-and-forget, but the write behind it still rejects once the process
+   * is gone. Unhandled, that rejection is a daemon crash under Node's default policy.
+   */
+  private send(notification: Promise<void>): void {
+    notification.catch((error) => {
+      this.logger.debug({ err: error }, "language server notification failed");
+    });
+  }
+
+  /** Drop the connection state so the next request starts a fresh process. */
+  private forget(): void {
+    this.connection = null;
+    this.initializing = null;
+    this.documents.clear();
+  }
+
   private async ensureInitialized(): Promise<MessageConnection> {
     if (this.disposed) {
       throw new Error("language server session is disposed");
     }
     if (!this.initializing) {
-      this.initializing = this.start();
+      const attempt = this.start();
+      this.initializing = attempt;
+      // A failed handshake must not poison the session for the whole idle window.
+      attempt.catch(() => {
+        if (this.initializing === attempt) {
+          this.initializing = null;
+        }
+      });
     }
     await this.initializing;
     const connection = this.connection;
@@ -161,9 +189,19 @@ export class LspSession {
     });
     child.on("exit", (code, signal) => {
       this.logger.info({ code, signal }, "language server exited");
-      this.connection = null;
-      this.initializing = null;
-      this.documents.clear();
+      this.forget();
+    });
+    // A spawn failure — EAGAIN under load, or the binary removed while its resolution was
+    // still cached — emits here. Without a listener Node rethrows it and takes the daemon
+    // down with every agent it is running.
+    child.on("error", (error) => {
+      this.logger.warn({ err: error }, "language server process failed");
+      this.forget();
+    });
+    // The writer keeps writing into stdin after the process is gone, which is an EPIPE the
+    // stream throws rather than returns.
+    child.stdin?.on("error", (error) => {
+      this.logger.debug({ err: error }, "language server stdin failed");
     });
 
     if (!child.stdout || !child.stdin) {
@@ -200,7 +238,7 @@ export class LspSession {
       // characters, so say so rather than returning quietly wrong ranges.
       this.logger.warn({ encoding }, "language server chose an unsupported position encoding");
     }
-    connection.sendNotification(InitializedNotification.type, {});
+    this.send(connection.sendNotification(InitializedNotification.type, {}));
     return result;
   }
 
@@ -221,26 +259,37 @@ export class LspSession {
     }
 
     const text = await input.readText();
-    if (existing) {
-      existing.version = input.version;
-      existing.revision += 1;
-      connection.sendNotification(DidChangeTextDocumentNotification.type, {
-        textDocument: { uri, version: existing.revision },
-        contentChanges: [{ text }],
-      });
-      return existing;
+    // Re-check after the read. Requests are dispatched concurrently, so two hovers on the same
+    // file both get here; without this they each send `didOpen` and the loser's document is
+    // orphaned in a `ready` state nothing ever resolves.
+    const current = this.documents.get(uri);
+    if (current?.version === input.version) {
+      return current;
+    }
+    if (current) {
+      current.version = input.version;
+      current.revision += 1;
+      this.send(
+        connection.sendNotification(DidChangeTextDocumentNotification.type, {
+          textDocument: { uri, version: current.revision },
+          contentChanges: [{ text }],
+        }),
+      );
+      return current;
     }
 
     const opened = createOpenDocument(input.version);
     this.documents.set(uri, opened);
-    connection.sendNotification(DidOpenTextDocumentNotification.type, {
-      textDocument: {
-        uri,
-        languageId: languageIdForFile(this.server.descriptor, input.filePath),
-        version: opened.revision,
-        text,
-      },
-    });
+    this.send(
+      connection.sendNotification(DidOpenTextDocumentNotification.type, {
+        textDocument: {
+          uri,
+          languageId: languageIdForFile(this.server.descriptor, input.filePath),
+          version: opened.revision,
+          text,
+        },
+      }),
+    );
     return opened;
   }
 }

@@ -50,6 +50,33 @@ describe("resolveLanguageServer", () => {
   });
 });
 
+describe("LspSession", () => {
+  it("surfaces a spawn failure instead of crashing the daemon", async () => {
+    // An unhandled `error` on a spawned child is rethrown by Node, and the daemon worker turns
+    // that into an exit, taking every running agent with it. The binary disappearing between
+    // resolution and spawn is the realistic way in.
+    const session = new LspSession({
+      server: {
+        descriptor: descriptorForFile("a.ts")!,
+        executablePath: resolve(APP_ROOT, "no-such-language-server"),
+      },
+      rootPath: APP_ROOT,
+      logger,
+    });
+
+    await expect(
+      session.definition({
+        filePath: SESSIONS_ROUTE,
+        version: "1",
+        readText: async () => readFileSync(SESSIONS_ROUTE, "utf8"),
+        position: { line: 1, character: 12 },
+      }),
+    ).rejects.toThrow();
+
+    await session.dispose();
+  }, 30_000);
+});
+
 describe("LspSession against a real language server", () => {
   let session: LspSession | null = null;
 

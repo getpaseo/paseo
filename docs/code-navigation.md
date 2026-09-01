@@ -57,7 +57,12 @@ progress.
 
 A target that encloses the position you clicked is dropped. tsserver answers a click on `return`
 or `export` with the function containing it, and linking every keyword to the block you are
-already inside is noise.
+already inside is noise. The cost is that a recursive call resolves to nothing, since its
+declaration also encloses it.
+
+Go to definition is off while a file has unsaved edits. The daemon resolves against the file on
+disk, so positions from a modified buffer would land somewhere else in the server's copy. Save and
+the links come back.
 
 One server runs per (workspace root, language), started on first use and stopped after ten idle
 minutes or when a fifth would be needed — a loaded project graph is the expensive thing it holds,

@@ -133,12 +133,15 @@ export function goToDefinition(callbacks: GoToDefinitionCallbacks): Extension {
 
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      void resolveWord(view, word).then((resolved) => {
-        if (hoveredWord?.from === word.from) {
-          view.dispatch({ effects: setHighlight.of(highlightFor(view, word, resolved)) });
-        }
-        return undefined;
-      });
+      void resolveWord(view, word)
+        // A dropped connection leaves the optimistic underline on a word that leads nowhere.
+        .catch(() => null)
+        .then((resolved) => {
+          if (hoveredWord?.from === word.from) {
+            view.dispatch({ effects: setHighlight.of(highlightFor(view, word, resolved)) });
+          }
+          return undefined;
+        });
     }, RESOLVE_DEBOUNCE_MS);
   }
 
@@ -183,14 +186,17 @@ export function goToDefinition(callbacks: GoToDefinitionCallbacks): Extension {
         event.preventDefault();
         // A cold server takes seconds; the cursor says the click was received.
         view.contentDOM.style.cursor = "progress";
-        void resolveWord(view, word).then((resolved) => {
-          view.contentDOM.style.cursor = "";
-          view.dispatch({ effects: setHighlight.of(null) });
-          if (resolved) {
-            callbacks.navigate(resolved.target);
-          }
-          return undefined;
-        });
+        void resolveWord(view, word)
+          // Without this a rejected request strands the progress cursor for good.
+          .catch(() => null)
+          .then((resolved) => {
+            view.contentDOM.style.cursor = "";
+            view.dispatch({ effects: setHighlight.of(null) });
+            if (resolved) {
+              callbacks.navigate(resolved.target);
+            }
+            return undefined;
+          });
         return true;
       },
     }),

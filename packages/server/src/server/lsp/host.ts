@@ -47,12 +47,14 @@ export interface LspHostOptions {
 }
 
 interface PooledSession {
-  session: Promise<LspSession>;
+  session: LspSession;
   idleTimer: NodeJS.Timeout;
 }
 
 interface CachedResolution {
   executablePath: string | null;
+  /** The command that was probed, so the absent-server report names what to install. */
+  command: string;
   expiresAt: number;
 }
 
@@ -79,8 +81,7 @@ export class LspHost {
       return { status: "unsupported-language" };
     }
 
-    const command = this.readCommandOverrides()[descriptor.id] ?? descriptor.command;
-    const session = await this.acquireSession(descriptor, input.rootPath, command);
+    const { session, command } = await this.acquireSession(descriptor, input.rootPath);
     if (!session) {
       return { status: "server-not-installed", serverId: descriptor.id, command };
     }
@@ -105,8 +106,7 @@ export class LspHost {
   private async acquireSession(
     descriptor: LanguageServerDescriptor,
     rootPath: string,
-    command: string,
-  ): Promise<LspSession | null> {
+  ): Promise<{ session: LspSession | null; command: string }> {
     if (this.disposed) {
       throw new Error("language server host is disposed");
     }
@@ -115,12 +115,12 @@ export class LspHost {
     const existing = this.sessions.get(key);
     if (existing) {
       this.touch(key, existing);
-      return existing.session;
+      return { session: existing.session, command: descriptor.command };
     }
 
-    const executablePath = await this.resolveExecutable(descriptor, command);
+    const { executablePath, command } = await this.resolveExecutable(descriptor);
     if (!executablePath) {
-      return null;
+      return { session: null, command };
     }
 
     // Re-check: resolution awaited, and a concurrent request may have won the race. Without
@@ -128,33 +128,38 @@ export class LspHost {
     const raced = this.sessions.get(key);
     if (raced) {
       this.touch(key, raced);
-      return raced.session;
+      return { session: raced.session, command };
     }
 
-    const session = Promise.resolve(
-      new LspSession({
-        server: { descriptor, executablePath },
-        rootPath,
-        logger: this.logger,
-      }),
-    );
+    const session = new LspSession({
+      server: { descriptor, executablePath },
+      rootPath,
+      logger: this.logger,
+    });
     this.sessions.set(key, { session, idleTimer: this.scheduleReap(key) });
     this.evictOverflow();
-    return session;
+    return { session, command };
   }
 
-  private async resolveExecutable(
-    descriptor: LanguageServerDescriptor,
-    command: string,
-  ): Promise<string | null> {
-    const cached = this.resolutions.get(command);
+  /**
+   * Resolution is cached per language rather than per command, so the override lookup — a
+   * synchronous `config.json` read and parse on the daemon's event loop — happens at most once
+   * per TTL instead of once per hover.
+   */
+  private async resolveExecutable(descriptor: LanguageServerDescriptor): Promise<CachedResolution> {
+    const cached = this.resolutions.get(descriptor.id);
     if (cached && cached.expiresAt > Date.now()) {
-      return cached.executablePath;
+      return cached;
     }
+    const command = this.readCommandOverrides()[descriptor.id] ?? descriptor.command;
     const resolved = await resolveLanguageServer(descriptor, command);
-    const executablePath = resolved?.executablePath ?? null;
-    this.resolutions.set(command, { executablePath, expiresAt: Date.now() + RESOLUTION_TTL_MS });
-    return executablePath;
+    const entry: CachedResolution = {
+      executablePath: resolved?.executablePath ?? null,
+      command,
+      expiresAt: Date.now() + RESOLUTION_TTL_MS,
+    };
+    this.resolutions.set(descriptor.id, entry);
+    return entry;
   }
 
   /** Oldest insertion first, which for a Map is plain iteration order after touch re-inserts. */
@@ -194,7 +199,6 @@ export class LspHost {
 
   private async closeEntry(entry: PooledSession): Promise<void> {
     clearTimeout(entry.idleTimer);
-    const session = await entry.session;
-    await session.dispose();
+    await entry.session.dispose();
   }
 }

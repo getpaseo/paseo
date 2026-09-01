@@ -628,7 +628,9 @@ function EditableFilePane({
       />
       {showSource ? (
         <FileEditorView
-          definitions={definitions}
+          // The daemon resolves against the file on disk, so a buffer with unsaved edits would
+          // send positions the language server cannot match. No link beats a wrong jump.
+          definitions={snapshot.modified ? null : definitions}
           model={model}
           filename={filename}
           location={location}
