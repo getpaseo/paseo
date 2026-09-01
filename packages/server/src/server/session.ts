@@ -461,6 +461,7 @@ export interface SessionOptions {
   getTransportBufferedAmount?: () => number | null;
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   onWorkspaceRecovered?: (workspace: PersistedWorkspaceRecord) => Promise<void>;
+  emitWorkspaceUpdatesForExternalWorkspaceIds?: (workspaceIds: Iterable<string>) => Promise<void>;
   logger: pino.Logger;
   downloadTokenStore: DownloadTokenStore;
   pushNotifications: PushNotifications;
@@ -972,6 +973,10 @@ export class Session {
         const workspaceIds = (await this.workspaceRegistry.list())
           .filter((workspace) => workspace.projectId === projectId && !workspace.archivedAt)
           .map((workspace) => workspace.workspaceId);
+        if (options.emitWorkspaceUpdatesForExternalWorkspaceIds) {
+          await options.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIds);
+          return;
+        }
         await this.emitWorkspaceUpdatesForWorkspaceIds(workspaceIds);
       },
       logger: this.sessionLogger,
