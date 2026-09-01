@@ -479,7 +479,6 @@ export interface SessionOptions {
       source: string;
       id?: string;
       ref?: string;
-      pluginPath?: string;
     }): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
     statusSources(
       pluginId?: string,
@@ -2109,10 +2108,10 @@ export class Session {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
       return this.pluginRuntime
         .installSource({
-          source: msg.source,
+          // COMPAT(plugin-source-path): accepted for v0.7 clients; remove after 2027-09-01.
+          source: msg.pluginPath ? `${msg.source}:${msg.pluginPath}` : msg.source,
           ...(msg.id ? { id: msg.id } : {}),
           ...(msg.ref ? { ref: msg.ref } : {}),
-          ...(msg.pluginPath ? { pluginPath: msg.pluginPath } : {}),
         })
         .then((plugin) => {
           this.emit({

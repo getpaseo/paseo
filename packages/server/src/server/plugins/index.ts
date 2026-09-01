@@ -12,6 +12,7 @@ import {
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
 import { readPluginManifest } from "./manifest.js";
+import { runPluginBuild } from "./preparation.js";
 import { PluginRuntime } from "./runtime.js";
 
 interface PluginRuntimePort {
@@ -165,27 +166,36 @@ export class PluginService {
     source: string;
     id?: string;
     ref?: string;
-    pluginPath?: string;
   }): Promise<PluginListItem> {
-    const directory = path.resolve(input.source);
-    const info = await stat(directory).catch(() => null);
+    const directDirectory = path.resolve(input.source);
+    const directInfo = await stat(directDirectory).catch(() => null);
+    const reference = directInfo?.isDirectory()
+      ? { source: input.source, pluginPath: undefined }
+      : splitPluginSourceReference(input.source);
+    const directory = path.resolve(reference.source);
+    const info = directInfo?.isDirectory() ? directInfo : await stat(directory).catch(() => null);
     if (info?.isDirectory()) {
       if (input.ref) throw new Error("Plugin --ref is only valid for Git sources");
-      const pluginDirectory = resolveLocalPluginPath(directory, input.pluginPath);
+      const pluginDirectory = resolveLocalPluginPath(directory, reference.pluginPath);
       return this.installDirectory({ path: pluginDirectory, id: input.id });
     }
     const managedSources = this.requireManagedSources();
     return this.enqueue(async () => {
-      let candidate = await managedSources.prepareInstall(input);
-      const pluginId = PluginIdSchema.parse(input.id ?? candidate.defaultId);
-      if (this.configStore.get().plugins?.[pluginId]) {
-        await managedSources.discard(candidate);
-        throw new Error(
-          `Plugin ID "${pluginId}" is already configured; choose another ID with --id`,
-        );
-      }
-      candidate = await managedSources.place(pluginId, candidate);
+      let candidate = await managedSources.prepareInstall({
+        ...input,
+        source: reference.source,
+        pluginPath: reference.pluginPath,
+      });
+      let pluginId: string;
       try {
+        await runPluginBuild(candidate.directory, candidate.build, this.logger);
+        pluginId = PluginIdSchema.parse(input.id ?? candidate.defaultId);
+        if (this.configStore.get().plugins?.[pluginId]) {
+          throw new Error(
+            `Plugin ID "${pluginId}" is already configured; choose another ID with --id`,
+          );
+        }
+        candidate = await managedSources.place(pluginId, candidate);
         await this.validateCandidate(candidate);
       } catch (error) {
         await managedSources.discard(candidate);
@@ -382,8 +392,10 @@ export class PluginService {
         updated: false,
       };
     }
-    const candidate = await managedSources.place(pluginId, prepared.candidate);
+    let candidate = prepared.candidate;
     try {
+      await runPluginBuild(candidate.directory, candidate.build, this.logger);
+      candidate = await managedSources.place(pluginId, candidate);
       await this.validateCandidate(candidate);
     } catch (error) {
       await managedSources.discard(candidate);
@@ -481,11 +493,41 @@ export class PluginService {
 
 function resolveLocalPluginPath(directory: string, pluginPath: string | undefined): string {
   if (!pluginPath) return directory;
-  if (path.isAbsolute(pluginPath)) throw new Error("Plugin --path must be relative to the source");
+  if (path.isAbsolute(pluginPath)) throw new Error("Plugin path must be relative to the source");
   const pluginDirectory = path.resolve(directory, pluginPath);
   const relative = path.relative(directory, pluginDirectory);
   const escapesSource =
     relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
-  if (escapesSource) throw new Error("Plugin --path must stay inside the source directory");
+  if (escapesSource) throw new Error("Plugin path must stay inside the source directory");
   return pluginDirectory;
+}
+
+function splitPluginSourceReference(reference: string): {
+  source: string;
+  pluginPath: string | undefined;
+} {
+  const separator = reference.lastIndexOf(":");
+  if (separator === -1 || separator === reference.length - 1) {
+    return { source: reference, pluginPath: undefined };
+  }
+
+  const scheme = reference.indexOf("://");
+  if (scheme !== -1) {
+    const pathStart = reference.indexOf("/", scheme + 3);
+    if (pathStart === -1 || separator < pathStart) {
+      return { source: reference, pluginPath: undefined };
+    }
+  } else {
+    const firstSeparator = reference.indexOf(":");
+    const isWindowsDrive = firstSeparator === 1 && /^[A-Za-z]:[\\/]/.test(reference);
+    const isScpSource = /^[^/@\s]+@[^:\s]+:/.test(reference);
+    if ((isWindowsDrive || isScpSource) && separator === firstSeparator) {
+      return { source: reference, pluginPath: undefined };
+    }
+  }
+
+  return {
+    source: reference.slice(0, separator),
+    pluginPath: reference.slice(separator + 1),
+  };
 }

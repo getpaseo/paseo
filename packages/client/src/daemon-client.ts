@@ -4971,7 +4971,6 @@ export class DaemonClient {
     source: string;
     id?: string;
     ref?: string;
-    pluginPath?: string;
   }): Promise<PluginListItem> {
     const requestId = this.createRequestId();
     const payload = await this.sendCorrelatedSessionRequest({
