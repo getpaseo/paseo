@@ -73,7 +73,6 @@ function thought(id: string, seed: number): Extract<StreamItem, { kind: "thought
 
 function timingFor(...ids: string[]): Map<string, TurnTiming> {
   const timing = {
-    startedAt: timestamp(1),
     completedAt: timestamp(9),
     durationMs: 8000,
   };
