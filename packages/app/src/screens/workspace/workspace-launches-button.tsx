@@ -7,6 +7,7 @@ import { useTranslation } from "react-i18next";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
 import { DropdownMenuLabel } from "@/components/ui/dropdown-menu";
+import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
 import { openServiceUrl } from "@/utils/open-service-url";
@@ -38,8 +39,10 @@ const ThemedGlobe = withUnistyles(Globe);
 const ThemedPlay = withUnistyles(Play);
 const ThemedSquare = withUnistyles(Square);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
+const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 
 const playFillTransparent = { fill: "transparent" };
+const pendingAccessibilityState = { busy: true, disabled: true };
 
 const foregroundColorMapping = (theme: Theme) => ({
   color: theme.colors.foreground,
@@ -77,6 +80,7 @@ function LaunchActionButton({
   icon,
   label,
   onPress,
+  pending,
   testID,
   tooltipLabel,
 }: {
@@ -85,6 +89,7 @@ function LaunchActionButton({
   icon?: LaunchActionIcon;
   label?: string;
   onPress: () => void;
+  pending?: boolean;
   testID: string;
   tooltipLabel: string;
 }): ReactElement {
@@ -97,15 +102,29 @@ function LaunchActionButton({
           testID={testID}
           hitSlop={6}
           disabled={disabled}
+          accessibilityState={pending ? pendingAccessibilityState : undefined}
           onPress={onPress}
           style={label ? styles.labeledActionButton : styles.iconActionButton}
         >
-          {({ hovered }) => (
-            <>
-              {icon ? <LaunchActionIconElement hovered={hovered} icon={icon} /> : null}
-              {label ? <Text style={styles.actionLabel}>{label}</Text> : null}
-            </>
-          )}
+          {({ hovered }) => {
+            let actionIcon: ReactElement | null = null;
+            if (pending) {
+              actionIcon = (
+                <View testID={`${testID}-pending`} accessibilityRole="progressbar">
+                  <ThemedLoadingSpinner size={12} uniProps={mutedColorMapping} />
+                </View>
+              );
+            } else if (icon) {
+              actionIcon = <LaunchActionIconElement hovered={hovered} icon={icon} />;
+            }
+
+            return (
+              <>
+                {actionIcon}
+                {label ? <Text style={styles.actionLabel}>{label}</Text> : null}
+              </>
+            );
+          }}
         </Pressable>
       </TooltipTrigger>
       <TooltipContent testID={`${testID}-tooltip`} side="top" align="center" offset={8}>
@@ -161,8 +180,8 @@ function LaunchEndpointRow({
 interface LaunchRowProps {
   launch: WorkspaceLaunches[number];
   liveTerminalIdSet: Set<string>;
-  isStartPending: boolean;
-  isStopPending: boolean;
+  pendingStartLaunchName: string | null;
+  pendingStopLaunchName: string | null;
   launchError: WorkspaceLaunchError | null;
   onStart: (launchName: string) => void;
   onStop: (launchName: string) => void;
@@ -174,8 +193,8 @@ interface LaunchRowProps {
 function LaunchRow({
   launch,
   liveTerminalIdSet,
-  isStartPending,
-  isStopPending,
+  pendingStartLaunchName,
+  pendingStopLaunchName,
   launchError,
   onStart,
   onStop,
@@ -185,6 +204,8 @@ function LaunchRow({
 }: LaunchRowProps): ReactElement {
   const { t } = useTranslation();
   const isRunning = launch.lifecycle === "running";
+  const isStartPending = pendingStartLaunchName === launch.launchName;
+  const isStopPending = pendingStopLaunchName === launch.launchName;
   const liveTerminalId =
     launch.terminalId && liveTerminalIdSet.has(launch.terminalId) ? launch.terminalId : null;
   const handleStart = useCallback(() => onStart(launch.launchName), [launch.launchName, onStart]);
@@ -244,9 +265,10 @@ function LaunchRow({
               launchName: launch.launchName,
             })}
             testID={`workspace-launches-stop-${launch.launchName}`}
-            disabled={isStopPending}
+            disabled={pendingStopLaunchName !== null}
             icon="stop"
             onPress={handleStop}
+            pending={isStopPending}
             tooltipLabel={t("workspace.launches.actions.stop")}
           />
         ) : (
@@ -255,9 +277,10 @@ function LaunchRow({
               launchName: launch.launchName,
             })}
             testID={`workspace-launches-start-${launch.launchName}`}
-            disabled={isStartPending}
+            disabled={pendingStartLaunchName !== null}
             icon="start"
             onPress={handleStart}
+            pending={isStartPending}
             tooltipLabel={t("workspace.launches.actions.start")}
           />
         )}
@@ -272,7 +295,11 @@ function LaunchRow({
           <View style={styles.launchErrorActions}>
             <LaunchActionButton
               accessibilityLabel={t("common.actions.retry")}
-              disabled={launchError.action === "start" ? isStartPending : isStopPending}
+              disabled={
+                launchError.action === "start"
+                  ? pendingStartLaunchName !== null
+                  : pendingStopLaunchName !== null
+              }
               label={t("common.actions.retry")}
               onPress={handleRetry}
               testID={`workspace-launches-retry-${launch.launchName}`}
@@ -381,6 +408,8 @@ export function WorkspaceLaunchesSection({
     },
     onSuccess: (_result, launchName) => onClearLaunchError(launchName),
   });
+  const pendingStartLaunchName = startMutation.isPending ? (startMutation.variables ?? null) : null;
+  const pendingStopLaunchName = stopMutation.isPending ? (stopMutation.variables ?? null) : null;
 
   const handleStart = useCallback(
     (launchName: string) => startMutation.mutate(launchName),
@@ -410,8 +439,8 @@ export function WorkspaceLaunchesSection({
           key={launch.launchName}
           launch={launch}
           liveTerminalIdSet={liveTerminalIdSet}
-          isStartPending={startMutation.isPending}
-          isStopPending={stopMutation.isPending}
+          pendingStartLaunchName={pendingStartLaunchName}
+          pendingStopLaunchName={pendingStopLaunchName}
           launchError={launchErrors[launch.launchName] ?? null}
           onStart={handleStart}
           onStop={handleStop}

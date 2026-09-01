@@ -721,6 +721,45 @@ describe("runAsyncWorktreeBootstrap", () => {
     expect(createTerminalCalls).toEqual([]);
   });
 
+  it("rejects an explicit service port reserved by an active launch block", async () => {
+    const reservedPort = 45_678;
+    commitPaseoConfig({
+      scripts: {
+        api: {
+          type: "service",
+          command: "npm run api",
+          port: reservedPort,
+        },
+      },
+    });
+
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    const workspaceRuntimeEnvironment = {
+      ensure: async () => {
+        throw new Error("Legacy service scripts must not request a workspace port block");
+      },
+      getReservedPorts: () => new Set([reservedPort]),
+    };
+
+    await expect(
+      spawnWorkspaceScript({
+        repoRoot: repoDir,
+        workspaceId: "workspace-explicit-service-after-launch",
+        projectSlug: "repo",
+        branchName: "feature-explicit-service-after-launch",
+        scriptName: "api",
+        daemonPort: null,
+        serviceProxy: new ScriptRouteStore(),
+        runtimeStore: new WorkspaceScriptRuntimeStore(),
+        terminalManager: createStubTerminalManager(createTerminalCalls),
+        workspaceRuntimeEnvironment,
+      }),
+    ).rejects.toThrow(
+      `Service 'api' has a port reserved by a workspace runtime block: ${reservedPort}`,
+    );
+    expect(createTerminalCalls).toEqual([]);
+  });
+
   it("keeps script port blocks outside planned service leases", async () => {
     const plannedServicePort = 44_000;
     commitPaseoConfig({
