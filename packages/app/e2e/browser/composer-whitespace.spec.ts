@@ -99,6 +99,7 @@ test("composer growth keeps a bottom-pinned chat at the bottom", async ({ page }
     repoPrefix: "composer-bottom-anchor-",
     title: "Composer bottom anchor",
     initialPrompt: "Produce enough content to make the chat scrollable.",
+    model: "ten-second-stream",
   });
 
   try {

@@ -23,6 +23,7 @@ import {
 import type { ManagedAgent } from "./agent-manager.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import type { ManagedProcessRegistry } from "../managed-processes/managed-processes.js";
+import type { OpenCodeBridge } from "./providers/opencode/bridge.js";
 import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
@@ -48,30 +49,25 @@ import {
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
 const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
-const REFRESH_TIMEOUT_ENV_VAR = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
+const PROVIDER_REFRESH_DEADLINE_ENV = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
 export const GLOBAL_PROVIDER_SNAPSHOT_KEY = "paseo:global";
 
-// Provider refresh probes can be slow on cold starts (e.g. Copilot's first
-// `copilot --acp` invocation, OpenCode workspace probes with many MCP servers).
-// Allow operators to bump the ceiling via env var without rebuilding.
-function resolveRefreshTimeoutMs(option: number | undefined): number {
-  if (
-    typeof option === "number" &&
-    Number.isSafeInteger(option) &&
-    option > 0 &&
-    option <= MAX_REFRESH_TIMEOUT_MS
-  ) {
-    return option;
-  }
-  const fromEnv = process.env[REFRESH_TIMEOUT_ENV_VAR];
-  if (fromEnv) {
-    // Number() handles scientific notation (e.g. "6e4") which parseInt would silently truncate.
-    const parsed = Number(fromEnv);
-    if (Number.isSafeInteger(parsed) && parsed > 0 && parsed <= MAX_REFRESH_TIMEOUT_MS) {
-      return parsed;
-    }
-  }
-  return DEFAULT_REFRESH_TIMEOUT_MS;
+function validRefreshDeadline(value: unknown): number | undefined {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value > 0 &&
+    value <= MAX_REFRESH_TIMEOUT_MS
+    ? value
+    : undefined;
+}
+
+function providerRefreshDeadline(configured: number | undefined): number {
+  const explicit = validRefreshDeadline(configured);
+  if (explicit !== undefined) return explicit;
+  return (
+    validRefreshDeadline(Number(process.env[PROVIDER_REFRESH_DEADLINE_ENV])) ??
+    DEFAULT_REFRESH_TIMEOUT_MS
+  );
 }
 
 function resolveDiagnosticTimeoutMs(option: number | undefined, refreshTimeoutMs: number): number {
@@ -103,6 +99,7 @@ export interface ProviderSnapshotManagerOptions {
   extraClients?: Partial<Record<AgentProvider, AgentClient>>;
   refreshTimeoutMs?: number;
   diagnosticTimeoutMs?: number;
+  openCodeBridge?: OpenCodeBridge;
 }
 
 interface ProviderSnapshotRefreshOptions {
@@ -213,6 +210,7 @@ export class ProviderSnapshotManager {
   private readonly logger: Logger;
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   private readonly managedProcesses?: ManagedProcessRegistry;
+  private readonly openCodeBridge?: OpenCodeBridge;
   private readonly isDev: boolean;
   private readonly extraClients: Partial<Record<AgentProvider, AgentClient>>;
   private runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
@@ -226,12 +224,13 @@ export class ProviderSnapshotManager {
     this.logger = options.logger;
     this.workspaceGitService = options.workspaceGitService;
     this.managedProcesses = options.managedProcesses;
+    this.openCodeBridge = options.openCodeBridge;
     this.isDev = options.isDev === true;
     this.extraClients = options.extraClients ?? {};
     this.runtimeSettings = options.runtimeSettings;
     this.providerOverrides = options.providerOverrides;
     this.baseProviderOverrides = options.providerOverrides;
-    this.refreshTimeoutMs = resolveRefreshTimeoutMs(options.refreshTimeoutMs);
+    this.refreshTimeoutMs = providerRefreshDeadline(options.refreshTimeoutMs);
     this.diagnosticTimeoutMs = resolveDiagnosticTimeoutMs(
       options.diagnosticTimeoutMs,
       this.refreshTimeoutMs,
@@ -559,7 +558,7 @@ export class ProviderSnapshotManager {
   }
 
   setRefreshTimeoutMs(refreshTimeoutMs: number | undefined): void {
-    this.refreshTimeoutMs = resolveRefreshTimeoutMs(refreshTimeoutMs);
+    this.refreshTimeoutMs = providerRefreshDeadline(refreshTimeoutMs);
     this.diagnosticTimeoutMs = resolveDiagnosticTimeoutMs(undefined, this.refreshTimeoutMs);
   }
 
@@ -594,6 +593,7 @@ export class ProviderSnapshotManager {
       providerOverrides: this.providerOverrides,
       workspaceGitService: this.workspaceGitService,
       managedProcesses: this.managedProcesses,
+      openCodeBridge: this.openCodeBridge,
       isDev: this.isDev,
     });
 

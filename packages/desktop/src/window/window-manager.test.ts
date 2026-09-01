@@ -2,16 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   applyMacWindowControlsUpdate,
-  applyWindowControlsOverlayUpdate,
-  createWindowControlsOverlayState,
   DEFAULT_WINDOW_HEIGHT,
   DEFAULT_WINDOW_WIDTH,
   getMainWindowChromeOptions,
-  getTitleBarOverlayOptions,
   readBadgeCount,
-  readWindowControlsOverlayUpdate,
+  readWindowChromeUpdate,
   readWindowTheme,
-  resolveRuntimeTitleBarOverlayOptions,
   resolveWindowBounds,
 } from "./window-manager";
 
@@ -47,104 +43,29 @@ describe("window-manager", () => {
     });
   });
 
-  describe("getTitleBarOverlayOptions", () => {
-    it("returns light title bar overlay colors", () => {
-      expect(getTitleBarOverlayOptions("light")).toEqual({
-        color: "#ffffff",
-        symbolColor: "#09090b",
-        height: 29,
-      });
-    });
-
-    it("returns dark title bar overlay colors", () => {
-      expect(getTitleBarOverlayOptions("dark")).toEqual({
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 29,
-      });
-    });
-  });
-
-  describe("readWindowControlsOverlayUpdate", () => {
+  describe("readWindowChromeUpdate", () => {
     it("accepts partial runtime overlay updates", () => {
       expect(
-        readWindowControlsOverlayUpdate({
-          height: 48,
+        readWindowChromeUpdate({
           backgroundColor: "#181B1A",
           trafficLightOffsetY: -5,
         }),
       ).toEqual({
-        height: 48,
         backgroundColor: "#181B1A",
         trafficLightOffsetY: -5,
       });
     });
 
     it("rejects empty and invalid payloads", () => {
-      expect(readWindowControlsOverlayUpdate(undefined)).toBeNull();
-      expect(readWindowControlsOverlayUpdate({})).toBeNull();
-      expect(readWindowControlsOverlayUpdate({ height: 0 })).toBeNull();
-      expect(readWindowControlsOverlayUpdate({ backgroundColor: 12 })).toBeNull();
-      expect(readWindowControlsOverlayUpdate({ trafficLightOffsetY: -11 })).toBeNull();
+      expect(readWindowChromeUpdate(undefined)).toBeNull();
+      expect(readWindowChromeUpdate({})).toBeNull();
+      expect(readWindowChromeUpdate({ backgroundColor: 12 })).toBeNull();
+      expect(readWindowChromeUpdate({ trafficLightOffsetY: -11 })).toBeNull();
     });
 
     it("preserves fractional traffic-light offsets", () => {
-      expect(readWindowControlsOverlayUpdate({ trafficLightOffsetY: 1.5 })).toEqual({
+      expect(readWindowChromeUpdate({ trafficLightOffsetY: 1.5 })).toEqual({
         trafficLightOffsetY: 1.5,
-      });
-    });
-  });
-
-  describe("resolveRuntimeTitleBarOverlayOptions", () => {
-    it("applies the VS Code height minus border adjustment", () => {
-      expect(
-        resolveRuntimeTitleBarOverlayOptions({
-          height: 48,
-          backgroundColor: "#ffffff",
-          foregroundColor: "#09090b",
-        }),
-      ).toEqual({
-        color: "#ffffff",
-        symbolColor: "#09090b",
-        height: 47,
-      });
-    });
-  });
-
-  describe("applyWindowControlsOverlayUpdate", () => {
-    it("merges cached colors with later runtime height updates", () => {
-      const setTitleBarOverlay = vi.fn();
-      let state = createWindowControlsOverlayState("dark");
-
-      state = applyWindowControlsOverlayUpdate({
-        win: { setTitleBarOverlay },
-        current: state,
-        update: {
-          backgroundColor: "#181B1A",
-          foregroundColor: "#e4e4e7",
-        },
-      });
-
-      state = applyWindowControlsOverlayUpdate({
-        win: { setTitleBarOverlay },
-        current: state,
-        update: { height: 48 },
-      });
-
-      expect(state).toEqual({
-        height: 48,
-        backgroundColor: "#181B1A",
-        foregroundColor: "#e4e4e7",
-      });
-      expect(setTitleBarOverlay).toHaveBeenNthCalledWith(1, {
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 28,
-      });
-      expect(setTitleBarOverlay).toHaveBeenNthCalledWith(2, {
-        color: "#181B1A",
-        symbolColor: "#e4e4e7",
-        height: 47,
       });
     });
   });
@@ -168,47 +89,32 @@ describe("window-manager", () => {
   });
 
   describe("getMainWindowChromeOptions", () => {
-    it("uses frameless hidden title bars with overlay on windows", () => {
+    it("uses renderer-painted controls on windows", () => {
       expect(
         getMainWindowChromeOptions({
-          platform: "win32",
-          theme: "dark",
+          mode: "custom-windows",
         }),
       ).toEqual({
-        titleBarStyle: "hidden",
         frame: false,
         autoHideMenuBar: true,
-        titleBarOverlay: {
-          color: "#181B1A",
-          symbolColor: "#e4e4e7",
-          height: 29,
-        },
       });
     });
 
-    it("uses frameless hidden title bars with overlay on linux", () => {
+    it("uses renderer-painted controls on linux", () => {
       expect(
         getMainWindowChromeOptions({
-          platform: "linux",
-          theme: "light",
+          mode: "custom-linux",
         }),
       ).toEqual({
-        titleBarStyle: "hidden",
         frame: false,
         autoHideMenuBar: true,
-        titleBarOverlay: {
-          color: "#ffffff",
-          symbolColor: "#09090b",
-          height: 29,
-        },
       });
     });
 
     it("keeps the mac traffic-light path separate", () => {
       expect(
         getMainWindowChromeOptions({
-          platform: "darwin",
-          theme: "dark",
+          mode: "native-mac",
         }),
       ).toEqual({
         titleBarStyle: "hidden",

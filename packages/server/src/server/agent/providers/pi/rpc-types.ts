@@ -128,6 +128,8 @@ export interface PiRpcSlashCommand {
 
 export type PiRpcCommand =
   | { id?: string; type: "prompt"; message: string; images?: PiImageContent[] }
+  | { id?: string; type: "steer"; message: string; images?: PiImageContent[] }
+  | { id?: string; type: "clear_queue" }
   | { id?: string; type: "compact"; customInstructions?: string }
   | { id?: string; type: "set_auto_compaction"; enabled: boolean }
   | { id?: string; type: "abort" }
@@ -187,7 +189,16 @@ export type PiAgentSessionEvent =
     }
   | { type: "compaction_start"; reason?: "manual" | "threshold" | "overflow" | string }
   | { type: "compaction_end"; reason?: string; errorMessage?: string; aborted?: boolean }
-  | { type: "agent_end"; messages?: PiAgentMessage[] };
+  | { type: "agent_end"; messages?: PiAgentMessage[]; willRetry?: boolean }
+  | { type: "agent_settled" }
+  | {
+      type: "auto_retry_start";
+      attempt: number;
+      maxAttempts: number;
+      delayMs: number;
+      errorMessage: string;
+    }
+  | { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
 
 export type PiRuntimeEvent =
   | PiAgentSessionEvent

@@ -11,12 +11,16 @@ export interface PluginClientStateSource {
 
 const PluginClientStateContext = createContext<PluginClientStateSource | null>(null);
 
+export function usePluginClientStateSource(): PluginClientStateSource | null {
+  return useContext(PluginClientStateContext);
+}
+
 function usePluginEntity<Entity, Selection>(input: {
   id: string;
   read(source: PluginClientStateSource, id: string): Entity | null;
   selector(entity: Entity): Selection;
 }): Selection | null {
-  const source = useContext(PluginClientStateContext);
+  const source = usePluginClientStateSource();
   if (!source) throw new Error("Plugin state hooks must run inside a workspace panel");
   return useSyncExternalStoreWithSelector(
     source.subscribe,

@@ -442,21 +442,40 @@ function formatFrames(frames: TurnFrame[], centers: number | number[]): string {
     .join("\n");
 }
 
+function submittedRowContentTop(frame: TurnFrame | undefined): number | undefined {
+  const viewportTop = frame?.userRow.rect?.top;
+  const scrollTop = frame?.scroll.scrollTop;
+  return viewportTop == null || scrollTop == null ? undefined : viewportTop + scrollTop;
+}
+
 function expectRowContinuity(frames: TurnFrame[]): void {
   const first = frames.findIndex((frame) => hasPaintedLayout(frame.userRow));
-  const baseline = frames[first]?.userRow.rect?.top;
+  const baselineFrame = frames[first];
+  const baselineContentTop = submittedRowContentTop(baselineFrame);
   const disappeared = frames.findIndex(
     (frame, index) => index > first && !hasPaintedLayout(frame.userRow),
   );
   const reappeared = frames.findIndex(
     (frame, index) => index > disappeared && disappeared >= 0 && hasPaintedLayout(frame.userRow),
   );
-  const shifted = frames.findIndex(
-    (frame, index) =>
+  const contentShifted = frames.findIndex((frame, index) => {
+    const contentTop = submittedRowContentTop(frame);
+    return (
       index > first &&
       hasPaintedLayout(frame.userRow) &&
-      baseline !== undefined &&
-      Math.abs((frame.userRow.rect?.top ?? baseline) - baseline) > 1,
+      baselineContentTop !== undefined &&
+      contentTop !== undefined &&
+      Math.abs(contentTop - baselineContentTop) > 1
+    );
+  });
+  const viewportChanged = frames.findIndex(
+    (frame, index) =>
+      index > first &&
+      [
+        geometryChanged(frame.scroll.rect?.top, baselineFrame?.scroll.rect?.top),
+        geometryChanged(frame.scroll.rect?.height, baselineFrame?.scroll.rect?.height),
+        geometryChanged(frame.scroll.clientHeight, baselineFrame?.scroll.clientHeight),
+      ].some(Boolean),
   );
   const attachmentMissing = frames.findIndex(
     (frame, index) => index >= first && !hasPaintedLayout(frame.attachment),
@@ -468,16 +487,18 @@ function expectRowContinuity(frames: TurnFrame[]): void {
           `submitted row disappeared for ${Math.max(0, reappeared - disappeared)} recorded frames (${Math.max(0, (frames[reappeared]?.at ?? frames.at(-1)?.at ?? 0) - frames[disappeared].at).toFixed(1)}ms) before authoritative recovery`,
         ]
       : []),
-    ...(shifted >= 0
+    ...(contentShifted >= 0
       ? [
-          `submitted row moved from ${baseline?.toFixed(1)} to ${frames[shifted].userRow.rect?.top.toFixed(1)}`,
+          `submitted row moved in scroll content from ${baselineContentTop?.toFixed(1)} to ${submittedRowContentTop(frames[contentShifted])?.toFixed(1)}`,
         ]
       : []),
+    ...(viewportChanged >= 0 ? ["scroll viewport geometry changed"] : []),
     ...(attachmentMissing >= 0 ? ["submitted image attachment left the painted layout"] : []),
   ];
   let failure = Math.max(0, first);
   if (attachmentMissing >= 0) failure = attachmentMissing;
-  if (shifted >= 0) failure = shifted;
+  if (viewportChanged >= 0) failure = viewportChanged;
+  if (contentShifted >= 0) failure = contentShifted;
   if (disappeared >= 0) failure = disappeared;
   expect(
     violations,
@@ -726,7 +747,7 @@ async function recordDelayedRunningTransition(
   gate.holdNextAgentStreamEvent("turn_started");
   gate.holdNextAgentUpdate(agent.agentId, "running");
   gate.holdNextServerMessage("send_agent_message_response");
-  gate.setAgentStreamItemSuppressed("assistant_message", true);
+  gate.setAgentStreamSuppressed(true);
   await recordTurnFrames(page, prompt);
   await installActivityContinuityOracle(page, prompt);
   await submitMessage(page, prompt);
@@ -779,13 +800,13 @@ async function recordDelayedRunningTransition(
     const checkpoints = await readActivityContinuityOracle(page);
     expectActivityContinuity(checkpoints);
     expect(elapsedBeforeAuthoritative).toBe(0);
-    gate.setAgentStreamItemSuppressed("assistant_message", false);
+    gate.setAgentStreamSuppressed(false);
     return { frames, checkpoints };
   } finally {
     if (!turnReleased) gate.releaseHeldAgentStreamEvent("turn_started");
     if (!snapshotReleased) gate.releaseHeldAgentUpdate(agent.agentId, "running");
     if (!responseReleased) gate.releaseHeldServerMessage("send_agent_message_response");
-    gate.setAgentStreamItemSuppressed("assistant_message", false);
+    gate.setAgentStreamSuppressed(false);
   }
 }
 
@@ -814,6 +835,8 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
     await expectComposerVisible(page);
 
     const prompt = "Delay synthetic user message by 300ms.";
+    gate.holdNextServerMessage("fetch_agent_timeline_response");
+    gate.setAgentStreamEventSuppressed("timeline", true);
     await attachImageFromMenu(page, FIRST_PROMPT_IMAGE);
     await expectAttachmentPill(page, "composer-image-attachment-pill");
     await recordTurnFrames(page, prompt);
@@ -821,7 +844,10 @@ test("keeps the first prompt of a new agent in place through authoritative hydra
 
     const submittedRow = page.getByTestId("user-message").filter({ hasText: prompt }).first();
     await expect(submittedRow).toBeVisible();
-    await gate.waitForServerMessage("fetch_agent_timeline_response");
+    await gate.waitForHeldServerMessage("fetch_agent_timeline_response");
+    gate.truncateHeldTimelineAfterLast("user_message");
+    gate.releaseHeldServerMessage("fetch_agent_timeline_response");
+    await expect(submittedRow.getByTestId("rewind-menu-trigger")).toBeVisible();
     await recordPaintsFor(page, 80);
     expectAtomicFirstPromptTransition(await stopTurnFrameRecording(page));
   } finally {

@@ -19,12 +19,12 @@ import type { SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { COMPOSER_PILL_CLEARANCE, composerPillStyles } from "./pill-styles";
 
 /**
- * The strip of pills where a pane's ambient trackers live — subagents and tasks today.
+ * The strip of pills where a pane's ambient trackers and plugin actions live.
  *
- * Everything in it is a pill: a count you can read without opening anything, and a panel behind
- * it for the detail. Trackers used to be stacked cards, so every one of them pushed the composer
- * further down the pane. The bar has at most one subagent pill and one task pill, so it remains
- * one line and has deterministic geometry on every platform.
+ * Trackers expose a count and a detail panel; plugin actions expose their own icon and text.
+ * Trackers used to be stacked cards, so every one of them pushed the composer further down the
+ * pane. Built-in and contributed pills share this one-line rail and its deterministic geometry
+ * on every platform.
  *
  * The bar floats over the transcript with no background, so content remains visible underneath.
  * Its host gives the scroll viewport a small bottom inset only when the bar exists; that keeps

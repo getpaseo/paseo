@@ -4,9 +4,9 @@ import {
   Text,
   useWindowDimensions,
   NativeSyntheticEvent,
-  TextInputContentSizeChangeEventData,
   TextInputKeyPressEventData,
   TextInputSelectionChangeEventData,
+  type LayoutChangeEvent,
 } from "react-native";
 import {
   useState,
@@ -35,7 +35,7 @@ import {
   filesToImageAttachments,
 } from "@/utils/image-attachments-from-files";
 import type { ComposerAttachment } from "@/attachments/types";
-import type { ImageAttachment, MessagePayload } from "@/composer/types";
+import type { ImageAttachment, MessagePayload, TextReplacement } from "@/composer/types";
 import { focusWithRetries } from "@/utils/web-focus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -55,7 +55,7 @@ import { isWeb } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useComposerKeyboardScope } from "@/composer/keyboard-scope";
 import { RenderProfile } from "@/utils/render-profiler";
-import { useComposerHeightMirror } from "./height-mirror";
+import { useComposerHeight } from "./height";
 import { resolveComposerInputMode, type ComposerInputMode } from "@/composer/input-mode";
 import type { NativePastedFile } from "@/composer/native-pasted-image";
 import {
@@ -169,8 +169,8 @@ export interface MessageInputProps {
   inputMode?: ComposerInputMode;
   /** Renders `value` as static text on the same surface, for content there is nothing to type into. */
   readOnly?: boolean;
-  /** Changes only when application state must replace native-owned text. */
-  textReplacementKey: string;
+  /** Command issued when application state must replace native-owned text. */
+  textReplacement: TextReplacement;
   /** Replaces the submit icon with this label, still inside the composer's own toolbar row. */
   submitLabel?: string;
 }
@@ -639,7 +639,6 @@ interface ComposerTextSurfaceProps {
   editable: boolean;
   scrollEnabled: boolean;
   autoFocus: boolean;
-  onContentSizeChange: (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => void;
   onKeyPress: ((event: WebTextInputKeyPressEvent) => void) | undefined;
   onSelectionChange: (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => void;
   onPasteImages: ((files: readonly NativePastedFile[]) => void) | undefined;
@@ -678,7 +677,6 @@ function ComposerTextSurface(props: ComposerTextSurfaceProps): React.ReactElemen
         style={props.textInputStyle}
         multiline
         scrollEnabled={props.scrollEnabled}
-        onContentSizeChange={props.onContentSizeChange}
         editable={props.editable}
         onKeyPress={props.onKeyPress}
         onSelectionChange={props.onSelectionChange}
@@ -990,20 +988,6 @@ function resolveMaxInputHeight(windowHeight: number): number {
   return Math.max(DEFAULT_MAX_INPUT_HEIGHT, Math.floor(windowHeight * MAX_INPUT_VIEWPORT_RATIO));
 }
 
-function computeTextInputHeightStyle(inputHeight: number, maxInputHeight: number) {
-  if (isWeb) {
-    return {
-      height: inputHeight,
-      minHeight: MIN_INPUT_HEIGHT,
-      maxHeight: maxInputHeight,
-    };
-  }
-  return {
-    minHeight: MIN_INPUT_HEIGHT,
-    maxHeight: maxInputHeight,
-  };
-}
-
 function isTextAreaLike(v: unknown): v is TextAreaHandle {
   return typeof v === "object" && v !== null && "scrollHeight" in v;
 }
@@ -1097,7 +1081,7 @@ interface ResolvedMessageInputProps {
   attachmentSlot: React.ReactNode;
   inputMode: ComposerInputMode;
   readOnly: boolean;
-  textReplacementKey: string;
+  textReplacement: TextReplacement;
   submitLabel: string | undefined;
 }
 
@@ -1144,7 +1128,7 @@ function resolveMessageInputProps(props: MessageInputProps): ResolvedMessageInpu
     attachmentSlot: props.attachmentSlot,
     inputMode: props.inputMode ?? "chat",
     readOnly: props.readOnly ?? false,
-    textReplacementKey: props.textReplacementKey,
+    textReplacement: props.textReplacement,
     submitLabel: props.submitLabel,
   };
 }
@@ -1199,7 +1183,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       attachmentSlot,
       inputMode,
       readOnly,
-      textReplacementKey,
+      textReplacement,
       submitLabel,
     } = resolveMessageInputProps(props);
     const mode = resolveComposerInputMode(inputMode);
@@ -1213,7 +1197,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const voiceMuteToggleKeys = useShortcutKeys("voice-mute-toggle");
     const dictationToggleKeys = useShortcutKeys("dictation-toggle");
     const focusInputKeys = useShortcutKeys("focus-message-input");
-    const [inputHeight, setInputHeight] = useState(MIN_INPUT_HEIGHT);
     const [isInputFocused, setIsInputFocused] = useState(false);
     // Web text is DOM-owned between deferred draft publications. The action button only needs
     // this boundary, so publish empty/non-empty transitions without rerendering for every key.
@@ -1226,7 +1209,23 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     const isInputFocusedRef = useRef(false);
     const valueRef = useRef(value);
     const selectionRef = useRef({ start: value.length, end: value.length });
-    const appliedTextReplacementKeyRef = useRef(textReplacementKey);
+    const appliedTextReplacementKeyRef = useRef(textReplacement.key);
+    const webTextareaRef = useRef<HTMLElement | null>(null);
+    const composerHeight = useComposerHeight({
+      value,
+      textareaRef: webTextareaRef,
+      minHeight: MIN_INPUT_HEIGHT,
+      maxHeight: maxInputHeight,
+    });
+    const { style: composerHeightStyle, scrollEnabled: isComposerScrollEnabled } = composerHeight;
+    const measuredComposerHeight = composerHeight.mode === "measured" ? composerHeight : undefined;
+    const updateComposerHeightForText = measuredComposerHeight?.onTextChange;
+    const resetComposerHeight = measuredComposerHeight?.reset;
+
+    const handleComposerLayout = useCallback(
+      (event: LayoutChangeEvent) => onHeightChange?.(event.nativeEvent.layout.height),
+      [onHeightChange],
+    );
 
     const updateLiveTextPresence = useCallback((text: string) => {
       const nextHasLiveText = text.trim().length > 0;
@@ -1237,13 +1236,14 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const replaceText = useCallback(
       (nextText: string, selection?: { start: number; end: number }) => {
+        updateComposerHeightForText?.(valueRef.current, nextText);
         valueRef.current = nextText;
         updateLiveTextPresence(nextText);
         selectionRef.current = selection ?? { start: nextText.length, end: nextText.length };
         textInputRef.current?.replaceText(nextText, selection);
         onChangeText(nextText);
       },
-      [onChangeText, updateLiveTextPresence],
+      [onChangeText, updateComposerHeightForText, updateLiveTextPresence],
     );
 
     useImperativeHandle(ref, () => ({
@@ -1273,7 +1273,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
         }),
       getNativeElement: () => (isWeb ? getTextInputNativeElement(textInputRef.current) : null),
     }));
-    const inputHeightRef = useRef(MIN_INPUT_HEIGHT);
     const sendAfterTranscriptRef = useRef(false);
     const serverInfo = useSessionStore(
       useCallback(
@@ -1288,12 +1287,13 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
 
     useEffect(() => {
-      if (appliedTextReplacementKeyRef.current === textReplacementKey) return;
-      appliedTextReplacementKeyRef.current = textReplacementKey;
-      valueRef.current = value;
-      updateLiveTextPresence(value);
-      textInputRef.current?.replaceText(value);
-    }, [textReplacementKey, updateLiveTextPresence, value]);
+      if (appliedTextReplacementKeyRef.current === textReplacement.key) return;
+      appliedTextReplacementKeyRef.current = textReplacement.key;
+      updateComposerHeightForText?.(valueRef.current, textReplacement.text);
+      valueRef.current = textReplacement.text;
+      updateLiveTextPresence(textReplacement.text);
+      textInputRef.current?.replaceText(textReplacement.text);
+    }, [textReplacement, updateComposerHeightForText, updateLiveTextPresence]);
 
     useEffect(() => {
       return () => {
@@ -1490,10 +1490,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     ]);
 
     const minimizeInputHeight = useCallback(() => {
-      inputHeightRef.current = MIN_INPUT_HEIGHT;
-      setInputHeight(MIN_INPUT_HEIGHT);
-      onHeightChange?.(MIN_INPUT_HEIGHT);
-    }, [onHeightChange]);
+      resetComposerHeight?.();
+    }, [resetComposerHeight]);
 
     const handleSendMessage = useCallback(() => {
       const liveValue = textInputRef.current?.getText() ?? valueRef.current;
@@ -1561,8 +1559,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       [],
     );
 
-    const webTextareaRef = useRef<HTMLElement | null>(null);
-
     useLayoutEffect(() => {
       if (isWeb) {
         webTextareaRef.current = getWebTextArea() as HTMLElement | null;
@@ -1577,37 +1573,6 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
       isRealtimeVoiceForCurrentAgent,
       onAddImages,
     });
-
-    const setBoundedInputHeight = useCallback(
-      (nextHeight: number) => {
-        const bounded = Math.max(MIN_INPUT_HEIGHT, Math.min(maxInputHeight, nextHeight));
-        if (Math.abs(inputHeightRef.current - bounded) < 1) return;
-        inputHeightRef.current = bounded;
-        setInputHeight(bounded);
-        onHeightChange?.(bounded);
-      },
-      [maxInputHeight, onHeightChange],
-    );
-
-    useEffect(() => {
-      setBoundedInputHeight(inputHeightRef.current);
-    }, [setBoundedInputHeight]);
-
-    const measureComposerHeight = useComposerHeightMirror({
-      value,
-      textareaRef: webTextareaRef,
-      minHeight: MIN_INPUT_HEIGHT,
-      maxHeight: maxInputHeight,
-      onHeight: setBoundedInputHeight,
-    });
-
-    const handleContentSizeChange = useCallback(
-      (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
-        if (isWeb) return;
-        setBoundedInputHeight(event.nativeEvent.contentSize.height);
-      },
-      [setBoundedInputHeight],
-    );
 
     const handleSelectionChange = useCallback(
       (event: NativeSyntheticEvent<TextInputSelectionChangeEventData>) => {
@@ -1695,12 +1660,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
     const handleInputChange = useCallback(
       (nextValue: string) => {
+        updateComposerHeightForText?.(valueRef.current, nextValue);
         valueRef.current = nextValue;
-        measureComposerHeight(nextValue);
         updateLiveTextPresence(nextValue);
         onChangeText(nextValue);
       },
-      [measureComposerHeight, onChangeText, updateLiveTextPresence],
+      [onChangeText, updateComposerHeightForText, updateLiveTextPresence],
     );
 
     const handleInputFocus = useCallback(() => {
@@ -1761,12 +1726,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     // `fontFamily` here is silently dropped while every other property lands.
     // An inline style outranks both classes. See docs/unistyles.md.
     const textInputStyle = useMemo(
-      () => [
-        styles.textInput,
-        mode.isMonospace && styles.textInputMonospace,
-        computeTextInputHeightStyle(inputHeight, maxInputHeight),
-      ],
-      [inputHeight, maxInputHeight, mode.isMonospace],
+      () => [styles.textInput, mode.isMonospace && styles.textInputMonospace, composerHeightStyle],
+      [composerHeightStyle, mode.isMonospace],
     );
     // Static content has no textarea to mirror, so it grows with its own text
     // instead of the measured input height.
@@ -1811,7 +1772,12 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
     );
 
     return (
-      <View ref={rootRef} style={styles.container} testID="message-input-root">
+      <View
+        ref={rootRef}
+        style={styles.container}
+        testID="message-input-root"
+        onLayout={handleComposerLayout}
+      >
         <MessageInputAutoFocus
           enabled={autoFocus}
           autoFocusKey={autoFocusKey}
@@ -1838,9 +1804,8 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
               onFocus={handleInputFocus}
               onBlur={handleInputBlur}
               editable={!isDictating && !isRealtimeVoiceForCurrentAgent && !disabled}
-              scrollEnabled={isWeb ? inputHeight >= maxInputHeight : true}
+              scrollEnabled={isComposerScrollEnabled}
               autoFocus={false}
-              onContentSizeChange={handleContentSizeChange}
               onKeyPress={shouldHandleWebKeyPress ? handleDesktopKeyPress : undefined}
               onSelectionChange={handleSelectionChange}
               onPasteImages={onPasteImages}
@@ -1936,9 +1901,11 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(
 
 const styles = StyleSheet.create((theme: Theme) => ({
   container: {
+    flexShrink: 1,
     position: "relative",
   },
   inputWrapper: {
+    flexShrink: 1,
     flexDirection: "column",
     gap: theme.spacing[3],
     backgroundColor: theme.colors.surface1,
@@ -1967,6 +1934,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     borderStyle: "dotted",
   },
   textInputScrollWrapper: {
+    flexShrink: 1,
     position: "relative",
   },
   focusHintText: {
@@ -1978,11 +1946,13 @@ const styles = StyleSheet.create((theme: Theme) => ({
     opacity: 0.5,
   },
   textInput: {
+    // Preserve the controls when an ancestor constrains an overlong draft.
+    flexShrink: 1,
     width: "100%",
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.content,
     fontWeight: theme.fontWeight.normal,
-    lineHeight: theme.fontSize.base * 1.4,
+    lineHeight: theme.fontSize.content * 1.4,
     ...(isWeb
       ? ({
           outlineStyle: "none",
@@ -1999,6 +1969,7 @@ const styles = StyleSheet.create((theme: Theme) => ({
     color: theme.colors.foregroundMuted,
   },
   buttonRow: {
+    flexShrink: 0,
     flexDirection: "row",
     alignItems: "flex-end",
     justifyContent: "space-between",

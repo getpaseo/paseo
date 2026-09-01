@@ -37,10 +37,8 @@ function navigateDeps(): NavigateToWorkspaceDeps {
     getSessionWorkspaces: (serverId) => useSessionStore.getState().sessions[serverId]?.workspaces,
     getSessionAgents: (serverId) =>
       useSessionStore.getState().sessions[serverId]?.agents.values() ?? [],
-    openTabFocused: (workspaceKey, target) =>
-      useWorkspaceLayoutStore.getState().openTabFocused(workspaceKey, target),
-    pinAgent: (workspaceKey, agentId) =>
-      useWorkspaceLayoutStore.getState().pinAgent(workspaceKey, agentId),
+    isWorkspaceLayoutHydrated: () => useWorkspaceLayoutStore.persist.hasHydrated(),
+    openTab: (input) => useWorkspaceLayoutStore.getState().openTab(input),
     rememberLastWorkspace: (selection) => lastWorkspaceSelectionStore.remember(selection),
     navigateToRoute: (route) => {
       navigateToHostWorkspaceRoute(route);

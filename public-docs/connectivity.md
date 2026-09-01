@@ -1,6 +1,6 @@
 ---
 title: Connectivity
-description: Connect a Paseo client to your daemon through the relay or Tailscale.
+description: Connect a Paseo client to your daemon through SSH, the relay, or Tailscale.
 nav: Connectivity
 order: 4
 category: Getting started
@@ -8,12 +8,44 @@ category: Getting started
 
 # Connectivity
 
-Your Paseo app connects to the daemon running on your computer or server. You can connect through the Paseo relay or directly with Tailscale.
+Your Paseo app connects to the daemon running on your computer or server. Paseo Desktop and the CLI can tunnel through SSH. Mobile clients can connect through the Paseo relay or directly with Tailscale.
 
 This is client-to-daemon transport. If you are looking for the service that starts agents from GitHub, Slack, and Discord events, that is [Hub](/docs/hub).
 
+- [SSH](#ssh)
 - [Paseo relay](#paseo-relay)
 - [Tailscale](#tailscale)
+
+## SSH
+
+SSH transport connects to an existing daemon through your local OpenSSH client. It does not install, start, or configure Paseo on the remote host.
+
+Before connecting:
+
+1. Start the Paseo daemon on the remote host.
+2. Confirm `ssh user@host` works with a key or SSH agent. Paseo uses non-interactive SSH and follows your OpenSSH config.
+
+The CLI accepts an SSH URI as its host:
+
+```bash
+paseo ls -a --host ssh://user@host
+```
+
+The daemon is expected at `127.0.0.1:6767` on the remote host. The port in the SSH URL is the SSH server port:
+
+```bash
+paseo ls -a --host ssh://user@host:2222
+```
+
+Set a different remote daemon port with `daemonPort`:
+
+```bash
+paseo ls -a --host 'ssh://user@host?daemonPort=7777'
+```
+
+`--host` belongs after the command. `paseo daemon status` checks only the local daemon; use `paseo ls --host ...` to verify a remote connection. `paseo run --host ...` also requires `--cwd` with a path that exists on the remote host.
+
+In Paseo Desktop, open **Settings → Add host → Remote SSH** and enter the same `ssh://` destination.
 
 ## Paseo relay
 
@@ -89,6 +121,8 @@ If the host was already paired through the relay, Paseo adds the direct connecti
 
 ## Troubleshooting
 
+- **SSH authentication failed:** Run `ssh user@host` in a terminal and fix the key, agent, host key, or `~/.ssh/config` entry there. Paseo does not prompt for SSH passwords.
+- **SSH connects but Paseo is refused:** Run `paseo daemon status` on the remote host. SSH transport does not start the daemon.
 - **Connection timed out:** Check that Tailscale is connected on both devices and that you used the daemon machine's Tailscale IP.
 - **Connection refused:** Run `paseo daemon status` and confirm the daemon is running on the configured IP and port.
 - **Config change has no effect:** Run `paseo reload`. `daemon.listen` is a startup setting, so restart when the command reports it.

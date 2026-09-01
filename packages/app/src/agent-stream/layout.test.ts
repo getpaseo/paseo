@@ -330,7 +330,7 @@ describe("layoutStream", () => {
     });
 
     expect(findLayoutItem(layout, historyBlock.id).assistantSpacing).toBe("compactBottom");
-    expect(findLayoutItem(layout, headBlock.id).assistantSpacing).toBe("compactTop");
+    expect(findLayoutItem(layout, headBlock.id).assistantSpacing).toBe("compactBoth");
   });
 
   it.each(["web", "android"] as const)(
