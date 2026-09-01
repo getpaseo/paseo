@@ -39,6 +39,9 @@ tsconfig.tsbuildinfo
 .idea/
 *.sublime-*
 
+# Local, machine-specific lefthook overrides
+lefthook-local.yml
+
 # Testing
 coverage/
 

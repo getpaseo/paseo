@@ -1,18 +1,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { History } from "lucide-react-native";
 import { Pressable, Text, View } from "react-native";
-import { StyleSheet } from "react-native-unistyles";
+import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTranslation } from "react-i18next";
 import { useRetainedPanelActive } from "@/components/retained-panel";
+import { isNative } from "@/constants/platform";
+import { useIsCompactFormFactor } from "@/constants/layout";
+import { extraMutedIconColorMapping } from "@/components/ui/icon-button-chrome";
+import { ToolbarButton } from "@/components/ui/pane-content-toolbar";
 import { useCheckoutCommitsQuery, type CheckoutCommitsQueryResult } from "@/git/use-commits-query";
 import { ThemedChevron, chevronColorMapping } from "@/git/themed-chevron";
 import { normalizeBranchOptionName } from "@/utils/branch-suggestions";
 import { CommitRow } from "./commit-row";
 
+const ThemedHistory = withUnistyles(History);
+
 interface CommitsSectionProps {
   serverId: string;
   cwd: string;
   onCommitPress: (sha: string) => void;
+  /** Null when the host predates the commit history RPC. */
+  onOpenHistory?: (() => void) | null;
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
 }
@@ -88,12 +97,17 @@ export function CommitsSection({
   serverId,
   cwd,
   onCommitPress,
+  onOpenHistory,
   collapsed = true,
   onCollapsedChange,
 }: CommitsSectionProps) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
   const isPanelActive = useRetainedPanelActive();
+  const isCompact = useIsCompactFormFactor();
+  const [isHovered, setIsHovered] = useState(false);
+  const handlePointerEnter = useCallback(() => setIsHovered(true), []);
+  const handlePointerLeave = useCallback(() => setIsHovered(false), []);
   const [now, setNow] = useState(() => new Date());
   const displayNow = useMemo(() => (isPanelActive ? new Date() : now), [isPanelActive, now]);
   const query = useCheckoutCommitsQuery({
@@ -134,31 +148,52 @@ export function CommitsSection({
       ? query.data.commits.filter((commit) => !commit.isOnBase).length
       : null;
 
+  // Plain View tracks hover; the toggle Pressable and the History button are
+  // siblings inside it (docs/hover.md).
   return (
     <View style={containerStyle}>
-      <Pressable
-        accessibilityRole="button"
-        testID="commits-section-header"
-        onPress={handleToggleSection}
-        style={styles.header}
+      <View
+        style={styles.headerRow}
+        onPointerEnter={handlePointerEnter}
+        onPointerLeave={handlePointerLeave}
       >
-        <View style={headerChevronStyle}>
-          <ThemedChevron size={14} uniProps={chevronColorMapping} />
+        <Pressable
+          accessibilityRole="button"
+          testID="commits-section-header"
+          onPress={handleToggleSection}
+          style={styles.header}
+        >
+          <View style={headerChevronStyle}>
+            <ThemedChevron size={14} uniProps={chevronColorMapping} />
+          </View>
+          <Text style={styles.title}>{t("workspace.git.diff.commits.title")}</Text>
+          {commitCount === null ? (
+            <View style={styles.countSpacer} />
+          ) : (
+            <Text
+              style={styles.count}
+              accessibilityLabel={t("workspace.git.diff.commits.countLabel", {
+                count: commitCount,
+              })}
+            >
+              {commitCount}
+            </Text>
+          )}
+        </Pressable>
+        <View style={styles.headerAction}>
+          {onOpenHistory && (isHovered || isNative || isCompact) ? (
+            <ToolbarButton
+              compact
+              label={t("workspace.git.diff.commits.openHistory")}
+              tooltipSide="top"
+              testID="commits-section-open-history"
+              onPress={onOpenHistory}
+            >
+              <ThemedHistory size={14} uniProps={extraMutedIconColorMapping} />
+            </ToolbarButton>
+          ) : null}
         </View>
-        <Text style={styles.title}>{t("workspace.git.diff.commits.title")}</Text>
-        {commitCount === null ? (
-          <View style={styles.countSpacer} />
-        ) : (
-          <Text
-            style={styles.count}
-            accessibilityLabel={t("workspace.git.diff.commits.countLabel", {
-              count: commitCount,
-            })}
-          >
-            {commitCount}
-          </Text>
-        )}
-      </Pressable>
+      </View>
       {collapsed ? null : (
         <CommitsSectionContent query={query} now={displayNow} onCommitPress={onCommitPress} />
       )}
@@ -171,13 +206,28 @@ const styles = StyleSheet.create((theme) => ({
     borderTopWidth: theme.borderWidth[1],
     borderTopColor: theme.colors.border,
   },
+  headerRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingRight: theme.spacing[2],
+    // Fixed slot so revealing the History button never reflows the header
+    // under the cursor (docs/hover.md failure mode 2).
+    minHeight: 36,
+    flexShrink: 0,
+  },
   header: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
     paddingLeft: theme.spacing[2],
-    paddingRight: theme.spacing[3],
     paddingVertical: theme.spacing[2],
+  },
+  headerAction: {
+    width: 28,
+    alignItems: "center",
+    justifyContent: "center",
     flexShrink: 0,
   },
   headerChevron: {

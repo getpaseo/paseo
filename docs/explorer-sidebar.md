@@ -20,6 +20,27 @@ tabs, including agents, terminals, files, and diffs, can move between Explorer a
 Keep panel implementations independent of either shell. `WorkspacePanelHost` owns mounting and
 retention, while each shell owns its tabs, focus, dragging, resizing, and shortcuts.
 
+### Adding a tab target kind
+
+A new `WorkspaceTabTarget` kind touches several lists, and only two of them fail the build. The
+manifest in `panels/panel-manifest.ts` is exhaustive, and so is `buildDeterministicWorkspaceTabId`.
+Everything else fails at runtime or not at all:
+
+- `WorkspaceTabTargetStorageSchema` in `stores/workspace-layout-store.ts` is a separate strict union
+  with no compile-time link to the TypeScript one. A missing branch fails `safeParse` for the entire
+  persisted layout, so every workspace loses every tab on restart — not just the new kind.
+- `normalizeWorkspaceTabTarget` in `workspace-tabs/identity.ts` returns `null` by default, which
+  removes the tab from the layout with no error.
+- `secondaryWorkspaceTabTargetsEqual` returns `false` by default, so `intent: "reveal"` opens a
+  duplicate instead of focusing the tab that already exists.
+- The fallback-label chains in `screens/workspace/workspace-screen.tsx` end at `labels.agent`.
+- `panels/register-panels.ts` is a map, not a record. A missing `registerPanel` call throws when the
+  tab is first opened.
+
+Add the kind to `isEphemeralTab` (`stores/workspace-layout-actions.ts`) only if it pins something a
+rebase can invalidate, the way `commit_diff` pins a sha. Kinds without an identity argument restore
+like `files` and `changes_tree`.
+
 ## Explorer sidebar
 
 `packages/app/src/workspace-tabs/explorer-sidebar.ts` owns show, hide, toggle, and view selection.

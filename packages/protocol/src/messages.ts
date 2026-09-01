@@ -2197,6 +2197,41 @@ export const CheckoutCommitsListRequestSchema = z.object({
   requestId: z.string(),
 });
 
+const CommitLogRefSchema = z.object({
+  kind: z.enum(["head", "local_branch", "remote_branch", "tag"]),
+  name: z.string(),
+});
+
+// Deliberately carries no file stats: the history log runs `git log` without
+// --raw/--numstat (a full tree diff per commit is the dominant cost there), and
+// a required-but-always-empty `files` array would be indistinguishable from a
+// commit that changed nothing. Field names match CheckoutCommitSchema so the app
+// can share a structural type.
+const CommitLogEntrySchema = z.object({
+  sha: z.string(),
+  shortSha: z.string(),
+  subject: z.string(),
+  authorName: z.string(),
+  authorDate: z.string(), // ISO 8601
+  refs: z.array(CommitLogRefSchema),
+});
+
+const CommitLogScopeSchema = z.enum(["head", "all"]);
+
+export const CheckoutCommitsListHistoryRequestSchema = z.object({
+  type: z.literal("checkout.commits.list_history.request"),
+  cwd: z.string(),
+  // Absent means "head". The default lives in the server, not the wire schema.
+  scope: CommitLogScopeSchema.optional(),
+  page: z
+    .object({
+      limit: z.number().int().positive().max(200),
+      cursor: z.string().min(1).optional(),
+    })
+    .optional(),
+  requestId: z.string(),
+});
+
 export const CheckoutCommitFileDiffRequestSchema = z.object({
   type: z.literal("checkout.commits.file_diff.request"),
   cwd: z.string(),
@@ -3106,6 +3141,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutForgeSetAutoMergeRequestSchema,
   CheckoutGithubSetAutoMergeRequestSchema,
   CheckoutCommitsListRequestSchema,
+  CheckoutCommitsListHistoryRequestSchema,
   CheckoutCommitFileDiffRequestSchema,
   CheckoutForgeGetCheckDetailsRequestSchema,
   CheckoutGithubGetCheckDetailsRequestSchema,
@@ -3463,6 +3499,8 @@ export const ServerInfoStatusPayloadSchema = z
         commitsList: z.boolean().optional(),
         // COMPAT(commitBaseClassification): added in v0.2.0, remove gate after 2027-01-23.
         commitBaseClassification: z.boolean().optional(),
+        // COMPAT(commitHistoryLog): added in v0.7.0, remove gate after 2027-08-31.
+        commitHistoryLog: z.boolean().optional(),
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
@@ -5150,6 +5188,33 @@ export const CheckoutCommitsListResponseSchema = z.object({
   }),
 });
 
+export const CheckoutCommitsListHistoryResponseSchema = z.object({
+  type: z.literal("checkout.commits.list_history.response"),
+  payload: z.object({
+    cwd: z.string(),
+    // Echoed so a client that flipped the scope toggle mid-flight can tell which
+    // scope a late page belongs to.
+    scope: CommitLogScopeSchema,
+    commits: z.array(CommitLogEntrySchema),
+    pageInfo: z.object({
+      nextCursor: z.string().nullable(),
+      hasMore: z.boolean(),
+    }),
+    // The cursor pinned starting commits that no longer exist (force-push + gc,
+    // or a pruned remote-tracking branch). The page is empty and the client must
+    // restart from page 1 rather than be served a silently shifted page. This is
+    // a per-message boolean rather than a CheckoutErrorCode because that enum is
+    // shared by every checkout response; adding a member would break older apps.
+    cursorExpired: z.boolean(),
+    // "all" scope pins a bounded set of ref tips. These report how many, and
+    // whether older refs were dropped, so the UI can say so.
+    pinnedTipCount: z.number().int().nonnegative(),
+    pinnedTipsTruncated: z.boolean(),
+    error: CheckoutErrorSchema.nullable(),
+    requestId: z.string(),
+  }),
+});
+
 export const CheckoutCommitFileDiffResponseSchema = z.object({
   type: z.literal("checkout.commits.file_diff.response"),
   payload: z.object({
@@ -6434,6 +6499,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   CheckoutForgeSetAutoMergeResponseSchema,
   CheckoutGithubSetAutoMergeResponseSchema,
   CheckoutCommitsListResponseSchema,
+  CheckoutCommitsListHistoryResponseSchema,
   CheckoutCommitFileDiffResponseSchema,
   CheckoutForgeGetCheckDetailsResponseSchema,
   CheckoutGithubGetCheckDetailsResponseSchema,
@@ -6789,6 +6855,15 @@ export type CheckoutCommitFile = z.infer<typeof CheckoutCommitFileSchema>;
 export type CheckoutCommit = z.infer<typeof CheckoutCommitSchema>;
 export type CheckoutCommitsListRequest = z.infer<typeof CheckoutCommitsListRequestSchema>;
 export type CheckoutCommitsListResponse = z.infer<typeof CheckoutCommitsListResponseSchema>;
+export type CommitLogRef = z.infer<typeof CommitLogRefSchema>;
+export type CommitLogEntry = z.infer<typeof CommitLogEntrySchema>;
+export type CommitLogScope = z.infer<typeof CommitLogScopeSchema>;
+export type CheckoutCommitsListHistoryRequest = z.infer<
+  typeof CheckoutCommitsListHistoryRequestSchema
+>;
+export type CheckoutCommitsListHistoryResponse = z.infer<
+  typeof CheckoutCommitsListHistoryResponseSchema
+>;
 export type CheckoutCommitFileDiffRequest = z.infer<typeof CheckoutCommitFileDiffRequestSchema>;
 export type CheckoutCommitFileDiffResponse = z.infer<typeof CheckoutCommitFileDiffResponseSchema>;
 export type ParsedDiffFile = z.infer<typeof ParsedDiffFileSchema>;

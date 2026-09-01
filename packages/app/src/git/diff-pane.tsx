@@ -4,23 +4,15 @@ import type { TFunction } from "i18next";
 import { TreeRail } from "@/components/tree-rail";
 import { TreeRailToggle } from "@/components/tree-rail-toggle";
 import { DiffStat } from "@/components/diff-stat";
-import {
-  View,
-  Text,
-  Pressable,
-  FlatList,
-  type PressableStateCallbackType,
-  type StyleProp,
-  type ViewStyle,
-} from "react-native";
+import { View, Text, FlatList } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import {
-  AlignJustify,
   ChevronDown,
   Columns2,
   ExternalLink,
+  History,
   ListChevronsDownUp,
   ListChevronsUpDown,
   Maximize,
@@ -79,7 +71,6 @@ import { Button } from "@/components/ui/button";
 import {
   PaneContentToolbar,
   paneContentToolbarIconSize,
-  paneContentToolbarIconButtonStyle,
   paneContentToolbarTrailingPadding,
   ToolbarButton,
   ToolbarControls,
@@ -198,19 +189,15 @@ interface ChangesSurfaceProps {
   onStateChange?: (state: ChangesState) => void;
 }
 
-type PressableStyleFn = (
-  state: PressableStateCallbackType & { hovered?: boolean; open?: boolean },
-) => StyleProp<ViewStyle>;
-
 const foregroundMutedIconColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
-const ThemedAlignJustify = withUnistyles(AlignJustify);
 const ThemedColumns2 = withUnistyles(Columns2);
 const ThemedPilcrow = withUnistyles(Pilcrow);
 const ThemedWrapText = withUnistyles(WrapText);
 const ThemedListChevronsDownUp = withUnistyles(ListChevronsDownUp);
 const ThemedListChevronsUpDown = withUnistyles(ListChevronsUpDown);
+const ThemedHistory = withUnistyles(History);
 const ThemedMaximize = withUnistyles(Maximize);
 const noopStateChange = () => {};
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -234,56 +221,9 @@ const DIFF_OPTIONS_EXPAND_ICON = (
 const DIFF_OPTIONS_CHANGES_TAB_ICON = (
   <ThemedMaximize size={14} uniProps={foregroundMutedIconColorMapping} />
 );
-
-interface DiffLayoutToggleProps {
-  layout: "unified" | "split";
-  isMobile: boolean;
-  testID?: string;
-  toggleStyle?: PressableStyleFn;
-  onToggle: () => void;
-}
-export function DiffLayoutToggle({
-  layout,
-  isMobile,
-  testID = "changes-toggle-layout",
-  toggleStyle,
-  onToggle,
-}: DiffLayoutToggleProps) {
-  const defaultToggleStyle = useMemo(
-    () => buildToggleButtonStyle(false, undefined, isMobile),
-    [isMobile],
-  );
-  const { t } = useTranslation();
-  const label =
-    layout === "unified"
-      ? t("workspace.git.diff.switchToSplit")
-      : t("workspace.git.diff.switchToUnified");
-  return (
-    <Tooltip delayDuration={300}>
-      <TooltipTrigger asChild>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={label}
-          testID={testID}
-          onPress={onToggle}
-          style={toggleStyle ?? defaultToggleStyle}
-        >
-          {layout === "unified" ? (
-            <ThemedColumns2 size={isMobile ? 18 : 14} uniProps={foregroundMutedIconColorMapping} />
-          ) : (
-            <ThemedAlignJustify
-              size={isMobile ? 18 : 14}
-              uniProps={foregroundMutedIconColorMapping}
-            />
-          )}
-        </Pressable>
-      </TooltipTrigger>
-      <TooltipContent side="bottom">
-        <Text style={styles.tooltipText}>{label}</Text>
-      </TooltipContent>
-    </Tooltip>
-  );
-}
+const DIFF_OPTIONS_HISTORY_ICON = (
+  <ThemedHistory size={14} uniProps={foregroundMutedIconColorMapping} />
+);
 
 interface DiffModeMenuProps {
   diffMode: "uncommitted" | "base";
@@ -379,6 +319,7 @@ type ChangesToolbarMode =
   | {
       kind: "tree";
       onOpenDiff: () => void;
+      onOpenHistory: (() => void) | null;
       inlineDiff: ChangesToolbarInlineDiffToggle | null;
       refresh: ChangesToolbarRefreshAction | null;
     }
@@ -390,6 +331,7 @@ type ChangesToolbarMode =
   | {
       kind: "combined";
       options: ChangesToolbarDiffOptions;
+      onOpenHistory: (() => void) | null;
       refresh: ChangesToolbarRefreshAction | null;
       treeToggle: { visible: boolean; onToggle: () => void } | null;
       inlineDiff: ChangesToolbarInlineDiffToggle | null;
@@ -407,6 +349,7 @@ function buildChangesToolbarMode(input: {
   wrapLines: boolean;
   treeVisible: boolean;
   onOpenDiff: () => void;
+  onOpenHistory: (() => void) | null;
   inlineDiff: ChangesToolbarInlineDiffToggle | null;
   onRefresh: () => void;
   onCollapseAll: () => void;
@@ -424,6 +367,7 @@ function buildChangesToolbarMode(input: {
     return {
       kind: "tree",
       onOpenDiff: input.onOpenDiff,
+      onOpenHistory: input.onOpenHistory,
       inlineDiff: input.inlineDiff,
       refresh,
     };
@@ -450,6 +394,7 @@ function buildChangesToolbarMode(input: {
   return {
     kind: "combined",
     options,
+    onOpenHistory: input.onOpenHistory,
     refresh,
     treeToggle:
       !input.compact && input.hasChanges
@@ -894,10 +839,15 @@ function ChangesOptionsMenu({ mode, compact }: { mode: ChangesOptionsMenuMode; c
   const optionsLabel = t("workspace.git.diff.options");
   const content =
     mode.kind === "tree" ? (
-      <ChangesTreeOptions onOpenDiff={mode.onOpenDiff} inlineDiff={mode.inlineDiff} />
+      <ChangesTreeOptions
+        onOpenDiff={mode.onOpenDiff}
+        onOpenHistory={mode.onOpenHistory}
+        inlineDiff={mode.inlineDiff}
+      />
     ) : (
       <>
         <ChangesDiffOptions options={mode.options} />
+        <ChangesHistoryOption onOpenHistory={mode.onOpenHistory} />
         {mode.inlineDiff ? (
           <>
             <DropdownMenuSeparator />
@@ -929,9 +879,11 @@ function ChangesOptionsMenu({ mode, compact }: { mode: ChangesOptionsMenuMode; c
 
 function ChangesTreeOptions({
   onOpenDiff,
+  onOpenHistory,
   inlineDiff,
 }: {
   onOpenDiff: () => void;
+  onOpenHistory: (() => void) | null;
   inlineDiff: ChangesToolbarInlineDiffToggle | null;
 }) {
   const { t } = useTranslation();
@@ -944,6 +896,7 @@ function ChangesTreeOptions({
       >
         {t("workspace.git.diff.openDiffTab")}
       </DropdownMenuItem>
+      <ChangesHistoryOption onOpenHistory={onOpenHistory} />
       {inlineDiff ? (
         <>
           <DropdownMenuSeparator />
@@ -951,6 +904,23 @@ function ChangesTreeOptions({
         </>
       ) : null}
     </>
+  );
+}
+
+function ChangesHistoryOption({ onOpenHistory }: { onOpenHistory: (() => void) | null }) {
+  const { t } = useTranslation();
+  // Absent rather than disabled when the host predates the history RPC.
+  if (!onOpenHistory) {
+    return null;
+  }
+  return (
+    <DropdownMenuItem
+      leading={DIFF_OPTIONS_HISTORY_ICON}
+      testID="changes-open-history"
+      onSelect={onOpenHistory}
+    >
+      {t("workspace.git.diff.commits.openHistory")}
+    </DropdownMenuItem>
   );
 }
 
@@ -1251,14 +1221,6 @@ function buildForgeSetupMessage(input: {
   return input.t("workspace.git.forgeSetup.signIn", { command, brand: brandLabel });
 }
 
-function buildToggleButtonStyle(
-  selected: boolean,
-  baseStyles?: StyleProp<ViewStyle> | StyleProp<ViewStyle>[],
-  isMobile = false,
-): PressableStyleFn {
-  return (state) => [baseStyles, paneContentToolbarIconButtonStyle(state, selected, isMobile)];
-}
-
 function ChangedFilesTree({
   files,
   mode,
@@ -1485,6 +1447,7 @@ function ChangesCommits({
   cwd,
   collapsed,
   onCommitPress,
+  onOpenHistory,
   onCollapsedChange,
 }: {
   presentation: ChangesPresentation;
@@ -1492,6 +1455,7 @@ function ChangesCommits({
   cwd: string;
   collapsed: boolean;
   onCommitPress: (sha: string) => void;
+  onOpenHistory: (() => void) | null;
   onCollapsedChange: (collapsed: boolean) => void;
 }) {
   if (presentation === "diff") return null;
@@ -1500,6 +1464,7 @@ function ChangesCommits({
       serverId={serverId}
       cwd={cwd}
       onCommitPress={onCommitPress}
+      onOpenHistory={onOpenHistory}
       collapsed={collapsed}
       onCollapsedChange={onCollapsedChange}
     />
@@ -1543,6 +1508,11 @@ function useDiffTabNavigation({
     },
     [openWorkspaceTab, persistenceKey],
   );
+  const openHistory = useCallback(() => {
+    if (persistenceKey) {
+      openWorkspaceTab(persistenceKey, { kind: "commit_log" }, FOCUSED_PANE_PLACEMENT);
+    }
+  }, [openWorkspaceTab, persistenceKey]);
   const openPullRequest = useCallback(() => {
     if (!persistenceKey) return;
     openWorkspacePullRequest({
@@ -1555,6 +1525,7 @@ function useDiffTabNavigation({
   return {
     openDiff,
     openCommit,
+    openHistory,
     openPullRequest,
   };
 }
@@ -1626,6 +1597,7 @@ export function ChangesSurface({
   const {
     openDiff: handleOpenDiff,
     openCommit: handleCommitPress,
+    openHistory: handleOpenHistory,
     openPullRequest: handleOpenPullRequest,
   } = useDiffTabNavigation({
     serverId,
@@ -1637,6 +1609,11 @@ export function ChangesSurface({
   const refreshSupported = useSessionStore(
     (s) => s.sessions[serverId]?.serverInfo?.features?.checkoutRefresh === true,
   );
+  // COMPAT(commitHistoryLog): added in v0.7.0, remove gate after 2027-08-31.
+  const commitHistorySupported = useSessionStore(
+    (s) => s.sessions[serverId]?.serverInfo?.features?.commitHistoryLog === true,
+  );
+  const openHistory = commitHistorySupported ? handleOpenHistory : null;
   const client = useSessionStore((state) => state.sessions[serverId]?.client);
   // COMPAT(fsEntryDuplicate): added in v0.3.0, remove gate after 2027-02-09.
   const fsEntryDuplicateEnabled = useSessionStore(
@@ -1952,6 +1929,7 @@ export function ChangesSurface({
         wrapLines,
         treeVisible: desktopTreeVisible,
         onOpenDiff: handleOpenDiff,
+        onOpenHistory: openHistory,
         inlineDiff: !isMobile
           ? { value: preferences.inlineDiff, onToggle: handleToggleInlineDiff }
           : null,
@@ -1971,6 +1949,7 @@ export function ChangesSurface({
       handleCollapseAllFiles,
       handleExpandAllFiles,
       handleOpenDiff,
+      openHistory,
       handleToggleInlineDiff,
       handleRefresh,
       handleToggleDesktopTree,
@@ -2056,6 +2035,7 @@ export function ChangesSurface({
         serverId={serverId}
         cwd={cwd}
         onCommitPress={handleCommitPress}
+        onOpenHistory={openHistory}
         collapsed={instanceState.commitsCollapsed}
         onCollapsedChange={handleCommitsCollapsedChange}
       />

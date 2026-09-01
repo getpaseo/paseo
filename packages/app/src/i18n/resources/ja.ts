@@ -915,6 +915,7 @@ export const ja: TranslationResources = {
           loading: "コミットを読み込み中…",
           loadError: "コミットの読み込みに失敗しました",
           empty: "コミットはまだありません",
+          openHistory: "履歴タブを開く",
         },
       },
       openInEditor: {
@@ -1809,6 +1810,27 @@ export const ja: TranslationResources = {
       emptyTitle: "プルリクエストはまだありません",
       emptyDescription:
         "このチェックアウトのプルリクエストを作成すると、ここに詳細が表示されます。",
+    },
+    commitLog: {
+      label: "履歴",
+      subtitle: "コミット履歴",
+      tooltip: "コミット履歴を閲覧",
+      directoryMissing: "ワークスペースのディレクトリが見つかりません。",
+      capabilityMissing: "コミット履歴を閲覧するにはホストを更新してください。",
+      connecting: "ホストに接続しています…",
+      loading: "履歴を読み込んでいます…",
+      loadError: "コミット履歴の読み込みに失敗しました",
+      empty: "コミットはまだありません",
+      loadMore: "さらに読み込む",
+      loadingMore: "読み込み中…",
+      refresh: "更新",
+      refreshing: "更新中",
+      truncatedRefs: "最近更新されたブランチとタグのみを表示しています",
+      cursorExpired: "読み込み中に履歴が変更されました。先頭から再読み込みしました。",
+      scope: {
+        head: "現在のブランチ",
+        all: "すべてのブランチ",
+      },
     },
     diff: {
       changesLabel: "変更",

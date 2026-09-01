@@ -15,6 +15,7 @@ import {
   WORKSPACE_TREE_ICON_SIZE,
 } from "@/components/tree-primitives";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
+import { PressHighlight } from "@/components/ui/press-highlight";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useFileHeaderInteraction } from "@/git/file-header-interaction";
 import type { ParsedDiffFile } from "@/git/use-diff-query";
@@ -260,8 +261,15 @@ export const FileHeader = memo(function FileHeader({
       </View>
     </View>
   );
+  // A commit diff supplies no file actions. Wrapping it in a context menu anyway
+  // would swallow right click and open nothing, so only the menu-bearing case
+  // gets the trigger; the rest press through a plain pressable.
+  const hasMenu =
+    interactive && Object.values(actions).some((value) => typeof value === "function");
   let trigger: ReactElement;
-  if (interactive) {
+  if (!interactive) {
+    trigger = <View style={pressableStyle({ pressed: false })}>{content}</View>;
+  } else if (hasMenu) {
     trigger = (
       <ContextMenuTrigger
         testID={testID ? `${testID}-toggle` : undefined}
@@ -281,8 +289,31 @@ export const FileHeader = memo(function FileHeader({
       </ContextMenuTrigger>
     );
   } else {
-    trigger = <View style={pressableStyle({ pressed: false })}>{content}</View>;
+    trigger = (
+      <PressHighlight
+        testID={testID ? `${testID}-toggle` : undefined}
+        style={pressableStyle}
+        highlightStyle={fileHeaderPressFeedbackStyle(showsBodyState)}
+        cancelable={false}
+        onPressIn={interaction.onPressIn}
+        onPressOut={interaction.onPressOut}
+        onPress={interaction.activate}
+        accessibilityState={accessibilityState}
+        aria-expanded={expandedAriaValue(showsBodyState, bodyVisible)}
+        aria-selected={isSelected}
+      >
+        {content}
+      </PressHighlight>
+    );
   }
+  const labelled = (
+    <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+      <TooltipTrigger asChild>{trigger}</TooltipTrigger>
+      <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
+        <Text style={styles.tooltip}>{file.path}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
   return (
     <View
       style={[styles.container, fileHeaderContainerStyle(showsBodyState)]}
@@ -291,17 +322,14 @@ export const FileHeader = memo(function FileHeader({
       onPointerLeave={hover.handlePointerLeave}
       testID={testID}
     >
-      <ContextMenu>
-        <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
-          <TooltipTrigger asChild>{trigger}</TooltipTrigger>
-          <TooltipContent side="bottom" align="start" offset={6} maxWidth={520}>
-            <Text style={styles.tooltip}>{file.path}</Text>
-          </TooltipContent>
-        </Tooltip>
-        {interactive ? (
+      {hasMenu ? (
+        <ContextMenu>
+          {labelled}
           <FileHeaderMenu file={file} testID={testID} {...actions} bodyVisible={bodyVisible} />
-        ) : null}
-      </ContextMenu>
+        </ContextMenu>
+      ) : (
+        labelled
+      )}
     </View>
   );
 });

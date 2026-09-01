@@ -83,8 +83,49 @@ test("commit history shows dates and shares diff layout preferences", async ({
   );
 
   await page.setViewportSize({ width: 480, height: 900 });
-  await expect(panel.getByTestId("commit-diff-toolbar")).toHaveCount(0);
+  // Collapse and wrap stay reachable on compact; only the split toggle drops out.
+  await expect(panel.getByTestId("commit-diff-toolbar")).toBeVisible();
+  await expect(panel.getByTestId("commit-diff-toggle-layout")).toHaveCount(0);
+  await expect(panel.getByTestId("commit-diff-toggle-collapse-all")).toBeVisible();
   await expect(panel.getByTestId("git-diff-canvas")).toBeVisible();
+});
+
+test("commit diff collapses files from the header and the toolbar", async ({
+  page,
+  withWorkspace,
+}) => {
+  const workspace = await withWorkspace({ prefix: "commit-diff-collapse-" });
+  await createFeatureCommit(workspace.repoPath);
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await workspace.navigateTo();
+
+  await openChangesTreePanel(page);
+  const commitsSection = page.getByRole("button", { name: /Commits/i });
+  await expect(commitsSection).toBeVisible({ timeout: 30_000 });
+  await commitsSection.click();
+
+  const commitRow = page.locator('[data-testid^="commit-row-"]').filter({
+    hasText: COMMIT_SUBJECT,
+  });
+  await expect(commitRow).toContainText(COMMIT_SUBJECT, { timeout: 30_000 });
+  await commitRow.click();
+
+  const panel = page.getByTestId("commit-diff-panel").filter({ visible: true });
+  const body = panel.getByTestId("diff-file-0-body");
+  await expect(body).toBeVisible({ timeout: 30_000 });
+
+  await panel.getByTestId("diff-file-0-toggle").click();
+  await expect(body).not.toBeVisible();
+  await panel.getByTestId("diff-file-0-toggle").click();
+  await expect(body).toBeVisible();
+
+  const collapseAll = panel.getByTestId("commit-diff-toggle-collapse-all");
+  await expect(collapseAll).toHaveAccessibleName("Collapse all files");
+  await collapseAll.click();
+  await expect(body).not.toBeVisible();
+  await expect(collapseAll).toHaveAccessibleName("Expand all files");
+  await collapseAll.click();
+  await expect(body).toBeVisible();
 });
 
 async function createFeatureCommit(repoPath: string): Promise<void> {

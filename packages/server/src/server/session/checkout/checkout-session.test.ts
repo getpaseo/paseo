@@ -29,6 +29,10 @@ import {
 import { expandTilde } from "../../../utils/path.js";
 import type { GitMetadataGenerator } from "./git-metadata-generator.js";
 
+function subjectsOf(commits: readonly { subject: string }[]): string[] {
+  return commits.map((commit) => commit.subject);
+}
+
 function isCheckDetailsResponse(msg: SessionOutboundMessage): boolean {
   return msg.type === "checkout.forge.get_check_details.response";
 }
@@ -1701,6 +1705,95 @@ describe("CheckoutSession", () => {
           },
         },
       ]);
+    });
+  });
+  describe("commit history", () => {
+    it("returns a first page and a cursor that pages the rest", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "checkout-session-history-"));
+      const cwd = realpathSync(tempDir);
+      try {
+        execFileSync("git", ["init", "-q", "-b", "main"], { cwd });
+        execFileSync("git", ["config", "user.email", "test@example.com"], { cwd });
+        execFileSync("git", ["config", "user.name", "Test User"], { cwd });
+        for (const name of ["a", "b", "c"]) {
+          writeFileSync(
+            join(cwd, `${name}.txt`),
+            `${name}
+`,
+          );
+          execFileSync("git", ["add", "."], { cwd });
+          execFileSync("git", ["commit", "-qm", `add ${name}`], { cwd });
+        }
+
+        const { checkout, emitted } = makeCheckoutSession();
+        await checkout.handleCommitsListHistoryRequest({
+          type: "checkout.commits.list_history.request",
+          cwd,
+          page: { limit: 2 },
+          requestId: "history-1",
+        });
+
+        const first = emitted[0];
+        expect(first?.type).toBe("checkout.commits.list_history.response");
+        if (first?.type !== "checkout.commits.list_history.response") {
+          throw new Error("expected a history response");
+        }
+        expect(first.payload).toMatchObject({
+          cwd,
+          scope: "head",
+          cursorExpired: false,
+          error: null,
+          requestId: "history-1",
+          pinnedTipCount: 1,
+          pinnedTipsTruncated: false,
+        });
+        expect(subjectsOf(first.payload.commits)).toEqual(["add c", "add b"]);
+        expect(first.payload.pageInfo.hasMore).toBe(true);
+        expect(first.payload.pageInfo.nextCursor).toBeTypeOf("string");
+        expect(first.payload.commits[0]?.refs).toContainEqual({ kind: "head", name: "HEAD" });
+
+        await checkout.handleCommitsListHistoryRequest({
+          type: "checkout.commits.list_history.request",
+          cwd,
+          page: { limit: 2, cursor: first.payload.pageInfo.nextCursor as string },
+          requestId: "history-2",
+        });
+
+        const second = emitted[1];
+        if (second?.type !== "checkout.commits.list_history.response") {
+          throw new Error("expected a history response");
+        }
+        expect(subjectsOf(second.payload.commits)).toEqual(["add a"]);
+        expect(second.payload.pageInfo).toEqual({ nextCursor: null, hasMore: false });
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("flags a malformed cursor as expired so the client restarts from page one", async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), "checkout-session-history-cursor-"));
+      const cwd = realpathSync(tempDir);
+      try {
+        execFileSync("git", ["init", "-q", "-b", "main"], { cwd });
+        const { checkout, emitted } = makeCheckoutSession();
+
+        await checkout.handleCommitsListHistoryRequest({
+          type: "checkout.commits.list_history.request",
+          cwd,
+          page: { limit: 10, cursor: "not-a-real-cursor" },
+          requestId: "history-bad",
+        });
+
+        const response = emitted[0];
+        if (response?.type !== "checkout.commits.list_history.response") {
+          throw new Error("expected a history response");
+        }
+        expect(response.payload.cursorExpired).toBe(true);
+        expect(response.payload.commits).toEqual([]);
+        expect(response.payload.error?.code).toBe("UNKNOWN");
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
     });
   });
 });

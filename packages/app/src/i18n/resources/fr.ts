@@ -926,6 +926,7 @@ export const fr: TranslationResources = {
         deletedFile: "Supprimé",
         modifiedFile: "Modifié",
         commits: {
+          openHistory: "Ouvrir l’onglet Historique",
           title: "Commits",
           countLabel: "{{count}} commits de l’espace de travail",
           noneAhead: "Aucun commit en avance sur {{baseRef}} pour le moment",
@@ -1842,6 +1843,28 @@ export const fr: TranslationResources = {
       emptyTitle: "Aucune demande de fusion pour le moment",
       emptyDescription:
         "Créez une demande de fusion pour cette copie de travail afin d’afficher ses détails ici.",
+    },
+    commitLog: {
+      label: "Historique",
+      subtitle: "Historique des commits",
+      tooltip: "Parcourir l’historique des commits",
+      directoryMissing: "Répertoire de l’espace de travail introuvable.",
+      capabilityMissing: "Mettez l’hôte à jour pour parcourir l’historique des commits.",
+      connecting: "Connexion à l’hôte…",
+      loading: "Chargement de l’historique…",
+      loadError: "Échec du chargement de l’historique des commits",
+      empty: "Aucun commit pour l’instant",
+      loadMore: "Charger plus",
+      loadingMore: "Chargement…",
+      refresh: "Actualiser",
+      refreshing: "Actualisation",
+      truncatedRefs:
+        "Affichage des branches et étiquettes les plus récemment mises à jour uniquement",
+      cursorExpired: "L’historique a changé pendant le chargement. Rechargé depuis le début.",
+      scope: {
+        head: "Branche actuelle",
+        all: "Toutes les branches",
+      },
     },
     diff: {
       changesLabel: "Modifications",

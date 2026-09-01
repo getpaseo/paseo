@@ -20,8 +20,7 @@ export const DocumentFileHeader = memo(function DocumentFileHeader({
 }: DocumentFileHeaderProps) {
   const activate = useCallback(
     (path: string) => {
-      if (mode.kind !== "working") return;
-      mode.onFilePress?.(path);
+      if (mode.kind === "working") mode.onFilePress?.(path);
       onToggleFile(path);
     },
     [mode, onToggleFile],
@@ -32,7 +31,6 @@ export const DocumentFileHeader = memo(function DocumentFileHeader({
       file={file.file}
       bodyVisible={!file.isCollapsed}
       isSelected={selectedPath === file.path}
-      interactive={mode.kind === "working"}
       workspaceFileDragScope={working?.workspaceFileDragScope}
       onActivate={activate}
       onSelect={onSelectPath}

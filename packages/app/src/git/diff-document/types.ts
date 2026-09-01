@@ -4,6 +4,15 @@ import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 
 interface DiffDocumentBaseProps {
   files: ParsedDiffFile[];
+  /**
+   * Paths whose bodies are hidden. Owned by the hosting panel so collapse
+   * survives tab switches, and so both working and commit diffs collapse the
+   * same way.
+   */
+  collapseState: {
+    paths: readonly string[];
+    onChange: (paths: string[]) => void;
+  };
   displayPreferences: {
     layout: "unified" | "split";
     wrapLines: boolean;
@@ -31,17 +40,9 @@ export interface WorkingDiffMode {
   onRevert?: (path: string, oldPath?: string) => void;
 }
 
-export type DiffDocumentProps = DiffDocumentBaseProps &
-  (
-    | {
-        mode: WorkingDiffMode;
-        collapseState: {
-          paths: readonly string[];
-          onChange: (paths: string[]) => void;
-        };
-      }
-    | { mode: { kind: "commit" }; collapseState?: never }
-  );
+export type DiffDocumentProps = DiffDocumentBaseProps & {
+  mode: WorkingDiffMode | { kind: "commit" };
+};
 
 export interface DiffTypography {
   family: string;
