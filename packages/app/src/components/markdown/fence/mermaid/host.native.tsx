@@ -4,6 +4,7 @@ import {
   Pressable,
   StyleSheet as RNStyleSheet,
   ScrollView,
+  Text,
   View,
   type TextStyle,
   type ViewStyle,
@@ -44,7 +45,7 @@ interface MermaidWebViewProps {
     height: number;
     width: number;
   }) => void;
-  onRenderFailed: (revision: number) => void;
+  onRenderFailed: (revision: number, error?: string) => void;
   style?: ViewStyle;
 }
 
@@ -100,7 +101,7 @@ function MermaidWebView({
         return;
       }
       if (message.type === "renderError") {
-        onRenderFailed(message.revision);
+        onRenderFailed(message.revision, message.error);
         sendRequest(driverRef.current?.settled(message.revision, false) ?? null);
         return;
       }
@@ -306,6 +307,7 @@ function MermaidFenceHostImpl({
   const openViewer = useCallback(() => setViewerOpen(true), []);
   const closeViewer = useCallback(() => setViewerOpen(false), []);
   const visible = state.visible;
+  const renderError = state.phase === "complete" && state.status === "failed" ? state.error : null;
   const canShowDiagram = visible !== null && hasRuntimeContent;
   const previewInnerStyle = useMemo(
     () =>
@@ -319,12 +321,22 @@ function MermaidFenceHostImpl({
   return (
     <>
       {!canShowDiagram ? (
-        <HighlightedCodeBlock
-          code={code}
-          language="mermaid"
-          inheritedStyles={inheritedStyles}
-          textStyle={textStyle}
-        />
+        <View>
+          {renderError ? (
+            <View>
+              <Text style={errorStyles.errorText}>{t("message.diagram.renderFailed")}</Text>
+              <Text style={errorStyles.errorMessage}>
+                {renderError.split("\n").slice(0, 4).join("\n")}
+              </Text>
+            </View>
+          ) : null}
+          <HighlightedCodeBlock
+            code={code}
+            language="mermaid"
+            inheritedStyles={inheritedStyles}
+            textStyle={textStyle}
+          />
+        </View>
       ) : null}
       <Pressable
         onPress={openViewer}
@@ -358,6 +370,11 @@ function MermaidFenceHostImpl({
     </>
   );
 }
+
+const errorStyles = StyleSheet.create((theme) => ({
+  errorText: { color: theme.colors.statusDanger },
+  errorMessage: { color: theme.colors.foregroundMuted },
+}));
 
 const previewStyles = RNStyleSheet.create({
   measuring: {

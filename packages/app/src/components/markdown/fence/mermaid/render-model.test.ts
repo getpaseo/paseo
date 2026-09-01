@@ -160,4 +160,37 @@ describe("Mermaid render model", () => {
     expect(rejected.status).toBe("rejected");
     expect(rejected.visible).toBeNull();
   });
+
+  it("keeps the parser error for a final failure and clears it for a new source", () => {
+    const pending = createMermaidRenderModel(input({ phase: "complete" }));
+    const failed = reduceMermaidRenderModel(pending, {
+      type: "renderFailed",
+      revision: pending.revision,
+      error: "Parse error on line 2: got 'PS'",
+    });
+
+    expect(failed.status).toBe("failed");
+    expect(failed.error).toBe("Parse error on line 2: got 'PS'");
+
+    const retried = reduceMermaidRenderModel(failed, {
+      type: "inputChanged",
+      input: input({ source: "flowchart TD\nA --> B\nB --> C" }),
+    });
+
+    expect(retried.status).toBe("pending");
+    expect(retried.error).toBeNull();
+  });
+
+  it("clears the error when the same source renders successfully", () => {
+    const pending = createMermaidRenderModel(input());
+    const failed = reduceMermaidRenderModel(pending, {
+      type: "renderFailed",
+      revision: pending.revision,
+      error: "Parse error on line 2: got 'PS'",
+    });
+    const rendered = renderCurrent(failed);
+
+    expect(rendered.status).toBe("rendered");
+    expect(rendered.error).toBeNull();
+  });
 });

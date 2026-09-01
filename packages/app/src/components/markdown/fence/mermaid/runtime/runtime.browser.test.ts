@@ -81,8 +81,25 @@ describe("Mermaid sandbox runtime", () => {
     const second = await render(frame, { revision: 3, source: secondSource });
 
     expect(first).toMatchObject({ type: "rendered", revision: 1, source: firstSource });
-    expect(invalid).toEqual({ type: "renderError", revision: 2 });
+    expect(invalid).toEqual({
+      type: "renderError",
+      revision: 2,
+      error: expect.any(String),
+    });
     expect(second).toMatchObject({ type: "rendered", revision: 3, source: secondSource });
+  });
+
+  it("reports the parser's own message for an unquoted label paren", async () => {
+    const frame = await mountRuntime();
+    const response = await render(frame, {
+      revision: 1,
+      source: "flowchart LR\n    a[x (y)] --> b[ok]",
+    });
+
+    expect(response.type).toBe("renderError");
+    if (response.type === "renderError") {
+      expect(response.error).toContain("Parse error");
+    }
   });
 
   it("coalesces queued input and never reports an obsolete result", async () => {

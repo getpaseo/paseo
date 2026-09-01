@@ -289,6 +289,7 @@ export const ko: TranslationResources = {
       resetZoom: "보기 초기화",
       viewSource: "소스 보기",
       viewDiagram: "다이어그램 보기",
+      renderFailed: "다이어그램 렌더링에 실패했습니다",
     },
     actions: {
       copyCode: "코드 복사",

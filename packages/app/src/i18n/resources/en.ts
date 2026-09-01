@@ -286,6 +286,7 @@ export const en = {
       resetZoom: "Reset view",
       viewSource: "View source",
       viewDiagram: "View diagram",
+      renderFailed: "Diagram failed to render",
     },
     actions: {
       copyCode: "Copy code",

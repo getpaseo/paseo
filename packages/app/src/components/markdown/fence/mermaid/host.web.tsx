@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, View, type TextStyle, type ViewStyle } from "react-native";
+import { Pressable, Text, View, type TextStyle, type ViewStyle } from "react-native";
 import { Code, Workflow } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
@@ -24,7 +24,7 @@ interface MermaidIframeRuntimeProps {
     height: number;
     width: number;
   }) => void;
-  onRenderFailed: (revision: number) => void;
+  onRenderFailed: (revision: number, error?: string) => void;
 }
 
 function MermaidIframeRuntime({
@@ -75,7 +75,7 @@ function MermaidIframeRuntime({
         return;
       }
       if (message.type === "renderError") {
-        onRenderFailed(message.revision);
+        onRenderFailed(message.revision, message.error);
         sendRequest(driverRef.current?.settled(message.revision, false) ?? null);
         return;
       }
@@ -139,6 +139,7 @@ function MermaidFenceHostImpl({
     [rendered],
   );
   const visible = state.visible;
+  const renderError = state.phase === "complete" && state.status === "failed" ? state.error : null;
   const canShowDiagram = visible !== null && hasRuntimeContent;
   const diagramVisible = canShowDiagram && !showSource;
   const runtimeHeight = Math.max(visible?.height ?? 240, 1);
@@ -178,6 +179,14 @@ function MermaidFenceHostImpl({
     <>
       {sourceVisible ? (
         <View style={sourceContainer}>
+          {renderError ? (
+            <View style={controlStyles.errorBox}>
+              <Text style={controlStyles.errorText}>{t("message.diagram.renderFailed")}</Text>
+              <Text style={controlStyles.errorMessage}>
+                {renderError.split("\n").slice(0, 4).join("\n")}
+              </Text>
+            </View>
+          ) : null}
           <HighlightedCodeBlock
             code={code}
             language="mermaid"
@@ -242,6 +251,9 @@ const controlStyles = StyleSheet.create((theme) => ({
   },
   icon: { color: theme.colors.foregroundMuted },
   iconHovered: { color: theme.colors.foreground },
+  errorBox: { marginBottom: theme.spacing[1] },
+  errorText: { color: theme.colors.statusDanger },
+  errorMessage: { color: theme.colors.foregroundMuted },
 }));
 const mapColorScheme = (theme: Theme) => ({ colorScheme: theme.colorScheme });
 const ThemedMermaidFenceHost = withUnistyles(MermaidFenceHostImpl);

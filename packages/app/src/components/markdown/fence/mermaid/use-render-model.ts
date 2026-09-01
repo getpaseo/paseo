@@ -83,8 +83,8 @@ export function useMermaidRenderModel({
     },
     [],
   );
-  const renderFailed = useCallback((revision: number) => {
-    dispatch({ type: "renderFailed", revision });
+  const renderFailed = useCallback((revision: number, error?: string) => {
+    dispatch({ type: "renderFailed", revision, error });
   }, []);
 
   return {

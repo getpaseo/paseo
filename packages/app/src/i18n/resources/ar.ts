@@ -288,6 +288,7 @@ export const ar: TranslationResources = {
       resetZoom: "إعادة تعيين العرض",
       viewSource: "عرض المصدر",
       viewDiagram: "عرض المخطط",
+      renderFailed: "فشل عرض المخطط",
     },
     actions: {
       copyCode: "نسخ الرمز",

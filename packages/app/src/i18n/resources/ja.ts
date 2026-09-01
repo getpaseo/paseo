@@ -291,6 +291,7 @@ export const ja: TranslationResources = {
       resetZoom: "表示をリセット",
       viewSource: "ソースを表示",
       viewDiagram: "図を表示",
+      renderFailed: "図のレンダリングに失敗しました",
     },
     actions: {
       copyCode: "コードをコピー",

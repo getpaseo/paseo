@@ -292,6 +292,7 @@ export const fr: TranslationResources = {
       resetZoom: "Réinitialiser la vue",
       viewSource: "Afficher la source",
       viewDiagram: "Afficher le diagramme",
+      renderFailed: "Échec du rendu du diagramme",
     },
     actions: {
       copyCode: "Copier le code",

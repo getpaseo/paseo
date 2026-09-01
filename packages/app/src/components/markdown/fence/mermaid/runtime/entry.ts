@@ -81,9 +81,13 @@ async function render(message: MermaidRuntimeRenderMessage): Promise<void> {
       height: Math.ceil(rect?.height ?? host.scrollHeight),
       width: Math.ceil(rect?.width ?? host.scrollWidth),
     });
-  } catch {
+  } catch (error) {
     if (message.revision === latestRevision) {
-      sendToHost({ type: "renderError", revision: message.revision });
+      sendToHost({
+        type: "renderError",
+        revision: message.revision,
+        error: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+      });
     }
   }
 }
