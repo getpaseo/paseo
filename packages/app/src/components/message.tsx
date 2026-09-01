@@ -116,6 +116,11 @@ import {
   markdownCopyTableCellDataSet,
   type MarkdownCopyInlineTag,
 } from "@/assistant-selection-copy/markup";
+import {
+  ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT,
+  capAssistantMessageForRender,
+  getUtf8ByteLength,
+} from "./assistant-message-render-limit";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
@@ -762,6 +767,13 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   },
   containerCompactBottom: {
     paddingBottom: 0,
+  },
+  cappedNotice: {
+    marginTop: theme.spacing[3],
+    fontFamily: theme.fontFamily.ui,
+    fontSize: theme.fontSize.base,
+    fontStyle: "italic",
+    color: theme.colors.foregroundMuted,
   },
   imageFrame: {
     width: "100%",
@@ -1488,10 +1500,20 @@ export const AssistantMessage = memo(function AssistantMessage({
   spacing = "default",
   phase,
 }: AssistantMessageProps) {
+  const { t } = useTranslation();
   const markdownParser = useMemo(createAssistantMarkdownParser, []);
   // Paint a paced prefix while the turn is streaming so text arrives at a steady
   // rate instead of in whatever lumps the daemon's coalescing window produced.
   const revealedMessage = useRevealedText(message, phase);
+  const renderedMessage = useMemo(
+    () => capAssistantMessageForRender(revealedMessage),
+    [revealedMessage],
+  );
+  const fullMessageByteLength = useMemo(
+    () =>
+      message.length > ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT ? getUtf8ByteLength(message) : null,
+    [message],
+  );
 
   const fileLinkActions = useAssistantFileLinkActions();
   const handleMarkdownLinkPress = useStableEvent((url: string) => {
@@ -1930,7 +1952,7 @@ export const AssistantMessage = memo(function AssistantMessage({
     };
   }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
 
-  const blocks = useMemo(() => splitMarkdownBlocks(revealedMessage), [revealedMessage]);
+  const blocks = useMemo(() => splitMarkdownBlocks(renderedMessage.text), [renderedMessage.text]);
   const keyedBlocks = useMemo(
     () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
     [blocks],
@@ -1970,6 +1992,14 @@ export const AssistantMessage = memo(function AssistantMessage({
           />
         </AssistantMessageBlockContainer>
       ))}
+      {renderedMessage.capped ? (
+        <Text
+          testID="assistant-message-capped-notice"
+          style={assistantMessageStylesheet.cappedNotice}
+        >
+          {t("agentStream.messageCapped", { bytes: fullMessageByteLength })}
+        </Text>
+      ) : null}
     </View>
   );
 });
