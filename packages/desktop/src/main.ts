@@ -67,8 +67,11 @@ import {
   registerBrowserWebviewNavigationGuards,
   unregisterPaseoBrowserFromHost,
   registerAttachedPaseoBrowser,
+  setPaseoGuestPresented,
   setWorkspaceActivePaseoBrowserId,
+  startPaseoGuestCompositorWatchdog,
   unregisterPaseoBrowserHost,
+  withPaseoGuestLiveHold,
 } from "./features/browser-webviews/index.js";
 import {
   clearPaseoBrowserProfile,
@@ -167,6 +170,22 @@ function readAttachedBrowserInput(input: unknown): AttachedBrowserInput | null {
     workspaceId: record.workspaceId.trim(),
     webContentsId: record.webContentsId,
   };
+}
+
+function readPresentedBrowserInput(
+  input: unknown,
+): { browserId: string; presented: boolean } | null {
+  if (typeof input !== "object" || input === null || Array.isArray(input)) {
+    return null;
+  }
+  const record = input as Record<string, unknown>;
+  if (typeof record.browserId !== "string" || record.browserId.trim().length === 0) {
+    return null;
+  }
+  if (typeof record.presented !== "boolean") {
+    return null;
+  }
+  return { browserId: record.browserId.trim(), presented: record.presented };
 }
 
 function readActiveBrowserInput(
@@ -454,6 +473,17 @@ ipcMain.handle("paseo:browser:set-workspace-active-browser", (event, rawInput: u
   }
 });
 
+ipcMain.handle("paseo:browser:set-guest-presented", (event, rawInput: unknown) => {
+  const input = readPresentedBrowserInput(rawInput);
+  if (input) {
+    setPaseoGuestPresented({
+      hostWebContentsId: event.sender.id,
+      browserId: input.browserId,
+      presented: input.presented,
+    });
+  }
+});
+
 ipcMain.handle("paseo:browser:focus", (event, browserId: unknown): boolean => {
   if (typeof browserId !== "string" || browserId.trim().length === 0) {
     return false;
@@ -527,7 +557,16 @@ ipcMain.handle("paseo:browser:clear-profile", async (_event, rawLegacyBrowserIds
 });
 
 const browserCapture = createBrowserCaptureService<Electron.NativeImage>({
-  findGuest: getPaseoBrowserWebContentsForHostWindow,
+  findGuest: (browserId, hostWebContentsId) => {
+    const contents = getPaseoBrowserWebContentsForHostWindow(browserId, hostWebContentsId);
+    if (!contents) {
+      return null;
+    }
+    return {
+      isDestroyed: () => contents.isDestroyed(),
+      capturePage: (rect) => withPaseoGuestLiveHold(contents.id, () => contents.capturePage(rect)),
+    };
+  },
   decodeImage: (dataUrl) => nativeImage.createFromDataURL(dataUrl),
   clipboard: {
     write: async ({ text, image }) => {
@@ -969,6 +1008,9 @@ async function bootstrap(): Promise<void> {
   ipcMain.handle("paseo:opener:openUrl", (_event, value: unknown) => openExternalUrl(value));
   registerEditorTargetHandlers();
   registerBrowserAutomationIpc();
+  startPaseoGuestCompositorWatchdog({
+    getMetrics: () => app.getAppMetrics(),
+  });
 
   // In-app "Open in new window": opens a window that lands on the given project
   // via the same open-project flow as a CLI launch (no move, no ownership).

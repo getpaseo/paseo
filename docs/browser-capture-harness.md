@@ -13,6 +13,7 @@ It validates the compositor behavior that unit tests cannot see:
 - both viewport `capturePage` and full-page CDP screenshots return real pixels from
   the permanent production parking state;
 - parked guests remain capturable with Chromium background throttling enabled;
+  main unfreezes a guest only for presentation, capture, or automation;
 - the real-Electron host-composer sentinel proves guest Enter cannot submit a focused
   host composer;
 - the automation group loads the compiled production keyboard boundary and guest
@@ -75,7 +76,8 @@ packages/desktop/capture-harness/out/
 A passing run prints `PASS` lines for the production P1 default-throttling parking state,
 including fresh, settled, 75-second soak, multi-tab, viewport, and full-page checks. The
 PNG sizes may be device-pixel scaled; on a Retina display the 1280x800 logical viewport
-is usually saved as 2560x1600.
+is usually saved as 2560x1600. Set `PASEO_CAPTURE_HARNESS_VARIANTS=attach-off` to compare
+the old always-unthrottled attach policy.
 
 The existing `npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop` journey
 verifies that a hidden window stops guest animation, captures fresh viewport pixels,
@@ -102,7 +104,11 @@ layering inside `overlay-root`. Activating a presented browser also focuses its 
 `WebContents` in main so macOS assigns keyboard first-responder ownership to the page.
 
 There is no renderer prep/restore handshake or lifetime background-throttling override.
-Screenshot capture temporarily enables frame production inside the shared serialized queue,
-restores the previous throttling policy on success or failure, invalidates before each attempt,
-and retries known first-frame failures within the 5-second capture budget. Viewport screenshots use `capturePage({ stayHidden:false })`;
+Main freezes parked guests and takes a live hold for the presented pane plus in-flight
+capture or automation. Screenshot capture temporarily enables frame production inside
+the shared serialized queue, restores the previous throttling policy on success or
+failure, invalidates before each attempt, and retries known first-frame failures within
+the 5-second capture budget. Viewport screenshots use `capturePage({ stayHidden:false })`;
 full-page screenshots use the existing CDP path with layout metrics and screenshot clip.
+A runaway guest renderer that stays above 1 GiB working set is reloaded, then crashed
+if it keeps growing.

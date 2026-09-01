@@ -31,6 +31,13 @@ describe("PaseoBrowserWebviewRegistry", () => {
     expect(registry.getWebContentsIdForBrowserInHostWindow(101, "browser-a")).toBe(2);
     expect(registry.getWorkspaceId("browser-a")).toBe("workspace-a");
     expect(registry.getActiveBrowserIdForHostWindow(101)).toBe("browser-a");
+    expect(registry.listRegistrations()).toEqual([
+      {
+        webContentsId: 2,
+        browserId: "browser-a",
+        hostWebContentsId: 101,
+      },
+    ]);
   });
 
   it("keeps the active browser when the same guest registers again", () => {

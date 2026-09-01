@@ -7,7 +7,12 @@ import type {
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import type { TabContents, BrowserRegistry, TabImage } from "./service.js";
 import type { IsolatedKeyboardInputEvent } from "./trusted-input.js";
-import { CdpSessionQueue } from "./cdp-session-queue.js";
+import {
+  CdpSessionQueue,
+  forgetCdpSessionQueue,
+  getCdpSessionQueue,
+  sendQueuedCdpCommand,
+} from "./cdp-session-queue.js";
 import {
   dialogAcceptValue,
   handledDialogEvent,
@@ -24,11 +29,11 @@ import {
   getPaseoBrowserWebContentsForHostWindow,
   getWorkspaceActivePaseoBrowserIdForHostWindow,
   getPaseoBrowserWorkspaceId,
+  withPaseoGuestLiveHold,
 } from "../browser-webviews/index.js";
 
 const MAX_CONSOLE_MESSAGES_PER_TAB = 200;
 const consoleMessagesByContentsId = new Map<number, BrowserAutomationConsoleLogEntry[]>();
-const cdpQueuesByContentsId = new Map<number, CdpSessionQueue>();
 const dialogMonitorsByContentsId = new Map<number, DialogMonitor>();
 const observedContentsIds = new Set<number>();
 
@@ -145,23 +150,12 @@ export function adaptWebContents(contents: BrowserAutomationWebContents): TabCon
     getConsoleMessages: () => consoleMessagesByContentsId.get(contentsId) ?? [],
     captureDialogs: (task) => dialogMonitor.capture(task),
     sendDebugCommand: (command: string, params?: Record<string, unknown>) =>
-      cdpQueue.run(async () => {
-        if (!contents.debugger.isAttached()) {
-          contents.debugger.attach("1.3");
-        }
-        return contents.debugger.sendCommand(command, params ?? {});
-      }),
+      sendQueuedCdpCommand(contents, command, params),
   };
 }
 
 function getCdpQueue(contentsId: number): CdpSessionQueue {
-  const existing = cdpQueuesByContentsId.get(contentsId);
-  if (existing) {
-    return existing;
-  }
-  const queue = new CdpSessionQueue();
-  cdpQueuesByContentsId.set(contentsId, queue);
-  return queue;
+  return getCdpSessionQueue(contentsId);
 }
 
 function observeConsoleMessages(contents: BrowserAutomationWebContents, contentsId: number): void {
@@ -178,7 +172,7 @@ function observeConsoleMessages(contents: BrowserAutomationWebContents, contents
   contents.once("destroyed", () => {
     observedContentsIds.delete(contentsId);
     consoleMessagesByContentsId.delete(contentsId);
-    cdpQueuesByContentsId.delete(contentsId);
+    forgetCdpSessionQueue(contentsId);
     dialogMonitorsByContentsId.delete(contentsId);
   });
 }
@@ -439,10 +433,34 @@ export function registerBrowserAutomationIpc(options?: { ipc?: IpcHandlerRegistr
         },
       };
     }
-    return executeAutomationCommand(parsed.data, registry, {
-      snapshotEngine: hostSnapshotEngines.get(hostContents),
-    });
+    const command = parsed.data.command;
+    const browserId =
+      "args" in command && command.args && typeof command.args === "object"
+        ? readCommandBrowserId(command.args)
+        : null;
+    const guestContents =
+      browserId === null
+        ? null
+        : getPaseoBrowserWebContentsForHostWindow(browserId, hostWebContentsId);
+    if (!guestContents) {
+      return executeAutomationCommand(parsed.data, registry, {
+        snapshotEngine: hostSnapshotEngines.get(hostContents),
+      });
+    }
+    return withPaseoGuestLiveHold(guestContents.id, async () =>
+      executeAutomationCommand(parsed.data, registry, {
+        snapshotEngine: hostSnapshotEngines.get(hostContents),
+      }),
+    );
   });
+}
+
+function readCommandBrowserId(args: object): string | null {
+  if (!("browserId" in args)) {
+    return null;
+  }
+  const browserId = args.browserId;
+  return typeof browserId === "string" && browserId.length > 0 ? browserId : null;
 }
 
 function readRequestId(rawRequest: unknown): string {
