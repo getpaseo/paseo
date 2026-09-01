@@ -5,7 +5,7 @@ import {
   AGENT_LIFECYCLE_STATUSES,
   type AgentLifecycleStatus,
 } from "@getpaseo/protocol/agent-lifecycle";
-import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
+import { deriveSidebarStateBucket, type SidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { getStatusDotColor } from "@/utils/status-dot-color";
 import { STATUS_INDICATOR_FILLED_DOT_SIZE } from "@/utils/status-indicator-geometry";
 
@@ -22,8 +22,6 @@ export function AgentStatusDot({
   pendingPermissionCount?: number;
   showInactive?: boolean;
 }) {
-  const { theme } = useUnistyles();
-
   if (!status) {
     return null;
   }
@@ -37,6 +35,24 @@ export function AgentStatusDot({
     attentionReason: attentionReason ?? null,
     pendingPermissionCount: pendingPermissionCount ?? 0,
   });
+
+  return <AgentStateBucketDot bucket={bucket} showInactive={showInactive} />;
+}
+
+/**
+ * The same dot, for callers holding a bucket rather than raw agent fields — the sidebar's agent
+ * index buckets once for the whole list. Deriving inputs backwards from a bucket to feed
+ * `AgentStatusDot` would be a lossy inverse of `deriveSidebarStateBucket`, and two ways to reach
+ * one colour is one too many.
+ */
+export function AgentStateBucketDot({
+  bucket,
+  showInactive = false,
+}: {
+  bucket: SidebarStateBucket;
+  showInactive?: boolean;
+}) {
+  const { theme } = useUnistyles();
   const color = getStatusDotColor({ theme, bucket, showDoneAsInactive: showInactive });
 
   if (!color) {

@@ -49,6 +49,7 @@ import type { ShortcutKey } from "@/utils/format-shortcut";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import { useKeyboardActionHandler } from "@/hooks/use-keyboard-action-handler";
 import { useClearWorkspaceAttention } from "@/hooks/use-clear-workspace-attention";
+import { SidebarWorkspaceAgentRows } from "@/components/sidebar/workspace-agent-list";
 import {
   SidebarWorkspaceRowFrame,
   SidebarWorkspaceRowContent,
@@ -916,6 +917,7 @@ function StatusWorkspaceRowInnerContent({
                 ) : null}
               </SidebarWorkspaceRowContent>
             </SidebarWorkspaceContextMenu>
+            <SidebarWorkspaceAgentRows workspace={workspace} />
           </View>
         );
       }}

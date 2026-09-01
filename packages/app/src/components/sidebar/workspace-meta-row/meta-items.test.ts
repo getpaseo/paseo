@@ -26,6 +26,8 @@ function select(overrides: Partial<Parameters<typeof selectMetaRowItems>[0]> = {
     prHint: PR_HINT,
     serviceSummary: SERVICE,
     labels: LABELS,
+    agentCount: 0,
+    agentRows: "collapsed",
     visible: DEFAULT_SIDEBAR_ROW_ITEMS,
     checksDisplay: DEFAULT_SIDEBAR_CHECKS_DISPLAY,
     ...overrides,
@@ -141,5 +143,19 @@ describe("selectMetaRowItems", () => {
   it("keeps a change request whose forge reports no checks", () => {
     const items = select({ prHint: { ...PR_HINT, checksStatus: undefined } });
     expect(kinds(items)).toEqual(["host", "changeRequest", "services", "labels"]);
+  });
+
+  it("leads with the agent count, ahead of identity", () => {
+    const items = select({ agentCount: 3 });
+    expect(items[0]).toEqual({ kind: "agents", count: 3 });
+  });
+
+  it("omits the agent count wherever the sub-list is not drawn", () => {
+    // One agent draws no sub-list, so a count beside it would report something the row cannot open.
+    expect(select({ agentCount: 1 }).some((item) => item.kind === "agents")).toBe(false);
+    expect(select({ agentCount: 0 }).some((item) => item.kind === "agents")).toBe(false);
+    expect(
+      select({ agentCount: 5, agentRows: "none" }).some((item) => item.kind === "agents"),
+    ).toBe(false);
   });
 });

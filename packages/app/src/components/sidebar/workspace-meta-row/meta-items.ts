@@ -1,21 +1,29 @@
 import type { WorkspaceLabelDefinition } from "@getpaseo/protocol/workspace-labels";
 import type { PrHint } from "@/git/pr-hint";
+import {
+  hasSidebarAgentRows,
+  type SidebarAgentRows,
+} from "@/components/sidebar/display-preferences/agent-rows";
 import type { SidebarChecksDisplay } from "@/components/sidebar/display-preferences/checks-display";
 import type { SidebarRowItems } from "@/components/sidebar/display-preferences/row-items";
 import { selectCheckSummary, type CheckSummary } from "./check-summary";
 import type { WorkspaceServiceSummary } from "./service-summary";
 
 /**
- * What ends up on the line under a workspace title, in the order it is read: where the
- * workspace lives, what change it belongs to, whether that change is passing, what it is
- * running, and what someone filed it under. Identity first, then the work, then the work's
- * state, then the labels a person put on it.
+ * What ends up on the line under a workspace title, in the order it is read: how many agents are
+ * working in it, where the workspace lives, what change it belongs to, whether that change is
+ * passing, what it is running, and what someone filed it under.
+ *
+ * The agent count leads, ahead of identity. Every other item describes the workspace — where it
+ * is, which change it carries, how that change is doing. The count is the only one about live
+ * work, and it is the reason you would open the row at all, so it is read first.
  *
  * Labels are one item rather than one per label: they are drawn as a run of chips with a single
  * separator in front of them, so the line reads as four peers however many labels a workspace
  * carries.
  */
 export type MetaRowItem =
+  | { kind: "agents"; count: number }
   | { kind: "branch"; name: string }
   | { kind: "project"; name: string }
   | { kind: "host" }
@@ -43,6 +51,9 @@ export function selectMetaRowItems(input: {
   labels: readonly WorkspaceLabelDefinition[];
   visible: SidebarRowItems;
   checksDisplay: SidebarChecksDisplay;
+  /** Active root agents in the workspace. Drawn only where the sub-list is, so the two agree. */
+  agentCount: number;
+  agentRows: SidebarAgentRows;
 }): MetaRowItem[] {
   const {
     currentBranch,
@@ -53,8 +64,14 @@ export function selectMetaRowItems(input: {
     labels,
     visible,
     checksDisplay,
+    agentCount,
+    agentRows,
   } = input;
   const items: MetaRowItem[] = [];
+
+  if (hasSidebarAgentRows({ agentCount, mode: agentRows })) {
+    items.push({ kind: "agents", count: agentCount });
+  }
 
   if (currentBranch && visible.branch) {
     items.push({ kind: "branch", name: currentBranch });

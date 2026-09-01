@@ -4,6 +4,14 @@ export interface CollapsedProjectsState {
   collapsedProjectKeys: Set<string>;
   collapsedWorkspaceGroupKeys: Set<string>;
   collapsedPinned: boolean;
+  /**
+   * Per-workspace overrides for the agent sub-list, keyed by `${serverId}:${workspaceId}`.
+   *
+   * An override rather than a set of collapsed keys, because this is the one section whose
+   * default flips with a preference: `sidebarAgentRows` is "collapsed" or "expanded". A bare set
+   * would silently invert every stored row the moment the user changed that preference.
+   */
+  agentListOverrides: Map<string, boolean>;
 }
 
 export interface PersistedCollapsedProjects {
@@ -11,6 +19,7 @@ export interface PersistedCollapsedProjects {
   collapsedWorkspaceGroupKeys?: string[];
   collapsedStatusGroupKeys?: string[];
   collapsedPinned?: boolean;
+  agentListOverrides?: Record<string, boolean>;
 }
 
 export const PersistedCollapsedProjectsSchema: z.ZodType<PersistedCollapsedProjects> =
@@ -20,6 +29,7 @@ export const PersistedCollapsedProjectsSchema: z.ZodType<PersistedCollapsedProje
     // COMPAT(sidebarWorkspaceGroupCollapse): added in v0.4.0, remove after 2027-02-14.
     collapsedStatusGroupKeys: z.array(z.string()).optional(),
     collapsedPinned: z.boolean().optional(),
+    agentListOverrides: z.record(z.string(), z.boolean()).optional(),
   });
 
 export function togglePinnedCollapsed(state: CollapsedProjectsState): CollapsedProjectsState {
@@ -52,6 +62,34 @@ export function toggleWorkspaceGroupCollapsed(
   return { ...state, collapsedWorkspaceGroupKeys: next };
 }
 
+/**
+ * Flip one workspace's agent sub-list. `expandedByDefault` comes from the display preference, so
+ * a toggle back to the default drops the override instead of pinning the value the user already
+ * had — otherwise changing the preference would leave stale rows behind.
+ */
+export function toggleAgentListExpanded(
+  state: CollapsedProjectsState,
+  workspaceKey: string,
+  expandedByDefault: boolean,
+): CollapsedProjectsState {
+  const current = state.agentListOverrides.get(workspaceKey) ?? expandedByDefault;
+  const next = new Map(state.agentListOverrides);
+  if (!current === expandedByDefault) {
+    next.delete(workspaceKey);
+  } else {
+    next.set(workspaceKey, !current);
+  }
+  return { ...state, agentListOverrides: next };
+}
+
+export function isAgentListExpanded(
+  state: Pick<CollapsedProjectsState, "agentListOverrides">,
+  workspaceKey: string,
+  expandedByDefault: boolean,
+): boolean {
+  return state.agentListOverrides.get(workspaceKey) ?? expandedByDefault;
+}
+
 export function setProjectCollapsed(
   state: CollapsedProjectsState,
   projectKey: string,
@@ -70,11 +108,13 @@ export function serializeCollapsedProjects(state: CollapsedProjectsState): {
   collapsedProjectKeys: string[];
   collapsedWorkspaceGroupKeys: string[];
   collapsedPinned: boolean;
+  agentListOverrides: Record<string, boolean>;
 } {
   return {
     collapsedProjectKeys: Array.from(state.collapsedProjectKeys),
     collapsedWorkspaceGroupKeys: Array.from(state.collapsedWorkspaceGroupKeys),
     collapsedPinned: state.collapsedPinned,
+    agentListOverrides: Object.fromEntries(state.agentListOverrides),
   };
 }
 
@@ -96,10 +136,14 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
       Array.from(current.collapsedWorkspaceGroupKeys),
   );
   const restoredPinned = persisted.collapsedPinned ?? current.collapsedPinned;
+  const restoredAgentListOverrides = persisted.agentListOverrides
+    ? new Map(Object.entries(persisted.agentListOverrides))
+    : current.agentListOverrides;
   if (
     areSetsEqual(current.collapsedProjectKeys, restoredProjects) &&
     areSetsEqual(current.collapsedWorkspaceGroupKeys, restoredWorkspaceGroups) &&
-    current.collapsedPinned === restoredPinned
+    current.collapsedPinned === restoredPinned &&
+    areOverridesEqual(current.agentListOverrides, restoredAgentListOverrides)
   ) {
     return current;
   }
@@ -108,7 +152,20 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
     collapsedProjectKeys: restoredProjects,
     collapsedWorkspaceGroupKeys: restoredWorkspaceGroups,
     collapsedPinned: restoredPinned,
+    agentListOverrides: restoredAgentListOverrides,
   };
+}
+
+function areOverridesEqual(left: Map<string, boolean>, right: Map<string, boolean>): boolean {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const [key, value] of left) {
+    if (right.get(key) !== value) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function deserializeCollapsedKeys(value: string[]): Set<string> {
