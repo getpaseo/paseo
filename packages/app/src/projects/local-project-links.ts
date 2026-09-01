@@ -94,13 +94,16 @@ export function resolveProjectGitIdentity(input: {
   for (const workspace of input.workspaces) {
     if (workspace.projectId !== input.project.projectId) continue;
     const checkout = workspace.project?.checkout;
-    const worktreeRoot = checkout?.isGit ? checkout.worktreeRoot : null;
+    let identityRoot: string | null = null;
+    if (checkout?.isGit) {
+      identityRoot = checkout.isPaseoOwnedWorktree ? checkout.mainRepoRoot : checkout.worktreeRoot;
+    }
     const remoteUrl = workspace.gitRuntime?.remoteUrl;
-    if (!worktreeRoot || !remoteUrl) continue;
+    if (!identityRoot || !remoteUrl) continue;
 
     const identity = deriveProjectGitIdentity({
       projectRootPath: input.project.projectRootPath,
-      worktreeRoot,
+      worktreeRoot: identityRoot,
       remoteUrl,
     });
     if (!identity) continue;
@@ -562,8 +565,14 @@ function relativeProjectPath(rootPath: string, projectPath: string): string | nu
   ) {
     return null;
   }
+  const rootComparison = compareAsWindows
+    ? root.segments.map((segment) => segment.toLowerCase())
+    : root.segments;
+  const projectComparison = compareAsWindows
+    ? project.segments.map((segment) => segment.toLowerCase())
+    : project.segments;
   for (let index = 0; index < root.segments.length; index += 1) {
-    if (root.segments[index] !== project.segments[index]) return null;
+    if (rootComparison[index] !== projectComparison[index]) return null;
   }
   return project.segments.slice(root.segments.length).join("/");
 }
@@ -607,7 +616,7 @@ function normalizePathSegments(
       segments.pop();
       continue;
     }
-    segments.push(compareAsWindows ? rawSegment.toLowerCase() : rawSegment);
+    segments.push(rawSegment);
   }
   return { root, segments };
 }
