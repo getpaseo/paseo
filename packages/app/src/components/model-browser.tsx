@@ -1094,7 +1094,6 @@ function IndependentModelList({
         maxToRenderPerBatch={16}
         updateCellsBatchingPeriod={40}
         removeClippedSubviews={Platform.OS === "android"}
-        getItemLayout={getModelRowLayout}
       />
     </IndependentScrollBoundary>
   );
@@ -1102,14 +1101,6 @@ function IndependentModelList({
 
 function getModelRowKey(row: ProviderSelectionModelRow): string {
   return row.favoriteKey;
-}
-
-function getModelRowLayout(_data: unknown, index: number) {
-  return {
-    length: DESKTOP_MODEL_ROW_HEIGHT,
-    offset: DESKTOP_MODEL_ROW_HEIGHT * index,
-    index,
-  };
 }
 
 function IndependentProviderList({ children }: { children: React.ReactNode }) {
@@ -1204,8 +1195,7 @@ function ModelRowList({
         windowSize={7}
         maxToRenderPerBatch={16}
         updateCellsBatchingPeriod={40}
-        removeClippedSubviews
-        getItemLayout={getModelRowLayout}
+        removeClippedSubviews={Platform.OS === "android"}
       />
     );
   }

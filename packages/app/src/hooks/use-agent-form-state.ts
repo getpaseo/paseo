@@ -257,6 +257,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       return next;
     };
     void updateCurrentPreferences(toPersist).catch((error) => {
+      // Preserve diagnostics: validation/storage failures are expected to be rare,
+      // but losing a preference update is silent and hard to debug.
       console.warn("[useAgentFormState] debounced preference persist failed", error);
     });
   }, [updateCurrentPreferences]);
@@ -627,24 +629,11 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
         clearTimeout(pending.timer);
         pending.timer = null;
       }
-      // Flush synchronously on unmount if needed — best-effort, ignore promise
-      if (pending.queued.length > 0) {
-        const queued = pending.queued;
-        pending.queued = [];
-        const toPersist: (prefs: FormPreferences) => FormPreferences = (prefs) => {
-          let next = prefs;
-          for (const u of queued) {
-            next =
-              typeof u === "function"
-                ? (u as (c: FormPreferences) => FormPreferences)(next)
-                : ({ ...next, ...u } as FormPreferences);
-          }
-          return next;
-        };
-        void updateCurrentPreferences(toPersist).catch(() => {});
-      }
+      // Reuse the same flush logic to avoid drift between the two paths;
+      // flushPendingPreferenceUpdates preserves diagnostics for unexpected failures.
+      flushPendingPreferenceUpdates();
     };
-  }, [updateCurrentPreferences]);
+  }, [flushPendingPreferenceUpdates]);
 
   const setWorkingDir = useCallback((value: string) => {
     dispatch({ type: "SET_WORKING_DIR", value });
