@@ -10,6 +10,10 @@ import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createServiceProxySubsystem } from "./service-proxy.js";
 import { WorkspaceLaunchManager } from "./workspace-launch-manager.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
+import {
+  ensureWorkspaceServicePortPlan,
+  releaseWorkspaceServicePortPlan,
+} from "./workspace-service-port-registry.js";
 import { WorkspaceRuntimeEnvironmentService } from "./workspace-runtime-environment.js";
 
 describe("WorkspaceLaunchManager", () => {
@@ -375,6 +379,61 @@ describe("WorkspaceLaunchManager", () => {
       expect(manager.buildSnapshot(context)).toEqual([]);
     } finally {
       await manager.disposeWorkspace(context.workspaceId);
+    }
+  });
+
+  it("keeps existing dynamic service leases outside the launch port block", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "paseo-workspace-launch-planned-port-"));
+    tempDirs.push(directory);
+    const plannedServicePort = 44_000;
+    writeFileSync(
+      join(directory, "paseo.json"),
+      JSON.stringify({
+        worktree: { servicePorts: { range: "44000-44200" } },
+        scripts: { api: { type: "service", command: "./bin/api" } },
+        launches: { dev: { command: "./bin/dev" } },
+      }),
+    );
+
+    const context = {
+      workspaceId: "workspace-launch-planned-port",
+      workspaceDirectory: directory,
+      projectSlug: "example-project",
+      branchName: "feature/launch",
+    };
+    await ensureWorkspaceServicePortPlan({
+      workspaceId: context.workspaceId,
+      services: [{ scriptName: "api" }],
+      allocatePort: async () => plannedServicePort,
+    });
+    const manager = new WorkspaceLaunchManager({
+      terminalManager: createTerminalManager().manager,
+      serviceProxy: createServiceProxySubsystem({ logger: pino({ level: "silent" }) }),
+      workspaceRuntimeEnvironment: new WorkspaceRuntimeEnvironmentService({
+        random: () => 0,
+        checkPortAvailable: async () => true,
+      }),
+      getDaemonTcpPort: () => 6767,
+      serviceProxyPublicBaseUrl: null,
+      resolveScriptHealth: null,
+      emitWorkspaceUpdates: async () => {},
+      endpointProbe: {
+        probeTcp: async () => false,
+        probeHttp: async () => false,
+      },
+      logger: pino({ level: "silent" }),
+    });
+
+    try {
+      const launch = await manager.start(context, "dev");
+
+      expect(launch).toMatchObject({
+        portBase: plannedServicePort + 1,
+        portEnd: plannedServicePort + 100,
+      });
+    } finally {
+      await manager.disposeWorkspace(context.workspaceId);
+      releaseWorkspaceServicePortPlan(context.workspaceId);
     }
   });
 

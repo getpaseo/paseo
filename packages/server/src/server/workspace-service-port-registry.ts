@@ -69,6 +69,15 @@ export function requirePlannedWorkspaceServicePort(
   return port;
 }
 
+/** Returns every dynamic or configured service port already leased by a workspace. */
+export function getReservedWorkspaceServicePorts(workspaceId: string): ReadonlySet<number> {
+  const ports = new Set(workspaceServicePortPlans.get(workspaceId)?.values());
+  for (const port of dynamicPortsByWorkspace.get(workspaceId)?.values() ?? []) {
+    ports.add(port);
+  }
+  return ports;
+}
+
 export function releaseWorkspaceServicePortPlan(workspaceId: string): void {
   const pendingToken = pendingWorkspaceServicePortPlanTokens.get(workspaceId);
   if (pendingToken) pendingToken.isReleased = true;
