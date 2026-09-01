@@ -242,13 +242,13 @@ focused invalidation capture; React Native's generated stacks make that mode hig
 Set `PASEO_PROFILE_TRACE_FOCUS=1` to include focus targets, durations, and JavaScript call stacks in
 the scenario report. This mode wraps `HTMLElement.focus`, so use it only for diagnosis.
 
-For the desktop explorer toggle, run the app against the root checkout's daemon and use:
+For the desktop Explorer sidebar toggle, run the app against the root checkout's daemon and use:
 
 ```bash
 npm run profile:explorer-toggle --workspace=@getpaseo/app
 ```
 
-The harness verifies port `6768`, opens the Paseo workspace, creates and warms the explorer pane,
+The harness verifies port `6768`, opens the Paseo workspace, creates and warms the Explorer pane,
 records an idle control, then measures settled and 50 ms burst Cmd+E toggles. It reports
 input-to-DOM and input-to-paint latency, React commits, mounts, unmounts, and DOM mutations. Set
 `PASEO_PROFILE_TRACE_PATH=/tmp/explorer-toggle.trace.json` or
@@ -277,6 +277,17 @@ Set `PASEO_PROFILE_TYPING_SCENARIO=height-growth` to alternate `Shift+Enter` and
 That report includes input and composer height changes plus React work grouped into composer,
 stream, and ancestor/root scopes. Ancestor/root timings include descendant work because the Profiler
 boundaries are nested. A printable key after an empty newline should not change either height.
+
+### Preview Windows and Linux window controls on macOS
+
+Desktop development can replace native macOS traffic lights with Paseo's custom controls:
+
+```bash
+PASEO_DESKTOP_WINDOW_CONTROLS=windows npm run dev:desktop
+PASEO_DESKTOP_WINDOW_CONTROLS=linux npm run dev:desktop
+```
+
+The override is rejected in packaged builds. Restart the desktop process when changing it.
 
 ### Desktop macOS compositor watchdog
 
@@ -502,6 +513,16 @@ For tighter loops, you can rebuild a single workspace:
 - Changed `packages/server/src/*`, `packages/cli/src/*`, `packages/relay/src/*`, or `packages/highlight/src/*`: `npm run build:server`.
 - Changed app build dependencies: `npm run build:app-deps`.
 
+## Dependency patches
+
+`patches/*.patch` are applied by `scripts/postinstall-patches.mjs` on every install. A patch only
+runs when its package is actually present, so add the package to that script's `patchedPackages`
+list when you introduce a new patch — otherwise the file sits in `patches/` and never applies.
+Regenerate a patch with `npx patch-package <package>` after editing `node_modules/<package>`, and
+patch every build the consumers use: Metro resolves the `react-native` field of a package
+(`src/*.ts` for `react-native-svg`), while Node and Vitest resolve `main`/`module`
+(`lib/commonjs`, `lib/module`). Patching only `lib/` leaves the app bundle unfixed.
+
 ## ACP provider catalog versions
 
 The in-app ACP provider catalog pins package-runner entries (`npx`, `npm exec`,
@@ -535,11 +556,14 @@ npm run cli -- daemon status         # Check daemon status
 npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and register project
 ```
 
-Use `--host <host:port>` to point the CLI at a different daemon:
+Use `--host` to point the CLI at a different daemon:
 
 ```bash
-npm run cli -- --host localhost:7777 ls -a
+npm run cli -- ls -a --host localhost:7777
+npm run cli -- ls -a --host ssh://user@host
 ```
+
+In an SSH URI, the URL port is the SSH server port. The remote daemon defaults to `127.0.0.1:6767`; use `?daemonPort=7777` to override it. The transport runs non-interactively through the local OpenSSH client and never installs, starts, or configures the remote daemon. User-facing setup and troubleshooting live in [public-docs/connectivity.md](../public-docs/connectivity.md#ssh).
 
 Desktop integrations can focus an existing agent without creating one or
 sending a message. Use `paseo://h/<server-id>/agent/<agent-id>`, or run

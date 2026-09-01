@@ -1,5 +1,5 @@
 import { router, useLocalSearchParams } from "expo-router";
-import type { PluginSurfaceProps } from "@paseo/plugin";
+import type { PluginSurfaceProps, PluginTheme } from "@getpaseo/plugin";
 import { ChevronDown, X } from "lucide-react-native";
 import { useCallback, useMemo, useRef, useState, type ComponentType } from "react";
 import { Platform, Pressable, Text, View } from "react-native";
@@ -13,10 +13,12 @@ import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import type { Theme } from "@/styles/theme";
 import type { ShortcutKey } from "@/utils/format-shortcut";
+import { usePluginHostNavigation } from "./host-navigation";
 import { resolvePluginIcon } from "./icons";
+import { toPluginTheme } from "./theme";
 import { useInstalledPlugin, usePluginInstallations } from "./registry";
 import { buildPluginSurfaceRoute } from "./routes";
-import { rememberPluginContributionHost } from "./sidebar-groups";
+import { rememberPluginContributionHost } from "./contribution-host";
 import { SurfaceErrorBoundary } from "./surface-error-boundary";
 import { createPluginSurfaceRuntime } from "./surface-runtime";
 import { PluginRuntimeBoundary } from "./runtime-boundary";
@@ -27,10 +29,9 @@ import {
 } from "./surface-contribution";
 
 const EMPTY_SHORTCUT_KEYS: ShortcutKey[] = [];
-const EMPTY_THEME_DTO: Record<string, unknown> = {};
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const pluginThemeMapping = (theme: Theme) => ({
-  themeDto: JSON.parse(JSON.stringify(theme)) as Record<string, unknown>,
+  theme: toPluginTheme(theme),
 });
 const ThemedX = withUnistyles(X);
 const ThemedChevronDown = withUnistyles(ChevronDown);
@@ -57,18 +58,19 @@ function SurfaceRenderer({
   plugin,
   layout,
   host,
-  themeDto = EMPTY_THEME_DTO,
+  theme,
 }: {
   Surface: ComponentType<PluginSurfaceProps>;
   runtime: NonNullable<ReturnType<typeof createPluginSurfaceRuntime>>;
   plugin: NonNullable<ReturnType<typeof useInstalledPlugin>>;
   layout: PluginSurfaceProps["layout"];
   host: PluginSurfaceProps["host"];
-  themeDto?: Record<string, unknown>;
+  theme: PluginTheme;
 }) {
+  const navigation = usePluginHostNavigation(host.id);
   return (
     <PluginRuntimeBoundary plugin={plugin} runtime={runtime}>
-      <Surface theme={themeDto} host={host} layout={layout} />
+      <Surface theme={theme} host={host} layout={layout} navigation={navigation} />
     </PluginRuntimeBoundary>
   );
 }

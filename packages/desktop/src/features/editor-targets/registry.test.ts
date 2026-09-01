@@ -233,6 +233,41 @@ describe("editor target registry", () => {
     ]);
   });
 
+  it("lists and opens Android Studio through its bundled macOS launcher", async () => {
+    const runtime = new FakeEditorTargets("darwin", { HOME: "/Users/me" });
+    const bundledCommand = "/Users/me/Applications/Android Studio.app/Contents/MacOS/studio";
+    runtime.installCommand(bundledCommand, bundledCommand);
+    runtime.addPath("/repo");
+    runtime.addPath("/repo/app/src/main/MainActivity.kt");
+
+    const targets = await listAvailableEditorTargets(runtime);
+
+    expect(targets).toContainEqual({
+      id: "android-studio",
+      label: "Android Studio",
+      kind: "editor",
+      icon: { kind: "image", dataUrl: "data:image/png;base64,android-studio.png" },
+    });
+
+    await openEditorTarget(
+      {
+        editorId: "android-studio",
+        workspacePath: "/repo",
+        filePath: "/repo/app/src/main/MainActivity.kt",
+        line: 18,
+        column: 3,
+      },
+      runtime,
+    );
+
+    expect(runtime.launches).toEqual([
+      {
+        command: bundledCommand,
+        args: ["/repo", "--line", "18", "--column", "3", "/repo/app/src/main/MainActivity.kt"],
+      },
+    ]);
+  });
+
   it("detects Cursor's installed Windows command when it is absent from PATH", async () => {
     const runtime = new FakeEditorTargets("win32", {
       LOCALAPPDATA: "C:/Users/me/AppData/Local",

@@ -20,7 +20,6 @@ import { resolveTurnPresentation, TURN_LIVENESS_IDLE } from "@/timeline/turn-liv
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { buildWorkspaceDraftAgentConfig } from "@/screens/workspace/workspace-draft-agent-config";
 import { buildDraftStoreKey } from "@/stores/draft-keys";
-import { usePanelStore } from "@/stores/panel-store";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
 import type { Agent } from "@/stores/session-store";
 import { useWorkspaceFields } from "@/stores/session-store-hooks";
@@ -49,7 +48,12 @@ import {
   useIsCompactFormFactor,
 } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
-import type { WorkspaceDraftTabSetup } from "@/workspace-tabs/model";
+import {
+  buildWorkspaceTabPersistenceKey,
+  type WorkspaceDraftTabSetup,
+} from "@/workspace-tabs/model";
+import { openWorkspaceChanges } from "@/workspace-tabs/open-supporting-view";
+import { useSettings } from "@/hooks/use-settings";
 
 const EMPTY_PENDING_PERMISSIONS = new Map();
 const EMPTY_ONLINE_SERVER_IDS: string[] = [];
@@ -436,6 +440,7 @@ export function WorkspaceDraftAgentTab({
     workspaceId,
   });
   const draftAttachmentScopeKey = useDraftWorkspaceAttachmentScopeKey(draftId);
+  const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const attachmentScopeKeys = useMemo(
     () => [draftAttachmentScopeKey, workspaceAttachmentScopeKey].filter(Boolean),
     [draftAttachmentScopeKey, workspaceAttachmentScopeKey],
@@ -443,28 +448,19 @@ export function WorkspaceDraftAgentTab({
   const clearWorkspaceAttachments = useWorkspaceAttachmentsStore(
     (state) => state.clearWorkspaceAttachments,
   );
-  const openFileExplorerForCheckout = usePanelStore((state) => state.openFileExplorerForCheckout);
-  const setExplorerTabForCheckout = usePanelStore((state) => state.setExplorerTabForCheckout);
   const handleOpenWorkspaceAttachment = useCallback(
     (attachment: WorkspaceComposerAttachment) => {
       if (attachment.kind !== "review") {
         return;
       }
-      const checkout = {
-        serverId,
-        cwd: attachment.attachment.cwd,
-        isGit: true,
-      };
-      openFileExplorerForCheckout({
-        checkout,
+      openWorkspaceChanges({
         isCompact: isCompactFormFactor,
-      });
-      setExplorerTabForCheckout({
-        ...checkout,
-        tab: "changes",
+        workspaceKey: buildWorkspaceTabPersistenceKey({ serverId, workspaceId: workspaceId ?? "" }),
+        checkout: { serverId, cwd: composerState.workingDir, isGit: true },
+        preferences: openInSidePane,
       });
     },
-    [isCompactFormFactor, openFileExplorerForCheckout, serverId, setExplorerTabForCheckout],
+    [composerState.workingDir, isCompactFormFactor, openInSidePane, serverId, workspaceId],
   );
 
   const {
@@ -701,7 +697,7 @@ export function WorkspaceDraftAgentTab({
           blurOnSubmit={true}
           value={draftInput.text}
           onChangeText={draftInput.editText}
-          textReplacementKey={draftInput.textReplacementKey}
+          textReplacement={draftInput.textReplacement}
           attachments={draftInput.attachments}
           attachmentScopeKeys={attachmentScopeKeys}
           onOpenWorkspaceAttachment={handleOpenWorkspaceAttachment}

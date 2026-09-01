@@ -5,9 +5,11 @@ import { resolvePluginIcon } from "./icons";
 import { useInstalledPlugins } from "./registry";
 import { buildPluginSurfaceRoute, hostIdFromPathname } from "./routes";
 import {
-  groupPluginSidebarContributions,
   getPreferredPluginContributionHost,
   rememberPluginContributionHost,
+} from "./contribution-host";
+import {
+  groupPluginSidebarContributions,
   type PluginSidebarGroup,
   type PluginSidebarTarget,
 } from "./sidebar-groups";

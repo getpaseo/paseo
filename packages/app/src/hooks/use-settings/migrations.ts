@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { readValidatedJson } from "@/storage/validated-storage";
 import { APP_SETTINGS_KEY, SETTINGS_MIGRATIONS_KEY } from "./keys";
-import type { AppSettings, KeyValueStorage } from "./storage";
+import type { AppSettings, KeyValueStorage, PersistedAppSettings } from "./storage";
 
 const AppliedMigrationsSchema = z.strictObject({ applied: z.array(z.string()) });
 
@@ -13,6 +13,9 @@ const AppliedMigrationsSchema = z.strictObject({ applied: z.array(z.string()) })
  */
 const STEER_DEFAULT_MIGRATION = "steer-default";
 
+/** Existing mobile installs materialized the old 15px content default in storage. */
+const MOBILE_CONTENT_16_MIGRATION = "mobile-content-16";
+
 /**
  * Brings stored settings up to date, returning what the caller should use. Owns both writes so
  * the marker can only ever be written after the settings it describes: a failed marker write
@@ -22,20 +25,47 @@ const STEER_DEFAULT_MIGRATION = "steer-default";
 export async function migrateAppSettings(
   settings: AppSettings,
   storage: KeyValueStorage,
+  stored?: PersistedAppSettings,
+  options: { native?: boolean } = {},
 ): Promise<AppSettings> {
-  const stored = await readValidatedJson(storage, SETTINGS_MIGRATIONS_KEY, AppliedMigrationsSchema);
-  const applied = new Set(stored?.applied ?? []);
-  if (applied.has(STEER_DEFAULT_MIGRATION)) {
+  const migrationMarker = await readValidatedJson(
+    storage,
+    SETTINGS_MIGRATIONS_KEY,
+    AppliedMigrationsSchema,
+  );
+  const applied = new Set(migrationMarker?.applied ?? []);
+  let addedMigration = false;
+
+  let migrated = settings;
+  if (!applied.has(STEER_DEFAULT_MIGRATION)) {
+    migrated =
+      migrated.sendBehavior === "interrupt" ? { ...migrated, sendBehavior: "steer" } : migrated;
+    applied.add(STEER_DEFAULT_MIGRATION);
+    addedMigration = true;
+  }
+
+  if (options.native && !applied.has(MOBILE_CONTENT_16_MIGRATION)) {
+    migrated = migrated.contentFontSize === 15 ? { ...migrated, contentFontSize: 16 } : migrated;
+    applied.add(MOBILE_CONTENT_16_MIGRATION);
+    addedMigration = true;
+  }
+
+  if (!addedMigration) {
     return settings;
   }
 
-  const migrated: AppSettings =
-    settings.sendBehavior === "interrupt" ? { ...settings, sendBehavior: "steer" } : settings;
   if (migrated !== settings) {
-    await storage.setItem(APP_SETTINGS_KEY, JSON.stringify(migrated));
+    const storedSidebarRowItems = stored?.sidebarRowItems ?? {};
+    await storage.setItem(
+      APP_SETTINGS_KEY,
+      JSON.stringify({
+        ...stored,
+        ...migrated,
+        sidebarRowItems: { ...storedSidebarRowItems, ...migrated.sidebarRowItems },
+      }),
+    );
   }
 
-  applied.add(STEER_DEFAULT_MIGRATION);
   await storage.setItem(SETTINGS_MIGRATIONS_KEY, JSON.stringify({ applied: [...applied] }));
   return migrated;
 }

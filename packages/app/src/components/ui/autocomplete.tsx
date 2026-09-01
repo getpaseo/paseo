@@ -288,6 +288,8 @@ export function Autocomplete({
 
 const styles = StyleSheet.create((theme: Theme) => ({
   outerWrapper: {
+    flexShrink: 1,
+    minHeight: 0,
     gap: theme.spacing[1],
   },
   detailCard: {
@@ -315,6 +317,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
     marginTop: theme.spacing[1],
   },
   container: {
+    flexShrink: 1,
+    minHeight: 0,
     backgroundColor: theme.colors.surface1,
     borderWidth: theme.borderWidth[1],
     borderColor: theme.colors.borderAccent,

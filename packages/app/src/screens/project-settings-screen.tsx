@@ -34,6 +34,7 @@ import { settingsStyles } from "@/styles/settings";
 import { useProjects } from "@/hooks/use-projects";
 import type { ProjectEditFormSnapshot } from "@/projects/edit-form";
 import { useProjectIcons } from "@/projects/icons";
+import { createProjectIconTarget } from "@/projects/icon-target";
 import { useHostRuntimeClient, useHostRuntimeSnapshot } from "@/runtime/host-runtime";
 import { useHostFeature } from "@/runtime/host-features";
 import { useToast } from "@/contexts/toast-context";
@@ -230,24 +231,13 @@ function ProjectSettingsBody({
   const data = readQuery.data;
   const supportsCustomIcon = useHostFeature(selectedHost.serverId, "projectCustomIcon");
   const customIconRevision = selectedHost.customIconRevision ?? null;
-  const projectIconTargets = useMemo(
-    () => [
-      {
-        serverId: selectedHost.serverId,
-        projectViewKey: project.viewKey,
-        projectId: selectedHost.projectId,
-        iconWorkingDir: selectedHost.repoRoot,
-        customIconRevision,
-      },
-    ],
-    [
-      customIconRevision,
-      project.viewKey,
-      selectedHost.projectId,
-      selectedHost.repoRoot,
-      selectedHost.serverId,
-    ],
-  );
+  const projectIconTargets = useMemo(() => {
+    const target = createProjectIconTarget({
+      projectViewKey: project.viewKey,
+      placement: { ...selectedHost, iconWorkingDir: selectedHost.repoRoot },
+    });
+    return target ? [target] : [];
+  }, [project.viewKey, selectedHost]);
   const projectIcons = useProjectIcons({ projects: projectIconTargets });
   const projectIconDataUri = projectIcons.get(project.viewKey) ?? null;
   const editSnapshot = useMemo<ProjectEditFormSnapshot>(

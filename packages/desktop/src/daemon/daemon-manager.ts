@@ -216,6 +216,34 @@ function logDesktopDaemonLifecycle(message: string, details?: Record<string, unk
   });
 }
 
+function statusFromDaemonProbe(
+  payload: Record<string, unknown>,
+  home: string,
+): DesktopDaemonStatus {
+  const local = typeof payload.localDaemon === "string" ? payload.localDaemon : "stopped";
+  const reachable = payload.connectedDaemon === "reachable";
+  const processAlive = local === "running";
+  const stalledProcess = local === "unresponsive";
+  let status: DesktopDaemonState = "stopped";
+  if (reachable || processAlive) {
+    status = "running";
+  } else if (stalledProcess) {
+    status = "errored";
+  }
+  return {
+    serverId: typeof payload.serverId === "string" ? payload.serverId : "",
+    status,
+    listen: typeof payload.listen === "string" ? payload.listen : null,
+    hostname:
+      status === "running" && typeof payload.hostname === "string" ? payload.hostname : null,
+    pid: (processAlive || stalledProcess) && typeof payload.pid === "number" ? payload.pid : null,
+    home,
+    version: typeof payload.daemonVersion === "string" ? payload.daemonVersion : null,
+    desktopManaged: payload.desktopManaged === true,
+    error: null,
+  };
+}
+
 function resolveDesktopAppVersion(): string {
   if (app.isPackaged) {
     return app.getVersion();
@@ -248,32 +276,7 @@ export async function resolveDesktopDaemonStatus(): Promise<DesktopDaemonStatus>
       string,
       unknown
     >;
-    const localDaemon = typeof payload.localDaemon === "string" ? payload.localDaemon : "stopped";
-    const connectedDaemon =
-      typeof payload.connectedDaemon === "string" ? payload.connectedDaemon : "not_probed";
-    const hasRunningLocalProcess = localDaemon === "running";
-    const hasLocalProcess = hasRunningLocalProcess || localDaemon === "unresponsive";
-    const desktopManaged = payload.desktopManaged === true;
-    const apiReachable = connectedDaemon === "reachable";
-    let status: DesktopDaemonState = "stopped";
-    if (apiReachable || hasRunningLocalProcess) {
-      status = "running";
-    } else if (localDaemon === "unresponsive") {
-      status = "errored";
-    }
-
-    return {
-      serverId: typeof payload.serverId === "string" ? payload.serverId : "",
-      status,
-      listen: typeof payload.listen === "string" ? payload.listen : null,
-      hostname:
-        status === "running" && typeof payload.hostname === "string" ? payload.hostname : null,
-      pid: hasLocalProcess && typeof payload.pid === "number" ? payload.pid : null,
-      home,
-      version: typeof payload.daemonVersion === "string" ? payload.daemonVersion : null,
-      desktopManaged,
-      error: null,
-    };
+    return statusFromDaemonProbe(payload, home);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     logDesktopDaemonLifecycle("resolveStatus CLI command failed", { error: errorMessage });
@@ -536,10 +539,7 @@ export function createDaemonCommandHandlers(): Record<string, DesktopCommandHand
     read_file_base64: (args) => readManagedFileBase64(args ?? {}),
     delete_attachment_file: (args) => deleteManagedAttachmentFile(args ?? {}),
     garbage_collect_attachment_files: (args) => garbageCollectManagedAttachmentFiles(args ?? {}),
-    open_local_daemon_transport: async (args) => {
-      const target = args as { transportType: "socket" | "pipe"; transportPath: string };
-      return await openLocalTransportSession(target);
-    },
+    open_local_daemon_transport: async (args) => await openLocalTransportSession(args),
     send_local_daemon_transport_message: async (args) => {
       await sendLocalTransportMessage(
         args as { sessionId: string; text?: string; binaryBase64?: string },

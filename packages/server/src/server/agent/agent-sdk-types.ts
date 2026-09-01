@@ -214,9 +214,14 @@ export interface AgentRunOptions {
   clientMessageId?: string;
 }
 
+export interface AgentSteerOptions extends AgentRunOptions {
+  /** Deny permissions that block this steer. An accepted steer must honor this contract. */
+  clearPendingPermissions?: boolean;
+}
+
 export type SteerResult = { status: "accepted" } | { status: "unavailable" };
 
-export interface SteerActiveTurnOptions extends AgentRunOptions {
+export interface SteerActiveTurnOptions extends AgentSteerOptions {
   expectedTurnId: string;
 }
 
@@ -648,6 +653,11 @@ export interface AgentSession {
     response: AgentPermissionResponse,
   ): Promise<AgentPermissionResult | void>;
   describePersistence(): AgentPersistenceHandle | null;
+  /**
+   * Resolve once every foreground turn that predates this call can no longer run or become active.
+   * Calling while already idle is a successful no-op. Reject only when foreground ownership is
+   * still uncertain.
+   */
   interrupt(): Promise<void>;
   /** Release live runtime resources without archiving or deleting the durable native session. */
   close(): Promise<void>;

@@ -69,6 +69,7 @@ test("recovers missed output after EOF without failing the active turn", async (
   expect(assistantTexts).toHaveLength(52);
   expect(assistantTexts.at(-1)).toBe("recovered output");
   expect(assistantTexts).not.toContain("before boundary");
+  expect(upstream.messageReads()).toBe(1);
 
   await session.close();
   await fixture.manager.shutdown();

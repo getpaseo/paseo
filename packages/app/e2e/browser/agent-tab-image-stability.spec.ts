@@ -45,6 +45,49 @@ test("switching between settled agent tabs keeps a real assistant PNG rendered",
   await switchAwayAndBackWithoutImageInstability(page, { image, imageAgent, otherAgent });
 });
 
+test("opens a timeline image in a zoomable lightbox", async ({
+  imageWorkspace: workspace,
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const image = await createSmallAssistantPng(workspace, {
+    alt: "Zoomable timeline image",
+    fileName: "zoomable-timeline-image.png",
+  });
+  const imageAgent = await createSettledMockAgent(workspace, "Zoomable image timeline");
+  await emitSettledAssistantImage(workspace.client, imageAgent, image);
+  await openAssistantImageTimeline(page, imageAgent);
+  await expectAssistantImageRendered(page, image);
+
+  await page.getByRole("button", { name: "Open image attachment" }).click();
+  const lightboxImage = page.getByTestId("attachment-lightbox-image");
+  const canvas = page.getByTestId("attachment-lightbox-canvas");
+  await expect(lightboxImage).toBeVisible();
+  await canvas.hover();
+  const transformedContent = canvas.locator(":scope > div").first();
+  const initialBox = await transformedContent.boundingBox();
+  const canvasBox = await canvas.boundingBox();
+  expect(initialBox).not.toBeNull();
+  expect(canvasBox).not.toBeNull();
+  expect(initialBox!.width).toBeLessThan(canvasBox!.width);
+  const zoomIn = page.getByRole("button", { name: "Zoom in", exact: true });
+  await zoomIn.click();
+  await zoomIn.click();
+  await zoomIn.click();
+  await zoomIn.click();
+  await expect
+    .poll(async () => (await transformedContent.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(canvasBox!.width);
+
+  await canvas.dblclick({ position: { x: canvasBox!.width / 2, y: canvasBox!.height / 2 } });
+  await expect
+    .poll(async () => Math.round((await transformedContent.boundingBox())?.width ?? 0))
+    .toBe(Math.round(initialBox!.width));
+
+  await canvas.click({ position: { x: 4, y: 4 } });
+  await expect(lightboxImage).toHaveCount(0);
+});
+
 test("reloading a timeline anchors near-tail assistant image growth", async ({
   imageWorkspace: workspace,
   page,

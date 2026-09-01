@@ -123,6 +123,7 @@ import {
   resolveNewWorkspaceAutomaticServerId,
   resolveNewWorkspaceInitialServerId,
 } from "./new-workspace-initial-context";
+import { buildNewWorkspaceProjectIconTargets } from "./new-workspace/project-icon-targets";
 import { useNewWorkspaceProjectPicker } from "./new-workspace/project-picker";
 
 const ThemedFolderPlus = withUnistyles(FolderPlus);
@@ -1727,6 +1728,10 @@ export function NewWorkspaceScreen({
     terminalSubmitLabel,
     launchFocusKey,
   } = useTerminalComposerState({ launchTarget, terminalProfiles, terminalPromptText });
+  const terminalTextReplacement = useMemo(
+    () => ({ key: launchFocusKey, text: terminalComposerValue }),
+    [launchFocusKey, terminalComposerValue],
+  );
 
   useEffect(() => {
     const trimmed = pickerSearchQuery.trim();
@@ -1754,24 +1759,7 @@ export function NewWorkspaceScreen({
     allowAllProjects: supportsWorkspaceMultiplicity,
   });
   const projectIconTargets = useMemo(
-    () =>
-      projects.flatMap((project) => {
-        const iconWorkingDir = getHostProjectSourceDirectory(project, selectedServerId)?.trim();
-        if (!iconWorkingDir) {
-          return [];
-        }
-        const host = project.hosts.find((candidate) => candidate.serverId === selectedServerId);
-        if (!host) return [];
-        return [
-          {
-            projectViewKey: project.viewKey,
-            projectId: host.projectId,
-            serverId: selectedServerId,
-            iconWorkingDir,
-            customIconRevision: host.customIconRevision,
-          },
-        ];
-      }),
+    () => buildNewWorkspaceProjectIconTargets(projects, selectedServerId),
     [projects, selectedServerId],
   );
 
@@ -1802,11 +1790,11 @@ export function NewWorkspaceScreen({
   );
   const selectedItem = pickerSelection.selectedItem;
 
-  const handleGithubPrDetected = useCallback(() => {
+  const handleForgeChangeRequestDetected = useCallback(() => {
     dispatchPickerSelection({ type: "pr-detected" });
   }, []);
 
-  const handleGithubPrAutoAttach = useCallback((item: ForgeSearchItem) => {
+  const handleForgeChangeRequestAutoAttach = useCallback((item: ForgeSearchItem) => {
     dispatchPickerSelection({
       type: "pr-added",
       item: { kind: "github-pr", item },
@@ -2508,6 +2496,7 @@ export function NewWorkspaceScreen({
           {formStack}
           {isTerminalLaunch ? (
             <Composer
+              key="terminal"
               externalKeyboardShift
               inputMode="terminal"
               readOnly={!terminalTakesPrompt}
@@ -2525,7 +2514,7 @@ export function NewWorkspaceScreen({
               blurOnSubmit={true}
               value={terminalComposerValue}
               onChangeText={setTerminalPromptText}
-              textReplacementKey={launchFocusKey}
+              textReplacement={terminalTextReplacement}
               attachments={NO_TERMINAL_ATTACHMENTS}
               onChangeAttachments={noopChangeAttachments}
               cwd={selectedSourceDirectory ?? ""}
@@ -2535,6 +2524,7 @@ export function NewWorkspaceScreen({
             />
           ) : (
             <Composer
+              key="chat"
               externalKeyboardShift
               agentId={draftKey}
               serverId={selectedServerId}
@@ -2545,17 +2535,17 @@ export function NewWorkspaceScreen({
               submitButtonTestID="workspace-create-submit"
               submitIcon="return"
               isSubmitLoading={isPending}
-              waitForGithubAutoAttachOnSubmit
+              waitForForgeAutoAttachOnSubmit
               submitBehavior="preserve-and-lock"
               blurOnSubmit={true}
               value={chatDraft.text}
               onChangeText={chatDraft.editText}
-              textReplacementKey={chatDraft.textReplacementKey}
+              textReplacement={chatDraft.textReplacement}
               attachments={chatDraft.attachments}
               attachmentScopeKeys={visibleDraftContextScopeKeys}
               onChangeAttachments={chatDraft.setAttachments}
-              onGithubPrDetected={handleGithubPrDetected}
-              onGithubPrAutoAttach={handleGithubPrAutoAttach}
+              onForgeChangeRequestDetected={handleForgeChangeRequestDetected}
+              onForgeChangeRequestAutoAttach={handleForgeChangeRequestAutoAttach}
               cwd={selectedSourceDirectory ?? ""}
               clearDraft={handleClearDraft}
               autoFocus

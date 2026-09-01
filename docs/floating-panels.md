@@ -132,30 +132,21 @@ quietly relying on:
 
 The fix for transforms is Gotcha 3. The fix for context is Gotcha 7.
 
-## Gotcha 3 — Reanimated transforms vs `measureInWindow`
+## Gotcha 3 — Keyboard layout and portal anchors
 
-`measureInWindow` returns the view's _current_ screen position. In theory that
-includes Reanimated-applied transforms (Reanimated updates native view
-properties, and Android's `getLocationInWindow` reads transformed coords). In
-practice it's racy — the measurement may snapshot mid-animation, and on Android
-with Reanimated worklets the result is not always stable.
+Move the chat surface with worklet-driven bottom padding from
+`KeyboardShiftProvider`. Padding keeps the stream, composer, visual position,
+and native hit testing in the same layout. Do not translate the stream and
+composer independently.
 
-If the panel cannot stay inside the transformed ancestor, do not try to track
-the keyboard by re-measuring on every frame. Instead,
-**slave the popover's transform to the same `KeyboardShiftProvider` SharedValue
-the composer uses**:
+Do not use the controller's raw keyboard progress for the padding. It can retain
+a nonzero value after the keyboard closes. The shared provider normalizes that
+state and reconciles native animation-end events.
 
-1. Snapshot `openShift = shift.value` at the moment you measure the anchor.
-2. Apply `useAnimatedStyle(() => ({ transform: [{ translateY: openShift.value - shift.value }] }))`
-   to the popover wrapper.
-
-When `shift` equals `openShift`, the translate is 0 and the popover sits at
-the measured position. When the keyboard moves afterward, the delta translates
-the popover by exactly the amount the composer translates. They move in
-lockstep, no re-measurement needed. Do not call
-`useReanimatedKeyboardAnimation()` directly for app UI offset policy; Android
-can briefly report a stale nonzero height with closed progress, and the shared
-provider is where that is normalized.
+`measureInWindow` already includes the dock's current padding layout. When a
+portal opens, snapshot the current shift and apply only the subsequent shift
+delta to its animated `bottom`. Adding the full shift moves the portal twice and
+can place it over the composer controls.
 
 The provider also reconciles iOS from the controller's native `onEnd` event.
 The controller's stock iOS shared values update at move start and during an

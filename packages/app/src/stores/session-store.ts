@@ -205,21 +205,22 @@ function preserveWorkspaceDescriptorIdentity(
   return incoming;
 }
 
-function preserveWorkspaceMapIdentity(
-  existing: Map<string, WorkspaceDescriptor>,
-  incoming: Map<string, WorkspaceDescriptor>,
-): Map<string, WorkspaceDescriptor> {
+function preserveMapIdentity<Key, Value>(
+  existing: Map<Key, Value>,
+  incoming: Map<Key, Value>,
+): Map<Key, Value> {
   if (existing === incoming) {
     return existing;
   }
 
-  const next = new Map<string, WorkspaceDescriptor>();
+  const next = new Map<Key, Value>();
   let changed = existing.size !== incoming.size;
   const existingEntries = existing.entries();
 
   for (const [key, workspace] of incoming) {
     const existingWorkspace = existing.get(key);
-    const nextWorkspace = preserveWorkspaceDescriptorIdentity(workspace, existingWorkspace);
+    const nextWorkspace =
+      existingWorkspace && equal(existingWorkspace, workspace) ? existingWorkspace : workspace;
     next.set(key, nextWorkspace);
     const existingEntry = existingEntries.next().value;
     if (!existingEntry || existingEntry[0] !== key || existingEntry[1] !== nextWorkspace) {
@@ -228,17 +229,6 @@ function preserveWorkspaceMapIdentity(
   }
 
   return changed ? next : existing;
-}
-
-function projectMapsEqual(
-  left: ReadonlyMap<string, ProjectDescriptor>,
-  right: ReadonlyMap<string, ProjectDescriptor>,
-): boolean {
-  if (left.size !== right.size) return false;
-  for (const [projectId, project] of right) {
-    if (!equal(left.get(projectId), project)) return false;
-  }
-  return true;
 }
 
 export type ExplorerEntryKind = "file" | "directory";
@@ -306,20 +296,6 @@ export interface AgentTimelineCursorState {
     endSeq: number;
     hasOlder?: boolean;
   }>;
-}
-
-export interface SessionReplicaTimeline {
-  agentId: string;
-  items: StreamItem[];
-  range: AgentTimelineCursorState | null;
-  hasOlder: boolean;
-}
-
-export interface SessionReplica {
-  agents: Map<string, Agent>;
-  workspaces: Map<string, WorkspaceDescriptor>;
-  projects: Map<string, ProjectDescriptor>;
-  timeline: SessionReplicaTimeline | null;
 }
 
 export type AgentTimelineState =
@@ -464,7 +440,6 @@ interface SessionStoreActions {
     client: DaemonClient | null,
     clientGeneration?: number,
   ) => void;
-  restoreSessionReplica: (serverId: string, replica: SessionReplica) => void;
   clearSession: (serverId: string) => void;
   getSession: (serverId: string) => SessionState | undefined;
   updateSessionClient: (serverId: string, client: DaemonClient, clientGeneration?: number) => void;
@@ -638,6 +613,7 @@ interface SessionStoreActions {
   // Hydration
   setHasHydratedAgents: (serverId: string, hydrated: boolean) => void;
   setHasHydratedWorkspaces: (serverId: string, hydrated: boolean) => void;
+  setHasWorkspaceDirectorySnapshot: (serverId: string, available: boolean) => void;
 
   // Agent directory (derived from agents)
   getAgentDirectory: (serverId: string) => AgentDirectoryEntry[] | undefined;
@@ -776,58 +752,6 @@ export const useSessionStore = create<SessionStore>()(
               ...prev.sessions,
               [serverId]: createInitialSessionState(serverId, client, clientGeneration),
             },
-          };
-        });
-      },
-
-      restoreSessionReplica: (serverId, replica) => {
-        set((prev) => {
-          if (prev.sessions[serverId]) {
-            return prev;
-          }
-          const session = createInitialSessionState(serverId, null);
-          const timeline = replica.timeline;
-          const agentStreamTail = new Map<string, StreamItem[]>();
-          const agentTasks = new Map<string, TodoEntry[]>();
-          if (timeline) {
-            agentStreamTail.set(timeline.agentId, timeline.items);
-            const tasks = latestTasksFromStream(timeline.items);
-            if (tasks.length > 0) agentTasks.set(timeline.agentId, tasks);
-          }
-          const agentTimelineCursor = new Map<string, AgentTimelineCursorState>();
-          const agentTimelineHasOlder = new Map<string, boolean>();
-          const agentTimelineHasNewer = new Map<string, boolean>();
-          const agentAuthoritativeHistoryApplied = new Map<string, boolean>();
-          if (timeline?.range) {
-            agentTimelineCursor.set(timeline.agentId, timeline.range);
-            agentTimelineHasOlder.set(timeline.agentId, timeline.hasOlder);
-            agentTimelineHasNewer.set(timeline.agentId, false);
-            agentAuthoritativeHistoryApplied.set(timeline.agentId, true);
-          }
-          const agentLastActivity = new Map(prev.agentLastActivity);
-          for (const agent of replica.agents.values()) {
-            agentLastActivity.set(agent.id, agent.lastActivityAt);
-          }
-          return {
-            ...prev,
-            sessions: {
-              ...prev.sessions,
-              [serverId]: {
-                ...session,
-                agents: replica.agents,
-                workspaceAgentActivity: buildWorkspaceAgentActivityIndex(replica.agents),
-                workspaces: replica.workspaces,
-                projects: replica.projects,
-                hasWorkspaceDirectorySnapshot: true,
-                agentStreamTail,
-                agentTasks,
-                agentTimelineCursor,
-                agentTimelineHasOlder,
-                agentTimelineHasNewer,
-                agentAuthoritativeHistoryApplied,
-              },
-            },
-            agentLastActivity,
           };
         });
       },
@@ -1659,10 +1583,7 @@ export const useSessionStore = create<SessionStore>()(
           }
           const nextWorkspaces =
             typeof workspaces === "function" ? workspaces(session.workspaces) : workspaces;
-          const preservedWorkspaces = preserveWorkspaceMapIdentity(
-            session.workspaces,
-            nextWorkspaces,
-          );
+          const preservedWorkspaces = preserveMapIdentity(session.workspaces, nextWorkspaces);
           if (session.workspaces === preservedWorkspaces) {
             return prev;
           }
@@ -1681,10 +1602,15 @@ export const useSessionStore = create<SessionStore>()(
         for (const project of projects) next.set(project.projectId, project);
         set((prev) => {
           const session = prev.sessions[serverId];
-          if (!session || projectMapsEqual(session.projects, next)) return prev;
+          if (!session) return prev;
+          const preservedProjects = preserveMapIdentity(session.projects, next);
+          if (session.projects === preservedProjects) return prev;
           return {
             ...prev,
-            sessions: { ...prev.sessions, [serverId]: { ...session, projects: next } },
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, projects: preservedProjects },
+            },
           };
         });
       },
@@ -1962,6 +1888,20 @@ export const useSessionStore = create<SessionStore>()(
             sessions: {
               ...prev.sessions,
               [serverId]: { ...session, hasHydratedWorkspaces: hydrated },
+            },
+          };
+        });
+      },
+
+      setHasWorkspaceDirectorySnapshot: (serverId, available) => {
+        set((prev) => {
+          const session = prev.sessions[serverId];
+          if (!session || session.hasWorkspaceDirectorySnapshot === available) return prev;
+          return {
+            ...prev,
+            sessions: {
+              ...prev.sessions,
+              [serverId]: { ...session, hasWorkspaceDirectorySnapshot: available },
             },
           };
         });

@@ -5,10 +5,11 @@ import {
   defineRpc,
   type PluginHandlerContext,
   type PluginRpcContract,
-} from "@paseo/plugin";
+} from "@getpaseo/plugin/server";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
+import { isPluginClientOnlySdkSpecifier, isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
 
@@ -61,8 +62,19 @@ function register(contract: PluginRpcContract, handler: RpcHandler): void {
   handlers.set(method, { contract: { ...contract, name: method }, handler });
 }
 
+const pluginAuthorRuntime = {
+  defineAttachmentSource,
+  defineRpc,
+  Icon() {
+    throw new Error("Icon is available only in plugin client code");
+  },
+};
+
 function runtimeRequire(name: string): unknown {
-  if (name === "@paseo/plugin") return { defineAttachmentSource, defineRpc };
+  if (isPluginClientOnlySdkSpecifier(name)) {
+    throw new Error(`${name} is available only in plugin client code`);
+  }
+  if (isPluginSdkSpecifier(name)) return pluginAuthorRuntime;
   return nodeRequire(name);
 }
 
@@ -96,6 +108,7 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
     url: `ipc://plugin/${encodeURIComponent(message.pluginId)}`,
     clientId: `plugin:${message.pluginId}`,
     clientType: "cli",
+    appVersion: message.appVersion,
     reconnect: { enabled: false },
     transportFactory,
   });

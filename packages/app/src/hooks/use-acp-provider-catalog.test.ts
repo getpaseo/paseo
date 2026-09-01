@@ -50,6 +50,15 @@ describe("ACP provider catalog", () => {
     expect(findProvider("traecli").command).toEqual(["traecli", "acp", "serve"]);
   });
 
+  it("offers MiniMax Code through its pinned public ACP package", () => {
+    expect(findProvider("minimax-code")).toMatchObject({
+      title: "MiniMax Code",
+      version: "0.1.2",
+      command: ["npx", "-y", "@minimax-ai/code@0.1.2", "acp"],
+    });
+    expect(findProvider("minimax-code").iconSvg).toContain("<svg");
+  });
+
   it("maps a catalog entry to the daemon provider config patch", () => {
     expect(buildAcpProviderConfigPatch(findProvider("amp-acp"))).toEqual({
       providers: {

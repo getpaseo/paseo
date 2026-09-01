@@ -50,7 +50,7 @@ The manifest supplies the default install ID:
 Default-export one contribution function. It must return cleanup, even when there is nothing to clean:
 
 ```tsx
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 
 export default function contribute(plugin: PluginContext) {
   // Register contributions here.
@@ -62,16 +62,34 @@ Cleanup can be async. Use it for timers, watchers, sockets, and other resources 
 
 ## Add a workspace panel
 
-Workspace panels live beside agents, terminals, files, and diffs. Their props contain stable IDs;
-required-selector hooks read cached client state without subscribing to unrelated fields:
+Workspace panels live beside agents, terminals, files, and diffs. Plugins run on desktop and
+mobile, and Paseo has multiple themes. Every `Text` must take its color from `theme.colors`.
+Use `layout.compact` for padding and stacking. Unstyled text is black and fails in dark themes.
 
 ```tsx
-import { type PluginContext, type PluginWorkspacePanelProps, useWorkspace } from "@paseo/plugin";
-import { Text } from "react-native";
+import { type PluginContext, type PluginWorkspacePanelProps, useWorkspace } from "@getpaseo/plugin";
+import { useMemo } from "react";
+import { Text, View } from "react-native";
 
-function Overview({ workspaceId }: PluginWorkspacePanelProps) {
+function Overview({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
   const name = useWorkspace(workspaceId, (workspace) => workspace.name);
-  return <Text>{name}</Text>;
+  const styles = useMemo(
+    () => ({
+      screen: {
+        flex: 1,
+        padding: layout.compact ? 16 : 24,
+        gap: layout.compact ? 8 : 12,
+        backgroundColor: theme.colors.surface0,
+      },
+      title: { color: theme.colors.foreground, fontSize: layout.compact ? 20 : 24 },
+    }),
+    [theme, layout.compact],
+  );
+  return (
+    <View style={styles.screen}>
+      <Text style={styles.title}>{name}</Text>
+    </View>
+  );
 }
 
 export default function contribute(plugin: PluginContext) {
@@ -102,24 +120,39 @@ the active workspace or agent. Command callbacks receive the selected host's `pa
 
 ## Add a sidebar surface
 
-Plugin surfaces use React Native primitives and work across desktop, browser, iOS, and Android. Register the surface before its sidebar item:
+Plugin surfaces use React Native primitives and work across desktop, browser, iOS, and Android. Register the surface before its sidebar item. Color text from `theme.colors` and pad from `layout.compact`.
 
 ```tsx
-import type { PluginContext } from "@paseo/plugin";
-import React, { useState } from "react";
+import type { PluginContext, PluginSurfaceProps } from "@getpaseo/plugin";
+import React, { useMemo, useState } from "react";
 import { Pressable, Text, View } from "react-native";
 
-function Counter() {
+function Counter({ theme, layout }: PluginSurfaceProps) {
   const [count, setCount] = useState(0);
+  const styles = useMemo(
+    () => ({
+      screen: {
+        flex: 1,
+        padding: layout.compact ? 16 : 24,
+        gap: 16,
+        backgroundColor: theme.colors.surface0,
+      },
+      count: { color: theme.colors.foreground, fontSize: layout.compact ? 36 : 48 },
+      button: { padding: 14, borderRadius: 10, backgroundColor: theme.colors.accent },
+      buttonText: { color: theme.colors.accentForeground, textAlign: "center" as const },
+    }),
+    [theme, layout.compact],
+  );
   return (
-    <View style={{ flex: 1, padding: 24, gap: 16 }}>
-      <Text style={{ fontSize: 48 }}>{count}</Text>
+    <View style={styles.screen}>
+      <Text style={styles.count}>{count}</Text>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`Increment counter, currently ${count}`}
         onPress={() => setCount((value) => value + 1)}
+        style={styles.button}
       >
-        <Text>Count me in</Text>
+        <Text style={styles.buttonText}>Count me in</Text>
       </Pressable>
     </View>
   );
@@ -137,9 +170,14 @@ export default function contribute(plugin: PluginContext) {
 }
 ```
 
-Icons are Lucide icon names. `PluginSurfaceProps` provides `theme`, selected `host`, and `layout`. Validate the theme keys the surface reads. Paseo owns the route, header, host picker, close action, error boundary, and per-installation query client.
+Icons are Lucide icon names. `theme` is a typed `PluginTheme` on every surface and panel. Primary text uses `theme.colors.foreground`; labels use `theme.colors.foregroundMuted`; the root view uses `theme.colors.surface0`. `layout.compact` is true on mobile and narrow windows. Paseo owns the route, header, host picker, close action, error boundary, and per-installation query client.
 
-Client code may import `react`, `react-native`, `@tanstack/react-query`, `zod`, and `@paseo/plugin`. Install dependencies locally for typechecking; Paseo supplies these runtime modules.
+Client code may import `react`, `react-native`, `@tanstack/react-query`, `zod`, `@getpaseo/plugin`, and `@getpaseo/plugin/server`. Install dependencies locally for typechecking; Paseo supplies these runtime modules.
+
+| Module                    | Use it for                                           |
+| ------------------------- | ---------------------------------------------------- |
+| `@getpaseo/plugin`        | hooks and UI types                                   |
+| `@getpaseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, handler types |
 
 ## Choose the correct API
 
@@ -150,7 +188,7 @@ Use the existing Paseo SDK for normal Paseo operations. Use plugin RPC only for 
 `usePaseo()` borrows the selected host's current connection. Never create another client inside a surface.
 
 ```tsx
-import { usePaseo } from "@paseo/plugin";
+import { usePaseo } from "@getpaseo/plugin";
 
 function PullRequestAction() {
   const paseo = usePaseo();
@@ -183,7 +221,9 @@ The API covers workspaces, agents, providers, and daemon config. It omits connec
 Define one Zod contract, register its subprocess handler, and call it with `useRpc()`:
 
 ```tsx
-import { defineRpc, type PluginContext, useRpc } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
+import { useRpc } from "@getpaseo/plugin";
+import { defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 const greeting = defineRpc({
@@ -235,7 +275,8 @@ daemon log. Never log credentials or other secrets.
 Define a search RPC and register a declarative source:
 
 ```tsx
-import { defineAttachmentSource, defineRpc, type PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
+import { defineAttachmentSource, defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 const searchIssues = defineRpc({
@@ -328,7 +369,7 @@ After a change:
 1. Run `npm run typecheck`.
 2. Install or reload the exact runtime ID.
 3. Run `paseo plugin ls` and require `running` with no error.
-4. Confirm the contribution on the intended host. For UI work, check both a wide client and a compact/mobile client when available.
+4. Confirm the contribution on the intended host. Open the Command Center with **⌘K** (macOS) or **Ctrl+K** (Windows/Linux). For UI work, check a wide desktop window and a compact/mobile client, and switch theme to confirm text still uses `foreground` / `foregroundMuted`.
 5. Exercise the changed action or RPC, including its error state.
 
 Common failures:
