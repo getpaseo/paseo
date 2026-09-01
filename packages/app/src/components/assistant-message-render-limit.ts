@@ -1,4 +1,4 @@
-import { clampToSafeRevealBoundary } from "@/agent-stream/text-reveal";
+import { clampToSafeRevealBoundary, isTextRevealPacingSupported } from "@/agent-stream/text-reveal";
 
 export const ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT = 32_000;
 
@@ -38,7 +38,15 @@ export function capAssistantMessageForRender(message: string): CappedAssistantMe
     return { text: message, capped: false };
   }
 
-  const end = clampToSafeRevealBoundary(message, ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT);
+  let end = ASSISTANT_MESSAGE_RENDER_CHARACTER_LIMIT;
+  if (isTextRevealPacingSupported()) {
+    end = clampToSafeRevealBoundary(message, end);
+  } else {
+    const finalCodeUnit = message.charCodeAt(end - 1);
+    if (finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {
+      end -= 1;
+    }
+  }
 
   return { text: message.slice(0, end), capped: true };
 }
