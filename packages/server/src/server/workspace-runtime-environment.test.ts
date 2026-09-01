@@ -61,6 +61,35 @@ describe("WorkspaceRuntimeEnvironmentService", () => {
     expect(environment.portBase).toBe(secondPort);
     service.release("workspace-with-explicit-service");
   });
+
+  it("serializes concurrent port block allocation across workspaces", async () => {
+    const service = new WorkspaceRuntimeEnvironmentService({
+      random: () => 0,
+      checkPortAvailable: async () => true,
+    });
+    const allocation = { range: "40000-40001", blockSize: 1 };
+
+    const [first, second] = await Promise.all([
+      service.ensure({
+        workspaceId: "workspace-concurrent-one",
+        cwd: process.cwd(),
+        branchName: "feature/concurrent-one",
+        allocation,
+      }),
+      service.ensure({
+        workspaceId: "workspace-concurrent-two",
+        cwd: process.cwd(),
+        branchName: "feature/concurrent-two",
+        allocation,
+      }),
+    ]);
+
+    expect([first.portBase, second.portBase].sort((left, right) => left - right)).toEqual([
+      40000, 40001,
+    ]);
+    service.release("workspace-concurrent-one");
+    service.release("workspace-concurrent-two");
+  });
 });
 
 async function getFreePortPair(): Promise<[number, number]> {

@@ -900,7 +900,10 @@ async function resolveWorkspaceScriptRuntimeEnvironment(params: {
   allocation: PaseoServicePortAllocation | undefined;
   excludedPorts: ReadonlySet<number>;
 }): Promise<WorkspaceRuntimeEnvironment | null> {
-  if (!params.workspaceRuntimeEnvironment) {
+  // Existing servicePorts range/portScript settings allocate individual
+  // services. A block is an explicit opt-in for ordinary scripts and services;
+  // launches always request one through their own manager.
+  if (!params.workspaceRuntimeEnvironment || params.allocation?.blockSize === undefined) {
     return null;
   }
   return await params.workspaceRuntimeEnvironment.ensure({

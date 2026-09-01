@@ -490,16 +490,20 @@ describe("runAsyncWorktreeBootstrap", () => {
     });
   }
 
-  function commitPaseoScripts(
-    scripts: Record<string, { command: string; type?: "script" | "service" }>,
-    message = "add script config",
-  ): void {
-    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify({ scripts }));
+  function commitPaseoConfig(config: Record<string, unknown>, message = "add script config"): void {
+    writeFileSync(join(repoDir, "paseo.json"), JSON.stringify(config));
     execFileSync("git", ["add", "paseo.json"], { cwd: repoDir, stdio: "pipe" });
     execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", message], {
       cwd: repoDir,
       stdio: "pipe",
     });
+  }
+
+  function commitPaseoScripts(
+    scripts: Record<string, { command: string; type?: "script" | "service" }>,
+    message = "add script config",
+  ): void {
+    commitPaseoConfig({ scripts }, message);
   }
 
   it("spawns plain scripts in persistent shell terminals without env injection or routes", async () => {
@@ -543,9 +547,14 @@ describe("runAsyncWorktreeBootstrap", () => {
   });
 
   it("injects the shared workspace runtime environment into plain scripts", async () => {
-    commitPaseoScripts({
-      compose: {
-        command: "docker compose ps",
+    commitPaseoConfig({
+      worktree: {
+        servicePorts: { range: "21000-21099", blockSize: 100 },
+      },
+      scripts: {
+        compose: {
+          command: "docker compose ps",
+        },
       },
     });
 
@@ -586,7 +595,7 @@ describe("runAsyncWorktreeBootstrap", () => {
       workspaceId: "workspace-runtime-env",
       cwd: repoDir,
       branchName: "feature-runtime-env",
-      allocation: undefined,
+      allocation: { range: "21000-21099", blockSize: 100 },
       excludedPorts: new Set(),
     });
     expect(createTerminalCalls[0]?.env).toMatchObject({
@@ -596,6 +605,66 @@ describe("runAsyncWorktreeBootstrap", () => {
       PASEO_COMPOSE_PROJECT_NAME: "paseo_workspace",
       COMPOSE_PROJECT_NAME: "paseo_workspace",
     });
+  });
+
+  it("keeps legacy service port allocation when no workspace block is configured", async () => {
+    commitPaseoConfig({
+      worktree: {
+        servicePorts: { range: "3000-3001" },
+      },
+      scripts: {
+        compose: {
+          command: "docker compose ps",
+        },
+        api: {
+          type: "service",
+          command: "npm run api",
+          port: 39123,
+        },
+      },
+    });
+
+    const routeStore = new ScriptRouteStore();
+    const runtimeStore = new WorkspaceScriptRuntimeStore();
+    const createTerminalCalls: CreateTerminalCall[] = [];
+    let ensureCalls = 0;
+    const workspaceRuntimeEnvironment = {
+      ensure: async () => {
+        ensureCalls += 1;
+        throw new Error("Legacy scripts must not request a workspace port block");
+      },
+    };
+
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: "workspace-legacy-service-ports",
+      projectSlug: "repo",
+      branchName: "feature-legacy-service-ports",
+      scriptName: "compose",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager: createStubTerminalManager(createTerminalCalls),
+      workspaceRuntimeEnvironment,
+    });
+    await spawnWorkspaceScript({
+      repoRoot: repoDir,
+      workspaceId: "workspace-legacy-service-ports",
+      projectSlug: "repo",
+      branchName: "feature-legacy-service-ports",
+      scriptName: "api",
+      daemonPort: null,
+      serviceProxy: routeStore,
+      runtimeStore,
+      terminalManager: createStubTerminalManager(createTerminalCalls),
+      workspaceRuntimeEnvironment,
+    });
+
+    expect(ensureCalls).toBe(0);
+    expect(createTerminalCalls[0]?.env).toBeUndefined();
+    expect(createTerminalCalls[1]?.env).toMatchObject({ PASEO_PORT: "39123" });
+    expect(createTerminalCalls[1]?.env?.PASEO_PORT_BASE).toBeUndefined();
+    expect(createTerminalCalls[1]?.env?.COMPOSE_PROJECT_NAME).toBeUndefined();
   });
 
   it("records plain script exit codes from shell command completion without terminal exit", async () => {

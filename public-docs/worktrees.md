@@ -179,9 +179,10 @@ By default, Paseo asks the OS for an available ephemeral port. Configure a range
 The range is inclusive. A project `servicePorts` block replaces the global block. An explicit
 service `port` always wins over either setting.
 
-Set `blockSize` to reserve a contiguous workspace-wide port block. It defaults to `100`. Paseo
-passes that block to configured scripts and launches, so an existing Compose wrapper or host dev
-script can choose its own ports without defining every process as a Paseo service.
+Set `blockSize` to opt configured scripts and services into a contiguous workspace-wide port
+block. Launches also receive a block; when no size is configured, they use `100` ports. This lets
+an existing Compose wrapper or host dev script choose its own ports without defining every process
+as a Paseo service.
 
 ```json
 {
@@ -191,9 +192,11 @@ script can choose its own ports without defining every process as a Paseo servic
 }
 ```
 
-The lease lasts for the daemon lifetime and is reused by every command in the same workspace.
-Paseo keeps existing `$PASEO_PORT` allocation for individually declared services.
-Declared explicit service ports stay outside the workspace block.
+Without `blockSize`, scripts and services keep their legacy per-service allocation, and Paseo does
+not invoke `portScript` with `@workspace`. When a block is configured, its lease lasts for the
+daemon lifetime and is reused by every opted-in command in the same workspace. Paseo keeps existing
+`$PASEO_PORT` allocation for individually declared services. Declared explicit service ports stay
+outside the workspace block.
 
 For an external allocator, configure `portScript` instead:
 
@@ -213,7 +216,8 @@ the same block. Paseo trusts the external allocator, so the returned port may al
 example by a service Paseo will attach to.
 
 For a workspace block, Paseo invokes the same allocator once with the service name `@workspace`
-and sets `PASEO_PORT_COUNT` to the requested block size. Print the block's first port.
+and sets `PASEO_PORT_COUNT` to the requested block size. Print the block's first port. This happens
+when `blockSize` is set for scripts and services, or when a launch starts.
 
 ### Workspace launches
 
@@ -304,7 +308,8 @@ Setup, teardown, scripts, and services all see:
 - `$PASEO_BRANCH_NAME`, the worktree's branch
 - `$PASEO_WORKTREE_PORT`, legacy per-worktree port (prefer `$PASEO_PORT` inside services)
 
-Configured scripts and launches additionally see one shared workspace runtime environment:
+Launches, and scripts or services with `servicePorts.blockSize`, additionally see one shared
+workspace runtime environment:
 
 - `$PASEO_WORKSPACE_ID`
 - `$PASEO_PORT_BASE`, `$PASEO_PORT_END` (inclusive), and `$PASEO_PORT_COUNT`
