@@ -84,6 +84,7 @@ interface SessionHandlerInternals {
   handleStashPopRequest(params: unknown): Promise<unknown>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
+  resolveWorkspaceLaunchContextById(workspaceId: string): Promise<unknown>;
 }
 
 function asSessionInternals(session: Session): SessionHandlerInternals {
@@ -4724,6 +4725,28 @@ describe("session workspace script handling", () => {
         error: null,
       },
     });
+  });
+});
+
+describe("session workspace launch handling", () => {
+  test("rejects archived workspaces before resolving a launch context", async () => {
+    const projectRegistry = { get: vi.fn() };
+    const session = createSessionForTest({
+      workspaceRegistry: {
+        get: vi.fn().mockResolvedValue({
+          workspaceId: "archived-workspace",
+          cwd: "/tmp/archived-workspace",
+          projectId: "project-1",
+          archivedAt: "2026-09-01T00:00:00.000Z",
+        }),
+      },
+      projectRegistry,
+    });
+
+    await expect(
+      asSessionInternals(session).resolveWorkspaceLaunchContextById("archived-workspace"),
+    ).rejects.toThrow("Workspace not found: archived-workspace");
+    expect(projectRegistry.get).not.toHaveBeenCalled();
   });
 });
 

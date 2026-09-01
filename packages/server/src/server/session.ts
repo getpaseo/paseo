@@ -6595,7 +6595,7 @@ export class Session {
     workspaceId: string,
   ): Promise<WorkspaceLaunchContext> {
     const workspace = await this.workspaceRegistry.get(workspaceId);
-    if (!workspace) {
+    if (!workspace || workspace.archivedAt) {
       throw new Error(`Workspace not found: ${workspaceId}`);
     }
     const project = await this.projectRegistry.get(workspace.projectId);
