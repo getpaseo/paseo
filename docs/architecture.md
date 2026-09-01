@@ -124,10 +124,11 @@ Cross-platform React Native app that connects to one or more daemons.
   provider and matching client transport. Providers own prompts, credentials, hidden resources,
   tools, media integration, and cleanup. The manual provider creates a hidden orchestrator through
   the atomic required-Paseo-tools capability with an authoritative provider prompt, and owns a
-  separate speech runtime configured from the top-level `manualVoice` block. Dictation keeps its own
-  speech runtime. A complete manual orchestrator provider and mode selection is required; partial
-  configuration does not fall back to another provider or mode. Cleanup detaches work delegated by
-  the hidden orchestrator before archiving it.
+  separate speech runtime configured from the top-level `manualVoice` block. That runtime is created
+  on the first valid manual call and reused; ordinary daemon startup does not load or download voice
+  models. Dictation keeps its own speech runtime. A complete manual orchestrator provider and mode
+  selection is required; partial configuration does not fall back to another provider or mode.
+  Cleanup detaches work delegated by the hidden orchestrator before archiving it.
 - Voice calls end as soon as the final client socket disconnects. The containing client session may
   remain reconnectable, but calls are not replayed or rehydrated in this protocol slice. The sidebar
   footer starts the call and hosts its controls; routes and visible agents do not own its lifetime.

@@ -35,12 +35,12 @@ export interface CreateManualVoiceProviderOptions {
   agentStorage: AgentStorage;
   workspaceRegistry: Pick<WorkspaceRegistry, "get">;
   logger: Logger;
+  speechFactory?: typeof createSpeechService;
 }
 
 export interface ManualVoiceProvider extends VoiceCallProvider {
   configureOrchestrator(orchestrator: ManualVoiceOrchestratorSettings): void;
-  startHarness(): void;
-  stopHarness(): Promise<void>;
+  close(): Promise<void>;
 }
 
 const ManualClientTransportMessageSchema = z.discriminatedUnion("type", [
@@ -149,20 +149,27 @@ export function createManualVoiceProvider(
   options: CreateManualVoiceProviderOptions,
 ): ManualVoiceProvider {
   let orchestratorSettings = options.config.orchestrator;
-  const speech = createSpeechService({
-    logger: options.logger,
-    openaiConfig: options.config.openai,
-    speechConfig: options.config.speech,
-  });
+  let speech: ReturnType<typeof createSpeechService> | null = null;
+
+  function getSpeech() {
+    if (!speech) {
+      speech = (options.speechFactory ?? createSpeechService)({
+        logger: options.logger,
+        openaiConfig: options.config.openai,
+        speechConfig: options.config.speech,
+      });
+      speech.start();
+    }
+    return speech;
+  }
+
   return {
     configureOrchestrator(orchestrator) {
       orchestratorSettings = orchestrator;
     },
-    startHarness() {
-      speech.start();
-    },
-    stopHarness() {
-      return speech.stop();
+    async close() {
+      await speech?.stop();
+      speech = null;
     },
     getReadiness() {
       if (!resolveManualVoiceOrchestratorConfig(orchestratorSettings)) {
@@ -171,14 +178,14 @@ export function createManualVoiceProvider(
       return { ready: true };
     },
     async start(input) {
-      return startManualVoiceCall(options, speech, orchestratorSettings, input);
+      return startManualVoiceCall(options, getSpeech, orchestratorSettings, input);
     },
   };
 }
 
 async function startManualVoiceCall(
   options: CreateManualVoiceProviderOptions,
-  speech: ReturnType<typeof createSpeechService>,
+  getSpeech: () => ReturnType<typeof createSpeechService>,
   orchestratorSettings: ManualVoiceOrchestratorSettings,
   input: VoiceProviderStartInput,
 ) {
@@ -194,6 +201,9 @@ async function startManualVoiceCall(
   if (!workspace || workspace.archivedAt) throw new Error("The selected workspace is unavailable.");
   const orchestrator = resolveManualVoiceOrchestratorConfig(orchestratorSettings);
   if (!orchestrator) throw new Error("Configure the manual voice orchestrator and mode.");
+  if (input.signal.aborted) throw new Error("Voice call start was canceled.");
+  const speech = getSpeech();
+  await speech.ready;
   if (input.signal.aborted) throw new Error("Voice call start was canceled.");
 
   const agentId = uuidv4();

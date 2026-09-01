@@ -1791,10 +1791,9 @@ export async function createPaseoDaemon(
         }
       });
 
-      // Start speech service after listening so synchronous Sherpa native
+      // Start dictation after listening so synchronous Sherpa native
       // model loading doesn't block the server from accepting connections.
       dictationSpeechService.start();
-      manualVoiceProvider.startHarness();
       scriptHealthMonitor.start();
     } catch (error) {
       unsubscribePluginProviders();
@@ -1825,7 +1824,7 @@ export async function createPaseoDaemon(
     await agentProviderRuntime.shutdown();
     terminalManager.killAll();
     await voiceChat?.close();
-    await manualVoiceProvider.stopHarness();
+    await manualVoiceProvider.close();
     await dictationSpeechService.stop();
     await scheduleService.stop().catch(() => undefined);
     await relayRuntime?.stop().catch(() => undefined);
