@@ -6,8 +6,8 @@ import {
   type PluginHandlerContext,
   type PluginRpcContract,
 } from "@getpaseo/plugin/server";
-import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
-import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { PaseoApi } from "@getpaseo/client";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
 import { isPluginClientOnlySdkSpecifier, isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
 
@@ -24,6 +24,14 @@ let daemonClient: DaemonClient | null = null;
 let paseo: PaseoApi | null = null;
 let stopping = false;
 const nodeRequire = createRequire(import.meta.url);
+
+class DisabledDaemonApiContext implements PluginHandlerContext {
+  get paseo(): PaseoApi {
+    throw new Error("Plugin daemon API is disabled in paseo-plugin.json");
+  }
+}
+
+const disabledDaemonApiContext = new DisabledDaemonApiContext();
 
 function send(message: PluginProcessMessage): void {
   process.send?.(message);
@@ -104,16 +112,22 @@ const transportFactory = createPluginDaemonTransportFactory({
 });
 
 async function initialize(message: Extract<PluginProcessRequest, { type: "initialize" }>) {
-  daemonClient = new DaemonClient({
-    url: `ipc://plugin/${encodeURIComponent(message.pluginId)}`,
-    clientId: `plugin:${message.pluginId}`,
-    clientType: "cli",
-    appVersion: message.appVersion,
-    reconnect: { enabled: false },
-    transportFactory,
-  });
-  paseo = createPaseoApi(daemonClient);
-  await daemonClient.connect();
+  if (message.daemonApi) {
+    const [{ createPaseoApi }, { DaemonClient }] = await Promise.all([
+      import("@getpaseo/client"),
+      import("@getpaseo/client/internal/daemon-client"),
+    ]);
+    daemonClient = new DaemonClient({
+      url: `ipc://plugin/${encodeURIComponent(message.pluginId)}`,
+      clientId: `plugin:${message.pluginId}`,
+      clientType: "cli",
+      appVersion: message.appVersion,
+      reconnect: { enabled: false },
+      transportFactory,
+    });
+    paseo = createPaseoApi(daemonClient);
+    await daemonClient.connect();
+  }
   evaluateBundle(message.bundle);
   send({ type: "ready", methods: [...handlers.keys()].sort() });
 }
@@ -128,8 +142,10 @@ async function shutdown(): Promise<void> {
   } catch (error) {
     console.error("Plugin cleanup failed", error);
   }
-  await daemonClient?.close().catch(() => undefined);
-  await sendAndWait({ type: "paseo_close" });
+  if (daemonClient) {
+    await daemonClient.close().catch(() => undefined);
+    await sendAndWait({ type: "paseo_close" });
+  }
   daemonClient = null;
   paseo = null;
   process.disconnect();
@@ -161,8 +177,7 @@ process.on("message", (message: PluginProcessRequest) => {
   void registered.contract.input
     .parseAsync(message.input)
     .then((input) => {
-      if (!paseo) throw new Error("Plugin Paseo API is unavailable");
-      return registered.handler(input, { paseo });
+      return registered.handler(input, paseo ? { paseo } : disabledDaemonApiContext);
     })
     .then((output) => registered.contract.output.parseAsync(output))
     .then(

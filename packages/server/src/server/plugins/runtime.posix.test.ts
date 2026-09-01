@@ -494,6 +494,37 @@ export default function contribute(plugin: unknown) {
     await runtime.stopAll();
   });
 
+  it("runs RPC-only plugins without a daemon API session", async () => {
+    const directory = await createPlugin(
+      "rpc-only",
+      `import type { PluginContext } from "@getpaseo/plugin";
+import { defineRpc } from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+const pingRpc = defineRpc({
+  name: "ping",
+  input: z.object({}),
+  output: z.object({ ok: z.boolean() }),
+});
+
+export default function contribute(plugin: PluginContext) {
+  plugin.handle(pingRpc, async () => ({ ok: true }));
+  return () => undefined;
+}`,
+    );
+    await writeFile(
+      path.join(directory, "paseo-plugin.json"),
+      JSON.stringify({ id: "rpc-only", daemonApi: false }),
+      "utf8",
+    );
+    const runtime = new PluginRuntime(pino({ level: "silent" }), "0.7.0");
+
+    await runtime.startPlugin("rpc-only", directory);
+
+    await expect(runtime.invoke("rpc-only", "ping", {})).resolves.toEqual({ ok: true });
+    await runtime.stopAll();
+  });
+
   it("loads one index.tsx, exposes its client bundle, and invokes its server RPC", async () => {
     const directory = await createPlugin(
       "hello",
