@@ -2702,6 +2702,7 @@ export const ja: TranslationResources = {
         nameAccessibility: "起動名",
         commandAccessibility: "起動コマンド",
         nameRequired: "名前は必須です",
+        nameDuplicate: "各起動には一意の名前が必要です",
         commandRequired: "コマンドは必須です",
         newLaunch: "新しい起動",
         editLaunch: "{{name}}を編集",

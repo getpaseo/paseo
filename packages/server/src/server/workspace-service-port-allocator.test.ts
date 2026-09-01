@@ -2,16 +2,39 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { findFreePort } = vi.hoisted(() => ({ findFreePort: vi.fn() }));
+
+vi.mock("./service-proxy.js", () => ({ findFreePort }));
+
 import { allocateWorkspaceServicePort } from "./workspace-service-port-allocator.js";
 
 describe("allocateWorkspaceServicePort", () => {
   const tempDirs: string[] = [];
 
   afterEach(() => {
+    findFreePort.mockReset();
     for (const tempDir of tempDirs.splice(0)) {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it("skips reserved ports during default allocation", async () => {
+    findFreePort.mockResolvedValueOnce(45_000).mockResolvedValueOnce(45_001);
+
+    await expect(
+      allocateWorkspaceServicePort({
+        allocation: undefined,
+        cwd: tmpdir(),
+        scriptName: "web",
+        workspaceId: "wks_default_reserved",
+        branchName: "feature/default-reserved",
+        reservedPorts: new Set([45_000]),
+      }),
+    ).resolves.toBe(45_001);
+
+    expect(findFreePort).toHaveBeenCalledTimes(2);
   });
 
   it("allocates an available port within the configured range", async () => {

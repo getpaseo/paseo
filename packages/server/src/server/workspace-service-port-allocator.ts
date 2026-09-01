@@ -7,6 +7,7 @@ const PORT_SCRIPT_TIMEOUT_MS = 10_000;
 const PORT_SCRIPT_MAX_OUTPUT_BYTES = 1024;
 const TCP_PORT_MIN = 1;
 const TCP_PORT_MAX = 65_535;
+const MAX_DEFAULT_PORT_ALLOCATION_ATTEMPTS = 10;
 
 interface PortRange {
   start: number;
@@ -44,7 +45,17 @@ export async function allocateWorkspaceServicePort(
       options.reservedPorts ?? new Set(),
     );
   }
-  return await findFreePort();
+  return await allocateDefaultPort(options.reservedPorts ?? new Set());
+}
+
+async function allocateDefaultPort(reservedPorts: ReadonlySet<number>): Promise<number> {
+  for (let attempt = 0; attempt < MAX_DEFAULT_PORT_ALLOCATION_ATTEMPTS; attempt += 1) {
+    const port = await findFreePort();
+    if (!reservedPorts.has(port)) return port;
+  }
+  throw new Error(
+    `Could not allocate an unreserved service port after ${MAX_DEFAULT_PORT_ALLOCATION_ATTEMPTS} attempts`,
+  );
 }
 
 async function allocatePortFromScript(options: {
