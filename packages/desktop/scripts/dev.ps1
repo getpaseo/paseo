@@ -8,25 +8,61 @@ $env:PATH = "$RootDir\node_modules\.bin;$env:PATH"
 
 # Build the Electron main process
 npm run build:main
+if ($LASTEXITCODE -ne 0) { throw "build:main failed with exit code $LASTEXITCODE" }
+
+# Desktop dev doesn't watch-build @getpaseo/protocol/@getpaseo/client like
+# `npm run dev` does, and their dist is consumed directly (see docs/development.md),
+# so rebuild them only when their sources changed since the last build here —
+# HEAD moving picks up pulled commits, the working-tree diff hash picks up
+# uncommitted edits.
+$ClientBuildPaths = @(
+    "packages/protocol/src",
+    "packages/protocol/codegen",
+    "packages/protocol/package.json",
+    "packages/protocol/tsconfig.json",
+    "packages/client/src",
+    "packages/client/package.json",
+    "packages/client/tsconfig.json"
+)
+$ClientBuildMarker = "$DesktopDir\.dev\build-client.fingerprint"
+$HeadSha = (git -C $RootDir rev-parse HEAD).Trim()
+$WorkingDiff = git -C $RootDir diff HEAD -- $ClientBuildPaths
+$WorkingDiffHash = if ($WorkingDiff) { ($WorkingDiff -join "`n" | git -C $RootDir hash-object --stdin).Trim() } else { "clean" }
+$CurrentFingerprint = "$HeadSha|$WorkingDiffHash"
+$PreviousFingerprint = if (Test-Path $ClientBuildMarker) { Get-Content $ClientBuildMarker -Raw } else { $null }
+
+if ($CurrentFingerprint -ne $PreviousFingerprint) {
+    Write-Host "[dev] packages/protocol or packages/client changed since the last desktop dev build, rebuilding..."
+    npm --prefix $RootDir run build:client
+    if ($LASTEXITCODE -ne 0) { throw "build:client failed with exit code $LASTEXITCODE" }
+    New-Item -ItemType Directory -Force -Path (Split-Path $ClientBuildMarker) | Out-Null
+    Set-Content -Path $ClientBuildMarker -Value $CurrentFingerprint -NoNewline
+} else {
+    Write-Host "[dev] packages/protocol and packages/client unchanged, skipping build:client"
+}
 
 # Prefer Metro's stable default port so dev browser storage keeps the same
-# localhost origin across restarts. Fall back only when earlier ports are busy.
-$PreviousNoColor = $env:NO_COLOR
-$PreviousForceColor = $env:FORCE_COLOR
-try {
-    $env:NO_COLOR = "1"
-    $env:FORCE_COLOR = "0"
-    $env:EXPO_PORT = (npx get-port-cli 8081 8082 8083 8084 8085).Trim()
-} finally {
-    if ($null -eq $PreviousNoColor) {
-        Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
-    } else {
-        $env:NO_COLOR = $PreviousNoColor
-    }
-    if ($null -eq $PreviousForceColor) {
-        Remove-Item Env:\FORCE_COLOR -ErrorAction SilentlyContinue
-    } else {
-        $env:FORCE_COLOR = $PreviousForceColor
+# localhost origin across restarts. Fall back only when earlier ports are busy,
+# and let a preset EXPO_PORT win so the origin can be pinned on machines where
+# 8081-8085 are unavailable.
+if (-not $env:EXPO_PORT) {
+    $PreviousNoColor = $env:NO_COLOR
+    $PreviousForceColor = $env:FORCE_COLOR
+    try {
+        $env:NO_COLOR = "1"
+        $env:FORCE_COLOR = "0"
+        $env:EXPO_PORT = (npx get-port-cli 8081 8082 8083 8084 8085).Trim()
+    } finally {
+        if ($null -eq $PreviousNoColor) {
+            Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+        } else {
+            $env:NO_COLOR = $PreviousNoColor
+        }
+        if ($null -eq $PreviousForceColor) {
+            Remove-Item Env:\FORCE_COLOR -ErrorAction SilentlyContinue
+        } else {
+            $env:FORCE_COLOR = $PreviousForceColor
+        }
     }
 }
 

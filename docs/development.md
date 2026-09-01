@@ -23,6 +23,22 @@ Desktop dev launches its desktop-managed daemon with `PASEO_NODE_ENV=development
 so development-only providers such as Mock Load Test are available. Packaged
 desktop launches always force the daemon to production mode.
 
+That daemon runs from `packages/server/dist` when the build output exists, so
+server edits need a rebuild. To iterate on server code without one, start a
+daemon yourself on the desktop dev port with the desktop dev home before
+launching desktop dev — it reuses a daemon that is already running at the
+configured `daemon.listen` instead of spawning its own, and `npm run dev:server:watch`
+runs the daemon from TypeScript source through tsx, so a `paseo daemon restart`
+picks up your changes.
+
+Desktop dev doesn't watch-build `@getpaseo/protocol`/`@getpaseo/client` the way
+`npm run dev` does. `packages/desktop/scripts/dev.ps1` instead fingerprints
+their sources (current `HEAD` plus a hash of the working-tree diff against it)
+against the fingerprint from the last desktop dev build, stored in
+`packages/desktop/.dev/build-client.fingerprint`, and only reruns `build:client`
+when that fingerprint changed — so a `git pull` that touches protocol picks up
+a rebuild automatically, and repeat restarts with no relevant changes skip it.
+
 The web and desktop dev launchers pass the current Git branch to Metro as
 `EXPO_PUBLIC_PASEO_DEV_BUILD_LABEL`. The expanded desktop sidebar shows it in
 the titlebar row. Production builds leave the variable unset and show no label.
@@ -69,6 +85,15 @@ PASEO_DEV_RESET_HOME=1 npm run dev            # clear and reseed the derived wor
 - `npm run dev` (Windows): `localhost:6767` for the daemon.
 
 In Paseo-managed worktree services, use the injected service environment rather than hardcoded root checkout ports.
+
+On Windows, Hyper-V/WSL reserve blocks of TCP ports, and `8002-8101` is commonly
+one of them, so Metro can't bind `8081` and falls back to a random port every
+restart, breaking dev browser storage continuity. Check with
+`netsh interface ipv4 show excludedportrange protocol=tcp`. Plain `npm run dev`
+respects Expo's own `RCT_METRO_PORT` env var with no code changes needed.
+Desktop dev respects a preset `EXPO_PORT` instead of always auto-picking from
+`8081-8085`. Set whichever applies as a persistent user env var
+(`setx EXPO_PORT 8181`) to pin a port outside the reserved blocks.
 
 ### Expo Router
 
