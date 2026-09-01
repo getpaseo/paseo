@@ -10,6 +10,15 @@ import { resolveSupervisorLogFile } from "./supervisor-log-config.js";
 const repoRoot = path.resolve(fileURLToPath(new URL("../../..", import.meta.url)));
 const supervisorPath = fileURLToPath(new URL("./supervisor.ts", import.meta.url));
 
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function runSupervisorFixture(options: {
   workerSource: string;
   restartOnCrash?: boolean;
@@ -187,6 +196,47 @@ describe("supervisor durable logging", () => {
     expect(result.log).toContain('"msg":"Supervisor sending signal to worker"');
     expect(result.log).toContain('"signal":"SIGTERM"');
     expect(result.log).toContain('"workerPid":');
+  });
+
+  test("lets the worker clean up its descendant before supervised shutdown", async () => {
+    const result = await runSupervisorFixture({
+      workerSource: `
+        import { spawn } from "node:child_process";
+
+        const descendant = spawn(
+          process.execPath,
+          ["-e", "setInterval(() => {}, 1000)"],
+          { detached: true, stdio: "ignore" },
+        );
+        descendant.unref();
+        process.stdout.write(\`DESCENDANT_PID=\${descendant.pid}\\n\`);
+
+        process.on("SIGTERM", () => {
+          descendant.once("exit", () => {
+            process.stdout.write("GRACEFUL_CLEANUP_RAN\\n");
+            process.exit(0);
+          });
+          descendant.kill("SIGTERM");
+        });
+
+        process.send?.({ type: "paseo:shutdown", reason: "descendant_cleanup_probe" });
+        setInterval(() => {}, 1000);
+      `,
+    });
+
+    const descendantPid = Number.parseInt(
+      result.stdout.match(/DESCENDANT_PID=(\d+)/)?.[1] ?? "",
+      10,
+    );
+    expect(Number.isInteger(descendantPid)).toBe(true);
+
+    const descendantSurvived = isProcessRunning(descendantPid);
+    if (descendantSurvived) {
+      process.kill(descendantPid, "SIGKILL");
+    }
+
+    expect(result.stdout).toContain("GRACEFUL_CLEANUP_RAN");
+    expect(descendantSurvived).toBe(false);
   });
 
   test("does not restart a worker based on heartbeat absence", async () => {
