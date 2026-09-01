@@ -3681,77 +3681,218 @@ class OpenCodeAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
-    await this.turnCancellationGate.waitForQuiescence();
-    if (this.closed) {
-      throw new Error("OpenCode session is closed");
-    }
-    if (this.turnState.status === "running") {
-      throw new Error("A foreground turn is already active");
-    }
+    const start = this.turnCancellationGate.beginStart();
     try {
-      await this.awaitRunnerQuiescence();
-    } catch (error) {
-      this.rethrowRunnerWaitError(error);
-    }
-    if (this.closed) {
-      throw new Error("OpenCode session is closed");
-    }
-    if (this.turnState.status !== "idle") {
-      throw new Error("OpenCode is still stopping the previous turn");
-    }
+      await this.turnCancellationGate.waitForQuiescence(start);
+      if (this.closed) {
+        throw new Error("OpenCode session is closed");
+      }
+      if (this.turnState.status === "running") {
+        throw new Error("A foreground turn is already active");
+      }
+      try {
+        await this.awaitRunnerQuiescence();
+      } catch (error) {
+        this.rethrowRunnerWaitError(error);
+      }
+      if (this.closed) {
+        throw new Error("OpenCode session is closed");
+      }
+      if (this.turnState.status !== "idle") {
+        throw new Error("OpenCode is still stopping the previous turn");
+      }
 
-    this.runningToolCalls.clear();
-    this.subAgentsByCallId.clear();
-    this.subAgentCallIdByChildSessionId.clear();
-    const turnAbortController = new AbortController();
-    this.abortController = turnAbortController;
-    await this.ensureMcpServersConfigured();
-    const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
-    this.accumulatedUsage = contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
+      this.runningToolCalls.clear();
+      this.subAgentsByCallId.clear();
+      this.subAgentCallIdByChildSessionId.clear();
+      const turnAbortController = new AbortController();
+      this.abortController = turnAbortController;
+      await this.ensureMcpServersConfigured();
+      const contextWindowMaxTokens = this.resolveSelectedModelContextWindowMaxTokens();
+      this.accumulatedUsage =
+        contextWindowMaxTokens !== undefined ? { contextWindowMaxTokens } : {};
 
-    const parts = buildOpenCodePromptParts(prompt);
-    this.pendingUserMessageText = buildOpenCodeUserTimelineText(prompt);
-    this.pendingClientMessageId = options?.clientMessageId ?? null;
-    this.suppressAssistantMessagesUntilIdle.active = false;
-    const model = this.parseModel(this.config.model);
-    const thinkingOptionId = this.config.thinkingOptionId;
-    const effectiveVariant = thinkingOptionId ?? undefined;
-    const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
+      const parts = buildOpenCodePromptParts(prompt);
+      this.pendingUserMessageText = buildOpenCodeUserTimelineText(prompt);
+      this.pendingClientMessageId = options?.clientMessageId ?? null;
+      this.suppressAssistantMessagesUntilIdle.active = false;
+      const model = this.parseModel(this.config.model);
+      const thinkingOptionId = this.config.thinkingOptionId;
+      const effectiveVariant = thinkingOptionId ?? undefined;
+      const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
 
-    await this.awaitEventStreamReady(turnAbortController);
+      await this.awaitEventStreamReady(turnAbortController);
+      this.turnCancellationGate.assertCurrent(start);
 
-    const turnId = this.createTurnId();
-    this.materializedParts.clear();
-    this.turnState = { status: "running", turnId };
-    this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
+      const turnId = this.createTurnId();
+      this.materializedParts.clear();
+      this.turnState = { status: "running", turnId };
+      this.notifySubscribers({ type: "turn_started", provider: "opencode" }, turnId);
 
-    const slashCommand = await this.resolveSlashCommandInvocation(prompt);
-    if (slashCommand) {
-      if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
-        this.activeDispatchMessageId = null;
-        this.suppressAssistantMessagesUntilIdle.active = true;
-        void this.client.session
-          .summarize({
-            sessionID: this.sessionId,
-            directory: this.config.cwd,
-            ...(model ? { providerID: model.providerID, modelID: model.modelID } : {}),
-          })
-          .then((response) => {
-            if (response.error) {
+      const slashCommand = await this.resolveSlashCommandInvocation(prompt);
+      this.turnCancellationGate.assertCurrent(start);
+      if (slashCommand) {
+        if (slashCommand.commandName === "compact" || slashCommand.commandName === "summarize") {
+          this.activeDispatchMessageId = null;
+          this.suppressAssistantMessagesUntilIdle.active = true;
+          void this.client.session
+            .summarize({
+              sessionID: this.sessionId,
+              directory: this.config.cwd,
+              ...(model ? { providerID: model.providerID, modelID: model.modelID } : {}),
+            })
+            .then((response) => {
+              if (response.error) {
+                this.suppressAssistantMessagesUntilIdle.active = false;
+                this.finishForegroundTurn(
+                  {
+                    type: "turn_failed",
+                    provider: "opencode",
+                    error: toDiagnosticErrorMessage(response.error),
+                  },
+                  turnId,
+                );
+              }
+              return;
+            })
+            .catch((error) => {
               this.suppressAssistantMessagesUntilIdle.active = false;
               this.finishForegroundTurn(
                 {
                   type: "turn_failed",
                   provider: "opencode",
-                  error: toDiagnosticErrorMessage(response.error),
+                  error: toDiagnosticErrorMessage(error),
                 },
+                turnId,
+              );
+            });
+          start.complete();
+          return { turnId };
+        }
+
+        // command() is only dispatch acknowledgement. OpenCode session events are
+        // the source of truth for when the command turn becomes idle or fails.
+        this.activeDispatchMessageId = createOpenCodeMessageId();
+        void this.client.session
+          .command({
+            sessionID: this.sessionId,
+            directory: this.config.cwd,
+            command: slashCommand.commandName,
+            arguments: slashCommand.args ?? "",
+            messageID: this.activeDispatchMessageId,
+            ...(this.config.model ? { model: this.config.model } : {}),
+            ...(effectiveMode ? { agent: effectiveMode } : {}),
+            ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+          })
+          .then((response) => {
+            if (response.error) {
+              if (isOpenCodeHeadersTimeoutFailure(response.error)) {
+                this.logger.warn(
+                  {
+                    err: response.error,
+                    commandName: slashCommand.commandName,
+                    turnId,
+                  },
+                  "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
+                );
+                return;
+              }
+              const errorMsg = toDiagnosticErrorMessage(response.error);
+              this.finishForegroundTurn(
+                { type: "turn_failed", provider: "opencode", error: errorMsg },
                 turnId,
               );
             }
             return;
           })
-          .catch((error) => {
-            this.suppressAssistantMessagesUntilIdle.active = false;
+          .catch((err) => {
+            if (isOpenCodeHeadersTimeoutFailure(err)) {
+              this.logger.warn(
+                {
+                  err,
+                  commandName: slashCommand.commandName,
+                  turnId,
+                },
+                "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
+              );
+              return;
+            }
+            this.finishForegroundTurn(
+              { type: "turn_failed", provider: "opencode", error: toDiagnosticErrorMessage(err) },
+              turnId,
+            );
+          });
+        start.complete();
+      } else {
+        const dispatchMessageId = createOpenCodeMessageId();
+        this.activeDispatchMessageId = dispatchMessageId;
+        // Wrap in an async IIFE so a synchronous throw from promptAsync (e.g.
+        // SDK input validation) is caught alongside async rejections. A plain
+        // `.then().catch()` chain would let a sync throw escape unhandled.
+        void (async () => {
+          this.traceOpenCode("provider.opencode.prompt_async.start", {
+            turnId,
+            sessionId: this.sessionId,
+            model,
+            effectiveMode,
+            effectiveVariant,
+            partTypes: parts.map((p) => p.type),
+          });
+          try {
+            const systemPrompt = composeSystemPromptParts(
+              this.config.systemPrompt,
+              this.config.daemonAppendSystemPrompt,
+            );
+            const permission = buildOpenCodePermissionRules(
+              this.config.providerOptions,
+              this.config.toolPolicy,
+            );
+            this.turnCancellationGate.assertCurrent(start);
+            const promptRequest = this.client.session.promptAsync({
+              sessionID: this.sessionId,
+              directory: this.config.cwd,
+              messageID: dispatchMessageId,
+              parts,
+              ...(options?.outputSchema
+                ? {
+                    format: {
+                      type: "json_schema" as const,
+                      schema: options.outputSchema as Record<string, unknown>,
+                    },
+                  }
+                : {}),
+              ...(systemPrompt ? { system: systemPrompt } : {}),
+              ...(permission ? { permission } : {}),
+              ...(model ? { model } : {}),
+              ...(effectiveMode ? { agent: effectiveMode } : {}),
+              ...(effectiveVariant ? { variant: effectiveVariant } : {}),
+            });
+            start.complete();
+            const promptResponse = await promptRequest;
+            this.traceOpenCode("provider.opencode.prompt_async.response", {
+              turnId,
+              hasError: promptResponse.error !== undefined,
+              error: promptResponse.error,
+              data: promptResponse.data,
+            });
+            if (promptResponse.error) {
+              this.finishForegroundTurn(
+                {
+                  type: "turn_failed",
+                  provider: "opencode",
+                  error: toDiagnosticErrorMessage(promptResponse.error),
+                },
+                turnId,
+              );
+            }
+          } catch (error) {
+            this.traceOpenCode("provider.opencode.prompt_async.throw", {
+              turnId,
+              error:
+                error instanceof Error
+                  ? { name: error.name, message: error.message, stack: error.stack }
+                  : String(error),
+            });
             this.finishForegroundTurn(
               {
                 type: "turn_failed",
@@ -3760,142 +3901,14 @@ class OpenCodeAgentSession implements AgentSession {
               },
               turnId,
             );
-          });
-        return { turnId };
+          }
+        })();
       }
 
-      // command() is only dispatch acknowledgement. OpenCode session events are
-      // the source of truth for when the command turn becomes idle or fails.
-      this.activeDispatchMessageId = createOpenCodeMessageId();
-      void this.client.session
-        .command({
-          sessionID: this.sessionId,
-          directory: this.config.cwd,
-          command: slashCommand.commandName,
-          arguments: slashCommand.args ?? "",
-          messageID: this.activeDispatchMessageId,
-          ...(this.config.model ? { model: this.config.model } : {}),
-          ...(effectiveMode ? { agent: effectiveMode } : {}),
-          ...(effectiveVariant ? { variant: effectiveVariant } : {}),
-        })
-        .then((response) => {
-          if (response.error) {
-            if (isOpenCodeHeadersTimeoutFailure(response.error)) {
-              this.logger.warn(
-                {
-                  err: response.error,
-                  commandName: slashCommand.commandName,
-                  turnId,
-                },
-                "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
-              );
-              return;
-            }
-            const errorMsg = toDiagnosticErrorMessage(response.error);
-            this.finishForegroundTurn(
-              { type: "turn_failed", provider: "opencode", error: errorMsg },
-              turnId,
-            );
-          }
-          return;
-        })
-        .catch((err) => {
-          if (isOpenCodeHeadersTimeoutFailure(err)) {
-            this.logger.warn(
-              {
-                err,
-                commandName: slashCommand.commandName,
-                turnId,
-              },
-              "OpenCode slash command hit a header timeout; waiting for SSE terminal event",
-            );
-            return;
-          }
-          this.finishForegroundTurn(
-            { type: "turn_failed", provider: "opencode", error: toDiagnosticErrorMessage(err) },
-            turnId,
-          );
-        });
-    } else {
-      const dispatchMessageId = createOpenCodeMessageId();
-      this.activeDispatchMessageId = dispatchMessageId;
-      // Wrap in an async IIFE so a synchronous throw from promptAsync (e.g.
-      // SDK input validation) is caught alongside async rejections. A plain
-      // `.then().catch()` chain would let a sync throw escape unhandled.
-      void (async () => {
-        this.traceOpenCode("provider.opencode.prompt_async.start", {
-          turnId,
-          sessionId: this.sessionId,
-          model,
-          effectiveMode,
-          effectiveVariant,
-          partTypes: parts.map((p) => p.type),
-        });
-        try {
-          const systemPrompt = composeSystemPromptParts(
-            this.config.systemPrompt,
-            this.config.daemonAppendSystemPrompt,
-          );
-          const permission = buildOpenCodePermissionRules(
-            this.config.providerOptions,
-            this.config.toolPolicy,
-          );
-          const promptResponse = await this.client.session.promptAsync({
-            sessionID: this.sessionId,
-            directory: this.config.cwd,
-            messageID: dispatchMessageId,
-            parts,
-            ...(options?.outputSchema
-              ? {
-                  format: {
-                    type: "json_schema" as const,
-                    schema: options.outputSchema as Record<string, unknown>,
-                  },
-                }
-              : {}),
-            ...(systemPrompt ? { system: systemPrompt } : {}),
-            ...(permission ? { permission } : {}),
-            ...(model ? { model } : {}),
-            ...(effectiveMode ? { agent: effectiveMode } : {}),
-            ...(effectiveVariant ? { variant: effectiveVariant } : {}),
-          });
-          this.traceOpenCode("provider.opencode.prompt_async.response", {
-            turnId,
-            hasError: promptResponse.error !== undefined,
-            error: promptResponse.error,
-            data: promptResponse.data,
-          });
-          if (promptResponse.error) {
-            this.finishForegroundTurn(
-              {
-                type: "turn_failed",
-                provider: "opencode",
-                error: toDiagnosticErrorMessage(promptResponse.error),
-              },
-              turnId,
-            );
-          }
-        } catch (error) {
-          this.traceOpenCode("provider.opencode.prompt_async.throw", {
-            turnId,
-            error:
-              error instanceof Error
-                ? { name: error.name, message: error.message, stack: error.stack }
-                : String(error),
-          });
-          this.finishForegroundTurn(
-            {
-              type: "turn_failed",
-              provider: "opencode",
-              error: toDiagnosticErrorMessage(error),
-            },
-            turnId,
-          );
-        }
-      })();
+      return { turnId };
+    } finally {
+      start.complete();
     }
-
-    return { turnId };
   }
 
   private async awaitEventStreamReady(turnAbortController: AbortController): Promise<void> {

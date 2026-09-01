@@ -3604,7 +3604,9 @@ describe("Codex app-server provider", () => {
 
       threadStart.resolve({ thread: { id: "thread-1" } });
       await expect(interruptPromise).resolves.toBeUndefined();
-      await expect(resultPromise).rejects.toThrow("interrupted before reaching Codex");
+      await expect(resultPromise).rejects.toThrow(
+        /canceled before prompt dispatch|interrupted before reaching Codex/,
+      );
       expect(appServer.requests()).not.toContainEqual(
         expect.objectContaining({ method: "turn/start" }),
       );

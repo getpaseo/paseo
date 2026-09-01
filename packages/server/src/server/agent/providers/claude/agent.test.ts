@@ -740,6 +740,63 @@ describe("ClaudeAgentSession features", () => {
     }
   });
 
+  test("does not push a prompt after cancellation during Claude query startup", async () => {
+    const { queryFactory, queryMock, launches } = createQueryMock();
+    let releaseFlags!: () => void;
+    const flagsReleased = new Promise<void>((resolve) => {
+      releaseFlags = resolve;
+    });
+    let flagsStarted!: () => void;
+    const flagsStartedPromise = new Promise<void>((resolve) => {
+      flagsStarted = resolve;
+    });
+    queryMock.applyFlagSettings = vi.fn(async () => {
+      flagsStarted();
+      await flagsReleased;
+    });
+    Object.assign(queryMock, { interrupt: vi.fn(async () => undefined) });
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+      featureValues: { fast_mode: true },
+    });
+
+    try {
+      const start = session.startTurn("canceled during startup");
+      await flagsStartedPromise;
+      const cancellation = session.interrupt();
+
+      releaseFlags();
+      const startOutcome = await Promise.race([
+        start,
+        new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 100)),
+      ]);
+      expect(startOutcome).not.toBe("timed_out");
+      const cancellationOutcome = await Promise.race([
+        cancellation,
+        new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 100)),
+      ]);
+      expect(cancellationOutcome).not.toBe("timed_out");
+
+      const input = launches[0]?.prompt as AsyncIterable<SDKUserMessage> | undefined;
+      const firstPrompt = input
+        ? await Promise.race([
+            input[Symbol.asyncIterator]().next(),
+            new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 25)),
+          ])
+        : "timed_out";
+      expect(firstPrompt).toBe("timed_out");
+    } finally {
+      releaseFlags();
+      await session.close();
+    }
+  });
+
   test("passes exact configured Fable 5 IDs through to Claude Code", async () => {
     const { queryFactory, queryMock } = createQueryMock();
     const client = new ClaudeAgentClient({

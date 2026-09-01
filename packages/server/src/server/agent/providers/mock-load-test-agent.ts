@@ -787,129 +787,135 @@ export class MockLoadTestAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
-    await this.turnCancellationGate.waitForQuiescence();
-    if (this.closed) {
-      throw new Error("Mock load-test session is closed");
-    }
-    if (this.activeTurn) {
-      throw new Error("Mock load-test provider already has an active turn");
-    }
-    if (this.remainingPromptRejections > 0) {
-      this.remainingPromptRejections -= 1;
-      throw new Error("Requested mock prompt rejection");
-    }
+    const start = this.turnCancellationGate.beginStart();
+    try {
+      await this.turnCancellationGate.waitForQuiescence(start);
+      if (this.closed) {
+        throw new Error("Mock load-test session is closed");
+      }
+      if (this.activeTurn) {
+        throw new Error("Mock load-test provider already has an active turn");
+      }
+      this.turnCancellationGate.assertCurrent(start);
+      if (this.remainingPromptRejections > 0) {
+        this.remainingPromptRejections -= 1;
+        throw new Error("Requested mock prompt rejection");
+      }
 
-    const profile = resolveModelProfile(this.modelId);
-    const turnId = randomUUID();
-    const assistantMessageId = randomUUID();
-    let resolve!: (result: AgentRunResult) => void;
-    const completed = new Promise<AgentRunResult>((promiseResolve) => {
-      resolve = promiseResolve;
-    });
-    const turn: ActiveTurn = {
-      turnId,
-      assistantMessageId,
-      prompt,
-      startedAt: Date.now(),
-      cycle: 0,
-      durationMs: profile.durationMs,
-      intervalMs: profile.intervalMs,
-      timer: null,
-      resolve,
-      completed,
-      queue: [],
-      emittedTokens: 0,
-      turnStarted: false,
-      burst: profile.burst,
-      burstIndex: 0,
-    };
-    this.activeTurn = turn;
-    const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
-    const stress = parseAgentStreamStressPrompt(prompt);
-    const questionPrompt = parseMockQuestionPrompt(prompt);
-    const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
-    const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
-    const steeringReplayShape = parseSteeringReplayShape(prompt);
-    const scheduleTurn = () => {
-      if (shouldEmitTurnFailure(prompt)) {
-        this.scheduleFailedTurn(turn);
-      } else if (steeringReplayShape) {
-        this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
-      } else if (this.streamingAssistantResponse !== null) {
-        this.scheduleStreamingAssistantTurn(turn, this.streamingAssistantResponse);
-      } else if (this.assistantResponse !== null) {
-        this.scheduleSettledAssistantTurn(turn, this.assistantResponse);
-      } else if (structuredBranchName) {
-        this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
-      } else if (settledAssistantImageMarkdown) {
-        this.scheduleSettledAssistantTurn(turn, settledAssistantImageMarkdown);
-      } else if (shouldEmitPlanApprovalPrompt(prompt)) {
-        this.schedulePlanApprovalTurn(turn);
-      } else if (questionPrompt) {
-        this.scheduleQuestionPromptTurn(turn, questionPrompt);
-      } else if (largePayload) {
-        this.scheduleLargePayloadTurn(turn, largePayload);
-      } else if (stress) {
-        this.scheduleStressTurn(turn, stress);
-      } else {
-        this.schedule(turn, 0);
-      }
-    };
-    const emitUserMessage = () => {
-      if (this.activeTurn?.turnId !== turnId) {
-        return;
-      }
-      this.emitTurnStarted(turn);
-      this.emit({
-        type: "timeline",
-        provider: this.provider,
-        turnId,
-        item: {
-          type: "user_message",
-          text: promptToText(prompt),
-          messageId: randomUUID(),
-          ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
-        },
+      const profile = resolveModelProfile(this.modelId);
+      const turnId = randomUUID();
+      const assistantMessageId = randomUUID();
+      let resolve!: (result: AgentRunResult) => void;
+      const completed = new Promise<AgentRunResult>((promiseResolve) => {
+        resolve = promiseResolve;
       });
-    };
-    if (shouldEmitUserMessageBeforeTurnAcceptance(prompt)) {
-      emitUserMessage();
-      scheduleTurn();
-      return { turnId };
-    }
-    if (shouldWithholdUserMessageUntilInterrupt(prompt)) {
-      return { turnId };
-    }
-    const assistantMessagesBeforeUserMessage = parseAssistantMessagesBeforeUserMessage(prompt);
-    if (assistantMessagesBeforeUserMessage !== null) {
-      turn.timer = setTimeout(async () => {
-        if (this.activeTurn !== turn) return;
+      const turn: ActiveTurn = {
+        turnId,
+        assistantMessageId,
+        prompt,
+        startedAt: Date.now(),
+        cycle: 0,
+        durationMs: profile.durationMs,
+        intervalMs: profile.intervalMs,
+        timer: null,
+        resolve,
+        completed,
+        queue: [],
+        emittedTokens: 0,
+        turnStarted: false,
+        burst: profile.burst,
+        burstIndex: 0,
+      };
+      this.activeTurn = turn;
+      const largePayload = parseLargeAgentStreamPayloadPrompt(prompt);
+      const stress = parseAgentStreamStressPrompt(prompt);
+      const questionPrompt = parseMockQuestionPrompt(prompt);
+      const structuredBranchName = parseStructuredBranchNamePrompt(prompt);
+      const settledAssistantImageMarkdown = parseSettledAssistantImageMarkdown(prompt);
+      const steeringReplayShape = parseSteeringReplayShape(prompt);
+      const scheduleTurn = () => {
+        if (shouldEmitTurnFailure(prompt)) {
+          this.scheduleFailedTurn(turn);
+        } else if (steeringReplayShape) {
+          this.scheduleSteeringReplayTurn(turn, steeringReplayShape);
+        } else if (this.streamingAssistantResponse !== null) {
+          this.scheduleStreamingAssistantTurn(turn, this.streamingAssistantResponse);
+        } else if (this.assistantResponse !== null) {
+          this.scheduleSettledAssistantTurn(turn, this.assistantResponse);
+        } else if (structuredBranchName) {
+          this.scheduleSettledAssistantTurn(turn, JSON.stringify(structuredBranchName));
+        } else if (settledAssistantImageMarkdown) {
+          this.scheduleSettledAssistantTurn(turn, settledAssistantImageMarkdown);
+        } else if (shouldEmitPlanApprovalPrompt(prompt)) {
+          this.schedulePlanApprovalTurn(turn);
+        } else if (questionPrompt) {
+          this.scheduleQuestionPromptTurn(turn, questionPrompt);
+        } else if (largePayload) {
+          this.scheduleLargePayloadTurn(turn, largePayload);
+        } else if (stress) {
+          this.scheduleStressTurn(turn, stress);
+        } else {
+          this.schedule(turn, 0);
+        }
+      };
+      const emitUserMessage = () => {
+        if (this.activeTurn?.turnId !== turnId) {
+          return;
+        }
         this.emitTurnStarted(turn);
-        for (let index = 0; index < assistantMessagesBeforeUserMessage; index += 1) {
-          this.emitTimeline(turnId, {
-            type: "assistant_message",
-            text: `Synthetic pre-echo message ${index + 1}`,
-            messageId: `${turn.assistantMessageId}-${index + 1}`,
-          });
+        this.emit({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "user_message",
+            text: promptToText(prompt),
+            messageId: randomUUID(),
+            ...(options?.clientMessageId ? { clientMessageId: options.clientMessageId } : {}),
+          },
+        });
+      };
+      if (shouldEmitUserMessageBeforeTurnAcceptance(prompt)) {
+        emitUserMessage();
+        scheduleTurn();
+        return { turnId };
+      }
+      if (shouldWithholdUserMessageUntilInterrupt(prompt)) {
+        return { turnId };
+      }
+      const assistantMessagesBeforeUserMessage = parseAssistantMessagesBeforeUserMessage(prompt);
+      if (assistantMessagesBeforeUserMessage !== null) {
+        turn.timer = setTimeout(async () => {
+          if (this.activeTurn !== turn) return;
+          this.emitTurnStarted(turn);
+          for (let index = 0; index < assistantMessagesBeforeUserMessage; index += 1) {
+            this.emitTimeline(turnId, {
+              type: "assistant_message",
+              text: `Synthetic pre-echo message ${index + 1}`,
+              messageId: `${turn.assistantMessageId}-${index + 1}`,
+            });
+            await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
+            if (this.activeTurn !== turn) return;
+          }
+          emitUserMessage();
           await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
           if (this.activeTurn !== turn) return;
-        }
+          this.finishTurnWithText(turn, "Synthetic pre-echo stream complete");
+        }, 0);
+        turn.timer.unref?.();
+        return { turnId };
+      }
+      const userMessageDelayMs = parseUserMessageDelayMs(prompt);
+      const userMessageTimer = setTimeout(() => {
         emitUserMessage();
-        await new Promise<void>((resolvePromise) => setImmediate(resolvePromise));
-        if (this.activeTurn !== turn) return;
-        this.finishTurnWithText(turn, "Synthetic pre-echo stream complete");
-      }, 0);
-      turn.timer.unref?.();
+        if (userMessageDelayMs > 0) scheduleTurn();
+      }, userMessageDelayMs);
+      userMessageTimer.unref?.();
+      if (userMessageDelayMs === 0) scheduleTurn();
       return { turnId };
+    } finally {
+      start.complete();
     }
-    const userMessageDelayMs = parseUserMessageDelayMs(prompt);
-    const userMessageTimer = setTimeout(() => {
-      emitUserMessage();
-      if (userMessageDelayMs > 0) scheduleTurn();
-    }, userMessageDelayMs);
-    userMessageTimer.unref?.();
-    if (userMessageDelayMs === 0) scheduleTurn();
-    return { turnId };
   }
 
   tryHandleOutOfBand(

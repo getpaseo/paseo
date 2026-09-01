@@ -1609,50 +1609,58 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
-    await this.turnCancellationGate.waitForQuiescence();
-    if (this.closed) {
-      throw new Error(`${this.provider} session is closed`);
-    }
-    if (!this.connection || !this.sessionId) {
-      throw new Error(`${this.provider} session is not initialized`);
-    }
-    if (this.activeForegroundTurnId) {
-      throw new Error("A foreground turn is already active");
-    }
+    const start = this.turnCancellationGate.beginStart();
+    try {
+      await this.turnCancellationGate.waitForQuiescence(start);
+      if (this.closed) {
+        throw new Error(`${this.provider} session is closed`);
+      }
+      if (!this.connection || !this.sessionId) {
+        throw new Error(`${this.provider} session is not initialized`);
+      }
+      if (this.activeForegroundTurnId) {
+        throw new Error("A foreground turn is already active");
+      }
+      this.turnCancellationGate.assertCurrent(start);
 
-    this.deliverTranslatedEvents(this.flushPendingUserMessage());
-    const turnId = randomUUID();
-    const messageId = options?.clientMessageId ?? randomUUID();
-    this.activeForegroundTurnId = turnId;
-    this.fallbackAssistantMessageId = null;
-    this.submittedUserMessageTurnId = null;
-    this.emitBootstrapThreadEvent();
-    this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
-    this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
+      this.deliverTranslatedEvents(this.flushPendingUserMessage());
+      const turnId = randomUUID();
+      const messageId = options?.clientMessageId ?? randomUUID();
+      this.activeForegroundTurnId = turnId;
+      this.fallbackAssistantMessageId = null;
+      this.submittedUserMessageTurnId = null;
+      this.emitBootstrapThreadEvent();
+      this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
-    void this.connection
-      .prompt({
+      this.turnCancellationGate.assertCurrent(start);
+      const promptRequest = this.connection.prompt({
         sessionId: this.sessionId,
         messageId,
         prompt: toACPContentBlocks(prompt),
-      })
-      .then((response) => {
-        this.handlePromptResponse(response, turnId);
-        return;
-      })
-      .catch((error) => {
-        const summary = summarizeACPRequestError(error);
-        this.finishTurn({
-          type: "turn_failed",
-          provider: this.provider,
-          error: summary.message,
-          code: summary.code,
-          diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
-          turnId,
-        });
       });
+      start.complete();
+      void promptRequest
+        .then((response) => {
+          this.handlePromptResponse(response, turnId);
+          return;
+        })
+        .catch((error) => {
+          const summary = summarizeACPRequestError(error);
+          this.finishTurn({
+            type: "turn_failed",
+            provider: this.provider,
+            error: summary.message,
+            code: summary.code,
+            diagnostic: this.collectDiagnostic(summary.diagnostic ?? summary.message),
+            turnId,
+          });
+        });
 
-    return { turnId };
+      return { turnId };
+    } finally {
+      start.complete();
+    }
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -2178,6 +2186,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         pending.resolve({ outcome: { outcome: "cancelled" } });
       }
       this.pendingPermissions.clear();
+      await this.turnCancellationGate.interrupt(
+        expectedTurnId,
+        () => this.activeForegroundTurnId,
+        async () => {},
+      );
       return;
     }
 

@@ -69,6 +69,7 @@ import { limitAgentTimelineItemContent } from "./agent-timeline-content.js";
 import {
   AgentRunState,
   type ForegroundTurnWaiter,
+  type PendingAgentSessionEvent,
   type PendingForegroundRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
@@ -347,6 +348,7 @@ type ActiveTurnTerminalDisposition = "closed_current" | "stale" | "untracked";
 
 interface HandleStreamEventOptions {
   fromHistory?: boolean;
+  sessionGeneration?: symbol;
 }
 
 interface ManagedAgentBase {
@@ -526,7 +528,7 @@ interface SubscriptionRecord {
 }
 
 interface SteerEventBarrier {
-  events: AgentStreamEvent[];
+  events: PendingAgentSessionEvent[];
 }
 
 const BUSY_STATUSES: Set<AgentLifecycleStatus> = new Set(["initializing", "running"]);
@@ -678,6 +680,7 @@ export class AgentManager {
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
+  private readonly sessionGenerationTokens = new Map<string, symbol>();
   private readonly steerEventBarriers = new Map<string, SteerEventBarrier>();
   private readonly foregroundMutationTails = new Map<string, Promise<void>>();
   private readonly runs = new AgentRunState();
@@ -1400,6 +1403,7 @@ export class AgentManager {
       this.assertAcceptingAgentRegistrations();
 
       this.cancelRunningProviderSubagents(agentId);
+      await this.drainSessionEvents(agentId);
       const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
       try {
         await this.persistSnapshot(closedExisting);
@@ -2289,7 +2293,7 @@ export class AgentManager {
       );
       const stagedSubmittedPromptEcho = options?.clientMessageId
         ? pendingRun.stagedEvents.find(
-            (event): event is Extract<AgentStreamEvent, { type: "timeline" }> =>
+            ({ event }) =>
               event.type === "timeline" &&
               event.item.type === "user_message" &&
               event.item.clientMessageId === options.clientMessageId,
@@ -2300,18 +2304,20 @@ export class AgentManager {
           messageId: options.clientMessageId,
           turnId,
           providerMessageId:
-            stagedSubmittedPromptEcho?.item.type === "user_message"
-              ? stagedSubmittedPromptEcho.item.messageId
+            stagedSubmittedPromptEcho?.event.type === "timeline" &&
+            stagedSubmittedPromptEcho.event.item.type === "user_message"
+              ? stagedSubmittedPromptEcho.event.item.messageId
               : undefined,
         });
       }
       for (const stagedEvent of pendingRun.stagedEvents.splice(0)) {
+        const event = stagedEvent.event;
         const isAcceptedTurnStart =
-          stagedEvent.type === "turn_started" && getAgentStreamEventTurnId(stagedEvent) === turnId;
+          event.type === "turn_started" && getAgentStreamEventTurnId(event) === turnId;
         if (isAcceptedTurnStart || stagedEvent === stagedSubmittedPromptEcho) {
           continue;
         }
-        this.enqueueSessionEvent(agent.id, stagedEvent);
+        this.enqueueSessionEvent(agent.id, event, stagedEvent.generation);
       }
       this.emitState(agent);
       this.logger.trace(
@@ -2544,8 +2550,8 @@ export class AgentManager {
         if (this.steerEventBarriers.get(agent.id) === barrier) {
           this.steerEventBarriers.delete(agent.id);
         }
-        for (const event of barrier.events) {
-          this.enqueueSessionEvent(agent.id, event);
+        for (const queuedEvent of barrier.events) {
+          this.enqueueSessionEvent(agent.id, queuedEvent.event, queuedEvent.generation);
         }
         await this.drainSessionEvents(agent.id);
       }
@@ -2791,9 +2797,6 @@ export class AgentManager {
     });
 
     if (!interruptResult.acknowledged) {
-      if (settlement === "completed") {
-        return { status: "settled" };
-      }
       await this.quarantineAgentSession(agent, interruptResult.error);
       return { status: "refused" };
     }
@@ -2885,6 +2888,11 @@ export class AgentManager {
 
   private async quarantineAgentSession(agent: ActiveManagedAgent, reason?: unknown): Promise<void> {
     this.quarantinedAgentIds.add(agent.id);
+    this.invalidateSessionGeneration(agent.id);
+    if (agent.unsubscribeSession) {
+      agent.unsubscribeSession();
+      agent.unsubscribeSession = null;
+    }
     this.logger.error(
       { err: reason, agentId: agent.id, provider: agent.provider },
       "Quarantining agent session after cancellation failure",
@@ -3283,6 +3291,7 @@ export class AgentManager {
 
       this.assertAcceptingAgentRegistrations();
       this.agents.set(resolvedAgentId, managed);
+      this.sessionGenerationTokens.set(resolvedAgentId, Symbol(`session:${resolvedAgentId}`));
       this.quarantinedAgentIds.delete(resolvedAgentId);
       registered = true;
       // Initialize previousStatus to track transitions
@@ -3463,6 +3472,7 @@ export class AgentManager {
     cancelReason: string,
   ): ManagedAgentClosed {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
+    this.invalidateSessionGeneration(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
     if (agent.unsubscribeSession) {
@@ -3493,6 +3503,15 @@ export class AgentManager {
     };
   }
 
+  private invalidateSessionGeneration(agentId: string): void {
+    const tail = this.sessionEventTails.get(agentId);
+    if (tail) {
+      this.backgroundTasks.delete(tail);
+    }
+    this.sessionGenerationTokens.delete(agentId);
+    this.sessionEventTails.delete(agentId);
+  }
+
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
@@ -3508,13 +3527,25 @@ export class AgentManager {
       return;
     }
     const agentId = agent.id;
+    const generation = this.sessionGenerationTokens.get(agentId);
+    if (!generation) {
+      throw new Error(`Agent ${agentId} session generation is not registered`);
+    }
     const unsubscribe = agent.session.subscribe((event: AgentStreamEvent) => {
-      this.enqueueSessionEvent(agentId, event);
+      this.enqueueSessionEvent(agentId, event, generation);
     });
     agent.unsubscribeSession = unsubscribe;
   }
 
-  private enqueueSessionEvent(agentId: string, event: AgentStreamEvent): void {
+  private enqueueSessionEvent(
+    agentId: string,
+    event: AgentStreamEvent,
+    generation = this.sessionGenerationTokens.get(agentId),
+  ): void {
+    if (!generation || this.sessionGenerationTokens.get(agentId) !== generation) {
+      return;
+    }
+    const queuedEvent: PendingAgentSessionEvent = { generation, event };
     this.logger.trace(
       {
         agentId,
@@ -3527,18 +3558,21 @@ export class AgentManager {
     );
     const steerBarrier = this.steerEventBarriers.get(agentId);
     if (steerBarrier) {
-      steerBarrier.events.push(event);
+      steerBarrier.events.push(queuedEvent);
       return;
     }
     const pendingRun = this.runs.getPendingRun(agentId);
     if (pendingRun?.start.status === "pending") {
-      pendingRun.stagedEvents.push(event);
+      pendingRun.stagedEvents.push(queuedEvent);
       return;
     }
     const previous = this.sessionEventTails.get(agentId) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
       .then(async () => {
+        if (this.sessionGenerationTokens.get(agentId) !== queuedEvent.generation) {
+          return;
+        }
         const current = this.agents.get(agentId);
         if (!current) {
           return;
@@ -3549,19 +3583,19 @@ export class AgentManager {
         this.logger.trace(
           {
             agentId,
-            provider: event.provider,
+            provider: queuedEvent.event.provider,
             sessionId: current.persistence?.sessionId ?? undefined,
-            turnId: getAgentStreamEventTurnId(event),
-            event,
+            turnId: getAgentStreamEventTurnId(queuedEvent.event),
+            event: queuedEvent.event,
           },
           "agent.manager.dequeue",
         );
-        await this.dispatchSessionEvent(current, event);
+        await this.dispatchSessionEvent(current, queuedEvent.event, queuedEvent.generation);
         return;
       })
       .catch((err) => {
         this.logger.error(
-          { err, agentId, eventType: event.type },
+          { err, agentId, eventType: queuedEvent.event.type },
           "Failed to process session event",
         );
       });
@@ -3586,7 +3620,23 @@ export class AgentManager {
       if (!tail) {
         return;
       }
-      await tail;
+      const result = await this.waitWithTimeout({
+        operation: tail,
+        timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+        onLateError: (error) => {
+          this.logger.warn(
+            { err: error, agentId },
+            "Session event queue failed after drain timeout",
+          );
+        },
+      });
+      if (result === "timed_out") {
+        this.logger.warn(
+          { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
+          "Timed out draining session events",
+        );
+        return;
+      }
       if (this.sessionEventTails.get(agentId) === tail) {
         return;
       }
@@ -3596,7 +3646,15 @@ export class AgentManager {
   private async dispatchSessionEvent(
     agent: ActiveManagedAgent,
     event: AgentStreamEvent,
+    sessionGeneration?: symbol,
   ): Promise<void> {
+    if (
+      sessionGeneration !== undefined &&
+      (this.sessionGenerationTokens.get(agent.id) !== sessionGeneration ||
+        this.agents.get(agent.id) !== agent)
+    ) {
+      return;
+    }
     if (event.type === "provider_subagent") {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       this.dispatch({ type: "provider_subagent", event: update });
@@ -3616,7 +3674,16 @@ export class AgentManager {
       "agent.manager.dispatch_session_event",
     );
 
-    const shouldNotifyWaiters = await this.handleStreamEvent(agent, event);
+    const shouldNotifyWaiters = await this.handleStreamEvent(agent, event, {
+      sessionGeneration,
+    });
+    if (
+      sessionGeneration !== undefined &&
+      (this.sessionGenerationTokens.get(agent.id) !== sessionGeneration ||
+        this.agents.get(agent.id) !== agent)
+    ) {
+      return;
+    }
 
     if (!shouldNotifyWaiters) {
       return;
@@ -3903,6 +3970,9 @@ export class AgentManager {
     event: AgentStreamEvent,
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
+    if (!this.shouldHandleSessionEvent(agent, options)) {
+      return false;
+    }
     event = limitAgentStreamEventContent(event);
     const identified = attachManagedTurnIdentity(agent, event, options?.fromHistory === true);
     event = identified.event;
@@ -3949,6 +4019,10 @@ export class AgentManager {
     });
     if (dispatchPromise) {
       await dispatchPromise;
+    }
+
+    if (!this.shouldHandleSessionEvent(agent, options)) {
+      return false;
     }
 
     if (!options?.fromHistory) {
@@ -4139,7 +4213,7 @@ export class AgentManager {
   private async onStreamTimelineEvent(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "timeline" }>;
-    options: { fromHistory?: boolean } | undefined;
+    options: HandleStreamEventOptions | undefined;
     flags: StreamEventFlags;
   }): Promise<void> {
     const { agent, event, options, flags } = params;
@@ -4225,7 +4299,7 @@ export class AgentManager {
     eventTurnId: string | undefined;
     isForegroundEvent: boolean;
     terminalDisposition: ActiveTurnTerminalDisposition;
-    options: { fromHistory?: boolean } | undefined;
+    options: HandleStreamEventOptions | undefined;
   }): Promise<void> {
     const { agent, event, eventTurnId, isForegroundEvent, terminalDisposition, options } = params;
     this.logger.warn(
@@ -4254,6 +4328,12 @@ export class AgentManager {
       this.formatTurnFailedMessage(event),
       options,
     );
+    if (
+      options?.sessionGeneration !== undefined &&
+      !this.isSessionGenerationCurrent(agent, options.sessionGeneration)
+    ) {
+      return;
+    }
     this.resolvePendingPermissionsForAgent(agent, event.provider, options, "Turn failed");
     if (!isForegroundEvent && !agent.activeForegroundTurnId) {
       this.emitState(agent);
@@ -4466,7 +4546,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     provider: AgentProvider,
     message: string,
-    options?: { fromHistory?: boolean },
+    options?: HandleStreamEventOptions,
   ): Promise<void> {
     if (options?.fromHistory) {
       return;
@@ -4479,6 +4559,12 @@ export class AgentManager {
 
     const text = `${SYSTEM_ERROR_PREFIX} ${normalized}`;
     const lastItem = await this.getLastItemFromStores(agent.id);
+    if (
+      options?.sessionGeneration !== undefined &&
+      !this.isSessionGenerationCurrent(agent, options.sessionGeneration)
+    ) {
+      return;
+    }
     if (lastItem?.type === "assistant_message" && lastItem.text === text) {
       return;
     }
@@ -4514,6 +4600,23 @@ export class AgentManager {
       parts.push(diagnostic);
     }
     return parts.join("\n\n");
+  }
+
+  private isSessionGenerationCurrent(agent: ActiveManagedAgent, generation: symbol): boolean {
+    return (
+      this.sessionGenerationTokens.get(agent.id) === generation &&
+      this.agents.get(agent.id) === agent
+    );
+  }
+
+  private shouldHandleSessionEvent(
+    agent: ActiveManagedAgent,
+    options?: HandleStreamEventOptions,
+  ): boolean {
+    return (
+      options?.sessionGeneration === undefined ||
+      this.isSessionGenerationCurrent(agent, options.sessionGeneration)
+    );
   }
 
   private recordTimeline(

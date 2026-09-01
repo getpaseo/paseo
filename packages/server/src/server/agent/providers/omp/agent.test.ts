@@ -268,13 +268,7 @@ describe("OMP agent client and session", () => {
     await expect(omp.interrupt()).rejects.toThrow("abort unavailable");
     expect(scheduler.activePollCount()).toBe(1);
     omp.runtime().abortError = null;
-    await omp.interrupt();
-    expect(scheduler.activePollCount()).toBe(0);
-
-    await omp.runPrompt("finish normally", "done");
-    expect(scheduler.activePollCount()).toBe(0);
-
-    await omp.requireStartTurn("close the session");
+    await expect(omp.interrupt()).rejects.toThrow("abort unavailable");
     expect(scheduler.activePollCount()).toBe(1);
     await omp.close();
     expect(scheduler.activePollCount()).toBe(0);

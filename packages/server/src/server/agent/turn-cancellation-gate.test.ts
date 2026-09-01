@@ -10,6 +10,79 @@ function deferred<T = void>() {
 }
 
 describe("TurnCancellationGate", () => {
+  test("invalidates a captured start generation as soon as cancellation begins", async () => {
+    const gate = new TurnCancellationGate();
+    const start = gate.beginStart();
+    const cancellation = gate.interrupt(
+      undefined,
+      () => null,
+      async () => undefined,
+    );
+
+    expect(() => gate.assertCurrent(start)).toThrow(/canceled/i);
+
+    start.complete();
+    await cancellation;
+  });
+
+  test("waits for a pending startup to settle before acknowledging its cancellation", async () => {
+    const gate = new TurnCancellationGate();
+    const start = gate.beginStart();
+    let cancellationSettled = false;
+    const cancellation = gate
+      .interrupt(
+        undefined,
+        () => null,
+        async () => undefined,
+      )
+      .then(() => {
+        cancellationSettled = true;
+        return undefined;
+      });
+
+    await Promise.resolve();
+    expect(cancellationSettled).toBe(false);
+
+    start.complete();
+    await cancellation;
+    expect(cancellationSettled).toBe(true);
+  });
+
+  test("does not let a successor start while an earlier startup is pending", async () => {
+    const gate = new TurnCancellationGate();
+    const first = gate.beginStart();
+    const second = gate.beginStart();
+    let successorReady = false;
+    const successor = gate.waitForQuiescence(second).then(() => {
+      successorReady = true;
+      return undefined;
+    });
+
+    await Promise.resolve();
+    expect(successorReady).toBe(false);
+
+    first.complete();
+    await successor;
+    expect(successorReady).toBe(true);
+    second.complete();
+  });
+
+  test("close releases pending start bookkeeping and rejects its cancellation", async () => {
+    const gate = new TurnCancellationGate();
+    const start = gate.beginStart();
+    const cancellation = gate.interrupt(
+      undefined,
+      () => null,
+      async () => undefined,
+    );
+
+    gate.close();
+    gate.close();
+    start.complete();
+
+    await expect(cancellation).rejects.toMatchObject({ code: "TURN_CANCELLATION_SESSION_CLOSED" });
+  });
+
   test("keeps a late cancellation from running after a newer turn starts", async () => {
     const gate = new TurnCancellationGate();
     let activeTurnId: string | null = "turn-a";

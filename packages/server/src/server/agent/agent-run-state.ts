@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 
 import { getAgentStreamEventTurnId, type AgentStreamEvent } from "./agent-sdk-types.js";
 
+export interface PendingAgentSessionEvent {
+  readonly generation: symbol;
+  readonly event: AgentStreamEvent;
+}
+
 export interface ForegroundTurnWaiter {
   turnId: string;
   callback: (event: AgentStreamEvent) => void;
@@ -13,7 +18,7 @@ export interface ForegroundTurnWaiter {
 export interface PendingForegroundRun {
   token: string;
   kind: "foreground";
-  stagedEvents: AgentStreamEvent[];
+  stagedEvents: PendingAgentSessionEvent[];
   start:
     | { status: "pending" }
     | { status: "started"; turnId: string }

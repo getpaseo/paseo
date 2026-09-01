@@ -4143,81 +4143,87 @@ export class CodexAppServerAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
-    await this.turnCancellationGate.waitForQuiescence();
-    if (this.activeForegroundTurnId || this.pendingForegroundStart) {
-      throw new Error("A foreground turn is already active");
-    }
-
-    let resolveStart!: () => void;
-    const pendingStart = {
-      promise: new Promise<void>((resolve) => {
-        resolveStart = resolve;
-      }),
-      resolve: () => resolveStart(),
-      cancelRequested: false,
-    };
-    this.pendingForegroundStart = pendingStart;
-
-    this.dismissPendingPlanApprovals("Dismissed by a new prompt");
-
+    const start = this.turnCancellationGate.beginStart();
     try {
-      await this.connect();
-      if (!this.client) {
-        throw new Error("Codex client not initialized");
+      await this.turnCancellationGate.waitForQuiescence(start);
+      if (this.activeForegroundTurnId || this.pendingForegroundStart) {
+        throw new Error("A foreground turn is already active");
       }
 
-      const slashCommand = await this.resolveSlashCommandInvocation(prompt);
-      const effectivePrompt = slashCommand
-        ? await this.buildCommandPromptInput(slashCommand.commandName, slashCommand.args)
-        : prompt;
-
-      if (this.currentThreadId) {
-        await this.ensureThreadLoaded();
-      } else {
-        await this.ensureThread();
-      }
-
-      const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
-      const turnId = this.createTurnId();
-      this.activeForegroundTurnId = turnId;
-      this.activeClientMessageId = options?.clientMessageId ?? null;
-      this.currentTurnId = null;
-      this.pendingForegroundTurnIdentification?.resolve(null);
-      let resolveTurnIdentification!: (identifiedTurnId: string | null) => void;
-      const turnIdentification = new Promise<string | null>((resolvePromise) => {
-        resolveTurnIdentification = resolvePromise;
-      });
-      this.pendingForegroundTurnIdentification = {
-        foregroundTurnId: turnId,
-        promise: turnIdentification,
-        resolve: resolveTurnIdentification,
+      let resolveStart!: () => void;
+      const pendingStart = {
+        promise: new Promise<void>((resolve) => {
+          resolveStart = resolve;
+        }),
+        resolve: () => resolveStart(),
+        cancelRequested: false,
       };
+      this.pendingForegroundStart = pendingStart;
 
-      this.logTurnStartSummary({
-        turnId,
-        thinkingOptionId: turnStart.thinkingOptionId,
-        approvalPolicy: turnStart.approvalPolicy,
-        sandboxPolicyType: turnStart.sandboxPolicyType,
-        hasOutputSchema: turnStart.hasOutputSchema,
-        hasDeveloperInstructions: turnStart.hasDeveloperInstructions,
-        hasCodexConfig: turnStart.hasCodexConfig,
-      });
-      if (pendingStart.cancelRequested) {
-        throw new Error("Codex turn start was interrupted before reaching Codex");
+      this.dismissPendingPlanApprovals("Dismissed by a new prompt");
+
+      try {
+        await this.connect();
+        if (!this.client) {
+          throw new Error("Codex client not initialized");
+        }
+
+        const slashCommand = await this.resolveSlashCommandInvocation(prompt);
+        const effectivePrompt = slashCommand
+          ? await this.buildCommandPromptInput(slashCommand.commandName, slashCommand.args)
+          : prompt;
+
+        if (this.currentThreadId) {
+          await this.ensureThreadLoaded();
+        } else {
+          await this.ensureThread();
+        }
+
+        const turnStart = await this.buildTurnStartParams(effectivePrompt, options);
+        const turnId = this.createTurnId();
+        this.activeForegroundTurnId = turnId;
+        this.activeClientMessageId = options?.clientMessageId ?? null;
+        this.currentTurnId = null;
+        this.pendingForegroundTurnIdentification?.resolve(null);
+        let resolveTurnIdentification!: (identifiedTurnId: string | null) => void;
+        const turnIdentification = new Promise<string | null>((resolvePromise) => {
+          resolveTurnIdentification = resolvePromise;
+        });
+        this.pendingForegroundTurnIdentification = {
+          foregroundTurnId: turnId,
+          promise: turnIdentification,
+          resolve: resolveTurnIdentification,
+        };
+
+        this.logTurnStartSummary({
+          turnId,
+          thinkingOptionId: turnStart.thinkingOptionId,
+          approvalPolicy: turnStart.approvalPolicy,
+          sandboxPolicyType: turnStart.sandboxPolicyType,
+          hasOutputSchema: turnStart.hasOutputSchema,
+          hasDeveloperInstructions: turnStart.hasDeveloperInstructions,
+          hasCodexConfig: turnStart.hasCodexConfig,
+        });
+        this.turnCancellationGate.assertCurrent(start);
+        if (pendingStart.cancelRequested) {
+          throw new Error("Codex turn start was interrupted before reaching Codex");
+        }
+        await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
+        return { turnId };
+      } catch (error) {
+        this.pendingForegroundTurnIdentification?.resolve(null);
+        this.pendingForegroundTurnIdentification = null;
+        this.activeForegroundTurnId = null;
+        this.activeClientMessageId = null;
+        throw error;
+      } finally {
+        if (this.pendingForegroundStart === pendingStart) {
+          this.pendingForegroundStart = null;
+        }
+        pendingStart.resolve();
       }
-      await this.client.request("turn/start", turnStart.params, TURN_START_TIMEOUT_MS);
-      return { turnId };
-    } catch (error) {
-      this.pendingForegroundTurnIdentification?.resolve(null);
-      this.pendingForegroundTurnIdentification = null;
-      this.activeForegroundTurnId = null;
-      this.activeClientMessageId = null;
-      throw error;
     } finally {
-      if (this.pendingForegroundStart === pendingStart) {
-        this.pendingForegroundStart = null;
-      }
-      pendingStart.resolve();
+      start.complete();
     }
   }
 

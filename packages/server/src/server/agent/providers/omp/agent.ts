@@ -952,75 +952,81 @@ export class OmpAgentSession implements AgentSession {
   }
 
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<StartTurnResult> {
-    await this.turnCancellationGate.waitForQuiescence();
-    if (this.activeTurnId) {
-      throw new Error("An OMP turn is already active");
-    }
+    const start = this.turnCancellationGate.beginStart();
+    try {
+      await this.turnCancellationGate.waitForQuiescence(start);
+      if (this.activeTurnId) {
+        throw new Error("An OMP turn is already active");
+      }
+      this.turnCancellationGate.assertCurrent(start);
 
-    const payload = convertPromptInput(prompt, { model: this.state.model });
-    const turnId = randomUUID();
-    this.live = true;
-    this.activeTurnId = turnId;
-    this.activeClientMessageId = options?.clientMessageId ?? null;
-    this.activeAssistantMessageId = null;
-    this.activeTurnTerminalAssistantMessage = null;
-    this.activeTurnStarted = false;
-    this.activeTurnHasUserMessage = false;
-    this.activePromptRequestId = null;
-    this.clearNoTurnBuffers();
-    this.activeNoTurnPromptText = payload.text;
-    this.usagePoller.startTurn();
+      const payload = convertPromptInput(prompt, { model: this.state.model });
+      const turnId = randomUUID();
+      this.live = true;
+      this.activeTurnId = turnId;
+      this.activeClientMessageId = options?.clientMessageId ?? null;
+      this.activeAssistantMessageId = null;
+      this.activeTurnTerminalAssistantMessage = null;
+      this.activeTurnStarted = false;
+      this.activeTurnHasUserMessage = false;
+      this.activePromptRequestId = null;
+      this.clearNoTurnBuffers();
+      this.activeNoTurnPromptText = payload.text;
+      this.usagePoller.startTurn();
 
-    void (async () => {
-      try {
-        const ack = await this.runtimeSession.prompt(payload.text, payload.images);
-        this.activePromptRequestId = ack.requestId ?? null;
-        const correlatedResult = ack.requestId
-          ? this.pendingPromptResults.get(ack.requestId)
-          : undefined;
-        if (ack.requestId) {
-          this.pendingPromptResults.delete(ack.requestId);
-        }
-        this.activePromptAgentInvoked = correlatedResult ?? ack.agentInvoked ?? null;
-        if (correlatedResult === false) {
-          this.scheduleNoTurnPromptCompletion(turnId);
-          return;
-        }
-        if (correlatedResult !== true && ack.agentInvoked === false) {
-          await this.completeNoTurnPrompt(turnId);
-          return;
-        }
-      } catch (error) {
-        if (this.activeTurnId !== turnId) {
-          return;
-        }
-        this.usagePoller.stopTurn();
-        this.activeTurnId = null;
-        this.activeClientMessageId = null;
-        this.activeTurnStarted = false;
-        this.activeTurnHasUserMessage = false;
-        this.activeAssistantMessageId = null;
-        this.activeTurnTerminalAssistantMessage = null;
-        this.clearNoTurnBuffers();
-        if (isOmpRequestAbortError(error)) {
+      void (async () => {
+        try {
+          const ack = await this.runtimeSession.prompt(payload.text, payload.images);
+          this.activePromptRequestId = ack.requestId ?? null;
+          const correlatedResult = ack.requestId
+            ? this.pendingPromptResults.get(ack.requestId)
+            : undefined;
+          if (ack.requestId) {
+            this.pendingPromptResults.delete(ack.requestId);
+          }
+          this.activePromptAgentInvoked = correlatedResult ?? ack.agentInvoked ?? null;
+          if (correlatedResult === false) {
+            this.scheduleNoTurnPromptCompletion(turnId);
+            return;
+          }
+          if (correlatedResult !== true && ack.agentInvoked === false) {
+            await this.completeNoTurnPrompt(turnId);
+            return;
+          }
+        } catch (error) {
+          if (this.activeTurnId !== turnId) {
+            return;
+          }
+          this.usagePoller.stopTurn();
+          this.activeTurnId = null;
+          this.activeClientMessageId = null;
+          this.activeTurnStarted = false;
+          this.activeTurnHasUserMessage = false;
+          this.activeAssistantMessageId = null;
+          this.activeTurnTerminalAssistantMessage = null;
+          this.clearNoTurnBuffers();
+          if (isOmpRequestAbortError(error)) {
+            this.emit({
+              type: "turn_canceled",
+              provider: this.provider,
+              turnId,
+              reason: toDiagnosticErrorMessage(error),
+            });
+            return;
+          }
           this.emit({
-            type: "turn_canceled",
+            type: "turn_failed",
             provider: this.provider,
             turnId,
-            reason: toDiagnosticErrorMessage(error),
+            error: toDiagnosticErrorMessage(error),
           });
-          return;
         }
-        this.emit({
-          type: "turn_failed",
-          provider: this.provider,
-          turnId,
-          error: toDiagnosticErrorMessage(error),
-        });
-      }
-    })();
+      })();
 
-    return { turnId };
+      return { turnId };
+    } finally {
+      start.complete();
+    }
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -1128,6 +1134,11 @@ export class OmpAgentSession implements AgentSession {
       return;
     }
     if (!turnId) {
+      await this.turnCancellationGate.interrupt(
+        expectedTurnId,
+        () => this.activeTurnId,
+        async () => {},
+      );
       return;
     }
     await this.turnCancellationGate.interrupt(

@@ -167,6 +167,16 @@ class RecordingTimelineStore implements AgentTimelineStore {
   }
 }
 
+class HangingTimelineReadStore extends RecordingTimelineStore {
+  readonly lastItemRead = deferred<AgentTimelineItem | null>();
+  getLastItemCalls = 0;
+
+  override async getLastItem(_agentId: string): Promise<AgentTimelineItem | null> {
+    this.getLastItemCalls += 1;
+    return await this.lastItemRead.promise;
+  }
+}
+
 function createFeature(args: { id: string; label: string; value: boolean }): AgentFeature {
   return {
     type: "toggle",
@@ -2346,6 +2356,151 @@ test("reloadAgentSession completes when the previous session close hangs", async
   }
 });
 
+test("drops an old queued tail before dispatching events from the replacement session", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-session-generation-"));
+  const agentId = "00000000-0000-4000-8000-000000000312";
+  const timelineStore = new HangingTimelineReadStore();
+  const sessions: ControlledInterruptSession[] = [];
+
+  class ReloadClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new ControlledInterruptSession(config, "initial-turn", async () => {});
+      sessions.push(session);
+      return session;
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      const session = new ControlledInterruptSession(
+        {
+          provider: "codex",
+          cwd: config?.cwd ?? workdir,
+          ...config,
+        },
+        "replacement-turn",
+        async () => {},
+      );
+      sessions.push(session);
+      return session;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ReloadClient() },
+    durableTimelineStore: timelineStore,
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+    idFactory: () => agentId,
+  });
+
+  let reload: Promise<ManagedAgent> | undefined;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const oldSession = sessions[0]!;
+    oldSession.pushEvent({
+      type: "turn_failed",
+      provider: oldSession.provider,
+      turnId: "old-turn",
+      error: "old generation failure",
+    });
+    await vi.waitFor(() => {
+      expect(timelineStore.getLastItemCalls).toBeGreaterThan(0);
+    });
+
+    reload = manager.reloadAgentSession(agent.id);
+    const reloadOutcome = await Promise.race([
+      reload,
+      new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 500)),
+    ]);
+    expect(reloadOutcome).not.toBe("timed_out");
+    expect(sessions).toHaveLength(2);
+    expect(sessions[0]?.closeCalled).toBe(true);
+    const replacementSession = sessions[1]!;
+
+    replacementSession.pushEvent({
+      type: "mode_changed",
+      provider: replacementSession.provider,
+      currentModeId: "replacement-mode",
+      availableModes: [],
+    });
+    await vi.waitFor(() => {
+      expect(manager.getAgent(agent.id)?.currentModeId).toBe("replacement-mode");
+    });
+
+    timelineStore.lastItemRead.resolve(null);
+    await reload;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(manager.getTimeline(agent.id)).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ text: expect.stringContaining("old generation failure") }),
+      ]),
+    );
+  } finally {
+    timelineStore.lastItemRead.resolve(null);
+    if (reload) await reload.catch(() => undefined);
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("closes the provider session after a queued event exceeds the drain bound", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-close-queued-tail-"));
+  const agentId = "00000000-0000-4000-8000-000000000313";
+  const timelineStore = new HangingTimelineReadStore();
+  const session = new ControlledInterruptSession(
+    { provider: "codex", cwd: workdir },
+    "close-turn",
+    async () => {},
+  );
+  const client = new (class extends TestAgentClient {
+    override async createSession(): Promise<AgentSession> {
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    durableTimelineStore: timelineStore,
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 10 },
+    idFactory: () => agentId,
+  });
+
+  let closing: Promise<void> | undefined;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    session.pushEvent({
+      type: "turn_failed",
+      provider: session.provider,
+      turnId: "old-close-turn",
+      error: "queued close failure",
+    });
+    await vi.waitFor(() => {
+      expect(timelineStore.getLastItemCalls).toBeGreaterThan(0);
+    });
+
+    closing = manager.closeAgent(agent.id);
+    const closeOutcome = await Promise.race([
+      closing,
+      new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 500)),
+    ]);
+    expect(closeOutcome).not.toBe("timed_out");
+    expect(session.closeCalled).toBe(true);
+    await manager.flush();
+  } finally {
+    timelineStore.lastItemRead.resolve(null);
+    if (closing) await closing.catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("cancelAgentRun preserves running state when the provider interrupt hangs", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-timeout",
@@ -2565,7 +2720,7 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
   }
 });
 
-test("cancelAgentRun succeeds when the foreground turn finishes before the provider rejects the interrupt", async () => {
+test("cancelAgentRun quarantines when the foreground turn finishes before the provider rejects the interrupt", async () => {
   let fixture!: ControlledInterruptFixture;
   fixture = await createControlledInterruptFixture({
     name: "interrupt-after-completion",
@@ -2587,8 +2742,9 @@ test("cancelAgentRun succeeds when the foreground turn finishes before the provi
     await fixture.startForegroundRun();
 
     await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
-      status: "settled",
+      status: "refused",
     });
+    expect(fixture.session.closeCalled).toBe(true);
     expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
       lifecycle: "idle",
       activeForegroundTurnId: null,
@@ -2598,7 +2754,7 @@ test("cancelAgentRun succeeds when the foreground turn finishes before the provi
   }
 });
 
-test("cancelAgentRun succeeds when the provider queues completion before rejecting the interrupt", async () => {
+test("cancelAgentRun quarantines when the provider queues completion before rejecting the interrupt", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-queued-completion",
     agentId: "00000000-0000-4000-8000-000000000306",
@@ -2617,14 +2773,98 @@ test("cancelAgentRun succeeds when the provider queues completion before rejecti
     await fixture.startForegroundRun();
 
     await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
-      status: "settled",
+      status: "refused",
     });
+    expect(fixture.session.closeCalled).toBe(true);
     expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
       lifecycle: "idle",
       activeForegroundTurnId: null,
     });
   } finally {
     await fixture.cleanup();
+  }
+});
+
+test("reloads a fresh session after a failed interrupt races with a terminal event", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-cancel-terminal-reload-"));
+  const agentId = "00000000-0000-4000-8000-000000000311";
+  const sessions: ControlledInterruptSession[] = [];
+
+  class RecreatingClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const isFirstSession = sessions.length === 0;
+      const session = new ControlledInterruptSession(
+        config,
+        isFirstSession ? "turn-a" : "turn-b",
+        isFirstSession
+          ? async () => {
+              throw new Error("native abort failed");
+            }
+          : async (current) => {
+              current.pushEvent({
+                type: "turn_canceled",
+                provider: current.provider,
+                turnId: "turn-b",
+                reason: "interrupted",
+              });
+            },
+      );
+      sessions.push(session);
+      return session;
+    }
+
+    override async resumeSession(): Promise<AgentSession> {
+      throw new Error("quarantined sessions must not be resumed");
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new RecreatingClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    rescueTimeouts: { interruptSessionMs: 10, reloadSessionCloseMs: 10 },
+    idFactory: () => agentId,
+  });
+  const managerEvents: AgentManagerEvent[] = [];
+  manager.subscribe((event) => managerEvents.push(event), { replayState: false });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const initialRun = manager.streamAgent(agent.id, "first");
+    void (async () => {
+      for await (const _event of initialRun) {
+        // Keep the foreground run subscribed through the terminal event race.
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    await expect(manager.cancelAgentRun(agent.id)).resolves.toEqual({ status: "refused" });
+    expect(sessions[0]?.closeCalled).toBe(true);
+
+    const eventCountBeforeLateTerminal = managerEvents.length;
+    sessions[0]?.pushEvent({
+      type: "turn_completed",
+      provider: "codex",
+      turnId: "turn-a",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(managerEvents.slice(eventCountBeforeLateTerminal)).toEqual([]);
+
+    const reloaded = await manager.reloadAgentSession(agent.id);
+    expect(reloaded.id).toBe(agent.id);
+    expect(sessions).toHaveLength(2);
+    expect(sessions[1]).not.toBe(sessions[0]);
+
+    const replacement = manager.streamAgent(agent.id, "replacement");
+    await expect(replacement.next()).resolves.toMatchObject({
+      value: { type: "turn_started", turnId: "turn-b" },
+    });
+    await replacement.return(undefined);
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
   }
 });
 

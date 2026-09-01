@@ -2203,100 +2203,118 @@ class ClaudeAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
-    await this.turnCancellationGate.waitForQuiescence();
-    if (this.closed) {
-      throw new Error("Claude session is closed");
-    }
-    if (this.activeForegroundTurnId) {
-      throw new Error("A foreground turn is already active");
-    }
+    const start = this.turnCancellationGate.beginStart();
+    try {
+      await this.turnCancellationGate.waitForQuiescence(start);
+      if (this.closed) {
+        throw new Error("Claude session is closed");
+      }
+      if (this.activeForegroundTurnId) {
+        throw new Error("A foreground turn is already active");
+      }
 
-    const slashCommand = this.resolveSlashCommandInvocation(prompt);
-    if (slashCommand?.commandName === REWIND_COMMAND_NAME) {
+      const slashCommand = this.resolveSlashCommandInvocation(prompt);
+      if (slashCommand?.commandName === REWIND_COMMAND_NAME) {
+        const turnId = this.createTurnId("foreground");
+        this.activeForegroundTurnId = turnId;
+        this.transitionTurnState("foreground", "rewind command");
+        void this.executeRewindTurn(turnId, slashCommand);
+        return { turnId };
+      }
+
+      if (this.autonomousTurn) {
+        this.completeAutonomousTurn();
+      }
+
+      const sdkMessage = this.toSdkUserMessage(prompt);
+      const sdkUserMessageId =
+        typeof sdkMessage.uuid === "string" && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null;
+      this.rememberRewindUserAnchor(sdkUserMessageId);
       const turnId = this.createTurnId("foreground");
       this.activeForegroundTurnId = turnId;
-      this.transitionTurnState("foreground", "rewind command");
-      void this.executeRewindTurn(turnId, slashCommand);
-      return { turnId };
-    }
+      this.foregroundHasVisibleActivity = false;
+      this.activeTurnHasAssistantText = false;
+      this.contextUsage.beginTurn();
+      this.transitionTurnState("foreground", "foreground turn started");
+      this.clearRecentStderr();
 
-    if (this.autonomousTurn) {
-      this.completeAutonomousTurn();
-    }
-
-    const sdkMessage = this.toSdkUserMessage(prompt);
-    const sdkUserMessageId =
-      typeof sdkMessage.uuid === "string" && sdkMessage.uuid.length > 0 ? sdkMessage.uuid : null;
-    this.rememberRewindUserAnchor(sdkUserMessageId);
-    const turnId = this.createTurnId("foreground");
-    this.activeForegroundTurnId = turnId;
-    this.foregroundHasVisibleActivity = false;
-    this.activeTurnHasAssistantText = false;
-    this.contextUsage.beginTurn();
-    this.transitionTurnState("foreground", "foreground turn started");
-    this.clearRecentStderr();
-
-    let cancelIssued = false;
-    const requestCancel = (): Promise<void> => {
-      if (cancelIssued) {
-        return Promise.resolve();
-      }
-      cancelIssued = true;
-      if (this.cancelCurrentTurn === requestCancel) {
-        this.cancelCurrentTurn = null;
-      }
-      const queryToInterrupt = this.activeForegroundQuery ?? this.query;
-      this.interruptingTurnId = turnId;
-      this.rejectAllPendingPermissions(new Error("Permission request canceled"));
-      return this.turnCancellationGate
-        .interrupt(
-          turnId,
-          () => this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? this.interruptingTurnId,
-          async (targetTurnId) => {
-            await this.interruptActiveTurn(queryToInterrupt, targetTurnId);
-          },
-        )
-        .then(() => {
-          if (this.activeForegroundTurnId === turnId) {
-            this.finishForegroundTurn({
-              type: "turn_canceled",
-              provider: "claude",
-              reason: "Interrupted",
-            });
-          }
-          return undefined;
-        })
-        .finally(() => {
-          if (this.interruptingTurnId === turnId) {
-            this.interruptingTurnId = null;
-          }
-        });
-    };
-    this.cancelCurrentTurn = requestCancel;
-
-    this.notifySubscribers({ type: "turn_started", provider: "claude" });
-
-    try {
-      await this.ensureQuery();
-      if (!this.input) {
-        throw new Error("Claude session input stream not initialized");
-      }
-      this.activeForegroundQuery = this.query;
-      this.activeForegroundInput = this.input;
-      this.startQueryPump();
-      this.input.push(sdkMessage);
-      setTimeout(() => {
-        if (this.activeForegroundTurnId === turnId) {
-          this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId);
+      let cancelIssued = false;
+      const requestCancel = (): Promise<void> => {
+        if (cancelIssued) {
+          return Promise.resolve();
         }
-      }, 0);
-    } catch (error) {
-      this.finishForegroundTurn(
-        this.buildTurnFailedEvent(error instanceof Error ? error.message : "Claude stream failed"),
-      );
-    }
+        cancelIssued = true;
+        if (this.cancelCurrentTurn === requestCancel) {
+          this.cancelCurrentTurn = null;
+        }
+        const queryToInterrupt = this.activeForegroundQuery ?? this.query;
+        this.interruptingTurnId = turnId;
+        this.rejectAllPendingPermissions(new Error("Permission request canceled"));
+        return this.turnCancellationGate
+          .interrupt(
+            turnId,
+            () => this.activeForegroundTurnId ?? this.autonomousTurn?.id ?? this.interruptingTurnId,
+            async (targetTurnId) => {
+              await this.interruptActiveTurn(queryToInterrupt, targetTurnId);
+              if (this.activeForegroundTurnId === turnId) {
+                this.finishForegroundTurn({
+                  type: "turn_canceled",
+                  provider: "claude",
+                  reason: "Interrupted",
+                });
+              }
+            },
+          )
+          .then(() => {
+            if (this.activeForegroundTurnId === turnId) {
+              this.finishForegroundTurn({
+                type: "turn_canceled",
+                provider: "claude",
+                reason: "Interrupted",
+              });
+            }
+            return undefined;
+          })
+          .finally(() => {
+            if (this.interruptingTurnId === turnId) {
+              this.interruptingTurnId = null;
+            }
+          });
+      };
+      this.cancelCurrentTurn = requestCancel;
 
-    return { turnId };
+      this.notifySubscribers({ type: "turn_started", provider: "claude" });
+
+      try {
+        await this.ensureQuery();
+        if (!this.input) {
+          throw new Error("Claude session input stream not initialized");
+        }
+        this.turnCancellationGate.assertCurrent(start);
+        this.activeForegroundQuery = this.query;
+        this.activeForegroundInput = this.input;
+        this.startQueryPump();
+        this.input.push(sdkMessage);
+        setTimeout(() => {
+          if (this.activeForegroundTurnId === turnId) {
+            this.emitSubmittedUserMessage(sdkMessage, turnId, options?.clientMessageId);
+          }
+        }, 0);
+      } catch (error) {
+        if (!this.turnCancellationGate.isCurrent(start)) {
+          return { turnId };
+        }
+        this.finishForegroundTurn(
+          this.buildTurnFailedEvent(
+            error instanceof Error ? error.message : "Claude stream failed",
+          ),
+        );
+      }
+
+      return { turnId };
+    } finally {
+      start.complete();
+    }
   }
 
   async steerActiveTurn(

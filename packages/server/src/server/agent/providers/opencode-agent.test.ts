@@ -3662,6 +3662,59 @@ describe("OpenCode adapter startTurn error handling", () => {
     }
   });
 
+  test("does not dispatch a prompt after cancellation during OpenCode startup", async () => {
+    const openCode = new TestOpenCodeClient();
+    openCode.sessionPromptAsyncEvents = [];
+    const streamReady = createTestDeferred<void>();
+    const readinessStarted = createTestDeferred<void>();
+    const session = new __openCodeInternals.OpenCodeAgentSession(
+      { provider: "opencode", cwd: "/workspace/repo" },
+      openCode.asSdkClient(),
+      "ses_start_canceled",
+      createTestLogger(),
+      new Map(),
+      {
+        ready: () => {
+          readinessStarted.resolve();
+          return streamReady.promise;
+        },
+        subscribe: () => () => undefined,
+      },
+    );
+
+    try {
+      const start = session.startTurn("canceled during startup");
+      await readinessStarted.promise;
+      const cancellation = session.interrupt();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      expect(openCode.calls.sessionAbort).toHaveLength(1);
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
+
+      streamReady.resolve();
+      const startOutcome = await Promise.race([
+        start.then(
+          () => ({ status: "resolved" as const }),
+          (error: unknown) => ({ status: "rejected" as const, error }),
+        ),
+        new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 100)),
+      ]);
+      expect(startOutcome).not.toBe("timed_out");
+      expect(startOutcome).toMatchObject({
+        status: "rejected",
+        error: { code: "TURN_START_CANCELED" },
+      });
+      const cancellationOutcome = await Promise.race([
+        cancellation,
+        new Promise<"timed_out">((resolve) => setTimeout(() => resolve("timed_out"), 100)),
+      ]);
+      expect(cancellationOutcome).not.toBe("timed_out");
+      expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
+    } finally {
+      streamReady.resolve();
+      await session.close();
+    }
+  });
+
   test("allows the shared stream to recover once after its thirty-second watchdog", async () => {
     vi.useFakeTimers();
     const openCode = new TestOpenCodeClient();
