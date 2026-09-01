@@ -1,14 +1,16 @@
 import { useCallback, useMemo, useRef } from "react";
-import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
+import { Text, View } from "react-native";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, GitBranch } from "lucide-react-native";
+import { GitBranch } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { Theme } from "@/styles/theme";
 import { Combobox, ComboboxItem, type ComboboxProps } from "@/components/ui/combobox";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useToast } from "@/contexts/toast-context";
 import { useBranchSwitcher } from "@/hooks/use-branch-switcher";
+import { ToolbarLabelSelectTrigger } from "@/components/ui/toolbar-label-trigger";
 
 interface BranchSwitcherProps {
   currentBranchName: string | null;
@@ -22,9 +24,7 @@ interface BranchSwitcherProps {
 const foregroundMutedIconColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
-
 const ThemedGitBranch = withUnistyles(GitBranch);
-const ThemedChevronDown = withUnistyles(ChevronDown);
 
 export function BranchSwitcher({
   currentBranchName,
@@ -55,14 +55,6 @@ export function BranchSwitcher({
 
   const handleOpen = useCallback(() => setIsOpen(true), [setIsOpen]);
 
-  const triggerStyle = useCallback(
-    ({ hovered = false, pressed }: PressableStateCallbackType & { hovered?: boolean }) => [
-      styles.trigger,
-      (Boolean(hovered) || pressed) && styles.triggerHovered,
-    ],
-    [],
-  );
-
   const branchLeadingSlot = useMemo(
     () => <ThemedGitBranch size={14} uniProps={foregroundMutedIconColorMapping} />,
     [],
@@ -87,19 +79,23 @@ export function BranchSwitcher({
 
   return (
     <View ref={anchorRef} collapsable={false} style={styles.anchor}>
-      <Pressable
-        testID={testID}
-        onPress={handleOpen}
-        style={triggerStyle}
-        accessibilityRole="button"
-        accessibilityLabel={t("branchSwitcher.currentBranch", { branchName: currentBranchName })}
-      >
-        <ThemedGitBranch size={14} uniProps={foregroundMutedIconColorMapping} />
-        <Text style={styles.branchLabel} numberOfLines={1}>
-          {currentBranchName}
-        </Text>
-        <ThemedChevronDown size={12} uniProps={foregroundMutedIconColorMapping} />
-      </Pressable>
+      <Tooltip delayDuration={300} enabledOnDesktop enabledOnMobile={false}>
+        <TooltipTrigger asChild>
+          <ToolbarLabelSelectTrigger
+            testID={testID}
+            label={currentBranchName}
+            open={isOpen}
+            onPress={handleOpen}
+            accessibilityRole="button"
+            accessibilityLabel={t("branchSwitcher.currentBranch", {
+              branchName: currentBranchName,
+            })}
+          />
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          <Text style={styles.tooltipText}>{t("branchSwitcher.triggerTooltip")}</Text>
+        </TooltipContent>
+      </Tooltip>
       <Combobox
         options={branchOptions}
         value={currentBranchName}
@@ -126,24 +122,8 @@ const styles = StyleSheet.create((theme) => ({
     flexShrink: 1,
     minWidth: 0,
   },
-  trigger: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[1],
-    minWidth: 0,
-    paddingVertical: theme.spacing[1],
-    paddingHorizontal: theme.spacing[2],
-    marginLeft: -theme.spacing[2],
-    borderRadius: theme.borderRadius.md,
-    flexShrink: 1,
-  },
-  triggerHovered: {
-    backgroundColor: theme.colors.surface1,
-  },
-  branchLabel: {
+  tooltipText: {
+    color: theme.colors.popoverForeground,
     fontSize: theme.fontSize.sm,
-    color: theme.colors.foreground,
-    fontWeight: theme.fontWeight.medium,
-    flexShrink: 1,
   },
 }));

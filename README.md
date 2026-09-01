@@ -111,8 +111,8 @@ paseo ls                           # list running agents
 paseo attach abc123                # stream live output
 paseo send abc123 "also add tests" # follow-up task
 
-# run on a remote daemon
-paseo --host workstation.local:6767 run "run the full test suite"
+# run on a remote daemon; --cwd is a path on that host
+paseo run --host workstation.local:6767 --cwd /workspace "run the full test suite"
 ```
 
 See the [full CLI reference](https://paseo.sh/docs/cli) for more.
@@ -188,9 +188,8 @@ npm run typecheck
 ## Related projects
 
 - [getpaseo/paseo-relay](https://github.com/getpaseo/paseo-relay) — official distributed relay, written in Elixir
-- [paseo-skins](https://github.com/huangguang1999/paseo-skins) — community themes and a zero-patch desktop theme loader with an Agent Skill
 - [paseo-vscode](https://marketplace.visualstudio.com/items?itemName=hinnes.paseo-vscode) — VS Code extension
 
 ## License
 
-AGPL-3.0
+Apache-2.0

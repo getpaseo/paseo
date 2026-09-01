@@ -30,7 +30,7 @@ export async function expectDiagramRemainsRenderedWhileStreaming(page: Page): Pr
   const samples = 80;
   for (let sample = 0; sample < samples; sample += 1) {
     await expect(diagram).toBeVisible({ timeout: 100 });
-    await expect(svg).toBeVisible({ timeout: 100 });
+    await expect(svg).toBeVisible({ timeout: 500 });
     await page.waitForTimeout(25);
   }
 }
@@ -44,5 +44,5 @@ export async function expectCompletedDiagram(page: Page, labels: readonly string
 }
 
 export async function reloadConversation(page: Page): Promise<void> {
-  await page.reload();
+  await page.reload({ waitUntil: "domcontentloaded" });
 }

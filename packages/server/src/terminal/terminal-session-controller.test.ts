@@ -12,6 +12,7 @@ import type { ServerMessage, TerminalSession, TerminalStateSnapshot } from "./te
 import { TerminalSessionController } from "./terminal-session-controller.js";
 import type { TerminalManager, TerminalsChangedEvent } from "./terminal-manager.js";
 import { isSameOrDescendantPath } from "../server/path-utils.js";
+import { PluginSessionSocket } from "../server/plugins/session-socket.js";
 
 function deferred<T>(): {
   promise: Promise<T>;
@@ -616,11 +617,23 @@ describe("terminal-session-controller workspace-scoped subscriptions", () => {
 
     controller.dispatch({ type: "subscribe_terminals_request", cwd, workspaceId: "ws-a" });
     controller.dispatch({ type: "subscribe_terminals_request", cwd, workspaceId: "ws-b" });
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-a" })).resolves.toBe(
+      true,
+    );
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-b" })).resolves.toBe(
+      true,
+    );
     await flushMicrotasks();
     outboundMessages.length = 0;
 
     // Tearing down workspace B must not drop workspace A's live subscription.
     controller.dispatch({ type: "unsubscribe_terminals_request", cwd, workspaceId: "ws-b" });
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-a" })).resolves.toBe(
+      true,
+    );
+    await expect(controller.hasDirectorySubscription({ cwd, workspaceId: "ws-b" })).resolves.toBe(
+      false,
+    );
 
     changedListener?.({ cwd, terminals: [{ id: "a", name: "A", cwd, workspaceId: "ws-a" }] });
     await flushMicrotasks();
@@ -753,6 +766,21 @@ describe("terminal-session-controller backpressure snapshot fallback", () => {
 
     expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Snapshot)).toBe(false);
     expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Output)).toBe(true);
+  });
+
+  test("uses plugin IPC queued bytes to enter the snapshot backpressure path", async () => {
+    const socket = new PluginSessionSocket({
+      send() {
+        return true;
+      },
+    });
+    socket.send(new Uint8Array(8 * 1024 * 1024));
+    const { pushOutput, frames } = await setup(() => socket.bufferedAmount);
+
+    pushOutput("p".repeat(300 * 1024));
+    await waitForCoalescerFlush();
+
+    expect(frames.some((frame) => frame.opcode === TerminalStreamOpcode.Snapshot)).toBe(true);
   });
 
   test("falls back to a snapshot at the byte threshold when no backpressure signal exists", async () => {

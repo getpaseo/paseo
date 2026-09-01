@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "pino";
@@ -14,11 +15,13 @@ import {
   unavailableUsage,
 } from "../usage.js";
 
-// Cursor stores auth in VS Code's ItemTable (state.vscdb). Modern builds keep the
-// access token as a plain JWT string under `cursorAuth/accessToken`; older builds
+// Cursor desktop stores auth in VS Code's ItemTable (state.vscdb). Modern builds keep
+// the access token as a plain JWT string under `cursorAuth/accessToken`; older builds
 // kept a JSON blob under `cursorAuthStatus`. Read it with node:sqlite so we don't
 // depend on a `sqlite3` CLI, which isn't installed by default on Windows (or on many
 // Linux hosts) — a missing binary silently rendered Cursor usage unavailable.
+// Headless hosts (VPS, cursor-agent only) have no desktop db; their session lives in
+// ~/.config/cursor/auth.json instead.
 const CURSOR_ACCESS_TOKEN_KEY = "cursorAuth/accessToken";
 const CURSOR_LEGACY_AUTH_KEY = "cursorAuthStatus";
 
@@ -157,6 +160,21 @@ async function readCursorTokenFromSqlite(homeDir: string, logger: Logger): Promi
   return null;
 }
 
+async function readCursorTokenFromAuthJson(
+  homeDir: string,
+  logger: Logger,
+): Promise<string | null> {
+  const path = join(homeDir, ".config", "cursor", "auth.json");
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = CursorAuthStatusSchema.parse(JSON.parse(await readFile(path, "utf8")));
+    return parsed.accessToken?.trim() || null;
+  } catch (err) {
+    logger.debug({ err, path }, "Failed to read Cursor token from auth.json");
+    return null;
+  }
+}
+
 export class CursorQuotaProvider implements ProviderUsageFetcher {
   readonly providerId = "cursor";
   readonly displayName = "Cursor";
@@ -175,7 +193,8 @@ export class CursorQuotaProvider implements ProviderUsageFetcher {
     const token =
       process.env["CURSOR_ACCESS_TOKEN"] ||
       process.env["CURSOR_TOKEN"] ||
-      (await readCursorTokenFromSqlite(this.homeDir, this.logger));
+      (await readCursorTokenFromSqlite(this.homeDir, this.logger)) ||
+      (await readCursorTokenFromAuthJson(this.homeDir, this.logger));
 
     if (!token) return unavailableUsage(this);
 

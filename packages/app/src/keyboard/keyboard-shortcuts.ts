@@ -171,7 +171,11 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   ],
   "tabs-panes": [
     "workspace-tab-new",
+    "workspace-tab-target-agent",
     "workspace-terminal-new",
+    "workspace-tab-target-browser",
+    "workspace-tab-target-changes",
+    "workspace-tab-target-files",
     "workspace-tab-close-current",
     "workspace-tab-jump-index",
     "workspace-tab-prev",
@@ -205,6 +209,10 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "switch-project": "settings.shortcuts.help.switchProject",
   "archive-workspace": "settings.shortcuts.help.archiveWorkspace",
   "workspace-tab-new": "settings.shortcuts.help.newTab",
+  "workspace-tab-target-agent": "workspace.tabs.actions.newAgent",
+  "workspace-tab-target-browser": "workspace.tabs.actions.newBrowser",
+  "workspace-tab-target-changes": "workspace.tabs.actions.changes",
+  "workspace-tab-target-files": "workspace.tabs.actions.files",
   "workspace-tab-close-current": "settings.shortcuts.help.closeCurrentTab",
   "workspace-jump-index": "settings.shortcuts.help.jumpToWorkspace",
   "workspace-tab-jump-index": "settings.shortcuts.help.jumpToTab",
@@ -379,7 +387,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   // --- Tab management ---
   {
     id: "workspace-tab-new-cmd-t-mac",
-    action: "workspace.tab.new",
+    action: "workspace.tab.menu.open",
     combo: "Cmd+T",
     when: { mac: true, commandCenter: false },
     help: {
@@ -390,13 +398,103 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
   },
   {
     id: "workspace-tab-new-ctrl-t-non-mac",
-    action: "workspace.tab.new",
+    action: "workspace.tab.menu.open",
     combo: "Ctrl+T",
     when: { mac: false, commandCenter: false, terminal: false },
     help: {
       id: "workspace-tab-new",
       section: "tabs-panes",
       label: "New tab",
+    },
+  },
+  {
+    id: "workspace-tab-target-agent-cmd-shift-a-mac",
+    action: "workspace.tab.target.agent",
+    combo: "Cmd+Shift+A",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "workspace-tab-target-agent",
+      section: "tabs-panes",
+      label: "New agent",
+    },
+  },
+  {
+    id: "workspace-tab-target-agent-ctrl-shift-a-non-mac",
+    action: "workspace.tab.target.agent",
+    combo: "Ctrl+Shift+A",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "workspace-tab-target-agent",
+      section: "tabs-panes",
+      label: "New agent",
+    },
+  },
+  {
+    id: "workspace-tab-target-browser-cmd-shift-b-mac",
+    action: "workspace.tab.target.browser",
+    combo: "Cmd+Shift+B",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "workspace-tab-target-browser",
+      section: "tabs-panes",
+      label: "New browser",
+    },
+  },
+  {
+    id: "workspace-tab-target-browser-ctrl-shift-b-non-mac",
+    action: "workspace.tab.target.browser",
+    combo: "Ctrl+Shift+B",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "workspace-tab-target-browser",
+      section: "tabs-panes",
+      label: "New browser",
+    },
+  },
+  {
+    // Keep the binding id stable so saved overrides from the former Cmd+Shift+C default survive.
+    id: "workspace-tab-target-changes-cmd-shift-c-mac",
+    action: "workspace.tab.target.changes",
+    combo: "Cmd+Shift+G",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "workspace-tab-target-changes",
+      section: "tabs-panes",
+      label: "Changes",
+    },
+  },
+  {
+    // Keep the binding id stable so saved overrides from the former Ctrl+Shift+C default survive.
+    id: "workspace-tab-target-changes-ctrl-shift-c-non-mac",
+    action: "workspace.tab.target.changes",
+    combo: "Ctrl+Shift+G",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "workspace-tab-target-changes",
+      section: "tabs-panes",
+      label: "Changes",
+    },
+  },
+  {
+    id: "workspace-tab-target-files-cmd-shift-e-mac",
+    action: "workspace.tab.target.files",
+    combo: "Cmd+Shift+E",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "workspace-tab-target-files",
+      section: "tabs-panes",
+      label: "Files",
+    },
+  },
+  {
+    id: "workspace-tab-target-files-ctrl-shift-e-non-mac",
+    action: "workspace.tab.target.files",
+    combo: "Ctrl+Shift+E",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "workspace-tab-target-files",
+      section: "tabs-panes",
+      label: "Files",
     },
   },
   {
@@ -737,7 +835,6 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       label: "Close pane",
     },
   },
-
   // --- New terminal ---
   {
     id: "workspace-terminal-new-cmd-shift-t-mac",
@@ -833,7 +930,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     help: {
       id: "toggle-right-sidebar",
       section: "layout",
-      label: "Toggle right sidebar",
+      label: "Toggle Explorer sidebar",
     },
   },
   {
@@ -844,7 +941,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
     help: {
       id: "toggle-right-sidebar",
       section: "layout",
-      label: "Toggle right sidebar",
+      label: "Toggle Explorer sidebar",
     },
   },
   {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { desaturateHexColor, parseHexColor } from "./color";
+import { desaturateHexColor, hexColorWithAlpha, parseHexColor } from "./color";
 
 describe("parseHexColor", () => {
   it("parses six-digit hex", () => {
@@ -14,6 +14,17 @@ describe("parseHexColor", () => {
     expect(parseHexColor("none")).toBeNull();
     expect(parseHexColor("url(#a)")).toBeNull();
     expect(parseHexColor("#ff800")).toBeNull();
+  });
+});
+
+describe("hexColorWithAlpha", () => {
+  it("creates a cross-platform rgba color from an owned theme color", () => {
+    expect(hexColorWithAlpha("#3e704a", 0.15)).toBe("rgba(62, 112, 74, 0.15)");
+  });
+
+  it("rejects colors and alpha values outside its contract", () => {
+    expect(() => hexColorWithAlpha("currentColor", 0.15)).toThrow();
+    expect(() => hexColorWithAlpha("#3e704a", 1.1)).toThrow();
   });
 });
 

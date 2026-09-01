@@ -4,6 +4,7 @@ import type {
   EditorTargetLaunchInput,
   EditorTargetRuntime,
 } from "./target.js";
+import { androidStudioTarget } from "./targets/android-studio.js";
 import { antigravityTarget } from "./targets/antigravity.js";
 import { aquaTarget } from "./targets/aqua.js";
 import { clionTarget } from "./targets/clion.js";
@@ -35,6 +36,7 @@ export const EDITOR_TARGETS: readonly EditorTarget[] = [
   vscodiumTarget,
   zedTarget,
   antigravityTarget,
+  androidStudioTarget,
   intellijIdeaTarget,
   aquaTarget,
   clionTarget,

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Text, TextInput, View } from "react-native";
+import { Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet } from "react-native-unistyles";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Button } from "@/components/ui/button";
 import { Field, FormTextInput } from "@/components/ui/form-field";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 
 export interface ProfileDraft {
   name: string;
@@ -41,9 +42,9 @@ export function TerminalProfileEditModal({
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [isPending, setIsPending] = useState(false);
-  const nameInputRef = useRef<TextInput>(null);
-  const commandInputRef = useRef<TextInput>(null);
-  const argsInputRef = useRef<TextInput>(null);
+  const nameInputRef = useRef<EditingTextInputHandle>(null);
+  const commandInputRef = useRef<EditingTextInputHandle>(null);
+  const argsInputRef = useRef<EditingTextInputHandle>(null);
 
   const handleNameChange = useCallback((value: string) => {
     setName(value);
@@ -254,6 +255,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   submitError: {
     color: theme.colors.palette.red[300],
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));

@@ -8,9 +8,24 @@ function bundle(marker: string): string {
       function Surface() { return ${JSON.stringify(marker)}; }
       plugin.addSurface("main", Surface);
       plugin.addSidebarItem({ id: "main", title: "Example", icon: "Blocks", surface: "main" });
+      plugin.addWorkspacePanel({ id: "review", title: "Review", icon: "Blocks", context: "workspace", Component: Surface });
+      plugin.addCommandCenterItem({ id: "open-review", title: "Open review", icon: "Blocks", context: "workspace", onSelect() {} });
       return function() { globalThis.__pluginCleanups = (globalThis.__pluginCleanups || 0) + 1; };
     };
     return module.exports;
+  })`;
+}
+
+function timelineBundle(marker: string): string {
+  return `(function() {
+    return { default: function(plugin) {
+      plugin.addTimelineTransformer({
+        id: "report",
+        query: { itemType: "tool_call" },
+        transform() { return ${JSON.stringify(marker)} ? { items: [] } : undefined; },
+      });
+      return function() {};
+    } };
   })`;
 }
 
@@ -21,6 +36,22 @@ afterEach(() => {
 });
 
 describe("PluginRegistry", () => {
+  it("reports timeline contribution changes", () => {
+    const first = timelineBundle("one");
+    expect(pluginRegistry.installCatalog("host-a", [{ id: "reports", clientBundle: first }])).toBe(
+      true,
+    );
+    expect(pluginRegistry.installCatalog("host-a", [{ id: "reports", clientBundle: first }])).toBe(
+      false,
+    );
+    expect(
+      pluginRegistry.installCatalog("host-a", [
+        { id: "reports", clientBundle: timelineBundle("two") },
+      ]),
+    ).toBe(true);
+    expect(pluginRegistry.installCatalog("host-a", [])).toBe(true);
+  });
+
   it("preserves a plugin query cache when the same bundle reconnects", () => {
     const clientBundle = bundle("one");
     pluginRegistry.installCatalog("host-a", [{ id: "example", clientBundle }]);
@@ -85,6 +116,8 @@ describe("PluginRegistry", () => {
 
     const second = pluginRegistry.getSnapshot()[0];
     expect(second).not.toBe(first);
+    expect(second?.workspacePanels.map((panel) => panel.id)).toEqual(["review"]);
+    expect(second?.commandCenterItems.map((item) => item.id)).toEqual(["open-review"]);
     expect(first?.queryClient.getQueryData(["attachment-search"])).toBeUndefined();
     expect(Reflect.get(globalThis, "__pluginCleanups")).toBe(1);
   });

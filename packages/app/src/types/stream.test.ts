@@ -22,6 +22,77 @@ import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display"
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
 describe("user message identity", () => {
+  it("replaces provisional optimistic turn membership with canonical membership", () => {
+    const optimistic = createUserMessage({
+      clientMessageId: "hello-client",
+      text: "hello",
+      timestamp: new Date("2026-08-15T10:00:00Z"),
+      turnId: "turn-a",
+    });
+
+    const result = applyStreamEvent({
+      tail: [optimistic],
+      head: [],
+      event: {
+        type: "timeline",
+        provider: "codex",
+        turnId: "turn-b",
+        item: {
+          type: "user_message",
+          text: "hello",
+          clientMessageId: "hello-client",
+          messageId: "provider-hello",
+        },
+      },
+      timestamp: new Date("2026-08-15T10:00:01Z"),
+    });
+
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toEqual(
+      expect.objectContaining({
+        kind: "user_message",
+        clientMessageId: "hello-client",
+        messageId: "provider-hello",
+        turnId: "turn-b",
+      }),
+    );
+  });
+
+  it("clears provisional optimistic turn membership for a legacy canonical row", () => {
+    const optimistic = createUserMessage({
+      clientMessageId: "hello-client",
+      text: "hello",
+      timestamp: new Date("2026-08-15T10:00:00Z"),
+      turnId: "turn-a",
+    });
+
+    const result = applyStreamEvent({
+      tail: [optimistic],
+      head: [],
+      event: {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "user_message",
+          text: "hello",
+          clientMessageId: "hello-client",
+          messageId: "provider-hello",
+        },
+      },
+      timestamp: new Date("2026-08-15T10:00:01Z"),
+    });
+
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toEqual(
+      expect.objectContaining({
+        kind: "user_message",
+        clientMessageId: "hello-client",
+        messageId: "provider-hello",
+      }),
+    );
+    expect(result.tail[0]).not.toHaveProperty("turnId");
+  });
+
   it("adds provider identity without replacing local presentation", () => {
     const timestamp = new Date("2026-07-26T10:00:00.000Z");
     const local = createUserMessage({
@@ -853,7 +924,7 @@ describe("stream reducer canonical tool calls", () => {
       detail: tool.payload.data.detail,
     });
     assert.strictEqual(display.summary, undefined);
-    assert.strictEqual(display.displayName, "Exec Command");
+    assert.strictEqual(display.displayName, "Exec command");
   });
 
   it("preserves early input when later updates contain null input", () => {
@@ -1020,6 +1091,30 @@ describe("stream reducer canonical tool calls", () => {
       { type: "completed", task: "Inspect provider" },
       { type: "started", task: "Ship fix" },
       { type: "completed", task: "Ship fix" },
+    ]);
+  });
+
+  it("reports new work after completed tasks without reopening anything", () => {
+    const state = hydrateStreamState([
+      {
+        event: todoTimeline([
+          { id: "0", text: "Finish old work", completed: true, status: "completed" },
+          { id: "1", text: "Verify old work", completed: true, status: "completed" },
+        ]),
+        timestamp: new Date("2025-01-01T10:50:00Z"),
+      },
+      {
+        event: todoTimeline([
+          { id: "0", text: "Investigate unrelated bug", completed: false, status: "in_progress" },
+          { id: "1", text: "Write unrelated test", completed: false, status: "pending" },
+        ]),
+        timestamp: new Date("2025-01-01T10:51:00Z"),
+      },
+    ]);
+
+    expect(state.flatMap((item) => (item.kind === "todo_list" ? [item.activity] : []))).toEqual([
+      { type: "created", count: 2 },
+      { type: "started", task: "Investigate unrelated bug" },
     ]);
   });
 

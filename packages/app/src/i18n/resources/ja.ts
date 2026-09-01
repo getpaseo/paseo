@@ -1,4 +1,4 @@
-import type { TranslationResources } from "./en";
+import { en, type TranslationResources } from "./en";
 import { pluginSettings } from "./plugin-settings";
 
 export const ja: TranslationResources = {
@@ -64,6 +64,9 @@ export const ja: TranslationResources = {
       workspaces: "ワークスペース",
       agents: "エージェント",
       newAgent: "新しいエージェント",
+      open: "{{name}}を開く",
+      openInSidePane: "{{name}}をサイドパネルで開く",
+      openInFocusedPane: "{{name}}をフォーカス中のペインで開く",
       addProject: "プロジェクトを追加",
       home: "ホーム",
       groupByProject: "プロジェクトでグループ化",
@@ -97,6 +100,7 @@ export const ja: TranslationResources = {
       interruptAgent: "エージェントを中断",
       queueMessage: "メッセージをキューに追加",
       sendAndInterrupt: "送信して中断",
+      sendAndSteer: "送信して指示を追加",
       sendMessage: "メッセージを送信",
       queue: "キュー",
       send: "送信",
@@ -214,7 +218,8 @@ export const ja: TranslationResources = {
       notFound: "エージェントが見つかりません",
       failedToLoad: "エージェントの読み込みに失敗しました",
       reconnecting: "再接続中",
-      timelineSyncFailed: "エージェントの履歴を更新できませんでした。再試行しています…",
+      timelineSyncFailed: "エージェントの履歴を更新できませんでした。",
+      timelineSyncRetrying: "再試行しています…",
       archivingTitle: "エージェントをアーカイブ中...",
       archivingSubtitle: "このエージェントをアーカイブするまでお待ちください。",
     },
@@ -338,13 +343,11 @@ export const ja: TranslationResources = {
       title: "タスク",
       empty: "タスクがまだありません。",
       tasksProgress: "{{completed}}/{{total}}タスク",
-      tasksProgressCurrent: "{{completed}}/{{total}}タスク · {{task}}",
       activity: {
         created: "{{count}}件のタスクを作成",
         added: "追加",
         started: "開始",
         completed: "完了",
-        reopened: "再開",
       },
     },
     compaction: {
@@ -416,6 +419,8 @@ export const ja: TranslationResources = {
     },
     fileActions: {
       openFile: "ファイルを開く",
+      openIn: "{{target}}で開く",
+      openToSide: "横に開く",
       copyPath: "パスをコピー",
       copyRelativePath: "相対パスをコピー",
       revealIn: "{{target}}で表示",
@@ -556,7 +561,6 @@ export const ja: TranslationResources = {
       loading: "読み込み中...",
       modified: "未保存の変更",
       loadingAgentTitle: "エージェントタイトルを読み込み中",
-      emptyPane: "このペインにタブがありません。",
       fallback: {
         newAgent: "新しいエージェント",
         setup: "セットアップ",
@@ -583,6 +587,7 @@ export const ja: TranslationResources = {
         closeLeft: "左のタブを閉じる",
         closeRight: "右のタブを閉じる",
         closeOthers: "他のタブを閉じる",
+        moveToMain: "メインパネルへ移動",
         reloadAgent: "エージェントを再読み込み",
         reloadAgentTooltip:
           "スキル、MCP、ログイン状態を更新するためにエージェントを再読み込みします。",
@@ -591,23 +596,28 @@ export const ja: TranslationResources = {
         renameAgent: "エージェントの名前を変更",
       },
       actions: {
+        newTab: "新しいタブ",
         newAgent: "新しいエージェント",
         newTerminal: "新しいターミナル",
         preparingTerminal: "ターミナルタブを準備中",
         preparingTerminalTooltip: "ターミナルを準備中...",
         newBrowser: "新しいブラウザ",
+        maximizePane: "ペインを最大化",
+        restorePane: "ペインを元に戻す",
+        closePane: "ペインを閉じる",
         exitFocusMode: "フォーカスモードを終了",
         splitRight: "右にペインを分割",
         splitDown: "下にペインを分割",
+        changes: "変更",
+        files: "ファイル",
+        pullRequest: "プルリクエスト",
         terminalProfilesMenu: "ターミナルプロファイル",
-        editTerminalProfiles: "プロファイルを編集…",
-        pinTarget: "ピン留め",
-        unpinTarget: "ピン留めを解除",
+        editTerminalProfiles: "プロファイルを編集",
       },
-      explorer: {
-        open: "エクスプローラーを開く",
-        close: "エクスプローラーを閉じる",
-        toggle: "エクスプローラーを切り替え",
+      explorerSidebar: {
+        open: "サイドパネルを開く",
+        close: "サイドパネルを閉じる",
+        toggle: "サイドパネルを切り替え",
         changes: "変更",
         files: "ファイル",
       },
@@ -706,6 +716,10 @@ export const ja: TranslationResources = {
         startFailed: "{{scriptName}}の起動に失敗しました",
         stopFailed: "{{scriptName}}の停止に失敗しました",
       },
+    },
+    tree: {
+      showFolderTree: "フォルダツリーを表示",
+      hideFolderTree: "フォルダツリーを非表示",
     },
     git: {
       actions: {
@@ -852,6 +866,7 @@ export const ja: TranslationResources = {
       },
       diff: {
         openChangesTab: "変更タブを開く",
+        openDiffTab: "差分タブを開く",
         closeChangesTab: "変更タブを閉じる",
         binaryFile: "バイナリファイル",
         tooLarge: "差分が大きすぎて表示できません",
@@ -861,23 +876,24 @@ export const ja: TranslationResources = {
         split: "左右比較",
         switchToUnified: "ユニファイド差分に切り替え",
         switchToSplit: "左右比較差分に切り替え",
-        showTreeView: "フォルダツリーを表示",
-        showFlatView: "フラットなファイル一覧を表示",
         options: "差分オプション",
+        inlineDiff: "インライン差分",
         hideWhitespace: "空白を非表示",
         showWhitespace: "空白を表示",
         scrollLongLines: "長い行をスクロール",
         wrapLongLines: "長い行を折り返す",
-        collapseAll: "すべて折りたたむ",
-        expandAll: "すべて展開",
         collapseAllFolders: "すべてのフォルダを折りたたむ",
         expandAllFolders: "すべてのフォルダを展開",
+        collapseAllFiles: "すべてのファイルを折りたたむ",
+        expandAllFiles: "すべてのファイルを展開",
         refreshing: "更新中",
         refresh: "更新",
         refreshState: "gitと{{brand}}の状態を更新",
         failedRefresh: "gitの状態の更新に失敗しました。",
         emptyHiddenWhitespace: "空白を非表示にすると変更は表示されません",
         emptyUncommitted: "未コミットの変更なし",
+        seeUncommittedChanges: "未コミットの変更を表示",
+        seeCommittedChanges: "コミット済みの変更を表示",
         emptyAgainstBase: "{{baseRef}}との差分なし",
         checkingRepository: "リポジトリを確認中...",
         notRepository: "gitリポジトリではありません",
@@ -888,6 +904,7 @@ export const ja: TranslationResources = {
         base: "ベース",
         newFile: "新規",
         deletedFile: "削除済み",
+        modifiedFile: "変更済み",
         commits: {
           title: "コミット",
           countLabel: "ワークスペースのコミット数: {{count}}",
@@ -934,6 +951,16 @@ export const ja: TranslationResources = {
         accessibility: {
           pullRequest: "プルリクエスト#{{number}}",
           pullRequest_mr: "マージリクエスト !{{number}}",
+          checkStatus: {
+            passed: "成功",
+            failed: "失敗",
+            warning: "警告",
+            actionRequired: "操作が必要",
+            manual: "手動",
+            pending: "保留中",
+            skipped: "スキップ済み",
+            cancelled: "キャンセル済み",
+          },
         },
         states: {
           draft: "ドラフト",
@@ -965,6 +992,48 @@ export const ja: TranslationResources = {
       },
     },
   },
+  workspaceLabels: {
+    title: "ラベル",
+    unlabelled: "ラベルなし",
+    create: "ラベルを作成",
+    createConfirm: "作成",
+    creating: "作成中…",
+    name: "ラベル名",
+    updateHostUse: "ラベルを使用するにはホストを更新してください。",
+    errors: { update: "ラベルを更新できません", load: "ラベルを読み込めません" },
+    colors: {
+      violet: "紫",
+      sky: "空色",
+      emerald: "エメラルド",
+      orange: "オレンジ",
+      pink: "ピンク",
+      indigo: "藍",
+      teal: "青緑",
+      red: "赤",
+      amber: "琥珀",
+      blue: "青",
+    },
+    filter: {
+      clear: "フィルターをクリア",
+    },
+    manage: {
+      open: "ラベルを管理…",
+      title: "ラベルを管理",
+      search: "ラベルを検索",
+      empty: "このホストにラベルはありません。",
+      edit: "ラベルを編集",
+      editLabel: "{{name}}を編集",
+      name: "名前",
+      color: "色",
+      save: "保存",
+      delete: "削除",
+      deleteTitle: "{{name}}を削除しますか？",
+      deleteMessage_one: "このホストの{{count}}個のワークスペースからラベルを削除します。",
+      deleteMessage_other: "このホストの{{count}}個のワークスペースからラベルを削除します。",
+      offline: "このホストはオフラインです。",
+      updateHost: "ラベルを管理するにはホストを更新してください。",
+    },
+  },
   sidebar: {
     display: {
       trigger: "表示設定",
@@ -973,6 +1042,7 @@ export const ja: TranslationResources = {
         label: "グループ化",
         project: "プロジェクト",
         status: "ステータス",
+        labels: "ラベル",
       },
       titleSource: {
         label: "タイトル",
@@ -981,10 +1051,13 @@ export const ja: TranslationResources = {
       },
       show: {
         label: "表示項目",
+        branch: "ブランチ",
+        project: "プロジェクト",
         host: "ホスト",
         changeRequest: "プルリクエスト",
         checks: "チェック",
         services: "サービス",
+        labels: "ラベル",
         diff: "差分統計",
         timestamp: "最終アクティビティ",
       },
@@ -997,6 +1070,16 @@ export const ja: TranslationResources = {
         label: "ホスト",
         all: "すべてのホスト",
       },
+      projectFilter: {
+        label: "プロジェクト",
+        all: "すべてのプロジェクト",
+      },
+    },
+    filterEmpty: {
+      title: "一致するワークスペースがありません",
+      description:
+        "ワークスペースを表示するにはサイドバーのフィルターを変更またはクリアしてください。",
+      clear: "フィルターをクリア",
     },
     pinned: {
       title: "固定済み",
@@ -1068,6 +1151,14 @@ export const ja: TranslationResources = {
         serviceRunning: "サービス {{name}} 実行中",
         serviceUnhealthy: "サービス {{name}} 異常",
         creating: "作成中...",
+      },
+      checks: {
+        passed: "成功: {{count}}",
+        failed: "失敗: {{count}}",
+        warning: "警告: {{count}}",
+        actionRequired: "操作が必要: {{count}}",
+        manual: "手動: {{count}}",
+        pending: "保留中: {{count}}",
       },
       actions: {
         menu: "ワークスペースアクション",
@@ -1154,6 +1245,12 @@ export const ja: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "ウィンドウを最小化",
+      maximize: "ウィンドウを最大化",
+      restore: "ウィンドウを元に戻す",
+      close: "ウィンドウを閉じる",
+    },
     quitting: {
       title: "Paseoを終了中...",
       detail: "ローカルデーモンを停止中。",
@@ -1304,13 +1401,6 @@ export const ja: TranslationResources = {
         statusFailed: "CLIのインストール状態を確認できません。",
         installFailed: "Paseo CLIをインストールできません。",
       },
-      skills: {
-        statusFailed: "オーケストレーションスキルのステータスを確認できません。",
-        installFailed: "オーケストレーションスキルをインストールできません。",
-        updateFailed: "オーケストレーションスキルを更新できません。",
-        uninstallFailed: "オーケストレーションスキルをアンインストールできません。",
-        saveSelectionFailed: "オーケストレーションスキルの選択を保存できません。",
-      },
     },
   },
   rootError: {
@@ -1361,6 +1451,7 @@ export const ja: TranslationResources = {
     openPath: "パスを開く",
   },
   branchSwitcher: {
+    triggerTooltip: "ワークスペースのブランチを切り替え",
     currentBranch: "現在のブランチ: {{branchName}}。押してブランチを切り替えてください。",
     placeholder: "ブランチを切り替え...",
     searchPlaceholder: "ブランチをフィルタ...",
@@ -1425,9 +1516,13 @@ export const ja: TranslationResources = {
     defaultModel: "デフォルト",
     profiles: "プロファイル",
     providers: "プロバイダー",
+    model: "モデル",
     editProfiles: "編集",
     editProfilesLabel: "エージェントプロファイルを編集",
     createProfile: "プロファイルを作成",
+    createProfileFromModel: "このモデルからプロファイルを作成",
+    editProfileLabel: "{{name}}を編集",
+    editProfilesCount: "プロファイルを編集（{{count}}）",
     modelCount: "{{count}}つのモデル",
     modelCountPlural: "{{count}}つのモデル",
     retry: "再試行",
@@ -1476,6 +1571,10 @@ export const ja: TranslationResources = {
       direct: {
         title: "直接接続",
         description: "ローカルネットワークまたはVPN。",
+      },
+      remoteSsh: {
+        title: "リモート SSH",
+        description: "デスクトップの SSH クライアント経由で接続します。",
       },
       scanQr: {
         title: "QRコードをスキャン",
@@ -1526,6 +1625,23 @@ export const ja: TranslationResources = {
         tlsError: "TLSエラー。直接接続は、デーモンの前にTLS終端がある場合のみSSLを使用します。",
         unableToConnect: "接続できません。ホスト/ポートとデーモンが到達可能かを確認してください。",
         details: "詳細: {{detail}}",
+      },
+    },
+    remoteSsh: {
+      title: "リモート SSH",
+      helper: "リモートホストで動作する Paseo デーモンに接続します。",
+      fields: {
+        target: "SSH ホスト",
+      },
+      actions: {
+        cancel: "キャンセル",
+        connect: "接続",
+        connecting: "接続中...",
+      },
+      errors: {
+        targetRequired: "SSH ホストは必須です",
+        invalidTarget: "有効な ssh:// ホストを入力してください",
+        failedToConnect: "SSH で接続できません。{{detail}}",
       },
     },
     link: {
@@ -1580,6 +1696,8 @@ export const ja: TranslationResources = {
       updateRequired: "Paseo Desktop からリレーを有効にするにはホストを更新してください。",
       unavailable: "ペアリングオファーが利用できません。",
       hint: "スマートフォンのPaseoでこのQRコードをスキャンするか、以下のリンクをコピーしてください。",
+      securityWarning:
+        "このペアリングリンクはパスワードと同様に扱ってください。リンクを知っている人は誰でもこのデーモンにアクセスできます。",
       qrUnavailable: "QRコードが利用できません。",
       qrAccessibility: "ペアリング QR コード",
       retry: "再試行",
@@ -1628,12 +1746,19 @@ export const ja: TranslationResources = {
     backdrop: "メニューの背景",
   },
   subagents: {
+    title: "サブエージェント",
+    pillLabelOne: "サブエージェント 1 件",
+    pillLabelMany: "サブエージェント {{count}} 件",
+    pillLabelWorking: "{{count}} 件実行中",
+    pillLabelFailed: "{{count}} 件失敗",
+    pillLabelNeedsInputOne: "1 件が入力待ち",
+    pillLabelNeedsInputMany: "{{count}} 件が入力待ち",
+    pillLabelReadyToReview: "{{count}} 件レビュー待ち",
     detachAction: "{{label}}を切り離す",
     detachTooltip: "サブエージェントを切り離す",
     archiveAction: "{{label}}をアーカイブ",
     archiveTooltip: "サブエージェントをアーカイブ",
     archiveFinishedAction: "完了したサブエージェントをアーカイブ",
-    archiveFinishedTooltip: "完了した項目をアーカイブ",
     archiveFinishedRetry: "再試行 ({{failed}}/{{total}})",
   },
   panels: {
@@ -1646,6 +1771,7 @@ export const ja: TranslationResources = {
       loading: "ファイルを読み込み中...",
       noPreview: "プレビューが利用できません",
       binaryPreviewUnavailable: "バイナリプレビューが利用できません",
+      tooLargeToDisplay: "このファイルは大きすぎて表示できません",
       failedToLoad: "ファイルの読み込みに失敗しました",
       failedToLoadPreview: "ファイルプレビューの読み込みに失敗しました",
       editor: {
@@ -1670,8 +1796,22 @@ export const ja: TranslationResources = {
         reloadMessage: "ローカルの変更は失われます。",
       },
     },
+    files: {
+      label: "ファイル",
+      subtitle: "ワークスペースのファイル",
+      tooltip: "ワークスペースのファイルを参照",
+      chooseFile: "ファイルを選択",
+    },
+    pullRequest: {
+      label: "プルリクエスト",
+      subtitle: "プルリクエストの詳細",
+      emptyTitle: "プルリクエストはまだありません",
+      emptyDescription:
+        "このチェックアウトのプルリクエストを作成すると、ここに詳細が表示されます。",
+    },
     diff: {
       changesLabel: "変更",
+      diffLabel: "差分",
       changesSubtitle: "作業ツリーの差分",
       commitSubtitle: "コミット差分",
       uncommittedSubtitle: "未コミットの変更",
@@ -1766,6 +1906,7 @@ export const ja: TranslationResources = {
     sections: {
       general: "一般",
       appearance: "外観",
+      layout: en.settings.sections.layout,
       editor: "エディター",
       shortcuts: "ショートカット",
       integrations: "連携",
@@ -1774,6 +1915,7 @@ export const ja: TranslationResources = {
       diagnostics: "診断",
       about: "アプリ情報",
     },
+    layout: en.settings.layout,
     editor: {
       title: "エディター",
       vimKeybindings: "Vim キーバインド",
@@ -1838,10 +1980,13 @@ export const ja: TranslationResources = {
         label: "デフォルトの送信",
         descriptions: {
           interrupt: "エージェント実行中、Enterで中断します。Command/Ctrl+Enterでキューに追加。",
+          steer:
+            "エージェント実行中、Enterで現在のターンに指示を送ります。Command/Ctrl+Enterでキューに追加。",
           queue: "エージェント実行中、Enterでキューに追加します。Command/Ctrl+Enterで送信。",
         },
         options: {
           interrupt: "中断",
+          steer: "指示",
           queue: "キュー",
         },
       },
@@ -1975,12 +2120,17 @@ export const ja: TranslationResources = {
           "アプリ全体で使用されます。システムデフォルトにするには空のままにしてください",
         interfaceFontAccessibility: "インターフェースフォントファミリー",
         interfaceSize: "インターフェースサイズ",
-        interfaceSizeAccessibility: "インターフェースフォントサイズ",
+        interfaceSizeHint: "ナビゲーション、コントロール、ラベルに使用されます",
+        interfaceSizeAccessibility: "インターフェースのフォントサイズ",
+        contentSize: "コンテンツサイズ",
+        contentSizeHint: "チャットテキストとレンダリングされた Markdown に使用されます",
+        contentSizeAccessibility: "コンテンツのフォントサイズ",
         codeFont: "コードフォント",
         codeFontHint:
           "コード、差分、ターミナル出力で使用されます。システムデフォルトにするには空のままにしてください",
         codeFontAccessibility: "コードフォントファミリー",
         codeSize: "コードサイズ",
+        codeSizeHint: "コード、差分、ターミナル出力に使用されます",
         codeSizeAccessibility: "コードフォントサイズ",
       },
       syntax: {
@@ -1988,7 +2138,9 @@ export const ja: TranslationResources = {
         highlightTheme: "ハイライトテーマ",
         highlightThemeHint: "コード用の色、アプリのテーマとは独立しています",
         highlightThemeAccessibility: "ハイライトテーマ: {{value}}",
-        previewAccessibility: "構文ハイライトテーマとコードフォントのライブプレビュー",
+        previewAccessibility:
+          "コンテンツの文字組み、構文ハイライトテーマ、コードフォントのライブプレビュー",
+        previewContent: "コンテンツとコードのプレビュー",
       },
     },
     shortcuts: {
@@ -2043,7 +2195,7 @@ export const ja: TranslationResources = {
         toggleCommandCenter: "コマンドセンターを切り替え",
         showKeyboardShortcuts: "キーボードショートカットを表示",
         toggleLeftSidebar: "左サイドバーを切り替え",
-        toggleRightSidebar: "右サイドバーを切り替え",
+        toggleRightSidebar: "サイドパネルを切り替え",
         toggleBothSidebars: "両方のサイドバーを切り替え",
         toggleSettings: "設定を切り替え",
         toggleFocusMode: "フォーカスモードを切り替え",
@@ -2067,49 +2219,16 @@ export const ja: TranslationResources = {
       title: "連携",
       docs: {
         cli: "CLIドキュメント",
-        skills: "スキルドキュメント",
         openCli: "CLIドキュメントを開く",
-        openSkills: "スキルドキュメントを開く",
       },
       commandLine: {
         title: "コマンドライン",
         description: "ターミナルからエージェントを制御し、スクリプトで操作",
       },
-      skills: {
-        title: "オーケストレーションスキル",
-        description: "エージェントがCLI経由でオーケストレーションできるようにします。",
-        updateAvailable: "更新が利用可能",
-        updateTitle: "Paseoスキルを更新しますか？",
-        updateFallback: "バンドルされたスキルをマシンに同期します。",
-        uninstallTitle: "Paseoスキルをアンインストールしますか？",
-        uninstallMessage:
-          "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
-        choose: "スキルを選択",
-        chooseAll: "すべてのスキル",
-        chooseAllHint:
-          "後から追加されるものも含め、バンドルされたスキルをすべてインストールしたままにします。",
-        chooseList: "バンドルされたスキル",
-        chooseEmpty: "このビルドにはスキルが含まれていません。",
-        removeTitle: "選択を外したスキルを削除しますか？",
-        removeMessage:
-          "{{skills}} を ~/.agents、~/.claude、~/.codex から削除します。それらのスキルフォルダー内に追加したものもすべて削除されます。",
-        saveFailed: "スキルの選択を保存できませんでした。",
-      },
       actions: {
         install: "インストール",
         installing: "インストール中...",
         installed: "インストール済み",
-        update: "更新",
-        working: "処理中...",
-        remove: "削除",
-        uninstall: "アンインストール",
-        save: "保存",
-        saving: "保存中...",
-      },
-      operations: {
-        add: "スキルを追加",
-        update: "スキルを更新",
-        delete: "スキルを削除",
       },
     },
     permissions: {
@@ -2164,6 +2283,7 @@ export const ja: TranslationResources = {
       badges: {
         relay: "リレー",
         local: "ローカル",
+        remoteSsh: "リモート SSH",
       },
       connections: {
         title: "接続",
@@ -2178,6 +2298,49 @@ export const ja: TranslationResources = {
         title: "デバイスをペアリング",
         rowTitle: "デバイスをペアリング",
         rowHint: "QRコードをスキャンするかリンクをコピーしてスマートフォンをこのホストに接続",
+      },
+      skills: {
+        ...en.settings.host.skills,
+        sectionTitle: "オーケストレーションスキル",
+        title: "オーケストレーションスキル",
+        description: "エージェントがCLI経由でオーケストレーションできるようにします。",
+        updateAvailable: "更新が利用可能",
+        updateTitle: "Paseoスキルを更新しますか？",
+        updateFallback: "バンドルされたスキルをマシンに同期します。",
+        uninstallTitle: "Paseoスキルをアンインストールしますか？",
+        uninstallMessage:
+          "~/.agents、~/.claude、~/.codexからすべてのPaseoオーケストレーションスキルを削除します。",
+        choose: "スキルを選択",
+        chooseAll: "すべてのスキル",
+        chooseAllHint:
+          "後から追加されるものも含め、バンドルされたスキルをすべてインストールしたままにします。",
+        chooseList: "バンドルされたスキル",
+        chooseEmpty: "このビルドにはスキルが含まれていません。",
+        removeTitle: "選択を外したスキルを削除しますか？",
+        removeMessage:
+          "{{skills}} を ~/.agents、~/.claude、~/.codex から削除します。それらのスキルフォルダー内に追加したものもすべて削除されます。",
+        saveFailed: "スキルの選択を保存できませんでした。",
+        statusFailed: "オーケストレーションスキルのステータスを確認できません。",
+        updateFailed: "オーケストレーションスキルを更新できません。",
+        uninstallFailed: "オーケストレーションスキルをアンインストールできません。",
+        saveSelectionFailed: "オーケストレーションスキルの選択を保存できません。",
+        actions: {
+          install: "インストール",
+          installing: "インストール中...",
+          installed: "インストール済み",
+          update: "更新",
+          working: "処理中...",
+          remove: "削除",
+          uninstall: "アンインストール",
+          save: "保存",
+          saving: "保存中...",
+          cancel: "キャンセル",
+        },
+        operations: {
+          add: "スキルを追加",
+          update: "スキルを更新",
+          delete: "スキルを削除",
+        },
       },
       orchestration: {
         title: "オーケストレーション",
@@ -2256,10 +2419,9 @@ export const ja: TranslationResources = {
         featuresLabel: "機能",
         featureCount: "{{count}}個の機能",
         featureCountOne: "{{count}}個の機能",
-        notesLabel: "エージェントへのメモ",
+        notesLabel: "使用する場面",
         notesPlaceholder: "UI作業に使用 — コンポーネント、レイアウト、デザイントークンなど。",
-        notesHint:
-          "list_profiles MCPツールによって返されます。他のエージェントへの指示として記述してください。",
+        notesHint: "別のエージェントを起動するとき、このプロファイルを選ぶために使用されます。",
         save: "保存",
         saving: "保存中...",
         remove: "削除",

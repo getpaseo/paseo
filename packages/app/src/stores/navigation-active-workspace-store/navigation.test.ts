@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ActiveWorkspaceSelection } from "@/stores/last-workspace-selection";
 import type { WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { parseHostWorkspaceRouteFromPathname } from "@/utils/host-routes";
 import {
   navigateToLastWorkspace,
   navigateToWorkspace,
@@ -13,6 +14,7 @@ import type { Agent, WorkspaceDescriptor } from "@/stores/session-store";
 interface RecordedTab {
   workspaceKey: string;
   target: WorkspaceTabTarget;
+  pin: boolean;
 }
 
 function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
@@ -22,11 +24,11 @@ function createFakeDeps(overrides: Partial<NavigateToWorkspaceDeps> = {}) {
   const deps: NavigateToWorkspaceDeps = {
     getSessionWorkspaces: () => null,
     getSessionAgents: () => [] as Agent[],
-    openTabFocused: (workspaceKey, target) => {
-      openedTabs.push({ workspaceKey, target });
+    isWorkspaceLayoutHydrated: () => true,
+    openTab: ({ workspaceKey, target, pin = false }) => {
+      openedTabs.push({ workspaceKey, target, pin });
       return target.kind === "agent" ? target.agentId : null;
     },
-    pinAgent: () => undefined,
     rememberLastWorkspace: (selection) => remembered.push(selection),
     navigateToRoute: (route) => navigations.push(route),
     ...overrides,
@@ -96,6 +98,7 @@ describe("workspace navigation", () => {
       {
         workspaceKey: "server-1:workspace-a",
         target: { kind: "agent", agentId: "agent-1" },
+        pin: false,
       },
     ]);
   });
@@ -130,6 +133,7 @@ describe("workspace navigation", () => {
       {
         workspaceKey: "server-1:workspace-a",
         target: { kind: "draft", draftId: "draft-1" },
+        pin: false,
       },
     ]);
   });
@@ -144,6 +148,30 @@ describe("workspace navigation", () => {
         serverId: "server-1",
         workspaceId: "workspace-a",
         target: { kind: "agent", agentId: "agent-1" },
+      },
+      deps,
+    );
+
+    expect(openedTabs).toEqual([]);
+    expect(navigations).toEqual(["/h/server-1/workspace/workspace-a?open=agent%3Aagent-1"]);
+  });
+
+  it("defers an agent tab until persisted workspace layout has hydrated", () => {
+    const workspace = {
+      id: "workspace-a",
+      workspaceDirectory: "/repo/workspace-a",
+    } as WorkspaceDescriptor;
+    const { deps, navigations, openedTabs } = createFakeDeps({
+      getSessionWorkspaces: () => new Map([[workspace.id, workspace]]),
+      isWorkspaceLayoutHydrated: () => false,
+    });
+
+    navigateToWorkspace(
+      {
+        serverId: "server-1",
+        workspaceId: "workspace-a",
+        target: { kind: "agent", agentId: "agent-1" },
+        pin: true,
       },
       deps,
     );
@@ -173,6 +201,21 @@ describe("workspace navigation", () => {
     expect(selection).toEqual({
       serverId: "server-1",
       workspaceId: "/tmp/paseo-missing-workspace",
+    });
+  });
+
+  // Desktop cold-starts at "/" (packages/desktop/src/main.ts) and restores the
+  // remembered workspace, so a workspace is mounted while the pathname carries
+  // no workspace at all. Anything that identifies the active workspace from the
+  // pathname alone silently gets nothing there — and reports that workspace's
+  // panes as closed.
+  it("resolves a workspace the pathname alone cannot identify", () => {
+    const params = { serverId: "server-1", workspaceId: "workspace-a" };
+
+    expect(parseHostWorkspaceRouteFromPathname("/")).toBeNull();
+    expect(parseActiveWorkspaceSelection({ pathname: "/", params })).toEqual({
+      serverId: "server-1",
+      workspaceId: "workspace-a",
     });
   });
 

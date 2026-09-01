@@ -1,9 +1,12 @@
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { Writable } from "node:stream";
+import pino, { type Logger } from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { findExecutable } from "../../../executable-resolution/executable-resolution.js";
@@ -27,6 +30,58 @@ afterEach(() => {
 });
 
 describe("OpenCodeServerManager generations", () => {
+  test("logs generation lifecycle transitions", async () => {
+    const { logger, records } = createCapturingLogger();
+    const { manager } = createTestManager([4081, 4082], { logger });
+
+    const first = await manager.acquireCurrent();
+    const second = await manager.acquireNew();
+    await second.release();
+    await first.release();
+    await manager.shutdown();
+
+    expect(records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ msg: "OpenCode server generation started", port: 4081 }),
+        expect.objectContaining({ msg: "OpenCode server generation retired", port: 4081 }),
+        expect.objectContaining({ msg: "OpenCode server generation started", port: 4082 }),
+        expect.objectContaining({ msg: "OpenCode server generation released", port: 4082 }),
+        expect.objectContaining({ msg: "OpenCode server generation exited", port: 4081 }),
+      ]),
+    );
+  });
+  test("shares one real SDK event stream across acquisitions until generation shutdown", async () => {
+    const responses: ServerResponse[] = [];
+    let requestCount = 0;
+    const upstream = createServer((_request, response) => {
+      requestCount += 1;
+      response.writeHead(200, { "content-type": "text/event-stream" });
+      response.flushHeaders();
+      responses.push(response);
+    });
+    await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+    const address = upstream.address();
+    if (!address || typeof address === "string") throw new Error("Missing upstream address");
+    const { manager } = createTestManager([address.port]);
+
+    const first = await manager.acquireCurrent();
+    const second = await manager.acquireCurrent();
+    expect(first.events).toBe(second.events);
+    await vi.waitFor(() => expect(responses).toHaveLength(1));
+    responses[0]?.write(
+      `data: ${JSON.stringify({ directory: "/workspace", payload: { type: "server.connected", properties: {} } })}\n\n`,
+    );
+    await first.events.ready();
+    expect(requestCount).toBe(1);
+
+    await first.release();
+    expect(requestCount).toBe(1);
+    await second.release();
+    expect(requestCount).toBe(1);
+    await manager.shutdown();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  });
+
   test("uses an explicit base environment for the server process", async () => {
     const baseEnv = { HOME: "/isolated/home", PATH: "/isolated/bin" };
     const { manager, runtime } = createTestManager([4091], { baseEnv });
@@ -367,6 +422,7 @@ function createTestManager(
     autoAnnounce?: boolean;
     baseEnv?: Record<string, string>;
     opencodeHomeDir?: string;
+    logger?: Logger;
   } = {},
 ): {
   manager: OpenCodeServerManager;
@@ -378,7 +434,7 @@ function createTestManager(
   });
   return {
     manager: new OpenCodeServerManager({
-      logger: createTestLogger(),
+      logger: options.logger ?? createTestLogger(),
       baseEnv: options.baseEnv,
       managedProcesses: runtime.managedProcesses,
       portAllocator: runtime.allocatePort,
@@ -389,6 +445,17 @@ function createTestManager(
     }),
     runtime,
   };
+}
+
+function createCapturingLogger(): { logger: Logger; records: Array<Record<string, unknown>> } {
+  const records: Array<Record<string, unknown>> = [];
+  const stream = new Writable({
+    write(chunk, _encoding, callback) {
+      records.push(JSON.parse(chunk.toString()) as Record<string, unknown>);
+      callback();
+    },
+  });
+  return { logger: pino({ level: "info" }, stream), records };
 }
 
 class FakeOpenCodeServerRuntime {

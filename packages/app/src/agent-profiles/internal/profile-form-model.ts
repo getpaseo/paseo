@@ -40,9 +40,20 @@ export interface AgentProfileFormOption {
   testID: string;
 }
 
+/**
+ * Pre-fill values for create mode. Only used when `mode === "create"`; edit
+ * mode always seeds from the stored `profile` and ignores this.
+ */
+export interface AgentProfileSeed {
+  provider: string;
+  modelId?: string;
+  name?: string;
+}
+
 export interface AgentProfileFormSnapshot {
   mode: "create" | "edit";
   profile?: AgentProfile;
+  seed?: AgentProfileSeed;
 }
 
 /**
@@ -367,14 +378,18 @@ function seedDisplay(value: string | undefined): AgentProfileFormDisplay | null 
  */
 function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileFormState {
   const profile = snapshot.profile ?? BLANK_PROFILE;
+  const seed = snapshot.mode === "create" ? snapshot.seed : undefined;
+  const name = seed?.name ?? profile.name;
+  const provider = seed?.provider ?? profile.provider;
+  const modelId = seed?.modelId ?? profile.model ?? "";
   return {
     mode: snapshot.mode,
-    name: profile.name,
+    name,
     icon: profile.icon ?? "",
     color: profile.color ?? "",
     notes: profile.notes ?? "",
-    provider: profile.provider,
-    modelId: profile.model ?? "",
+    provider,
+    modelId,
     modeId: profile.modeId ?? "",
     thinkingOptionId: profile.thinkingOptionId ?? "",
     featureValues: { ...profile.featureValues },
@@ -383,8 +398,8 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
     modeOptions: [],
     thinkingOptions: [],
     features: [],
-    providerDisplay: seedDisplay(profile.provider),
-    modelDisplay: seedDisplay(profile.model),
+    providerDisplay: seedDisplay(provider),
+    modelDisplay: seedDisplay(modelId),
     modeDisplay: seedDisplay(profile.modeId),
     thinkingDisplay: seedDisplay(profile.thinkingOptionId),
     catalogResolution: "idle",

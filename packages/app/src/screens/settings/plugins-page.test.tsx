@@ -6,7 +6,7 @@ import React, { type ReactElement } from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { PluginListItem } from "@getpaseo/protocol/messages";
+import type { PluginListItem, PluginLogEntry } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HostPluginsPage } from "./plugins-page";
 
@@ -15,6 +15,7 @@ void testI18n;
 const runtime = vi.hoisted(() => ({
   connected: true,
   supported: true,
+  logsSupported: true,
   client: null as DaemonClient | null,
 }));
 
@@ -24,8 +25,36 @@ vi.mock("@/runtime/host-runtime", () => ({
 }));
 
 vi.mock("@/runtime/host-features", () => ({
-  useHostFeature: () => runtime.supported,
+  useHostFeature: (_serverId: string, feature: string) =>
+    feature === "pluginLogs" ? runtime.logsSupported : runtime.supported,
 }));
+
+vi.mock("@/components/adaptive-modal-sheet", async () => {
+  const ReactModule = await vi.importActual<typeof import("react")>("react");
+  const actual = await vi.importActual<typeof import("@/components/adaptive-modal-sheet")>(
+    "@/components/adaptive-modal-sheet",
+  );
+  return {
+    ...actual,
+    AdaptiveModalSheet: ({
+      header,
+      children,
+      onClose,
+    }: {
+      header: { title: string; actions?: React.ReactNode };
+      children: React.ReactNode;
+      onClose(): void;
+    }) =>
+      ReactModule.createElement(
+        "div",
+        { role: "dialog" },
+        ReactModule.createElement("h2", null, header.title),
+        header.actions,
+        ReactModule.createElement("button", { type: "button", onClick: onClose }, "Close"),
+        children,
+      ),
+  };
+});
 
 vi.mock("react-native-reanimated", () => ({
   default: { View: "div" },
@@ -79,6 +108,7 @@ function createClient() {
     enablePlugin: vi.fn(async () => plugin()),
     disablePlugin: vi.fn(async () => plugin(false)),
     removePlugin: vi.fn(async () => undefined),
+    getPluginLogs: vi.fn(async (): Promise<PluginLogEntry[]> => []),
   };
 }
 
@@ -105,6 +135,7 @@ describe("HostPluginsPage", () => {
     vi.stubGlobal("React", React);
     runtime.connected = true;
     runtime.supported = true;
+    runtime.logsSupported = true;
     runtime.client = null;
     vi.stubGlobal(
       "confirm",
@@ -169,5 +200,62 @@ describe("HostPluginsPage", () => {
     const pendingControl = await screen.findByRole("button", { name: "Installing…" });
     expect(pendingControl.getAttribute("aria-disabled")).toBe("true");
     expect(client.installDirectoryPlugin).toHaveBeenCalledWith("/plugins/example", undefined);
+  });
+
+  it("hides the logs action when the host does not advertise support", async () => {
+    runtime.logsSupported = false;
+    const client = createClient();
+    client.listPlugins.mockResolvedValue([plugin()]);
+    renderPage(client);
+
+    await screen.findByText("example");
+    expect(screen.queryByRole("button", { name: "Logs" })).toBeNull();
+  });
+
+  it("opens readable stdout and stderr logs and refreshes them", async () => {
+    const client = createClient();
+    client.listPlugins.mockResolvedValue([plugin()]);
+    client.getPluginLogs.mockResolvedValue([
+      {
+        sequence: 1,
+        timestamp: "2026-08-16T12:00:00.000Z",
+        stream: "stdout",
+        message: "ready",
+      },
+      {
+        sequence: 2,
+        timestamp: "2026-08-16T12:00:01.000Z",
+        stream: "stderr",
+        message: "warning",
+      },
+    ]);
+    renderPage(client);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Logs" }));
+
+    expect(await screen.findByRole("dialog")).toBeDefined();
+    expect(screen.getByText("Logs: example")).toBeDefined();
+    expect(await screen.findByText("ready")).toBeDefined();
+    expect(screen.getByText("warning")).toBeDefined();
+    expect(screen.getByText(/stdout/)).toBeDefined();
+    expect(screen.getByText(/stderr/)).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    await waitFor(() => expect(client.getPluginLogs).toHaveBeenCalledTimes(2));
+  });
+
+  it("shows empty and recoverable error states for plugin logs", async () => {
+    const client = createClient();
+    client.listPlugins.mockResolvedValue([plugin()]);
+    client.getPluginLogs.mockRejectedValueOnce(new Error("logs exploded"));
+    renderPage(client);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Logs" }));
+    expect(await screen.findByText("Unable to load plugin logs")).toBeDefined();
+    expect(screen.getByText("logs exploded")).toBeDefined();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Refresh" }).at(-1)!);
+    await waitFor(() => expect(client.getPluginLogs).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText("No plugin output yet")).toBeDefined();
   });
 });

@@ -402,6 +402,117 @@ describe("ClaudeAgentSession sub-agent sidechain updates", () => {
     });
   });
 
+  test("routes a resumed SendMessage sidechain to the original child without a second Task card", async () => {
+    queryFactory.mockImplementation(() =>
+      buildQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "resume-session",
+          permissionMode: "default",
+          model: "opus",
+        },
+        {
+          type: "stream_event",
+          parent_tool_use_id: null,
+          event: {
+            type: "content_block_start",
+            index: 0,
+            content_block: {
+              type: "tool_use",
+              id: "task-original",
+              name: "Task",
+              input: { subagent_type: "Explore", description: "Original child" },
+            },
+          },
+        },
+        {
+          type: "system",
+          subtype: "task_started",
+          task_id: "native-task",
+          tool_use_id: "task-original",
+          task_type: "local_agent",
+          subagent_type: "Explore",
+          description: "Original child",
+          prompt: "Initial child prompt",
+        },
+        {
+          type: "system",
+          subtype: "task_updated",
+          task_id: "native-task",
+          patch: { status: "completed" },
+        },
+        {
+          type: "system",
+          subtype: "task_started",
+          task_id: "native-task",
+          tool_use_id: "task-resumed",
+          task_type: "local_agent",
+          subagent_type: "Explore",
+          description: "Changed description must not replace the original",
+          prompt: "Resumed child prompt",
+        },
+        {
+          type: "stream_event",
+          parent_tool_use_id: "task-resumed",
+          event: {
+            type: "content_block_start",
+            index: 1,
+            content_block: { type: "text_delta", text: "resumed" },
+          },
+        },
+        {
+          type: "assistant",
+          parent_tool_use_id: "task-resumed",
+          message: { model: "claude-opus-5", content: [{ type: "text", text: "resumed output" }] },
+        },
+        {
+          type: "system",
+          subtype: "task_updated",
+          task_id: "native-task",
+          patch: { status: "completed" },
+        },
+        {
+          type: "result",
+          subtype: "success",
+          usage: { input_tokens: 1, cache_read_input_tokens: 0, output_tokens: 1 },
+          total_cost_usd: 0,
+        },
+      ]),
+    );
+    const session = await new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    }).createSession({ provider: "claude", cwd: process.cwd() });
+
+    const events = await collectUntilTerminal(streamSession(session, "resume child"));
+    await session.close();
+
+    const providerEvents = events.flatMap((event) =>
+      event.type === "provider_subagent" ? [event.event] : [],
+    );
+    expect(
+      providerEvents.filter((event) => event.type === "upsert").map((event) => event.id),
+    ).toEqual(expect.arrayContaining(["task-original"]));
+    expect(providerEvents.every((event) => event.id !== "task-resumed")).toBe(true);
+    expect(providerEvents).toContainEqual({
+      type: "timeline",
+      id: "task-original",
+      item: { type: "user_message", text: "Resumed child prompt" },
+    });
+    expect(providerEvents).toContainEqual(
+      expect.objectContaining({ type: "timeline", id: "task-original" }),
+    );
+    const taskCards = events.filter(
+      (event) =>
+        event.type === "timeline" &&
+        event.item.type === "tool_call" &&
+        event.item.callId === "task-resumed",
+    );
+    expect(taskCards).toEqual([]);
+  });
+
   test("keeps a failed Task subagent failed when the parent turn succeeds", async () => {
     const failedEvents = buildTailScenarioEvents(1);
     const taskResult = failedEvents.find(

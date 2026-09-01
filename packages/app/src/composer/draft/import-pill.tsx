@@ -3,6 +3,7 @@ import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Import as ImportIcon } from "lucide-react-native";
+import { composerPillStyles } from "@/composer/pill-styles";
 import type { Theme } from "@/styles/theme";
 
 const ThemedImportIcon = withUnistyles(ImportIcon);
@@ -18,8 +19,14 @@ export function ComposerImportPill({ onPress, disabled = false }: ComposerImport
   const [isHovered, setIsHovered] = useState(false);
   const handleHoverIn = useCallback(() => setIsHovered(true), []);
   const handleHoverOut = useCallback(() => setIsHovered(false), []);
-  const bodyStyle = useMemo(() => [styles.body, isHovered && styles.bodyHovered], [isHovered]);
-  const labelStyle = useMemo(() => [styles.label, isHovered && styles.labelHovered], [isHovered]);
+  const bodyStyle = useMemo(
+    () => [composerPillStyles.body, isHovered && composerPillStyles.bodyActive],
+    [isHovered],
+  );
+  const labelStyle = useMemo(
+    () => [composerPillStyles.label, isHovered && composerPillStyles.labelActive],
+    [isHovered],
+  );
   return (
     <View style={styles.row}>
       <Pressable
@@ -41,29 +48,8 @@ export function ComposerImportPill({ onPress, disabled = false }: ComposerImport
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
+const styles = StyleSheet.create(() => ({
   row: {
     flexDirection: "row",
-  },
-  body: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: theme.spacing[2],
-    paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[2],
-    borderRadius: theme.borderRadius.xl,
-    borderWidth: theme.borderWidth[1],
-    borderColor: theme.colors.borderAccent,
-    backgroundColor: theme.colors.surface1,
-  },
-  bodyHovered: {
-    backgroundColor: theme.colors.surface2,
-  },
-  label: {
-    color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
-  },
-  labelHovered: {
-    color: theme.colors.foreground,
   },
 }));

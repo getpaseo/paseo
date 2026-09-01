@@ -15,6 +15,7 @@ import {
   type ProjectRegistry,
   type WorkspaceRegistry,
 } from "./workspace-registry.js";
+import { pinPaseoWorktreeBranchIdentityIfMissing } from "../utils/worktree-metadata.js";
 
 function minIsoDate(left: string | null, right: string | null): string | null {
   if (!left) {
@@ -59,6 +60,28 @@ export async function bootstrapWorkspaceRegistries(options: {
   ]);
 
   await Promise.all([options.projectRegistry.initialize(), options.workspaceRegistry.initialize()]);
+
+  // COMPAT(worktree-branch-identity): added in v0.4.0 on 2026-08-15; remove after
+  // 2027-02-15. Older worktrees did not pin branch-off/check-out branch identity.
+  // Seed it from the registry value clients already display, never from live Git.
+  for (const workspace of await options.workspaceRegistry.list()) {
+    if (
+      workspace.archivedAt ||
+      !workspace.isPaseoOwnedWorktree ||
+      !workspace.worktreeRoot ||
+      !workspace.branch
+    ) {
+      continue;
+    }
+    try {
+      pinPaseoWorktreeBranchIdentityIfMissing(workspace.worktreeRoot, workspace.branch);
+    } catch (error) {
+      options.logger.warn(
+        { err: error, workspaceId: workspace.workspaceId },
+        "Failed to pin legacy worktree branch identity; PR association remains disabled",
+      );
+    }
+  }
 
   if (projectsExists && workspacesExists) {
     await backfillWorkspaceIdForLegacyAgents(options);

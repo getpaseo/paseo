@@ -183,12 +183,12 @@ const styles = StyleSheet.create((theme) => ({
   title: {
     flexShrink: 1,
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
   },
   description: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   descriptionSlot: {
     flexShrink: 1,
@@ -224,7 +224,7 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.5,
   },
   actionLabel: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
   },
   actionLabelPrimary: {

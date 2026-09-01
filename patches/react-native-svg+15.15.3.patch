@@ -1,0 +1,61 @@
+diff --git a/node_modules/react-native-svg/lib/commonjs/lib/extract/extractTransform.js b/node_modules/react-native-svg/lib/commonjs/lib/extract/extractTransform.js
+index f22cca3..0a73681 100644
+--- a/node_modules/react-native-svg/lib/commonjs/lib/extract/extractTransform.js
++++ b/node_modules/react-native-svg/lib/commonjs/lib/extract/extractTransform.js
+@@ -152,7 +152,12 @@ function extractTransform(props) {
+ }
+ function extractTransformSvgView(props) {
+   if (typeof props.transform === 'string') {
+-    return (0, _transformToRn.parse)(props.transform);
++    try {
++      return (0, _transformToRn.parse)(props.transform);
++    } catch (e) {
++      console.error(e);
++      return undefined;
++    }
+   }
+   return props.transform;
+ }
+diff --git a/node_modules/react-native-svg/lib/module/lib/extract/extractTransform.js b/node_modules/react-native-svg/lib/module/lib/extract/extractTransform.js
+index c9d3d6a..085586c 100644
+--- a/node_modules/react-native-svg/lib/module/lib/extract/extractTransform.js
++++ b/node_modules/react-native-svg/lib/module/lib/extract/extractTransform.js
+@@ -142,7 +142,12 @@ export default function extractTransform(props) {
+ }
+ export function extractTransformSvgView(props) {
+   if (typeof props.transform === 'string') {
+-    return parseTransformSvgToRnStyle(props.transform);
++    try {
++      return parseTransformSvgToRnStyle(props.transform);
++    } catch (e) {
++      console.error(e);
++      return undefined;
++    }
+   }
+   return props.transform;
+ }
+diff --git a/node_modules/react-native-svg/src/lib/extract/extractTransform.ts b/node_modules/react-native-svg/src/lib/extract/extractTransform.ts
+index 0c854d6..7dc2828 100644
+--- a/node_modules/react-native-svg/src/lib/extract/extractTransform.ts
++++ b/node_modules/react-native-svg/src/lib/extract/extractTransform.ts
+@@ -216,7 +216,19 @@ export function extractTransformSvgView(
+   props: TransformsStyle
+ ): TransformsStyle['transform'] {
+   if (typeof props.transform === 'string') {
+-    return parseTransformSvgToRnStyle(props.transform);
++    // A root <Svg> is a real RN view, so a string transform has to be rewritten into RN's
++    // style syntax. The grammar behind this parser only accepts SVG transform functions and
++    // throws on anything else - including ordinary CSS (`none`, `rotate(-90deg)`). Every other
++    // extractor in this file already swallows that error; this one did not, so one unrecognised
++    // string escaped as an uncaught SyntaxError during render and took the whole app down.
++    // Untrusted SVG reaches this path (a repository's own favicon.svg/logo.svg is rendered
++    // through SvgXml/SvgCss), so degrade to "no transform" like the rest of the library.
++    try {
++      return parseTransformSvgToRnStyle(props.transform);
++    } catch (e) {
++      console.error(e);
++      return undefined;
++    }
+   }
+   return props.transform as TransformsStyle['transform'];
+ }

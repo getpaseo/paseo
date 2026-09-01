@@ -5,6 +5,7 @@ import { AGENT_LIFECYCLE_STATUSES } from "./agent-lifecycle.js";
 import { MAX_EXPLICIT_AGENT_TITLE_CHARS } from "./agent-title-limits.js";
 import { AgentProviderSchema } from "./provider-manifest.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
+import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
 import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
@@ -91,6 +92,20 @@ export {
 // ---------------------------------------------------------------------------
 // Mutable daemon config schemas (shared between server store and client)
 // ---------------------------------------------------------------------------
+
+export const DAEMON_PERMISSIONS = [
+  "daemon.read",
+  "daemon.manage",
+  "tunnel.manage",
+  "access.manage",
+  "workspace.read",
+  "workspace.write",
+  "workspace.manage",
+  "automation.manage",
+  "hub.execute",
+] as const;
+export const DaemonPermissionSchema = z.enum(DAEMON_PERMISSIONS);
+export type DaemonPermission = z.infer<typeof DaemonPermissionSchema>;
 
 const MutableDaemonProviderModelSchema = z
   .object({
@@ -188,6 +203,12 @@ export const PluginSourceSchema = z.discriminatedUnion("source", [DirectoryPlugi
 
 export type PluginSource = z.infer<typeof PluginSourceSchema>;
 
+export const AgentSkillSelectionSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("all") }).strict(),
+  z.object({ mode: z.literal("custom"), skills: z.array(z.string()) }).strict(),
+]);
+export type AgentSkillSelection = z.infer<typeof AgentSkillSelectionSchema>;
+
 export const MutableDaemonConfigSchema = z
   .object({
     // COMPAT(relayConfig): added in v0.2.6, remove after 2027-01-31 when old daemons are unsupported.
@@ -222,6 +243,7 @@ export const MutableDaemonConfigSchema = z
     appendSystemPrompt: z.string().default(""),
     terminalProfiles: z.array(TerminalProfileSchema).optional(),
     agentProfiles: z.array(AgentProfileSchema).optional(),
+    skills: z.object({ selection: AgentSkillSelectionSchema.optional() }).strict().optional(),
     pluginsEnabled: z.boolean().optional(),
     plugins: z.record(PluginIdSchema, PluginSourceSchema).optional(),
   })
@@ -748,6 +770,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     type: z.literal("timeline"),
     provider: AgentProviderSchema,
     item: AgentTimelineItemPayloadSchema,
+    turnId: z.string().optional(),
   }),
   z.object({
     type: z.literal("permission_requested"),
@@ -976,6 +999,52 @@ export const WorkspacePinSetRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const WorkspaceLabelColorSchema = z.enum(WORKSPACE_LABEL_COLORS);
+export const WorkspaceLabelDefinitionSchema = z.object({
+  name: z.string(),
+  color: WorkspaceLabelColorSchema,
+});
+const WorkspaceLabelSyncCursorSchema = z.object({
+  generation: z.string(),
+  afterSeq: z.number().int().nonnegative(),
+});
+
+export const WorkspaceLabelListRequestSchema = z.object({
+  type: z.literal("workspace.label.list.request"),
+  requestId: z.string(),
+  subscribe: z.object({ subscriptionId: z.string() }),
+  sync: WorkspaceLabelSyncCursorSchema.optional(),
+});
+export const WorkspaceLabelAssignmentSetRequestSchema = z.object({
+  type: z.literal("workspace.label.assignment.set.request"),
+  requestId: z.string(),
+  workspaceId: z.string(),
+  label: WorkspaceLabelDefinitionSchema,
+  assigned: z.boolean(),
+});
+/**
+ * Editing a label is one operation. A name and a colour are two fields of one thing, and two
+ * RPCs can land half-applied — leaving the catalog in a state the user never asked for and the
+ * UI with nothing true to say. Both fields are optional; omitting one leaves it alone.
+ */
+export const WorkspaceLabelUpdateRequestSchema = z.object({
+  type: z.literal("workspace.label.update.request"),
+  requestId: z.string(),
+  name: z.string(),
+  newName: z.string().optional(),
+  color: WorkspaceLabelColorSchema.optional(),
+});
+export const WorkspaceLabelDeleteRequestSchema = z.object({
+  type: z.literal("workspace.label.delete.request"),
+  requestId: z.string(),
+  name: z.string(),
+});
+export const WorkspaceLabelDeleteInspectRequestSchema = z.object({
+  type: z.literal("workspace.label.delete.inspect.request"),
+  requestId: z.string(),
+  name: z.string(),
+});
+
 export const WorkspaceRecoveryInspectRequestSchema = z.object({
   type: z.literal("workspace.recovery.inspect.request"),
   workspaceId: z.string(),
@@ -995,6 +1064,9 @@ export const SetVoiceModeMessageSchema = z.object({
   requestId: z.string().optional(),
 });
 
+// COMPAT(githubAttachmentKinds): legacy wire attachment retained when
+// forge-neutral attachments shipped in v0.2.0-beta.1. Stop emitting it after
+// 2027-01-17 once supported client and daemon floors are >= v0.2.0.
 export const GitHubPrAttachmentSchema = z.object({
   type: z.literal("github_pr"),
   mimeType: z.literal("application/github-pr"),
@@ -1019,6 +1091,9 @@ export const ForgeChangeRequestAttachmentSchema = z.object({
   headRefName: z.string().nullable().optional(),
 });
 
+// COMPAT(githubAttachmentKinds): legacy wire attachment retained when
+// forge-neutral attachments shipped in v0.2.0-beta.1. Stop emitting it after
+// 2027-01-17 once supported client and daemon floors are >= v0.2.0.
 export const GitHubIssueAttachmentSchema = z.object({
   type: z.literal("github_issue"),
   mimeType: z.literal("application/github-issue"),
@@ -1138,11 +1213,15 @@ const ImageAttachmentSchema = z.object({
   mimeType: z.string(), // e.g., "image/jpeg", "image/png"
 });
 
+export const ActiveTurnBehaviorSchema = z.enum(["interrupt", "steer"]);
+export type ActiveTurnBehavior = z.infer<typeof ActiveTurnBehaviorSchema>;
+
 export const SendAgentMessageSchema = z.object({
   type: z.literal("send_agent_message"),
   agentId: z.string(),
   text: z.string(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
+  activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
@@ -1295,6 +1374,7 @@ export const SendAgentMessageRequestSchema = z.object({
   agentId: z.string(),
   text: z.string(),
   messageId: z.string().optional(), // Client-provided ID for deduplication
+  activeTurnBehavior: ActiveTurnBehaviorSchema.optional(),
   images: z.array(ImageAttachmentSchema).optional(),
   attachments: AgentAttachmentsSchema,
 });
@@ -1327,6 +1407,7 @@ export const HubManagementDaemonConnectRequestSchema = z.object({
   requestId: z.string(),
   hubUrl: z.string(),
   token: z.string(),
+  permissions: z.array(DaemonPermissionSchema).default([]),
 });
 export const HubManagementDaemonGetStatusRequestSchema = z.object({
   type: z.literal("hub.management.daemon.get_status.request"),
@@ -1336,6 +1417,12 @@ export const HubManagementDaemonDisconnectRequestSchema = z.object({
   type: z.literal("hub.management.daemon.disconnect.request"),
   requestId: z.string(),
   force: z.boolean().optional(),
+});
+export const HubManagementDaemonPermissionsUpdateRequestSchema = z.object({
+  type: z.literal("hub.management.daemon.permissions.update.request"),
+  requestId: z.string(),
+  grant: z.array(DaemonPermissionSchema).default([]),
+  revoke: z.array(DaemonPermissionSchema).default([]),
 });
 
 export const DiagnosticsRequestSchema = z.object({
@@ -1353,6 +1440,12 @@ export const PluginListRequestSchema = z.object({
   requestId: z.string(),
 });
 
+export const PluginLogsGetRequestSchema = z.object({
+  type: z.literal("plugin.logs.get.request"),
+  requestId: z.string(),
+  pluginId: PluginIdSchema,
+});
+
 export const PluginDirectoryInstallRequestSchema = z.object({
   type: z.literal("plugin.directory.install.request"),
   requestId: z.string(),
@@ -1364,6 +1457,27 @@ export const PluginDirectoryInspectRequestSchema = z.object({
   type: z.literal("plugin.directory.inspect.request"),
   requestId: z.string(),
   path: z.string().min(1),
+});
+
+export const PluginSourceInstallRequestSchema = z.object({
+  type: z.literal("plugin.source.install.request"),
+  requestId: z.string(),
+  source: z.string().min(1),
+  id: PluginIdSchema.optional(),
+  ref: z.string().min(1).optional(),
+  pluginPath: z.string().min(1).optional(),
+});
+
+export const PluginSourceStatusRequestSchema = z.object({
+  type: z.literal("plugin.source.status.request"),
+  requestId: z.string(),
+  pluginId: PluginIdSchema.optional(),
+});
+
+export const PluginSourceUpdateRequestSchema = z.object({
+  type: z.literal("plugin.source.update.request"),
+  requestId: z.string(),
+  pluginId: PluginIdSchema.optional(),
 });
 
 function pluginIdRequest<const Type extends string>(type: Type) {
@@ -1382,6 +1496,59 @@ export const PluginRpcInvokeRequestSchema = z.object({
   method: z.string().min(1),
   input: z.unknown(),
 });
+
+export const AgentSkillOperationSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("add"), name: z.string() }).strict(),
+  z.object({ kind: z.literal("update"), name: z.string() }).strict(),
+  z.object({ kind: z.literal("delete"), name: z.string() }).strict(),
+]);
+export type AgentSkillOperation = z.infer<typeof AgentSkillOperationSchema>;
+
+export const AgentSkillsStatusSchema = z.object({
+  state: z.enum(["not-installed", "up-to-date", "drift"]),
+  ops: z.array(AgentSkillOperationSchema),
+  available: z.array(z.string()),
+  installed: z.array(z.string()),
+  selection: AgentSkillSelectionSchema,
+});
+export type AgentSkillsStatus = z.infer<typeof AgentSkillsStatusSchema>;
+
+export const AgentSkillsConfirmationSchema = z.object({ removals: z.array(z.string()) }).strict();
+export type AgentSkillsConfirmation = z.infer<typeof AgentSkillsConfirmationSchema>;
+
+export const AgentSkillsSaveResultSchema = AgentSkillsStatusSchema.extend({
+  confirmationRequired: AgentSkillsConfirmationSchema.nullable(),
+});
+export type AgentSkillsSaveResult = z.infer<typeof AgentSkillsSaveResultSchema>;
+
+function agentSkillsRequest<const Type extends string>(type: Type) {
+  return z.object({ type: z.literal(type), requestId: z.string() }).strict();
+}
+
+export const AgentSkillsGetStatusRequestSchema = agentSkillsRequest(
+  "agent.skills.get_status.request",
+);
+export const AgentSkillsReconcileRequestSchema = agentSkillsRequest(
+  "agent.skills.reconcile.request",
+);
+export const AgentSkillsUninstallRequestSchema = agentSkillsRequest(
+  "agent.skills.uninstall.request",
+);
+export const AgentSkillsSaveSelectionRequestSchema = z
+  .object({
+    type: z.literal("agent.skills.save_selection.request"),
+    requestId: z.string(),
+    selection: AgentSkillSelectionSchema,
+    confirmedRemovals: z.array(z.string()).optional(),
+  })
+  .strict();
+export const AgentSkillsImportLegacySelectionRequestSchema = z
+  .object({
+    type: z.literal("agent.skills.import_legacy_selection.request"),
+    requestId: z.string(),
+    selection: AgentSkillSelectionSchema,
+  })
+  .strict();
 
 export const GetDaemonConfigRequestMessageSchema = z.object({
   type: z.literal("get_daemon_config_request"),
@@ -1446,8 +1613,9 @@ const GitSetupOptionsSchema = z.object({
   refName: z.string().min(1).optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
   checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
-  // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
-  // clients send checkoutSource.
+  // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
+  // checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once the
+  // supported client floor is >= v0.2.0.
   githubPrNumber: z.number().int().positive().optional(),
 });
 
@@ -1992,8 +2160,9 @@ export const CheckoutForgeSetAutoMergeRequestSchema = z.object({
   requestId: z.string(),
 });
 
-// COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
-// all supported clients use checkout.forge.set_auto_merge.*.
+// COMPAT(githubAutoMergeRpc): legacy RPC retained when
+// checkout.forge.set_auto_merge.* shipped in v0.2.0-beta.1. Stop serving and
+// consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
 export const CheckoutGithubSetAutoMergeRequestSchema = z.object({
   type: z.literal("checkout.github.set_auto_merge.request"),
   cwd: z.string(),
@@ -2062,8 +2231,9 @@ export const CheckoutForgeGetCheckDetailsRequestSchema =
     type: z.literal("checkout.forge.get_check_details.request"),
   });
 
-// COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
-// all supported clients use checkout.forge.get_check_details.*.
+// COMPAT(githubCheckDetailsRpc): legacy RPC retained when
+// checkout.forge.get_check_details.* shipped in v0.2.0-beta.1. Stop serving
+// and consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
 export const CheckoutGithubGetCheckDetailsRequestSchema =
   CheckoutCheckDetailsRequestPayloadSchema.extend({
     type: z.literal("checkout.github.get_check_details.request"),
@@ -2156,8 +2326,9 @@ export const ForgeSearchItemSchema = GitHubSearchItemSchema.extend({
   kind: z.enum(["issue", "change_request"]),
 });
 
-// COMPAT(githubSearchKind): added in v0.1.106, remove with the legacy
-// github_search_request RPC after 2026-12-28.
+// COMPAT(githubSearchKind): legacy GitHub kind aliases retained when neutral
+// forge search shipped in v0.2.0-beta.1. Remove after 2027-01-17 together with
+// the legacy github_search_request RPC.
 export const ForgeSearchKindSchema = z.enum([
   "issue",
   "change_request",
@@ -2177,8 +2348,9 @@ export const ForgeSearchRequestSchema = z.object({
   requestId: z.string(),
 });
 
-// COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 once
-// clients use forge.search.*.
+// COMPAT(githubSearchRpc): legacy RPC retained when forge.search.* shipped in
+// v0.2.0-beta.1. Stop serving and consuming it after 2027-01-17 once client
+// and daemon floors are >= v0.2.0.
 export const GitHubSearchRequestSchema = z.object({
   type: z.literal("github_search_request"),
   cwd: z.string(),
@@ -2246,8 +2418,9 @@ export const CreatePaseoWorktreeRequestSchema = z.object({
   refName: z.string().min(1).optional(),
   action: z.enum(["branch-off", "checkout"]).optional(),
   checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
-  // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
-  // clients send checkoutSource: { kind: "change_request", forge, number }.
+  // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
+  // checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once the
+  // supported client floor is >= v0.2.0.
   githubPrNumber: z.number().int().positive().optional(),
   requestId: z.string(),
 });
@@ -2358,8 +2531,9 @@ export const WorkspaceCreateRequestSchema = z.object({
       // New branch name for branch-off. The worktree path may use a different slug.
       branchName: z.string().min(1).optional(),
       checkoutSource: ChangeRequestCheckoutSourceSchema.optional(),
-      // COMPAT(githubPrNumber): added in v0.1.106, remove after 2026-12-28 once
-      // clients send checkoutSource.
+      // COMPAT(githubPrNumber): legacy GitHub checkout input retained when
+      // checkoutSource shipped in v0.2.0-beta.1. Remove after 2027-01-17 once
+      // the supported client floor is >= v0.2.0.
       githubPrNumber: z.number().int().positive().optional(),
       worktreeSlug: z.string().optional(),
     }),
@@ -2436,6 +2610,7 @@ export const FileExplorerRequestSchema = z.object({
   mode: z.enum(["list", "file"]),
   requestId: z.string(),
   acceptBinary: z.boolean().optional(),
+  maxBytes: z.number().int().positive().optional(),
 });
 
 export const FileVersionSchema = z.discriminatedUnion("status", [
@@ -2841,6 +3016,11 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   ProjectRemoveRequestSchema,
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
+  WorkspaceLabelListRequestSchema,
+  WorkspaceLabelAssignmentSetRequestSchema,
+  WorkspaceLabelUpdateRequestSchema,
+  WorkspaceLabelDeleteRequestSchema,
+  WorkspaceLabelDeleteInspectRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
@@ -2852,16 +3032,26 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   HubManagementDaemonConnectRequestSchema,
   HubManagementDaemonGetStatusRequestSchema,
   HubManagementDaemonDisconnectRequestSchema,
+  HubManagementDaemonPermissionsUpdateRequestSchema,
   DiagnosticsRequestSchema,
   PluginCatalogGetRequestSchema,
   PluginListRequestSchema,
+  PluginLogsGetRequestSchema,
   PluginDirectoryInstallRequestSchema,
   PluginDirectoryInspectRequestSchema,
+  PluginSourceInstallRequestSchema,
+  PluginSourceStatusRequestSchema,
+  PluginSourceUpdateRequestSchema,
   PluginReloadRequestSchema,
   PluginEnableRequestSchema,
   PluginDisableRequestSchema,
   PluginRemoveRequestSchema,
   PluginRpcInvokeRequestSchema,
+  AgentSkillsGetStatusRequestSchema,
+  AgentSkillsReconcileRequestSchema,
+  AgentSkillsUninstallRequestSchema,
+  AgentSkillsSaveSelectionRequestSchema,
+  AgentSkillsImportLegacySelectionRequestSchema,
   GetDaemonConfigRequestMessageSchema,
   SetDaemonConfigRequestMessageSchema,
   ReadProjectConfigRequestMessageSchema,
@@ -3157,6 +3347,8 @@ export const ServerInfoStatusPayloadSchema = z
     serverId: z.string().trim().min(1),
     hostname: ServerInfoHostnameSchema.optional(),
     version: ServerInfoVersionSchema.optional(),
+    // COMPAT(sessionPermissions): optional while clients support older daemons.
+    permissions: z.array(DaemonPermissionSchema).optional(),
     // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
     desktopManaged: z.boolean().optional(),
     capabilities: ServerCapabilitiesFromUnknownSchema.optional(),
@@ -3168,15 +3360,27 @@ export const ServerInfoStatusPayloadSchema = z
         providersSnapshotCwd: z.boolean().optional(),
         // COMPAT(directorySync): added in v0.3.x, remove gate after 2027-02-12.
         directorySync: z.boolean().optional(),
-        // COMPAT(checkoutForgeSetAutoMerge): added in v0.1.106, remove old
-        // checkoutGithubSetAutoMerge fallback after 2026-12-28.
+        // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
+        workspaceLabels: z.boolean().optional(),
+        // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
+        // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
+        // once the supported daemon floor is >= v0.2.0.
         checkoutForgeSetAutoMerge: z.boolean().optional(),
+        // COMPAT(checkoutGithubSetAutoMerge): added in v0.1.75 and retained as
+        // the fallback for checkoutForgeSetAutoMerge. Stop advertising and
+        // consuming it after 2027-01-17 once supported floors are >= v0.2.0.
         checkoutGithubSetAutoMerge: z.boolean().optional(),
-        // COMPAT(githubCheckDetails): added in v0.1.92, remove gate after 2026-12-08.
+        // COMPAT(githubCheckDetails): added in v0.1.92 and retained as the
+        // fallback for forgeCheckDetails. Stop advertising and consuming it
+        // after 2027-01-17 once supported floors are >= v0.2.0.
         githubCheckDetails: z.boolean().optional(),
-        // COMPAT(forgeCheckDetails): added in v0.1.106, remove githubCheckDetails fallback after 2026-12-28.
+        // COMPAT(forgeCheckDetails): added in v0.2.0-beta.1. Remove the feature
+        // gate and githubCheckDetails fallback after 2027-01-17 once the
+        // supported daemon floor is >= v0.2.0.
         forgeCheckDetails: z.boolean().optional(),
-        // COMPAT(forgeSearch): added in v0.1.106, remove github_search fallback after 2026-12-28.
+        // COMPAT(forgeSearch): added in v0.2.0-beta.1. Remove the feature gate
+        // and github_search fallback after 2027-01-17 once the supported daemon
+        // floor is >= v0.2.0.
         forgeSearch: z.boolean().optional(),
         // COMPAT(daemonStatusRpc): added in v0.1.76, remove gate after 2026-11-18.
         daemonStatusRpc: z.boolean().optional(),
@@ -3190,6 +3394,16 @@ export const ServerInfoStatusPayloadSchema = z
         plugins: z.boolean().optional(),
         // COMPAT(pluginManagement): added in v0.4.0, remove gate after 2027-08-14.
         pluginManagement: z.boolean().optional(),
+        // COMPAT(pluginLogs): added in v0.4.0, remove gate after 2027-08-16.
+        pluginLogs: z.boolean().optional(),
+        // COMPAT(pluginGitManagement): added in v0.7.0, remove gate after 2027-08-26.
+        pluginGitManagement: z.boolean().optional(),
+        // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
+        // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
+        // so a theme plugin cannot start there at all.
+        pluginThemes: z.boolean().optional(),
+        // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
+        skillManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
@@ -3252,7 +3466,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerRemoval: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
-        // COMPAT(forgeProviders): added in v0.1.106, drop the gate when daemon floor >= v0.1.106.
+        // COMPAT(forgeProviders): added in v0.2.0-beta.1. Drop the gate after
+        // 2027-01-17 once the supported daemon floor is >= v0.2.0.
         // Daemon advertises pluggable non-GitHub forge support (the forge registry);
         // the client gates non-GitHub setup UI on it.
         forgeProviders: z.boolean().optional(),
@@ -3499,7 +3714,7 @@ const WorkspaceGitRuntimePayloadSchema = z
   .optional()
   .nullable();
 
-const WorkspaceGitHubRuntimePayloadSchema = z
+export const WorkspaceGitHubRuntimePayloadSchema = z
   .object({
     featuresEnabled: z.boolean().optional(),
     pullRequest: z
@@ -3521,6 +3736,8 @@ const WorkspaceGitHubRuntimePayloadSchema = z
               url: z.string().nullable(),
               workflow: z.string().optional(),
               duration: z.string().optional(),
+              // Open so future forge-neutral refinements remain parse-compatible.
+              traits: z.array(z.string()).optional(),
             }),
           )
           .optional(),
@@ -3573,6 +3790,8 @@ export const WorkspaceDescriptorPayloadSchema = z
     title: z.string().nullable().optional(),
     // COMPAT(workspacePinning): added in v0.1.107, remove optional after 2027-01-12.
     pinnedAt: z.string().nullable().optional(),
+    // COMPAT(workspaceLabels): added in v0.5.0, remove optional after 2027-08-14.
+    labels: z.array(z.string()).optional(),
     archivingAt: z.string().nullable().optional().default(null),
     status: WorkspaceStateBucketSchema,
     // Best-effort workspace status entry timestamp. Old daemons omit the
@@ -3593,10 +3812,14 @@ export const WorkspaceDescriptorPayloadSchema = z
       .optional(),
     scripts: z.array(WorkspaceScriptPayloadSchema).default([]),
     gitRuntime: WorkspaceGitRuntimePayloadSchema,
+    // COMPAT(githubRuntimeName): legacy wire-field name now carries
+    // forge-neutral runtime data. Introduce and migrate to a neutral
+    // forgeRuntime field before consumers stop using this name. Target cleanup
+    // after 2027-01-17 once the supported client floor is >= v0.2.0.
     githubRuntime: WorkspaceGitHubRuntimePayloadSchema,
-    // COMPAT(forge): added in v0.1.106, remove after 2026-12-27. The forge resolved
-    // for this workspace, so the sidebar/hover-card render the right brand mark.
-    // Old daemons omit it; absent means the client falls back to GitHub.
+    // COMPAT(forge): added in v0.2.0-beta.1. Treat an absent forge as GitHub
+    // until 2027-01-17; remove the consumer fallback once the supported daemon
+    // floor is >= v0.2.0.
     forge: z.string().optional(),
     project: ProjectPlacementPayloadSchema.optional(),
     // COMPAT(directorySync): sequence of this latest directory projection.
@@ -3789,6 +4012,69 @@ export const WorkspaceUpdateMessageSchema = z.object({
       seq: z.number().int().positive().optional(),
     }),
   ]),
+});
+
+const WorkspaceLabelSyncMetadataSchema = z.object({
+  mode: z.enum(["snapshot", "changes"]),
+  generation: z.string(),
+  headSeq: z.number().int().nonnegative(),
+  removals: z.array(z.object({ name: z.string(), seq: z.number().int().positive() })),
+});
+export const WorkspaceLabelListResponseSchema = z.object({
+  type: z.literal("workspace.label.list.response"),
+  payload: z.object({
+    requestId: z.string(),
+    labels: z.array(WorkspaceLabelDefinitionSchema),
+    sync: WorkspaceLabelSyncMetadataSchema,
+  }),
+});
+export const WorkspaceLabelUpdateSchema = z.object({
+  type: z.literal("workspace.label.update"),
+  payload: z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("upsert"),
+      label: WorkspaceLabelDefinitionSchema,
+      previousName: z.string().optional(),
+      generation: z.string(),
+      seq: z.number().int().positive(),
+    }),
+    z.object({
+      kind: z.literal("remove"),
+      name: z.string(),
+      generation: z.string(),
+      seq: z.number().int().positive(),
+    }),
+  ]),
+});
+export const WorkspaceLabelAssignmentSetResponseSchema = z.object({
+  type: z.literal("workspace.label.assignment.set.response"),
+  payload: z.object({
+    requestId: z.string(),
+    label: WorkspaceLabelDefinitionSchema,
+    workspaceLabels: z.array(z.string()),
+  }),
+});
+export const WorkspaceLabelUpdateResponseSchema = z.object({
+  type: z.literal("workspace.label.update.response"),
+  payload: z.object({
+    requestId: z.string(),
+    label: WorkspaceLabelDefinitionSchema,
+    affectedWorkspaceCount: z.number().int().nonnegative(),
+  }),
+});
+export const WorkspaceLabelDeleteResponseSchema = z.object({
+  type: z.literal("workspace.label.delete.response"),
+  payload: z.object({
+    requestId: z.string(),
+    affectedWorkspaceCount: z.number().int().nonnegative(),
+  }),
+});
+export const WorkspaceLabelDeleteInspectResponseSchema = z.object({
+  type: z.literal("workspace.label.delete.inspect.response"),
+  payload: z.object({
+    requestId: z.string(),
+    affectedWorkspaceCount: z.number().int().nonnegative(),
+  }),
 });
 
 export const ProjectUpdateMessageSchema = z.object({
@@ -4026,6 +4312,7 @@ const AgentTimelineSeqRangeSchema = z.object({
 export const AgentTimelineEntryPayloadSchema = z.object({
   provider: AgentProviderSchema,
   item: AgentTimelineItemPayloadSchema,
+  turnId: z.string().optional(),
   timestamp: z.string(),
   seqStart: z.number().int().nonnegative(),
   seqEnd: z.number().int().nonnegative(),
@@ -4057,6 +4344,14 @@ export const FetchAgentTimelineResponseMessageSchema = z.object({
     mergeWindow: z.boolean().optional(),
     entries: z.array(AgentTimelineEntryPayloadSchema),
     error: z.string().nullable(),
+  }),
+});
+
+export const AgentTimelineReplacementMessageSchema = z.object({
+  type: z.literal("agent.timeline.replacement"),
+  payload: z.object({
+    agentId: z.string(),
+    epoch: z.string(),
   }),
 });
 
@@ -4328,7 +4623,7 @@ export const HubRelationshipStatusSchema = z.object({
   ]),
   daemonId: z.string().nullable(),
   hubOrigin: z.string().nullable(),
-  scopes: z.array(z.string()),
+  permissions: z.array(DaemonPermissionSchema),
   connectedAt: z.string().nullable(),
   lastError: z.string().nullable(),
 });
@@ -4347,6 +4642,10 @@ export const HubManagementDaemonDisconnectResponseSchema = z.object({
     status: HubRelationshipStatusSchema,
     warning: z.string().optional(),
   }),
+});
+export const HubManagementDaemonPermissionsUpdateResponseSchema = z.object({
+  type: z.literal("hub.management.daemon.permissions.update.response"),
+  payload: z.object({ requestId: z.string(), status: HubRelationshipStatusSchema }),
 });
 
 export const DaemonGetPairingOfferResponseSchema = z.object({
@@ -4615,7 +4914,8 @@ const CheckoutPrGithubStatusSchema = CheckoutPrGithubStatusObjectSchema.optional
 const CheckoutPrForgeSpecificSchema = z.unknown().optional();
 
 export const CheckoutPrStatusSchema = z.object({
-  // COMPAT(forge): added in v0.1.106, remove the default after 2026-12-27 once daemon floor >= v0.1.106.
+  // COMPAT(forge): added in v0.2.0-beta.1. Remove the GitHub default after
+  // 2027-01-17 once the supported daemon floor is >= v0.2.0.
   forge: z.string().optional().default("github"),
   projectPath: z.string().optional(),
   number: z.number().optional(),
@@ -4638,9 +4938,15 @@ export const CheckoutPrStatusSchema = z.object({
         status: z.string(),
         url: z.string().nullable(),
         workflow: z.string().optional(),
+        /**
+         * Formatted by the forge adapter: how long a finished check took, or how long a
+         * running one has been going. Raw timestamps stay off the wire.
+         */
         duration: z.string().optional(),
         checkRunId: z.number().optional(),
         workflowRunId: z.number().optional(),
+        // Open so future forge-neutral refinements remain parse-compatible.
+        traits: z.array(z.string()).optional(),
       }),
     )
     .optional()
@@ -4669,12 +4975,12 @@ const CheckoutPrStatusPayloadSchema = z.object({
   cwd: z.string(),
   status: CheckoutPrStatusSchema.nullable(),
   githubFeaturesEnabled: z.boolean(),
-  // COMPAT(forgeAuthState): added in v0.1.106, remove after 2026-12-27. Optional richer
-  // signal that supersedes githubFeaturesEnabled. The legacy boolean stays for old clients
-  // and may remain true for non-auth error payloads so old clients still show the error.
-  // Drop the boolean once the daemon floor >= v0.1.106.
+  // COMPAT(forgeAuthState): added in v0.2.0-beta.1. Remove the legacy
+  // githubFeaturesEnabled normalization after 2027-01-17 once the supported
+  // daemon floor is >= v0.2.0.
   authState: ForgeAuthStateSchema,
-  // COMPAT(forge): added in v0.1.106, remove the default after 2026-12-27 once daemon floor >= v0.1.106.
+  // COMPAT(forge): added in v0.2.0-beta.1. Remove the GitHub default after
+  // 2027-01-17 once the supported daemon floor is >= v0.2.0.
   forge: z.string().optional().default("github"),
   error: CheckoutErrorSchema.nullable(),
   requestId: z.string(),
@@ -4808,8 +5114,9 @@ export const CheckoutForgeSetAutoMergeResponseSchema = z.object({
   }),
 });
 
-// COMPAT(githubAutoMergeRpc): added in v0.1.106, remove after 2026-12-28 once
-// all supported clients use checkout.forge.set_auto_merge.*.
+// COMPAT(githubAutoMergeRpc): legacy RPC retained when
+// checkout.forge.set_auto_merge.* shipped in v0.2.0-beta.1. Stop serving and
+// consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
 export const CheckoutGithubSetAutoMergeResponseSchema = z.object({
   type: z.literal("checkout.github.set_auto_merge.response"),
   payload: z.object({
@@ -4882,7 +5189,11 @@ const CheckoutPipelineJobSchema = z.object({
   name: z.string(),
   stage: z.string(),
   status: z.string(),
-  rawStatus: z.string(),
+  // COMPAT(pipelineRawStatus): no client reads this, but peers <= v0.2.0-rc.1
+  // validate it as required, so daemons must keep emitting it. Optional since
+  // this schema so future daemons may omit it; delete the field and its
+  // emission after 2027-01-17 once the supported client floor is >= v0.2.0.
+  rawStatus: z.string().optional(),
   url: z.string().nullable().optional().default(null),
   allowFailure: z.boolean().optional().default(false),
   durationSeconds: z.number().nullable().optional().default(null),
@@ -4897,7 +5208,8 @@ const CheckoutPipelineStageSchema = z.object({
 const CheckoutPipelineSchema = z.object({
   id: z.number(),
   status: z.string(),
-  rawStatus: z.string(),
+  // COMPAT(pipelineRawStatus): see CheckoutPipelineJobSchema.rawStatus.
+  rawStatus: z.string().optional(),
   url: z.string().nullable().optional().default(null),
   ref: z.string().nullable().optional().default(null),
   sha: z.string().nullable().optional().default(null),
@@ -4940,8 +5252,9 @@ export const CheckoutForgeGetCheckDetailsResponseSchema = z.object({
   }),
 });
 
-// COMPAT(githubCheckDetailsRpc): added in v0.1.106, remove after 2026-12-28 once
-// all supported clients use checkout.forge.get_check_details.*.
+// COMPAT(githubCheckDetailsRpc): legacy RPC retained when
+// checkout.forge.get_check_details.* shipped in v0.2.0-beta.1. Stop serving
+// and consuming it after 2027-01-17 once client and daemon floors are >= v0.2.0.
 export const CheckoutGithubGetCheckDetailsResponseSchema = z.object({
   type: z.literal("checkout.github.get_check_details.response"),
   payload: z.object({
@@ -5062,9 +5375,9 @@ export const PullRequestTimelineResponseSchema = z.object({
       error: PullRequestTimelineErrorSchema.nullable().optional().default(null),
       requestId: z.string().optional().default(""),
       githubFeaturesEnabled: z.boolean().optional().default(true),
-      // COMPAT(forgeAuthState): added in v0.1.106, remove after 2026-12-27. Optional richer
-      // signal that supersedes githubFeaturesEnabled, mirroring CheckoutPrStatusPayloadSchema.
-      // Drop the boolean once the daemon floor >= v0.1.106.
+      // COMPAT(forgeAuthState): added in v0.2.0-beta.1. Remove the legacy
+      // githubFeaturesEnabled normalization after 2027-01-17 once the supported
+      // daemon floor is >= v0.2.0.
       authState: ForgeAuthStateSchema,
     })
     .optional()
@@ -5184,8 +5497,9 @@ export const ForgeSearchResponseSchema = z.object({
   payload: ForgeSearchResponsePayloadSchema,
 });
 
-// COMPAT(githubSearchRpc): added in v0.1.106, remove after 2026-12-28 once
-// clients use forge.search.*.
+// COMPAT(githubSearchRpc): legacy RPC retained when forge.search.* shipped in
+// v0.2.0-beta.1. Stop serving and consuming it after 2027-01-17 once client
+// and daemon floors are >= v0.2.0.
 export const GitHubSearchResponseSchema = z.object({
   type: z.literal("github_search_response"),
   payload: GitHubSearchResponsePayloadSchema,
@@ -5854,13 +6168,34 @@ export const PluginListItemSchema = z.object({
   path: z.string(),
   enabled: z.boolean(),
   status: PluginStatusSchema,
+  source: z.enum(["directory", "git"]).optional(),
+  remote: z.string().optional(),
+  ref: z.string().optional(),
+  commit: z.string().optional(),
   error: z.string().optional(),
 });
 export type PluginListItem = z.infer<typeof PluginListItemSchema>;
 
+export const PluginLogEntrySchema = z.object({
+  sequence: z.number().int().nonnegative(),
+  timestamp: z.string().datetime(),
+  stream: z.enum(["stdout", "stderr"]),
+  message: z.string(),
+});
+export type PluginLogEntry = z.infer<typeof PluginLogEntrySchema>;
+
 export const PluginListResponseSchema = z.object({
   type: z.literal("plugin.list.response"),
   payload: z.object({ requestId: z.string(), plugins: z.array(PluginListItemSchema) }),
+});
+
+export const PluginLogsGetResponseSchema = z.object({
+  type: z.literal("plugin.logs.get.response"),
+  payload: z.object({
+    requestId: z.string(),
+    pluginId: PluginIdSchema,
+    entries: z.array(PluginLogEntrySchema),
+  }),
 });
 
 export const PluginDirectoryInstallResponseSchema = z.object({
@@ -5871,6 +6206,43 @@ export const PluginDirectoryInstallResponseSchema = z.object({
 export const PluginDirectoryInspectResponseSchema = z.object({
   type: z.literal("plugin.directory.inspect.response"),
   payload: z.object({ requestId: z.string(), id: PluginIdSchema }),
+});
+
+export const PluginSourceInstallResponseSchema = z.object({
+  type: z.literal("plugin.source.install.response"),
+  payload: z.object({ requestId: z.string(), plugin: PluginListItemSchema }),
+});
+
+export const PluginSourceStatusItemSchema = z.object({
+  id: PluginIdSchema,
+  source: z.enum(["directory", "git"]),
+  path: z.string(),
+  remote: z.string().optional(),
+  ref: z.string().optional(),
+  currentCommit: z.string().optional(),
+  latestCommit: z.string().optional(),
+  commitsBehind: z.number().int().nonnegative().optional(),
+  updateAvailable: z.boolean().optional(),
+});
+export type PluginSourceStatusItem = z.infer<typeof PluginSourceStatusItemSchema>;
+
+export const PluginSourceStatusResponseSchema = z.object({
+  type: z.literal("plugin.source.status.response"),
+  payload: z.object({ requestId: z.string(), plugins: z.array(PluginSourceStatusItemSchema) }),
+});
+
+export const PluginSourceUpdateItemSchema = z.object({
+  id: PluginIdSchema,
+  previousCommit: z.string(),
+  currentCommit: z.string(),
+  commits: z.number().int().nonnegative(),
+  updated: z.boolean(),
+});
+export type PluginSourceUpdateItem = z.infer<typeof PluginSourceUpdateItemSchema>;
+
+export const PluginSourceUpdateResponseSchema = z.object({
+  type: z.literal("plugin.source.update.response"),
+  payload: z.object({ requestId: z.string(), plugins: z.array(PluginSourceUpdateItemSchema) }),
 });
 
 function pluginActionResponse<const Type extends string>(type: Type) {
@@ -5896,6 +6268,35 @@ export const PluginRpcInvokeResponseSchema = z.object({
   }),
 });
 
+function agentSkillsStatusResponse<const Type extends string>(type: Type) {
+  return z.object({
+    type: z.literal(type),
+    payload: AgentSkillsStatusSchema.extend({ requestId: z.string() }),
+  });
+}
+
+export const AgentSkillsGetStatusResponseSchema = agentSkillsStatusResponse(
+  "agent.skills.get_status.response",
+);
+export const AgentSkillsReconcileResponseSchema = agentSkillsStatusResponse(
+  "agent.skills.reconcile.response",
+);
+export const AgentSkillsUninstallResponseSchema = agentSkillsStatusResponse(
+  "agent.skills.uninstall.response",
+);
+export const AgentSkillsSaveSelectionResponseSchema = z.object({
+  type: z.literal("agent.skills.save_selection.response"),
+  payload: AgentSkillsSaveResultSchema.extend({ requestId: z.string() }),
+});
+export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
+  type: z.literal("agent.skills.import_legacy_selection.response"),
+  payload: z.object({
+    requestId: z.string(),
+    imported: z.boolean(),
+    selection: AgentSkillSelectionSchema,
+  }),
+});
+
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubExecutionAgentCreateResponseSchema,
   HubExecutionAgentValidateResponseSchema,
@@ -5905,13 +6306,22 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   BrowserAutomationExecuteRequestSchema,
   PluginCatalogGetResponseSchema,
   PluginListResponseSchema,
+  PluginLogsGetResponseSchema,
   PluginDirectoryInstallResponseSchema,
   PluginDirectoryInspectResponseSchema,
+  PluginSourceInstallResponseSchema,
+  PluginSourceStatusResponseSchema,
+  PluginSourceUpdateResponseSchema,
   PluginReloadResponseSchema,
   PluginEnableResponseSchema,
   PluginDisableResponseSchema,
   PluginRemoveResponseSchema,
   PluginRpcInvokeResponseSchema,
+  AgentSkillsGetStatusResponseSchema,
+  AgentSkillsReconcileResponseSchema,
+  AgentSkillsUninstallResponseSchema,
+  AgentSkillsSaveSelectionResponseSchema,
+  AgentSkillsImportLegacySelectionResponseSchema,
   ActivityLogMessageSchema,
   AssistantChunkMessageSchema,
   AudioOutputMessageSchema,
@@ -5929,6 +6339,12 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArtifactMessageSchema,
   AgentUpdateMessageSchema,
   WorkspaceUpdateMessageSchema,
+  WorkspaceLabelListResponseSchema,
+  WorkspaceLabelUpdateSchema,
+  WorkspaceLabelAssignmentSetResponseSchema,
+  WorkspaceLabelUpdateResponseSchema,
+  WorkspaceLabelDeleteResponseSchema,
+  WorkspaceLabelDeleteInspectResponseSchema,
   ProjectUpdateMessageSchema,
   ProjectListResponseMessageSchema,
   ScriptStatusUpdateMessageSchema,
@@ -5954,6 +6370,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   ArchiveWorkspaceResponseMessageSchema,
   FetchAgentResponseMessageSchema,
   FetchAgentTimelineResponseMessageSchema,
+  AgentTimelineReplacementMessageSchema,
   AgentTimelineListPromptsResponseMessageSchema,
   ProviderSubagentListResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
@@ -5973,6 +6390,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   HubManagementDaemonConnectResponseSchema,
   HubManagementDaemonGetStatusResponseSchema,
   HubManagementDaemonDisconnectResponseSchema,
+  HubManagementDaemonPermissionsUpdateResponseSchema,
   DiagnosticsResponseSchema,
   GetDaemonConfigResponseMessageSchema,
   SetDaemonConfigResponseMessageSchema,
@@ -6547,7 +6965,7 @@ export const WSPongMessageSchema = z.object({
 export const WSHelloMessageSchema = z.object({
   type: z.literal("hello"),
   clientId: z.string().min(1),
-  clientType: z.enum(["mobile", "browser", "cli", "mcp"]),
+  clientType: z.enum(["mobile", "browser", "cli", "mcp", "hub"]),
   protocolVersion: z.number().int(),
   appVersion: z.string().optional(),
   capabilities: z
@@ -6561,6 +6979,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
       [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
+      [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
     })
     .passthrough()
