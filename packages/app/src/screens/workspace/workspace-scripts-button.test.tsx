@@ -5,7 +5,7 @@ import { i18n as testI18n } from "@/i18n/i18next";
 import React, { type ReactElement } from "react";
 import { act, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { WorkspaceLaunchPayload, WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
+import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createRoot } from "react-dom/client";
 import { WorkspaceScriptsButton } from "@/screens/workspace/workspace-scripts-button";
@@ -232,28 +232,10 @@ function script(
   };
 }
 
-function launch(
-  input: Partial<WorkspaceLaunchPayload> & Pick<WorkspaceLaunchPayload, "launchName">,
-): WorkspaceLaunchPayload {
-  return {
-    launchName: input.launchName,
-    lifecycle: input.lifecycle ?? "stopped",
-    active: input.active ?? false,
-    portBase: input.portBase ?? null,
-    portEnd: input.portEnd ?? null,
-    portCount: input.portCount ?? null,
-    composeProjectName: input.composeProjectName ?? null,
-    endpoints: input.endpoints ?? [],
-    exitCode: input.exitCode ?? null,
-    terminalId: input.terminalId ?? null,
-  };
-}
-
 const LIVE_TERMINAL_IDS: string[] = ["terminal-script-1"];
 
 interface RenderScriptsOptions {
   hideLabels?: boolean;
-  launches?: WorkspaceLaunchPayload[];
   presentation?: "split" | "ghost";
 }
 
@@ -281,7 +263,6 @@ function renderScripts(
           serverId="test-server"
           workspaceId="workspace-1"
           scripts={nextScripts}
-          launches={options.launches}
           liveTerminalIds={LIVE_TERMINAL_IDS}
           hideLabels={options.hideLabels}
           presentation={options.presentation}
@@ -448,37 +429,6 @@ describe("WorkspaceScriptsButton", () => {
     );
     expect(requirePrimaryIcon(requireRow("old-service")).dataset.color).toBe(
       theme.colors.foregroundMuted,
-    );
-  });
-
-  it("groups launches, services, and scripts under one run menu", () => {
-    current = renderScripts(
-      [
-        script({ scriptName: "web", type: "service" }),
-        script({ scriptName: "typecheck", type: "script" }),
-      ],
-      {
-        launches: [launch({ launchName: "dev", portBase: 4100, portEnd: 4199 })],
-      },
-    );
-
-    expect(document.querySelector('[data-testid="workspace-launches-button"]')).toBeNull();
-    expect(document.querySelector('[data-testid="workspace-launches-section"]')).not.toBeNull();
-    expect(
-      document.querySelector('[data-testid="workspace-scripts-services-section"]'),
-    ).not.toBeNull();
-    expect(
-      document.querySelector('[data-testid="workspace-scripts-scripts-section"]'),
-    ).not.toBeNull();
-    expect(document.body.textContent).toContain("Launches");
-    expect(document.body.textContent).toContain("Services");
-    expect(document.body.textContent).toContain("Scripts");
-    expect(document.querySelector('[data-testid="workspace-launches-start-dev"]')).not.toBeNull();
-    expect(requireRow("web").parentElement?.dataset.testid).toBe(
-      "workspace-scripts-services-section",
-    );
-    expect(requireRow("typecheck").parentElement?.dataset.testid).toBe(
-      "workspace-scripts-scripts-section",
     );
   });
 

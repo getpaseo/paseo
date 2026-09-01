@@ -27,18 +27,33 @@ export interface EnsureWorkspaceRuntimeEnvironmentInput {
   excludedPorts?: ReadonlySet<number>;
 }
 
+export interface WorkspaceRuntimeEnvironmentServiceOptions {
+  /** Injectable only to make allocation ordering deterministic in tests. */
+  random?: () => number;
+  /** Injectable only to make availability checks deterministic in tests. */
+  checkPortAvailable?: (port: number) => Promise<boolean>;
+}
+
 interface StoredWorkspaceRuntimeEnvironment extends WorkspaceRuntimeEnvironment {
   reservedPorts: Set<number>;
 }
 
 /**
- * A daemon-lifetime lease shared by every command in a workspace. The lease is
- * deliberately independent from service definitions: a launch, a plain script,
- * and a service all see the same port block and Compose project name.
+ * A daemon-lifetime lease shared by a workspace launch and commands that opt
+ * into a workspace port block. The lease is deliberately independent from
+ * service definitions, so Compose and host processes use the same values.
  */
 export class WorkspaceRuntimeEnvironmentService {
   private readonly environments = new Map<string, StoredWorkspaceRuntimeEnvironment>();
   private readonly pending = new Map<string, Promise<StoredWorkspaceRuntimeEnvironment>>();
+  private allocationChain: Promise<void> = Promise.resolve();
+  private readonly random: () => number;
+  private readonly checkPortAvailable: (port: number) => Promise<boolean>;
+
+  constructor(options: WorkspaceRuntimeEnvironmentServiceOptions = {}) {
+    this.random = options.random ?? Math.random;
+    this.checkPortAvailable = options.checkPortAvailable ?? checkPortAvailable;
+  }
 
   async ensure(
     input: EnsureWorkspaceRuntimeEnvironmentInput,
@@ -75,37 +90,52 @@ export class WorkspaceRuntimeEnvironmentService {
   private async create(
     input: EnsureWorkspaceRuntimeEnvironmentInput,
   ): Promise<StoredWorkspaceRuntimeEnvironment> {
-    const portCount = input.allocation?.blockSize ?? DEFAULT_WORKSPACE_PORT_BLOCK_SIZE;
-    const base = await this.allocatePortBlock({ ...input, portCount });
-    const portEnd = base + portCount - 1;
-    const reservedPorts = new Set<number>();
-    for (let port = base; port <= portEnd; port += 1) {
-      reservedPorts.add(port);
-    }
+    const releaseAllocationLock = await this.acquireAllocationLock();
+    try {
+      const portCount = input.allocation?.blockSize ?? DEFAULT_WORKSPACE_PORT_BLOCK_SIZE;
+      const base = await this.allocatePortBlock({ ...input, portCount });
+      const portEnd = base + portCount - 1;
+      const reservedPorts = new Set<number>();
+      for (let port = base; port <= portEnd; port += 1) {
+        reservedPorts.add(port);
+      }
 
-    const composeProjectName = `paseo_${createHash("sha256")
-      .update(input.workspaceId)
-      .digest("hex")
-      .slice(0, 12)}`;
-    const environment: StoredWorkspaceRuntimeEnvironment = {
-      portBase: base,
-      portEnd,
-      portCount,
-      composeProjectName,
-      env: {
-        PASEO_WORKSPACE_ID: input.workspaceId,
-        PASEO_PORT_BASE: String(base),
-        PASEO_PORT_END: String(portEnd),
-        PASEO_PORT_COUNT: String(portCount),
-        PASEO_COMPOSE_PROJECT_NAME: composeProjectName,
-        // Overlay instead of inheriting an ambient value: every unit in this
-        // workspace must address the same Compose project.
-        COMPOSE_PROJECT_NAME: composeProjectName,
-      },
-      reservedPorts,
-    };
-    this.environments.set(input.workspaceId, environment);
-    return environment;
+      const composeProjectName = `paseo_${createHash("sha256")
+        .update(input.workspaceId)
+        .digest("hex")
+        .slice(0, 12)}`;
+      const environment: StoredWorkspaceRuntimeEnvironment = {
+        portBase: base,
+        portEnd,
+        portCount,
+        composeProjectName,
+        env: {
+          PASEO_WORKSPACE_ID: input.workspaceId,
+          PASEO_PORT_BASE: String(base),
+          PASEO_PORT_END: String(portEnd),
+          PASEO_PORT_COUNT: String(portCount),
+          PASEO_COMPOSE_PROJECT_NAME: composeProjectName,
+          // Overlay instead of inheriting an ambient value: every unit in this
+          // workspace must address the same Compose project.
+          COMPOSE_PROJECT_NAME: composeProjectName,
+        },
+        reservedPorts,
+      };
+      this.environments.set(input.workspaceId, environment);
+      return environment;
+    } finally {
+      releaseAllocationLock();
+    }
+  }
+
+  private async acquireAllocationLock(): Promise<() => void> {
+    const previous = this.allocationChain;
+    let release!: () => void;
+    this.allocationChain = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
+    return release;
   }
 
   private async allocatePortBlock(
@@ -139,7 +169,7 @@ export class WorkspaceRuntimeEnvironmentService {
         );
       }
       const candidateCount = range.end - range.start - portCount + 2;
-      const startOffset = Math.floor(Math.random() * candidateCount);
+      const startOffset = Math.floor(this.random() * candidateCount);
       for (let offset = 0; offset < candidateCount; offset += 1) {
         const base = range.start + ((startOffset + offset) % candidateCount);
         if (await this.isAvailableBlock(base, portCount, input.excludedPorts)) {
@@ -214,7 +244,7 @@ export class WorkspaceRuntimeEnvironmentService {
     }
     this.assertValidBlock(base, portCount, undefined, excludedPorts);
     for (let port = base; port < base + portCount; port += 1) {
-      if (!(await isPortAvailable(port))) {
+      if (!(await this.checkPortAvailable(port))) {
         return false;
       }
     }
@@ -262,7 +292,7 @@ function intersectsPorts(
   return false;
 }
 
-async function isPortAvailable(port: number): Promise<boolean> {
+async function checkPortAvailable(port: number): Promise<boolean> {
   return await new Promise((resolve) => {
     const server = net.createServer();
     server.unref();
