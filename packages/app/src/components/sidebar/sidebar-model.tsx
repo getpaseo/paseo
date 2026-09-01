@@ -6,6 +6,7 @@ import {
   type SidebarWorkspacesListResult,
 } from "@/hooks/use-sidebar-workspaces-list";
 import { useSidebarWorkspaceEntries } from "@/hooks/use-sidebar-workspace-entries";
+import { sortSidebarProjectsByRecentActivity } from "@/hooks/sidebar-workspaces-view-model";
 import { usePinnedSidebarKeys, type PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import {
@@ -56,6 +57,7 @@ export function SidebarModelProvider({
 }) {
   const list = useSidebarWorkspacesList({ enabled: active });
   const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const projectSort = useSidebarViewStore((state) => state.projectSort);
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
   const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
@@ -95,7 +97,9 @@ export function SidebarModelProvider({
   // anything; the label filter reads `labels`, which only exists on an entry. Hydration opens a
   // live session-store subscription over every workspace on every visible host, so widening this
   // for a filter that does not need it costs a retained-but-inactive sidebar real work.
-  const needsWorkspaceEntries = groupMode !== "project" || hasActiveLabelFilter;
+  // The recent project sort reads `statusEnteredAt`, which only exists on a hydrated entry.
+  const needsWorkspaceEntries =
+    groupMode !== "project" || hasActiveLabelFilter || projectSort === "recent";
   const workspaceEntriesByKey = useSidebarWorkspaceEntries(
     list.workspacePlacements,
     active !== false || needsWorkspaceEntries,
@@ -138,10 +142,22 @@ export function SidebarModelProvider({
     list.projects,
     visibleWorkspaceKeys,
   ]);
-  const pinnedKeys = usePinnedSidebarKeys(filteredProjects);
+  // Recency sorts the whole (filtered) project list; timestamps come from the unfiltered
+  // entries map so a label filter can't change which workspace stands for a project.
+  const orderedProjects = useMemo(
+    () =>
+      projectSort === "recent"
+        ? sortSidebarProjectsByRecentActivity({
+            projects: filteredProjects,
+            workspaceEntriesByKey,
+          })
+        : filteredProjects,
+    [filteredProjects, projectSort, workspaceEntriesByKey],
+  );
+  const pinnedKeys = usePinnedSidebarKeys(orderedProjects);
   const projectionInput = useMemo(
     () => ({
-      projects: filteredProjects,
+      projects: orderedProjects,
       pinnedKeys,
       pinnedWorkspaceOrder,
       workspaceEntriesByKey: filteredWorkspaceEntriesByKey,
@@ -156,7 +172,7 @@ export function SidebarModelProvider({
       collapsedWorkspaceGroupKeys,
       groupMode,
       list.projectNamesByViewKey,
-      filteredProjects,
+      orderedProjects,
       pinnedCollapsed,
       pinnedKeys,
       pinnedWorkspaceOrder,
@@ -167,7 +183,7 @@ export function SidebarModelProvider({
   const value = useMemo(
     () => ({
       ...list,
-      projects: filteredProjects,
+      projects: orderedProjects,
       allProjects: list.projects,
       resolvedProjectFilters,
       hasProjectsBeforeFilter: list.projects.length > 0,
@@ -185,7 +201,7 @@ export function SidebarModelProvider({
       collapsedProjectKeys,
       groupMode,
       list,
-      filteredProjects,
+      orderedProjects,
       projection,
       toggleProjectCollapsed,
       filteredWorkspaceEntriesByKey,

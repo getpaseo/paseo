@@ -7,6 +7,12 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 
 export type SidebarGroupMode = "project" | "status";
 
+/**
+ * How the project sections are ordered. "manual" is the persisted drag order;
+ * "recent" puts the project with the freshest workspace activity first.
+ */
+export type SidebarProjectSortMode = "manual" | "recent";
+
 const SIDEBAR_VIEW_STORAGE_KEY = "sidebar-view";
 const LEGACY_SIDEBAR_GROUP_MODE_STORAGE_KEY = "sidebar-group-mode";
 const SIDEBAR_VIEW_STORE_VERSION = 6;
@@ -47,6 +53,7 @@ function toggleFilterEntry(list: readonly string[], key: string): string[] {
 
 interface SidebarViewStoreState {
   groupMode: SidebarGroupMode;
+  projectSort: SidebarProjectSortMode;
   // Empty means "all hosts". A non-empty list pins the sidebar to those hosts.
   hostFilters: string[];
   /**
@@ -62,6 +69,7 @@ interface SidebarViewStoreState {
   projectFilters: string[];
   labelFilter: SidebarLabelFilter;
   setGroupMode: (mode: SidebarGroupMode) => void;
+  setProjectSort: (mode: SidebarProjectSortMode) => void;
   toggleHostFilter: (serverId: string) => void;
   clearHostFilters: () => void;
   toggleProjectFilter: (viewKey: string) => void;
@@ -74,17 +82,20 @@ interface SidebarViewStoreState {
 
 interface SidebarViewPersistedState {
   groupMode: SidebarGroupMode;
+  projectSort: SidebarProjectSortMode;
   hostFilters: string[];
   projectFilters: string[];
   labelFilter: SidebarLabelFilter;
 }
 
 const PersistedSidebarGroupModeSchema = z.enum(["project", "status", "label"]);
+const PersistedSidebarProjectSortSchema = z.enum(["manual", "recent"]);
 const SidebarLabelFilterSchema = z.object({
   labels: z.array(z.string()),
 });
 const SidebarViewPersistedStateSchema = z.strictObject({
   groupMode: PersistedSidebarGroupModeSchema.optional(),
+  projectSort: PersistedSidebarProjectSortSchema.optional(),
   hostFilters: z.array(z.string()).optional(),
   hostFilter: z.string().nullable().optional(),
   projectFilters: z.array(z.string()).optional(),
@@ -123,6 +134,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
   if (!result.success) {
     return {
       groupMode: "project",
+      projectSort: "manual",
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
@@ -134,6 +146,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
   if (legacyGroupMode) {
     return {
       groupMode: legacyGroupMode,
+      projectSort: "manual",
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
@@ -142,6 +155,7 @@ export function migrateSidebarViewState(persistedState: unknown): SidebarViewPer
 
   return {
     groupMode: state.groupMode === "status" ? "status" : "project",
+    projectSort: state.projectSort ?? "manual",
     hostFilters: readHostFilters(state),
     projectFilters: state.projectFilters ?? [],
     labelFilter: state.labelFilter
@@ -179,10 +193,12 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
   persist(
     (set) => ({
       groupMode: "project",
+      projectSort: "manual",
       hostFilters: [],
       projectFilters: [],
       labelFilter: emptyLabelFilter(),
       setGroupMode: (mode) => set({ groupMode: mode }),
+      setProjectSort: (mode) => set({ projectSort: mode }),
       toggleHostFilter: (serverId) =>
         set((state) => ({ hostFilters: toggleFilterEntry(state.hostFilters, serverId) })),
       clearHostFilters: () => set({ hostFilters: [] }),
@@ -229,6 +245,7 @@ export const useSidebarViewStore = create<SidebarViewStoreState>()(
       ),
       partialize: (state) => ({
         groupMode: state.groupMode,
+        projectSort: state.projectSort,
         hostFilters: state.hostFilters,
         projectFilters: state.projectFilters,
         labelFilter: state.labelFilter,

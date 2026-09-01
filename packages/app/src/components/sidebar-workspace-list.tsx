@@ -2189,6 +2189,11 @@ function ProjectModeList({
 
   const handleProjectDragEnd = useCallback(
     (reorderedProjects: SidebarProjectEntry[]) => {
+      // A drop position taken from a recency-sorted view says nothing about the manual
+      // order, so don't let it overwrite one; the sort reasserts itself anyway.
+      if (useSidebarViewStore.getState().projectSort === "recent") {
+        return;
+      }
       const reorderedProjectKeys = reorderedProjects.map((project) => project.viewKey);
       const currentProjectOrder = getProjectOrder();
       if (

@@ -13,6 +13,7 @@ import {
   deriveProjectStatusBucket,
   deriveSidebarLoadingState,
   shouldShowSidebarHostLabels,
+  sortSidebarProjectsByRecentActivity,
   type ProjectStatusSession,
   type SidebarProjectEntry,
   type SidebarWorkspacePlacement,
@@ -196,6 +197,76 @@ describe("applyStoredOrdering", () => {
     });
 
     expect(result).toBe(baseline);
+  });
+});
+
+describe("sortSidebarProjectsByRecentActivity", () => {
+  function entryWithActivity(workspaceId: string, statusEnteredAt: Date | null) {
+    return createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: workspace({
+        id: workspaceId,
+        name: workspaceId,
+        projectId: "proj",
+        projectDisplayName: "proj",
+        status: "running",
+        statusEnteredAt,
+      }),
+    });
+  }
+
+  function entriesByKey(entries: ReturnType<typeof entryWithActivity>[]) {
+    return new Map(entries.map((entry) => [entry.workspaceKey, entry]));
+  }
+
+  it("puts the project with the freshest workspace activity first", () => {
+    const projects = [
+      sidebarProject({ projectKey: "stale", workspaceKeys: ["srv:ws-old"] }),
+      sidebarProject({ projectKey: "fresh", workspaceKeys: ["srv:ws-idle", "srv:ws-new"] }),
+    ];
+    const result = sortSidebarProjectsByRecentActivity({
+      projects,
+      workspaceEntriesByKey: entriesByKey([
+        entryWithActivity("ws-old", new Date("2026-08-01T00:00:00Z")),
+        entryWithActivity("ws-idle", new Date("2026-07-01T00:00:00Z")),
+        entryWithActivity("ws-new", new Date("2026-08-30T00:00:00Z")),
+      ]),
+    });
+
+    expect(result.map((entry) => entry.viewKey)).toEqual(["fresh", "stale"]);
+  });
+
+  it("keeps projects without timestamps in incoming order after dated ones", () => {
+    const projects = [
+      sidebarProject({ projectKey: "undated-1", workspaceKeys: ["srv:ws-u1"] }),
+      sidebarProject({ projectKey: "dated", workspaceKeys: ["srv:ws-dated"] }),
+      sidebarProject({ projectKey: "undated-2", workspaceKeys: ["srv:ws-u2"] }),
+    ];
+    const result = sortSidebarProjectsByRecentActivity({
+      projects,
+      workspaceEntriesByKey: entriesByKey([
+        entryWithActivity("ws-dated", new Date("2026-08-01T00:00:00Z")),
+        entryWithActivity("ws-u1", null),
+      ]),
+    });
+
+    expect(result.map((entry) => entry.viewKey)).toEqual(["dated", "undated-1", "undated-2"]);
+  });
+
+  it("returns the input array when nothing moves", () => {
+    const projects = [
+      sidebarProject({ projectKey: "first", workspaceKeys: ["srv:ws-1"] }),
+      sidebarProject({ projectKey: "second", workspaceKeys: ["srv:ws-2"] }),
+    ];
+    const result = sortSidebarProjectsByRecentActivity({
+      projects,
+      workspaceEntriesByKey: entriesByKey([
+        entryWithActivity("ws-1", new Date("2026-08-30T00:00:00Z")),
+        entryWithActivity("ws-2", new Date("2026-08-01T00:00:00Z")),
+      ]),
+    });
+
+    expect(result).toBe(projects);
   });
 });
 
