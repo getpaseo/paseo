@@ -50,8 +50,8 @@ describe("getClaudeModels", () => {
   it("returns all claude models", () => {
     const models = getClaudeModels();
     expect(models.map((m) => m.id)).toEqual([
-      "claude-fable-5-1",
       "claude-opus-5",
+      "claude-fable-5-1",
       "claude-fable-5",
       "claude-fable-5[1m]",
       "claude-opus-4-8[1m]",
@@ -82,8 +82,8 @@ describe("getClaudeModels", () => {
 
     expect(contextWindows).toEqual(
       new Map([
-        ["claude-fable-5-1", 1_000_000],
         ["claude-opus-5", 1_000_000],
+        ["claude-fable-5-1", 1_000_000],
         ["claude-fable-5", 1_000_000],
         ["claude-fable-5[1m]", 1_000_000],
         ["claude-opus-4-8[1m]", 1_000_000],
