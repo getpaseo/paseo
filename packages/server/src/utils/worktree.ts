@@ -1312,6 +1312,7 @@ async function resolveWorktreeSourcePlan({
       await validateGitBranchName(cwd, branchName);
       const normalizedBaseBranch = normalizeRequiredBaseBranch(source.baseBranch);
       const resolvedBaseBranch = await resolveBaseBranchForWorktree(cwd, source.baseBranch);
+      await refreshRemoteTrackingBaseRef(cwd, resolvedBaseBranch);
       const branchExists = await localBranchExists(cwd, branchName);
       const base = branchExists ? branchName : resolvedBaseBranch;
       const candidateBranch = branchExists ? desiredSlug : branchName;
@@ -1642,6 +1643,21 @@ async function resolveBaseBranchForWorktree(
     }
   }
   throw new Error(`Base branch not found: ${normalized}`);
+}
+
+// A remote-tracking base like refs/remotes/origin/main is only as fresh as the last fetch, and
+// nothing on the branch-off path guarantees one ran. Refresh it so the new branch starts at the
+// remote tip; when the fetch fails (offline, auth) the cached ref is still a usable base.
+async function refreshRemoteTrackingBaseRef(cwd: string, resolvedBaseRef: string): Promise<void> {
+  const match = /^refs\/remotes\/([^/]+)\/(.+)$/.exec(resolvedBaseRef);
+  if (!match) {
+    return;
+  }
+  try {
+    await tryFetchWorktreeTrackingRemote({ cwd, remoteName: match[1], headRef: match[2] });
+  } catch {
+    // Fetch timed out or the remote config could not be read; branch from the cached ref.
+  }
 }
 
 async function localBranchExists(cwd: string, branchName: string): Promise<boolean> {
