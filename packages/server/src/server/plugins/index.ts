@@ -9,6 +9,7 @@ import {
   type PluginSourceStatusItem,
   type PluginSourceUpdateItem,
 } from "@getpaseo/protocol/messages";
+import { parsePluginSourceReference } from "@getpaseo/protocol/plugin-source-reference";
 import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
 import { readPluginManifest } from "./manifest.js";
@@ -171,7 +172,7 @@ export class PluginService {
     const directInfo = await stat(directDirectory).catch(() => null);
     const reference = directInfo?.isDirectory()
       ? { source: input.source, pluginPath: undefined }
-      : splitPluginSourceReference(input.source);
+      : parsePluginSourceReference(input.source);
     const directory = path.resolve(reference.source);
     const info = directInfo?.isDirectory() ? directInfo : await stat(directory).catch(() => null);
     if (info?.isDirectory()) {
@@ -500,34 +501,4 @@ function resolveLocalPluginPath(directory: string, pluginPath: string | undefine
     relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative);
   if (escapesSource) throw new Error("Plugin path must stay inside the source directory");
   return pluginDirectory;
-}
-
-function splitPluginSourceReference(reference: string): {
-  source: string;
-  pluginPath: string | undefined;
-} {
-  const separator = reference.lastIndexOf(":");
-  if (separator === -1 || separator === reference.length - 1) {
-    return { source: reference, pluginPath: undefined };
-  }
-
-  const scheme = reference.indexOf("://");
-  if (scheme !== -1) {
-    const pathStart = reference.indexOf("/", scheme + 3);
-    if (pathStart === -1 || separator < pathStart) {
-      return { source: reference, pluginPath: undefined };
-    }
-  } else {
-    const firstSeparator = reference.indexOf(":");
-    const isWindowsDrive = firstSeparator === 1 && /^[A-Za-z]:[\\/]/.test(reference);
-    const isScpSource = /^[^/@\s]+@[^:\s]+:/.test(reference);
-    if ((isWindowsDrive || isScpSource) && separator === firstSeparator) {
-      return { source: reference, pluginPath: undefined };
-    }
-  }
-
-  return {
-    source: reference.slice(0, separator),
-    pluginPath: reference.slice(separator + 1),
-  };
 }

@@ -6,6 +6,10 @@ import type {
   PluginSourceStatusItem,
   PluginSourceUpdateItem,
 } from "@getpaseo/protocol/messages";
+import {
+  formatPluginSourceReference,
+  parsePluginSourceReference,
+} from "@getpaseo/protocol/plugin-source-reference";
 import type { CommandOptions, ListResult, OutputSchema, SingleResult } from "../../output/index.js";
 import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions, addJsonOption } from "../../utils/command-options.js";
@@ -124,12 +128,10 @@ async function install(
     source.startsWith("../") ||
     source.startsWith(".\\") ||
     source.startsWith("..\\");
-  const pathSeparator = source.lastIndexOf(":");
-  const hasPluginPathSuffix =
-    pathSeparator !== -1 && !(/^[A-Za-z]:[\\/]/.test(source) && pathSeparator === 1);
+  const hasPluginPathSuffix = parsePluginSourceReference(source).pluginPath !== undefined;
   const canUseLegacyDirectoryInstall =
     isExplicitPath && !hasPluginPathSuffix && !options.ref && !options.path;
-  const sourceReference = options.path ? `${source}:${options.path}` : source;
+  const sourceReference = formatPluginSourceReference(source, options.path);
   const data = canUseLegacyDirectoryInstall
     ? await withPluginManagementClient(options.host, (client) =>
         client.installDirectoryPlugin(source, options.id),
