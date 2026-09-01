@@ -34,13 +34,16 @@ describe("plugin scaffold", () => {
     expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual({
       id: "hello-plugin",
     });
+    const cliPackageJson = JSON.parse(
+      await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
     expect(JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"))).toEqual({
       name: "hello-plugin",
       private: true,
       version: "0.0.0",
       scripts: { typecheck: "tsc --noEmit" },
       devDependencies: {
-        "@getpaseo/plugin": "0.7.0",
+        "@getpaseo/plugin": cliPackageJson.version,
         "@tanstack/react-query": "^5.90.11",
         "@types/react": "~19.2.0",
         react: "19.1.0",
