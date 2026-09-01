@@ -17,6 +17,7 @@ describe("runCreateTerminalWorkspace", () => {
     const ensureWorkspace = vi.fn().mockResolvedValue(workspace);
     const createTerminal = vi.fn().mockResolvedValue({ terminalId: "term-1" });
     const sendTerminalInput = vi.fn();
+    const clearDraft = vi.fn();
     const { navigate, recorded } = createRecordingNavigate();
 
     await runCreateTerminalWorkspace({
@@ -27,6 +28,7 @@ describe("runCreateTerminalWorkspace", () => {
       ensureWorkspace,
       createTerminal,
       sendTerminalInput,
+      clearDraft,
       serverId: "server-abc",
       navigate,
     });
@@ -52,6 +54,7 @@ describe("runCreateTerminalWorkspace", () => {
         target: { kind: "terminal", terminalId: "term-1" },
       },
     ]);
+    expect(clearDraft).toHaveBeenCalledOnce();
   });
 
   it("drops a sentinel-only arg when the prompt is empty, so a bare command still launches", async () => {
@@ -69,6 +72,7 @@ describe("runCreateTerminalWorkspace", () => {
       ensureWorkspace,
       createTerminal,
       sendTerminalInput,
+      clearDraft: vi.fn(),
       serverId: "server-abc",
       navigate,
     });
@@ -97,6 +101,7 @@ describe("runCreateTerminalWorkspace", () => {
       ensureWorkspace,
       createTerminal,
       sendTerminalInput,
+      clearDraft: vi.fn(),
       serverId: "server-abc",
       navigate,
     });
@@ -132,6 +137,7 @@ describe("runCreateTerminalWorkspace", () => {
       ensureWorkspace,
       createTerminal,
       sendTerminalInput,
+      clearDraft: vi.fn(),
       serverId: "server-abc",
       navigate,
     });
@@ -155,6 +161,7 @@ describe("runCreateTerminalWorkspace", () => {
       ensureWorkspace,
       createTerminal,
       sendTerminalInput,
+      clearDraft: vi.fn(),
       serverId: "server-abc",
       navigate,
     });
@@ -183,6 +190,7 @@ describe("runCreateTerminalWorkspace", () => {
       ensureWorkspace,
       createTerminal,
       sendTerminalInput,
+      clearDraft: vi.fn(),
       serverId: "server-abc",
       navigate,
     });
@@ -212,6 +220,7 @@ describe("runCreateTerminalWorkspace", () => {
       ensureWorkspace,
       createTerminal,
       sendTerminalInput,
+      clearDraft: vi.fn(),
       serverId: "server-abc",
       navigate,
     });
@@ -234,6 +243,7 @@ describe("runCreateTerminalWorkspace", () => {
       ensureWorkspace,
       createTerminal,
       sendTerminalInput,
+      clearDraft: vi.fn(),
       serverId: "server-abc",
       navigate,
     });
@@ -243,5 +253,32 @@ describe("runCreateTerminalWorkspace", () => {
       workspaceId: "ws-1",
       name: undefined,
     });
+  });
+
+  it("keeps the draft when terminal creation fails", async () => {
+    const ensureWorkspace = vi
+      .fn()
+      .mockResolvedValue({ id: "ws-1", workspaceDirectory: "/repo/ws-1" });
+    const createTerminal = vi.fn().mockRejectedValue(new Error("terminal failed"));
+    const clearDraft = vi.fn();
+    const { navigate, recorded } = createRecordingNavigate();
+
+    await expect(
+      runCreateTerminalWorkspace({
+        cwd: "/repo",
+        prompt: "fix the bug",
+        profile: { command: "claude", args: ["{{{prompt}}}"] },
+        profileName: "Claude Code",
+        ensureWorkspace,
+        createTerminal,
+        sendTerminalInput: vi.fn(),
+        clearDraft,
+        serverId: "server-abc",
+        navigate,
+      }),
+    ).rejects.toThrow("terminal failed");
+
+    expect(clearDraft).not.toHaveBeenCalled();
+    expect(recorded).toEqual([]);
   });
 });
