@@ -2677,6 +2677,7 @@ export const ko: TranslationResources = {
         nameAccessibility: "실행 구성 이름",
         commandAccessibility: "실행 구성 명령",
         nameRequired: "이름이 필요합니다",
+        nameDuplicate: "각 실행 구성에는 고유한 이름이 필요합니다",
         commandRequired: "명령이 필요합니다",
         newLaunch: "새 실행 구성",
         editLaunch: "{{name}} 편집",

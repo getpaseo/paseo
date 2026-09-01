@@ -114,7 +114,26 @@ function nextLaunchDraftId(): string {
   return `launch-draft-${launchDraftIdCounter}`;
 }
 
+export function getDuplicateLaunchNames(
+  launches: readonly ProjectLaunchDraft[],
+): ReadonlySet<string> {
+  const names = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const launch of launches) {
+    const trimmedName = launch.name.trim();
+    if (trimmedName.length === 0) continue;
+    if (names.has(trimmedName)) duplicates.add(trimmedName);
+    names.add(trimmedName);
+  }
+  return duplicates;
+}
+
 function launchesFromDraft(launches: ProjectLaunchDraft[]): Record<string, PaseoLaunchEntryRaw> {
+  const duplicateNames = getDuplicateLaunchNames(launches);
+  if (duplicateNames.size > 0) {
+    throw new Error(`Launch names must be unique: ${Array.from(duplicateNames).join(", ")}`);
+  }
+
   const nextLaunches: Record<string, PaseoLaunchEntryRaw> = {};
   for (const row of launches) {
     const trimmedName = row.name.trim();

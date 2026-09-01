@@ -2631,6 +2631,7 @@ export const zhCN: TranslationResources = {
         nameAccessibility: "启动配置名称",
         commandAccessibility: "启动配置命令",
         nameRequired: "必须填写名称",
+        nameDuplicate: "每个启动配置都必须有唯一的名称",
         commandRequired: "必须填写命令",
         newLaunch: "新建启动配置",
         editLaunch: "编辑 {{name}}",

@@ -211,6 +211,18 @@ describe("applyDraftToConfig", () => {
     });
   });
 
+  it("rejects duplicate launch names after trimming", () => {
+    const draft = emptyDraft();
+    draft.launches = [
+      { id: "launch-1", name: "dev", commandText: "./bin/dev", rawEntry: {} },
+      { id: "launch-2", name: " dev ", commandText: "./bin/dev --watch", rawEntry: {} },
+    ];
+
+    expect(() => applyDraftToConfig({ draft, base: {} })).toThrow(
+      "Launch names must be unique: dev",
+    );
+  });
+
   it("normalizes script command text into the original command kind", () => {
     const base = PaseoConfigRawSchema.parse({
       scripts: {

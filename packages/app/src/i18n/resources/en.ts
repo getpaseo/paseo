@@ -2772,6 +2772,7 @@ export const en = {
         nameAccessibility: "Launch name",
         commandAccessibility: "Launch command",
         nameRequired: "Name is required",
+        nameDuplicate: "Each launch needs a unique name",
         commandRequired: "Command is required",
         newLaunch: "New launch",
         editLaunch: "Edit {{name}}",

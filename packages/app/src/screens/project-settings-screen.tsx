@@ -42,6 +42,7 @@ import { confirmDialog } from "@/utils/confirm-dialog";
 import {
   applyDraftToConfig,
   configToDraft,
+  getDuplicateLaunchNames,
   METADATA_PROMPT_KEYS,
   type LifecycleOriginalKind,
   type MetadataPromptKey,
@@ -722,14 +723,20 @@ function ProjectConfigForm({
   const editingScript = draft.scripts.find((entry) => entry.id === editingScriptId);
   const editingLaunch = draft.launches.find((entry) => entry.id === editingLaunchId);
 
+  const duplicateLaunchNames = useMemo(
+    () => getDuplicateLaunchNames(draft.launches),
+    [draft.launches],
+  );
+
   const hasInvalidScripts = useMemo(
     () => draft.scripts.some((script) => validateScript(script, t).hasErrors),
     [draft.scripts, t],
   );
 
   const hasInvalidLaunches = useMemo(
-    () => draft.launches.some((launch) => validateLaunch(launch, t).hasErrors),
-    [draft.launches, t],
+    () =>
+      draft.launches.some((launch) => validateLaunch(launch, t, duplicateLaunchNames).hasErrors),
+    [draft.launches, duplicateLaunchNames, t],
   );
 
   const scriptsTrailing = useMemo(
@@ -978,6 +985,7 @@ function ProjectConfigForm({
       {editingLaunch ? (
         <LaunchEditModal
           launch={editingLaunch}
+          duplicateLaunchNames={duplicateLaunchNames}
           onChange={handleEditingLaunchDraftChange}
           onCancel={handleCancelEditingLaunch}
           onSave={handleSaveEditingLaunch}
@@ -1162,9 +1170,18 @@ function validateScript(script: ProjectScriptDraft, t: TFunction): ScriptValidat
   };
 }
 
-function validateLaunch(launch: ProjectLaunchDraft, t: TFunction): ScriptValidation {
-  const nameError =
-    launch.name.trim().length === 0 ? t("settings.project.launches.nameRequired") : null;
+function validateLaunch(
+  launch: ProjectLaunchDraft,
+  t: TFunction,
+  duplicateLaunchNames: ReadonlySet<string>,
+): ScriptValidation {
+  const trimmedName = launch.name.trim();
+  let nameError: string | null = null;
+  if (trimmedName.length === 0) {
+    nameError = t("settings.project.launches.nameRequired");
+  } else if (duplicateLaunchNames.has(trimmedName)) {
+    nameError = t("settings.project.launches.nameDuplicate");
+  }
   const commandError =
     launch.commandText.trim().length === 0 ? t("settings.project.launches.commandRequired") : null;
   return {
@@ -1314,12 +1331,19 @@ function ScriptEditModal({ script, onChange, onCancel, onSave }: ScriptEditModal
 
 interface LaunchEditModalProps {
   launch: ProjectLaunchDraft;
+  duplicateLaunchNames: ReadonlySet<string>;
   onChange: (next: ProjectLaunchDraft) => void;
   onCancel: () => void;
   onSave: () => void;
 }
 
-function LaunchEditModal({ launch, onChange, onCancel, onSave }: LaunchEditModalProps) {
+function LaunchEditModal({
+  launch,
+  duplicateLaunchNames,
+  onChange,
+  onCancel,
+  onSave,
+}: LaunchEditModalProps) {
   const { t } = useTranslation();
   const [touched, setTouched] = useState<ScriptFieldsTouched>(NONE_TOUCHED);
 
@@ -1340,7 +1364,7 @@ function LaunchEditModal({ launch, onChange, onCancel, onSave }: LaunchEditModal
   );
   const handleNameBlur = useCallback(() => markTouched("name"), [markTouched]);
   const handleCommandBlur = useCallback(() => markTouched("command"), [markTouched]);
-  const validation = validateLaunch(launch, t);
+  const validation = validateLaunch(launch, t, duplicateLaunchNames);
   const handleSavePress = useCallback(() => {
     if (validation.hasErrors) {
       setTouched(ALL_TOUCHED);

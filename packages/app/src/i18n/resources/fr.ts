@@ -2733,6 +2733,7 @@ export const fr: TranslationResources = {
         nameAccessibility: "Nom du lancement",
         commandAccessibility: "Commande du lancement",
         nameRequired: "Le nom est requis",
+        nameDuplicate: "Chaque lancement doit avoir un nom unique",
         commandRequired: "La commande est requise",
         newLaunch: "Nouveau lancement",
         editLaunch: "Modifier {{name}}",

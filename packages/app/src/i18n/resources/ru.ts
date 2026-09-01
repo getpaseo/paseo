@@ -2717,6 +2717,7 @@ export const ru: TranslationResources = {
         nameAccessibility: "Имя запуска",
         commandAccessibility: "Команда запуска",
         nameRequired: "Укажите имя",
+        nameDuplicate: "У каждого запуска должно быть уникальное имя",
         commandRequired: "Укажите команду",
         newLaunch: "Новый запуск",
         editLaunch: "Изменить {{name}}",

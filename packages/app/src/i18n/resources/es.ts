@@ -2726,6 +2726,7 @@ export const es: TranslationResources = {
         nameAccessibility: "Nombre del inicio",
         commandAccessibility: "Comando del inicio",
         nameRequired: "El nombre es obligatorio",
+        nameDuplicate: "Cada inicio debe tener un nombre único",
         commandRequired: "El comando es obligatorio",
         newLaunch: "Nuevo inicio",
         editLaunch: "Editar {{name}}",
