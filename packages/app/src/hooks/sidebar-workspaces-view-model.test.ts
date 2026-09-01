@@ -692,6 +692,7 @@ function agent(input: {
   id: string;
   workspaceId: string;
   status: Agent["status"];
+  turn?: Agent["turn"];
   updatedAt?: Date;
   parentAgentId?: string | null;
   archivedAt?: Date | null;
@@ -701,7 +702,7 @@ function agent(input: {
     id: input.id,
     provider: "claude" as Agent["provider"],
     status: input.status,
-    turn: { phase: "idle", cancellationRequestId: null },
+    turn: input.turn ?? { phase: "idle", cancellationRequestId: null },
     createdAt: new Date(0),
     updatedAt: input.updatedAt ?? new Date(1_000),
     lastUserMessageAt: null,
@@ -891,7 +892,19 @@ describe("deriveProjectStatusBucket", () => {
         sessions: {
           srv: sessionWith({
             workspaces: [projectWorkspace("ws-1", "done")],
-            agents: [agent({ id: "a1", workspaceId: "ws-1", status: "running" })],
+            agents: [
+              agent({
+                id: "a1",
+                workspaceId: "ws-1",
+                status: "running",
+                turn: {
+                  phase: "open",
+                  turnId: "turn-1",
+                  startedAt: new Date(1_000),
+                  cancellationRequestId: null,
+                },
+              }),
+            ],
           }),
         },
       }),

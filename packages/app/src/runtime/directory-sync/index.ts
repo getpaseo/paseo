@@ -636,10 +636,8 @@ export class DirectorySync {
   }
 
   acceptWorkspaces(workspaces: readonly WorkspaceDescriptor[]): void {
-    this.checkpoints?.commitDirectoryMutations(
-      this.serverId,
-      this.workspaces.acceptWorkspaces(workspaces),
-    );
+    const mutations = this.workspaces.acceptWorkspaces(workspaces);
+    this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
   }
 
   archiveAgent(agentId: string, archivedAt: string): void {
@@ -651,17 +649,13 @@ export class DirectorySync {
   }
 
   acceptProject(project: ProjectDescriptor): void {
-    this.checkpoints?.commitDirectoryMutations(
-      this.serverId,
-      this.workspaces.acceptProject(project),
-    );
+    const mutations = this.workspaces.acceptProject(project);
+    this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
   }
 
   removeWorkspace(workspaceId: string): void {
-    this.checkpoints?.commitDirectoryMutations(
-      this.serverId,
-      this.workspaces.removeWorkspaceSnapshot(workspaceId),
-    );
+    const mutations = this.workspaces.removeWorkspaceSnapshot(workspaceId);
+    this.checkpoints?.commitDirectoryMutations(this.serverId, mutations);
   }
 
   markWorkspacesHydrated(hydrated: boolean): void {

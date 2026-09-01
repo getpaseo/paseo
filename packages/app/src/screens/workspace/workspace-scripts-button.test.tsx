@@ -91,6 +91,10 @@ vi.mock("@/constants/platform", () => ({
 }));
 
 vi.mock("@/runtime/host-runtime", () => ({
+  useHostRuntimeClient: () => ({
+    startWorkspaceScript: startWorkspaceScriptMock,
+    killTerminal: killTerminalMock,
+  }),
   useHostRuntimeSnapshot: () => ({ activeConnection: null }),
 }));
 

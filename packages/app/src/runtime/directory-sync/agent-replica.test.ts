@@ -135,6 +135,81 @@ describe("AgentDirectoryReplica", () => {
     store.clearSession(serverId);
   });
 
+  it("notifies the queue owner exactly once when a stream turn closes", () => {
+    const serverId = "agent-replica-stream-stop";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const stopped: string[] = [];
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      (agentId) => stopped.push(agentId),
+      () => undefined,
+    );
+    replica.commitSnapshot([entry(payload("agent"))], []);
+    replica.applyTurnLiveness("agent", {
+      type: "stream_open",
+      turn: { turnId: "turn-1", startedAt: null },
+    });
+
+    replica.applyTurnLiveness("agent", { type: "stream_close", turnId: "turn-1" });
+    replica.applyTurnLiveness("agent", { type: "stream_close", turnId: "turn-1" });
+
+    expect(stopped).toEqual(["agent"]);
+    store.clearSession(serverId);
+  });
+
+  it("preserves cancellation state when the same active turn is snapshotted", () => {
+    const serverId = "agent-replica-cancellation-snapshot";
+    const store = useSessionStore.getState();
+    store.initializeSession(serverId, null as unknown as DaemonClient);
+    const replica = new AgentDirectoryReplica(
+      serverId,
+      () => undefined,
+      () => undefined,
+    );
+    replica.commitSnapshot(
+      [
+        entry({
+          ...payload("running"),
+          activeTurn: { turnId: "turn-1", startedAt: null },
+        }),
+      ],
+      [],
+    );
+    replica.applyTurnLiveness("agent", { type: "cancellation_started", requestId: 7 });
+
+    replica.applyDelta({
+      kind: "upsert",
+      agent: {
+        ...payload("same running turn"),
+        activeTurn: { turnId: "turn-1", startedAt: null },
+      },
+      project: entry(payload("project")).project,
+    });
+
+    expect(useSessionStore.getState().sessions[serverId]?.agents.get("agent")?.turn).toMatchObject({
+      phase: "open",
+      turnId: "turn-1",
+      cancellationRequestId: 7,
+    });
+
+    replica.commitSnapshot(
+      [
+        entry({
+          ...payload("same turn from refresh"),
+          activeTurn: { turnId: "turn-1", startedAt: null },
+        }),
+      ],
+      [],
+    );
+    expect(useSessionStore.getState().sessions[serverId]?.agents.get("agent")?.turn).toMatchObject({
+      phase: "open",
+      turnId: "turn-1",
+      cancellationRequestId: 7,
+    });
+    store.clearSession(serverId);
+  });
+
   it("uses turn liveness for stopped transitions even when protocol status disagrees", () => {
     const serverId = "agent-replica-mismatched-status";
     const store = useSessionStore.getState();

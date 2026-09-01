@@ -5,6 +5,8 @@ import {
   isWorkspaceArchivePending,
 } from "@/contexts/session-workspace-upserts";
 import { useSessionStore, type WorkspaceDescriptor } from "@/stores/session-store";
+import { installSessionDataTestOwner } from "@/test/seed-session";
+import type { SessionDataOwner } from "@/runtime/session-data";
 import {
   archiveWorkspaceOptimistically,
   archiveWorkspacesOptimistically,
@@ -13,6 +15,7 @@ import {
 
 const SERVER_ID = "workspace-archive-test";
 const SECOND_SERVER_ID = "workspace-archive-test-2";
+let sessionDataOwner: SessionDataOwner;
 
 type ArchiveWorkspacePayload = Awaited<ReturnType<DaemonClient["archiveWorkspace"]>>;
 
@@ -86,6 +89,8 @@ function storedWorkspace(id: string): WorkspaceDescriptor | undefined {
 
 beforeEach(() => {
   useSessionStore.getState().initializeSession(SERVER_ID, {} as DaemonClient);
+  useSessionStore.getState().initializeSession(SECOND_SERVER_ID, {} as DaemonClient);
+  sessionDataOwner = installSessionDataTestOwner([SERVER_ID, SECOND_SERVER_ID]);
 });
 
 afterEach(() => {
@@ -99,7 +104,7 @@ afterEach(() => {
 describe("archiveWorkspaceOptimistically", () => {
   it("hides the workspace and marks the archive pending while the daemon call runs", async () => {
     const archived = workspace();
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [archived]);
+    sessionDataOwner.acceptWorkspaces(SERVER_ID, [archived]);
     const releaseArchive = deferred<ArchiveWorkspacePayload>();
     const client = createClient(vi.fn(async () => releaseArchive.promise));
 
@@ -124,7 +129,7 @@ describe("archiveWorkspaceOptimistically", () => {
 
   it("restores the workspace and clears pending state when the daemon rejects the archive", async () => {
     const archived = workspace();
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [archived]);
+    sessionDataOwner.acceptWorkspaces(SERVER_ID, [archived]);
     const client = createClient(
       vi.fn(async () => archivePayload({ workspaceId: archived.id, error: "nope" })),
     );
@@ -154,7 +159,7 @@ describe("archiveWorkspacesOptimistically", () => {
       workspaceDirectory: "/repo/project/workspace-2",
       name: "workspace-2",
     });
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [first, second]);
+    sessionDataOwner.acceptWorkspaces(SERVER_ID, [first, second]);
     const client = createClient(
       vi.fn(async (workspaceId) =>
         archivePayload({
@@ -182,9 +187,8 @@ describe("archiveWorkspacesOptimistically", () => {
       workspaceDirectory: "/repo/project/workspace-2",
       name: "workspace-2",
     });
-    useSessionStore.getState().initializeSession(SECOND_SERVER_ID, {} as DaemonClient);
-    useSessionStore.getState().mergeWorkspaces(SERVER_ID, [first]);
-    useSessionStore.getState().mergeWorkspaces(SECOND_SERVER_ID, [second]);
+    sessionDataOwner.acceptWorkspaces(SERVER_ID, [first]);
+    sessionDataOwner.acceptWorkspaces(SECOND_SERVER_ID, [second]);
 
     const archivedByServer = new Map<string, string[]>();
     const clientFor = (serverId: string) =>

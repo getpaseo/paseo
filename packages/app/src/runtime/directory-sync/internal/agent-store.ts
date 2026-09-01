@@ -12,6 +12,16 @@ import { useDraftStore } from "@/stores/draft-store";
 import { getInitDeferred, getInitKey, rejectInitDeferred } from "@/utils/agent-initialization";
 import { reduceTurnLiveness, type TurnLivenessTransition } from "@/timeline/turn-liveness";
 
+function mergeSnapshotTurn(previous: Agent | undefined, incoming: Agent): Agent {
+  if (!previous) return incoming;
+  const activeTurn =
+    incoming.turn.phase === "open"
+      ? { turnId: incoming.turn.turnId, startedAt: incoming.turn.startedAt }
+      : null;
+  const turn = reduceTurnLiveness(previous.turn, { type: "snapshot", activeTurn });
+  return turn === incoming.turn ? incoming : { ...incoming, turn };
+}
+
 export class AgentStoreProjection {
   constructor(private readonly serverId: string) {}
 
@@ -40,7 +50,7 @@ export class AgentStoreProjection {
     let accepted = agent;
     useSessionStore.getState().setAgents(this.serverId, (current) => {
       const previous = current.get(agent.id);
-      accepted = acceptAgentDirectoryUpdate(previous, agent);
+      accepted = acceptAgentDirectoryUpdate(previous, mergeSnapshotTurn(previous, agent));
       if (accepted === previous) return current;
       const next = new Map(current);
       next.set(agent.id, accepted);
@@ -97,7 +107,8 @@ export class AgentStoreProjection {
     const agents = new Map<string, Agent>();
     for (const [agentId, fetchedAgent] of fetched) {
       const existing = current.get(agentId);
-      agents.set(agentId, existing && equal(existing, fetchedAgent) ? existing : fetchedAgent);
+      const merged = mergeSnapshotTurn(existing, fetchedAgent);
+      agents.set(agentId, existing && equal(existing, merged) ? existing : merged);
       if (fetchedAgent.archivedAt) {
         clearArchiveAgentPending({ queryClient, serverId: this.serverId, agentId });
       }

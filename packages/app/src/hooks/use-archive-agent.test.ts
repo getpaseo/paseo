@@ -3,6 +3,8 @@ import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Agent } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
+import { acceptAgentSnapshot } from "@/runtime/session-data";
+import { installSessionDataTestOwner } from "@/test/seed-session";
 import { agentHistoryQueryKey, allAgentHistoryQueryKey } from "./agent-history-query-key";
 import {
   applyArchivedAgentCloseResults,
@@ -48,6 +50,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
 describe("useArchiveAgent", () => {
   beforeEach(() => {
     useSessionStore.setState((state) => ({ ...state, sessions: {} }));
+    installSessionDataTestOwner(["server-a"]);
   });
 
   it("tracks pending archive state in shared react-query cache", () => {
@@ -127,7 +130,7 @@ describe("useArchiveAgent", () => {
   it("applies archived agent close results to session state and cached lists", async () => {
     const queryClient = new QueryClient();
     useSessionStore.getState().initializeSession("server-a", {} as DaemonClient);
-    useSessionStore.getState().setAgents("server-a", new Map([["agent-1", makeAgent()]]));
+    acceptAgentSnapshot("server-a", makeAgent());
     queryClient.setQueryData(["sidebarAgentsList", "server-a"], {
       entries: [{ agent: { id: "agent-1" } }, { agent: { id: "agent-2" } }],
     });
@@ -209,7 +212,7 @@ describe("useArchiveAgent", () => {
   it("can apply archived agent close results without invalidating cached lists", () => {
     const queryClient = new QueryClient();
     useSessionStore.getState().initializeSession("server-a", {} as DaemonClient);
-    useSessionStore.getState().setAgents("server-a", new Map([["agent-1", makeAgent()]]));
+    acceptAgentSnapshot("server-a", makeAgent());
     queryClient.setQueryData(["sidebarAgentsList", "server-a"], {
       entries: [{ agent: { id: "agent-1" } }, { agent: { id: "agent-2" } }],
     });

@@ -551,8 +551,8 @@ async function expectProviderAcknowledgementBeforeRpcAcceptanceSettlesSubmission
     await gate.waitForAgentStreamItem("user_message");
     gate.releaseHeldServerMessage();
     await gate.drop();
-    await expect(page.getByTestId("turn-working-indicator")).toHaveCount(0);
     await expect(userMessage).toHaveAttribute("aria-busy", "false");
+    await expect(page.getByTestId("turn-working-indicator")).toBeVisible();
   } finally {
     gate.restore();
     await agent.cleanup();
