@@ -67,9 +67,11 @@ import {
 } from "./provider-config.js";
 export { formatOmpVersionSupport, resolveOmpDiagnosticPaths } from "./provider-config.js";
 import { OmpSubagentCardTracker, type OmpSubagentCardScheduler } from "./subagent-card-tracker.js";
-import { shouldDisplayOmpCustomMessage } from "./custom-message.js";
+import {
+  mapOmpCustomMessageTimelineItem,
+  shouldDisplayOmpCustomMessage,
+} from "./custom-message.js";
 import { getUserMessageText } from "./message-history.js";
-import { mapOmpSystemNoticeToToolCall } from "./system-notice.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { OmpCliRuntime } from "./cli-runtime.js";
 import { listOmpImportableSessions, readOmpImportSessionConfig } from "./session-descriptor.js";
@@ -94,7 +96,6 @@ import { mapOmpAvailableCommandsUpdate, mapOmpRuntimeSlashCommands } from "./com
 import { streamOmpHistory } from "./history.js";
 import { mapOmpTodoReminderEvent, mapOmpTodoState, mapOmpTodoToolResult } from "./todo-mapper.js";
 import { mapOmpRuntimeEventToTimelineItem } from "./event-mapper.js";
-import { mapOmpAdvisorMessageToToolCall } from "./advisor-message.js";
 import {
   clearOmpHostToolState,
   handleOmpHostToolRuntimeEvent,
@@ -2017,14 +2018,12 @@ export class OmpAgentSession implements AgentSession {
       if (shouldDisplayOmpCustomMessage(event.message)) {
         const text = getUserMessageText(event.message.content);
         if (text) {
-          const item =
-            mapOmpAdvisorMessageToToolCall(event.message, text) ??
-            mapOmpSystemNoticeToToolCall(text);
+          const item = mapOmpCustomMessageTimelineItem(event.message, text);
           this.emit({
             type: "timeline",
             provider: this.provider,
             turnId,
-            item: item ?? { type: "assistant_message", text },
+            item,
           });
         }
       }
