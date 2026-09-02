@@ -171,7 +171,7 @@ describe("Claude terminal agent hooks", () => {
     ).toLowerCase();
 
     for (const providerId of Object.keys(AGENT_HOOK_PROVIDERS)) {
-      expect(source).not.toContain(providerId);
+      expect(source).not.toMatch(new RegExp(`["']${providerId}["']`, "u"));
     }
   });
 

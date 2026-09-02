@@ -52,6 +52,7 @@ describe("terminal agent hook provider registry", () => {
         CLAUDE_CONFIG_DIR: badClaudeConfigDir,
         CODEX_HOME: codexHome,
         OPENCODE_CONFIG_DIR: opencodeConfigDir,
+        PI_CODING_AGENT_DIR: join(root, "pi"),
       },
       homeDir: join(root, "home"),
       logger,
@@ -60,9 +61,11 @@ describe("terminal agent hook provider registry", () => {
     expect(results.map((result) => result.configPath)).toEqual([
       join(codexHome, "hooks.json"),
       join(opencodeConfigDir, "plugins", "paseo-terminal-activity.js"),
+      join(root, "pi", "extensions", "paseo-terminal-activity.ts"),
     ]);
     expect(existsSync(join(codexHome, "hooks.json"))).toBe(true);
     expect(existsSync(join(opencodeConfigDir, "plugins", "paseo-terminal-activity.js"))).toBe(true);
+    expect(existsSync(join(root, "pi", "extensions", "paseo-terminal-activity.ts"))).toBe(true);
     expect(logger.entries).toEqual([
       {
         bindings: expect.objectContaining({ err: expect.any(Error), provider: "claude" }),

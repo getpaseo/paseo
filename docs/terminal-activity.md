@@ -72,6 +72,15 @@ OpenCode uses a server plugin instead of command hooks. The plugin listens to Op
 - `permission.asked` → `needs-input`
 - `permission.replied` → `running`
 
+Pi extension mapping:
+
+- `agent_start` -> `running`
+- `agent_settled` -> `idle`
+- `ask_user` starts -> `needs-input`
+- `ask_user` completes -> `running`
+
+An active `/goal` whose continuation has already started or queued stays working across intermediate settlement. If Pi remains idle with an active, paused, blocked, usage-limited, or budget-limited goal, the terminal becomes `needs-input`.
+
 The daemon maps hook states onto terminal activity like an agent lifecycle plus unread attention: `running` → `state: working`, `idle` → `state: idle`, and `needs-input` → `state: idle` with `attentionReason: needs_input`. A `working` → `idle` transition records `state: idle` with `attentionReason: finished` until the user focuses that terminal; plain idle terminals still contribute no workspace status.
 
 ## Focus clearing
@@ -95,6 +104,7 @@ When enabled, Paseo installs provider hooks globally:
 - Claude hooks are written to `~/.claude/settings.json` (or `CLAUDE_CONFIG_DIR/settings.json` when that override is set).
 - Codex hooks are written to `~/.codex/hooks.json` (or `CODEX_HOME/hooks.json` when that override is set). Codex supports a native `commandWindows`, so each Paseo hook includes both POSIX and Windows commands. Non-managed Codex hooks are trust-gated by Codex; users may see Codex's hook review prompt before the hook runs.
 - OpenCode gets a self-contained plugin at `$XDG_CONFIG_HOME/opencode/plugins/paseo-terminal-activity.js` (or `~/.config/opencode/plugins/paseo-terminal-activity.js` when XDG is unset; `OPENCODE_CONFIG_DIR` still wins when set).
+- Pi gets a self-contained extension at `$PI_CODING_AGENT_DIR/extensions/paseo-terminal-activity.ts` or `~/.pi/agent/extensions/paseo-terminal-activity.ts`. It is inert outside Paseo terminals and in Pi RPC, JSON, print, or child-subagent modes.
 
 Installation is marker-based/idempotent for config hooks and exact-file/idempotent for the OpenCode plugin. Paseo preserves user hooks, removes only its own marker-matched command hooks, and leaves hooks installed across daemon shutdown. Outside a Paseo terminal they are inert because the command or plugin is gated on `PASEO_TERMINAL_ID`.
 

@@ -1,6 +1,11 @@
 import { homedir } from "node:os";
 import { isAbsolute, posix, resolve, win32 } from "node:path";
 
+export interface ExpandUserPathOptions {
+  cwd?: string;
+  homeDir?: string;
+}
+
 export function assertAbsolutePath(cwd: string): void {
   if (!posix.isAbsolute(cwd) && !win32.isAbsolute(cwd)) {
     throw new Error("cwd must be absolute path");
@@ -8,15 +13,19 @@ export function assertAbsolutePath(cwd: string): void {
 }
 
 function hasHomePrefix(value: string): boolean {
-  return value === "~" || value.startsWith("~/");
+  return (
+    value === "~" ||
+    value.startsWith("~/") ||
+    (process.platform === "win32" && value.startsWith("~\\"))
+  );
 }
 
-export function expandUserPath(value: string): string {
+export function expandUserPath(value: string, options: ExpandUserPathOptions = {}): string {
   const trimmed = value.trim();
   if (hasHomePrefix(trimmed)) {
-    return resolve(homedir(), trimmed.slice(2));
+    return resolve(options.homeDir ?? homedir(), trimmed === "~" ? "" : trimmed.slice(2));
   }
-  return resolve(trimmed);
+  return resolve(options.cwd ?? process.cwd(), trimmed);
 }
 
 export function resolvePathFromBase(baseCwd: string, requestedPath: string): string {

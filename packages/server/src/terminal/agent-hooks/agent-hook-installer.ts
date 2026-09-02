@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { expandUserPath } from "../../server/path-utils.js";
 import { writePrivateFileAtomicSync } from "../../server/private-files.js";
 
 export interface AgentHookEventDefinition {
@@ -34,6 +35,7 @@ interface AgentHookInstallStrategyBase {
   configDirBase?: "home" | "xdg-config";
   configFile: string;
   configDirEnvOverride?: string;
+  configDirEnvOverrideResolution?: "verbatim" | "user-path";
   hookMarker: string;
 }
 
@@ -59,6 +61,7 @@ export interface AgentHookConfigFormat<TConfig> {
 export interface AgentHookInstallOptions {
   env?: NodeJS.ProcessEnv;
   homeDir?: string;
+  cwd?: string;
   configDir?: string;
 }
 
@@ -129,6 +132,7 @@ function resolveAgentHookInstallPath<TConfig>(
       install,
       env: options.env ?? process.env,
       homeDir: options.homeDir ?? homedir(),
+      cwd: options.cwd ?? process.cwd(),
     });
   return path.join(configDir, install.configFile);
 }
@@ -206,11 +210,18 @@ function resolveConfiguredDirectory<TConfig>(input: {
   install: AgentHookInstallStrategy<TConfig>;
   env: NodeJS.ProcessEnv;
   homeDir: string;
+  cwd: string;
 }): string {
   const overrideName = input.install.configDirEnvOverride;
-  const override = overrideName ? input.env[overrideName] : undefined;
+  const rawOverride = overrideName ? input.env[overrideName] : undefined;
+  const override =
+    input.install.configDirEnvOverrideResolution === "user-path"
+      ? rawOverride?.trim()
+      : rawOverride;
   if (override) {
-    return override;
+    return input.install.configDirEnvOverrideResolution === "user-path"
+      ? expandUserPath(override, input)
+      : override;
   }
 
   if (input.install.configDirBase === "xdg-config") {
