@@ -1393,7 +1393,7 @@ describe("runWorktreeSetupInBackground", () => {
       path.join(tempDir, "paseo.json"),
       JSON.stringify({
         worktree: {
-          setup: [`node -e "require('fs').writeFileSync('${setupMarker}', 'ran')"`],
+          setup: [`node -e "require('fs').writeFileSync('setup-ran', 'ran')"`],
           terminals: [{ command: "start-preview" }],
         },
       }),
