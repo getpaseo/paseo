@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -336,6 +336,46 @@ export default function contribute() {
     const { serverBundle } = await compilePlugin(entries);
 
     expect(serverBundle).toContain("dependency client directory");
+  });
+
+  it("rejects dependency-relative imports that escape into the opposite runtime", async () => {
+    const entries = await createSplitPlugin();
+    const dependency = path.join(entries.directory, "node_modules", "fixture-dependency");
+    await mkdir(dependency, { recursive: true });
+    await Promise.all([
+      writeFile(
+        path.join(dependency, "package.json"),
+        JSON.stringify({ name: "fixture-dependency", main: "index.js" }),
+      ),
+      writeFile(
+        path.join(dependency, "index.js"),
+        `module.exports = require("../../server/handler");`,
+      ),
+      writeFile(
+        entries.client,
+        `import handler from "fixture-dependency";
+export default function contribute() { void handler; return () => undefined; }`,
+      ),
+    ]);
+
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      "server-only module cannot be imported into the plugin client bundle",
+    );
+  });
+
+  it("classifies symlinks by their canonical target", async () => {
+    const entries = await createSplitPlugin();
+    const link = path.join(entries.directory, "client", "handler.ts");
+    await symlink(path.join(entries.directory, "server", "handler.ts"), link);
+    await writeFile(
+      entries.client,
+      `import { handler } from "./client/handler";
+export default function contribute() { void handler; return () => undefined; }`,
+    );
+
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      "server-only module cannot be imported into the plugin client bundle",
+    );
   });
 
   it("builds a single runtime when the other entry is absent", async () => {

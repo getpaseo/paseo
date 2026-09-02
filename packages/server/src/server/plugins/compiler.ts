@@ -75,6 +75,7 @@ function directoryTarget(filePath: string, pluginDirectory: string): PluginModul
   const relative = path.relative(pluginDirectory, filePath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) return "invalid";
   const segments = relative.split(path.sep);
+  if (segments.includes("node_modules")) return null;
   if (segments[0] === "client") return "client";
   if (segments[0] === "server") return "server";
   if (segments[0] === "shared") return "shared";
@@ -84,14 +85,30 @@ function directoryTarget(filePath: string, pluginDirectory: string): PluginModul
 }
 
 function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory: string): Plugin {
+  const boundaryResolution = {};
   return {
     name: `paseo-plugin-${target}-runtime-boundary`,
     setup(buildContext) {
-      buildContext.onResolve({ filter: /.*/ }, (args) => {
+      buildContext.onResolve({ filter: /.*/ }, async (args) => {
         if (args.kind === "entry-point") return null;
         if (!args.path.startsWith(".") && !path.isAbsolute(args.path)) return null;
-        if (args.importer.split(path.sep).includes("node_modules")) return null;
-        const resolvedPath = path.resolve(args.resolveDir, args.path);
+        if (args.pluginData === boundaryResolution) return null;
+        const resolution = await buildContext.resolve(args.path, {
+          importer: args.importer,
+          namespace: args.namespace,
+          resolveDir: args.resolveDir,
+          kind: args.kind,
+          pluginData: boundaryResolution,
+          with: args.with,
+        });
+        if (
+          resolution.errors.length > 0 ||
+          resolution.external ||
+          resolution.namespace !== "file"
+        ) {
+          return null;
+        }
+        const resolvedPath = resolution.path;
         const importedTarget = directoryTarget(resolvedPath, pluginDirectory);
         if (importedTarget === "invalid") {
           return {
