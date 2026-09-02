@@ -96,7 +96,15 @@ export const useWorkspaceDraftSubmissionStore = create<WorkspaceDraftSubmissionS
         if (!matchesPendingSubmission(state.pendingByDraftId[input.draftId], input)) {
           return state;
         }
-        const { [input.draftId]: _removed, ...rest } = state.pendingByDraftId;
+        // Remove via copy + delete, NOT computed-key destructuring-omit. The
+        // production minifier miscompiles
+        //   const { [input.draftId]: _removed, ...rest } = state.pendingByDraftId
+        // into an omit whose excluded-key array is built from an unassigned
+        // variable, so the entry is never removed. When that happens every
+        // concurrently-mounted draft tab re-consumes the same pending and creates
+        // a duplicate agent. Keep this in a form the minifier cannot drop. See #3217.
+        const rest = { ...state.pendingByDraftId };
+        delete rest[input.draftId];
         return { pendingByDraftId: rest };
       });
       return pending;
