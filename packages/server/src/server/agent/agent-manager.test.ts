@@ -1457,6 +1457,131 @@ test("poisonSession clears active ownership, settles streams, and persists termi
   }
 });
 
+test("reload does not resume a session poisoned while its captured drains run", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-poison-drain-"));
+  const durable = new BlockingTimelineStore();
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+  class ReloadClient extends TestAgentClient {
+    resumeSessionCalls = 0;
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.resumeSessionCalls += 1;
+      return await super.resumeSession(handle, config);
+    }
+  }
+
+  const client = new ReloadClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    durableTimelineStore: durable,
+    registry: storage,
+    rescueTimeouts: {
+      durableTimelineMutationMs: 10,
+      reloadSessionCloseMs: 10,
+      interruptSessionMs: 10,
+    },
+    logger,
+  });
+  let agentId: string | null = null;
+  let appendFailure: Promise<unknown> | undefined;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const append = manager.appendTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "stale durable append",
+    });
+    appendFailure = append.catch((error: unknown) => error);
+    await durable.bulkInsertStarted.promise;
+
+    const reload = manager.reloadAgentSession(agent.id);
+    await expect(reload).rejects.toMatchObject({
+      code: "DURABLE_TIMELINE_PERSISTENCE_UNAVAILABLE",
+    });
+    expect(client.resumeSessionCalls).toBe(0);
+
+    durable.releaseBulkInsert.resolve();
+    await expect(appendFailure).resolves.toMatchObject({
+      code: "DURABLE_TIMELINE_MUTATION_TIMEOUT",
+    });
+  } finally {
+    durable.releaseBulkInsert.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reload chooses a fresh session when quarantine appears before replacement", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-quarantine-race-"));
+  const storage = new (class extends AgentStorage {
+    manager: AgentManager | null = null;
+    private injected = false;
+
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: { title?: string | null; internal?: boolean },
+      shouldCommit?: () => boolean,
+    ): Promise<void> {
+      if (!this.injected && agent.lifecycle === "closed") {
+        const managerInternals = this.manager as unknown as {
+          quarantinedAgentIds: Set<string>;
+        };
+        managerInternals.quarantinedAgentIds.add(agent.id);
+        this.injected = true;
+      }
+      await super.applySnapshot(agent, options, shouldCommit);
+    }
+  })(join(workdir, "agents"), logger);
+
+  class ReloadClient extends TestAgentClient {
+    createSessionCalls = 0;
+    resumeSessionCalls = 0;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      return await super.createSession(config);
+    }
+
+    override async resumeSession(
+      handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.resumeSessionCalls += 1;
+      return await super.resumeSession(handle, config);
+    }
+  }
+
+  const client = new ReloadClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+  storage.manager = manager;
+  let agentId: string | null = null;
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    await expect(manager.reloadAgentSession(agent.id)).resolves.toMatchObject({ id: agent.id });
+
+    expect(client.createSessionCalls).toBe(2);
+    expect(client.resumeSessionCalls).toBe(0);
+  } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test.each(["acknowledgement-before-timeout", "timeout-before-acknowledgement"] as const)(
   "durable timeout and acknowledged cancellation are generation-safe (%s)",
   async (order) => {
@@ -4288,6 +4413,66 @@ test("drops an old queued tail before dispatching events from the replacement se
   } finally {
     timelineStore.lastItemRead.resolve(null);
     if (reload) await reload.catch(() => undefined);
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("a successor session does not wait on a stale coalesced tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stale-coalesced-tail-"));
+  const agentId = "00000000-0000-4000-8000-000000000317";
+  const stale = deferred<void>();
+  const client = new SessionRecordingAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    rescueTimeouts: { durableTimelineMutationMs: 10 },
+    logger,
+    idFactory: () => agentId,
+  });
+  interface CoalescedTailForTest {
+    promise: Promise<void>;
+    generation: symbol;
+    turnToken?: string;
+  }
+
+  try {
+    await manager.createAgent({ provider: "codex", cwd: workdir }, agentId, {
+      workspaceId: undefined,
+    });
+    const managerInternals = manager as unknown as {
+      sessionGenerationTokens: Map<string, symbol>;
+      coalescedTimelineTails: Map<string, CoalescedTailForTest>;
+    };
+    const oldGeneration = managerInternals.sessionGenerationTokens.get(agentId);
+    if (!oldGeneration) throw new Error("expected an initial session generation");
+
+    await manager.closeAgent(agentId);
+    await manager.createAgent({ provider: "codex", cwd: workdir }, agentId, {
+      workspaceId: undefined,
+    });
+
+    // Make the promise usable by both the pre-fix Promise-only map and the identity-bearing map.
+    const staleTail = Object.assign(stale.promise, {
+      promise: stale.promise,
+      generation: oldGeneration,
+    }) as unknown as CoalescedTailForTest;
+    managerInternals.coalescedTimelineTails.set(agentId, staleTail);
+
+    const replacementSession = client.sessions[1];
+    if (!replacementSession) throw new Error("expected a replacement session");
+    replacementSession.pushEvent({
+      type: "mode_changed",
+      provider: replacementSession.provider,
+      currentModeId: "replacement-mode",
+      availableModes: [],
+    });
+
+    await vi.waitFor(() => {
+      expect(manager.getAgent(agentId)?.currentModeId).toBe("replacement-mode");
+    });
+    expect(manager.getAgent(agentId)?.lifecycle).not.toBe("error");
+  } finally {
+    stale.resolve();
     await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
