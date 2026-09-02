@@ -91,7 +91,6 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
     setup(buildContext) {
       buildContext.onResolve({ filter: /.*/ }, async (args) => {
         if (args.kind === "entry-point") return null;
-        if (!args.path.startsWith(".") && !path.isAbsolute(args.path)) return null;
         if (args.pluginData === boundaryResolution) return null;
         const resolution = await buildContext.resolve(args.path, {
           importer: args.importer,

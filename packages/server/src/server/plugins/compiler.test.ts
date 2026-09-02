@@ -378,6 +378,31 @@ export default function contribute() { void handler; return () => undefined; }`,
     );
   });
 
+  it("classifies bare package imports by their canonical target", async () => {
+    const entries = await createSplitPlugin();
+    const dependency = path.join(entries.directory, "node_modules", "fixture-dependency");
+    await mkdir(dependency, { recursive: true });
+    await Promise.all([
+      writeFile(
+        path.join(dependency, "package.json"),
+        JSON.stringify({ name: "fixture-dependency", main: "index.js" }),
+      ),
+      symlink(
+        path.join(entries.directory, "server", "handler.ts"),
+        path.join(dependency, "index.js"),
+      ),
+      writeFile(
+        entries.client,
+        `import { handler } from "fixture-dependency";
+export default function contribute() { void handler; return () => undefined; }`,
+      ),
+    ]);
+
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      "server-only module cannot be imported into the plugin client bundle",
+    );
+  });
+
   it("builds a single runtime when the other entry is absent", async () => {
     const entries = await createSplitPlugin();
     const { clientBundle, serverBundle } = await compilePlugin({
