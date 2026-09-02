@@ -151,6 +151,19 @@ describe("diff hit testing", () => {
       "new-one\nnew-two",
     );
   });
+
+  it("falls back to the old pane for a deletion-only split hunk", () => {
+    const model = buildModel("unused", { files: [deletedSplitFile()], layout: "split" });
+    const header = model.rows
+      .filter((row) => row.kind === "line")
+      .flatMap((row) => row.cells)
+      .find((cell) => cell?.type === "header");
+    expect(header).toBeDefined();
+
+    expect(selectedSourceText(model, selectAllSource(model, position(model, header!, 0))!)).toBe(
+      "@@ -1,2 +1,0 @@\nold-one\nold-two",
+    );
+  });
 });
 
 function buildModel(changedContent: string, overrides: Partial<BuildDiffDocumentModelInput> = {}) {
@@ -253,6 +266,29 @@ function splitFile(): ParsedDiffFile {
           { type: "remove", content: "old-two" },
           { type: "add", content: "new-one" },
           { type: "add", content: "new-two" },
+        ],
+      },
+    ],
+  };
+}
+
+function deletedSplitFile(): ParsedDiffFile {
+  return {
+    path: "src/deleted.ts",
+    isNew: false,
+    isDeleted: true,
+    additions: 0,
+    deletions: 2,
+    hunks: [
+      {
+        oldStart: 1,
+        oldCount: 2,
+        newStart: 1,
+        newCount: 0,
+        lines: [
+          { type: "header", content: "@@ -1,2 +1,0 @@" },
+          { type: "remove", content: "old-one" },
+          { type: "remove", content: "old-two" },
         ],
       },
     ],

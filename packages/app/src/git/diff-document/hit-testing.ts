@@ -131,7 +131,13 @@ export function selectAllSource(
       : null;
   let splitCellIndex: number | null = null;
   if (model.layout === "split") {
-    splitCellIndex = preferredCell?.type === "header" ? 1 : (preferredPosition?.cellIndex ?? 1);
+    const hasNewSource = model.rows.some(
+      (row) => row.kind === "line" && row.cells[1] && row.cells[1].type !== "header",
+    );
+    splitCellIndex = hasNewSource ? 1 : 0;
+    if (preferredPosition && preferredCell && preferredCell.type !== "header") {
+      splitCellIndex = preferredPosition.cellIndex;
+    }
   }
   for (const row of model.rows) {
     if (row.kind !== "line") continue;
