@@ -87,9 +87,7 @@ describe("comboStringToShortcutKeys", () => {
 
   it("hands named keys to the display table under the names it uses", () => {
     expect(comboStringToShortcutKeys("Cmd+Shift+ArrowLeft")).toEqual(["mod", "shift", "Left"]);
-    expect(formatShortcut(comboStringToShortcutKeys("Cmd+Shift+ArrowLeft"), "mac")).toBe(
-      "Shift+⌘+←",
-    );
+    expect(formatShortcut(comboStringToShortcutKeys("Cmd+Shift+ArrowLeft"), "mac")).toBe("⇧⌘←");
     expect(formatShortcut(comboStringToShortcutKeys("Escape"), "mac")).toBe("Esc");
     expect(formatShortcut(comboStringToShortcutKeys("Backspace"), "mac")).toBe("⌫");
   });

@@ -25,6 +25,8 @@ interface HubLoginDependencies {
   credentials: HubCredentialStore;
   flow: Pick<CliLoginFlow, "authorize">;
   reporter: HubReporter;
+  isInteractive?(): boolean;
+  continueGuidedSetup?(origin: string): Promise<void>;
 }
 
 export async function runHubLogin(
@@ -40,6 +42,14 @@ export async function runHubLogin(
   reportHubProgress(dependencies.reporter, options, `Logging in to ${origin}`);
   const credential = await dependencies.flow.authorize(origin);
   dependencies.credentials.save({ origin, credential });
+  reportHubProgress(dependencies.reporter, options, "Logged in");
+  if (
+    !options.json &&
+    dependencies.isInteractive?.() &&
+    dependencies.continueGuidedSetup !== undefined
+  ) {
+    await dependencies.continueGuidedSetup(origin);
+  }
   return { type: "single", data: { origin, status: "logged_in" }, schema };
 }
 

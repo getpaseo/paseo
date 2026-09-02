@@ -1,8 +1,13 @@
 import type { ParsedDiffFile } from "@/git/use-diff-query";
 
-// Builds a directory hierarchy from the flat, path-sorted `ParsedDiffFile[]` the
-// Changes view renders. The tree renders on every form factor, consistent with
-// the Files explorer.
+// Builds a directory hierarchy from the `ParsedDiffFile[]` the Changes view
+// renders. The tree renders on every form factor, consistent with the Files
+// explorer.
+//
+// `sortTree` below is the single ordering authority for the Changes view. The
+// flat scrolling diff does not sort for itself — `orderCheckoutDiffFiles`
+// (diff-order.ts) builds this tree and reads its file sequence back out — so
+// changing `sortTree` reorders both surfaces together, by construction.
 //
 // Directory nodes are keyed by their FULL uncompressed path (e.g. "packages/app/src").
 // That path is the stable identity used to persist folder-collapse state, so the
@@ -13,6 +18,7 @@ import type { ParsedDiffFile } from "@/git/use-diff-query";
 export interface DiffTreeFileNode {
   kind: "file";
   file: ParsedDiffFile;
+  fileIndex: number;
   /** basename, e.g. "diff-pane.tsx" */
   name: string;
 }
@@ -42,6 +48,7 @@ export interface DiffTreeFolderRow {
 export interface DiffTreeFileRow {
   kind: "file";
   file: ParsedDiffFile;
+  fileIndex: number;
   depth: number;
 }
 
@@ -53,8 +60,8 @@ function sortTree(node: DiffTreeDirNode): void {
       // directories before files within a level
       return a.kind === "dir" ? -1 : 1;
     }
-    // Plain ASCII comparison, matching compareCheckoutDiffPaths (diff-order.ts)
-    // so the tree order is consistent with the rest of the Changes view.
+    // Plain ASCII, not localeCompare: the order must not shift with the
+    // device locale, and every surface derives from this comparison.
     if (a.name === b.name) return 0;
     return a.name < b.name ? -1 : 1;
   });
@@ -85,11 +92,11 @@ export function buildDiffTree(files: ParsedDiffFile[]): DiffTreeDirNode {
     return node;
   }
 
-  for (const file of files) {
+  for (const [fileIndex, file] of files.entries()) {
     const parts = file.path.split("/");
     const name = parts[parts.length - 1];
     const dirPath = parts.slice(0, -1).join("/");
-    ensureDir(dirPath).children.push({ kind: "file", file, name });
+    ensureDir(dirPath).children.push({ kind: "file", file, fileIndex, name });
   }
 
   sortTree(root);
@@ -169,7 +176,7 @@ export function flattenDiffTree(
   function walk(node: DiffTreeDirNode, depth: number): void {
     for (const child of node.children) {
       if (child.kind === "file") {
-        rows.push({ kind: "file", file: child.file, depth });
+        rows.push({ kind: "file", file: child.file, fileIndex: child.fileIndex, depth });
         continue;
       }
       const stats = statsByNode.get(child) ?? EMPTY_DIR_STATS;

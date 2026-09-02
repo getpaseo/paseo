@@ -54,13 +54,13 @@ describe("runCli", () => {
 
   it("classifies existing unknown directories as open-project invocations", () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-cli-run-"));
-    const project = path.join(root, "project");
+    const project = path.join(root, "repository");
     mkdirSync(project);
 
     try {
       expect(
         createCliParseArgv({
-          argv: ["project"],
+          argv: ["repository"],
           cwd: root,
           nodeArgv: ["node", "paseo"],
         }),

@@ -103,7 +103,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.spacing[2],
   },
   sectionTitle: {
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     fontWeight: theme.fontWeight.medium,
     color: theme.colors.foregroundMuted,
   },
@@ -128,12 +128,12 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   rowLabel: {
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
   },
   rowNote: {
     marginTop: 2,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     color: theme.colors.foregroundMuted,
   },
   rowShortcut: {
@@ -143,13 +143,13 @@ const styles = StyleSheet.create((theme) => ({
   // same state the same way.
   rowUnassigned: {
     alignSelf: "flex-start",
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
   empty: {
     paddingVertical: theme.spacing[6],
     textAlign: "center",
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     color: theme.colors.foregroundMuted,
   },
 }));

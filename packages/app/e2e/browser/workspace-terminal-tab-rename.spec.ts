@@ -70,9 +70,9 @@ test.describe("Workspace terminal tab rename", () => {
       await expect(tab).toBeVisible({ timeout: 15_000 });
 
       await tab.click({ button: "right" });
-      const copyTerminalId = page.getByTestId(
-        `workspace-tab-context-terminal_${terminalId}-copy-terminal-id`,
-      );
+      const copyTerminalId = page.getByRole("menuitem", {
+        name: /^Copy terminal id/,
+      });
       await expect(copyTerminalId).toBeVisible({ timeout: 10_000 });
       await copyTerminalId.click();
 
@@ -99,10 +99,7 @@ test.describe("Workspace terminal tab rename", () => {
       await expect(tab).toBeVisible({ timeout: 15_000 });
 
       await tab.click({ button: "right" });
-      await expect(page.getByTestId(`workspace-tab-context-terminal_${terminalId}`)).toBeVisible({
-        timeout: 10_000,
-      });
-      const renameItem = page.getByTestId(`workspace-tab-context-terminal_${terminalId}-rename`);
+      const renameItem = page.getByRole("menuitem", { name: "Rename", exact: true });
       await expect(renameItem).toBeVisible({ timeout: 10_000 });
       await renameItem.click();
 

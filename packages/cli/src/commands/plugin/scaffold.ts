@@ -1,94 +1,7 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PluginIdSchema } from "@getpaseo/protocol/messages";
-
-const SDK_DECLARATIONS = `declare module "@paseo/plugin" {
-  import type { ComponentType } from "react";
-  import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
-
-  export interface PluginSurfaceProps {
-    theme: Record<string, unknown>;
-    host: { id: string; label: string };
-    layout: { compact: boolean; platform: "ios" | "android" | "web" };
-  }
-
-  export interface PluginRpcContract<
-    InputSchema extends ZodType = ZodType,
-    OutputSchema extends ZodType = ZodType,
-  > {
-    name: string;
-    input: InputSchema;
-    output: OutputSchema;
-  }
-
-  export interface PluginAttachmentItem {
-    id: string;
-    identifier: string;
-    title: string;
-    subtitle?: string;
-    url: string;
-    text: string;
-    resourceType: string;
-  }
-
-  export interface PluginAttachmentSearchPayload {
-    items: PluginAttachmentItem[];
-  }
-
-  export interface PluginAttachmentSourceContribution {
-    id: string;
-    title: string;
-    icon: string;
-    pickerTitle: string;
-    searchPlaceholder: string;
-    search: PluginRpcContract;
-  }
-
-  export interface PluginSidebarContribution {
-    id: string;
-    title: string;
-    icon: string;
-    surface: string;
-  }
-
-  export interface PluginSurfaceContribution {
-    id: string;
-    Component: ComponentType<PluginSurfaceProps>;
-  }
-
-  export interface PluginContext {
-    handle<InputSchema extends ZodType, OutputSchema extends ZodType>(
-      contract: PluginRpcContract<InputSchema, OutputSchema>,
-      handler: (
-        input: ZodOutput<InputSchema>,
-      ) => ZodInput<OutputSchema> | Promise<ZodInput<OutputSchema>>,
-    ): void;
-    addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
-    addSidebarItem(contribution: PluginSidebarContribution): void;
-    addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
-  }
-
-  export type PluginCleanup = () => void;
-  export type PluginContribution = (plugin: PluginContext) => PluginCleanup;
-
-  export function defineRpc<InputSchema extends ZodType, OutputSchema extends ZodType>(definition: {
-    name: string;
-    input: InputSchema;
-    output: OutputSchema;
-  }): PluginRpcContract<InputSchema, OutputSchema>;
-
-  export function useRpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
-    contract: PluginRpcContract<InputSchema, OutputSchema>,
-  ): (input: ZodInput<InputSchema>) => Promise<ZodOutput<OutputSchema>>;
-
-  export function defineAttachmentSource<Definition extends PluginAttachmentSourceContribution>(
-    definition: Definition,
-  ): Definition;
-
-  export const PluginAttachmentItemSchema: import("zod").ZodType<PluginAttachmentItem>;
-  export const PluginAttachmentSearchPayloadSchema: import("zod").ZodType<PluginAttachmentSearchPayload>;
-}
-`;
+import { resolveCliVersion } from "../../version.js";
 
 const TSCONFIG = {
   compilerOptions: {
@@ -103,20 +16,39 @@ const TSCONFIG = {
     esModuleInterop: true,
     allowSyntheticDefaultImports: true,
   },
-  include: ["index.tsx", "paseo-plugin.d.ts"],
+  include: ["**/*.ts", "**/*.tsx"],
 };
 
-const ENTRY = `import type { PluginContext } from "@paseo/plugin";
-import React from "react";
-import { Text } from "react-native";
-
-function MainSurface() {
-  return <Text>Hello from my plugin</Text>;
-}
+const ENTRY = `import type { PluginContext } from "@getpaseo/plugin";
+import { MainSurface } from "./main.client";
 
 export default function contribute(plugin: PluginContext) {
   plugin.addSurface("main", MainSurface);
-  return () => undefined;
+  return () => {};
+}
+`;
+
+const CLIENT_SURFACE = `import type { PluginSurfaceProps } from "@getpaseo/plugin";
+import React, { useMemo } from "react";
+import { Text, View } from "react-native";
+
+export function MainSurface({ theme, layout }: PluginSurfaceProps) {
+  const styles = useMemo(
+    () => ({
+      screen: {
+        flex: 1,
+        padding: layout.compact ? 16 : 24,
+        backgroundColor: theme.colors.surface0,
+      },
+      text: { color: theme.colors.foreground },
+    }),
+    [theme, layout.compact],
+  );
+  return (
+    <View style={styles.screen}>
+      <Text style={styles.text}>Hello from my plugin</Text>
+    </View>
+  );
 }
 `;
 
@@ -143,6 +75,7 @@ export async function scaffoldPluginDirectory(
     version: "0.0.0",
     scripts: { typecheck: "tsc --noEmit" },
     devDependencies: {
+      "@getpaseo/plugin": resolveCliVersion(),
       "@tanstack/react-query": "^5.90.11",
       "@types/react": "~19.2.0",
       react: "19.1.0",
@@ -155,8 +88,8 @@ export async function scaffoldPluginDirectory(
     ["paseo-plugin.json", `${JSON.stringify({ id }, null, 2)}\n`],
     ["package.json", `${JSON.stringify(packageJson, null, 2)}\n`],
     ["tsconfig.json", `${JSON.stringify(TSCONFIG, null, 2)}\n`],
-    ["paseo-plugin.d.ts", SDK_DECLARATIONS],
-    ["index.tsx", ENTRY],
+    ["index.ts", ENTRY],
+    ["main.client.tsx", CLIENT_SURFACE],
   ]);
   await Promise.all(
     [...files].map(([filename, contents]) =>

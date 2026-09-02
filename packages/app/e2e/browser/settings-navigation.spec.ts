@@ -2,6 +2,7 @@ import { test, expect } from "../support/fixtures";
 import {
   buildHostWorkspaceRoute,
   buildOpenProjectRoute,
+  buildSettingsHostSectionRoute,
   buildSettingsRoute,
   buildSettingsSectionRoute,
 } from "@/utils/host-routes";
@@ -120,6 +121,41 @@ test.describe("Settings sidebar navigation", () => {
     await clickSettingsBackToWorkspace(page);
     await expect(page).not.toHaveURL(/\/settings(\/|$)/);
   });
+
+  test("pressing Escape closes settings", async ({ page }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+    await page.keyboard.press("Escape");
+    await expect(page).not.toHaveURL(/\/settings(\/|$)/);
+  });
+
+  test("Escape lets settings dropdowns and modals close before leaving settings", async ({
+    page,
+  }) => {
+    await gotoAppShell(page);
+    await openSettings(page);
+
+    await test.step("a dropdown owns Escape", async () => {
+      await openSettingsSection(page, "appearance");
+      await page.getByLabel(/Theme:/).click();
+      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toBeVisible();
+
+      await page.keyboard.press("Escape");
+
+      await expect(page.getByRole("menuitem", { name: "System", exact: true })).toHaveCount(0);
+      await expect(page).toHaveURL(/\/settings(\/|$)/);
+    });
+
+    await test.step("a modal owns Escape", async () => {
+      await openAddHostFlow(page);
+      await expect(page.getByText("Add connection", { exact: true })).toBeVisible();
+
+      await page.keyboard.press("Escape");
+
+      await expect(page.getByText("Add connection", { exact: true })).toHaveCount(0);
+      await expect(page).toHaveURL(/\/settings(\/|$)/);
+    });
+  });
 });
 
 test.describe("Settings — compact master-detail", () => {
@@ -179,6 +215,28 @@ test.describe("Settings — compact master-detail", () => {
     await goBackInSettings(page);
     await expectAppRoute(page, buildSettingsRoute());
     await expectSettingsSidebarVisible(page);
+  });
+
+  test("host picker settings opens Overview and backs through the settings list", async ({
+    page,
+    withWorkspace,
+  }) => {
+    const workspace = await withWorkspace({ prefix: "host-picker-settings-back-" });
+    const workspaceRoute = buildHostWorkspaceRoute(getServerId(), workspace.workspaceId);
+
+    await openWorkspace(page, workspace);
+    await page.getByRole("button", { name: "Open menu", exact: true }).click();
+    await page.getByTestId("sidebar-hosts-trigger").click();
+    await page.getByRole("button", { name: /Open .* settings/ }).click();
+
+    await expectAppRoute(page, buildSettingsHostSectionRoute(getServerId(), "host"));
+    await expect(page.getByText("Overview", { exact: true })).toBeVisible();
+
+    await goBackInSettings(page);
+    await expectCompactSettingsList(page);
+
+    await goBackInSettings(page);
+    await expectAppRoute(page, workspaceRoute);
   });
 
   test("switching the host picker on the settings list scopes host rows without navigating", async ({

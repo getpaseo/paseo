@@ -18,12 +18,14 @@ import {
   FileTransferOpcode,
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
-import { isSessionRpcAllowed, Session } from "./session.js";
+import { Session } from "./session.js";
+import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
+import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
@@ -280,7 +282,7 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
 });
 
 interface SessionForTestOptions {
-  scopes?: readonly string[];
+  permissions?: readonly DaemonPermission[];
   agentManager?: { [K in keyof SessionOptions["agentManager"]]?: unknown };
   agentStorage?: { [K in keyof SessionOptions["agentStorage"]]?: unknown };
   github?: Partial<ForgeService & GitHubService>;
@@ -321,6 +323,8 @@ interface SessionForTestOptions {
   targetedMessages?: Array<{ source: object; message: SessionOutboundMessage }>;
   binaryMessages?: Uint8Array[];
   pluginRuntime?: SessionOptions["pluginRuntime"];
+  orchestrationSkills?: SessionOptions["orchestrationSkills"];
+  workspaceLabelService?: WorkspaceLabelService;
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -395,6 +399,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       get: vi.fn(),
       list: vi.fn().mockResolvedValue([]),
     },
+    workspaceLabelService: options.workspaceLabelService,
     scheduleService: asScheduleService(),
     checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
     github: asGitHubService(github),
@@ -407,6 +412,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       onChange: vi.fn(() => () => {}),
     }),
     pluginRuntime: options.pluginRuntime,
+    orchestrationSkills: options.orchestrationSkills,
     stt: options.stt ?? null,
     tts: null,
     terminalManager: options.terminalManager ?? null,
@@ -421,14 +427,56 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
     serverId: options.serverId,
     daemonVersion: options.daemonVersion,
     daemonRuntimeConfig: options.daemonRuntimeConfig,
-    scopes: options.scopes ?? ["*"],
+    permissions: options.permissions ?? OWNER_PERMISSIONS,
   };
   return new Session(sessionOptions);
 }
 
-test("routes plugin management requests and catalog notifications", async () => {
+test("routes host-scoped agent skills requests through the daemon owner", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const status = {
+    state: "up-to-date" as const,
+    ops: [],
+    available: ["paseo"],
+    installed: ["paseo"],
+    selection: { mode: "all" as const },
+  };
+  const orchestrationSkills: NonNullable<SessionOptions["orchestrationSkills"]> = {
+    getStatus: vi.fn(async () => status),
+    reconcile: vi.fn(async () => status),
+    uninstall: vi.fn(async () => status),
+    saveSelection: vi.fn(async () => ({ ...status, confirmationRequired: null })),
+    importLegacySelectionIfUnset: vi.fn(async (selection) => ({
+      imported: true,
+      selection,
+    })),
+    autoUpdate: vi.fn(async () => status),
+  };
+  const session = createSessionForTest({ messages, orchestrationSkills });
+
+  await session.handleMessage({
+    type: "agent.skills.save_selection.request",
+    requestId: "save-skills",
+    selection: { mode: "custom", skills: ["paseo"] },
+    confirmedRemovals: ["paseo-loop"],
+  });
+
+  expect(orchestrationSkills.saveSelection).toHaveBeenCalledWith(
+    { mode: "custom", skills: ["paseo"] },
+    ["paseo-loop"],
+  );
+  expect(messages).toContainEqual({
+    type: "agent.skills.save_selection.response",
+    payload: { requestId: "save-skills", ...status, confirmationRequired: null },
+  });
+});
+
+test("routes plugin requests and releases its owned catalog subscription on cleanup", async () => {
   const messages: SessionOutboundMessage[] = [];
   const listeners = new Set<(pluginId: string) => void>();
+  const releasePluginSubscription = vi.fn((listener: (pluginId: string) => void) => {
+    listeners.delete(listener);
+  });
   const plugin = {
     id: "example",
     path: "/plugins/example",
@@ -437,6 +485,14 @@ test("routes plugin management requests and catalog notifications", async () => 
   };
   const pluginRuntime: NonNullable<SessionOptions["pluginRuntime"]> = {
     listPlugins: () => [plugin],
+    getLogs: () => [
+      {
+        sequence: 1,
+        timestamp: "2026-08-16T12:00:00.000Z",
+        stream: "stdout",
+        message: "ready",
+      },
+    ],
     installDirectory: async () => plugin,
     inspectDirectory: async () => ({ id: "example" }),
     reloadPlugin: async () => plugin,
@@ -445,7 +501,7 @@ test("routes plugin management requests and catalog notifications", async () => 
     removePlugin: async () => undefined,
     subscribe: (listener) => {
       listeners.add(listener);
-      return () => listeners.delete(listener);
+      return () => releasePluginSubscription(listener);
     },
     catalog: () => [{ id: "example", clientBundle: "bundle" }],
     invokePluginRpc: async () => ({ ok: true }),
@@ -453,6 +509,11 @@ test("routes plugin management requests and catalog notifications", async () => 
   const session = createSessionForTest({ messages, pluginRuntime });
 
   await session.handleMessage({ type: "plugin.list.request", requestId: "list" });
+  await session.handleMessage({
+    type: "plugin.logs.get.request",
+    requestId: "logs",
+    pluginId: "example",
+  });
   await session.handleMessage({
     type: "plugin.directory.install.request",
     requestId: "install",
@@ -477,6 +538,7 @@ test("routes plugin management requests and catalog notifications", async () => 
 
   expect(messages.map((message) => message.type)).toEqual([
     "plugin.list.response",
+    "plugin.logs.get.response",
     "plugin.directory.install.response",
     "plugin.reload.response",
     "plugin.disable.response",
@@ -489,9 +551,178 @@ test("routes plugin management requests and catalog notifications", async () => 
   });
   await session.cleanup();
   expect(listeners.size).toBe(0);
+  expect(releasePluginSubscription).toHaveBeenCalledOnce();
 });
 
-describe("session authorization scopes", () => {
+describe("workspace label subscriptions", () => {
+  type LabelSubscription = Awaited<ReturnType<WorkspaceLabelService["subscribe"]>>;
+  type LabelChange = Parameters<Parameters<WorkspaceLabelService["subscribe"]>[0]["onChange"]>[0];
+
+  function labelSubscription(requestId: string): LabelSubscription {
+    return {
+      snapshot: {
+        labels: [],
+        sync: {
+          mode: "snapshot",
+          generation: `generation-${requestId}`,
+          headSeq: 0,
+          removals: [],
+        },
+      },
+      unsubscribe: vi.fn(),
+    };
+  }
+
+  function labelListRequest(requestId: string) {
+    return {
+      type: "workspace.label.list.request" as const,
+      requestId,
+      subscribe: { subscriptionId: `subscription-${requestId}` },
+    };
+  }
+
+  test("an overlapping request cannot reactivate its superseded subscription", async () => {
+    const first = deferred<LabelSubscription>();
+    const callbacks: Array<(change: LabelChange) => void> = [];
+    const service = {
+      subscribe: async (input: Parameters<WorkspaceLabelService["subscribe"]>[0]) => {
+        callbacks.push(input.onChange);
+        return callbacks.length === 1 ? first.promise : labelSubscription("b");
+      },
+    } as unknown as WorkspaceLabelService;
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, workspaceLabelService: service });
+
+    const requestA = session.handleMessage(labelListRequest("a"));
+    await Promise.resolve();
+    await session.handleMessage(labelListRequest("b"));
+    const firstSubscription = labelSubscription("a");
+    first.resolve(firstSubscription);
+    await requestA;
+
+    expect(firstSubscription.unsubscribe).toHaveBeenCalledOnce();
+    callbacks[0]?.({
+      kind: "remove",
+      name: "Old",
+      generation: "generation-a",
+      seq: 1,
+    });
+    callbacks[1]?.({
+      kind: "remove",
+      name: "Current",
+      generation: "generation-b",
+      seq: 1,
+    });
+    expect(messages.filter((message) => message.type === "workspace.label.update")).toEqual([
+      expect.objectContaining({ payload: expect.objectContaining({ name: "Current" }) }),
+    ]);
+  });
+
+  test("a superseded failure cannot clear the current subscription or survive cleanup", async () => {
+    const first = deferred<LabelSubscription>();
+    const callbacks: Array<(change: LabelChange) => void> = [];
+    const current = labelSubscription("b");
+    const service = {
+      subscribe: async (input: Parameters<WorkspaceLabelService["subscribe"]>[0]) => {
+        callbacks.push(input.onChange);
+        return callbacks.length === 1 ? first.promise : current;
+      },
+    } as unknown as WorkspaceLabelService;
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, workspaceLabelService: service });
+
+    const requestA = session.handleMessage(labelListRequest("a"));
+    await Promise.resolve();
+    await session.handleMessage(labelListRequest("b"));
+    first.reject(new Error("old request failed"));
+    await requestA;
+
+    callbacks[1]?.({
+      kind: "remove",
+      name: "Current",
+      generation: "generation-b",
+      seq: 1,
+    });
+    expect(messages.filter((message) => message.type === "workspace.label.update")).toHaveLength(1);
+    await session.cleanup();
+    expect(current.unsubscribe).toHaveBeenCalledOnce();
+    callbacks[1]?.({
+      kind: "remove",
+      name: "After cleanup",
+      generation: "generation-b",
+      seq: 2,
+    });
+    expect(messages.filter((message) => message.type === "workspace.label.update")).toHaveLength(1);
+  });
+});
+
+describe("workspace label editing", () => {
+  test("answers one edit with the label it produced and the assignments it rewrote", async () => {
+    const calls: unknown[] = [];
+    const service = {
+      update: async (input: unknown) => {
+        calls.push(input);
+        return { label: { name: "Priority", color: "sky" }, affectedWorkspaceCount: 3 };
+      },
+    } as unknown as WorkspaceLabelService;
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, workspaceLabelService: service });
+
+    await session.handleMessage({
+      type: "workspace.label.update.request",
+      requestId: "request-edit",
+      name: "Urgent",
+      newName: "Priority",
+      color: "sky",
+    });
+
+    expect(calls).toEqual([
+      expect.objectContaining({ name: "Urgent", newName: "Priority", color: "sky" }),
+    ]);
+    expect(messages).toEqual([
+      {
+        type: "workspace.label.update.response",
+        payload: {
+          requestId: "request-edit",
+          label: { name: "Priority", color: "sky" },
+          affectedWorkspaceCount: 3,
+        },
+      },
+    ]);
+  });
+
+  test("reports a name collision as a coded error and emits no response", async () => {
+    const service = {
+      update: async () => {
+        throw new WorkspaceLabelError("label_name_taken", "A label with that name already exists");
+      },
+    } as unknown as WorkspaceLabelService;
+    const messages: SessionOutboundMessage[] = [];
+    const session = createSessionForTest({ messages, workspaceLabelService: service });
+
+    await session.handleMessage({
+      type: "workspace.label.update.request",
+      requestId: "request-collision",
+      name: "Urgent",
+      newName: "Waiting",
+      color: "teal",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "rpc_error",
+        payload: {
+          requestId: "request-collision",
+          requestType: "workspace.label.update.request",
+          code: "label_name_taken",
+          error: "A label with that name already exists",
+        },
+      },
+    ]);
+  });
+});
+
+describe("session authorization permissions", () => {
   test("routes named-agent validation through the session source", async () => {
     const messages: SessionOutboundMessage[] = [];
     const providers = createProviderSnapshotManagerStub();
@@ -530,10 +761,10 @@ describe("session authorization scopes", () => {
     });
   });
 
-  test("rejects an RPC outside an exact grant with the generic RPC error", async () => {
+  test("rejects an operation without its semantic permission", async () => {
     const messages: SessionOutboundMessage[] = [];
     const session = createSessionForTest({
-      scopes: ["hub.execution.agent.create.request"],
+      permissions: ["hub.execute"],
       messages,
     });
 
@@ -552,32 +783,16 @@ describe("session authorization scopes", () => {
     ]);
   });
 
-  test.each([
-    ["*", "ping"],
-    ["hub.execution.*", "hub.execution.agent.create.request"],
-    ["hub.execution.agent.create.request", "hub.execution.agent.create.request"],
-  ])("scope %s authorizes %s", (scope, requestType) => {
-    expect(isSessionRpcAllowed([scope], requestType)).toBe(true);
-  });
-
-  test.each([
-    ["hub.execution.*", "hub.management.daemon.get_status.request"],
-    ["hub.execution.agent.create.request", "hub.execution.agent.update"],
-    ["hub.execution.*", "hub.executions.agent.create.request"],
-  ])("scope %s rejects %s", (scope, requestType) => {
-    expect(isSessionRpcAllowed([scope], requestType)).toBe(false);
-  });
-
-  test("replaces a session's scopes without reconstructing the session", async () => {
+  test("replaces a session's permissions without reconstructing the session", async () => {
     const messages: SessionOutboundMessage[] = [];
-    const session = createSessionForTest({ scopes: ["hub.execution.*"], messages });
+    const session = createSessionForTest({ permissions: ["hub.execute"], messages });
 
     await session.handleMessage({
       type: "ping",
       requestId: "before-scope-change",
       clientSentAt: 1,
     });
-    session.setScopes(["*"]);
+    session.setPermissions(["daemon.read"]);
     await session.handleMessage({ type: "ping", requestId: "after-scope-change", clientSentAt: 2 });
 
     expect(messages).toEqual([

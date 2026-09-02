@@ -43,7 +43,6 @@ const cases: ProviderSubagentCase[] = [
     sentinel: "OPENCODE_CHILD_SENTINEL",
     expectedName: "Verify OpenCode descriptor",
     expectedSubtitle: /explore · gpt-5\.4(?: · [^\n·]+)? · \d+(?:\.\d+)?k? tokens/i,
-    expectsUserMessage: false,
     providerConfig: { model: "openai/gpt-5.4" },
     prompt:
       'Use the task tool exactly once with description "Verify OpenCode descriptor" and the explore subagent. Ask it to reply with exactly OPENCODE_CHILD_SENTINEL and do nothing else. Wait for it, then reply ROOT_DONE.',
@@ -89,6 +88,9 @@ test.describe("real provider subagent timelines", () => {
         }
         await rows.first().click();
 
+        // Choosing a row is a menu selection: the track panel goes with it.
+        await expect(page.getByTestId("subagents-track-header-panel")).toBeHidden();
+
         const panel = page.getByTestId("provider-subagent-panel");
         await expect(panel).toBeVisible({ timeout: 30_000 });
         if (scenario.expectedSubtitle) {
@@ -133,6 +135,8 @@ test.describe("real provider subagent timelines", () => {
         await expect(
           page.getByTestId("assistant-message").filter({ hasText: "ROOT_DONE" }).last(),
         ).toBeVisible({ timeout: 60_000 });
+        // Opening the subagent's tab closed the panel with the parent's pane.
+        await openSubagentsTrack(page);
         const archiveFinished = page.getByTestId("subagents-track-archive-finished");
         await expect(archiveFinished).toBeVisible({ timeout: 30_000 });
         await archiveFinished.click();

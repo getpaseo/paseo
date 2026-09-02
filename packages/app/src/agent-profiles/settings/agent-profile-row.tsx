@@ -168,7 +168,7 @@ const styles = StyleSheet.create((theme) => ({
   summary: {
     flexShrink: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   notes: {
     flexDirection: "row",
@@ -179,7 +179,7 @@ const styles = StyleSheet.create((theme) => ({
   notesText: {
     flex: 1,
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   rowActions: {
     flexDirection: "row",

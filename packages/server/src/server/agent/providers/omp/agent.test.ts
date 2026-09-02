@@ -4,7 +4,19 @@ import { setImmediate as waitForImmediate } from "node:timers/promises";
 import type { PaseoToolCatalog } from "../../tools/types.js";
 import type { OmpNoTurnScheduler, OmpProviderIdleScheduler } from "./agent.js";
 import type { OmpUsagePollScheduler } from "./usage-poller.js";
+import { resolveOmpProviderParams } from "./provider-config.js";
 import { OmpHarness } from "./test-utils/omp-harness.js";
+
+test("OMP ready timeout defaults to 20 seconds and RPC timeout overrides both", () => {
+  expect(resolveOmpProviderParams({}).runtimeProviderParams).toMatchObject({
+    readyTimeoutMs: 20_000,
+    rpcTimeoutMs: 60_000,
+  });
+  expect(resolveOmpProviderParams({ rpcTimeoutMs: 90_000 }).runtimeProviderParams).toMatchObject({
+    readyTimeoutMs: 90_000,
+    rpcTimeoutMs: 90_000,
+  });
+});
 
 class ManualIdleScheduler implements OmpProviderIdleScheduler {
   private readonly retries: Array<() => void> = [];

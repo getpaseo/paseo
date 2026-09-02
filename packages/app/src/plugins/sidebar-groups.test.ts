@@ -19,7 +19,13 @@ function installed(serverId: string, contributionId = "main"): InstalledPlugin {
         surface: "surface",
       },
     ],
+    workspacePanels: [],
+    commandCenterItems: [],
+    clientSide: null,
     attachmentSources: [],
+    themes: [],
+    timelineTransformers: [],
+    timelineRenderers: [],
   };
 }
 
@@ -40,6 +46,9 @@ describe("groupPluginSidebarContributions", () => {
       installed("host-b", "settings"),
     ]);
 
-    expect(groups.map((group) => group.key)).toEqual(["example/main", "example/settings"]);
+    expect(groups.map((group) => group.key)).toEqual([
+      "example/sidebar/main",
+      "example/sidebar/settings",
+    ]);
   });
 });

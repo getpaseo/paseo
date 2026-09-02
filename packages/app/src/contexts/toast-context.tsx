@@ -1,23 +1,16 @@
-import { createContext, useContext, type ReactNode } from "react";
-import { ToastViewport, useToastHost, type ToastApi } from "@/components/toast-host";
+import type { ReactNode } from "react";
+import { ToastViewport, useToastHost } from "@/components/toast-host";
+import { ToastApiProvider } from "./toast-api-context";
 
-const ToastContext = createContext<ToastApi | null>(null);
-
-export function useToast(): ToastApi {
-  const value = useContext(ToastContext);
-  if (!value) {
-    throw new Error("useToast must be used within ToastProvider");
-  }
-  return value;
-}
+export { ToastApiProvider, useToast } from "./toast-api-context";
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const { api, toast, dismiss } = useToastHost();
 
   return (
-    <ToastContext.Provider value={api}>
+    <ToastApiProvider api={api}>
       {children}
       <ToastViewport toast={toast} onDismiss={dismiss} />
-    </ToastContext.Provider>
+    </ToastApiProvider>
   );
 }

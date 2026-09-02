@@ -3,6 +3,7 @@ import path from "node:path";
 import { expect, type Page } from "@playwright/test";
 import { test } from "../support/fixtures";
 import { openFileExplorer } from "../support/helpers/file-explorer";
+import { openChangesPanel } from "../support/helpers/workspace-tabs";
 import { gotoWorkspace } from "../support/helpers/launcher";
 import { daemonWsRoutePattern } from "../support/helpers/daemon-port";
 import { seedWorkspace, type SeededWorkspace } from "../support/helpers/seed-client";
@@ -108,6 +109,21 @@ test.beforeEach(async () => {
 
 test.afterEach(async () => {
   await workspace?.cleanup();
+});
+
+test("file explorer rows share the workspace title opacity treatment", async ({ page }) => {
+  await gotoWorkspace(page, workspace.workspaceId);
+  await openFileExplorer(page);
+
+  const row = page
+    .getByTestId("file-explorer-tree-scroll")
+    .getByTestId(/^file-explorer-row-\d+$/)
+    .first();
+  const name = row.getByTestId(/-name$/);
+  await expect(row).toHaveCSS("opacity", "1");
+  await expect(name).toHaveCSS("opacity", "0.76");
+  await row.hover();
+  await expect(name).toHaveCSS("opacity", "1");
 });
 
 test("creates, renames, copies, and deletes entries through the file explorer", async ({
@@ -437,7 +453,7 @@ test("hides unsupported file operations and revert actions", async ({ page }) =>
   await expect(filesMenu.getByText("Delete", { exact: true })).toHaveCount(0);
   await page.keyboard.press("Escape");
 
-  await page.getByTestId("explorer-tab-changes").click();
+  await openChangesPanel(page);
   await expect(page.getByTestId("diff-file-0")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("diff-file-0-toggle").click({ button: "right" });
   await expect(page.getByTestId("diff-file-0-duplicate")).toHaveCount(0);

@@ -38,6 +38,10 @@ export async function expectComposerEditable(page: Page): Promise<void> {
   await expect(composerInput(page)).toBeEditable({ timeout: 15_000 });
 }
 
+export async function expectComposerFocused(page: Page): Promise<void> {
+  await expect(composerInput(page)).toBeFocused();
+}
+
 export async function submitMessage(page: Page, text: string): Promise<void> {
   const input = composerInput(page);
   await expect(input).toBeEditable({ timeout: 30_000 });
@@ -47,6 +51,10 @@ export async function submitMessage(page: Page, text: string): Promise<void> {
 
 export async function fillComposerDraft(page: Page, text: string): Promise<void> {
   await composerInput(page).fill(text);
+}
+
+export async function typeIntoFocusedComposer(page: Page, text: string): Promise<void> {
+  await page.keyboard.type(text);
 }
 
 export async function sendDraftToQueue(page: Page): Promise<void> {
@@ -82,7 +90,7 @@ export async function openAttachmentMenu(page: Page): Promise<void> {
 export async function expectAttachmentSheetRowsOnTitleRail(page: Page): Promise<void> {
   const title = page.getByText("Add attachment", { exact: true });
   const firstItemGlyph = page
-    .getByRole("button", { name: "Add image", exact: true })
+    .getByRole("menuitem", { name: "Add image", exact: true })
     .locator("svg")
     .first();
   await waitForSettledPosition(title);
@@ -198,13 +206,20 @@ export async function selectGithubOption(
 export interface MockAgentSetup {
   client: SeedDaemonClient;
   repo: Awaited<ReturnType<typeof createTempGitRepo>>;
+  workspaceId: string;
+  agentId: string;
   cleanup: () => Promise<void>;
 }
 
 /** Create a temp repo, start a mock agent, navigate to it, and wait for it to be running. */
 export async function startRunningMockAgent(
   page: Page,
-  opts: { prefix: string; model: string; prompt: string },
+  opts: {
+    prefix: string;
+    model: string;
+    prompt: string;
+    featureValues?: Record<string, unknown>;
+  },
 ): Promise<MockAgentSetup> {
   const serverId = getServerId();
 
@@ -222,6 +237,7 @@ export async function startRunningMockAgent(
     cwd: repo.path,
     workspaceId: workspace.id,
     model: opts.model,
+    featureValues: opts.featureValues,
   });
   const agentUrl = `${buildHostWorkspaceRoute(serverId, workspace.id)}?open=${encodeURIComponent(`agent:${agent.id}`)}`;
   await page.goto(agentUrl);
@@ -233,6 +249,8 @@ export async function startRunningMockAgent(
   return {
     client,
     repo,
+    workspaceId: workspace.id,
+    agentId: agent.id,
     cleanup: async () => {
       await client.removeProject(workspace.projectId).catch(() => undefined);
       await client.close().catch(() => undefined);

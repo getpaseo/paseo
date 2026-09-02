@@ -1,4 +1,5 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -19,11 +20,19 @@ async function createFakeEditorBin(): Promise<string> {
   const binDir = await mkdtemp(path.join(tmpdir(), "paseo-e2e-editor-bin-"));
   let realGhPath = "";
   try {
-    realGhPath = execSync("which gh").toString().trim();
+    const locator = process.platform === "win32" ? "where.exe" : "which";
+    const candidates = execFileSync(locator, ["gh"], { encoding: "utf8" })
+      .split(/\r?\n/u)
+      .map((candidate) => candidate.trim())
+      .filter(Boolean);
+    realGhPath =
+      candidates.find(
+        (candidate) =>
+          process.platform !== "win32" || !/\.(?:cmd|bat)$/iu.test(path.extname(candidate)),
+      ) ?? "";
   } catch {
     // The local GitHub fixture remains usable without a system gh binary.
   }
-
   const fakeEditorSource = `#!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
@@ -41,6 +50,9 @@ if (recordPath) {
     const editorPath = path.join(binDir, editorCommand);
     await writeFile(editorPath, fakeEditorSource);
     await chmod(editorPath, 0o755);
+    if (process.platform === "win32") {
+      await writeFile(`${editorPath}.cmd`, `@node "%~dp0${editorCommand}" %*\r\n`);
+    }
   }
 
   const fakeGhPath = path.join(binDir, "gh");
@@ -106,6 +118,9 @@ process.exit(result.status ?? 1);
 `;
   await writeFile(fakeGhPath, fakeGhSource);
   await chmod(fakeGhPath, 0o755);
+  if (process.platform === "win32") {
+    await writeFile(`${fakeGhPath}.cmd`, '@node "%~dp0gh" %*\r\n');
+  }
   return binDir;
 }
 
@@ -141,7 +156,7 @@ async function applyMetadataFork(targetHome: string, providerIds: string[]): Pro
 
 export async function startE2EWorker(
   workerIndex: number,
-  options: { forkProviders?: string[] } = {},
+  options: { forkProviders?: string[]; injectPaseoTools?: boolean } = {},
 ): Promise<E2EWorker> {
   const requestedRoot = resolveOptionalHome(process.env.E2E_PASEO_HOME);
   const paseoHome = requestedRoot
@@ -154,6 +169,9 @@ export async function startE2EWorker(
 
   try {
     await applyMetadataFork(paseoHome, options.forkProviders ?? []);
+    if (options.injectPaseoTools) {
+      await enablePaseoTools(paseoHome);
+    }
     const daemon = await startIsolatedHostDaemon(serverId, {
       paseoHome,
       preserveHome,
@@ -186,4 +204,29 @@ export async function startE2EWorker(
     if (!preserveHome) await rm(paseoHome, { recursive: true, force: true });
     throw error;
   }
+}
+
+async function enablePaseoTools(paseoHome: string): Promise<void> {
+  const configPath = path.join(paseoHome, "config.json");
+  const existing = existsSync(configPath)
+    ? JSON.parse(await readFile(configPath, "utf8"))
+    : { version: 1 };
+  await writeFile(
+    configPath,
+    `${JSON.stringify(
+      {
+        ...existing,
+        daemon: {
+          ...existing.daemon,
+          mcp: {
+            ...existing.daemon?.mcp,
+            enabled: true,
+            injectIntoAgents: true,
+          },
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
 }

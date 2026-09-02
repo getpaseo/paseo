@@ -6,13 +6,13 @@ import { getServerId } from "../support/helpers/server-id";
 import { observeTimelineSubscriptions } from "../support/helpers/timeline-delivery";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
+import { runWorkspaceActionFromCommandCenter } from "../support/helpers/command-center-workspace-actions";
 import {
   expectAgentIdle,
   expectInlineWorkingIndicator,
   expectTurnCopyButton,
 } from "../support/helpers/agent-stream";
 import {
-  expectReconnectingToastDebounced,
   expectReconnectingToastGone,
   expectReconnectingToastVisible,
 } from "../support/helpers/workspace-ui";
@@ -150,7 +150,7 @@ test.describe("Viewed agent timelines", () => {
     try {
       await enableMoveTabShortcut(page);
       await openAgent(page, scenario, scenario.firstAgentId);
-      await page.getByRole("button", { name: "Split pane right" }).click();
+      await runWorkspaceActionFromCommandCenter(page, "Split pane right");
       await selectAgent(page, "Second viewed chat");
       await moveActiveTabRight(page);
       await expect(
@@ -180,13 +180,17 @@ test.describe("Viewed agent timelines", () => {
         "true",
       );
       await gate.drop();
-      await expectReconnectingToastDebounced(page);
-      await expectReconnectingToastVisible(page);
+      await gate.waitForBlockedConnection();
       await commitMessage(scenario, scenario.firstAgentId, "Committed while the chat reconnects.");
       await expect(
         page.getByText("Committed while the chat reconnects.", { exact: true }),
       ).toHaveCount(0);
+      // Hold the first authoritative catch-up response so the assertion observes
+      // the reconnect boundary instead of racing a socket that has not reopened yet.
+      gate.holdNextServerMessage("fetch_agent_timeline_response");
       gate.restore();
+      await gate.waitForHeldServerMessage("fetch_agent_timeline_response");
+      gate.releaseHeldServerMessage("fetch_agent_timeline_response");
       await expectReconnectingToastGone(page);
       const recoveredMessage = page.getByText("Committed while the chat reconnects.", {
         exact: true,
@@ -208,6 +212,7 @@ test.describe("Viewed agent timelines", () => {
       await expect(page.getByRole("textbox", { name: "Message agent..." })).toBeVisible();
       await selectAgent(page, "First viewed chat");
       await gate.drop();
+      await gate.waitForBlockedConnection();
       await expectReconnectingToastVisible(page);
 
       await selectAgent(page, "Second viewed chat");

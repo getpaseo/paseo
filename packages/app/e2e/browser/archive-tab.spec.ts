@@ -10,6 +10,7 @@ import {
   archiveAgentFromSessions,
   clickSessionRow,
   createIdleAgent,
+  expectArchivedAgentFocused,
   expectSessionRowArchived,
   expectSessionRowVisible,
   expectWorkspaceArchiveOutcome,
@@ -21,6 +22,7 @@ import {
   resetSeededPageState,
   reloadWorkspace,
 } from "../support/helpers/archive-tab";
+import { expectAgentTabActive } from "../support/helpers/launcher";
 
 test.describe("Archive tab reconciliation", () => {
   let client: Awaited<ReturnType<typeof connectSeedClient>>;
@@ -144,6 +146,8 @@ test.describe("Archive tab reconciliation", () => {
 
     await clickSessionRow(page, archived.title);
 
+    await expectArchivedAgentFocused(page, archived.id);
+    await expectAgentTabActive(page, archived.id);
     expect(await fetchAgentArchivedAt(client, archived.id)).toBe(archivedAt);
 
     await expect(page).toHaveURL(buildHostWorkspaceRoute(getServerId(), archived.workspaceId), {

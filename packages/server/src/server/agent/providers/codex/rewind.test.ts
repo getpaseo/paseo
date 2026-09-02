@@ -51,16 +51,25 @@ class FakeCodex implements CodexRewindClient {
     };
   }
 
-  request(): Promise<unknown> {
-    throw new Error("FakeCodex uses typed thread methods");
+  request(method: string): Promise<unknown> {
+    if (method === "thread/read") {
+      return Promise.resolve({ thread: { id: "source-thread", historyMode: "legacy" } });
+    }
+    throw new Error(`Unexpected request: ${method}`);
   }
 }
 
 class CodexMessageTurns implements CodexUserMessageTurnIndex {
-  constructor(private readonly indexesByMessageId: Map<string, number>) {}
+  constructor(
+    private readonly indexesByMessageId: Map<string, number>,
+    private readonly turnIdsByMessageId: Map<string, string> = new Map(),
+  ) {}
 
-  resolve(messageId: string): number | null {
-    return this.indexesByMessageId.get(messageId) ?? null;
+  resolve(messageId: string): { index: number; turnId: string | null } | null {
+    const index = this.indexesByMessageId.get(messageId);
+    return index === undefined
+      ? null
+      : { index, turnId: this.turnIdsByMessageId.get(messageId) ?? null };
   }
 
   count(): number {
@@ -129,6 +138,95 @@ describe("Codex Rewind", () => {
 
     expect(codex.recordedRollbacks).toEqual([{ threadId: "forked-thread", numTurns: 2 }]);
     expect(reboundThreadId).toBe("forked-thread");
+  });
+
+  test("rewinds a paginated conversation with one bounded fork and no rollback", async () => {
+    class PaginatedCodex extends FakeCodex {
+      override request(method: string): Promise<unknown> {
+        if (method === "thread/read") {
+          return Promise.resolve({ thread: { id: "source-thread", historyMode: "paginated" } });
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      }
+
+      override rollbackThread(): Promise<CodexThreadRollbackResponse> {
+        throw new Error("paginated threads do not support thread/rollback");
+      }
+    }
+
+    const codex = new PaginatedCodex();
+    const userMessageTurns = new CodexMessageTurns(
+      new Map([
+        ["codex-first", 0],
+        ["codex-second", 1],
+      ]),
+      new Map([
+        ["codex-first", "turn-first"],
+        ["codex-second", "turn-second"],
+      ]),
+    );
+    let reboundThreadId: string | null = null;
+
+    await revertCodexConversation({
+      client: codex,
+      threadId: "source-thread",
+      messageId: "codex-first",
+      cwd: "/workspace/project",
+      model: "gpt-5.4-mini",
+      serviceTier: null,
+      userMessageTurns,
+      setThreadId: (threadId) => {
+        reboundThreadId = threadId;
+      },
+    });
+
+    expect(codex.recordedForks).toEqual([
+      {
+        threadId: "source-thread",
+        beforeTurnId: "turn-first",
+        cwd: "/workspace/project",
+        model: "gpt-5.4-mini",
+        serviceTier: null,
+        excludeTurns: false,
+        persistExtendedHistory: true,
+      },
+    ]);
+    expect(codex.recordedRollbacks).toEqual([]);
+    expect(reboundThreadId).toBe("forked-thread");
+  });
+
+  test("does not fork a paginated thread when the target turn id is unavailable", async () => {
+    class PaginatedCodex extends FakeCodex {
+      override request(method: string): Promise<unknown> {
+        if (method === "thread/read") {
+          return Promise.resolve({ thread: { id: "source-thread", historyMode: "paginated" } });
+        }
+        throw new Error(`Unexpected request: ${method}`);
+      }
+    }
+
+    const codex = new PaginatedCodex();
+    const userMessageTurns = new CodexMessageTurns(new Map([["codex-first", 0]]));
+    let reboundThreadId: string | null = null;
+
+    await expect(
+      revertCodexConversation({
+        client: codex,
+        threadId: "source-thread",
+        messageId: "codex-first",
+        cwd: "/workspace/project",
+        model: "gpt-5.4-mini",
+        serviceTier: null,
+        userMessageTurns,
+        setThreadId: (threadId) => {
+          reboundThreadId = threadId;
+        },
+      }),
+    ).rejects.toThrow("Codex could not find the turn containing user message codex-first");
+
+    expect(codex.recordedForks).toEqual([]);
+    expect(codex.recordedRollbacks).toEqual([]);
+    expect(reboundThreadId).toBeNull();
   });
 
   test("declines to rewind when the user message is not in the Codex thread", async () => {

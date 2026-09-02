@@ -55,14 +55,18 @@ const agentTab: WorkspaceTabDescriptor = {
   target: { kind: "agent", agentId: "agent-a" },
 };
 
-function buildContent(tab: WorkspaceTabDescriptor = agentTab) {
+function buildContent(tab: WorkspaceTabDescriptor = agentTab, host: "main" | "explorer" = "main") {
   return buildWorkspacePaneContentModel({
     tab,
     normalizedServerId: "server-a",
     normalizedWorkspaceId: "workspace-a",
+    host,
     onOpenTab: vi.fn(),
+    onOpenPreferredTarget: vi.fn(),
+    onOpenTargetToSide: vi.fn(),
     onCloseCurrentTab: vi.fn(),
     onRetargetCurrentTab: vi.fn(),
+    onSetCurrentTabState: vi.fn(),
     onOpenWorkspaceFile: vi.fn(),
     onOpenImportSheet: vi.fn(),
   });
@@ -119,6 +123,24 @@ describe("WorkspacePaneContent", () => {
       isInteractive: true,
       focusPane: expect.any(Function),
     });
+  });
+
+  it("exposes the pane host to its content", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <WorkspacePaneContent
+          content={buildContent(agentTab, "explorer")}
+          isPaneFocused
+          isWorkspaceFocused
+        />,
+      );
+    });
+
+    expect(snapshots[0]?.paneContextValue.host).toBe("explorer");
   });
 
   it("keeps pane content mounted when a draft tab is retargeted in place", () => {

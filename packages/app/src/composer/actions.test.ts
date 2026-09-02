@@ -21,15 +21,15 @@ import {
   cancelComposerAgent,
   dispatchComposerAgentMessage,
   editQueuedComposerMessage,
-  findGithubItemByOption,
-  isAttachmentSelectedForGithubItem,
+  findForgeItemByOption,
+  isAttachmentSelectedForForgeItem,
   openComposerAttachment,
   pickAndPersistImages,
   queueComposerMessage,
   removeComposerAttachmentAtIndex,
   sendQueuedComposerMessageNow,
-  toggleGithubAttachment,
-  toggleGithubAttachmentFromPicker,
+  toggleForgeAttachment,
+  toggleForgeAttachmentFromPicker,
   type MessageSubmissionWriter,
   type AttachmentPersister,
   type ComposerCancelClient,
@@ -179,6 +179,7 @@ interface FakeSendCall {
   text: string;
   options: {
     messageId: string;
+    activeTurnBehavior?: "interrupt" | "steer";
     images: Array<{ data: string; mimeType: string }>;
     attachments: AgentAttachment[];
   };
@@ -417,6 +418,50 @@ describe("pickAndPersistImages", () => {
 });
 
 describe("dispatchComposerAgentMessage", () => {
+  it("forwards the configured active-turn intent without provider capability checks", async () => {
+    const client = createFakeSendClient();
+    const stream = createFakeStream();
+
+    await dispatchComposerAgentMessage({
+      client,
+      agentId: "agent",
+      text: "steer this turn",
+      attachments: [],
+      encodeImages: async () => [],
+      submission: stream,
+      activeTurnBehavior: "steer",
+    });
+
+    expect(client.calls[0]?.options.activeTurnBehavior).toBe("steer");
+  });
+
+  it("stamps only a steer optimistic row with the daemon active turn ID", async () => {
+    const client = createFakeSendClient();
+    const stream = createFakeStream();
+    await dispatchComposerAgentMessage({
+      client,
+      agentId: "agent",
+      text: "hello",
+      attachments: [],
+      encodeImages: async () => [],
+      submission: stream,
+      activeTurnBehavior: "steer",
+      activeTurnId: "turn-1",
+    });
+    expect(stream.tail.get("agent")?.[0]).toMatchObject({ turnId: "turn-1" });
+    const legacy = createFakeStream();
+    await dispatchComposerAgentMessage({
+      client,
+      agentId: "legacy",
+      text: "hello",
+      attachments: [],
+      encodeImages: async () => [],
+      submission: legacy,
+      activeTurnBehavior: "steer",
+    });
+    expect(legacy.tail.get("legacy")?.[0]?.turnId).toBeUndefined();
+  });
+
   it("removes the submitted prompt when the host rejects it", async () => {
     const rejection = new Error("Host rejected prompt");
     const client = createFakeSendClient({ rejection });
@@ -473,6 +518,28 @@ describe("dispatchComposerAgentMessage", () => {
         attachments: [],
         encodeImages: passthroughEncodeImages,
         submission,
+      }),
+    ).rejects.toBe(transportError);
+  });
+
+  it("surfaces an ambiguous failure even when a concurrent canonical echo was observed", async () => {
+    const transportError = new Error("Connection lost after delivery may have occurred");
+    const client = createFakeSendClient({ rejection: transportError });
+    const submission: MessageSubmissionWriter = {
+      begin: () => {},
+      accept: () => {},
+      reject: () => "accepted",
+    };
+
+    await expect(
+      dispatchComposerAgentMessage({
+        client,
+        agentId: "agent",
+        text: "ambiguous steer",
+        attachments: [],
+        encodeImages: passthroughEncodeImages,
+        submission,
+        activeTurnBehavior: "steer",
       }),
     ).rejects.toBe(transportError);
   });
@@ -894,19 +961,19 @@ describe("openComposerAttachment", () => {
   });
 });
 
-describe("toggleGithubAttachment", () => {
+describe("toggleForgeAttachment", () => {
   it("appends a GitHub issue when not already attached", () => {
-    const next = toggleGithubAttachment([], issueItem);
+    const next = toggleForgeAttachment([], issueItem);
     expect(next).toEqual([{ kind: "forge_issue", item: issueItem }]);
   });
 
   it("appends a GitHub PR when not already attached", () => {
-    const next = toggleGithubAttachment([], prItem);
+    const next = toggleForgeAttachment([], prItem);
     expect(next).toEqual([{ kind: "forge_change_request", item: prItem }]);
   });
 
   it("removes an existing GitHub item with the same kind+number", () => {
-    const next = toggleGithubAttachment([{ kind: "github_issue", item: issueItem }], issueItem);
+    const next = toggleForgeAttachment([{ kind: "github_issue", item: issueItem }], issueItem);
     expect(next).toEqual([]);
   });
 
@@ -916,7 +983,7 @@ describe("toggleGithubAttachment", () => {
       { kind: "github_pr", item: prItem },
     ];
     const otherIssue: ForgeSearchItem = { ...issueItem, number: 999 };
-    const next = toggleGithubAttachment(start, otherIssue);
+    const next = toggleForgeAttachment(start, otherIssue);
     expect(next).toEqual([
       { kind: "github_issue", item: issueItem },
       { kind: "github_pr", item: prItem },
@@ -925,41 +992,41 @@ describe("toggleGithubAttachment", () => {
   });
 });
 
-describe("toggleGithubAttachmentFromPicker", () => {
+describe("toggleForgeAttachmentFromPicker", () => {
   it("marks an existing GitHub item as removed when picker toggle removes it", () => {
-    const markGithubAttachmentRemoved = vi.fn();
+    const markForgeAttachmentRemoved = vi.fn();
     const attachment: UserComposerAttachment = { kind: "github_pr", item: prItem };
 
-    const next = toggleGithubAttachmentFromPicker({
+    const next = toggleForgeAttachmentFromPicker({
       current: [attachment],
       item: prItem,
-      markGithubAttachmentRemoved,
+      markForgeAttachmentRemoved,
     });
 
     expect(next).toEqual([]);
-    expect(markGithubAttachmentRemoved).toHaveBeenCalledTimes(1);
-    expect(markGithubAttachmentRemoved).toHaveBeenCalledWith(attachment);
+    expect(markForgeAttachmentRemoved).toHaveBeenCalledTimes(1);
+    expect(markForgeAttachmentRemoved).toHaveBeenCalledWith(attachment);
   });
 
   it("does not mark a GitHub item removed when picker toggle adds it", () => {
-    const markGithubAttachmentRemoved = vi.fn();
+    const markForgeAttachmentRemoved = vi.fn();
 
-    const next = toggleGithubAttachmentFromPicker({
+    const next = toggleForgeAttachmentFromPicker({
       current: [],
       item: issueItem,
-      markGithubAttachmentRemoved,
+      markForgeAttachmentRemoved,
     });
 
     expect(next).toEqual([{ kind: "forge_issue", item: issueItem }]);
-    expect(markGithubAttachmentRemoved).not.toHaveBeenCalled();
+    expect(markForgeAttachmentRemoved).not.toHaveBeenCalled();
   });
 });
 
-describe("findGithubItemByOption / isAttachmentSelectedForGithubItem", () => {
+describe("findForgeItemByOption / isAttachmentSelectedForForgeItem", () => {
   it("locates items via their composite kind:number id", () => {
-    expect(findGithubItemByOption([issueItem, prItem], "issue:101")).toBe(issueItem);
-    expect(findGithubItemByOption([issueItem, prItem], "change_request:202")).toBe(prItem);
-    expect(findGithubItemByOption([issueItem], "change_request:404")).toBeUndefined();
+    expect(findForgeItemByOption([issueItem, prItem], "issue:101")).toBe(issueItem);
+    expect(findForgeItemByOption([issueItem, prItem], "change_request:202")).toBe(prItem);
+    expect(findForgeItemByOption([issueItem], "change_request:404")).toBeUndefined();
   });
 
   it("recognizes when an attachment list already contains a matching GitHub item", () => {
@@ -968,7 +1035,7 @@ describe("findGithubItemByOption / isAttachmentSelectedForGithubItem", () => {
       { kind: "github_issue", item: issueItem },
       reviewWorkspaceAttachment("ignored"),
     ];
-    expect(isAttachmentSelectedForGithubItem(attachments, issueItem)).toBe(true);
-    expect(isAttachmentSelectedForGithubItem(attachments, prItem)).toBe(false);
+    expect(isAttachmentSelectedForForgeItem(attachments, issueItem)).toBe(true);
+    expect(isAttachmentSelectedForForgeItem(attachments, prItem)).toBe(false);
   });
 });

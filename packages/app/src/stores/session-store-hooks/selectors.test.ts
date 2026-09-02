@@ -4,6 +4,7 @@ import { createProjectViewKey } from "@/projects/workspace-structure";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   composeWorkspaceStructure,
+  createWorkspaceStructureProjectsSelector,
   selectHasWorkspaces,
   selectHydratedWorkspaceServerIds,
   selectWorkspaceDirectoryServerIds,
@@ -134,14 +135,11 @@ afterEach(() => {
 describe("workspace replica authority", () => {
   it("publishes a restored directory while keeping remote hydration false", () => {
     const cachedWorkspace = createWorkspace({ id: "cached-workspace" });
-    useSessionStore.getState().restoreSessionReplica(SERVER_ID, {
-      agents: new Map(),
-      workspaces: new Map([[cachedWorkspace.id, cachedWorkspace]]),
-      projects: new Map([
-        [cachedWorkspace.projectId, projectDescriptorFromTestWorkspace(cachedWorkspace)],
-      ]),
-      timeline: null,
-    });
+    const store = useSessionStore.getState();
+    store.initializeSession(SERVER_ID, null);
+    store.setWorkspaces(SERVER_ID, new Map([[cachedWorkspace.id, cachedWorkspace]]));
+    store.setProjects(SERVER_ID, [projectDescriptorFromTestWorkspace(cachedWorkspace)]);
+    store.setHasWorkspaceDirectorySnapshot(SERVER_ID, true);
     const cachedSession = useSessionStore.getState().sessions[SERVER_ID];
     if (!cachedSession) throw new Error("expected initialized session");
 
@@ -338,6 +336,27 @@ describe("selectWorkspaceFields", () => {
 });
 
 describe("workspace structure composition", () => {
+  it("reuses structure when unrelated session state changes", () => {
+    const workspace = createWorkspace({ id: "workspace-a" });
+    const workspaces = new Map([[workspace.id, workspace]]);
+    const projects = new Map([
+      [workspace.projectId, projectDescriptorFromTestWorkspace(workspace)],
+    ]);
+    const selectProjects = createWorkspaceStructureProjectsSelector([SERVER_ID]);
+    const before = selectProjects({ sessions: { [SERVER_ID]: { workspaces, projects } } });
+    const after = selectProjects({
+      sessions: {
+        [SERVER_ID]: {
+          workspaces,
+          projects,
+          hasHydratedWorkspaces: true,
+        },
+      },
+    });
+
+    expect(after).toBe(before);
+  });
+
   function snapshotStructure(
     serverId: string,
     sidebar: SidebarOrderSnapshot,

@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Pressable, Text, TextInput, View } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { SvgXml } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ExternalLink, PackagePlus, Search } from "lucide-react-native";
@@ -13,6 +13,7 @@ import {
 import { useProvidersSnapshot } from "@/hooks/use-providers-snapshot";
 import type { Theme } from "@/styles/theme";
 import { openExternalUrl } from "@/utils/open-external-url";
+import { EditingTextInput as TextInput } from "@/components/ui/text-input";
 
 interface ProviderCatalogListProps {
   serverId: string;
@@ -150,7 +151,7 @@ export function ProviderCatalogList({
         </View>
         <ThemedTextInput
           testID="provider-catalog-search"
-          value={search}
+          initialValue={search}
           onChangeText={setSearch}
           accessibilityLabel={t("providerCatalog.search")}
           placeholder={t("providerCatalog.search")}
@@ -202,7 +203,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
     paddingVertical: theme.spacing[3],
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
   list: {
     borderRadius: theme.borderRadius.lg,
@@ -240,18 +241,18 @@ const styles = StyleSheet.create((theme) => ({
   },
   name: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
     flexShrink: 1,
   },
   version: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
     flexShrink: 0,
   },
   description: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   installLink: {
     alignSelf: "flex-start",
@@ -262,7 +263,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   installLinkText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.xs,
+    fontSize: theme.fontSize.sm,
   },
   actionButton: {
     width: 92,
@@ -281,6 +282,6 @@ const styles = StyleSheet.create((theme) => ({
   },
   stateText: {
     color: theme.colors.foregroundMuted,
-    fontSize: theme.fontSize.sm,
+    fontSize: theme.fontSize.base,
   },
 }));

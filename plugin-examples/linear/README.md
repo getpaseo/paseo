@@ -25,9 +25,9 @@ Register the extension in `$PASEO_HOME/config.json`:
 
 Restart the development daemon after changing its environment or plugin configuration.
 
-The entry point demonstrates the complete attachment-source pattern:
+The split entry point demonstrates the complete attachment-source pattern:
 
-- define one validated search RPC;
-- handle it in the daemon subprocess;
-- register a declarative attachment source for the client;
+- define the validated search RPC and attachment metadata in `issues.shared.ts`;
+- handle it in the daemon subprocess from `issues.server.ts`;
+- wire both contributions from `index.ts`;
 - keep credentials and vendor API calls out of the client bundle.

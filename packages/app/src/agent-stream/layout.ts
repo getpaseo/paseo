@@ -2,6 +2,7 @@ import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
 import { getAssistantBlockSpacing, getGapBetweenStreamItems } from "./spacing";
 import type { StreamFrameChildOrder, StreamStrategy } from "./strategy";
+import { continuesResponse, continuesTurn, isResponseBoundary } from "./turn-membership";
 
 export type StreamToolSequence = "single" | "first" | "middle" | "last" | "none";
 
@@ -14,8 +15,6 @@ export interface TurnFooterHost {
 
 export interface StreamLayoutItem {
   item: StreamItem;
-  index: number;
-  items: StreamItem[];
   aboveItem: StreamItem | null;
   belowItem: StreamItem | null;
   gapBelow: number;
@@ -48,6 +47,7 @@ interface LayoutSegmentInput {
   items: StreamItem[];
   timingByAssistantId: Map<string, TurnTiming>;
   auxiliaryTurnFooter: TurnFooterHost | null;
+  hasAuxiliaryFooter: boolean;
   frameOrder: StreamFrameChildOrder;
   boundaryIndex: number | null;
   boundaryAboveItem: StreamItem | null;
@@ -77,7 +77,7 @@ function createTurnFooterHost(input: {
   };
 }
 
-function findLatestAssistantInTurn(input: {
+function findLatestAssistantInResponse(input: {
   strategy: StreamStrategy;
   items: StreamItem[];
   startIndex: number;
@@ -87,6 +87,7 @@ function findLatestAssistantInTurn(input: {
   let items = input.items;
   let index = input.startIndex;
   let canCrossBoundary = true;
+  let laterItem: StreamItem | null = null;
 
   while (true) {
     for (
@@ -95,12 +96,13 @@ function findLatestAssistantInTurn(input: {
       index = input.strategy.getNeighborIndex(index, "above")
     ) {
       const item = items[index];
-      if (!item || item.kind === "user_message") {
+      if (!item || (laterItem && !continuesResponse(item, laterItem))) {
         return null;
       }
       if (item.kind === "assistant_message") {
         return { item, items, index };
       }
+      laterItem = item;
     }
 
     if (
@@ -129,7 +131,7 @@ function resolveAuxiliaryTurnFooter(input: StreamLayoutInput): TurnFooterHost | 
     return null;
   }
 
-  const assistant = findLatestAssistantInTurn({
+  const assistant = findLatestAssistantInResponse({
     strategy: input.strategy,
     items: footerItems,
     startIndex: latestIndex,
@@ -157,11 +159,11 @@ function resolveCompletedFooter(input: {
   boundaryAboveItems: StreamItem[] | null;
   boundaryAboveIndex: number | null;
 }): TurnFooterHost | null {
-  if (input.item.kind === "user_message" || input.belowItem?.kind !== "user_message") {
+  if (input.item.kind === "user_message" || !isResponseBoundary(input.item, input.belowItem)) {
     return null;
   }
 
-  const assistant = findLatestAssistantInTurn({
+  const assistant = findLatestAssistantInResponse({
     strategy: input.strategy,
     items: input.items,
     startIndex: input.index,
@@ -194,8 +196,10 @@ function getToolSequence(input: {
     return "none";
   }
 
-  const hasAbove = isToolSequenceItem(input.aboveItem);
-  const hasBelow = isToolSequenceItem(input.belowItem);
+  const hasAbove =
+    isToolSequenceItem(input.aboveItem) && continuesTurn(input.aboveItem, input.item);
+  const hasBelow =
+    isToolSequenceItem(input.belowItem) && continuesTurn(input.item, input.belowItem);
   if (hasAbove && hasBelow) {
     return "middle";
   }
@@ -226,57 +230,109 @@ function getSegmentNeighbor(input: {
   return null;
 }
 
-function layoutSegment(input: LayoutSegmentInput): StreamLayoutItem[] {
-  return input.items.map((item, index) => {
-    const aboveItem = getSegmentNeighbor({
-      strategy: input.strategy,
-      items: input.items,
-      index,
-      relation: "above",
-      boundaryIndex: input.boundaryIndex,
-      boundaryItem: input.boundaryAboveItem,
-    });
-    const belowItem = getSegmentNeighbor({
-      strategy: input.strategy,
-      items: input.items,
-      index,
-      relation: "below",
-      boundaryIndex: input.boundaryIndex,
-      boundaryItem: input.boundaryBelowItem,
-    });
-    const assistantSpacing = getAssistantBlockSpacing({
-      item,
-      aboveItem,
-      belowItem,
-    });
-    const completedFooter = resolveCompletedFooter({
-      strategy: input.strategy,
-      items: input.items,
-      index,
-      item,
-      belowItem,
-      timingByAssistantId: input.timingByAssistantId,
-      auxiliaryTurnFooter: input.auxiliaryTurnFooter,
-      boundaryAboveItems: input.boundaryAboveItems,
-      boundaryAboveIndex: input.boundaryAboveIndex,
-    });
+// Last layout emitted for each stream item. A row only rerenders when its layout item identity
+// changes, so an item whose render-relevant layout is unchanged must keep its previous object even
+// when the surrounding array was rebuilt (a new row shifts every index in a newest-first list).
+const previousLayoutItemByStreamItem = new WeakMap<StreamItem, StreamLayoutItem>();
 
-    return {
-      item,
-      index,
-      items: input.items,
-      aboveItem,
-      belowItem,
-      gapBelow: completedFooter ? 0 : getGapBetweenStreamItems(item, belowItem),
-      assistantSpacing,
-      completedFooter,
-      toolSequence: getToolSequence({ item, aboveItem, belowItem }),
-      isFirstInUserGroup: item.kind === "user_message" && aboveItem?.kind !== "user_message",
-      isLastInUserGroup: item.kind === "user_message" && belowItem?.kind !== "user_message",
-      isLastInToolSequence: isToolSequenceItem(item) && !isToolSequenceItem(belowItem),
-      frameOrder: input.frameOrder,
-      phase: input.phase,
-    };
+function areTurnFooterHostsEqual(
+  left: TurnFooterHost | null,
+  right: TurnFooterHost | null,
+): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return (
+    left.itemId === right.itemId &&
+    left.timing === right.timing &&
+    left.startIndex === right.startIndex &&
+    left.items === right.items
+  );
+}
+
+function areLayoutItemsEquivalent(previous: StreamLayoutItem, next: StreamLayoutItem): boolean {
+  return (
+    previous.item === next.item &&
+    previous.aboveItem === next.aboveItem &&
+    previous.belowItem === next.belowItem &&
+    previous.gapBelow === next.gapBelow &&
+    previous.assistantSpacing === next.assistantSpacing &&
+    areTurnFooterHostsEqual(previous.completedFooter, next.completedFooter) &&
+    previous.toolSequence === next.toolSequence &&
+    previous.isFirstInUserGroup === next.isFirstInUserGroup &&
+    previous.isLastInUserGroup === next.isLastInUserGroup &&
+    previous.isLastInToolSequence === next.isLastInToolSequence &&
+    previous.frameOrder === next.frameOrder &&
+    previous.phase === next.phase
+  );
+}
+
+function shareLayoutItem(next: StreamLayoutItem): StreamLayoutItem {
+  const previous = previousLayoutItemByStreamItem.get(next.item);
+  if (previous && areLayoutItemsEquivalent(previous, next)) {
+    return previous;
+  }
+  previousLayoutItemByStreamItem.set(next.item, next);
+  return next;
+}
+
+function layoutSegment(input: LayoutSegmentInput): StreamLayoutItem[] {
+  return input.items.map((item, index) => layoutSegmentItem(input, item, index));
+}
+
+function layoutSegmentItem(
+  input: LayoutSegmentInput,
+  item: StreamItem,
+  index: number,
+): StreamLayoutItem {
+  const aboveItem = getSegmentNeighbor({
+    strategy: input.strategy,
+    items: input.items,
+    index,
+    relation: "above",
+    boundaryIndex: input.boundaryIndex,
+    boundaryItem: input.boundaryAboveItem,
+  });
+  const belowItem = getSegmentNeighbor({
+    strategy: input.strategy,
+    items: input.items,
+    index,
+    relation: "below",
+    boundaryIndex: input.boundaryIndex,
+    boundaryItem: input.boundaryBelowItem,
+  });
+  const completedFooter = resolveCompletedFooter({
+    strategy: input.strategy,
+    items: input.items,
+    index,
+    item,
+    belowItem,
+    timingByAssistantId: input.timingByAssistantId,
+    auxiliaryTurnFooter: input.auxiliaryTurnFooter,
+    boundaryAboveItems: input.boundaryAboveItems,
+    boundaryAboveIndex: input.boundaryAboveIndex,
+  });
+  const assistantSpacing = getAssistantBlockSpacing({
+    item,
+    aboveItem,
+    belowItem,
+    hasFooterBelow: completedFooter !== null || (input.hasAuxiliaryFooter && belowItem === null),
+  });
+
+  return shareLayoutItem({
+    item,
+    aboveItem,
+    belowItem,
+    gapBelow: completedFooter ? 0 : getGapBetweenStreamItems(item, belowItem),
+    assistantSpacing,
+    completedFooter,
+    toolSequence: getToolSequence({ item, aboveItem, belowItem }),
+    isFirstInUserGroup: item.kind === "user_message" && aboveItem?.kind !== "user_message",
+    isLastInUserGroup: item.kind === "user_message" && belowItem?.kind !== "user_message",
+    isLastInToolSequence:
+      isToolSequenceItem(item) &&
+      !(isToolSequenceItem(belowItem) && continuesTurn(item, belowItem)),
+    frameOrder: input.frameOrder,
+    phase: input.phase,
   });
 }
 
@@ -287,6 +343,7 @@ const historyLayoutCache = new WeakMap<StreamItem[], Map<string, StreamLayoutIte
 
 export function layoutStream(input: StreamLayoutInput): StreamLayout {
   const auxiliaryTurnFooter = resolveAuxiliaryTurnFooter(input);
+  const hasAuxiliaryFooter = input.isTurnActive || auxiliaryTurnFooter !== null;
   const historyBoundaryIndex = input.strategy.getHistoryLiveBoundaryIndex(input.history);
   const liveHeadBoundaryIndex = input.strategy.getLiveHeadHistoryBoundaryIndex(input.liveHead);
   const historyBoundaryItem =
@@ -297,15 +354,16 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
 
   let history: StreamLayoutItem[];
   if (input.history.length > 0) {
-    // The cache key encodes every input that can change history layout. liveHeadBoundaryItem.id
-    // and .kind are stable across text-only flushes (text growth doesn't change what kind of
-    // item borders history), so cached layout stays valid between flushes.
+    // The cache key encodes every input that can change history layout. The boundary turn ID
+    // is membership, so changing it must not reuse a layout from the adjacent turn.
     const historyCacheKey = [
       frameOrder,
       historyBoundaryIndex ?? "null",
       liveHeadBoundaryItem?.id ?? "null",
       liveHeadBoundaryItem?.kind ?? "null",
+      liveHeadBoundaryItem?.turnId ?? "null",
       auxiliaryTurnFooter?.itemId ?? "null",
+      hasAuxiliaryFooter ? "footer" : "no-footer",
     ].join(":");
     let byKey = historyLayoutCache.get(input.history);
     if (!byKey) {
@@ -321,6 +379,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
         items: input.history,
         timingByAssistantId: input.timingByAssistantId,
         auxiliaryTurnFooter,
+        hasAuxiliaryFooter,
         frameOrder,
         boundaryIndex: historyBoundaryIndex,
         boundaryAboveItem: null,
@@ -340,6 +399,7 @@ export function layoutStream(input: StreamLayoutInput): StreamLayout {
     items: input.liveHead,
     timingByAssistantId: input.timingByAssistantId,
     auxiliaryTurnFooter,
+    hasAuxiliaryFooter,
     frameOrder,
     boundaryIndex: liveHeadBoundaryIndex,
     boundaryAboveItem: historyBoundaryItem,

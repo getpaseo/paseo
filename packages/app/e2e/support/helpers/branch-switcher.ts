@@ -1,35 +1,27 @@
 import { expect, type Page } from "@playwright/test";
 import { escapeRegex } from "./regex";
+import { openChangesTreePanel } from "./workspace-tabs";
 
-// The branch switcher lives in the git diff panel's Changes header (right-side
-// ExplorerSidebar), not in the workspace header. It renders as a button whose
+// The branch switcher lives in the Changes tab, not in the workspace header. It renders as a button whose
 // accessible name carries the current branch ("Current branch: <name>. Press to
 // switch branch."). Matching on the accessible name keeps these helpers tied to
 // what a screen reader user hears, and it proves the panel resolved a real
-// checkout directory from the opaque workspace id. Scoping to the changes header
-// keeps the matcher unambiguous even when the header is shared with diff actions.
+// checkout directory from the opaque workspace id. Scoping to the repository
+// header keeps the matcher aligned with the row that owns repository identity.
 function branchSwitcherTrigger(page: Page, branchName: string) {
   return page
-    .getByTestId("changes-header")
+    .getByTestId("changes-repository-header")
     .getByRole("button", { name: new RegExp(`Current branch: ${escapeRegex(branchName)}\\b`) })
     .filter({ visible: true })
     .first();
 }
 
-// Opens the right-side explorer and lands on the Changes tab, where the branch
-// switcher and diff live. Git checkouts default to the Changes tab when the
-// explorer opens, so this is enough to reveal the switcher on desktop and mobile.
+// Opens the fixed Explorer Changes view, where the switcher lives.
 export async function openChangesPanel(page: Page): Promise<void> {
-  await expect(page.getByTestId("workspace-explorer-toggle").first()).toBeVisible({
-    timeout: 30_000,
-  });
-  await page.getByTestId("workspace-explorer-toggle").first().click();
-  const changesTab = page.getByTestId("explorer-tab-changes").filter({ visible: true }).first();
-  await expect(changesTab).toBeVisible({ timeout: 30_000 });
-  await changesTab.click();
-  await expect(page.getByTestId("changes-header").filter({ visible: true }).first()).toBeVisible({
-    timeout: 30_000,
-  });
+  await openChangesTreePanel(page);
+  await expect(
+    page.getByTestId("changes-repository-header").filter({ visible: true }).first(),
+  ).toBeVisible({ timeout: 30_000 });
 }
 
 export async function expectWorkspaceBranch(page: Page, branchName: string): Promise<void> {

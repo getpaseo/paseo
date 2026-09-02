@@ -868,6 +868,15 @@ describe("workspace message schemas", () => {
   });
 
   test("parses fetch_workspaces_response with optional runtime fields", () => {
+    const checks = [
+      { name: "legacy", status: "success", url: null },
+      {
+        name: "deploy",
+        status: "pending",
+        url: null,
+        traits: ["manual", "action_required", "future-forge-trait"],
+      },
+    ];
     const parsed = SessionOutboundMessageSchema.parse({
       type: "fetch_workspaces_response",
       payload: {
@@ -909,6 +918,7 @@ describe("workspace message schemas", () => {
                 baseRefName: "main",
                 headRefName: "workspace-git-service",
                 isMerged: false,
+                checks,
               },
               error: null,
               refreshedAt: "2026-04-12T00:00:00.000Z",
@@ -930,6 +940,7 @@ describe("workspace message schemas", () => {
       aheadOfOrigin: 2,
     });
     expect(parsed.payload.entries[0]?.githubRuntime?.pullRequest?.title).toBe("Runtime payloads");
+    expect(parsed.payload.entries[0]?.githubRuntime?.pullRequest?.checks).toEqual(checks);
   });
 
   test("older workspace parsers ignore additive runtime fields", () => {

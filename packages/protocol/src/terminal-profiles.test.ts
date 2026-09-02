@@ -6,6 +6,7 @@ import {
   getTerminalProfileIcon,
   guessTerminalProfileIcon,
   profileTakesPrompt,
+  resolveTerminalProfileLaunch,
   resolveTerminalProfiles,
   substitutePrompt,
 } from "./terminal-profiles.js";
@@ -282,6 +283,22 @@ describe("substitutePrompt", () => {
 
   it("normalizes absent args to an empty list", () => {
     expect(substitutePrompt({ command: "zsh" }, "ignored")).toEqual({ command: "zsh", args: [] });
+  });
+});
+
+describe("resolveTerminalProfileLaunch", () => {
+  it("turns an empty prompt profile into a spawnable command with no prompt argument", () => {
+    expect(
+      resolveTerminalProfileLaunch(
+        {
+          id: "agent",
+          name: "Agent",
+          command: "agent-cli",
+          args: [PROMPT_SENTINEL],
+        },
+        "",
+      ),
+    ).toEqual({ name: "Agent", command: "agent-cli", args: [] });
   });
 });
 

@@ -7,6 +7,8 @@ interface SendAgentMessageRequest {
   type: "send_agent_message_request";
   requestId: string;
   agentId: string;
+  /** Absent when the client sends into an idle agent. */
+  activeTurnBehavior?: string;
 }
 
 function readSendRequest(message: WebSocketMessage): SendAgentMessageRequest | null {
@@ -28,6 +30,8 @@ function readSendRequest(message: WebSocketMessage): SendAgentMessageRequest | n
       type: "send_agent_message_request",
       requestId: request.requestId,
       agentId: request.agentId,
+      activeTurnBehavior:
+        typeof request.activeTurnBehavior === "string" ? request.activeTurnBehavior : undefined,
     };
   } catch {
     return null;

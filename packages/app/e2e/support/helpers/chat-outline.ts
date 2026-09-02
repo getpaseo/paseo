@@ -1,6 +1,7 @@
 import { expect, type Locator, type Page } from "@playwright/test";
 import { openSettings } from "./app";
 import { openSettingsSection } from "./settings";
+import { runWorkspaceActionFromCommandCenter } from "./command-center-workspace-actions";
 
 export function chatOutlineRail(page: Page): Locator {
   return page.getByTestId("chat-outline-rail");
@@ -41,7 +42,7 @@ export async function clickChatOutlineRowEdge(page: Page, position: number): Pro
 }
 
 export async function splitCurrentPanelRight(page: Page): Promise<void> {
-  await page.getByRole("button", { name: "Split pane right" }).first().click();
+  await runWorkspaceActionFromCommandCenter(page, "Split pane right");
 }
 
 export async function disableChatOutlineFromAppearance(page: Page): Promise<void> {
@@ -137,6 +138,15 @@ export async function expectActiveChatOutlinePrompt(page: Page, position: number
   await expect(chatOutlineRail(page).getByRole("tab", { selected: true })).toHaveAccessibleName(
     new RegExp(`^${position} of `),
   );
+}
+
+export async function expectActiveChatOutlinePromptMovedFrom(
+  page: Page,
+  position: number,
+): Promise<void> {
+  const activePrompt = chatOutlineRail(page).getByRole("tab", { selected: true });
+  await expect(activePrompt).toHaveCount(1);
+  await expect(activePrompt).not.toHaveAccessibleName(new RegExp(`^${position} of `));
 }
 
 export async function expectLiveTurnPromptAboveFoldAndActive(

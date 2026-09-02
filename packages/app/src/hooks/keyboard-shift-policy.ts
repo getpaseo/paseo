@@ -1,5 +1,12 @@
 export const DEFAULT_IOS_KEYBOARD_INSET_MIN_HEIGHT = 120;
 
+export function shouldUseCompactExplorerKeyboardPadding(input: {
+  isGit: boolean;
+  explorerTab: "changes" | "files" | "pr";
+}): boolean {
+  return !input.isGit || input.explorerTab !== "changes";
+}
+
 export function resolveKeyboardShift(input: {
   rawKeyboardHeight: number;
   keyboardProgress: number;
@@ -20,4 +27,12 @@ export function resolveKeyboardShift(input: {
   }
 
   return Math.max(0, input.rawKeyboardHeight - input.bottomInset);
+}
+
+export function shouldReconcileHiddenKeyboardEnd(input: {
+  height: number;
+  progress: number;
+}): boolean {
+  "worklet";
+  return !(input.height > 0) || !(input.progress > 0);
 }

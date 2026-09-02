@@ -3,6 +3,24 @@ import { createCompactMarkdownStyles, createMarkdownStyles } from "./markdown-st
 import { darkTheme } from "./theme";
 
 describe("createMarkdownStyles", () => {
+  it("uses the content size for conversation prose and list markers", () => {
+    const styles = createMarkdownStyles(darkTheme);
+    const proseLineHeight = Math.round(darkTheme.fontSize.content * 1.4);
+
+    expect(styles.body).toMatchObject({
+      fontSize: darkTheme.fontSize.content,
+      lineHeight: proseLineHeight,
+    });
+    expect(styles.bullet_list_icon).toMatchObject({
+      fontSize: darkTheme.fontSize.content,
+      lineHeight: proseLineHeight,
+    });
+    expect(styles.ordered_list_icon).toMatchObject({
+      fontSize: darkTheme.fontSize.content,
+      lineHeight: proseLineHeight,
+    });
+  });
+
   it("applies shrink-and-wrap constraints to long markdown text and links", () => {
     const styles = createMarkdownStyles(darkTheme);
 
@@ -92,5 +110,33 @@ describe("createMarkdownStyles", () => {
       fontSize: darkTheme.fontSize.code,
     });
     expect(compactStyles.code_inline).not.toHaveProperty("lineHeight");
+  });
+
+  it("scales Markdown headings from content size with safe line heights", () => {
+    const largeContentTheme = {
+      ...darkTheme,
+      fontSize: { ...darkTheme.fontSize, content: 21 },
+    };
+    const styles = createMarkdownStyles(largeContentTheme);
+
+    expect(styles.heading1.lineHeight).toBeGreaterThan(styles.heading1.fontSize);
+    expect(styles.heading2.lineHeight).toBeGreaterThan(styles.heading2.fontSize);
+    expect(styles.heading3.lineHeight).toBeGreaterThan(styles.heading3.fontSize);
+  });
+
+  it("keeps blockquotes quiet with a square left edge", () => {
+    const styles = createMarkdownStyles(darkTheme);
+
+    expect(styles.blockquote).toMatchObject({
+      backgroundColor: darkTheme.colors.surface1,
+      color: `${darkTheme.colors.foreground}cc`,
+      borderLeftColor: darkTheme.colors.surface2,
+      paddingTop: darkTheme.spacing[3],
+      paddingBottom: 0,
+      borderTopLeftRadius: 0,
+      borderBottomLeftRadius: 0,
+    });
+    expect(styles.paragraph.marginBottom).toBe(darkTheme.spacing[3]);
+    expect(styles.text).not.toHaveProperty("color");
   });
 });

@@ -18,6 +18,33 @@ test("shows Pure black in the appearance picker", async ({ page }, testInfo) => 
   });
 });
 
+test("keeps the selected workspace visible in Light", async ({ page }, testInfo) => {
+  const workspace = await seedWorkspace({
+    repoPrefix: "light-selected-workspace-",
+    title: "Selected workspace",
+  });
+
+  try {
+    await page.addInitScript(() => {
+      localStorage.setItem("@paseo:app-settings", JSON.stringify({ theme: "light" }));
+    });
+    await gotoAppShell(page);
+
+    const row = page.getByTestId(`sidebar-workspace-row-${getServerId()}:${workspace.workspaceId}`);
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    await row.click();
+
+    await expect(row).toHaveAttribute("aria-selected", "true");
+    await expect(row).toHaveCSS("background-color", "rgb(228, 228, 231)");
+    await page.screenshot({
+      path: testInfo.outputPath("light-selected-workspace.png"),
+      fullPage: true,
+    });
+  } finally {
+    await workspace.cleanup();
+  }
+});
+
 test("keeps the selected workspace visible in Pure black", async ({ page }, testInfo) => {
   const workspace = await seedWorkspace({
     repoPrefix: "pure-black-selected-workspace-",
@@ -35,7 +62,7 @@ test("keeps the selected workspace visible in Pure black", async ({ page }, test
     await row.click();
 
     await expect(row).toHaveAttribute("aria-selected", "true");
-    await expect(row).toHaveCSS("background-color", "rgb(22, 22, 22)");
+    await expect(row).toHaveCSS("background-color", "rgb(17, 17, 17)");
     await page.screenshot({
       path: testInfo.outputPath("pure-black-selected-workspace.png"),
       fullPage: true,
@@ -47,7 +74,7 @@ test("keeps the selected workspace visible in Pure black", async ({ page }, test
 
 test("applies the interface font size to settings text", async ({ page }) => {
   await page.addInitScript(() => {
-    localStorage.setItem("@paseo:app-settings", JSON.stringify({ uiFontSize: 24 }));
+    localStorage.setItem("@paseo:app-settings", JSON.stringify({ uiBaseFontSize: 21 }));
   });
   await page.goto("/settings");
   await expect(page.getByTestId("settings-sidebar")).toBeVisible();
@@ -56,11 +83,14 @@ test("applies the interface font size to settings text", async ({ page }) => {
   const sectionTitle = page.getByText("Theme", { exact: true }).first();
   await expect(sectionTitle).toHaveCSS("font-size", "18px");
 
-  const fontSizeInput = page.getByLabel("Interface font size");
-  await expect(fontSizeInput).toHaveValue("24");
-  await fontSizeInput.fill("12");
-  await fontSizeInput.press("Tab");
+  const interfaceSizeInput = page.getByLabel("Interface font size");
+  const contentSizeInput = page.getByLabel("Content font size");
+  await expect(interfaceSizeInput).toHaveValue("21");
+  await expect(contentSizeInput).toHaveValue("21");
+  await interfaceSizeInput.fill("12");
+  await interfaceSizeInput.press("Tab");
 
-  await expect(fontSizeInput).toHaveValue("12");
-  await expect(sectionTitle).toHaveCSS("font-size", "9px");
+  await expect(interfaceSizeInput).toHaveValue("12");
+  await expect(contentSizeInput).toHaveValue("21");
+  await expect(sectionTitle).toHaveCSS("font-size", "10px");
 });

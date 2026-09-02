@@ -56,6 +56,13 @@ const sessionMock = vi.hoisted(() => {
     clearAgentTimelineSubscription = vi.fn();
     getClientActivity = vi.fn(() => null);
     getSessionId = vi.fn(() => "mock-session-id");
+    getPermissions = vi.fn(() => this.args.permissions as string[]);
+    allowsInbound = vi.fn(() => true);
+    allowsPermission = vi.fn(() => true);
+    publish = vi.fn((message: unknown) => {
+      const onMessage = this.args.onMessage as ((message: unknown) => void) | undefined;
+      onMessage?.(message);
+    });
     resetPeakInflight = vi.fn(() => {});
     getRuntimeMetrics = vi.fn(() => ({
       checkoutDiffTargetCount: 0,
@@ -96,7 +103,7 @@ vi.mock("./push/index.js", () => ({
 
 import { z } from "zod";
 import { VoiceAssistantWebSocketServer } from "./websocket-server";
-import { parseServerInfoStatusPayload } from "./messages.js";
+import { DAEMON_PERMISSIONS, parseServerInfoStatusPayload } from "./messages.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 
 interface WebSocketServerInternals {
@@ -220,6 +227,7 @@ function createWorkspaceAutoNameStub(): WorkspaceAutoName {
 function createServer(options?: {
   speechReadiness?: SpeechReadinessSnapshot | null;
   logger?: ReturnType<typeof createLogger>;
+  startPaused?: boolean;
 }) {
   const speechReadiness = options?.speechReadiness ?? null;
   const daemonConfigStore = {
@@ -248,7 +256,7 @@ function createServer(options?: {
     "/tmp/paseo-test",
     createStub<DaemonConfigStore>(daemonConfigStore),
     null,
-    { allowedOrigins: new Set() },
+    { allowedOrigins: new Set(), startPaused: options?.startPaused },
     createWorkspaceAutoNameStub(),
     undefined,
     speechReadiness
@@ -503,6 +511,39 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("gives every plugin socket an exclusively owned session and cleans it immediately", async () => {
+    const server = createServer();
+    const firstSocket = new MockSocket();
+    const firstAttachment = await server.attachPluginSocket("exclusive", firstSocket);
+    firstSocket.emit("message", JSON.stringify(createHelloMessage("plugin:exclusive")));
+
+    const secondSocket = new MockSocket();
+    const secondAttachment = await server.attachPluginSocket("exclusive", secondSocket);
+    secondSocket.emit("message", JSON.stringify(createHelloMessage("plugin:exclusive")));
+
+    expect(sessionMock.instances).toHaveLength(2);
+    firstSocket.emit("close", 1000, "plugin stopped");
+    await firstAttachment.closed;
+    expect(sessionMock.instances[0]?.cleanup).toHaveBeenCalledOnce();
+    expect(sessionMock.instances[1]?.cleanup).not.toHaveBeenCalled();
+
+    secondSocket.emit("close", 1000, "plugin stopped");
+    await secondAttachment.closed;
+    expect(sessionMock.instances[1]?.cleanup).toHaveBeenCalledOnce();
+    await server.close();
+  });
+
+  test("rejects ordinary sockets that claim the reserved plugin client id", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await server.attachExternalSocket(socket, { transport: "relay" });
+    socket.emit("message", JSON.stringify(createHelloMessage("plugin:not-a-plugin")));
+
+    expect(socket.readyState).toBe(3);
+    expect(sessionMock.instances).toHaveLength(0);
+    await server.close();
+  });
+
   test("passes hello capabilities through to the created session", async () => {
     const server = createServer();
     const socket = new MockSocket();
@@ -553,6 +594,27 @@ describe("relay external socket reconnect behavior", () => {
       heldCleanup.finish();
       await closePromise;
     }
+  });
+
+  test("accepts plugin startup sessions while application sessions remain paused", async () => {
+    const server = createServer({ startPaused: true });
+    const applicationSocket = new MockSocket();
+    await server.attachExternalSocket(applicationSocket, { transport: "relay" });
+    expect(applicationSocket.readyState).toBe(3);
+
+    const pluginSocket = new MockSocket();
+    const attachment = await server.attachPluginSocket("startup", pluginSocket);
+    pluginSocket.emit("message", JSON.stringify(createHelloMessage("plugin:startup")));
+    expect(sessionMock.instances).toHaveLength(1);
+
+    server.beginAcceptingConnections();
+    const readySocket = new MockSocket();
+    await attachRelayAndHello({ server, socket: readySocket, clientId: "ready-client" });
+    expect(sessionMock.instances).toHaveLength(2);
+
+    pluginSocket.emit("close", 1000, "done");
+    await attachment.closed;
+    await server.close();
   });
 
   test("closes pending connection when hello timeout elapses", async () => {
@@ -618,6 +680,28 @@ describe("relay external socket reconnect behavior", () => {
     });
     expect(sessionMock.instances).toHaveLength(2);
 
+    await server.close();
+  });
+
+  test("isolates resumable sessions by principal while sharing hello bootstrap", async () => {
+    const server = createServer();
+    const clientId = "shared-client-id";
+    const ownerSocket = new MockSocket();
+    const hubSocket = new MockSocket();
+
+    const ownerInfo = await attachRelayAndHello({ server, socket: ownerSocket, clientId });
+    await server.attachExternalSocket(
+      hubSocket,
+      { transport: "hub", hubDaemonId: "daemon-1" },
+      { principalId: "hub:daemon-1", permissions: ["hub.execute"] },
+    );
+    hubSocket.emit("message", JSON.stringify(createHelloMessage(clientId)));
+    const hubEnvelope = parseSentEnvelope(hubSocket.sent[0]);
+    const hubInfo = parseServerInfoStatusPayload(hubEnvelope.message?.payload);
+
+    expect(sessionMock.instances).toHaveLength(2);
+    expect(ownerInfo.permissions).toEqual(DAEMON_PERMISSIONS);
+    expect(hubInfo?.permissions).toEqual(["hub.execute"]);
     await server.close();
   });
 
@@ -923,9 +1007,11 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.stableProjectIdentity).toBe(true);
     expect(serverInfo.features?.canonicalSubmittedPrompts).toBe(true);
     expect(serverInfo.features?.providersSnapshotCwd).toBe(true);
+    expect(serverInfo.features?.pluginLogs).toBe(true);
     expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);
     expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
     expect(serverInfo.features?.agentTurnIdentity).toBeUndefined();
+    expect(serverInfo.permissions).toEqual(DAEMON_PERMISSIONS);
     await server.close();
   });
 

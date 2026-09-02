@@ -64,3 +64,12 @@ export async function createTerminalFromCommandCenter(page: Page, panel: Locator
   await page.keyboard.press("Enter");
   await expectTerminalTabOpen(page);
 }
+
+export async function runWorkspaceActionFromCommandCenter(
+  page: Page,
+  title: string,
+): Promise<void> {
+  const panel = await openCommandCenter(page);
+  await panel.getByTestId("command-center-input").fill(title);
+  await action(panel, title).click();
+}

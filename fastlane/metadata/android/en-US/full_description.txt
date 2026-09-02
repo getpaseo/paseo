@@ -1,0 +1,37 @@
+Paseo is a client for AI coding agents that run on your own machine. Your dev environment, in your pocket.
+
+Paseo runs a local server called the daemon on your computer. It manages your coding agents and streams their output in real time. This app connects to that daemon, so your code never leaves your machine and there is no cloud service in between.
+
+<b>Supported agents</b>
+
+<ul>
+<li>Claude Code</li>
+<li>Codex</li>
+<li>GitHub Copilot</li>
+<li>OpenCode</li>
+<li>Pi</li>
+</ul>
+
+You bring your own provider credentials and use your existing subscriptions. Paseo adds no markup and no inference costs of its own.
+
+<b>What you can do</b>
+
+<ul>
+<li>Start agents, watch them work, and answer their questions from your phone</li>
+<li>Run several agents in parallel across projects and git worktrees</li>
+<li>Review diffs, browse commit history, and edit files</li>
+<li>Work with pull requests from GitHub, GitLab, Gitea, Forgejo, and Codeberg</li>
+<li>Open a terminal in any workspace</li>
+<li>Dictate prompts or talk through a problem in voice mode</li>
+<li>Schedule agents to run on a recurring basis</li>
+</ul>
+
+<b>Privacy</b>
+
+No telemetry, no tracking, no account required. The app talks only to daemons you point it at. Remote access goes through an end-to-end encrypted relay that cannot read your traffic, or over your own network or VPN if you prefer.
+
+<b>You need a daemon to connect to</b>
+
+This app is not useful on its own. Install the Paseo daemon on the computer where your code and agent CLIs live, then pair this app with it from Settings. The desktop app bundles the daemon, or you can run it from npm, Docker, or Nix.
+
+Setup instructions: https://paseo.sh

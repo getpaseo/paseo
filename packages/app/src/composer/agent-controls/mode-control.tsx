@@ -317,7 +317,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   tooltipText: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.sm,
-    lineHeight: theme.fontSize.sm * 1.4,
+    fontSize: theme.fontSize.base,
+    lineHeight: theme.fontSize.base * 1.4,
   },
 }));

@@ -1,0 +1,37 @@
+Paseo 是运行在你自己机器上的 AI 编程 agents 的客户端。把你的开发环境装进口袋。
+
+Paseo 会在你的电脑上运行一个名为 daemon 的本地服务，由它管理编程 agents 并实时推送输出。本应用连接到该 daemon，因此你的代码不会离开你的机器，中间也没有任何云服务。
+
+<b>支持的 agents</b>
+
+<ul>
+<li>Claude Code</li>
+<li>Codex</li>
+<li>GitHub Copilot</li>
+<li>OpenCode</li>
+<li>Pi</li>
+</ul>
+
+你使用自己的提供商凭据和现有订阅。Paseo 不加价，也不产生自己的推理费用。
+
+<b>你可以做什么</b>
+
+<ul>
+<li>在手机上启动 agents、查看进展并回答它们的提问</li>
+<li>跨项目和 git worktree 并行运行多个 agents</li>
+<li>审查差异、浏览提交历史、编辑文件</li>
+<li>处理来自 GitHub、GitLab、Gitea、Forgejo 和 Codeberg 的合并请求</li>
+<li>在任意工作区打开终端</li>
+<li>用语音输入提示，或在语音模式下讨论问题</li>
+<li>将 agents 设置为定期运行</li>
+</ul>
+
+<b>隐私</b>
+
+没有遥测、没有追踪、无需账号。应用只与你指定的 daemon 通信。远程访问通过无法读取你流量的端到端加密中继，或者你也可以使用自己的网络或 VPN。
+
+<b>你需要一个可连接的 daemon</b>
+
+本应用无法独立使用。请在存放代码和 agent CLI 的电脑上安装 Paseo daemon，然后在设置中将本应用与其配对。桌面应用已内置 daemon，你也可以通过 npm、Docker 或 Nix 运行。
+
+安装说明：https://paseo.sh

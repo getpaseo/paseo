@@ -899,7 +899,9 @@ describe("WorkspaceGitService checkout observation", () => {
         { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
       ]);
     releaseFetch.resolve();
-    await flushPromises();
+    await vi.waitFor(() => {
+      expect(service.getMetrics().fetchInFlightCount).toBe(0);
+    });
     await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(2);
@@ -1389,7 +1391,11 @@ describe("WorkspaceGitService checkout observation", () => {
     await vi.waitFor(() => {
       expect(runGitFetch).toHaveBeenCalledTimes(2);
     });
-    expect(runGitFetch).toHaveBeenLastCalledWith(worktrees[1], expect.anything());
+    expect(runGitFetch).toHaveBeenLastCalledWith(
+      worktrees[1],
+      expect.anything(),
+      expect.anything(),
+    );
 
     for (const subscription of subscriptions.slice(1)) {
       subscription.unsubscribe();

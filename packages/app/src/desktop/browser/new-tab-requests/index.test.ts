@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WorkspaceLayout } from "@/stores/workspace-layout-store";
 import { createDefaultLayout } from "@/stores/workspace-layout-store";
-import { openTabInLayoutFocused } from "@/stores/workspace-layout-actions";
+import { FOCUSED_PANE_PLACEMENT, openTabInLayoutFocused } from "@/stores/workspace-layout-actions";
 import { resolveBrowserNewTabRequest, type BrowserNewTabRequest } from ".";
 
 function createLayoutWithBrowser(browserId: string): WorkspaceLayout {
@@ -9,7 +9,9 @@ function createLayoutWithBrowser(browserId: string): WorkspaceLayout {
     layout: createDefaultLayout(),
     target: { kind: "browser", browserId },
     now: 1,
-  }).layout;
+    placement: FOCUSED_PANE_PLACEMENT,
+    explorerSidebarPaneId: null,
+  })!.layout;
 }
 
 describe("browser new-tab requests", () => {

@@ -17,7 +17,9 @@ Each layout owns only the routes directly inside its directory.
   `h/[serverId]/index`.
 - `packages/app/src/app/h/[serverId]/_layout.tsx` owns the host leaves with
   relative screen names: `index`, `workspace/[workspaceId]/index`,
-  `agent/[agentId]`, `sessions`, `open-project`, and `settings`.
+  `agent/[agentId]`, `sessions`, `open-project`, `settings`,
+  `plugin/[pluginId]/[surfaceId]`, and
+  `plugin/[pluginId]/[contributionKind]/[contributionId]`.
 
 Expo Router warns with `[Layout children]: No route named ...` when a layout
 registers grandchildren. Treat that warning as a route-tree bug. On native, that
@@ -65,7 +67,9 @@ that decision; if no host route is mounted yet, it falls back to ordinary route
 navigation.
 
 Those hidden entries are not harmless: composer floating panels can measure
-against the wrong deck and disappear offscreen.
+against the wrong deck and disappear offscreen. Follow the
+[retained panel measurement rules](coding-standards.md#retained-panel-measurements)
+for components that intentionally remain mounted while hidden.
 
 Hidden host routes may keep their local params while an app-wide route is
 foregrounded. Active-workspace observers must prefer the current pathname and
