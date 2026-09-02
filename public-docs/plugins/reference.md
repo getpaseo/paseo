@@ -52,7 +52,7 @@ letters, numbers, or hyphens. Client slash-command names follow the same rule.
 
 The generated `package.json` installs `@getpaseo/plugin` and the other host modules as development
 dependencies for local typechecking and tests. Paseo supplies their runtime instances. Consumers do
-not install them when adding the client.
+not install them when adding the plugin.
 
 Add runtime-specific files as the plugin grows:
 
@@ -96,7 +96,7 @@ Do not import `lucide-react-native`, `react-native-svg`, or DOM libraries. Set c
 
 Client components are React Native components rendered by Paseo. Web clients render them through React Native Web. Browser globals such as `localStorage` and `location` exist only when `layout.platform === "web"`; iOS and Android have no equivalent. Gate any use on that field.
 
-There is no plugin storage API. Browser storage does not persist settings across Paseo clients. There is also no general host navigation API: plugin code cannot open native Paseo routes. Command Center callbacks can only open surfaces and panels registered by the same client.
+There is no plugin storage API. Browser storage does not persist settings across Paseo clients. There is also no general host navigation API: plugin code cannot open native Paseo routes. Command Center callbacks can only open surfaces and panels registered by the same plugin.
 
 ### Server runtime
 
@@ -118,7 +118,7 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
-Cleanup can be async. Release timers, watchers, sockets, and other resources created by the client. Paseo also removes registrations, unmounts surfaces, rejects pending RPCs, closes the plugin's daemon session, and stops its subprocess on reload, disable, removal, disconnect, or daemon shutdown.
+Cleanup can be async. Release timers, watchers, sockets, and other resources created by the plugin. Paseo also removes registrations, unmounts surfaces, rejects pending RPCs, closes the plugin's daemon session, and stops its subprocess on reload, disable, removal, disconnect, or daemon shutdown.
 
 ## Surfaces and sidebar items
 
@@ -400,8 +400,8 @@ Workspace and agent panels receive the same `theme`, `layout`, and optional `nav
 
 ## Contribute a theme
 
-`addTheme` adds a light or dark theme to Settings → Appearance, listed under the built-ins by its `name`. A
-theme is data, so it needs no client file:
+`addTheme` adds a light or dark theme to Settings → Appearance, listed under the built-ins by its
+`name`. A theme is data, so it needs no component file:
 
 ```ts
 import type { PluginClientContext } from "@getpaseo/plugin";
@@ -448,9 +448,8 @@ Only one contributed theme is active at a time. Selecting one persists the choic
 later disabled or removed, Paseo falls back to the default theme rather than leaving the app
 unpainted.
 
-Themes need a host that supports them. A daemon released before `addTheme` compiles the call into
-the plugin's backend bundle, where it does not exist, and the plugin fails to start with
-`client.addTheme is not a function`. Update the host.
+Themes need a host that supports them. A client released before `addTheme` cannot evaluate that client entry and reports
+`client.addTheme is not a function`. Update the client.
 
 ## Workspace panels
 
@@ -730,7 +729,7 @@ Paseo owns the pressable, shared pill chrome, pending state, error reporting, an
 placement. The component receives `theme`, `host`, `layout`, `workspaceId`, and `agentId`. Read
 current values with `useWorkspace` and `useAgent`. The plugin owns when the pill exists, its icon
 and text, and the callback. `openPanel(id, { workspaceId, agentId? })` opens or focuses a panel
-registered by the same client.
+registered by the same plugin.
 
 ## Use the Paseo SDK
 

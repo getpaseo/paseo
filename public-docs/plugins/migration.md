@@ -87,8 +87,8 @@ registrations after the entry cleanup runs.
 ## 4. Separate imports
 
 The client entry imports only `client/`, `shared/`, and client-safe packages. The server entry imports
-only `server/`, `shared/`, and server-safe packages. Never import `node:` modules from the client
-entry or anything reachable from it. Never import a component into the server entry merely to wire
+only `server/`, `shared/`, and server-safe packages. A `node:` import in the client entry or anything
+reachable from it is a compile error. Never import a component into the server entry merely to wire
 its registration; that registration belongs in the client entry.
 
 ## 5. Recognize half-migration errors
