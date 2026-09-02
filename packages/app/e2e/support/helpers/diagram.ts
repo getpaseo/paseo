@@ -33,6 +33,12 @@ export async function expectDiagramRemainsRenderedWhileStreaming(
   const completed = completion.then(() => true);
   for (;;) {
     expect(await diagram.isVisible()).toBe(true);
+    const box = await diagram.boundingBox();
+    expect(box, "the inline diagram should have measurable layout").not.toBeNull();
+    expect(
+      box?.height,
+      "the inline diagram should remain tall enough to read",
+    ).toBeGreaterThanOrEqual(56);
     const didComplete = await Promise.race([completed, page.waitForTimeout(16).then(() => false)]);
     if (didComplete) return completion;
   }
@@ -75,6 +81,49 @@ export async function openDiagramFullscreen(page: Page): Promise<void> {
 export async function closeDiagramFullscreen(page: Page): Promise<void> {
   await page.getByTestId(`${FULLSCREEN_VIEWPORT}-canvas`).hover();
   await page.getByTestId("mermaid-fullscreen-close").click();
+}
+
+export async function zoomAndPanFullscreenDiagram(page: Page): Promise<void> {
+  const canvas = page.getByTestId(`${FULLSCREEN_VIEWPORT}-canvas`);
+  const svg = diagramSvg(page, FULLSCREEN_VIEWPORT);
+  const initial = await svg.boundingBox();
+  expect(initial, "the fullscreen diagram should have measurable layout").not.toBeNull();
+
+  await page.mouse.move(initial!.x + initial!.width / 2, initial!.y + initial!.height / 2);
+  await page.mouse.wheel(0, -100);
+
+  const zoomed = await svg.boundingBox();
+  expect(zoomed, "the zoomed diagram should have measurable layout").not.toBeNull();
+  expect(zoomed!.width).toBeGreaterThan(initial!.width * 1.1);
+
+  const viewport = await canvas.boundingBox();
+  expect(viewport, "the fullscreen viewport should have measurable layout").not.toBeNull();
+  await page.mouse.move(viewport!.x + viewport!.width / 2, viewport!.y + viewport!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    viewport!.x + viewport!.width / 2 - 120,
+    viewport!.y + viewport!.height / 2,
+  );
+  await page.mouse.up();
+
+  const panned = await svg.boundingBox();
+  expect(panned, "the panned diagram should have measurable layout").not.toBeNull();
+  expect(Math.abs(panned!.x - zoomed!.x)).toBeGreaterThan(100);
+}
+
+export async function closeDiagramFullscreenFromOutside(page: Page): Promise<void> {
+  const canvas = page.getByTestId(`${FULLSCREEN_VIEWPORT}-canvas`);
+  const viewport = await canvas.boundingBox();
+  const svg = await diagramSvg(page, FULLSCREEN_VIEWPORT).boundingBox();
+  expect(viewport, "the fullscreen viewport should have measurable layout").not.toBeNull();
+  expect(svg, "the fullscreen diagram should have measurable layout").not.toBeNull();
+
+  const x = viewport!.x + viewport!.width / 2;
+  const y =
+    svg!.y + svg!.height < viewport!.y + viewport!.height - 8
+      ? viewport!.y + viewport!.height - 4
+      : viewport!.y + 4;
+  await page.mouse.click(x, y);
 }
 
 export async function expectFullscreenDiagram(

@@ -1,12 +1,14 @@
 import { test } from "../support/fixtures";
 import {
   closeDiagramFullscreen,
+  closeDiagramFullscreenFromOutside,
   expectCompletedDiagram,
   expectFullscreenDiagram,
   expectFullscreenDiagramClosed,
   openDiagramFullscreen,
   requestDiagram,
   waitForDiagramTurnToComplete,
+  zoomAndPanFullscreenDiagram,
 } from "../support/helpers/diagram";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
@@ -43,6 +45,10 @@ test("opens a Mermaid diagram fullscreen and closes it again", async ({ page }) 
       await expectFullscreenDiagram(page, ["Start", "Review", "Ship"]);
     });
 
+    await test.step("The fullscreen diagram zooms with the wheel and pans by dragging", async () => {
+      await zoomAndPanFullscreenDiagram(page);
+    });
+
     await test.step("The close action returns to the conversation", async () => {
       await closeDiagramFullscreen(page);
       await expectFullscreenDiagramClosed(page);
@@ -53,6 +59,13 @@ test("opens a Mermaid diagram fullscreen and closes it again", async ({ page }) 
       await openDiagramFullscreen(page);
       await expectFullscreenDiagram(page, ["Start", "Ship"]);
       await page.keyboard.press("Escape");
+      await expectFullscreenDiagramClosed(page);
+    });
+
+    await test.step("Clicking outside the diagram closes the fullscreen viewer", async () => {
+      await openDiagramFullscreen(page);
+      await expectFullscreenDiagram(page, ["Start", "Ship"]);
+      await closeDiagramFullscreenFromOutside(page);
       await expectFullscreenDiagramClosed(page);
     });
   } finally {
