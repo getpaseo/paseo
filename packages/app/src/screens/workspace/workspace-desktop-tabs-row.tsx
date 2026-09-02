@@ -139,8 +139,11 @@ function updateMeasuredWidth(
   setWidth((current) => retainWorkspaceTabMeasuredWidth(current, nextWidth));
 }
 
-function formatAgentTooltipTitle(title: string): string {
-  const singleLineTitle = title.replace(/\s+/g, " ").trim();
+function normalizeAgentTooltipTitle(title: string): string {
+  return title.replace(/\s+/g, " ").trim();
+}
+
+function formatAgentTooltipTitle(singleLineTitle: string): string {
   if (singleLineTitle.length <= AGENT_TOOLTIP_TITLE_MAX_LENGTH) return singleLineTitle;
   return `${singleLineTitle.slice(0, AGENT_TOOLTIP_TITLE_MAX_LENGTH - 1).trimEnd()}…`;
 }
@@ -710,6 +713,7 @@ function TabChip({
   isClosingTab,
   presentation,
   tooltipLabel,
+  accessibilityLabel,
   resolvedTab,
   setHoveredCloseTabKey,
   onNavigateTab,
@@ -728,6 +732,7 @@ function TabChip({
   isClosingTab: boolean;
   presentation: WorkspaceTabPresentation;
   tooltipLabel: string;
+  accessibilityLabel: string;
   resolvedTab: WorkspaceDesktopTabActions;
   setHoveredCloseTabKey: Dispatch<SetStateAction<string | null>>;
   onNavigateTab: (tabId: string) => void;
@@ -838,7 +843,7 @@ function TabChip({
               onPressIn={handleNavigateTab}
               onPress={handleNavigateTab}
               accessibilityRole="button"
-              accessibilityLabel={tooltipLabel}
+              accessibilityLabel={accessibilityLabel}
               accessibilityState={tabAccessibilityState}
               aria-selected={isActive}
             >
@@ -1485,8 +1490,14 @@ function ResolvedDesktopTabChip({
     presentation.titleState === "loading"
       ? t("workspace.tabs.loadingAgentTitle")
       : presentation.tooltip;
+  const accessibilityLabel =
+    item.tab.target.kind === "agent"
+      ? normalizeAgentTooltipTitle(rawTooltipLabel)
+      : rawTooltipLabel;
   const tooltipLabel =
-    item.tab.target.kind === "agent" ? formatAgentTooltipTitle(rawTooltipLabel) : rawTooltipLabel;
+    item.tab.target.kind === "agent"
+      ? formatAgentTooltipTitle(accessibilityLabel)
+      : rawTooltipLabel;
 
   return (
     <View style={styles.tabSlot}>
@@ -1506,6 +1517,7 @@ function ResolvedDesktopTabChip({
         isClosingTab={item.isClosingTab}
         presentation={presentation}
         tooltipLabel={tooltipLabel}
+        accessibilityLabel={accessibilityLabel}
         resolvedTab={resolvedTab}
         setHoveredCloseTabKey={setHoveredCloseTabKey}
         onNavigateTab={onNavigateTab}

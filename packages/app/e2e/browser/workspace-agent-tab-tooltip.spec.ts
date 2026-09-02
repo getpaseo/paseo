@@ -8,8 +8,12 @@ import { buildHostAgentDetailRoute } from "@/utils/host-routes";
 
 const TITLE_MAX_LENGTH = 80;
 
+function normalizedTitle(title: string): string {
+  return title.replace(/\s+/g, " ").trim();
+}
+
 function expectedTooltipTitle(title: string): string {
-  const singleLineTitle = title.replace(/\s+/g, " ").trim();
+  const singleLineTitle = normalizedTitle(title);
   return singleLineTitle.length <= TITLE_MAX_LENGTH
     ? singleLineTitle
     : `${singleLineTitle.slice(0, TITLE_MAX_LENGTH - 1).trimEnd()}…`;
@@ -24,8 +28,8 @@ async function openAgent(page: Page, agent: { id: string; workspaceId: string })
   await waitForWorkspaceTabsVisible(page);
 }
 
-async function openAgentTabTooltip(page: Page, agentId: string): Promise<Locator> {
-  await page.getByTestId(`workspace-tab-agent_${agentId}`).first().hover();
+async function openAgentTabTooltip(page: Page, agentId: string, title: string): Promise<Locator> {
+  await page.getByRole("button", { name: normalizedTitle(title), exact: true }).hover();
   const tooltip = page.getByTestId(`workspace-tab-tooltip-agent_${agentId}`);
   await expect(tooltip).toBeVisible({ timeout: 10_000 });
   return tooltip;
@@ -63,7 +67,7 @@ test.describe("Workspace agent tab tooltip", () => {
       });
 
       await openAgent(page, agent);
-      const tooltip = await openAgentTabTooltip(page, agent.id);
+      const tooltip = await openAgentTabTooltip(page, agent.id, title);
 
       await expectTwoRowAgentSummary(tooltip, { title, agentId: agent.id });
     } finally {
