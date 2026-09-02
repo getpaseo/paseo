@@ -24,7 +24,7 @@ import {
 } from "./runtime/messages";
 import { MermaidRuntimeRequestDriver } from "./runtime/request-driver";
 import { useMermaidRenderModel } from "./use-render-model";
-import { getDiagramBoxStyle } from "./presentation";
+import { getDiagramBoxStyle, MAX_PREVIEW_HEIGHT } from "./presentation";
 
 interface MermaidFenceHostImplProps extends MarkdownFenceRendererProps {
   colorScheme?: "light" | "dark";
@@ -32,7 +32,6 @@ interface MermaidFenceHostImplProps extends MarkdownFenceRendererProps {
 
 const WEBVIEW_SOURCE = { html: mermaidRuntimeHtml };
 const WEBVIEW_ORIGIN_WHITELIST = ["*"];
-const MAX_PREVIEW_HEIGHT = 480;
 
 interface MermaidWebViewProps {
   request: MermaidRenderRequest | null;
@@ -310,7 +309,7 @@ function MermaidFenceHostImpl({
   const previewInnerStyle = useMemo(
     () =>
       canShowDiagram && visible
-        ? { height: Math.min(visible.height, MAX_PREVIEW_HEIGHT) }
+        ? { aspectRatio: visible.width / visible.height, maxHeight: MAX_PREVIEW_HEIGHT }
         : previewStyles.measuringInner,
     [canShowDiagram, visible],
   );
