@@ -6,7 +6,7 @@ import { panelTargetSupportsHost, resolvePluginPanelOpenLocation } from "./locat
 vi.mock("../navigation", () => ({
   createPluginNavigation: () => ({}),
 }));
-vi.mock("../composer-pills/lifecycle", () => ({
+vi.mock("../client-runtime", () => ({
   createPluginClientRuntime: () => ({
     paseo: {},
     rpc: async () => undefined,

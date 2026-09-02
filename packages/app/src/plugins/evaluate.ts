@@ -100,9 +100,13 @@ export function runPluginClientBundle(
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
+  let setupComplete = false;
+  const notifyChange = () => {
+    if (setupComplete) onChange();
+  };
   function register<T>(items: T[], item: T, release: () => void): PluginCleanup {
     items.push(item);
-    onChange();
+    notifyChange();
     let active = true;
     const remove = () => {
       if (!active) return;
@@ -111,7 +115,7 @@ export function runPluginClientBundle(
       if (index !== -1) items.splice(index, 1);
       release();
       removals.delete(remove);
-      onChange();
+      notifyChange();
     };
     removals.add(remove);
     return remove;
@@ -387,6 +391,7 @@ export function runPluginClientBundle(
     }
     throw error;
   }
+  setupComplete = true;
   let stopped = false;
   const cleanup = async () => {
     if (stopped) return;

@@ -1,16 +1,16 @@
-import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin";
 import {
   createPluginAgentActionContext,
   createPluginCapabilities,
   createPluginWorkspaceActionContext,
-} from "../actions";
-import { createPluginClientStateSource } from "../client-state/source";
-import { createPluginNavigation } from "../navigation";
-import { createPluginSurfaceRuntime } from "../surface-runtime";
-import type { InstalledPlugin } from "../types";
-import type { PluginClientRuntime } from "../evaluate";
-import { pluginComposerPillStore } from "./store";
+} from "./actions";
+import { createPluginClientStateSource } from "./client-state/source";
+import type { PluginClientRuntime } from "./evaluate";
+import { createPluginNavigation } from "./navigation";
+import { pluginComposerPillStore } from "./composer-pills/store";
+import { createPluginSurfaceRuntime } from "./surface-runtime";
+import type { InstalledPlugin } from "./types";
 
 export function createPluginClientRuntime(
   installation: InstalledPlugin,

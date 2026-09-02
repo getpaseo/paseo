@@ -5,7 +5,7 @@ import { pluginRegistry as registry } from "./registry";
 vi.mock("./navigation", () => ({
   createPluginNavigation: () => ({}),
 }));
-vi.mock("./composer-pills/lifecycle", () => ({
+vi.mock("./client-runtime", () => ({
   createPluginClientRuntime: () => ({
     paseo: {},
     rpc: async () => undefined,
@@ -18,6 +18,7 @@ vi.mock("./composer-pills/lifecycle", () => ({
 const daemonClient = {} as DaemonClient;
 const pluginRegistry = {
   getSnapshot: registry.getSnapshot,
+  subscribe: registry.subscribe,
   removeHost: registry.removeHost.bind(registry),
   installCatalog(
     serverId: string,
@@ -56,6 +57,10 @@ function timelineBundle(marker: string): string {
   })`;
 }
 
+function installedPluginIds(): string[] {
+  return pluginRegistry.getSnapshot().map(({ id }) => id);
+}
+
 afterEach(() => {
   pluginRegistry.removeHost("host-a");
   pluginRegistry.removeHost("host-b");
@@ -63,6 +68,18 @@ afterEach(() => {
 });
 
 describe("PluginRegistry", () => {
+  it("publishes synchronous setup once after storing the installation", () => {
+    const snapshots: string[][] = [];
+    const unsubscribe = pluginRegistry.subscribe(() => {
+      snapshots.push(installedPluginIds());
+    });
+
+    pluginRegistry.installCatalog("host-a", [{ id: "example", clientBundle: bundle("one") }]);
+    unsubscribe();
+
+    expect(snapshots).toEqual([["example"]]);
+  });
+
   it("reports timeline contribution changes", () => {
     const first = timelineBundle("one");
     expect(pluginRegistry.installCatalog("host-a", [{ id: "reports", clientBundle: first }])).toBe(

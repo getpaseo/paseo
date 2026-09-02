@@ -7,7 +7,7 @@ import { expect, it, vi } from "vitest";
 vi.mock("./evaluate", () => ({
   runPluginClientBundle: vi.fn(),
 }));
-vi.mock("./composer-pills/lifecycle", () => ({
+vi.mock("./client-runtime", () => ({
   createPluginClientRuntime: vi.fn(),
 }));
 

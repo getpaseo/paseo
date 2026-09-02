@@ -2,9 +2,9 @@ import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { PluginComposerPillProps } from "@getpaseo/plugin";
 import { afterEach, describe, expect, it } from "vitest";
-import type { InstalledPlugin } from "../types";
-import { createPluginClientRuntime } from "./lifecycle";
-import { pluginComposerPillStore } from "./store";
+import type { InstalledPlugin } from "./types";
+import { createPluginClientRuntime } from "./client-runtime";
+import { pluginComposerPillStore } from "./composer-pills/store";
 
 function Pill(_props: PluginComposerPillProps) {
   return null;
