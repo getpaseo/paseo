@@ -24,7 +24,7 @@ export type AgentLoaderManager = Pick<
   | "getAgent"
   | "getRegisteredProviderIds"
   | "hydrateTimelineFromProvider"
-  | "resumeAgentFromPersistence"
+  | "resumeAgentFromPersistenceLocked"
 > &
   Partial<Pick<AgentManager, "waitForAgentClose">>;
 
@@ -105,7 +105,10 @@ export async function ensureAgentLoaded(
 
     let snapshot: ManagedAgent;
     if (handle) {
-      snapshot = await deps.agentManager.resumeAgentFromPersistence(
+      // Resume joins the same per-agent lifecycle queue archive/detach use, so
+      // a resume racing a concurrent archive of this same agent is ordered
+      // instead of interleaved (see agent-manager.ts resumeAgentFromPersistenceLocked).
+      snapshot = await deps.agentManager.resumeAgentFromPersistenceLocked(
         handle,
         buildConfigOverrides(record),
         agentId,
