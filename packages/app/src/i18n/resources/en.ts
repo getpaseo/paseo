@@ -2449,6 +2449,16 @@ export const en = {
       },
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",
+        branchPrefix: {
+          title: "Branch name prefix",
+          hint: "Prefix for new workspace branch names",
+          accessibilityLabel: "Branch name prefix",
+          fieldLabel: "Prefix",
+          fieldHint: "Preview: {{branch}}",
+          placeholder: "e.g. feature/ or myname-",
+          updateFailedTitle: "Unable to update branch name prefix",
+          updateFailedMessage: "Check your connection and try again.",
+        },
       },
       terminalProfiles: {
         unavailable: "Connect to this host to manage terminal profiles",
@@ -2713,7 +2723,7 @@ export const en = {
         title: "Metadata generation",
         info: "Project-specific instructions injected into the AI prompts Paseo uses to generate metadata - use them to enforce your team's conventions like branch naming, commit style, or PR format",
         branchName: "Branch names",
-        branchNamePlaceholder: "Prefix branches with feat/ or fix/, mb/ for personal branches",
+        branchNamePlaceholder: "Instructions for turning your messages into branch names",
         commitMessage: "Commit messages",
         commitMessagePlaceholder: "Use Conventional Commits with a scope",
         pullRequest: "Pull requests",

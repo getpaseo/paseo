@@ -1,3 +1,4 @@
+import { applyBranchPrefix } from "@getpaseo/protocol/branch-slug";
 import type { ForgeService, PullRequestCheckoutTarget } from "../services/forge-service.js";
 import type { WorktreeSource } from "../utils/worktree.js";
 
@@ -26,6 +27,8 @@ export interface ResolveWorktreeCreationIntentDeps {
   forge: string;
   forgeService: ForgeService;
   resolveDefaultBranch: (repoRoot: string) => Promise<string>;
+  /** Prefix applied to freshly created branch-off branch names, e.g. "alice". */
+  branchPrefix?: string;
 }
 
 export class MissingCheckoutTargetError extends Error {
@@ -70,7 +73,10 @@ export async function resolveWorktreeCreationIntent(
     return {
       kind: "branch-off",
       baseBranch: input.refName?.trim() || (await resolveDefaultBranch(repoRoot, deps)),
-      branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
+      branchName: applyBranchPrefix(
+        input.branchName ?? input.worktreeSlug ?? "worktree",
+        deps.branchPrefix,
+      ),
     };
   }
 
@@ -112,14 +118,20 @@ export async function resolveWorktreeCreationIntent(
     return {
       kind: "branch-off",
       baseBranch: input.refName.trim(),
-      branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
+      branchName: applyBranchPrefix(
+        input.branchName ?? input.worktreeSlug ?? "worktree",
+        deps.branchPrefix,
+      ),
     };
   }
 
   return {
     kind: "branch-off",
     baseBranch: await resolveDefaultBranch(repoRoot, deps),
-    branchName: input.branchName ?? input.worktreeSlug ?? "worktree",
+    branchName: applyBranchPrefix(
+      input.branchName ?? input.worktreeSlug ?? "worktree",
+      deps.branchPrefix,
+    ),
   };
 }
 

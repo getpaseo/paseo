@@ -127,6 +127,30 @@ describe("resolveWorktreeCreationIntent", () => {
     expect(deps.headRefLookups).toEqual([]);
   });
 
+  test("applies the branch prefix from deps to freshly branched-off names", async () => {
+    const deps = { ...createResolverHarness(), branchPrefix: "alice" };
+
+    await expect(
+      resolveWorktreeCreationIntent({ worktreeSlug: "tokyo" }, repoRoot, deps),
+    ).resolves.toEqual({
+      kind: "branch-off",
+      baseBranch: "main",
+      branchName: "alice/tokyo",
+    });
+  });
+
+  test("does not apply a branch prefix when none is configured", async () => {
+    const deps = createResolverHarness();
+
+    await expect(
+      resolveWorktreeCreationIntent({ worktreeSlug: "tokyo" }, repoRoot, deps),
+    ).resolves.toEqual({
+      kind: "branch-off",
+      baseBranch: "main",
+      branchName: "tokyo",
+    });
+  });
+
   test("checks out an explicit branch target", async () => {
     const deps = createResolverHarness();
 

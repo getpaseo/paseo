@@ -2321,6 +2321,16 @@ export const zhCN: TranslationResources = {
       },
       workspaces: {
         unavailable: "连接到这个 Host 以管理 Workspace",
+        branchPrefix: {
+          title: "分支名称前缀",
+          hint: "为新 Workspace 的分支名称添加前缀",
+          accessibilityLabel: "分支名称前缀",
+          fieldLabel: "前缀",
+          fieldHint: "预览：{{branch}}",
+          placeholder: "例如 feature/ 或 myname-",
+          updateFailedTitle: "无法更新分支名称前缀",
+          updateFailedMessage: "请检查网络连接后重试。",
+        },
       },
       terminalProfiles: {
         unavailable: "Connect to this host to manage terminal profiles",
@@ -2577,7 +2587,7 @@ export const zhCN: TranslationResources = {
         title: "元数据生成",
         info: "注入到 Paseo 用来生成元数据的 AI prompts 中的 Project 专属指令，可用于强制执行团队约定，例如分支命名、提交风格或 PR 格式",
         branchName: "分支名称",
-        branchNamePlaceholder: "分支以 feat/ 或 fix/ 开头，个人分支使用 mb/",
+        branchNamePlaceholder: "用于将你的消息转换为分支名称的说明",
         commitMessage: "提交消息",
         commitMessagePlaceholder: "使用带 scope 的 Conventional Commits",
         pullRequest: "Pull requests",

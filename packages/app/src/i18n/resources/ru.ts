@@ -2389,6 +2389,16 @@ export const ru: TranslationResources = {
       },
       workspaces: {
         unavailable: "Подключитесь к этому хосту, чтобы управлять рабочими пространствами",
+        branchPrefix: {
+          title: "Префикс имени ветки",
+          hint: "Префикс для имён веток новых рабочих пространств",
+          accessibilityLabel: "Префикс имени ветки",
+          fieldLabel: "Префикс",
+          fieldHint: "Предпросмотр: {{branch}}",
+          placeholder: "например, feature/ или myname-",
+          updateFailedTitle: "Не удалось обновить префикс имени ветки",
+          updateFailedMessage: "Проверьте подключение и повторите попытку.",
+        },
       },
       terminalProfiles: {
         unavailable: "Подключитесь к этому хосту, чтобы управлять профилями терминала",
@@ -2657,8 +2667,7 @@ export const ru: TranslationResources = {
         title: "Генерация метаданных",
         info: "Инструкции для этого проекта, добавляемые в промпты ИИ, с помощью которых Paseo генерирует метаданные. Используйте их, чтобы соблюдать принятые в команде правила именования веток, оформления коммитов и формата PR.",
         branchName: "Названия веток",
-        branchNamePlaceholder:
-          "Добавляйте к веткам префиксы feat/ или fix/, а к личным веткам — mb/",
+        branchNamePlaceholder: "Инструкции по превращению ваших сообщений в имена веток",
         commitMessage: "Сообщения коммитов",
         commitMessagePlaceholder: "Используйте формат Conventional Commits с областью",
         pullRequest: "PR",

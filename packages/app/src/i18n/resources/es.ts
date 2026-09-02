@@ -2400,6 +2400,16 @@ export const es: TranslationResources = {
       },
       workspaces: {
         unavailable: "Connect to this host to manage workspaces",
+        branchPrefix: {
+          title: "Prefijo del nombre de rama",
+          hint: "Prefijo para los nombres de rama de los nuevos espacios de trabajo",
+          accessibilityLabel: "Prefijo del nombre de rama",
+          fieldLabel: "Prefijo",
+          fieldHint: "Vista previa: {{branch}}",
+          placeholder: "p. ej. feature/ o myname-",
+          updateFailedTitle: "No se pudo actualizar el prefijo del nombre de rama",
+          updateFailedMessage: "Comprueba tu conexión e inténtalo de nuevo.",
+        },
       },
       terminalProfiles: {
         unavailable: "Connect to this host to manage terminal profiles",
@@ -2666,7 +2676,7 @@ export const es: TranslationResources = {
         title: "Generación de metadatos",
         info: "Instrucciones específicas del proyecto inyectadas en los mensajes de IA quePaseoutiliza para generar metadatos; úselas para hacer cumplir las convenciones de su equipo, como la denominación de ramas, el estilo de confirmación o el formatoPR.",
         branchName: "Nombres de sucursales",
-        branchNamePlaceholder: "Prefijo ramas con feat/ o fix/, mb/ para ramas personales",
+        branchNamePlaceholder: "Instrucciones para convertir tus mensajes en nombres de rama",
         commitMessage: "Confirmar mensajes",
         commitMessagePlaceholder: "Utilice confirmaciones convencionales con un alcance",
         pullRequest: "Solicitudes de extracción",

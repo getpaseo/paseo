@@ -2384,6 +2384,16 @@ export const ptBR: TranslationResources = {
       },
       workspaces: {
         unavailable: "Conecte-se a este host para gerenciar workspaces",
+        branchPrefix: {
+          title: "Prefixo do nome da branch",
+          hint: "Prefixo para os nomes de branch dos novos workspaces",
+          accessibilityLabel: "Prefixo do nome da branch",
+          fieldLabel: "Prefixo",
+          fieldHint: "Prévia: {{branch}}",
+          placeholder: "ex.: feature/ ou myname-",
+          updateFailedTitle: "Não foi possível atualizar o prefixo do nome da branch",
+          updateFailedMessage: "Verifique sua conexão e tente novamente.",
+        },
       },
       terminalProfiles: {
         unavailable: "Conecte-se a este host para gerenciar perfis de terminal",
@@ -2651,7 +2661,7 @@ export const ptBR: TranslationResources = {
         title: "Geração de metadados",
         info: "Instruções específicas do projeto injetadas nos prompts de IA que o Paseo usa para gerar metadados. Use-as para aplicar convenções da sua equipe, como nomes de branch, estilo de commit ou formato de PR",
         branchName: "Nomes de branch",
-        branchNamePlaceholder: "Prefixe branches com feat/ ou fix/, mb/ para branches pessoais",
+        branchNamePlaceholder: "Instruções para transformar suas mensagens em nomes de branch",
         commitMessage: "Mensagens de commit",
         commitMessagePlaceholder: "Use Conventional Commits com escopo",
         pullRequest: "Pull requests",

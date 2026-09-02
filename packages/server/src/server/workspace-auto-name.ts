@@ -28,6 +28,7 @@ interface WorkspaceAutoNameOptions {
   workspaceGitService: WorkspaceGitService;
   providerSnapshotManager: ProviderSnapshotManager;
   readDaemonConfig: () => StructuredGenerationDaemonConfig;
+  getBranchPrefix?: () => string | undefined;
   gitMutation: Pick<GitMutationService, "notifyGitMutation">;
   emitWorkspaceUpdateForCwd: (cwd: string) => Promise<void>;
   emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
@@ -45,6 +46,7 @@ export class WorkspaceAutoName {
   private readonly workspaceGitService: WorkspaceGitService;
   private readonly providerSnapshotManager: ProviderSnapshotManager;
   private readonly readDaemonConfig: () => StructuredGenerationDaemonConfig;
+  private readonly getBranchPrefix: () => string | undefined;
   private readonly gitMutation: Pick<GitMutationService, "notifyGitMutation">;
   private readonly emitWorkspaceUpdateForCwd: (cwd: string) => Promise<void>;
   private readonly emitWorkspaceUpdateForWorkspaceId: (workspaceId: string) => Promise<void>;
@@ -57,6 +59,7 @@ export class WorkspaceAutoName {
     this.workspaceGitService = options.workspaceGitService;
     this.providerSnapshotManager = options.providerSnapshotManager;
     this.readDaemonConfig = options.readDaemonConfig;
+    this.getBranchPrefix = options.getBranchPrefix ?? (() => undefined);
     this.gitMutation = options.gitMutation;
     this.emitWorkspaceUpdateForCwd = options.emitWorkspaceUpdateForCwd;
     this.emitWorkspaceUpdateForWorkspaceId = options.emitWorkspaceUpdateForWorkspaceId;
@@ -113,6 +116,7 @@ export class WorkspaceAutoName {
     const result: AttemptFirstAgentBranchAutoNameResult = await attemptFirstAgentBranchAutoName({
       cwd: worktreeRoot,
       firstAgentContext: input.firstAgentContext,
+      branchPrefix: this.getBranchPrefix(),
       generateBranchNameFromContext: ({ firstAgentContext }) => {
         return this.generateFromContext({
           cwd: input.workspace.cwd,
