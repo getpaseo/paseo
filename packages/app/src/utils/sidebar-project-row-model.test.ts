@@ -136,7 +136,7 @@ describe("buildSidebarProjectRowModel", () => {
     });
   });
 
-  it("targets the remembered host when the project spans several hosts", () => {
+  it("targets the active workspace's host when the project spans several hosts", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         hosts: [
@@ -146,7 +146,7 @@ describe("buildSidebarProjectRowModel", () => {
       }),
       collapsed: false,
       supportsMultiplicityByServerId: new Map(),
-      preferredServerId: "remote",
+      activeServerId: "remote",
       hostConnectionStatusByServerId: new Map([
         ["local", "online" as const],
         ["remote", "online" as const],
@@ -159,7 +159,7 @@ describe("buildSidebarProjectRowModel", () => {
     });
   });
 
-  it("keeps the first qualifying host when no host is remembered", () => {
+  it("keeps the first qualifying host when no workspace is active", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         hosts: [
@@ -181,7 +181,7 @@ describe("buildSidebarProjectRowModel", () => {
     });
   });
 
-  it("ignores a remembered host that is offline", () => {
+  it("ignores an active host that is offline", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         hosts: [
@@ -191,7 +191,7 @@ describe("buildSidebarProjectRowModel", () => {
       }),
       collapsed: false,
       supportsMultiplicityByServerId: new Map(),
-      preferredServerId: "remote",
+      activeServerId: "remote",
       hostConnectionStatusByServerId: new Map([
         ["local", "online" as const],
         ["remote", "offline" as const],
@@ -204,14 +204,14 @@ describe("buildSidebarProjectRowModel", () => {
     });
   });
 
-  it("ignores a remembered host that does not have this project", () => {
+  it("ignores an active host that does not have this project", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         hosts: [{ serverId: "local", iconWorkingDir: "/repo/local", worktreeSupport: "supported" }],
       }),
       collapsed: false,
       supportsMultiplicityByServerId: new Map(),
-      preferredServerId: "remote",
+      activeServerId: "remote",
       hostConnectionStatusByServerId: new Map([
         ["local", "online" as const],
         ["remote", "online" as const],
@@ -224,7 +224,7 @@ describe("buildSidebarProjectRowModel", () => {
     });
   });
 
-  it("ignores a remembered host that cannot create a workspace for the project", () => {
+  it("ignores an active host that cannot create a workspace for the project", () => {
     const result = buildSidebarProjectRowModel({
       project: project({
         projectKind: "directory",
@@ -236,7 +236,7 @@ describe("buildSidebarProjectRowModel", () => {
       }),
       collapsed: false,
       supportsMultiplicityByServerId: new Map([["local", true]]),
-      preferredServerId: "remote",
+      activeServerId: "remote",
       hostConnectionStatusByServerId: new Map([
         ["local", "online" as const],
         ["remote", "online" as const],

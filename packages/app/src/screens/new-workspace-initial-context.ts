@@ -9,7 +9,6 @@ import type { HostRuntimeConnectionStatus } from "@/runtime/host-runtime";
 export interface NewWorkspaceInitialServerInput {
   allServerIds: readonly string[];
   routeServerId: string | null | undefined;
-  preferredServerId?: string | null | undefined;
   lastActiveProject: HostProjectListItem | null;
   projects: readonly HostProjectListItem[];
   hostConnectionStatusByServerId: ReadonlyMap<string, HostRuntimeConnectionStatus>;
@@ -115,32 +114,11 @@ function isKnownUnreachable(
   return status === "offline" || status === "error";
 }
 
-function findPreferredServerId(input: {
-  serverIds: ReadonlySet<string>;
-  preferredServerId: string | null | undefined;
-  hostConnectionStatusByServerId: ReadonlyMap<string, HostRuntimeConnectionStatus>;
-}) {
-  const preferred = knownServerId(input.serverIds, input.preferredServerId);
-  if (!preferred || !isOnline(input.hostConnectionStatusByServerId, preferred)) {
-    return null;
-  }
-  return preferred;
-}
-
 export function resolveNewWorkspaceInitialServerId(input: NewWorkspaceInitialServerInput): string {
   const serverIds = new Set(input.allServerIds);
   const routeServerId = knownServerId(serverIds, input.routeServerId);
   if (routeServerId) {
     return routeServerId;
-  }
-
-  const preferredServerId = findPreferredServerId({
-    serverIds,
-    preferredServerId: input.preferredServerId,
-    hostConnectionStatusByServerId: input.hostConnectionStatusByServerId,
-  });
-  if (preferredServerId) {
-    return preferredServerId;
   }
 
   const onlineServerIds = input.allServerIds.filter((serverId) =>
@@ -225,15 +203,6 @@ export function resolveNewWorkspaceAutomaticServerId(
 
   const routeServerId = knownServerId(serverIds, input.routeServerId);
   if (routeServerId === nextServerId) {
-    return nextServerId;
-  }
-
-  const preferredServerId = findPreferredServerId({
-    serverIds,
-    preferredServerId: input.preferredServerId,
-    hostConnectionStatusByServerId: input.hostConnectionStatusByServerId,
-  });
-  if (preferredServerId === nextServerId) {
     return nextServerId;
   }
 

@@ -14,7 +14,6 @@ export type LaunchTarget = { kind: "chat" } | { kind: "terminal"; profileId: str
 
 export interface FormPreferences {
   provider?: string;
-  serverId?: string;
   providerPreferences?: Record<string, ProviderPreferences>;
   favoriteModels?: Array<{ provider: string; modelId: string }>;
   isolation?: "local" | "worktree";
@@ -35,8 +34,6 @@ const launchTargetSchema: z.ZodType<LaunchTarget> = z.discriminatedUnion("kind",
 
 export const FormPreferencesSchema = z.strictObject({
   provider: z.string().optional(),
-  // The host last picked by hand in the New workspace composer.
-  serverId: z.string().optional(),
   providerPreferences: z.record(z.string(), providerPreferencesSchema).optional(),
   // COMPAT(agentProfileFavoriteMigration): favourites were removed in v0.3.2.
   // Keep the legacy payload alive until every capable host has had a chance to

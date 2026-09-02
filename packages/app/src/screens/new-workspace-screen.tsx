@@ -1094,15 +1094,12 @@ function useNewWorkspaceHostSelector(input: {
   hostConnectionStatusByServerId: ReadonlyMap<string, HostRuntimeConnectionStatus>;
   workspaceMultiplicityByServerId: ReadonlyMap<string, boolean>;
 }) {
-  const { preferences, updatePreferences } = useFormPreferences();
-  const preferredServerId = preferences.serverId ?? null;
   const routeServerId = input.initialServerId.trim();
   const defaultServerId = useMemo(
     () =>
       resolveNewWorkspaceInitialServerId({
         allServerIds: input.allServerIds,
         routeServerId: input.initialServerId,
-        preferredServerId,
         lastActiveProject: input.lastActiveProject,
         projects: input.projects,
         hostConnectionStatusByServerId: input.hostConnectionStatusByServerId,
@@ -1115,7 +1112,6 @@ function useNewWorkspaceHostSelector(input: {
       input.lastActiveProject,
       input.projects,
       input.workspaceMultiplicityByServerId,
-      preferredServerId,
     ],
   );
   const [automaticSelection, setAutomaticSelection] = useState(() => ({
@@ -1135,7 +1131,6 @@ function useNewWorkspaceHostSelector(input: {
           ? resolveNewWorkspaceAutomaticServerId({
               allServerIds: input.allServerIds,
               routeServerId: input.initialServerId,
-              preferredServerId,
               lastActiveProject: input.lastActiveProject,
               projects: input.projects,
               hostConnectionStatusByServerId: input.hostConnectionStatusByServerId,
@@ -1159,7 +1154,6 @@ function useNewWorkspaceHostSelector(input: {
     input.lastActiveProject,
     input.projects,
     input.workspaceMultiplicityByServerId,
-    preferredServerId,
     routeServerId,
   ]);
 
@@ -1178,11 +1172,8 @@ function useNewWorkspaceHostSelector(input: {
     (id: string) => {
       setManualSelection({ routeServerId, serverId: id });
       setHostPickerOpen(false);
-      // Only an explicit pick is remembered; persisting a resolved host would
-      // latch the preference onto whatever the resolver happened to choose.
-      void updatePreferences({ serverId: id });
     },
-    [routeServerId, updatePreferences],
+    [routeServerId],
   );
 
   const handleHostPickerOpenChange = useCallback((open: boolean) => {

@@ -97,7 +97,7 @@ function canHostNewWorkspace(
 interface NewWorkspaceTargetInput {
   project: SidebarProjectEntry;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
-  preferredServerId: string | null | undefined;
+  activeServerId: string | null | undefined;
   hostConnectionStatusByServerId: ReadonlyMap<string, HostRuntimeConnectionStatus>;
 }
 
@@ -108,16 +108,15 @@ function resolveNewWorkspaceTarget(
     canHostNewWorkspace(host, input.supportsMultiplicityByServerId),
   );
 
-  // This row navigates with an explicit `?serverId=`, which the composer honours
-  // outright, so an offline remembered host would stick with nothing to correct it.
-  const preferredServerId = input.preferredServerId?.trim() ?? "";
-  if (
-    preferredServerId &&
-    input.hostConnectionStatusByServerId.get(preferredServerId) === "online"
-  ) {
-    const preferredHost = qualifyingHosts.find((host) => host.serverId === preferredServerId);
-    const preferredTarget = preferredHost ? hostTarget(preferredHost) : null;
-    if (preferredTarget) return preferredTarget;
+  // New work happens on the host you are already working on, matching Cmd+N and
+  // the composer. The row navigates with an explicit `?serverId=` that the
+  // composer honours outright, so an offline host would stick with nothing to
+  // correct it; fall back to the plain walk unless it is online.
+  const activeServerId = input.activeServerId?.trim() ?? "";
+  if (activeServerId && input.hostConnectionStatusByServerId.get(activeServerId) === "online") {
+    const activeHost = qualifyingHosts.find((host) => host.serverId === activeServerId);
+    const activeTarget = activeHost ? hostTarget(activeHost) : null;
+    if (activeTarget) return activeTarget;
   }
 
   for (const host of qualifyingHosts) {
@@ -136,7 +135,7 @@ export function buildSidebarProjectRowModel(input: {
   project: SidebarProjectEntry;
   collapsed: boolean;
   supportsMultiplicityByServerId?: ReadonlyMap<string, boolean>;
-  preferredServerId?: string | null;
+  activeServerId?: string | null;
   hostConnectionStatusByServerId?: ReadonlyMap<string, HostRuntimeConnectionStatus>;
 }): SidebarProjectRowModel {
   return {
@@ -146,7 +145,7 @@ export function buildSidebarProjectRowModel(input: {
       project: input.project,
       supportsMultiplicityByServerId:
         input.supportsMultiplicityByServerId ?? EMPTY_MULTIPLICITY_MAP,
-      preferredServerId: input.preferredServerId,
+      activeServerId: input.activeServerId,
       hostConnectionStatusByServerId: input.hostConnectionStatusByServerId ?? EMPTY_STATUS_MAP,
     }),
   };
