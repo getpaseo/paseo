@@ -4,20 +4,13 @@ import { copyFile, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TestInfo } from "@playwright/test";
-import { buildHostWorkspaceRoute } from "@/utils/host-routes";
-import { expect, test, type Page } from "../support/fixtures";
-import { gotoAppShell } from "../support/helpers/app";
-import { openCommandCenter } from "../support/helpers/command-center";
+import { test, type Page } from "../support/fixtures";
+import { ImportSessionFlow } from "../support/helpers/import-session";
 import {
   connectNewWorkspaceDaemonClient,
   openProjectViaDaemon,
   type OpenedProject,
 } from "../support/helpers/new-workspace";
-import { getServerId } from "../support/helpers/server-id";
-import {
-  expectMobileAgentSidebarVisible,
-  openMobileAgentSidebar,
-} from "../support/helpers/sidebar";
 import { createTempDirectory, createTempGitRepo } from "../support/helpers/workspace";
 
 const SCREENSHOT_DIRECTORY = path.join(
@@ -130,193 +123,96 @@ test.afterAll(async () => {
 });
 
 test("captures the compact import-session journey", async ({ page }, testInfo) => {
-  await useViewport(page, { width: 390, height: 844 });
-  await openWorkspace(page);
+  const flow = new ImportSessionFlow(page);
+  await flow.openWorkspace(scenario.project.workspaceId, { width: 390, height: 844 });
 
   await test.step("the mobile sidebar exposes import in its footer", async () => {
-    await openMobileAgentSidebar(page);
-    await expectMobileAgentSidebarVisible(page);
-    const importButton = page.getByTestId("sidebar-import-session");
-    await expect(importButton).toHaveAccessibleName("Import session");
-    await importButton.hover();
-    await expect(page.getByText("Import session", { exact: true })).toBeVisible();
+    await flow.revealMobileEntryPoint();
     await capture(page, testInfo, "01-mobile-sidebar-footer.png");
   });
 
   await test.step("the host-wide sheet is newest first and fits its provider filter", async () => {
-    await page.getByTestId("sidebar-import-session").click();
-    await expectImportSheet(page);
-    await expect(page.getByTestId("import-session-scope")).toContainText("Sessions on");
-    expect((await listRowTestIds(page)).slice(0, 3)).toEqual([
-      rowTestId(scenario.importSessionId),
-      rowTestId("fixture-worktree"),
-      rowTestId("fixture-unrelated"),
-    ]);
-    await expect(rowFolder(page, scenario.importSessionId)).toHaveText(scenario.projectName);
-    await expect(rowFolder(page, "fixture-worktree")).toHaveText(
-      `${scenario.projectName} · worktrees/review-fix`,
-    );
-    await expect(rowFolder(page, "fixture-unrelated")).toHaveText(
-      scenario.reuseTarget.projectDisplayName,
-    );
-    await expect(page.getByTestId("import-session-provider-errors")).toContainText(
-      "Could not load Broken ACP sessions",
-    );
-    await expect(page.getByTestId("import-session-scope")).toBeInViewport();
-    const providerFilter = page.getByRole("button", { name: "Filter: All" });
-    await expect(providerFilter).toBeInViewport();
-    const filterBounds = await providerFilter.boundingBox();
-    expect(filterBounds?.x ?? 390).toBeGreaterThanOrEqual(0);
-    expect((filterBounds?.x ?? 390) + (filterBounds?.width ?? 1)).toBeLessThanOrEqual(390);
-    await page.getByTestId(rowTestId("fixture-unrelated")).scrollIntoViewIfNeeded();
+    await flow.openGlobally();
+    await flow.expectScope("Sessions on", false);
+    await flow.expectRows({
+      first: [scenario.importSessionId, "fixture-worktree", "fixture-unrelated"],
+      folders: [
+        [scenario.importSessionId, scenario.projectName],
+        ["fixture-worktree", `${scenario.projectName} · worktrees/review-fix`],
+        ["fixture-unrelated", scenario.reuseTarget.projectDisplayName],
+      ],
+    });
+    await flow.expectProviderError("Broken ACP");
+    await flow.expectProviderFilterFits(390);
+    await flow.revealSession("fixture-unrelated");
     await capture(page, testInfo, "02-mobile-sheet-unscoped.png");
   });
 
   await test.step("search narrows across the fixture corpus", async () => {
-    await expectImportSheet(page);
-    await page.getByTestId("import-session-search").fill("invoice");
-    await expect(page.getByText("Invoice migration plan", { exact: true })).toBeVisible();
-    await expect(page.getByText("Root session 01", { exact: true })).toHaveCount(0);
-    await expect(page.getByTestId("import-session-load-more")).toHaveCount(0);
+    await flow.search("invoice");
     await capture(page, testInfo, "03-mobile-search-narrowed.png");
   });
 
   await test.step("load more grows the result set and then disappears", async () => {
-    await expectImportSheet(page);
-    await page.getByTestId("import-session-search").fill("");
-    await expect(page.getByTestId("import-session-load-more")).toBeVisible();
+    await flow.resetSearch();
     await capture(page, testInfo, "04-mobile-load-more-visible.png");
-    await page.getByTestId("import-session-load-more").click();
-    await expect(page.getByText("Root session 20", { exact: true })).toBeVisible();
-    await expect(page.getByTestId("import-session-load-more")).toHaveCount(0);
+    await flow.loadMore();
     await capture(page, testInfo, "05-mobile-load-more-complete.png");
   });
 
   await test.step("one provider fails inline and Retry settles", async () => {
-    await expectImportSheet(page);
-    const errorBanner = page.getByTestId("import-session-provider-errors");
-    await expect(errorBanner).toContainText("Could not load Broken ACP sessions");
-    await page.getByTestId(`import-session-retry-${brokenProvider}`).click();
-    await expect(page.getByTestId(`import-session-retry-${brokenProvider}`)).toBeEnabled();
-    await expect(errorBanner).toContainText("Could not load Broken ACP sessions");
-    await expect(page.getByRole("progressbar")).toHaveCount(0);
+    await flow.retryProvider(brokenProvider, "Broken ACP");
     await capture(page, testInfo, "06-mobile-provider-error-retry.png");
   });
 
   await test.step("the selected row imports and opens the hydrated transcript", async () => {
-    await expectImportSheet(page);
-    const row = page.getByTestId(`import-session-session-claude-${scenario.importSessionId}`);
-    await row.click();
-    // The row's "Importing..." state lasts only until the import response, which
-    // the fixture daemon returns in ~100 ms; the sheet's unit test holds that
-    // response to assert it. Here only the outcome is observable.
-    await expect(page.getByTestId("import-session-sheet")).toHaveCount(0, { timeout: 30_000 });
-    await expect(page.getByTestId("user-message")).toContainText("Review the invoice migration");
-    await expect(page.getByTestId("assistant-message")).toContainText(
-      "The fixture transcript is ready.",
-    );
+    await flow.importSession(scenario.importSessionId);
+    await flow.expectTranscript("Review the invoice migration", "The fixture transcript is ready.");
     await capture(page, testInfo, "08-mobile-agent-after-import.png");
   });
 
   await test.step("workspace actions start scoped and can widen to the host", async () => {
-    await page.getByRole("button", { name: "Workspace actions" }).click();
-    await page.getByTestId("workspace-header-import-agent").click();
-    await expect(page.getByTestId("import-session-scope")).toHaveText("This workspace");
-    await expect(page.getByTestId("import-session-scope")).toBeVisible();
-    await expect(page.getByTestId("import-session-show-all")).toBeVisible();
-    await expect(page.getByText("Workspace actions", { exact: true })).not.toBeVisible();
+    await flow.openFromWorkspaceHeader();
     await capture(page, testInfo, "09-mobile-workspace-scoped.png");
-    await page.getByTestId("import-session-show-all").click();
-    await expect(page.getByTestId("import-session-scope")).toContainText("Sessions on");
-    await expect(rowFolder(page, "fixture-unrelated")).toHaveText(
-      scenario.reuseTarget.projectDisplayName,
-    );
+    await flow.showAll();
+    await flow.expectRows({
+      folders: [["fixture-unrelated", scenario.reuseTarget.projectDisplayName]],
+    });
     await capture(page, testInfo, "10-mobile-workspace-show-all.png");
 
-    const reusedRow = page.getByTestId(rowTestId("fixture-root-03"));
-    await reusedRow.click();
-    await expect(page.getByTestId("import-session-sheet")).toHaveCount(0, { timeout: 30_000 });
-    await expect(page).toHaveURL(
-      buildHostWorkspaceRoute(getServerId(), scenario.reuseTarget.workspaceId),
-      { timeout: 30_000 },
-    );
-    const targetWorkspace = page.getByTestId(
-      `workspace-deck-entry-${getServerId()}:${scenario.reuseTarget.workspaceId}`,
-    );
-    await expect(targetWorkspace.getByTestId("user-message")).toContainText(
+    await flow.importSession("fixture-root-03");
+    await flow.expectImportedIntoWorkspace(
+      scenario.reuseTarget.workspaceId,
       "Review fixture item 3",
     );
   });
 });
 
 test("captures the desktop import sheet and command-center entry", async ({ page }, testInfo) => {
-  await useViewport(page, { width: 1280, height: 800 });
-  await openWorkspace(page);
+  const flow = new ImportSessionFlow(page);
+  await flow.openWorkspace(scenario.project.workspaceId, {
+    width: 1280,
+    height: 800,
+  });
 
   await test.step("desktop shows the flat host-wide sheet", async () => {
-    await expect(page.getByTestId("sidebar-import-session")).toBeVisible();
-    await page.getByTestId("sidebar-import-session").click();
-    await expectImportSheet(page);
+    await flow.openGlobally();
     // The compact test may already have imported the newest fixture row, so this
     // asserts recency as an ordering between two rows nothing imports.
-    const rowIds = await listRowTestIds(page);
-    expect(rowIds.indexOf(rowTestId("fixture-worktree"))).toBeGreaterThanOrEqual(0);
-    expect(rowIds.indexOf(rowTestId("fixture-worktree"))).toBeLessThan(
-      rowIds.indexOf(rowTestId("fixture-unrelated")),
-    );
-    await expect(rowFolder(page, "fixture-worktree")).toHaveText(
-      `${scenario.projectName} · worktrees/review-fix`,
-    );
-    await page.getByTestId(rowTestId("fixture-unrelated")).scrollIntoViewIfNeeded();
+    await flow.expectRows({
+      before: ["fixture-worktree", "fixture-unrelated"],
+      folders: [["fixture-worktree", `${scenario.projectName} · worktrees/review-fix`]],
+    });
+    await flow.revealSession("fixture-unrelated");
     await capture(page, testInfo, "11-desktop-sheet-unscoped.png");
-    await page.keyboard.press("Escape");
-    await expect(page.getByTestId("import-session-sheet")).toHaveCount(0);
+    await flow.close();
   });
 
   await test.step("import matches the command but not Home", async () => {
-    const panel = await openCommandCenter(page);
-    await panel.getByTestId("command-center-input").fill("import");
-    await expect(panel.getByText("Import session", { exact: true })).toBeVisible();
-    await expect(panel.getByText("Home", { exact: true })).toHaveCount(0);
+    await flow.expectCommandCenterMatch();
     await capture(page, testInfo, "12-desktop-command-center-import.png");
   });
 });
-
-function rowTestId(providerHandleId: string): string {
-  return `import-session-session-claude-${providerHandleId}`;
-}
-
-function rowFolder(page: Page, providerHandleId: string) {
-  return page.getByTestId(`import-session-row-folder-claude-${providerHandleId}`);
-}
-
-/** The rendered row order, which the flat list keys to recency. */
-async function listRowTestIds(page: Page): Promise<Array<string | null>> {
-  return await page
-    .locator('[data-testid^="import-session-session-claude-"]')
-    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-testid")));
-}
-
-async function useViewport(page: Page, viewport: { width: number; height: number }): Promise<void> {
-  await page.setViewportSize(viewport);
-}
-
-async function openWorkspace(page: Page): Promise<void> {
-  await gotoAppShell(page);
-  await page.goto(buildHostWorkspaceRoute(getServerId(), scenario.project.workspaceId));
-  await expect(page.getByRole("button", { name: "Workspace actions" })).toBeVisible({
-    timeout: 30_000,
-  });
-}
-
-async function expectImportSheet(page: Page) {
-  const sheet = page.getByTestId("import-session-sheet");
-  await expect(sheet).toBeVisible({ timeout: 30_000 });
-  await expect(sheet.getByText("Loading sessions...", { exact: true })).toHaveCount(0, {
-    timeout: 30_000,
-  });
-  return sheet;
-}
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
   const outputPath = testInfo.outputPath(name);
