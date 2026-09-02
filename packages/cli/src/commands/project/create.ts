@@ -1,7 +1,11 @@
 import path from "node:path";
 import type { Command } from "commander";
 import type { CommandError, CommandOptions, SingleResult } from "../../output/index.js";
-import { buildDaemonConnectionCommandError, connectToDaemon } from "../../utils/client.js";
+import {
+  buildDaemonConnectionCommandError,
+  connectToDaemon,
+  getExplicitDaemonHost,
+} from "../../utils/client.js";
 import { projectSchema, toProjectRow, type ProjectRow } from "./shared.js";
 
 export function resolveProjectPath(input: {
@@ -31,7 +35,7 @@ export async function runCreateCommand(
   const projectPath = resolveProjectPath({
     pathArg,
     cwd: process.cwd(),
-    daemonTarget: options.host ?? process.env.PASEO_HOST,
+    daemonTarget: getExplicitDaemonHost(options.host),
   });
   const client = await connectToDaemon({ host: options.host }).catch((error: unknown) => {
     throw buildDaemonConnectionCommandError({ host: options.host, error });

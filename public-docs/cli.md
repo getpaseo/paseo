@@ -317,11 +317,11 @@ Relay is off for new installations. In non-interactive or JSON mode, a disabled 
 Use it from anywhere:
 
 ```bash
-paseo ls --host 'https://app.paseo.sh/#offer=eyJ2IjoyLC...'
+paseo --host 'https://app.paseo.sh/#offer=eyJ2IjoyLC...' ls
 paseo run --host "$OFFER_URL" "fix the failing tests"
 ```
 
-You can also set it once via `PASEO_HOST` instead of passing `--host` on every command.
+The global and command-local positions are equivalent. You can also set it once via `PASEO_HOST` instead of passing `--host` on every command. An explicit flag overrides the environment variable.
 
 ## Multi-agent workflows
 
