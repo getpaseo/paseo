@@ -29,7 +29,6 @@ my-plugin/
   paseo-plugin.json
   index.ts
   main.client.tsx
-  paseo-plugin.d.ts
   package.json
   tsconfig.json
 ```
@@ -42,9 +41,9 @@ The required root manifest is `paseo-plugin.json`. It contains the default plugi
 
 The entry point is `index.ts` at the plugin root. Plugin, surface, sidebar-item, workspace-panel, Command Center item, and attachment-source IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
 
-The generated declaration file supplies `@getpaseo/plugin`, `@getpaseo/plugin/react-native`, and
-`@getpaseo/plugin/server` types for local typechecking. Paseo supplies the runtime modules.
-Regenerate a fresh project with the matching CLI when the plugin contract changes.
+The generated `package.json` installs `@getpaseo/plugin` and the other host modules as development
+dependencies for local typechecking and tests. Paseo supplies their runtime instances. Consumers do
+not install them when adding the plugin.
 
 Add runtime-specific files as the plugin grows:
 
@@ -883,7 +882,7 @@ paseo plugin install /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin --id another-runtime-id
 paseo plugin add owner/repository
 paseo plugin add https://git.example.com/owner/repository.git --ref main
-paseo plugin add owner/monorepo --path plugins/review
+paseo plugin add owner/monorepo:plugins/review
 paseo plugin status [id]
 paseo plugin update <id>
 paseo plugin update --all
@@ -899,10 +898,32 @@ Pass `--host <url>` to management commands when the target is not the CLI's defa
 never deletes a directory source; it deletes the managed checkout for a Git source. The install-time
 `--id` is the runtime ID and allows the same directory or repository to be installed more than once.
 
-An existing directory wins over `owner/repository` GitHub shorthand. Omit `--ref` to track the
-default branch. Explicit branches track updates; tags and commits stay pinned. Git installation
-runs no package manager and no install scripts. `update` validates and compiles the candidate before
-activation, then restores the installed commit if startup fails.
+> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Server code and Git preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With `--host`, commands run on the remote daemon host.
+
+An existing directory wins over `owner/repository` GitHub shorthand. Append `:relative/path` when
+the plugin lives below the repository root. Omit `--ref` to track the default branch. Explicit
+branches track updates; tags and commits stay pinned.
+
+Most plugins should omit `build`. Use it only when the staged checkout must install a dependency
+that Paseo does not provide, generate source or assets, or perform another required preparation
+step:
+
+```json
+{
+  "id": "review",
+  "build": [
+    ["npm", "ci"],
+    ["npm", "run", "build"]
+  ]
+}
+```
+
+`build` is a list of non-empty argv arrays. Paseo runs each executable directly, without a shell,
+from the staged plugin directory after resolving the exact commit and manifest. It never infers a
+package manager or commands from lockfiles. Install and update both run `build` before validation,
+compilation, activation, or replacement. A failing command reports its output, discards the
+candidate, and leaves the installed/running version intact. The daemon log records each command and
+output; with `--host`, execution is on that daemon host.
 
 Run `npm run typecheck` before install or reload. Never edit the daemon config directly.
 

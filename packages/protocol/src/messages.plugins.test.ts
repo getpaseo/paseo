@@ -53,8 +53,15 @@ describe("plugin protocol compatibility", () => {
       SessionInboundMessageSchema.parse({
         type: "plugin.source.install.request",
         requestId: "request-install",
-        source: "owner/repository",
+        source: "owner/repository:plugins/review",
         ref: "main",
+      }).type,
+    ).toBe("plugin.source.install.request");
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "plugin.source.install.request",
+        requestId: "request-install-old-client",
+        source: "owner/repository",
         pluginPath: "plugins/review",
       }).type,
     ).toBe("plugin.source.install.request");

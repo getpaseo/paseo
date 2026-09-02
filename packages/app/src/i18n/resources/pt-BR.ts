@@ -203,6 +203,7 @@ export const ptBR: TranslationResources = {
     empty: "Comece a conversar com este agente...",
     scrollToBottom: "Rolar para o fim",
     historyLoadFailed: "Não foi possível carregar o histórico do agente",
+    messageCapped: "Esta mensagem foi truncada ({{bytes}} bytes).",
     permission: {
       plan: "Plano",
       required: "Permissão necessária",

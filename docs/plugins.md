@@ -2,8 +2,9 @@
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
 composer pills, app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
-subprocess and evaluates the client contribution in the app runtime. Plugin code is trusted code;
-Paseo does not sandbox it.
+subprocess and evaluates the client contribution in the app runtime.
+
+> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
 
 ## Install a directory source
 
@@ -47,15 +48,13 @@ my-plugin/
   paseo-plugin.json
   index.ts
   main.client.tsx
-  paseo-plugin.d.ts
   package.json
   tsconfig.json
 ```
 
-Paseo compiles TypeScript and TSX when loading the plugin, so these packages are development dependencies only.
-The generated declaration file supplies `@getpaseo/plugin` and `@getpaseo/plugin/server` types until the
-SDK is distributed as a public package. Regenerate new plugins with the matching Paseo CLI when the
-SDK contract changes.
+The generated `package.json` installs `@getpaseo/plugin` and the other host modules as development
+dependencies for local typechecking and tests. Paseo compiles TypeScript and TSX and supplies the
+runtime modules, so consumers do not install these packages when adding the plugin.
 
 ```json
 {
@@ -84,28 +83,52 @@ directory always wins over shorthand resolution.
 
 ```bash
 paseo plugin add owner/repository
+paseo plugin add https://gitlab.com/group/repository.git
 paseo plugin add https://git.example.com/owner/repository.git
-paseo plugin add owner/monorepo --path plugins/review
+paseo plugin add owner/monorepo:plugins/review
 paseo plugin add owner/repository --ref main
 paseo plugin status
 paseo plugin update review
 paseo plugin update --all
 ```
 
+Append `:relative/path` to the source when the plugin lives below the repository root.
+
 Omitting `--ref` tracks the remote's default branch. A branch passed with `--ref` also tracks;
 tags and commits stay pinned. `status` fetches tracked refs and reports the installed and available
-commits. `update` checks out a new version, validates its manifest, compiles both bundles, and starts
-it before changing the configured path. A compilation or startup failure restores the running
-version. Removing a Git source deletes Paseo's managed checkout.
+commits. Removing a Git source deletes Paseo's managed checkout.
 
-Git installation does not run a package manager or install script. A distributable source plugin
-uses Paseo's host-provided modules or commits any other bundled source it needs. Native React Native
-dependencies work only when the Paseo app already ships the native module.
+### Declare Git preparation
+
+Most plugins should omit `build`. Use it only when the staged checkout must install a dependency
+that Paseo does not provide, generate source or assets, or perform another required preparation
+step:
+
+```json
+{
+  "id": "review",
+  "build": [
+    ["npm", "ci"],
+    ["npm", "run", "build"]
+  ]
+}
+```
+
+`build` is an optional list of argv arrays. Each array must contain at least one non-empty string;
+shell command strings are rejected. Paseo starts the executable directly, without a shell, from the
+plugin directory in the staged checkout. It never detects lockfiles or chooses a package manager.
+
+On install and every update, Paseo resolves the exact Git revision and manifest, runs the declared
+commands, then validates, compiles, and activates the candidate. It logs each argv command and its
+output in the daemon log. If a command fails, the error includes its output, Paseo discards the
+candidate, and the existing installed and running version stays untouched. On a remote daemon, all
+of this happens on the remote daemon host.
 
 Server contributions can write to stdout and stderr with normal Node logging. Paseo adds `[paseo]`
 entries for loading, ready, stopping, and stopped transitions. Compilation and load failures are
 recorded as stderr entries before a subprocess exists. Inspect the recent in-memory
-tail from the host plugin settings or with `paseo plugin logs <id>`. Reload, disable, and process
+tail from the host plugin settings or with `paseo plugin logs <id>`. Git preparation commands are
+recorded in `$PASEO_HOME/daemon.log` before a plugin exists, rather than the plugin log tail. Reload, disable, and process
 failure retain the tail; removing the plugin clears it. Daemon restarts do not retain the tail, but
 structured copies remain in `$PASEO_HOME/daemon.log`. Plugin output can contain secrets, so do not
 log credentials or tokens.

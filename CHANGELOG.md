@@ -1,82 +1,93 @@
 # Changelog
 
-## 0.7.0-beta.3 - 2026-08-31
+## 0.7.2 - 2026-09-02
 
 ### Added
 
-- Added readable prompts, details, and results for Paseo tool calls ([#4066](https://github.com/getpaseo/paseo/pull/4066))
-- Added zoom and pan to workspace images and assistant timeline previews ([#4032](https://github.com/getpaseo/paseo/pull/4032), [#4049](https://github.com/getpaseo/paseo/pull/4049), [#4064](https://github.com/getpaseo/paseo/pull/4064))
-- Added host navigation from plugin surfaces to agents and workspaces ([#3901](https://github.com/getpaseo/paseo/pull/3901) by [@omercnet](https://github.com/omercnet))
-- Added Astro syntax highlighting to files, the editor, and diffs ([#3997](https://github.com/getpaseo/paseo/pull/3997))
+- Added active-turn steering for pi agents so new messages reach the running turn without interrupting it ([#3752](https://github.com/getpaseo/paseo/pull/3752) by [@mcowger](https://github.com/mcowger))
+- Added declared build commands and monorepo source paths for Git-hosted plugins ([#4158](https://github.com/getpaseo/paseo/pull/4158))
 
 ### Improved
 
-- Reused one OpenCode helper across ordinary agent sessions instead of spawning one per agent ([#4009](https://github.com/getpaseo/paseo/pull/4009))
-- Kept cold-start pull request status checks on the shared GitHub batch path ([#4025](https://github.com/getpaseo/paseo/pull/4025))
+- Reduced JS stalls while watching a streaming agent on mobile ([#4190](https://github.com/getpaseo/paseo/pull/4190))
 
 ### Fixed
 
-- Fixed Android first-message submissions crashing when the keyboard restarted during composer teardown ([#4044](https://github.com/getpaseo/paseo/pull/4044))
-- Fixed long mobile drafts hiding composer controls behind the keyboard ([#4051](https://github.com/getpaseo/paseo/pull/4051))
-- Fixed web and Electron composers losing focus after submission ([#4067](https://github.com/getpaseo/paseo/pull/4067))
-- Fixed Android dictation leaving Bluetooth audio in call-quality routing after capture stopped ([#4069](https://github.com/getpaseo/paseo/pull/4069))
-- Fixed dictation retries timing out after an abandoned partial transcript ([#4065](https://github.com/getpaseo/paseo/pull/4065))
-- Fixed the model selector crashing in iPad desktop layouts ([#3992](https://github.com/getpaseo/paseo/pull/3992) by [@yzim](https://github.com/yzim))
-- Fixed archived agents disappearing when opened from History ([#4033](https://github.com/getpaseo/paseo/pull/4033))
-- Fixed Grok unified-billing accounts showing zero credits instead of weekly usage ([#4029](https://github.com/getpaseo/paseo/pull/4029) by [@Lite-G](https://github.com/Lite-G), [@claude](https://github.com/claude))
-- Fixed slow Pi and OMP startup requests timing out after 30 seconds ([#4008](https://github.com/getpaseo/paseo/pull/4008))
-- Fixed Android system navigation covering the Commits controls ([#4005](https://github.com/getpaseo/paseo/pull/4005))
-- Fixed new agent work appearing as reopened tasks ([#4068](https://github.com/getpaseo/paseo/pull/4068))
+- Fixed large and many-file diffs stalling or crashing while opening and scrolling ([#4174](https://github.com/getpaseo/paseo/pull/4174))
+- Fixed mobile sidebar and explorer panels losing their settled position when a JS stall crossed the animation ([#4190](https://github.com/getpaseo/paseo/pull/4190))
+- Fixed a single oversized assistant message crashing the timeline by capping rendered content at 32,000 characters ([#4166](https://github.com/getpaseo/paseo/pull/4166))
+- Fixed Codex rewind failing on paginated threads with Codex 0.151 and later ([#4119](https://github.com/getpaseo/paseo/pull/4119))
+- Fixed Escape closing an image preview also interrupting the running agent ([#4161](https://github.com/getpaseo/paseo/pull/4161))
+- Fixed daemon stop and restart on Windows skipping graceful shutdown and orphaning agent processes ([#4168](https://github.com/getpaseo/paseo/pull/4168))
+- Fixed OMP startup timing out at 10 seconds regardless of the configured RPC timeout ([#4143](https://github.com/getpaseo/paseo/pull/4143) by [@Juns-g](https://github.com/Juns-g))
+- Fixed completed turns without a visible prompt showing no completion time ([#4170](https://github.com/getpaseo/paseo/pull/4170))
+- Fixed Explorer renames replacing an existing file when file identity metadata is unavailable ([#4171](https://github.com/getpaseo/paseo/pull/4171))
 
-## 0.7.0-beta.2 - 2026-08-28
+## 0.7.1 - 2026-09-01
 
 ### Added
 
-- Added SSH connections to existing remote daemons from Desktop and CLI ([#3989](https://github.com/getpaseo/paseo/pull/3989) by [@reidlevesque](https://github.com/reidlevesque))
-- Added workspace management and layout actions to the Command Center ([#3013](https://github.com/getpaseo/paseo/pull/3013) by [@cleiter](https://github.com/cleiter))
-- Added contextual composer-pill contributions for plugins ([#3956](https://github.com/getpaseo/paseo/pull/3956))
-- Added host UI primitives for client plugins ([#3967](https://github.com/getpaseo/paseo/pull/3967))
-- Added PR and MR number search to the Command Center ([#3008](https://github.com/getpaseo/paseo/pull/3008) by [@cleiter](https://github.com/cleiter))
-- Added session commands to agent SDK handles ([#3719](https://github.com/getpaseo/paseo/pull/3719) by [@gpambrozio](https://github.com/gpambrozio), [@marvin-ambrozio](https://github.com/marvin-ambrozio))
+- Added Claude Fable 5.1 with a 1M context window ([#4179](https://github.com/getpaseo/paseo/pull/4179))
 
-### Improved
-
-- Batched GitHub pull request polling within the reserved API budget ([#3825](https://github.com/getpaseo/paseo/pull/3825) by [@dezchai](https://github.com/dezchai))
-
-### Fixed
-
-- Fixed daemon reconnects stalling while Git processes were queued ([#3945](https://github.com/getpaseo/paseo/pull/3945))
-- Fixed restored workspace tabs entering reconciliation loops ([#3987](https://github.com/getpaseo/paseo/pull/3987))
-- Fixed immediate dictation submissions omitting the newest speech segment ([#3968](https://github.com/getpaseo/paseo/pull/3968))
-- Fixed archived workspaces returning from durable cache ([#3975](https://github.com/getpaseo/paseo/pull/3975))
-- Fixed commits and squash merges bypassing configured Git signing ([#3976](https://github.com/getpaseo/paseo/pull/3976))
-- Fixed Markdown literal characters being replaced by typographic symbols ([#3253](https://github.com/getpaseo/paseo/pull/3253) by [@cleiter](https://github.com/cleiter))
-
-## 0.7.0-beta.1 - 2026-08-27
+## 0.7.0 - 2026-08-31
 
 ### Changed
 
 - Changed the project license to Apache-2.0 ([#3944](https://github.com/getpaseo/paseo/pull/3944))
 - Changed Cmd/Ctrl+E to toggle Explorer visibility without selecting a view ([#3896](https://github.com/getpaseo/paseo/pull/3896))
+- Changed the default mobile content text size from 15px to 16px ([#4111](https://github.com/getpaseo/paseo/pull/4111))
 
 ### Added
 
 - Added plugin installation and updates directly from Git repositories ([#3920](https://github.com/getpaseo/paseo/pull/3920))
 - Added plugin-defined timeline transformations and rendering ([#3940](https://github.com/getpaseo/paseo/pull/3940))
+- Added SSH connections to existing remote daemons from Desktop and CLI ([#3989](https://github.com/getpaseo/paseo/pull/3989) by [@reidlevesque](https://github.com/reidlevesque))
+- Added workspace management and layout actions to the Command Center ([#3013](https://github.com/getpaseo/paseo/pull/3013) by [@cleiter](https://github.com/cleiter))
+- Added contextual composer-pill contributions for plugins ([#3956](https://github.com/getpaseo/paseo/pull/3956))
+- Added host UI primitives for client plugins ([#3967](https://github.com/getpaseo/paseo/pull/3967))
+- Added readable prompts, details, and results for Paseo tool calls ([#4066](https://github.com/getpaseo/paseo/pull/4066))
+- Added zoom and pan to workspace images and assistant timeline previews ([#4032](https://github.com/getpaseo/paseo/pull/4032), [#4049](https://github.com/getpaseo/paseo/pull/4049), [#4064](https://github.com/getpaseo/paseo/pull/4064))
 - Added opening child folders directly in the preferred desktop editor ([#3615](https://github.com/getpaseo/paseo/pull/3615) by [@caikovsky](https://github.com/caikovsky))
+- Added host navigation from plugin surfaces to agents and workspaces ([#3901](https://github.com/getpaseo/paseo/pull/3901) by [@omercnet](https://github.com/omercnet))
 - Added host-rendered icons to plugin client surfaces ([#3903](https://github.com/getpaseo/paseo/pull/3903) by [@omercnet](https://github.com/omercnet))
 - Added semantic surface, border, success, and warning colors to plugin themes ([#3898](https://github.com/getpaseo/paseo/pull/3898) by [@omercnet](https://github.com/omercnet))
 - Added registered project listing to the public plugin SDK ([#3899](https://github.com/getpaseo/paseo/pull/3899) by [@omercnet](https://github.com/omercnet))
+- Added PR and MR number search to the Command Center ([#3008](https://github.com/getpaseo/paseo/pull/3008) by [@cleiter](https://github.com/cleiter))
+- Added session commands to agent SDK handles ([#3719](https://github.com/getpaseo/paseo/pull/3719) by [@gpambrozio](https://github.com/gpambrozio), [@marvin-ambrozio](https://github.com/marvin-ambrozio))
 - Added F-Droid release metadata and stable changelog generation ([#2501](https://github.com/getpaseo/paseo/pull/2501) by [@antonok-edm](https://github.com/antonok-edm))
+- Added Astro syntax highlighting to files, the editor, and diffs ([#3997](https://github.com/getpaseo/paseo/pull/3997))
 
 ### Improved
 
 - Streamed assistant text at a steady visual rate instead of in arrival lumps ([#3612](https://github.com/getpaseo/paseo/pull/3612) by [@Tommypop2](https://github.com/Tommypop2))
 - Painted cached conversations before unrelated cache restoration and network loading ([#3907](https://github.com/getpaseo/paseo/pull/3907))
+- Reused one OpenCode helper across ordinary agent sessions instead of spawning one per agent ([#4009](https://github.com/getpaseo/paseo/pull/4009))
+- Batched GitHub pull request polling within the reserved API budget ([#3825](https://github.com/getpaseo/paseo/pull/3825) by [@dezchai](https://github.com/dezchai))
 - Added manual, action-required, and warning states to GitLab and Gitea checks ([#2337](https://github.com/getpaseo/paseo/pull/2337) by [@nllptrx](https://github.com/nllptrx))
+- Kept cold-start pull request status checks on the shared GitHub batch path ([#4025](https://github.com/getpaseo/paseo/pull/4025))
 
 ### Fixed
 
+- Fixed the daemon crashing when a Claude or OMP JSONL process closes during a write ([#4048](https://github.com/getpaseo/paseo/pull/4048))
+- Fixed Android first-message submissions crashing when the keyboard restarted during composer teardown ([#4044](https://github.com/getpaseo/paseo/pull/4044))
+- Fixed long mobile drafts hiding composer controls behind the keyboard ([#4051](https://github.com/getpaseo/paseo/pull/4051))
+- Fixed Android timelines shifting when tapping selectable text ([#4090](https://github.com/getpaseo/paseo/pull/4090))
+- Fixed web and Electron composers losing focus after submission ([#4067](https://github.com/getpaseo/paseo/pull/4067))
+- Fixed Android dictation leaving Bluetooth audio in call-quality routing after capture stopped ([#4069](https://github.com/getpaseo/paseo/pull/4069))
+- Fixed dictation retries timing out after an abandoned partial transcript ([#4065](https://github.com/getpaseo/paseo/pull/4065))
+- Fixed immediate dictation submissions omitting the newest speech segment ([#3968](https://github.com/getpaseo/paseo/pull/3968))
+- Fixed the model selector crashing in iPad desktop layouts ([#3992](https://github.com/getpaseo/paseo/pull/3992) by [@yzim](https://github.com/yzim))
+- Fixed OpenCode child-session prompts missing from provider subagent timelines ([#4055](https://github.com/getpaseo/paseo/pull/4055) by [@mcowger](https://github.com/mcowger))
+- Fixed archived agents disappearing when opened from History ([#4033](https://github.com/getpaseo/paseo/pull/4033))
+- Fixed restored workspace tabs entering reconciliation loops ([#3987](https://github.com/getpaseo/paseo/pull/3987))
+- Fixed archived workspaces returning from durable cache ([#3975](https://github.com/getpaseo/paseo/pull/3975))
+- Fixed Grok unified-billing accounts showing zero credits instead of weekly usage ([#4029](https://github.com/getpaseo/paseo/pull/4029) by [@Lite-G](https://github.com/Lite-G), [@claude](https://github.com/claude))
+- Fixed daemon reconnects stalling while Git processes were queued ([#3945](https://github.com/getpaseo/paseo/pull/3945))
+- Fixed slow Pi and OMP startup requests timing out after 30 seconds ([#4008](https://github.com/getpaseo/paseo/pull/4008))
+- Fixed commits and squash merges bypassing configured Git signing ([#3976](https://github.com/getpaseo/paseo/pull/3976))
+- Fixed Android system navigation covering the Commits controls ([#4005](https://github.com/getpaseo/paseo/pull/4005))
+- Fixed new agent work appearing as reopened tasks ([#4068](https://github.com/getpaseo/paseo/pull/4068))
+- Fixed Markdown literal characters being replaced by typographic symbols ([#3253](https://github.com/getpaseo/paseo/pull/3253) by [@cleiter](https://github.com/cleiter))
 - Fixed rewinding long conversations replaying the complete rebuilt timeline ([#3642](https://github.com/getpaseo/paseo/pull/3642))
 - Fixed rewound prompts remaining blank in the mounted iOS composer ([#3946](https://github.com/getpaseo/paseo/pull/3946))
 - Fixed native plugin setup and async client callbacks failing on iOS ([#3942](https://github.com/getpaseo/paseo/pull/3942))

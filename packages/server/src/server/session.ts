@@ -4,6 +4,7 @@ import { lstat, mkdir, mkdtemp, rename, rm, stat } from "node:fs/promises";
 import { basename, resolve, sep } from "path";
 import { homedir } from "node:os";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import { formatPluginSourceReference } from "@getpaseo/protocol/plugin-source-reference";
 import {
   serializeAgentStreamEvent,
   type AgentSnapshotPayload,
@@ -479,7 +480,6 @@ export interface SessionOptions {
       source: string;
       id?: string;
       ref?: string;
-      pluginPath?: string;
     }): Promise<import("@getpaseo/protocol/messages").PluginListItem>;
     statusSources(
       pluginId?: string,
@@ -2109,10 +2109,10 @@ export class Session {
       if (!this.pluginRuntime) throw new Error("Plugin service is unavailable");
       return this.pluginRuntime
         .installSource({
-          source: msg.source,
+          // COMPAT(plugin-source-path): accepted for v0.7 clients; remove after 2027-09-01.
+          source: formatPluginSourceReference(msg.source, msg.pluginPath),
           ...(msg.id ? { id: msg.id } : {}),
           ...(msg.ref ? { ref: msg.ref } : {}),
-          ...(msg.pluginPath ? { pluginPath: msg.pluginPath } : {}),
         })
         .then((plugin) => {
           this.emit({

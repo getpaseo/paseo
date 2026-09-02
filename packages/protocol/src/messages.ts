@@ -1465,6 +1465,7 @@ export const PluginSourceInstallRequestSchema = z.object({
   source: z.string().min(1),
   id: PluginIdSchema.optional(),
   ref: z.string().min(1).optional(),
+  // COMPAT(plugin-source-path): accepted for v0.7 clients; remove after 2027-09-01.
   pluginPath: z.string().min(1).optional(),
 });
 

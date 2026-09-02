@@ -144,13 +144,16 @@ The output includes each script's lifecycle and supervised terminal ID. Services
 
 ## Plugins
 
+> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugin server code and Git preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With `--host`, commands run on the remote daemon host.
+
 Create and manage trusted plugins on a daemon:
 
 ```bash
 paseo plugin init /absolute/path/to/plugin
 paseo plugin install /absolute/path/to/plugin
 paseo plugin add owner/repository
-paseo plugin add https://git.example.com/owner/repository.git --ref main
+paseo plugin add https://gitlab.com/group/repository.git --ref main
+paseo plugin add owner/monorepo:plugins/review
 paseo plugin status
 paseo plugin update my-plugin
 paseo plugin update --all
@@ -162,8 +165,8 @@ paseo plugin enable my-plugin
 paseo plugin remove my-plugin
 ```
 
-GitHub shorthand checks an existing host directory first. Use `--path <directory>` for a plugin in
-a monorepo. `paseo plugin logs <id>` returns the plugin's recent daemon-side stdout and stderr. Add `--json` for
+GitHub shorthand checks an existing host directory first. Append `:<directory>` for a plugin in a
+monorepo. `paseo plugin logs <id>` returns the plugin's recent daemon-side stdout and stderr. Add `--json` for
 structured entries or `--host <target>` for another daemon. See the
 [Plugin reference](/docs/plugins/reference) for installation, trust, lifecycle, and log-retention
 behavior.
