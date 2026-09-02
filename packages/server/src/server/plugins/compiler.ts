@@ -1,8 +1,6 @@
 import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { parse } from "@babel/parser";
 import type { Plugin } from "esbuild";
 import {
   PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS,
@@ -71,193 +69,35 @@ function loadEsbuild(): typeof import("esbuild") {
 
 type PluginBuildTarget = "client" | "server";
 
-interface SourceRange {
-  start: number;
-  end: number;
-}
-
-const REGISTRATIONS_REMOVED_BY_TARGET: Record<PluginBuildTarget, ReadonlySet<string>> = {
-  client: new Set(["handle"]),
-  server: new Set([
-    "addSurface",
-    "addSidebarItem",
-    "addWorkspacePanel",
-    "addCommandCenterItem",
-    "addClientSlashCommand",
-    "addClientSide",
-    "addAttachmentSource",
-    "addTheme",
-    "addTimelineTransformer",
-    "addTimelineRenderer",
-  ]),
-};
-
-function registrationName(statement: unknown, contextName: string): string | null {
-  if (!statement || typeof statement !== "object") return null;
-  const expression = Reflect.get(statement, "expression");
-  if (
-    !expression ||
-    typeof expression !== "object" ||
-    Reflect.get(expression, "type") !== "CallExpression"
-  ) {
-    return null;
-  }
-  const callee = Reflect.get(expression, "callee");
-  if (!callee || typeof callee !== "object" || Reflect.get(callee, "type") !== "MemberExpression") {
-    return null;
-  }
-  const object = Reflect.get(callee, "object");
-  const property = Reflect.get(callee, "property");
-  if (
-    !object ||
-    typeof object !== "object" ||
-    Reflect.get(object, "type") !== "Identifier" ||
-    Reflect.get(object, "name") !== contextName ||
-    !property ||
-    typeof property !== "object" ||
-    Reflect.get(property, "type") !== "Identifier"
-  ) {
-    return null;
-  }
-  return String(Reflect.get(property, "name"));
-}
-
-function defaultPluginFunction(programBody: unknown[]): { body: object; contextName: string } {
-  const defaultExports = programBody.filter(
-    (statement) =>
-      statement !== null &&
-      typeof statement === "object" &&
-      Reflect.get(statement, "type") === "ExportDefaultDeclaration",
-  );
-  if (defaultExports.length !== 1) {
-    throw new Error("Plugin entry point must have exactly one default export function");
-  }
-  const declaration = Reflect.get(defaultExports[0] as object, "declaration");
-  const declarationType =
-    declaration !== null && typeof declaration === "object"
-      ? Reflect.get(declaration, "type")
-      : null;
-  if (
-    declarationType !== "FunctionDeclaration" &&
-    declarationType !== "FunctionExpression" &&
-    declarationType !== "ArrowFunctionExpression"
-  ) {
-    throw new Error("Plugin default export must be a function receiving its context");
-  }
-  const parameters = Reflect.get(declaration, "params");
-  const parameter = Array.isArray(parameters) && parameters.length === 1 ? parameters[0] : null;
-  if (
-    parameter === null ||
-    typeof parameter !== "object" ||
-    Reflect.get(parameter, "type") !== "Identifier"
-  ) {
-    throw new Error("Plugin default export must receive one named context parameter");
-  }
-  const body = Reflect.get(declaration, "body");
-  if (body === null || typeof body !== "object" || Reflect.get(body, "type") !== "BlockStatement") {
-    throw new Error("Plugin default export must have a block body");
-  }
-  return { body, contextName: String(Reflect.get(parameter, "name")) };
-}
-
-function collectRemovedRegistrationRanges(
-  node: unknown,
-  contextName: string,
-  removedNames: ReadonlySet<string>,
-  ranges: SourceRange[],
-): void {
-  if (node === null || typeof node !== "object") return;
-  if (Reflect.get(node, "type") === "ExpressionStatement") {
-    const name = registrationName(node, contextName);
-    if (name && removedNames.has(name)) {
-      const start = Reflect.get(node, "start");
-      const end = Reflect.get(node, "end");
-      if (typeof start !== "number" || typeof end !== "number") {
-        throw new Error(
-          `Could not locate plugin context ${name} registration in plugin entry point`,
-        );
-      }
-      ranges.push({ start, end });
-      return;
-    }
-  }
-  for (const value of Object.values(node)) {
-    if (Array.isArray(value)) {
-      for (const child of value)
-        collectRemovedRegistrationRanges(child, contextName, removedNames, ranges);
-    } else if (value !== null && typeof value === "object") {
-      collectRemovedRegistrationRanges(value, contextName, removedNames, ranges);
-    }
-  }
-}
-
 function moduleTarget(specifier: string): PluginBuildTarget | null {
   if (/\.client(?:\.[cm]?[jt]sx?)?$/.test(specifier)) return "client";
   if (/\.server(?:\.[cm]?[jt]sx?)?$/.test(specifier)) return "server";
   return null;
 }
 
-function collectOppositeTargetImportRanges(
-  programBody: unknown[],
-  target: PluginBuildTarget,
-  ranges: SourceRange[],
-): void {
-  for (const statement of programBody) {
-    if (
-      statement === null ||
-      typeof statement !== "object" ||
-      Reflect.get(statement, "type") !== "ImportDeclaration"
-    ) {
-      continue;
-    }
-    const source = Reflect.get(statement, "source");
-    const specifier =
-      source !== null && typeof source === "object" ? Reflect.get(source, "value") : null;
-    if (typeof specifier !== "string") continue;
-    const importedTarget = moduleTarget(specifier);
-    if (importedTarget === null || importedTarget === target) continue;
-    const start = Reflect.get(statement, "start");
-    const end = Reflect.get(statement, "end");
-    if (typeof start !== "number" || typeof end !== "number") {
-      throw new Error(`Could not locate ${importedTarget}-only import in plugin entry point`);
-    }
-    ranges.push({ start, end });
-  }
+function directoryTarget(filePath: string, pluginDirectory: string): PluginBuildTarget | null {
+  const relative = path.relative(pluginDirectory, filePath);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  const segments = relative.split(path.sep);
+  if (segments.includes("client")) return "client";
+  if (segments.includes("server")) return "server";
+  return null;
 }
 
-function filterEntrypoint(source: string, target: PluginBuildTarget): string {
-  const ast = parse(source, {
-    sourceType: "module",
-    plugins: ["typescript", "jsx"],
-  });
-  const pluginFunction = defaultPluginFunction(ast.program.body);
-  const ranges: SourceRange[] = [];
-  collectRemovedRegistrationRanges(
-    pluginFunction.body,
-    pluginFunction.contextName,
-    REGISTRATIONS_REMOVED_BY_TARGET[target],
-    ranges,
-  );
-  collectOppositeTargetImportRanges(ast.program.body, target, ranges);
-
-  let output = source;
-  for (const range of ranges.toSorted((left, right) => right.start - left.start)) {
-    output = `${output.slice(0, range.start)}${output.slice(range.end)}`;
-  }
-  return output;
-}
-
-function createRuntimeBoundaryPlugin(target: PluginBuildTarget): Plugin {
+function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory: string): Plugin {
   return {
     name: `paseo-plugin-${target}-runtime-boundary`,
     setup(buildContext) {
-      buildContext.onResolve({ filter: /\.(?:client|server)(?:\.[cm]?[jt]sx?)?$/ }, (args) => {
-        const importedTarget = moduleTarget(args.path);
+      buildContext.onResolve({ filter: /.*/ }, (args) => {
+        if (args.kind === "entry-point" || !args.path.startsWith(".")) return null;
+        const resolvedPath = path.resolve(args.resolveDir, args.path);
+        const importedTarget =
+          moduleTarget(args.path) ?? directoryTarget(resolvedPath, pluginDirectory);
         if (importedTarget === null || importedTarget === target) return null;
         return {
           errors: [
             {
-              text: `${importedTarget}-only module cannot be imported into the plugin ${target} bundle: ${args.path}`,
+              text: `${importedTarget}-only module cannot be imported into the plugin ${target} bundle: ${resolvedPath}`,
             },
           ],
         };
@@ -284,19 +124,16 @@ function exactSpecifierFilter(specifiers: readonly string[]): RegExp {
   return new RegExp(`^(${alternatives.join("|")})$`);
 }
 
-function createUnusedPlatformModulePlugin(target: PluginBuildTarget): Plugin {
-  const filter =
-    target === "server"
-      ? exactSpecifierFilter([
-          "@tanstack/react-query",
-          "react",
-          "react/jsx-runtime",
-          "react-native",
-          ...PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS,
-        ])
-      : /^node:/;
+function createUnusedPlatformModulePlugin(): Plugin {
+  const filter = exactSpecifierFilter([
+    "@tanstack/react-query",
+    "react",
+    "react/jsx-runtime",
+    "react-native",
+    ...PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS,
+  ]);
   return {
-    name: `paseo-plugin-${target}-unused-platform-modules`,
+    name: "paseo-plugin-server-unused-platform-modules",
     setup(buildContext) {
       buildContext.onResolve({ filter }, (args) => ({
         path: args.path,
@@ -311,17 +148,26 @@ function createUnusedPlatformModulePlugin(target: PluginBuildTarget): Plugin {
   };
 }
 
+function createClientNodeImportPlugin(): Plugin {
+  return {
+    name: "paseo-plugin-client-node-imports",
+    setup(buildContext) {
+      buildContext.onResolve({ filter: /^node:/ }, (args) => ({
+        errors: [
+          {
+            text: `Node module cannot be imported into the plugin client bundle: ${args.path} imported by ${args.importer}`,
+          },
+        ],
+      }));
+    },
+  };
+}
+
 async function compileTarget(entryPath: string, target: PluginBuildTarget): Promise<string> {
   const { build } = loadEsbuild();
-  const source = await readFile(entryPath, "utf8");
-  const filteredSource = filterEntrypoint(source, target);
+  const pluginDirectory = path.dirname(entryPath);
   const result = await build({
-    stdin: {
-      contents: filteredSource,
-      loader: "tsx",
-      resolveDir: path.dirname(entryPath),
-      sourcefile: entryPath,
-    },
+    entryPoints: [entryPath],
     bundle: true,
     format: "cjs",
     jsx: target === "client" ? "automatic" : undefined,
@@ -341,7 +187,12 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
             "zod",
           ]
         : [...PLUGIN_SDK_SPECIFIERS, "zod"],
-    plugins: [createRuntimeBoundaryPlugin(target), createUnusedPlatformModulePlugin(target)],
+    plugins: [
+      createRuntimeBoundaryPlugin(target, pluginDirectory),
+      ...(target === "client"
+        ? [createClientNodeImportPlugin()]
+        : [createUnusedPlatformModulePlugin()]),
+    ],
     logLevel: "silent",
     treeShaking: true,
     write: false,
@@ -351,13 +202,16 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
   return wrapCommonJsBundle(makeHermesInteropEager(output));
 }
 
-export async function compilePlugin(entryPath: string): Promise<{
-  clientBundle: string;
-  serverBundle: string;
+export async function compilePlugin(entryPaths: {
+  client: string | null;
+  server: string | null;
+}): Promise<{
+  clientBundle: string | null;
+  serverBundle: string | null;
 }> {
   const [clientBundle, serverBundle] = await Promise.all([
-    compileTarget(entryPath, "client"),
-    compileTarget(entryPath, "server"),
+    entryPaths.client ? compileTarget(entryPaths.client, "client") : null,
+    entryPaths.server ? compileTarget(entryPaths.server, "server") : null,
   ]);
   return { clientBundle, serverBundle };
 }

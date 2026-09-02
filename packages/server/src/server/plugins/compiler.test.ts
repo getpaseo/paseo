@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +9,13 @@ import {
 } from "./compiler.js";
 
 const asarEsbuildDir = path.join("Resources", "app.asar", "node_modules", "esbuild");
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
+  );
+});
 
 describe("asar esbuild binary resolution", () => {
   it("rewrites an asar package path to the unpacked platform binary", () => {
@@ -64,159 +71,147 @@ describe("asar esbuild binary resolution", () => {
   });
 });
 
-const temporaryDirectories: string[] = [];
-
-afterEach(async () => {
-  await Promise.all(
-    temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
-  );
-});
-
-describe("plugin author module externals", () => {
-  // COMPAT(plugin-sdk-scope): plugins written against the unpublished @paseo/plugin name must
-  // keep compiling. Drop that case with the specifiers in plugin-sdk-specifiers.ts.
-  it.each(["@getpaseo/plugin", "@paseo/plugin"])(
-    "leaves %s/server external in both bundles",
-    async (sdk) => {
-      const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
-      temporaryDirectories.push(directory);
-      const entryPath = path.join(directory, "index.ts");
-      await writeFile(
-        entryPath,
-        `import type { PluginContext } from "${sdk}";
-import { Icon } from "${sdk}/react-native";
-import { defineRpc } from "${sdk}/server";
-import { z } from "zod";
-
-const ping = defineRpc({
-  name: "ping",
-  input: z.object({}),
-  output: z.object({ ok: z.boolean() }),
-});
-
-function Surface() {
-  return Icon({ name: "Settings", size: 18 });
-}
-
-export default function contribute(plugin: PluginContext) {
-  plugin.handle(ping, async () => ({ ok: true }));
-  plugin.addSurface("main", Surface);
-  return () => undefined;
-}
-`,
-      );
-
-      const { clientBundle, serverBundle } = await compilePlugin(entryPath);
-      expect(clientBundle).toContain(`${sdk}/react-native`);
-      expect(clientBundle).toContain(`${sdk}/server`);
-      expect(serverBundle).toContain(`${sdk}/server`);
-      expect(serverBundle).not.toContain(`${sdk}/react-native`);
-      expect(clientBundle).toContain("Settings");
-      expect(serverBundle).not.toContain("Settings");
-      expect(clientBundle).not.toContain("Invalid plugin RPC method");
-      expect(serverBundle).not.toContain("Invalid plugin RPC method");
-    },
-  );
-});
-
-describe("plugin contribution targets", () => {
-  it("keeps client contributions out of the server bundle", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
-    temporaryDirectories.push(directory);
-    const entryPath = path.join(directory, "index.ts");
-    await writeFile(
-      entryPath,
-      `export default function contribute(plugin) {
-  plugin.addTimelineTransformer({
-    id: "timeline-card",
-    query: { itemType: "tool_call" },
-    transform() { return { items: [] }; },
-  });
-  plugin.addTimelineRenderer({
-    kind: "timeline-card",
-    version: 1,
-    schema: { safeParse(value) { return { success: true, data: value }; } },
-    Component() { return null; },
-  });
-  plugin.addClientSlashCommand({
-    name: "review",
-    description: "Review changes",
-    argumentHint: "[scope]",
-    context: "agent",
-    onSubmit() {},
-  });
-  plugin.addClientSide((client) => {
-    return client.addComposerPill({
-      id: "composer-card",
-      title: "Composer card",
-      workspaceId: "workspace-a",
-      agentId: "agent-a",
-      Component() { return null; },
-      onPress() {},
-    });
-  });
-  return () => undefined;
-}
-`,
-    );
-
-    const { clientBundle, serverBundle } = await compilePlugin(entryPath);
-    expect(clientBundle).toContain("timeline-card");
-    expect(clientBundle).toContain("composer-card");
-    expect(clientBundle).toContain("Review changes");
-    expect(serverBundle).not.toContain("timeline-card");
-    expect(serverBundle).not.toContain("composer-card");
-    expect(serverBundle).not.toContain("Review changes");
-  });
-});
-
-describe("plugin client runtime syntax", () => {
-  it("uses the automatic JSX runtime without a React import", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
-    temporaryDirectories.push(directory);
-    const entryPath = path.join(directory, "index.tsx");
-    await writeFile(
-      entryPath,
+async function createSplitPlugin(): Promise<{
+  directory: string;
+  client: string;
+  server: string;
+}> {
+  const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+  temporaryDirectories.push(directory);
+  await Promise.all([
+    mkdir(path.join(directory, "client")),
+    mkdir(path.join(directory, "server")),
+    mkdir(path.join(directory, "shared")),
+  ]);
+  const client = path.join(directory, "index.client.tsx");
+  const server = path.join(directory, "index.server.ts");
+  await Promise.all([
+    writeFile(
+      path.join(directory, "shared", "labels.ts"),
+      `export const clientLabel = "Client contribution";
+export const serverLabel = "Server contribution";`,
+    ),
+    writeFile(
+      path.join(directory, "client", "surface.tsx"),
       `import { Text } from "react-native";
-
-function Surface() {
-  return <Text>Automatic JSX</Text>;
-}
-
-export default function contribute(plugin) {
-  plugin.addSurface("automatic-jsx", Surface);
+import { clientLabel } from "../shared/labels";
+export function Surface() { return <Text>{clientLabel}</Text>; }`,
+    ),
+    writeFile(
+      path.join(directory, "server", "handler.ts"),
+      `import { serverLabel } from "../shared/labels";
+export function handler() { return { label: serverLabel }; }`,
+    ),
+    writeFile(
+      client,
+      `import { Surface } from "./client/surface";
+export default function contribute(client) {
+  client.addSurface("main", Surface);
   return () => undefined;
+}`,
+    ),
+    writeFile(
+      server,
+      `import { handler } from "./server/handler";
+export default function contribute(server) {
+  server.handle({ name: "probe" }, handler);
+  return () => undefined;
+}`,
+    ),
+  ]);
+  return { directory, client, server };
 }
-`,
-    );
 
-    const { clientBundle } = await compilePlugin(entryPath);
+describe("plugin runtime entries", () => {
+  it("builds each runtime from its own entry and shares neutral modules", async () => {
+    const entries = await createSplitPlugin();
+
+    const { clientBundle, serverBundle } = await compilePlugin(entries);
+
+    expect(clientBundle).toContain("Client contribution");
+    expect(clientBundle).not.toContain("Server contribution");
+    expect(serverBundle).toContain("Server contribution");
+    expect(serverBundle).not.toContain("Client contribution");
+  });
+
+  it("uses the automatic JSX runtime without a React import", async () => {
+    const entries = await createSplitPlugin();
+    const { clientBundle } = await compilePlugin(entries);
     expect(clientBundle).toContain("react/jsx-runtime");
     expect(clientBundle).not.toContain("React.createElement");
   });
 
   it("lowers async callbacks before Hermes evaluates the client bundle", async () => {
-    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
-    temporaryDirectories.push(directory);
-    const entryPath = path.join(directory, "index.tsx");
+    const entries = await createSplitPlugin();
     await writeFile(
-      entryPath,
-      `import type { PluginContext } from "@getpaseo/plugin";
-
-export default function contribute(plugin: PluginContext) {
-  plugin.addSurface("probe", () => {
-    const refresh = async () => "ready";
-    return refresh;
-  });
-  plugin.handle({ name: "probe" } as never, async () => "ready");
+      entries.client,
+      `export default async function contribute() {
+  await Promise.resolve();
   return () => undefined;
-}
-`,
+}`,
     );
-
-    const { clientBundle, serverBundle } = await compilePlugin(entryPath);
-    expect(clientBundle).not.toContain("async () =>");
+    const { clientBundle } = await compilePlugin(entries);
+    expect(clientBundle).not.toContain("async function contribute");
     expect(clientBundle).toContain("__async");
-    expect(serverBundle).toContain("async () =>");
+  });
+
+  it("rejects node imports from the client entry", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.client,
+      `import { readFile } from "node:fs";
+export default function contribute() { void readFile; return () => undefined; }`,
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      "Node module cannot be imported into the plugin client bundle: node:fs",
+    );
+  });
+
+  it("rejects server directory imports from the client bundle", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.client,
+      `import { handler } from "./server/handler";
+export default function contribute() { void handler; return () => undefined; }`,
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      "server-only module cannot be imported into the plugin client bundle",
+    );
+  });
+
+  it("rejects client directory imports from the server bundle", async () => {
+    const entries = await createSplitPlugin();
+    await writeFile(
+      entries.server,
+      `import { Surface } from "./client/surface";
+export default function contribute() { void Surface; return () => undefined; }`,
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      "client-only module cannot be imported into the plugin server bundle",
+    );
+  });
+
+  it("keeps suffix runtime boundaries", async () => {
+    const entries = await createSplitPlugin();
+    const clientOnly = path.join(entries.directory, "secret.client.ts");
+    await writeFile(clientOnly, "export const secret = 1;");
+    await writeFile(
+      entries.server,
+      `import { secret } from "./secret.client";
+export default function contribute() { void secret; return () => undefined; }`,
+    );
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      "client-only module cannot be imported into the plugin server bundle",
+    );
+  });
+
+  it("builds a single runtime when the other entry is absent", async () => {
+    const entries = await createSplitPlugin();
+    const { clientBundle, serverBundle } = await compilePlugin({
+      client: entries.client,
+      server: null,
+    });
+    expect(clientBundle).toContain("Client contribution");
+    expect(serverBundle).toBeNull();
   });
 });
