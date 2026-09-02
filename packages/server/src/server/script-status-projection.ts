@@ -292,6 +292,7 @@ export function createScriptStatusEmitter({
   daemonPort,
   serviceProxyPublicBaseUrl,
   resolveWorkspaceConfig,
+  emitWorkspaceSnapshot,
   logger,
 }: {
   sessions: () => SessionEmitter[];
@@ -305,6 +306,8 @@ export function createScriptStatusEmitter({
     | { workspaceDirectory: string; projectConfigDirectory?: string }
     | null
     | Promise<{ workspaceDirectory: string; projectConfigDirectory?: string } | null>;
+  /** Refreshes launch endpoint state, which is carried by workspace descriptors. */
+  emitWorkspaceSnapshot?: (workspaceId: string) => Promise<void>;
   logger: Logger;
 }): (workspaceId: string, scripts: ScriptHealthEntry[]) => void {
   return (workspaceId, scripts) => {
@@ -344,6 +347,15 @@ export function createScriptStatusEmitter({
 
       for (const session of sessions()) {
         session.emit(message);
+      }
+
+      try {
+        await emitWorkspaceSnapshot?.(workspaceId);
+      } catch (error) {
+        logger.warn(
+          { err: error, workspaceId },
+          "Failed to emit workspace update after script health changed",
+        );
       }
     })();
   };

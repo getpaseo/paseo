@@ -673,30 +673,42 @@ export async function createPaseoDaemon(
   });
   let wsServer: VoiceAssistantWebSocketServer | null = null;
   let serviceProxyListenTarget: ListenTarget | null = null;
+  const emitWorkspaceUpdatesExternal = async (workspaceIds: Iterable<string>) => {
+    const workspaceIdList = Array.from(workspaceIds);
+    await Promise.all(
+      (wsServer?.listSessions() ?? []).map((session) =>
+        session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
+      ),
+    );
+  };
+  const emitScriptStatusUpdate = createScriptStatusEmitter({
+    sessions: () =>
+      wsServer?.listSessions().map((session) => ({
+        emit: (message) => session.emitServerMessage(message),
+      })) ?? [],
+    serviceProxy,
+    runtimeStore: scriptRuntimeStore,
+    daemonPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
+    resolveWorkspaceConfig: async (workspaceId) => {
+      const workspace = await workspaceRegistry?.get(workspaceId);
+      if (!workspace) {
+        return null;
+      }
+      const project = await projectRegistry.get(workspace.projectId);
+      return {
+        workspaceDirectory: workspace.cwd,
+        projectConfigDirectory: project?.rootPath ?? workspace.cwd,
+      };
+    },
+    emitWorkspaceSnapshot: async (workspaceId) => {
+      await emitWorkspaceUpdatesExternal([workspaceId]);
+    },
+    logger,
+    serviceProxyPublicBaseUrl,
+  });
   const scriptHealthMonitor = new ScriptHealthMonitor({
     serviceProxy,
-    onChange: createScriptStatusEmitter({
-      sessions: () =>
-        wsServer?.listSessions().map((session) => ({
-          emit: (message) => session.emitServerMessage(message),
-        })) ?? [],
-      serviceProxy,
-      runtimeStore: scriptRuntimeStore,
-      daemonPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
-      resolveWorkspaceConfig: async (workspaceId) => {
-        const workspace = await workspaceRegistry?.get(workspaceId);
-        if (!workspace) {
-          return null;
-        }
-        const project = await projectRegistry.get(workspace.projectId);
-        return {
-          workspaceDirectory: workspace.cwd,
-          projectConfigDirectory: project?.rootPath ?? workspace.cwd,
-        };
-      },
-      logger,
-      serviceProxyPublicBaseUrl,
-    }),
+    onChange: emitScriptStatusUpdate,
   });
   const handleServiceProxyBranchChange = createBranchChangeRouteHandler({
     serviceProxy,
@@ -1065,14 +1077,6 @@ export async function createPaseoDaemon(
     for (const session of wsServer?.listSessions() ?? []) {
       session.clearWorkspaceArchivingForExternalMutation(workspaceIdList);
     }
-  };
-  const emitWorkspaceUpdatesExternal = async (workspaceIds: Iterable<string>) => {
-    const workspaceIdList = Array.from(workspaceIds);
-    await Promise.all(
-      (wsServer?.listSessions() ?? []).map((session) =>
-        session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
-      ),
-    );
   };
   workspaceLaunchManager = new WorkspaceLaunchManager({
     terminalManager,
