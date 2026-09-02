@@ -191,18 +191,56 @@ export default function contribute() { void Surface; return () => undefined; }`,
     );
   });
 
-  it("keeps suffix runtime boundaries", async () => {
+  it("rejects modules imported directly from the plugin root", async () => {
     const entries = await createSplitPlugin();
-    const clientOnly = path.join(entries.directory, "secret.client.ts");
-    await writeFile(clientOnly, "export const secret = 1;");
+    const helper = path.join(entries.directory, "helper.ts");
+    await writeFile(helper, "export const value = 1;");
     await writeFile(
       entries.server,
-      `import { secret } from "./secret.client";
-export default function contribute() { void secret; return () => undefined; }`,
+      `import { value } from "./helper";
+export default function contribute() { void value; return () => undefined; }`,
     );
     await expect(compilePlugin(entries)).rejects.toThrow(
-      "client-only module cannot be imported into the plugin server bundle",
+      `Plugin modules belong in client/, server/, or shared/: ${path.join(entries.directory, "helper")}`,
     );
+  });
+
+  it("keeps nested modules owned by their top-level runtime directory", async () => {
+    const entries = await createSplitPlugin();
+    const nestedClient = path.join(entries.directory, "client", "feature", "server");
+    const nestedServer = path.join(entries.directory, "server", "feature", "client");
+    const nestedShared = path.join(entries.directory, "shared", "feature");
+    await Promise.all([
+      mkdir(nestedClient, { recursive: true }),
+      mkdir(nestedServer, { recursive: true }),
+      mkdir(nestedShared, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(path.join(nestedShared, "value.ts"), `export const value = "shared nested";`),
+      writeFile(
+        path.join(nestedClient, "value.ts"),
+        `export { value } from "../../../shared/feature/value";`,
+      ),
+      writeFile(
+        path.join(nestedServer, "value.ts"),
+        `export { value } from "../../../shared/feature/value";`,
+      ),
+      writeFile(
+        entries.client,
+        `import { value } from "./client/feature/server/value";
+export default function contribute() { void value; return () => undefined; }`,
+      ),
+      writeFile(
+        entries.server,
+        `import { value } from "./server/feature/client/value";
+export default function contribute() { void value; return () => undefined; }`,
+      ),
+    ]);
+
+    const { clientBundle, serverBundle } = await compilePlugin(entries);
+
+    expect(clientBundle).toContain("shared nested");
+    expect(serverBundle).toContain("shared nested");
   });
 
   it("does not classify dependency directories as plugin runtime boundaries", async () => {

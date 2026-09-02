@@ -69,20 +69,19 @@ function loadEsbuild(): typeof import("esbuild") {
 
 type PluginBuildTarget = "client" | "server";
 
-function moduleTarget(specifier: string): PluginBuildTarget | null {
-  if (/\.client(?:\.[cm]?[jt]sx?)?$/.test(specifier)) return "client";
-  if (/\.server(?:\.[cm]?[jt]sx?)?$/.test(specifier)) return "server";
-  return null;
-}
+type PluginModuleLocation = PluginBuildTarget | "shared" | "invalid";
 
-function directoryTarget(filePath: string, pluginDirectory: string): PluginBuildTarget | null {
+function directoryTarget(filePath: string, pluginDirectory: string): PluginModuleLocation | null {
   const relative = path.relative(pluginDirectory, filePath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
   const segments = relative.split(path.sep);
   if (segments.includes("node_modules")) return null;
-  if (segments.includes("client")) return "client";
-  if (segments.includes("server")) return "server";
-  return null;
+  if (segments[0] === "client") return "client";
+  if (segments[0] === "server") return "server";
+  if (segments[0] === "shared") return "shared";
+  if (/^index\.client\.tsx?$/.test(relative)) return "client";
+  if (/^index\.server\.tsx?$/.test(relative)) return "server";
+  return "invalid";
 }
 
 function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory: string): Plugin {
@@ -92,9 +91,19 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
       buildContext.onResolve({ filter: /.*/ }, (args) => {
         if (args.kind === "entry-point" || !args.path.startsWith(".")) return null;
         const resolvedPath = path.resolve(args.resolveDir, args.path);
-        const importedTarget =
-          moduleTarget(args.path) ?? directoryTarget(resolvedPath, pluginDirectory);
-        if (importedTarget === null || importedTarget === target) return null;
+        const importedTarget = directoryTarget(resolvedPath, pluginDirectory);
+        if (importedTarget === "invalid") {
+          return {
+            errors: [
+              {
+                text: `Plugin modules belong in client/, server/, or shared/: ${resolvedPath}`,
+              },
+            ],
+          };
+        }
+        if (importedTarget === null || importedTarget === "shared" || importedTarget === target) {
+          return null;
+        }
         return {
           errors: [
             {
