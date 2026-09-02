@@ -39,6 +39,10 @@ function fitsViewportWidth(element: HTMLElement): boolean {
   return element.scrollWidth === element.clientWidth;
 }
 
+function computedTransform(element: HTMLElement): string {
+  return getComputedStyle(element).transform;
+}
+
 async function replaceEditorText(page: Page, content: string): Promise<void> {
   await editor(page).fill(content);
 }
@@ -74,7 +78,9 @@ function watchRequestsTo(page: Page, origin: string): string[] {
   return requests;
 }
 
-async function seedAgentWithFileLink(input: LinkedFile) {
+async function seedAgentWithFileLink(input: LinkedFile | string, href?: string) {
+  const target = typeof input === "string" ? input : input.target;
+  const reference = href ? `[${target}](${href})` : `\`${target}\``;
   const session = await seedMockAgentWorkspace({
     repoPrefix: "file-editing-chat-link-",
     title: "Chat file link e2e",
@@ -83,11 +89,13 @@ async function seedAgentWithFileLink(input: LinkedFile) {
       "Return JSON only with fields 'title' and 'branch'.",
       "",
       "<user-prompt>",
-      `Open \`${input.target}\` now`,
+      `Open ${reference} now`,
       "</user-prompt>",
     ].join("\n"),
   });
-  await writeFile(path.join(session.cwd, input.fileName), input.content, "utf8");
+  if (typeof input !== "string") {
+    await writeFile(path.join(session.cwd, input.fileName), input.content, "utf8");
+  }
   return session;
 }
 
@@ -214,6 +222,92 @@ test.describe("CodeMirror workspace file editing", () => {
       await expect(
         page.getByTestId("file-source-editor").locator(".cm-line", { hasText: "line42 = 42" }),
       ).toBeVisible();
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("closes an image file tab back to its parent agent on compact layouts", async ({ page }) => {
+    test.setTimeout(180_000);
+    const target = "pixel.png";
+    const session = await seedAgentWithFileLink(target, `./${target}`);
+
+    try {
+      const fileTabMenuTrigger = page.getByTestId(`workspace-tab-menu-file_${target}-trigger`);
+      await writeFile(path.join(session.cwd, target), RED_PIXEL);
+      await page.setViewportSize({ width: 390, height: 844 });
+      await openAgentRoute(page, session);
+
+      const fileLink = page.locator(`a[href="./${target}"]`);
+      await expect(fileLink).toBeVisible({ timeout: 15_000 });
+      await fileLink.click();
+
+      await expect(page.getByTestId("workspace-file-pane")).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByTestId("workspace-file-tab-close")).toBeVisible();
+      await page.getByTestId("workspace-tab-switcher-trigger").click();
+      await expect(fileTabMenuTrigger).toBeVisible({ timeout: 10_000 });
+      const switcherBackdrop = page.getByRole("button", { name: "Bottom sheet backdrop" }).first();
+      await expect(switcherBackdrop).toBeVisible({ timeout: 10_000 });
+      await expect(async () => {
+        const backdropBox = await switcherBackdrop.boundingBox();
+        if (!backdropBox) {
+          throw new Error("Expected the tab switcher backdrop to be visible");
+        }
+        await page.mouse.click(backdropBox.x + backdropBox.width / 2, backdropBox.y + 24);
+        await expect(switcherBackdrop).not.toBeVisible({ timeout: 1_000 });
+      }).toPass({ timeout: 15_000 });
+      await page.getByTestId("workspace-file-tab-close").click();
+
+      await expect(page.getByTestId("workspace-file-tab-close")).toHaveCount(0);
+      await expect(fileLink).toBeVisible();
+      await page.getByTestId("workspace-tab-switcher-trigger").click();
+      await expect(
+        page.getByTestId(`workspace-tab-menu-agent_${session.agentId}-trigger`),
+      ).toBeVisible({ timeout: 10_000 });
+      await expect(fileTabMenuTrigger).toHaveCount(0);
+    } finally {
+      await session.cleanup();
+    }
+  });
+
+  test("zooms and pans an image file on desktop", async ({ page }) => {
+    const target = "pixel.png";
+    const session = await seedAgentWithFileLink(target, `./${target}`);
+
+    try {
+      await writeFile(path.join(session.cwd, target), RED_PIXEL);
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await openAgentRoute(page, session);
+      await page.locator(`a[href="./${target}"]`).click();
+
+      const viewer = page.getByTestId("workspace-file-image");
+      const canvas = page.getByTestId("workspace-file-image-canvas");
+      const imageFrame = canvas.locator(":scope > div");
+      await expect(viewer).toBeVisible({ timeout: 30_000 });
+      await expect(canvas).toBeVisible();
+      const initialTransform = await imageFrame.evaluate(computedTransform);
+
+      await canvas.hover();
+      await page.mouse.wheel(0, -300);
+      await page.mouse.wheel(0, -300);
+      await page.mouse.wheel(0, -300);
+      await expect.poll(() => imageFrame.evaluate(computedTransform)).not.toBe(initialTransform);
+
+      const beforeDrag = await imageFrame.evaluate(computedTransform);
+      const viewerBox = await viewer.boundingBox();
+      if (!viewerBox) throw new Error("Expected image viewer bounds");
+      await page.mouse.move(viewerBox.x + viewerBox.width / 2, viewerBox.y + viewerBox.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(
+        viewerBox.x + viewerBox.width / 2 + 80,
+        viewerBox.y + viewerBox.height / 2,
+        { steps: 5 },
+      );
+      await page.mouse.up();
+      await expect.poll(() => imageFrame.evaluate(computedTransform)).not.toBe(beforeDrag);
+
+      await canvas.dblclick();
+      await expect.poll(() => imageFrame.evaluate(computedTransform)).toBe(initialTransform);
     } finally {
       await session.cleanup();
     }

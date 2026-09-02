@@ -2,11 +2,26 @@ import { useEffect, useRef, useState } from "react";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { releaseAttachmentPreviewUrl, resolveAttachmentPreviewUrl } from "@/attachments/service";
 
-export function useAttachmentPreviewUrl(
+export type AttachmentPreviewUrlState =
+  | { status: "idle" | "loading" | "error"; url: null }
+  | { status: "ready"; url: string };
+
+export async function resolveAttachmentPreviewUrlState(input: {
+  attachment: AttachmentMetadata;
+  resolve: (attachment: AttachmentMetadata) => Promise<string>;
+}): Promise<{ status: "ready"; url: string } | { status: "error"; url: null }> {
+  try {
+    return { status: "ready", url: await input.resolve(input.attachment) };
+  } catch {
+    return { status: "error", url: null };
+  }
+}
+
+export function useAttachmentPreviewUrlState(
   attachment: AttachmentMetadata | null | undefined,
-): string | null {
-  const [url, setUrl] = useState<string | null>(null);
-  const activeAttachmentRef = useRef<AttachmentMetadata | null>(null);
+  retryKey = 0,
+): AttachmentPreviewUrlState {
+  const [state, setState] = useState<AttachmentPreviewUrlState>({ status: "idle", url: null });
   const attachmentRef = useRef(attachment);
   attachmentRef.current = attachment;
 
@@ -20,44 +35,48 @@ export function useAttachmentPreviewUrl(
     let currentUrl: string | null = null;
     const current = attachmentRef.current;
 
-    activeAttachmentRef.current = current ?? null;
     if (!current) {
-      setUrl(null);
+      setState({ status: "idle", url: null });
       return;
     }
 
+    setState({ status: "loading", url: null });
     void (async () => {
-      try {
-        const resolved = await resolveAttachmentPreviewUrl(current);
-        if (disposed) {
-          await releaseAttachmentPreviewUrl({ attachment: current, url: resolved });
-          return;
-        }
-        currentUrl = resolved;
-        setUrl(resolved);
-      } catch (error) {
+      const result = await resolveAttachmentPreviewUrlState({
+        attachment: current,
+        resolve: resolveAttachmentPreviewUrl,
+      });
+      if (result.status === "error") {
         console.error("[attachments] Failed to resolve preview URL", {
           attachmentId: current.id,
-          error,
         });
         if (!disposed) {
-          setUrl(null);
+          setState(result);
         }
+        return;
       }
+      if (disposed) {
+        await releaseAttachmentPreviewUrl({ attachment: current, url: result.url });
+        return;
+      }
+      currentUrl = result.url;
+      setState(result);
     })();
 
     return () => {
       disposed = true;
-      const activeAttachment = activeAttachmentRef.current;
-      if (!currentUrl || !activeAttachment) {
+      if (!currentUrl) {
         return;
       }
-      void releaseAttachmentPreviewUrl({
-        attachment: activeAttachment,
-        url: currentUrl,
-      });
+      void releaseAttachmentPreviewUrl({ attachment: current, url: currentUrl });
     };
-  }, [id, storageType, storageKey, mimeType]);
+  }, [id, storageType, storageKey, mimeType, retryKey]);
 
-  return url;
+  return state;
+}
+
+export function useAttachmentPreviewUrl(
+  attachment: AttachmentMetadata | null | undefined,
+): string | null {
+  return useAttachmentPreviewUrlState(attachment).url;
 }

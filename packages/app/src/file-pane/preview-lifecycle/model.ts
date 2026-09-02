@@ -1,9 +1,9 @@
 import type { FileReadResult } from "@getpaseo/client/internal/daemon-client";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { persistAttachmentFromBytes } from "@/attachments/service";
-import { createPreviewAttachmentId, getFileNameFromPath } from "@/attachments/utils";
 import { explorerFileFromReadResult } from "@/file-explorer/read-result";
 import type { ExplorerFile } from "@/stores/session-store";
+import { prepareImagePreviewAttachment } from "../image-preview-attachment";
 import type { LiveFileSnapshot } from "../live-file/model";
 
 export interface FilePanePreview {
@@ -28,20 +28,12 @@ export async function createFilePanePreview(file: FileReadResult): Promise<FileP
     return { file: explorerFile, imageAttachment: null };
   }
 
-  const imageAttachment = await persistAttachmentFromBytes({
-    id: createPreviewAttachmentId({
-      mimeType: file.mime,
-      path: file.path,
-      size: file.size,
-      modifiedAt: file.modifiedAt,
-      contentLength: file.bytes.byteLength,
-    }),
-    bytes: file.bytes,
-    mimeType: file.mime,
-    fileName: getFileNameFromPath(file.path),
-  });
+  const result = await prepareImagePreviewAttachment(file, { persist: persistAttachmentFromBytes });
+  if (result.status === "error") {
+    throw new Error("Failed to prepare image preview");
+  }
 
-  return { file: explorerFile, imageAttachment };
+  return { file: explorerFile, imageAttachment: result.attachment };
 }
 
 /** Owns conversion after LiveFileModel has produced a raw file snapshot. */
@@ -63,7 +55,11 @@ export class FilePreviewLifecycleModel {
 
   getSnapshot = (): FilePreviewLifecycleSnapshot => this.snapshot;
 
-  setSource(input: { targetKey: string | null; liveFileSnapshot: LiveFileSnapshot }): void {
+  setSource(input: {
+    targetKey: string | null;
+    liveFileSnapshot: LiveFileSnapshot;
+    preparationRevision?: number;
+  }): void {
     const targetChanged = input.targetKey !== this.targetKey;
     const retainedPreview = targetChanged ? undefined : filePreviewFromLifecycle(this.snapshot);
     if (targetChanged) {
@@ -144,6 +140,7 @@ export function resolveFilePreviewLifecycle(snapshot: FilePreviewLifecycleSnapsh
 function getReadySource(input: {
   targetKey: string | null;
   liveFileSnapshot: LiveFileSnapshot;
+  preparationRevision?: number;
 }): { key: string; file: FileReadResult } | null {
   const observation = input.liveFileSnapshot.observation;
   if (!input.targetKey || observation?.status !== "ready") {
@@ -154,7 +151,7 @@ function getReadySource(input: {
     return null;
   }
   return {
-    key: `${input.targetKey}:${version.revision ?? version.modifiedAt}:${version.size}`,
+    key: `${input.targetKey}:${version.revision ?? version.modifiedAt}:${version.size}:${input.preparationRevision ?? 0}`,
     file: observation.file,
   };
 }

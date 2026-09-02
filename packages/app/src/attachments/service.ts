@@ -133,11 +133,19 @@ export async function releaseAttachmentPreviewUrl(input: {
   attachment: AttachmentMetadata;
   url: string;
 }): Promise<void> {
-  const store = await getAttachmentStore();
-  if (!store.releasePreviewUrl) {
-    return;
+  try {
+    const store = await getAttachmentStore();
+    if (!store.releasePreviewUrl) {
+      return;
+    }
+    await store.releasePreviewUrl({ attachment: input.attachment, url: input.url });
+  } catch (error) {
+    console.warn("[attachments] Failed to release preview URL", {
+      attachmentId: input.attachment.id,
+      storageType: input.attachment.storageType,
+      error,
+    });
   }
-  await store.releasePreviewUrl({ attachment: input.attachment, url: input.url });
 }
 
 export async function deleteAttachments(

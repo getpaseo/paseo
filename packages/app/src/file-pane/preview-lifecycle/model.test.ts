@@ -72,11 +72,13 @@ function completed(rawFile: FileReadResult): LiveFileSnapshot {
 function source(
   targetKey: string,
   snapshot: LiveFileSnapshot,
+  preparationRevision?: number,
 ): {
   targetKey: string;
   liveFileSnapshot: LiveFileSnapshot;
+  preparationRevision?: number;
 } {
-  return { targetKey, liveFileSnapshot: snapshot };
+  return { targetKey, liveFileSnapshot: snapshot, preparationRevision };
 }
 
 describe("FilePreviewLifecycleModel", () => {
@@ -145,6 +147,27 @@ describe("FilePreviewLifecycleModel", () => {
 
     second.resolve(nextPreview);
     await expectSnapshot(model, { status: "ready", preview: nextPreview });
+  });
+
+  it("retries preparation for the same raw file when the preparation revision changes", async () => {
+    const first = deferred<FilePanePreview | null>();
+    const second = deferred<FilePanePreview | null>();
+    const preparations = [first, second];
+    const model = new FilePreviewLifecycleModel(() => preparations.shift()!.promise);
+    const preview: FilePanePreview = {
+      file: previewFile("retried"),
+      imageAttachment: null,
+    };
+    const snapshot = completed(file("same-revision"));
+
+    model.setSource(source("/workspace:file.ts", snapshot, 0));
+    first.reject(new Error("attachment failed"));
+    await expectSnapshot(model, { status: "error", message: "attachment failed" });
+
+    model.setSource(source("/workspace:file.ts", snapshot, 1));
+    expect(model.getSnapshot()).toEqual({ status: "preparing" });
+    second.resolve(preview);
+    await expectSnapshot(model, { status: "ready", preview });
   });
 });
 

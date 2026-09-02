@@ -1,6 +1,7 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import { getOpenAgentTabLabel } from "@getpaseo/protocol/agent-labels";
+import { Button } from "@/components/ui/button";
 import {
   memo,
   useCallback,
@@ -19,7 +20,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRouter, type Href } from "expo-router";
 import * as Clipboard from "expo-clipboard";
 import { useTranslation } from "react-i18next";
-import { ChevronDown } from "lucide-react-native";
+import { ChevronDown, X } from "lucide-react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
@@ -671,6 +672,10 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
     Keyboard.dismiss();
     setIsOpen(true);
   }, []);
+  const handleCloseActiveFile = useCallback(() => {
+    if (activeTab?.kind !== "file") return;
+    void onCloseTab(activeTab.tabId);
+  }, [activeTab, onCloseTab]);
 
   const renderTabOption = useCallback(
     ({
@@ -758,6 +763,19 @@ const MobileWorkspaceTabSwitcher = memo(function MobileWorkspaceTabSwitcher({
           </>
         )}
       </Pressable>
+
+      {activeTab?.kind === "file" ? (
+        <Button
+          variant="ghost"
+          size="md"
+          leftIcon={X}
+          style={styles.mobileFileCloseButton}
+          testID="workspace-file-tab-close"
+          accessibilityLabel={t("panels.file.closePreview")}
+          accessibilityHint={t("panels.file.closePreviewHint")}
+          onPress={handleCloseActiveFile}
+        />
+      ) : null}
 
       <Combobox
         options={tabSwitcherOptions}
@@ -4251,13 +4269,25 @@ const styles = StyleSheet.create((theme) => ({
     backgroundColor: theme.colors.surface0,
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
   },
   switcherTrigger: {
+    flex: 1,
+    minWidth: 0,
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[2],
     paddingHorizontal: theme.spacing[2] + theme.spacing[3],
     paddingVertical: theme.spacing[2],
+  },
+  mobileFileCloseButton: {
+    width: 44,
+    height: 44,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    marginRight: theme.spacing[1],
   },
   switcherTriggerPressed: {
     backgroundColor: theme.colors.surface1,

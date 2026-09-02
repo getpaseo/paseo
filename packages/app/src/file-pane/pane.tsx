@@ -15,7 +15,9 @@ import { useTranslation } from "react-i18next";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useSessionStore, type ExplorerFile } from "@/stores/session-store";
 import { filePreviewRenderKind } from "@/components/file-pane-render-mode";
-import { useAttachmentPreviewUrl } from "@/attachments/use-attachment-preview-url";
+import type { AttachmentMetadata } from "@/attachments/types";
+import { retainAttachmentForGarbageCollection } from "@/attachments/gc-retention";
+import { useAttachmentPreviewUrlState } from "@/attachments/use-attachment-preview-url";
 import { getFileNameFromPath } from "@/attachments/utils";
 import { resolveFilePreviewReadTarget } from "@/file-explorer/preview-target";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
@@ -30,6 +32,7 @@ import { resolveFilePreviewLifecycle } from "./preview-lifecycle/model";
 import { FilePanelBar } from "./bar";
 import { FileHtmlPreview } from "./html-preview";
 import { FileMarkdownPreview } from "./markdown-preview";
+import { FileImagePreview } from "./image-preview";
 import { FileEditorModel, getFileConflictCallout, type FileConflictCallout } from "./editor/model";
 import { createFileObservationSource } from "./editor/observation-source";
 import { FileEditorView } from "./editor/view";
@@ -39,7 +42,6 @@ import type { LiveFileModel } from "./live-file/model";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { usePublishPanelInstanceAttributes } from "@/panels/panel-instance-attributes";
 import type { Theme } from "@/styles/theme";
-import { ZoomableImage } from "@/components/zoomable-viewport/image";
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const foregroundMutedColorMapping = (theme: Theme) => ({
@@ -54,6 +56,8 @@ interface FilePreviewBodyProps {
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  imageAttachment: AttachmentMetadata | null;
+  imageFileName: string;
 }
 
 type TextExplorerFile = ExplorerFile & { kind: "text" };
@@ -135,6 +139,8 @@ function FilePreviewBody({
   location,
   navigationRevision,
   imagePreviewUri,
+  imageAttachment,
+  imageFileName,
 }: FilePreviewBodyProps) {
   const { t } = useTranslation();
   const filePath = location.path;
@@ -208,7 +214,13 @@ function FilePreviewBody({
       );
     }
 
-    return <ZoomableImage uri={imagePreviewUri} testID="image-file-preview" />;
+    return (
+      <FileImagePreview
+        uri={imagePreviewUri}
+        fileName={imageFileName}
+        attachment={imageAttachment}
+      />
+    );
   }
 
   return (
@@ -233,6 +245,7 @@ export function FilePane({
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
   const [previewMode, setPreviewMode] = useState<"preview" | "source">("preview");
+  const [previewRetry, setPreviewRetry] = useState(0);
 
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   // COMPAT(workspaceFileEditing): added in v0.2.0, remove after 2027-01-18 once daemon floor >= v0.2.0.
@@ -269,17 +282,29 @@ export function FilePane({
     enabled,
     liveUpdates: supportsEditing,
   });
+  const refreshLiveFile = liveFile.refresh;
 
   const targetKey = readTarget ? `${readTarget.cwd}:${readTarget.path}` : null;
   const previewLifecycle = useFilePreview({
     targetKey,
     liveFileSnapshot: liveFile.snapshot,
+    preparationRevision: previewRetry,
   });
 
   useEffect(() => setPreviewMode("preview"), [targetKey]);
 
   const { file: preview, imageAttachment } = resolveFilePreviewLifecycle(previewLifecycle);
-  const imagePreviewUri = useAttachmentPreviewUrl(imageAttachment);
+  useEffect(() => {
+    if (!imageAttachment) return;
+    return retainAttachmentForGarbageCollection(imageAttachment.id);
+  }, [imageAttachment]);
+  const imagePreview = useAttachmentPreviewUrlState(imageAttachment, previewRetry);
+  const imagePreviewUri = imagePreview.url;
+  const handleRetryRead = useCallback(() => {
+    setPreviewRetry((attempt) => attempt + 1);
+    refreshLiveFile();
+  }, [refreshLiveFile]);
+  const imageFileName = getFileNameFromPath(location.path) ?? location.path;
   const isRenderable = isRenderablePreview(preview, location.path);
   const editable = isEditableTextFile({
     preview,
@@ -288,7 +313,12 @@ export function FilePane({
   const canTogglePreviewMode = isRenderable && !location.lineStart;
   const lineCount =
     preview?.kind === "text" ? (preview.content ?? "").split("\n").length : undefined;
-  const errorMessage = previewLifecycle.status === "error" ? previewLifecycle.message : null;
+  let errorMessage: string | null = null;
+  if (previewLifecycle.status === "error") {
+    errorMessage = previewLifecycle.message;
+  } else if (imagePreview.status === "error") {
+    errorMessage = t("panels.file.failedToLoad");
+  }
   const isLoading =
     previewLifecycle.status === "initial" ||
     previewLifecycle.status === "read_pending" ||
@@ -301,10 +331,10 @@ export function FilePane({
       readTarget={readTarget}
       preview={preview}
       liveFile={liveFile.model}
-      onRetryRead={liveFile.refresh}
+      onRetryRead={handleRetryRead}
       retryingRead={liveFile.isRetrying}
       retryLabel={t("common.actions.retry")}
-      filename={getFileNameFromPath(location.path) ?? location.path}
+      filename={imageFileName}
       previewMode={canTogglePreviewMode ? previewMode : undefined}
       onPreviewModeChange={canTogglePreviewMode ? setPreviewMode : undefined}
       lineCount={lineCount}
@@ -316,6 +346,7 @@ export function FilePane({
       location={location}
       navigationRevision={navigationRevision}
       imagePreviewUri={imagePreviewUri}
+      imageAttachment={imageAttachment}
     />
   );
 }
@@ -357,6 +388,7 @@ function FilePanePresentation({
   location,
   navigationRevision,
   imagePreviewUri,
+  imageAttachment,
 }: {
   serverId: string;
   client: DaemonClient | null;
@@ -378,6 +410,7 @@ function FilePanePresentation({
   location: WorkspaceFileLocation;
   navigationRevision: number;
   imagePreviewUri: string | null;
+  imageAttachment: AttachmentMetadata | null;
 }) {
   if (!client && readTarget) {
     return (
@@ -449,6 +482,8 @@ function FilePanePresentation({
         location={location}
         navigationRevision={navigationRevision}
         imagePreviewUri={imagePreviewUri}
+        imageAttachment={imageAttachment}
+        imageFileName={filename}
       />
     </View>
   );
@@ -622,6 +657,8 @@ function EditableFilePane({
           location={location}
           navigationRevision={navigationRevision}
           imagePreviewUri={null}
+          imageAttachment={null}
+          imageFileName={filename}
         />
       )}
     </View>

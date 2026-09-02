@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AttachmentMetadata, AttachmentStore, SaveAttachmentInput } from "@/attachments/types";
 import { __setAttachmentStoreForTests } from "./store";
 import {
   encodeAttachmentsForSend,
   garbageCollectAttachments,
   persistAttachmentFromBytes,
+  releaseAttachmentPreviewUrl,
 } from "./service";
 
 function createAttachment(input: Partial<AttachmentMetadata> = {}): AttachmentMetadata {
@@ -97,6 +98,32 @@ describe("attachment service", () => {
     await expect(encodeAttachmentsForSend([attachment])).resolves.toEqual([
       { data: "att_send:base64", mimeType: "image/jpeg" },
     ]);
+  });
+
+  it("warns and resolves when preview URL release fails", async () => {
+    const releaseError = new Error("preview URL unavailable");
+    const store: AttachmentStore = {
+      ...createRecordingStore(),
+      async releasePreviewUrl() {
+        throw releaseError;
+      },
+    };
+    __setAttachmentStoreForTests(store);
+    const attachment = createAttachment({ id: "att_release", storageType: "web-indexeddb" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      await expect(
+        releaseAttachmentPreviewUrl({ attachment, url: "blob:att_release" }),
+      ).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith("[attachments] Failed to release preview URL", {
+        attachmentId: "att_release",
+        storageType: "web-indexeddb",
+        error: releaseError,
+      });
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("does not collect an attachment persisted while garbage collection is starting", async () => {

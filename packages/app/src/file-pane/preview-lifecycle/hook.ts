@@ -10,14 +10,15 @@ import {
 export function useFilePreview(input: {
   targetKey: string | null;
   liveFileSnapshot: LiveFileSnapshot;
+  preparationRevision?: number;
 }): FilePreviewLifecycleSnapshot {
   const [model] = useState(() => new FilePreviewLifecycleModel(createFilePanePreview));
   const snapshot = useSyncExternalStore(model.subscribe, model.getSnapshot, model.getSnapshot);
-  const { targetKey, liveFileSnapshot } = input;
+  const { targetKey, liveFileSnapshot, preparationRevision } = input;
 
   useEffect(() => {
-    model.setSource({ targetKey, liveFileSnapshot });
-  }, [liveFileSnapshot, model, targetKey]);
+    model.setSource({ targetKey, liveFileSnapshot, preparationRevision });
+  }, [liveFileSnapshot, model, preparationRevision, targetKey]);
 
   return snapshot;
 }

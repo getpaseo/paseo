@@ -13,11 +13,13 @@ import {
   FolderPlus,
   MessageSquarePlus,
   Pencil,
+  Share2,
   Trash2,
   Undo2,
   type LucideIcon,
 } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
+import { isNative } from "@/constants/platform";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import {
   ContextMenuContent,
@@ -28,6 +30,11 @@ import {
 const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 const destructiveColorMapping = (theme: Theme) => ({ color: theme.colors.destructive });
 type FileActionGroup = "create" | "open" | "reference" | "manage" | "destructive";
+
+// Native has no filesystem download target, so the same handler is surfaced as Share.
+const downloadActionSpec = isNative
+  ? { key: "share", labelKey: "workspace.fileActions.share", icon: Share2 }
+  : { key: "download", labelKey: "workspace.fileActions.download", icon: Download };
 
 interface FileAction {
   key: string;
@@ -186,10 +193,10 @@ export function FileActionsContextMenuContent({
         : null,
       availableFile && onDownload
         ? {
-            key: "download",
+            key: downloadActionSpec.key,
             group: "reference",
-            label: t("workspace.fileActions.download"),
-            icon: Download,
+            label: t(downloadActionSpec.labelKey),
+            icon: downloadActionSpec.icon,
             onSelect: onDownload,
           }
         : null,
