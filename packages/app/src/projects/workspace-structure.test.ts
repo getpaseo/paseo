@@ -7,12 +7,14 @@ function project(input: {
   key: string | null;
   root: string;
   name?: string;
+  group?: string | null;
 }): ProjectDescriptor {
   return {
     projectId: input.id,
     projectKey: input.key,
     projectDisplayName: input.name ?? "acme/app",
     projectCustomName: null,
+    projectGroup: input.group ?? null,
     projectRootPath: input.root,
     projectKind: "git",
   };
@@ -172,5 +174,48 @@ describe("buildWorkspaceStructureProjects", () => {
     expect(result.find((item) => item.projectKey === placementShapedKey)?.viewKey).toBe(
       placementShapedKey,
     );
+  });
+
+  test("the first non-null group across hosts wins; stays null when no host names one", () => {
+    const key = "remote:github.com/acme/app";
+    const withGroup = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [project({ id: "prj_a", key, root: "/a/app", group: null })],
+          workspaces: [],
+        },
+        {
+          serverId: "host-b",
+          projects: [project({ id: "prj_b", key, root: "/b/app", group: "Client X" })],
+          workspaces: [],
+        },
+        {
+          serverId: "host-c",
+          projects: [project({ id: "prj_c", key, root: "/c/app", group: "Client Y" })],
+          workspaces: [],
+        },
+      ],
+    });
+
+    expect(withGroup).toHaveLength(1);
+    expect(withGroup[0]?.group).toBe("Client X");
+
+    const withoutGroup = buildWorkspaceStructureProjects({
+      sessions: [
+        {
+          serverId: "host-a",
+          projects: [project({ id: "prj_a", key, root: "/a/app", group: null })],
+          workspaces: [],
+        },
+        {
+          serverId: "host-b",
+          projects: [project({ id: "prj_b", key, root: "/b/app", group: null })],
+          workspaces: [],
+        },
+      ],
+    });
+
+    expect(withoutGroup[0]?.group).toBeNull();
   });
 });

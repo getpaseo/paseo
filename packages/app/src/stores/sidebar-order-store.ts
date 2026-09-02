@@ -6,10 +6,16 @@ import { createValidatedPersistStorage } from "@/storage/validated-persist-stora
 
 interface SidebarOrderStoreState {
   projectOrder: string[];
+  /** Project group keys in the order the user arranged them; see `orderProjectGroups`. */
+  projectGroupOrder: string[];
   pinnedWorkspaceOrder: string[];
   workspaceOrderByProject: Record<string, string[]>;
   getProjectOrder: () => string[];
   setProjectOrder: (keys: string[]) => void;
+  getProjectGroupOrder: () => string[];
+  setProjectGroupOrder: (keys: string[]) => void;
+  /** A renamed group keeps its place: its entry moves to the new key. */
+  renameProjectGroupOrderKey: (fromKey: string, toKey: string) => void;
   getPinnedWorkspaceOrder: () => string[];
   setPinnedWorkspaceOrder: (keys: string[]) => void;
   getWorkspaceOrder: (projectViewKey: string) => string[];
@@ -18,6 +24,7 @@ interface SidebarOrderStoreState {
 
 interface SidebarOrderPersistedState {
   projectOrder?: string[];
+  projectGroupOrder?: string[];
   pinnedWorkspaceOrder?: string[];
   workspaceOrderByProject?: Record<string, string[]>;
   projectOrderByServerId?: Record<string, string[]>;
@@ -27,6 +34,7 @@ interface SidebarOrderPersistedState {
 const StringArrayRecordSchema = z.record(z.string(), z.array(z.string()));
 const SidebarOrderPersistedStateSchema = z.strictObject({
   projectOrder: z.array(z.string()).optional(),
+  projectGroupOrder: z.array(z.string()).optional(),
   pinnedWorkspaceOrder: z.array(z.string()).optional(),
   workspaceOrderByProject: StringArrayRecordSchema.optional(),
   projectOrderByServerId: StringArrayRecordSchema.optional(),
@@ -84,12 +92,18 @@ function normalizeLegacyWorkspaceKey(serverId: string, rawWorkspaceKey: string):
 
 export function migrateSidebarOrderState(persistedState: unknown): {
   projectOrder: string[];
+  projectGroupOrder: string[];
   pinnedWorkspaceOrder: string[];
   workspaceOrderByProject: Record<string, string[]>;
 } {
   const result = SidebarOrderPersistedStateSchema.safeParse(persistedState);
   if (!result.success) {
-    return { projectOrder: [], pinnedWorkspaceOrder: [], workspaceOrderByProject: {} };
+    return {
+      projectOrder: [],
+      projectGroupOrder: [],
+      pinnedWorkspaceOrder: [],
+      workspaceOrderByProject: {},
+    };
   }
   const state: SidebarOrderPersistedState = result.data;
 
@@ -121,21 +135,38 @@ export function migrateSidebarOrderState(persistedState: unknown): {
 
   return {
     projectOrder,
+    projectGroupOrder: normalizeKeys(state.projectGroupOrder ?? []),
     pinnedWorkspaceOrder: normalizeKeys(state.pinnedWorkspaceOrder ?? []),
     workspaceOrderByProject,
   };
+}
+
+export function renameOrderKey(order: string[], fromKey: string, toKey: string): string[] {
+  if (fromKey === toKey || !order.includes(fromKey)) return order;
+  const withoutTarget = order.filter((key) => key !== toKey);
+  return withoutTarget.map((key) => (key === fromKey ? toKey : key));
 }
 
 export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
   persist(
     (set, get) => ({
       projectOrder: [],
+      projectGroupOrder: [],
       pinnedWorkspaceOrder: [],
       workspaceOrderByProject: {},
       getProjectOrder: () => get().projectOrder,
       setProjectOrder: (keys) => {
         const normalized = normalizeKeys(keys);
         set({ projectOrder: normalized });
+      },
+      getProjectGroupOrder: () => get().projectGroupOrder,
+      setProjectGroupOrder: (keys) => {
+        set({ projectGroupOrder: normalizeKeys(keys) });
+      },
+      renameProjectGroupOrderKey: (fromKey, toKey) => {
+        set((state) => ({
+          projectGroupOrder: renameOrderKey(state.projectGroupOrder, fromKey, toKey),
+        }));
       },
       getPinnedWorkspaceOrder: () => get().pinnedWorkspaceOrder,
       setPinnedWorkspaceOrder: (keys) => {
@@ -164,6 +195,7 @@ export const useSidebarOrderStore = create<SidebarOrderStoreState>()(
       storage: createValidatedPersistStorage(AsyncStorage, SidebarOrderPersistedStateSchema),
       partialize: (state) => ({
         projectOrder: state.projectOrder,
+        projectGroupOrder: state.projectGroupOrder,
         pinnedWorkspaceOrder: state.pinnedWorkspaceOrder,
         workspaceOrderByProject: state.workspaceOrderByProject,
       }),

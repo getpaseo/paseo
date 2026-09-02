@@ -3722,6 +3722,7 @@ test("archiving the last workspace emits a remove carrying the now-empty project
       projectId: project.projectId,
       projectDisplayName: "repo",
       projectCustomName: null,
+      projectGroup: null,
       projectCustomIconRevision: null,
       projectRootPath: REPO_CWD,
       projectKind: "git",
@@ -8064,6 +8065,190 @@ test("project.rename.request returns accepted=false when project is not found", 
     customName: null,
   });
   expect(response?.payload.error).toBeTruthy();
+});
+
+test("project.group.set.request stores a trimmed group and emits an updated workspace descriptor", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+
+  const project = createPersistedProjectRecord({
+    projectId: "prj_group",
+    projectKey: "remote:github.com/acme/repo",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "acme/repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId: "ws-1",
+    projectId: project.projectId,
+    cwd: REPO_CWD,
+    kind: "local_checkout",
+    displayName: "main",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  const projects = new Map([[project.projectId, project]]);
+  session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
+  session.projectRegistry.update = async (id, updater) => {
+    const current = projects.get(id);
+    if (!current) return null;
+    const updated = updater(current);
+    projects.set(id, updated);
+    return updated;
+  };
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.get = async (id: string) =>
+    id === workspace.workspaceId ? workspace : null;
+
+  session.workspaceUpdatesSubscription = {
+    subscriptionId: "sub-workspaces",
+    filter: {},
+    isBootstrapping: false,
+    lastEmittedByWorkspaceId: new Map(),
+    pendingUpdatesByWorkspaceId: new Map(),
+  };
+
+  await session.handleMessage({
+    type: "project.group.set.request",
+    projectId: project.projectId,
+    group: "  Client X  ",
+    requestId: "req-group-1",
+  });
+
+  const response = findByType(emitted, "project.group.set.response");
+  expect(response?.payload).toEqual({
+    requestId: "req-group-1",
+    projectId: project.projectId,
+    accepted: true,
+    group: "Client X",
+    error: null,
+  });
+
+  expect(projects.get(project.projectId)?.group).toBe("Client X");
+
+  const update = findByType(emitted, "workspace_update");
+  expect(update?.payload).toMatchObject({
+    kind: "upsert",
+    workspace: {
+      id: "ws-1",
+      projectGroup: "Client X",
+    },
+  });
+});
+
+test("project.group.set.request updates a project with no workspaces", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  session.updateClientCapabilities({ [CLIENT_CAPS.projectUpdates]: true });
+
+  const project = createPersistedProjectRecord({
+    projectId: "prj_group_empty",
+    rootPath: REPO_CWD,
+    kind: "non_git",
+    displayName: "repo",
+    createdAt: "2026-07-20T12:00:00.000Z",
+    updatedAt: "2026-07-20T12:00:00.000Z",
+  });
+  const projects = new Map([[project.projectId, project]]);
+  session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
+  session.projectRegistry.update = async (id, updater) => {
+    const current = projects.get(id);
+    if (!current) return null;
+    const updated = updater(current);
+    projects.set(id, updated);
+    return updated;
+  };
+  session.workspaceRegistry.list = async () => [];
+
+  await session.handleMessage({
+    type: "project.group.set.request",
+    projectId: project.projectId,
+    group: "Client X",
+    requestId: "req-group-empty",
+  });
+
+  expect(findByType(emitted, "project.update")?.payload).toMatchObject({
+    kind: "upsert",
+    project: {
+      projectId: project.projectId,
+      projectGroup: "Client X",
+    },
+  });
+});
+
+test("project.group.set.request with whitespace-only group clears the override", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+
+  const project = createPersistedProjectRecord({
+    projectId: "remote:github.com/acme/repo",
+    rootPath: REPO_CWD,
+    kind: "git",
+    displayName: "acme/repo",
+    group: "Client X",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+
+  const projects = new Map([[project.projectId, project]]);
+  session.projectRegistry.get = async (id: string) => projects.get(id) ?? null;
+  session.projectRegistry.update = async (id, updater) => {
+    const current = projects.get(id);
+    if (!current) return null;
+    const updated = updater(current);
+    projects.set(id, updated);
+    return updated;
+  };
+  session.workspaceRegistry.list = async () => [];
+
+  await session.handleMessage({
+    type: "project.group.set.request",
+    projectId: project.projectId,
+    group: "   ",
+    requestId: "req-group-clear",
+  });
+
+  const response = findByType(emitted, "project.group.set.response");
+  expect(response?.payload).toEqual({
+    requestId: "req-group-clear",
+    projectId: project.projectId,
+    accepted: true,
+    group: null,
+    error: null,
+  });
+  expect(projects.get(project.projectId)?.group).toBeNull();
+});
+
+test("project.group.set.request returns accepted=false when project is not found", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const session = asTestSession(
+    createSessionForWorkspaceTests({ onMessage: (message) => emitted.push(message) }),
+  );
+  session.projectRegistry.update = async () => null;
+  await session.handleMessage({
+    type: "project.group.set.request",
+    projectId: "does-not-exist",
+    group: "X",
+    requestId: "req-group-missing",
+  });
+
+  const response = findByType(emitted, "project.group.set.response");
+  expect(response?.payload).toMatchObject({
+    requestId: "req-group-missing",
+    projectId: "does-not-exist",
+    accepted: false,
+    group: null,
+    error: "Project not found",
+  });
 });
 
 test("workspace.title.set.request stores the title and emits an updated descriptor", async () => {

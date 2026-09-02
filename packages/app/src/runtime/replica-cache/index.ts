@@ -252,6 +252,8 @@ const StoredWorkspaceSchema = z.strictObject({
   projectId: z.string(),
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable(),
+  // Optional because entries written before groups existed have none. Only written when non-null.
+  projectGroup: z.string().nullable().optional(),
   projectCustomIconRevision: z.string().nullable(),
   projectRootPath: z.string(),
   workspaceDirectory: z.string(),
@@ -281,6 +283,8 @@ const StoredProjectSchema = z.strictObject({
   projectKey: z.string().optional(),
   projectDisplayName: z.string(),
   projectCustomName: z.string().nullable(),
+  // Optional because entries written before groups existed have none. Only written when non-null.
+  projectGroup: z.string().nullable().optional(),
   projectCustomIconRevision: z.string().nullable(),
   projectIconRevision: z.string().optional(),
   projectRootPath: z.string(),
@@ -630,6 +634,7 @@ function serializeWorkspace(workspace: WorkspaceDescriptor): StoredWorkspace {
     projectId: workspace.projectId,
     projectDisplayName: workspace.projectDisplayName,
     projectCustomName: workspace.projectCustomName ?? null,
+    ...(workspace.projectGroup ? { projectGroup: workspace.projectGroup } : {}),
     projectCustomIconRevision: workspace.projectCustomIconRevision ?? null,
     projectRootPath: workspace.projectRootPath,
     workspaceDirectory: workspace.workspaceDirectory,
@@ -670,6 +675,7 @@ function serializeProject(project: ProjectDescriptor): StoredProject {
     ...(project.projectKey ? { projectKey: project.projectKey } : {}),
     projectDisplayName: project.projectDisplayName,
     projectCustomName: project.projectCustomName,
+    ...(project.projectGroup ? { projectGroup: project.projectGroup } : {}),
     projectCustomIconRevision: project.projectCustomIconRevision ?? null,
     projectIconRevision: project.projectIconRevision,
     projectRootPath: project.projectRootPath,

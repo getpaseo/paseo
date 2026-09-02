@@ -71,6 +71,44 @@ describe("workspace message schemas", () => {
     });
   });
 
+  test("parses project.group.set request and response", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "project.group.set.request",
+        requestId: "req-group-set",
+        projectId: "proj-12",
+        group: "Client X",
+      }),
+    ).toEqual({
+      type: "project.group.set.request",
+      requestId: "req-group-set",
+      projectId: "proj-12",
+      group: "Client X",
+    });
+
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "project.group.set.response",
+        payload: {
+          requestId: "req-group-set",
+          projectId: "proj-12",
+          accepted: true,
+          group: "Client X",
+          error: null,
+        },
+      }),
+    ).toEqual({
+      type: "project.group.set.response",
+      payload: {
+        requestId: "req-group-set",
+        projectId: "proj-12",
+        accepted: true,
+        group: "Client X",
+        error: null,
+      },
+    });
+  });
+
   test("parses active-scoped fetch_agents_request as an optional extension", () => {
     const legacy = SessionInboundMessageSchema.parse({
       type: "fetch_agents_request",

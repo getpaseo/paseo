@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { migrateSidebarOrderState } from "./sidebar-order-store";
+import { migrateSidebarOrderState, renameOrderKey } from "./sidebar-order-store";
 
 describe("migrateSidebarOrderState", () => {
   it("prefixes legacy per-server workspace order with the source server id", () => {
@@ -16,6 +16,7 @@ describe("migrateSidebarOrderState", () => {
 
     expect(migrated).toEqual({
       projectOrder: ["project-a"],
+      projectGroupOrder: [],
       pinnedWorkspaceOrder: [],
       workspaceOrderByProject: {
         "project-a": ["host-a:main", "host-a:feature", "host-b:main"],
@@ -29,5 +30,21 @@ describe("migrateSidebarOrderState", () => {
     });
 
     expect(migrated.pinnedWorkspaceOrder).toEqual(["host-a:one", "host-b:two"]);
+  });
+});
+
+describe("project group order", () => {
+  it("migrates a state saved before groups had an order", () => {
+    expect(migrateSidebarOrderState({ projectOrder: ["a"] }).projectGroupOrder).toEqual([]);
+    expect(
+      migrateSidebarOrderState({ projectGroupOrder: [" client x ", "", "client y", "client x"] })
+        .projectGroupOrder,
+    ).toEqual(["client x", "client y"]);
+  });
+
+  it("moves a renamed group's entry to its new key and drops a duplicate", () => {
+    expect(renameOrderKey(["a", "b", "c"], "b", "z")).toEqual(["a", "z", "c"]);
+    expect(renameOrderKey(["a", "b", "c"], "b", "c")).toEqual(["a", "c"]);
+    expect(renameOrderKey(["a", "b"], "x", "y")).toEqual(["a", "b"]);
   });
 });

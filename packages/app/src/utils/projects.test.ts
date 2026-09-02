@@ -14,6 +14,7 @@ function descriptor(
     projectKey: key,
     projectDisplayName: "acme/app",
     projectCustomName: null,
+    projectGroup: null,
     projectIconRevision: iconRevision,
     projectRootPath: root,
     projectKind: "git",

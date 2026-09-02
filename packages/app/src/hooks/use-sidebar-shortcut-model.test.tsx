@@ -43,6 +43,7 @@ function project(projectKey: string): SidebarProjectEntry {
   return {
     viewKey: projectKey,
     projectName: projectKey,
+    group: null,
     projectKind: "git",
     iconWorkingDir: `/repo/${projectKey}`,
     hosts: [],

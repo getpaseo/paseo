@@ -413,6 +413,44 @@ describe("workspace registries", () => {
     expect(record?.displayName).toBe("acme/repo");
   });
 
+  test("project record schema accepts records without group (legacy on-disk records)", async () => {
+    await projectRegistry.initialize();
+
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "remote:github.com/acme/repo",
+        rootPath: "/tmp/repo",
+        kind: "git",
+        displayName: "acme/repo",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+
+    const record = await projectRegistry.get("remote:github.com/acme/repo");
+    expect(record?.group).toBeNull();
+  });
+
+  test("project record persists a group", async () => {
+    await projectRegistry.initialize();
+
+    await projectRegistry.upsert(
+      createPersistedProjectRecord({
+        projectId: "remote:github.com/acme/repo",
+        rootPath: "/home/me/work/repo",
+        kind: "git",
+        displayName: "acme/repo",
+        group: "Client X",
+        createdAt: "2026-03-01T00:00:00.000Z",
+        updatedAt: "2026-03-01T00:00:00.000Z",
+      }),
+    );
+
+    const record = await projectRegistry.get("remote:github.com/acme/repo");
+    expect(record?.group).toBe("Client X");
+    expect(record?.displayName).toBe("acme/repo");
+  });
+
   test("creates, updates, archives, deletes, and lists workspace records", async () => {
     await workspaceRegistry.initialize();
     await workspaceRegistry.upsert(

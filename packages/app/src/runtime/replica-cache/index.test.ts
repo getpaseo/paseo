@@ -229,6 +229,49 @@ describe("ReplicaCache", () => {
     expect(restoredTimeline).toEqual(timeline());
   });
 
+  it("round-trips a workspace and project projectGroup", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const workspace = normalizeWorkspaceDescriptor({
+      ...workspacePayload(),
+      projectGroup: "Client X",
+    });
+    const project = normalizeProjectDescriptor({
+      projectId: "project-1",
+      projectDisplayName: "Paseo",
+      projectRootPath: "/repo/paseo",
+      projectKind: "git",
+      projectGroup: "Client X",
+    });
+    writer.commitDirectory(SERVER_ID, {
+      agents: new Map(),
+      workspaces: new Map([[workspace.id, workspace]]),
+      projects: new Map([[project.projectId, project]]),
+      checkpoint: { agents: { generation: "g", afterSeq: 12 } },
+    });
+    await writer.flush();
+
+    const reader = createCache(storage);
+    const restored = await reader.readDirectory(SERVER_ID);
+
+    expect(restored.workspaces.get("workspace-1")?.projectGroup).toBe("Client X");
+    expect(restored.projects.get("project-1")?.projectGroup).toBe("Client X");
+  });
+
+  it("omits the projectGroup key from stored rows when it is null", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    writer.commitDirectory(SERVER_ID, directory());
+    await writer.flush();
+
+    const workspaceRow = storage.rows.get(`${SERVER_ID}:workspace:workspace-1`);
+    const projectRow = storage.rows.get(`${SERVER_ID}:project:project-1`);
+    expect(workspaceRow).toBeDefined();
+    expect(projectRow).toBeDefined();
+    expect(JSON.parse(workspaceRow!.payload)).not.toHaveProperty("projectGroup");
+    expect(JSON.parse(projectRow!.payload)).not.toHaveProperty("projectGroup");
+  });
+
   it("never reads directory rows older than an accepted deferred deletion", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);

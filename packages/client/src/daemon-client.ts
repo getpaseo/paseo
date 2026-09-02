@@ -2660,6 +2660,21 @@ export class DaemonClient {
     if (!payload.accepted) throw new Error(payload.error ?? "setProjectIcon rejected");
   }
 
+  async setProjectGroup(
+    projectId: string,
+    group: string | null,
+    requestId?: string,
+  ): Promise<{ group: string | null }> {
+    const payload = await this.sendNamespacedCorrelatedSessionRequest<"project.group.set.response">(
+      {
+        requestId,
+        message: { type: "project.group.set.request", projectId, group },
+      },
+    );
+    if (!payload.accepted) throw new Error(payload.error ?? "setProjectGroup rejected");
+    return { group: payload.group };
+  }
+
   async removeProject(
     projectId: string,
     requestId?: string,

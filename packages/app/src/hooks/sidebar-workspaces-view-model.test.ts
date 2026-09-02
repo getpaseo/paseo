@@ -111,6 +111,7 @@ function project(input: {
     viewKey: input.projectKey,
     projectKey: input.projectKey,
     projectName: input.projectName ?? input.projectKey,
+    group: null,
     projectKind: input.projectKind ?? "git",
     iconWorkingDir: input.iconWorkingDir ?? input.projectKey,
     hosts: Array.from(

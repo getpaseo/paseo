@@ -39,6 +39,7 @@ import { useSidebarModel } from "@/components/sidebar/sidebar-model";
 import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
+import type { SidebarProjectGroup } from "@/components/sidebar/sidebar-projection";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
 import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
 import { useHosts } from "@/runtime/host-runtime";
@@ -55,6 +56,7 @@ import { openHostOverview } from "@/navigation/settings-navigation";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
 import { SidebarWorkspaceList } from "./sidebar-workspace-list";
+import { ProjectGroupCreateModal } from "@/project-groups/create-modal";
 
 type SidebarTheme = ReturnType<typeof useUnistyles>["theme"];
 
@@ -65,6 +67,7 @@ interface SidebarSharedProps {
   workspaceGroups: SidebarWorkspaceGroup[];
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
+  allProjects: SidebarProjectEntry[];
   projects: SidebarProjectEntry[];
   hasProjectsBeforeFilter: boolean;
   hasActiveProjectFilter: boolean;
@@ -74,6 +77,11 @@ interface SidebarSharedProps {
   isManualRefresh: boolean;
   groupMode: SidebarGroupMode;
   collapsedProjectKeys: ReadonlySet<string>;
+  projectGroups: SidebarProjectGroup[];
+  allProjectGroupKeys: string[];
+  ungroupedProjects: SidebarProjectEntry[];
+  collapsedProjectGroupKeys: ReadonlySet<string>;
+  toggleProjectGroupCollapsed: (groupKey: string) => void;
   shortcutIndexByWorkspaceKey: Map<string, number>;
   toggleProjectCollapsed: (projectViewKey: string) => void;
   handleRefresh: () => void;
@@ -114,6 +122,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   const showMobileAgent = usePanelStore((state) => state.showMobileAgent);
 
   const {
+    allProjects,
     projects,
     hasProjectsBeforeFilter,
     resolvedProjectFilters,
@@ -126,6 +135,11 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     pinnedGroups,
     collapsedProjectKeys,
     toggleProjectCollapsed,
+    projectGroups,
+    allProjectGroupKeys,
+    ungroupedProjects,
+    collapsedProjectGroupKeys,
+    toggleProjectGroupCollapsed,
     groupMode,
     shortcutModel,
   } = useSidebarModel();
@@ -211,6 +225,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     workspaceGroups,
     projectIconTargets,
     pinnedGroups,
+    allProjects,
     projects,
     hasProjectsBeforeFilter,
     hasActiveProjectFilter: resolvedProjectFilters.length > 0,
@@ -220,6 +235,11 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     isManualRefresh,
     groupMode,
     collapsedProjectKeys,
+    projectGroups,
+    allProjectGroupKeys,
+    ungroupedProjects,
+    collapsedProjectGroupKeys,
+    toggleProjectGroupCollapsed,
     shortcutIndexByWorkspaceKey,
     toggleProjectCollapsed,
     handleRefresh,
@@ -509,6 +529,7 @@ function MobileSidebar({
   workspaceGroups,
   projectIconTargets,
   pinnedGroups,
+  allProjects,
   projects,
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
@@ -518,6 +539,11 @@ function MobileSidebar({
   isManualRefresh,
   groupMode,
   collapsedProjectKeys,
+  projectGroups,
+  allProjectGroupKeys,
+  ungroupedProjects,
+  collapsedProjectGroupKeys,
+  toggleProjectGroupCollapsed,
   shortcutIndexByWorkspaceKey,
   toggleProjectCollapsed,
   handleRefresh,
@@ -582,6 +608,12 @@ function MobileSidebar({
           <SidebarWorkspaceList
             collapsedProjectKeys={collapsedProjectKeys}
             onToggleProjectCollapsed={toggleProjectCollapsed}
+            projectGroups={projectGroups}
+            allProjectGroupKeys={allProjectGroupKeys}
+            allProjects={allProjects}
+            ungroupedProjects={ungroupedProjects}
+            collapsedProjectGroupKeys={collapsedProjectGroupKeys}
+            onToggleProjectGroupCollapsed={toggleProjectGroupCollapsed}
             shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
             groupMode={groupMode}
             workspaceGroups={workspaceGroups}
@@ -600,6 +632,7 @@ function MobileSidebar({
             listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
+        <ProjectGroupCreateModal projects={allProjects} />
 
         <SidebarFooter
           theme={theme}
@@ -620,6 +653,7 @@ function DesktopSidebar({
   workspaceGroups,
   projectIconTargets,
   pinnedGroups,
+  allProjects,
   projects,
   hasProjectsBeforeFilter,
   hasActiveProjectFilter,
@@ -629,6 +663,11 @@ function DesktopSidebar({
   isManualRefresh,
   groupMode,
   collapsedProjectKeys,
+  projectGroups,
+  allProjectGroupKeys,
+  ungroupedProjects,
+  collapsedProjectGroupKeys,
+  toggleProjectGroupCollapsed,
   shortcutIndexByWorkspaceKey,
   toggleProjectCollapsed,
   handleRefresh,
@@ -759,6 +798,12 @@ function DesktopSidebar({
           <SidebarWorkspaceList
             collapsedProjectKeys={collapsedProjectKeys}
             onToggleProjectCollapsed={toggleProjectCollapsed}
+            projectGroups={projectGroups}
+            allProjectGroupKeys={allProjectGroupKeys}
+            allProjects={allProjects}
+            ungroupedProjects={ungroupedProjects}
+            collapsedProjectGroupKeys={collapsedProjectGroupKeys}
+            onToggleProjectGroupCollapsed={toggleProjectGroupCollapsed}
             shortcutIndexByWorkspaceKey={shortcutIndexByWorkspaceKey}
             groupMode={groupMode}
             workspaceGroups={workspaceGroups}
@@ -774,6 +819,7 @@ function DesktopSidebar({
             listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
+        <ProjectGroupCreateModal projects={allProjects} />
 
         <SidebarCalloutSlot />
 

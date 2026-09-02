@@ -6,6 +6,7 @@ import {
   setProjectCollapsed,
   togglePinnedCollapsed,
   toggleProjectCollapsed,
+  toggleProjectGroupCollapsed,
   toggleWorkspaceGroupCollapsed,
 } from "@/stores/sidebar-collapsed-sections-store/state";
 
@@ -13,6 +14,7 @@ function emptyState(): CollapsedProjectsState {
   return {
     collapsedProjectKeys: new Set(),
     collapsedWorkspaceGroupKeys: new Set(),
+    collapsedProjectGroupKeys: new Set(),
     collapsedPinned: false,
   };
 }
@@ -34,14 +36,44 @@ describe("sidebar collapsed projects transitions", () => {
     const state: CollapsedProjectsState = {
       collapsedProjectKeys: new Set(["project-a", "project-b"]),
       collapsedWorkspaceGroupKeys: new Set(["running"]),
+      collapsedProjectGroupKeys: new Set(["client x"]),
       collapsedPinned: true,
     };
 
     expect(serializeCollapsedProjects(state)).toEqual({
       collapsedProjectKeys: ["project-a", "project-b"],
       collapsedWorkspaceGroupKeys: ["running"],
+      collapsedProjectGroupKeys: ["client x"],
       collapsedPinned: true,
     });
+  });
+
+  it("tracks collapsed project group keys as a Set", () => {
+    let state = emptyState();
+
+    state = toggleProjectGroupCollapsed(state, "client x");
+    expect(Array.from(state.collapsedProjectGroupKeys)).toEqual(["client x"]);
+
+    state = toggleProjectGroupCollapsed(state, "client x");
+    expect(Array.from(state.collapsedProjectGroupKeys)).toEqual([]);
+  });
+
+  it("restores an empty collapsedProjectGroupKeys set when persisted state predates project groups", () => {
+    const restored = mergePersistedCollapsedProjects(
+      { collapsedProjectKeys: ["project-a"] },
+      emptyState(),
+    );
+
+    expect(Array.from(restored.collapsedProjectGroupKeys)).toEqual([]);
+  });
+
+  it("restores persisted collapsed project group keys", () => {
+    const restored = mergePersistedCollapsedProjects(
+      { collapsedProjectGroupKeys: ["client x"] },
+      emptyState(),
+    );
+
+    expect(Array.from(restored.collapsedProjectGroupKeys)).toEqual(["client x"]);
   });
 
   it("toggles and restores the pinned section collapse flag", () => {
