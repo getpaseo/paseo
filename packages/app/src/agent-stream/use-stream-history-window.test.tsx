@@ -135,6 +135,42 @@ describe("useStreamHistoryWindow", () => {
     expect(result.current.start).toBe(4);
   });
 
+  it("restarts at a recent window when a replacement outgrows an initially complete window", () => {
+    Object.defineProperty(globalThis, "__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", {
+      value: 2,
+      configurable: true,
+    });
+    const { result, rerender } = renderHook(
+      ({ history, resetKey }) =>
+        useStreamHistoryWindow({
+          agentId: "agent-1",
+          items: history,
+          loadRemoteOlder: vi.fn(),
+          resetKey,
+        }),
+      {
+        initialProps: {
+          history: [message("u1", "user_message"), message("a1", "assistant_message")],
+          resetKey: 0,
+        },
+      },
+    );
+
+    expect(result.current.start).toBe(0);
+    rerender({
+      history: [
+        message("new-u1", "user_message"),
+        message("new-a1", "assistant_message"),
+        message("new-u2", "user_message"),
+        message("new-a2", "assistant_message"),
+        message("new-u3", "user_message"),
+        message("new-a3", "assistant_message"),
+      ],
+      resetKey: 1,
+    });
+    expect(result.current.start).toBe(4);
+  });
+
   it("does not claim to reveal a missing or already-visible item", () => {
     Object.defineProperty(globalThis, "__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", {
       value: 2,
