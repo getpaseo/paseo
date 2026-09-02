@@ -393,6 +393,33 @@ test("createPaseoClient exposes workspace list through the daemon client", async
   await client.close();
 });
 
+test("passes long caller-supplied request IDs through existing RPCs", async () => {
+  const { client, ws } = await connectClient();
+  const requestId = "caller-request-".repeat(40);
+
+  const listPromise = client.workspaces.list({ requestId });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request.requestId).toBe(requestId);
+
+  ws.message(
+    sessionMessage({
+      type: "fetch_workspaces_response",
+      payload: {
+        requestId,
+        entries: [],
+        pageInfo: {
+          nextCursor: null,
+          prevCursor: null,
+          hasMore: false,
+        },
+      },
+    }),
+  );
+
+  await expect(listPromise).resolves.toMatchObject({ requestId, entries: [] });
+  await client.close();
+});
+
 test("createPaseoApi borrows daemon capabilities without exposing connection ownership", () => {
   const daemonClient = new DaemonClient({
     url: "ws://daemon.test",

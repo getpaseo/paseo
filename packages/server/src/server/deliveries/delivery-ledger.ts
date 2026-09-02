@@ -10,6 +10,7 @@ import {
   DeliveryMessageIdSchema,
   DeliveryPayloadValidationError,
   DeliveryRecordSchema,
+  DeliverySequenceCursorSchema,
   DeliveryStatusSchema,
   DeliveryTargetAgentIdSchema,
   MAX_DELIVERY_PAGE_SIZE,
@@ -43,7 +44,7 @@ const O_DIRECTORY = (fsConstants as { O_DIRECTORY?: number }).O_DIRECTORY ?? 0;
 export interface DeliveryLedgerGetOptions {
   deliveryId?: string;
   includeAcknowledged?: boolean;
-  /** New cursors are sequence strings. Legacy delivery-id cursors remain readable. */
+  /** New cursors are sequence strings. Legacy numeric sequence cursors remain readable. */
   cursor?: string;
   limit?: number;
   /** Used by the session layer to budget the complete encoded WS envelope. */
@@ -202,6 +203,13 @@ function cloneDelivery(record: DeliveryRecord): DeliveryRecord {
   const cloned = { ...record } as DeliveryRecord;
   if (record.payload === undefined) delete cloned.payload;
   else cloned.payload = clonePayload(record.payload);
+  return cloned;
+}
+
+/** Rehydrate only the response copy for an idempotent retry of a tombstone. */
+function cloneDeliveryForResend(record: LedgerRecord, payload: DeliveryPayload): DeliveryRecord {
+  const cloned = cloneDelivery(record);
+  if (cloned.payload === undefined) cloned.payload = clonePayload(payload);
   return cloned;
 }
 
@@ -677,7 +685,10 @@ export class DeliveryLedger {
             `Delivery ${deliveryId} already exists with a different target, message id, or payload`,
           );
         }
-        return { delivery: cloneDelivery(existing), created: false };
+        return {
+          delivery: cloneDeliveryForResend(existing, payload),
+          created: false,
+        };
       }
 
       const record = DeliveryRecordSchema.parse({
@@ -1357,23 +1368,14 @@ export class DeliveryLedger {
     nextSequence: number,
   ): { valid: boolean; index: number } {
     if (cursor === null) return { valid: true, index: -1 };
-    // COMPAT(durableDeliveryCursor): resolve an exact legacy delivery ID
-    // before interpreting a numeric value as a pre-v2 sequence.
-    const deliveryIdIndex = records.findIndex((record) => record.deliveryId === cursor);
-    if (deliveryIdIndex >= 0) return { valid: true, index: deliveryIdIndex };
-
-    const sequenceText = cursor.startsWith("seq:") ? cursor.slice(4) : cursor;
-    if (/^[1-9]\d*$/.test(sequenceText)) {
-      const sequence = Number(sequenceText);
-      if (!Number.isSafeInteger(sequence) || sequence >= nextSequence) {
-        return { valid: false, index: -1 };
-      }
-      const exactIndex = records.findIndex((record) => record.sequence === sequence);
-      if (exactIndex >= 0) return { valid: true, index: exactIndex };
-      const nextIndex = records.findIndex((record) => record.sequence > sequence);
-      return { valid: true, index: nextIndex < 0 ? records.length - 1 : nextIndex - 1 };
-    }
-    return { valid: false, index: -1 };
+    // COMPAT(durableDeliveryCursor): numeric sequence cursors remain readable
+    // during migration, but a cursor is never resolved as a delivery ID.
+    const sequence = parseSequenceCursor(cursor);
+    if (sequence === null || sequence >= nextSequence) return { valid: false, index: -1 };
+    const exactIndex = records.findIndex((record) => record.sequence === sequence);
+    if (exactIndex >= 0) return { valid: true, index: exactIndex };
+    const nextIndex = records.findIndex((record) => record.sequence > sequence);
+    return { valid: true, index: nextIndex < 0 ? records.length - 1 : nextIndex - 1 };
   }
 
   private getResponseFits(
@@ -1698,6 +1700,19 @@ function nonNegativeInteger(value: number, name: string): number {
 
 function encodeSequenceCursor(sequence: number): string {
   return `seq:${sequence}`;
+}
+
+function parseSequenceCursor(cursor: string): number | null {
+  let sequenceText: string | null = null;
+  const parsed = DeliverySequenceCursorSchema.safeParse(cursor);
+  if (parsed.success) {
+    sequenceText = parsed.data.slice(4);
+  } else if (/^[1-9]\d*$/.test(cursor)) {
+    sequenceText = cursor;
+  }
+  if (sequenceText === null) return null;
+  const sequence = Number(sequenceText);
+  return Number.isSafeInteger(sequence) ? sequence : null;
 }
 
 function isAllowedTransition(from: DeliveryStatus, to: DeliveryStatus): boolean {

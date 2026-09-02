@@ -97,9 +97,7 @@ test("loads legacy pull-only records and supplies native defaults in memory", as
       },
     ],
   });
-  await expect(
-    new DeliveryLedger(home).get("owner", { cursor: "legacy-a" }),
-  ).resolves.toMatchObject({
+  await expect(new DeliveryLedger(home).get("owner", { cursor: "seq:1" })).resolves.toMatchObject({
     deliveries: [{ deliveryId: "legacy-z", sequence: 2 }],
   });
   const consumer = new DeliveryLedger(home);
@@ -197,7 +195,7 @@ test("uses durable owner sequences for same-time concurrent sends and cursors", 
   const now = new Date("2026-09-02T00:00:00.000Z");
   const sameTime = new DeliveryLedger(home, { now: () => now });
   const results = await Promise.all(
-    ["delivery-a", "delivery-b", "delivery-c"].map((deliveryId) =>
+    ["delivery-a", "delivery-b", "delivery-c", "delivery-d"].map((deliveryId) =>
       sameTime.send("owner", { deliveryId, targetAgentId: "agent-test", payload: deliveryId }),
     ),
   );
@@ -208,14 +206,18 @@ test("uses durable owner sequences for same-time concurrent sends and cursors", 
     results.slice(0, 2).map((result) => result.delivery.deliveryId),
   );
   expect(page.nextCursor).toBe("seq:2");
-  await expect(
-    sameTime.get("owner", { cursor: page.nextCursor ?? undefined }),
-  ).resolves.toMatchObject({
-    deliveries: [{ sequence: 3 }],
+  const nextPage = await sameTime.get("owner", {
+    cursor: page.nextCursor ?? undefined,
+    limit: 1,
   });
+  expect(nextPage).toMatchObject({ deliveries: [{ sequence: 3 }], nextCursor: "seq:3" });
+  expect(nextPage.nextCursor).not.toBe(page.nextCursor);
+  await expect(
+    sameTime.get("owner", { cursor: nextPage.nextCursor ?? undefined }),
+  ).resolves.toMatchObject({ deliveries: [{ sequence: 4 }] });
 });
 
-test("resolves an exact numeric delivery ID before legacy numeric cursor migration", async () => {
+test("accepts a legacy numeric sequence cursor without resolving it as a delivery ID", async () => {
   const { ledger } = await createLedger();
   await ledger.send("owner", { deliveryId: "2", targetAgentId: "agent-test", payload: "first" });
   await ledger.send("owner", {
@@ -224,11 +226,45 @@ test("resolves an exact numeric delivery ID before legacy numeric cursor migrati
     payload: "second",
   });
 
-  await expect(ledger.get("owner", { cursor: "2" })).resolves.toMatchObject({
+  await expect(ledger.get("owner", { cursor: "1" })).resolves.toMatchObject({
     deliveries: [{ deliveryId: "after-numeric-id", sequence: 2 }],
   });
   await expect(ledger.get("owner", { cursor: "seq:1" })).resolves.toMatchObject({
     deliveries: [{ deliveryId: "after-numeric-id", sequence: 2 }],
+  });
+});
+
+test("treats a seq cursor as a sequence even when a delivery ID collides with it", async () => {
+  const { ledger } = await createLedger();
+  await ledger.send("owner", {
+    deliveryId: "first-delivery",
+    targetAgentId: "agent-test",
+    payload: "first",
+  });
+  await ledger.send("owner", {
+    deliveryId: "seq:1",
+    targetAgentId: "agent-test",
+    payload: "second",
+  });
+
+  await expect(ledger.get("owner", { cursor: "seq:1" })).resolves.toMatchObject({
+    deliveries: [{ deliveryId: "seq:1", sequence: 2 }],
+  });
+  await expect(ledger.get("owner", { deliveryId: "seq:1" })).resolves.toMatchObject({
+    delivery: { deliveryId: "seq:1", sequence: 2 },
+  });
+});
+
+test("never resolves an arbitrary delivery ID supplied in the cursor field", async () => {
+  const { ledger } = await createLedger();
+  await ledger.send("owner", {
+    deliveryId: "delivery-cursor-id",
+    targetAgentId: "agent-test",
+    payload: "payload",
+  });
+
+  await expect(ledger.get("owner", { cursor: "delivery-cursor-id" })).rejects.toMatchObject({
+    code: "delivery_cursor_invalid",
   });
 });
 
@@ -816,6 +852,35 @@ test("only capable clients admit payload tombstones and older clients get truthf
   await expect(configured.acknowledge("owner", "capable-client-delivery")).rejects.toMatchObject({
     code: "delivery_payload_unavailable",
   });
+
+  const persistedBeforeResend = JSON.parse(
+    await readFile(deliveryLedgerFilePath(home, "owner"), "utf8"),
+  ) as { deliveries: Array<Record<string, unknown>> };
+  expect(
+    persistedBeforeResend.deliveries.find(
+      ({ deliveryId }) => deliveryId === "capable-client-delivery",
+    ),
+  ).not.toHaveProperty("payload");
+
+  await expect(
+    configured.send("owner", {
+      deliveryId: "capable-client-delivery",
+      targetAgentId: "agent-test",
+      payload: "compacted",
+    }),
+  ).resolves.toMatchObject({
+    created: false,
+    delivery: { deliveryId: "capable-client-delivery", payload: "compacted" },
+  });
+
+  const persistedAfterResend = JSON.parse(
+    await readFile(deliveryLedgerFilePath(home, "owner"), "utf8"),
+  ) as { deliveries: Array<Record<string, unknown>> };
+  expect(
+    persistedAfterResend.deliveries.find(
+      ({ deliveryId }) => deliveryId === "capable-client-delivery",
+    ),
+  ).not.toHaveProperty("payload");
 });
 
 test("pages by exact encoded response budget and rejects an item that cannot fit", async () => {

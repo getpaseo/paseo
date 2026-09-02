@@ -562,6 +562,123 @@ test("durable deliveries are scoped to the authenticated principal and source", 
   }
 });
 
+test("keeps compacted deliveries compatible for old clients and exposes tombstones to new ones", async () => {
+  const home = mkdtempSync(join(tmpdir(), "paseo-delivery-tombstone-"));
+  const messages: SessionOutboundMessage[] = [];
+  const ledger = new DeliveryLedger(home, {
+    maxAcknowledgedPayloads: 0,
+    maxAcknowledgedPayloadBytes: 0,
+    acknowledgedPayloadMaxAgeMs: 100_000,
+    tombstoneRetentionMs: 100_000,
+  });
+  const sessions: Session[] = [];
+
+  try {
+    await ledger.send("owner", {
+      deliveryId: "compacted-delivery",
+      targetAgentId: "agent-exact",
+      payload: { event: "finished" },
+      payloadTombstoneEligible: true,
+    });
+    await ledger.markDispatching("owner", "compacted-delivery");
+    await ledger.markAccepted("owner", "compacted-delivery");
+    await ledger.acknowledge("owner", "compacted-delivery", {
+      allowPayloadTombstones: true,
+    });
+
+    const legacySession = createSessionForTest({
+      paseoHome: home,
+      principalId: "owner",
+      deliveryLedger: ledger,
+      clientCapabilities: { [CLIENT_CAPS.durableDeliveries]: true },
+      messages,
+    });
+    sessions.push(legacySession);
+
+    await legacySession.handleMessage({
+      type: "deliveries.send.request",
+      requestId: "legacy-resend",
+      deliveryId: "compacted-delivery",
+      targetAgentId: "agent-exact",
+      payload: { event: "finished" },
+    });
+    expect(messages.at(-1)).toEqual({
+      type: "deliveries.send.response",
+      payload: expect.objectContaining({
+        requestId: "legacy-resend",
+        delivery: expect.objectContaining({
+          deliveryId: "compacted-delivery",
+          payload: { event: "finished" },
+        }),
+        created: false,
+      }),
+    });
+
+    await legacySession.handleMessage({
+      type: "deliveries.get.request",
+      requestId: "legacy-get",
+      includeAcknowledged: true,
+    });
+    expect(messages.at(-1)).toEqual({
+      type: "deliveries.get.response",
+      payload: {
+        requestId: "legacy-get",
+        delivery: null,
+        deliveries: [],
+        nextCursor: null,
+      },
+    });
+
+    await legacySession.handleMessage({
+      type: "deliveries.acknowledge.request",
+      requestId: "legacy-ack",
+      deliveryId: "compacted-delivery",
+    });
+    expect(messages.findLast((message) => message.type === "rpc_error")).toEqual({
+      type: "rpc_error",
+      payload: expect.objectContaining({
+        requestId: "legacy-ack",
+        code: "delivery_payload_unavailable",
+      }),
+    });
+
+    const capableMessages: SessionOutboundMessage[] = [];
+    const capableSession = createSessionForTest({
+      paseoHome: home,
+      principalId: "owner",
+      deliveryLedger: ledger,
+      clientCapabilities: {
+        [CLIENT_CAPS.durableDeliveries]: true,
+        [CLIENT_CAPS.deliveryPayloadTombstones]: true,
+      },
+      messages: capableMessages,
+    });
+    sessions.push(capableSession);
+
+    await capableSession.handleMessage({
+      type: "deliveries.get.request",
+      requestId: "capable-get",
+      includeAcknowledged: true,
+    });
+    expect(capableMessages.at(-1)).toEqual({
+      type: "deliveries.get.response",
+      payload: expect.objectContaining({
+        requestId: "capable-get",
+        deliveries: [
+          expect.objectContaining({
+            deliveryId: "compacted-delivery",
+            payloadFingerprint: expect.any(String),
+          }),
+        ],
+      }),
+    });
+    expect(capableMessages.at(-1)).not.toHaveProperty("payload.deliveries.0.payload");
+  } finally {
+    await Promise.all(sessions.map((session) => session.cleanup()));
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("dispatches a targeted delivery through the injected native agent seam", async () => {
   const messages: SessionOutboundMessage[] = [];
   const dispatched = vi.fn(async () => ({ outcome: "accepted" as const }));

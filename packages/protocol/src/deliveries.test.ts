@@ -9,6 +9,7 @@ import {
 } from "./messages.js";
 import {
   DeliveryPayloadSchema,
+  DeliverySequenceCursorSchema,
   inspectDeliveryPayload,
   MAX_DELIVERY_REQUEST_ID_BYTES,
   MAX_DELIVERY_PAYLOAD_BYTES,
@@ -114,6 +115,20 @@ describe("durable delivery protocol", () => {
       targetAgentId: "agent-exact",
       messageId: "message-stable",
     });
+  });
+
+  test("validates sequence cursors independently from delivery IDs", () => {
+    expect(DeliverySequenceCursorSchema.parse("seq:7")).toBe("seq:7");
+    expect(DeliverySequenceCursorSchema.safeParse("delivery-one").success).toBe(false);
+    expect(DeliverySequenceCursorSchema.safeParse("seq:0").success).toBe(false);
+    expect(DeliverySequenceCursorSchema.safeParse("seq:9007199254740992").success).toBe(false);
+    expect(
+      DeliveriesGetRequestSchema.parse({
+        type: "deliveries.get.request",
+        requestId: "request-cursor",
+        cursor: "seq:7",
+      }).cursor,
+    ).toBe("seq:7");
   });
 
   test("advertises a distinct client capability", () => {

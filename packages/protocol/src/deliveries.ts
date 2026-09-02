@@ -189,9 +189,14 @@ const DeliveryPayloadWireSchema = z.unknown() as z.ZodType<DeliveryPayload>;
 export const DeliveryIdSchema = z.string().trim().min(1).max(MAX_DELIVERY_ID_BYTES);
 export const DeliveryTargetAgentIdSchema = z.string().trim().min(1).max(MAX_DELIVERY_ID_BYTES);
 export const DeliveryMessageIdSchema = z.string().trim().min(1).max(MAX_DELIVERY_ID_BYTES);
-// COMPAT(durableDeliveryCursor): old clients may send a delivery id here;
-// new responses always contain the durable owner sequence.
+// The wire accepts legacy cursor strings so an old peer still parses the
+// request. The ledger only accepts sequence cursors and never interprets one
+// as a delivery ID.
 export const DeliveryCursorSchema = z.string().trim().min(1).max(MAX_DELIVERY_ID_BYTES);
+export const DeliverySequenceCursorSchema = DeliveryCursorSchema.regex(/^seq:[1-9]\d*$/).refine(
+  (cursor) => Number.isSafeInteger(Number(cursor.slice(4))),
+  { message: "Expected a safe delivery sequence cursor" },
+);
 
 export const DeliveryStatusSchema = z.enum([
   "recorded",

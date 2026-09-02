@@ -5679,11 +5679,14 @@ export class DaemonClient {
   // ============================================================================
 
   private createRequestId(requestId?: string): string {
-    const resolved = requestId ?? crypto.randomUUID();
-    if (new TextEncoder().encode(resolved).byteLength > MAX_DELIVERY_REQUEST_ID_BYTES) {
-      throw new Error(`Request ID exceeds the ${MAX_DELIVERY_REQUEST_ID_BYTES}-byte SDK limit`);
+    if (requestId !== undefined) return requestId;
+    const generated = crypto.randomUUID();
+    if (new TextEncoder().encode(generated).byteLength > MAX_DELIVERY_REQUEST_ID_BYTES) {
+      throw new Error(
+        `Generated request ID exceeds the ${MAX_DELIVERY_REQUEST_ID_BYTES}-byte limit`,
+      );
     }
-    return resolved;
+    return generated;
   }
 
   getLastServerInfoMessage(): ServerInfoStatusPayload | null {
