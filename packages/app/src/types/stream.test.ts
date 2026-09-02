@@ -21,6 +21,52 @@ import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display"
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
+describe("plugin timeline rows", () => {
+  it("replaces a live row when the plugin-scoped identity repeats", () => {
+    const first = reduceStreamUpdate(
+      [],
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "plugin",
+          id: "review-1",
+          pluginId: "review",
+          kind: "review",
+          version: 1,
+          data: { status: "running" },
+        },
+      },
+      new Date(1),
+    );
+    const second = reduceStreamUpdate(
+      first,
+      {
+        type: "timeline",
+        provider: "codex",
+        item: {
+          type: "plugin",
+          id: "review-1",
+          pluginId: "review",
+          kind: "review",
+          version: 1,
+          data: { status: "complete" },
+        },
+      },
+      new Date(2),
+    );
+
+    expect(second).toHaveLength(1);
+    expect(second[0]).toMatchObject({
+      kind: "plugin",
+      id: "review/review-1",
+      pluginId: "review",
+      pluginItemId: "review-1",
+      data: { status: "complete" },
+    });
+  });
+});
+
 describe("user message identity", () => {
   it("replaces provisional optimistic turn membership with canonical membership", () => {
     const optimistic = createUserMessage({

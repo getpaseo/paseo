@@ -37,6 +37,12 @@ const list = defineRpc({
   output: z.object({ agentIds: z.array(z.string()) }),
 });
 
+const append = defineRpc({
+  name: "append",
+  input: z.object({ agentId: z.string(), status: z.string() }),
+  output: z.object({ seq: z.number(), epoch: z.string() }),
+});
+
 export default function contribute(plugin: PluginContext) {
   plugin.handle(create, async ({ path }, { paseo }) => {
     const workspace = await paseo.workspaces.create({
@@ -53,6 +59,15 @@ export default function contribute(plugin: PluginContext) {
     const result = await paseo.agents.list({ page: { limit: 100 } });
     return { agentIds: result.entries.map((entry) => entry.agent.id) };
   });
+  plugin.handle(append, ({ agentId, status }, { paseo }) =>
+    paseo.agents.ref(agentId).timeline.append({
+      type: "plugin",
+      id: "review-1",
+      kind: "review",
+      version: 1,
+      data: { status },
+    }),
+  );
   return () => undefined;
 }`,
   );
@@ -88,6 +103,22 @@ export default function contribute(plugin: PluginContext) {
     expect(listed).toEqual({
       agentIds: expect.arrayContaining([Reflect.get(created, "agentId")]),
     });
+    const agentId = Reflect.get(created, "agentId");
+    await expect(
+      client.invokePluginRpc("paseo-api", "append", { agentId, status: "running" }),
+    ).resolves.toEqual({ seq: expect.any(Number), epoch: expect.any(String) });
+    await client.invokePluginRpc("paseo-api", "append", { agentId, status: "complete" });
+    const timeline = await client.fetchAgentTimeline(agentId, { projection: "projected" });
+    expect(timeline.entries.filter((entry) => entry.item.type === "plugin")).toEqual([
+      expect.objectContaining({
+        item: expect.objectContaining({
+          type: "plugin",
+          id: "review-1",
+          pluginId: "paseo-api",
+          data: { status: "complete" },
+        }),
+      }),
+    ]);
     await client.removePlugin("paseo-api");
     const workspaces = await client.fetchWorkspaces();
     const agents = await client.fetchAgents();

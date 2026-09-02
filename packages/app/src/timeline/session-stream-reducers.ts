@@ -1,3 +1,4 @@
+import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
@@ -10,6 +11,7 @@ import {
   mergeAgentToolCallItem,
   replaceWithCanonicalStream,
   reduceStreamUpdate,
+  streamTimelineItemIdentity,
   upsertUserMessageAcrossStream,
 } from "@/types/stream";
 
@@ -129,7 +131,7 @@ interface TimelineResponseEntry {
   collapsed?: string[];
   provider: string;
   turnId?: string;
-  item: Record<string, unknown>;
+  item: AgentTimelineItem | Record<string, unknown>;
   timestamp: string;
 }
 
@@ -191,8 +193,9 @@ interface TimelinePathResult {
 }
 
 function matchesProjectedRow(existing: StreamItem, incoming: StreamItem): boolean {
-  if (isAgentToolCallItem(existing) && isAgentToolCallItem(incoming)) {
-    return existing.payload.data.callId === incoming.payload.data.callId;
+  const incomingIdentity = streamTimelineItemIdentity(incoming);
+  if (incomingIdentity !== null) {
+    return streamTimelineItemIdentity(existing) === incomingIdentity;
   }
   if (existing.kind === "assistant_message" && incoming.kind === "assistant_message") {
     return (
@@ -692,19 +695,8 @@ function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: Strea
   const olderLast = olderTail.at(-1);
   const currentFirst = currentTail[0];
 
-  if (
-    olderLast &&
-    currentFirst &&
-    isAgentToolCallItem(olderLast) &&
-    isAgentToolCallItem(currentFirst) &&
-    olderLast.payload.data.callId === currentFirst.payload.data.callId
-  ) {
-    return [
-      ...olderTail.slice(0, -1),
-      mergeAgentToolCallItem(olderLast, currentFirst.payload.data, currentFirst.timestamp),
-      ...currentTail.slice(1),
-    ];
-  }
+  const identityMerge = mergeTimelineIdentityBoundary(olderTail, currentTail);
+  if (identityMerge) return identityMerge;
 
   if (olderLast?.kind !== "assistant_message" || currentFirst?.kind !== "assistant_message") {
     return [...olderTail, ...currentTail];
@@ -719,6 +711,28 @@ function mergePrependedCanonicalTail(olderTail: StreamItem[], currentTail: Strea
   }
 
   return [...olderTail.slice(0, -1), mergedAssistant, ...currentTail.slice(1)];
+}
+
+function mergeTimelineIdentityBoundary(
+  olderTail: StreamItem[],
+  currentTail: StreamItem[],
+): StreamItem[] | null {
+  const olderLast = olderTail.at(-1);
+  const currentFirst = currentTail[0];
+  if (!olderLast || !currentFirst) return null;
+  const olderIdentity = streamTimelineItemIdentity(olderLast);
+  if (olderIdentity === null || olderIdentity !== streamTimelineItemIdentity(currentFirst)) {
+    return null;
+  }
+  if (olderLast.kind === "plugin" && currentFirst.kind === "plugin") {
+    return [...olderTail.slice(0, -1), currentFirst, ...currentTail.slice(1)];
+  }
+  if (!isAgentToolCallItem(olderLast) || !isAgentToolCallItem(currentFirst)) return null;
+  return [
+    ...olderTail.slice(0, -1),
+    mergeAgentToolCallItem(olderLast, currentFirst.payload.data, currentFirst.timestamp),
+    ...currentTail.slice(1),
+  ];
 }
 
 function mergeOlderTimelinePage(input: {

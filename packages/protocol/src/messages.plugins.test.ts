@@ -7,6 +7,39 @@ import {
 } from "./messages.js";
 
 describe("plugin protocol compatibility", () => {
+  it("parses plugin timeline append messages and advertises the capability", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "agent.timeline.append.request",
+        requestId: "request-append",
+        agentId: "agent-1",
+        item: {
+          type: "plugin",
+          id: "review-1",
+          kind: "review",
+          version: 1,
+          data: { status: "running" },
+        },
+      }),
+    ).toMatchObject({ type: "agent.timeline.append.request" });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "agent.timeline.append.response",
+        payload: { requestId: "request-append", seq: 7, epoch: "epoch-1" },
+      }),
+    ).toMatchObject({ type: "agent.timeline.append.response" });
+    expect(
+      StatusMessageSchema.parse({
+        type: "status",
+        payload: {
+          status: "server_info",
+          serverId: "server-1",
+          features: { pluginTimelineItems: true },
+        },
+      }).payload,
+    ).toMatchObject({ features: { pluginTimelineItems: true } });
+  });
+
   it("keeps old directory plugin config valid when enabled is absent", () => {
     const config = MutableDaemonConfigSchema.parse({
       mcp: { injectIntoAgents: true },

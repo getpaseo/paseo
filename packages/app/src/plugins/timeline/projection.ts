@@ -62,6 +62,7 @@ function transformSourceItem(
       id: `${pluginItem.pluginId}/${pluginItem.id}`,
       timestamp: item.timestamp,
       pluginId: pluginItem.pluginId,
+      pluginItemId: pluginItem.id,
       itemKind: pluginItem.kind,
       version: pluginItem.version,
       data: pluginItem.data,

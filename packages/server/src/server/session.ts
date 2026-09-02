@@ -2252,6 +2252,21 @@ export class Session {
     switch (msg.type) {
       case "fetch_agent_timeline_request":
         return this.handleFetchAgentTimelineRequest(msg, source);
+      case "agent.timeline.append.request": {
+        if (!this.clientId.startsWith("plugin:")) {
+          throw new Error("Only plugin sessions can append plugin timeline items");
+        }
+        const pluginId = this.clientId.slice("plugin:".length);
+        return this.agentManager
+          .appendTimelineItem(msg.agentId, { ...msg.item, pluginId })
+          .then(({ seq, epoch }) => {
+            this.emit({
+              type: "agent.timeline.append.response",
+              payload: { requestId: msg.requestId, seq, epoch },
+            });
+            return undefined;
+          });
+      }
       case "agent.timeline.list_prompts.request":
         return this.handleAgentTimelineListPromptsRequest(msg, source);
       case "agent.provider_subagents.list.request":

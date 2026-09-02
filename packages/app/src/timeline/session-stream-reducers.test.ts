@@ -59,6 +59,23 @@ function makeToolCallTimelineEntry(
   };
 }
 
+function makePluginTimelineEntry(seq: number, status: string) {
+  return {
+    seqStart: seq,
+    seqEnd: seq,
+    provider: "claude",
+    item: {
+      type: "plugin" as const,
+      id: "review-1",
+      pluginId: "review",
+      kind: "review",
+      version: 1,
+      data: { status },
+    },
+    timestamp: new Date(1000 + seq).toISOString(),
+  };
+}
+
 function makeTimelineEvent(
   text: string,
   type: string = "assistant_message",
@@ -3231,6 +3248,43 @@ describe("processTimelineResponse", () => {
         detailType: "read",
       },
     ]);
+  });
+
+  it("keeps the newest plugin row across the older-page prepend boundary", () => {
+    const currentTail = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "claude",
+            item: makePluginTimelineEntry(3, "complete").item,
+          },
+          timestamp: new Date(3000),
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 3, endSeq: 5 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [makePluginTimelineEntry(1, "running")],
+      },
+    });
+
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toMatchObject({
+      kind: "plugin",
+      id: "review/review-1",
+      data: { status: "complete" },
+    });
   });
 
   it("removes a reconciled submitted prompt before coalescing a tool call at the pagination seam", () => {
