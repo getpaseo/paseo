@@ -79,6 +79,56 @@ describe("useStreamHistoryWindow", () => {
     expect(result.current.start).toBe(4);
   });
 
+  it("recenters a show-all window when its source items are authoritatively replaced", () => {
+    Object.defineProperty(globalThis, "__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", {
+      value: 2,
+      configurable: true,
+    });
+    const { result, rerender } = renderHook(
+      ({ history, resetKey }) =>
+        useStreamHistoryWindow({
+          agentId: "agent-1",
+          items: history,
+          loadRemoteOlder: vi.fn(),
+          resetKey,
+        }),
+      {
+        initialProps: {
+          history: [message("old-u", "user_message"), message("old-a", "assistant_message")],
+          resetKey: 0,
+        },
+      },
+    );
+
+    expect(result.current.start).toBe(0);
+    rerender({
+      history: [
+        message("new-u1", "user_message"),
+        message("new-a1", "assistant_message"),
+        message("new-u2", "user_message"),
+        message("new-a2", "assistant_message"),
+      ],
+      resetKey: 1,
+    });
+    expect(result.current.start).toBe(2);
+  });
+
+  it("keeps a canonical prepend visible when the complete window is mounted", () => {
+    Object.defineProperty(globalThis, "__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", {
+      value: 4,
+      configurable: true,
+    });
+    const local = message("local", "user_message");
+    const { result, rerender } = renderHook(
+      ({ history }) =>
+        useStreamHistoryWindow({ agentId: "agent-1", items: history, loadRemoteOlder: vi.fn() }),
+      { initialProps: { history: [local] } },
+    );
+
+    rerender({ history: [message("remote", "user_message"), local] });
+    expect(result.current.start).toBe(0);
+  });
+
   it("keeps live appends inside the rendered window", () => {
     Object.defineProperty(globalThis, "__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", {
       value: 2,

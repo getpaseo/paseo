@@ -25,6 +25,7 @@ interface HistoryWindowBoundary {
   agentId: string;
   boundaryItemId: string | null;
   initialized: boolean;
+  resetKey: number;
 }
 
 function reconcileHistoryWindow(input: {
@@ -33,10 +34,11 @@ function reconcileHistoryWindow(input: {
   boundaryIndex: number;
   initialBoundaryItemId: string | null;
   hasItems: boolean;
+  resetKey: number;
 }): HistoryWindowBoundary {
-  const { current, agentId, boundaryIndex, initialBoundaryItemId, hasItems } = input;
-  if (current.agentId !== agentId) {
-    return { agentId, boundaryItemId: initialBoundaryItemId, initialized: hasItems };
+  const { current, agentId, boundaryIndex, initialBoundaryItemId, hasItems, resetKey } = input;
+  if (current.agentId !== agentId || current.resetKey !== resetKey) {
+    return { agentId, boundaryItemId: initialBoundaryItemId, initialized: hasItems, resetKey };
   }
   if (!current.initialized && hasItems) {
     return { ...current, boundaryItemId: initialBoundaryItemId, initialized: true };
@@ -51,17 +53,19 @@ export function useStreamHistoryWindow(input: {
   agentId: string;
   items: StreamItem[];
   loadRemoteOlder: () => boolean | Promise<boolean>;
+  resetKey?: number;
 }) {
-  const { agentId, items, loadRemoteOlder } = input;
+  const { agentId, items, loadRemoteOlder, resetKey = 0 } = input;
   const initialStart = useMemo(
     () => findMountedWindowStart({ items, minMountedCount: getMountedRecentStreamItems() }),
     [items],
   );
   const initialBoundaryItemId = initialStart === 0 ? null : (items[initialStart]?.id ?? null);
-  const [window, setWindow] = useState(() => ({
+  const [window, setWindow] = useState<HistoryWindowBoundary>(() => ({
     agentId,
     boundaryItemId: initialBoundaryItemId,
     initialized: items.length > 0,
+    resetKey,
   }));
   const boundaryIndex =
     window.agentId === agentId && window.boundaryItemId !== null
@@ -84,9 +88,10 @@ export function useStreamHistoryWindow(input: {
         boundaryIndex,
         initialBoundaryItemId,
         hasItems: items.length > 0,
+        resetKey,
       }),
     );
-  }, [agentId, boundaryIndex, initialBoundaryItemId, items.length]);
+  }, [agentId, boundaryIndex, initialBoundaryItemId, items.length, resetKey]);
 
   const revealLoadedHistory = useCallback(
     (itemId?: string): boolean => {
@@ -102,10 +107,11 @@ export function useStreamHistoryWindow(input: {
         agentId,
         boundaryItemId: items[nextStart]?.id ?? null,
         initialized: true,
+        resetKey,
       });
       return true;
     },
-    [agentId, items, start],
+    [agentId, items, resetKey, start],
   );
   const loadOlder = useCallback(async (): Promise<boolean> => {
     return revealLoadedHistory() || (await loadRemoteOlder());
