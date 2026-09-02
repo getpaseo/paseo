@@ -136,6 +136,7 @@ import { isRelayClientWebSocketUrl } from "@getpaseo/protocol/daemon-endpoints";
 import { terminalSubscriptionKey } from "@getpaseo/protocol/terminal-subscription-key";
 import {
   asUint8Array,
+  assertFileTransferRequestId,
   decodeFileTransferFrame,
   encodeFileTransferFrame,
   decodeTerminalStreamFrame,
@@ -4452,6 +4453,7 @@ export class DaemonClient {
     maxBytes?: number,
   ): Promise<FileReadResult> {
     const resolvedRequestId = this.createRequestId(requestId);
+    assertFileTransferRequestId(resolvedRequestId);
     this.pendingBinaryFileReads.set(resolvedRequestId, { cwd, path, maxBytes });
     try {
       const payload = await this.requestFileExplorer(
@@ -4580,6 +4582,7 @@ export class DaemonClient {
       throw new Error("File bytes are required.");
     }
     const resolvedRequestId = this.createRequestId(input.requestId);
+    assertFileTransferRequestId(resolvedRequestId);
     const modifiedAt = input.modifiedAt ?? new Date().toISOString();
     const responsePromise = this.sendCorrelatedRequest({
       requestId: resolvedRequestId,

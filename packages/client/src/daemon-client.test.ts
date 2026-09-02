@@ -2496,6 +2496,91 @@ test("uploadFile sends metadata request and file bytes as binary chunks", async 
   });
 });
 
+test("binary file transfers reject overlong request ids before sending or creating waiters", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_file_transfer_request_id",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const requestId = "x".repeat(256);
+  const uploadPromise = client.uploadFile({
+    fileName: "notes.txt",
+    mimeType: "text/plain",
+    bytes: new TextEncoder().encode("hello"),
+    requestId,
+  });
+  const readPromise = client.readFile("/tmp/project", "notes.txt", requestId);
+
+  await expect(uploadPromise).rejects.toThrow("File transfer requestId is too long");
+  await expect(readPromise).rejects.toThrow("File transfer requestId is too long");
+  expect(mock.sent).toHaveLength(0);
+
+  const state = client as unknown as {
+    waiters: Set<unknown>;
+    pendingBinaryFileReads: Map<string, unknown>;
+    activeBinaryFileTransfers: Map<string, unknown>;
+  };
+  expect(state.waiters.size).toBe(0);
+  expect(state.pendingBinaryFileReads.size).toBe(0);
+  expect(state.activeBinaryFileTransfers.size).toBe(0);
+});
+
+test("text RPCs keep accepting long caller request ids", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_text_rpc_request_id",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const requestId = "x".repeat(256);
+  const responsePromise = client.listDirectory("/tmp/project", "src", requestId);
+
+  expect(parseSentFrame(mock.sent[0])).toEqual({
+    type: "file_explorer_request",
+    cwd: "/tmp/project",
+    path: "src",
+    mode: "list",
+    requestId,
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "file_explorer_response",
+      payload: {
+        cwd: "/tmp/project",
+        path: "src",
+        mode: "list",
+        directory: {
+          path: "src",
+          entries: [],
+        },
+        file: null,
+        error: null,
+        requestId,
+      },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toEqual({ path: "src", entries: [] });
+});
+
 test("normalizes workspace_setup_progress into a workspace-scoped daemon event", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

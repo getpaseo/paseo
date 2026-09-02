@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  assertFileTransferRequestId,
   FileTransferOpcode,
+  MAX_FILE_TRANSFER_REQUEST_ID_BYTES,
   TerminalStreamOpcode,
   decodeFileTransferFrame,
   decodeTerminalStreamFrame,
@@ -161,5 +163,17 @@ describe("file transfer binary frames", () => {
       1,
     ]);
     expect(decodeFileTransferFrame(encoded)).toBeNull();
+  });
+
+  it("validates request ids by their encoded byte length", () => {
+    expect(() =>
+      assertFileTransferRequestId("x".repeat(MAX_FILE_TRANSFER_REQUEST_ID_BYTES)),
+    ).not.toThrow();
+    expect(() =>
+      assertFileTransferRequestId("x".repeat(MAX_FILE_TRANSFER_REQUEST_ID_BYTES + 1)),
+    ).toThrow("File transfer requestId is too long");
+    expect(() => assertFileTransferRequestId("é".repeat(128))).toThrow(
+      "File transfer requestId is too long",
+    );
   });
 });

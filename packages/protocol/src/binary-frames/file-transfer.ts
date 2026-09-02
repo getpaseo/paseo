@@ -7,6 +7,8 @@ export const FileTransferOpcode = {
   FileEnd: 0x12,
 } as const;
 
+export const MAX_FILE_TRANSFER_REQUEST_ID_BYTES = 0xff;
+
 export type FileTransferOpcode = (typeof FileTransferOpcode)[keyof typeof FileTransferOpcode];
 
 export const FileBeginMetadataSchema = z.object({
@@ -139,15 +141,29 @@ function encodeJsonPayload(value: unknown): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(value));
 }
 
+export function assertFileTransferRequestId(requestId: string): void {
+  const byteLength = new TextEncoder().encode(requestId).byteLength;
+  if (byteLength === 0) {
+    throw new RangeError("File transfer requestId is required");
+  }
+  if (byteLength > MAX_FILE_TRANSFER_REQUEST_ID_BYTES) {
+    throw new RangeError("File transfer requestId is too long");
+  }
+}
+
 function encodeRequestId(requestId: string): Uint8Array {
   const bytes = new TextEncoder().encode(requestId);
+  assertFileTransferRequestIdBytes(bytes);
+  return bytes;
+}
+
+function assertFileTransferRequestIdBytes(bytes: Uint8Array): void {
   if (bytes.byteLength === 0) {
     throw new RangeError("File transfer requestId is required");
   }
-  if (bytes.byteLength > 0xff) {
+  if (bytes.byteLength > MAX_FILE_TRANSFER_REQUEST_ID_BYTES) {
     throw new RangeError("File transfer requestId is too long");
   }
-  return bytes;
 }
 
 function decodeRequestId(bytes: Uint8Array): string {
