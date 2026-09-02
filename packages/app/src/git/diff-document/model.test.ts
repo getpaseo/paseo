@@ -58,6 +58,11 @@ function input(overrides: Partial<BuildDiffDocumentModelInput> = {}): BuildDiffD
       deletionBackground: "#100",
       emptyBackground: "#111",
       selection: "blue",
+      headerActiveSurface: "#222",
+      headerBorder: "#333",
+      statusSuccess: "green",
+      statusDanger: "red",
+      statusWarning: "orange",
       syntax: {},
     },
     labels: { binary: "Binary", tooLarge: "Too large" },
@@ -446,7 +451,107 @@ describe("diff document model", () => {
     expect(model.files[0]?.contentWidth).toBe(464);
     expect(model.files[0]!.contentWidth - model.viewportWidth).toBe(224);
   });
+
+  it("builds exact unwrapped scroll geometry without measuring offscreen files", () => {
+    const files = [file("a.ts"), file("b.ts"), file("c.ts")];
+    let measurementCount = 0;
+    const countingMeasurer: TextMeasurer = {
+      measure(text) {
+        measurementCount += 1;
+        return Array.from(text).length * 10;
+      },
+    };
+    const eager = buildDiffDocumentModel(input({ files, wrapLines: false }));
+    const firstFileWindow = buildDiffDocumentModel(
+      input({
+        files,
+        wrapLines: false,
+        measureText: countingMeasurer,
+        materializationWindow: { top: 0, height: eager.files[0]!.bottom },
+      }),
+    );
+
+    expect(firstFileWindow.height).toBe(eager.height);
+    expect(firstFileWindow.files.map((entry) => [entry.top, entry.bottom])).toEqual(
+      eager.files.map((entry) => [entry.top, entry.bottom]),
+    );
+    expect(firstFileWindow.rows[firstFileWindow.files[0]!.rowStart]).toMatchObject({
+      kind: "line",
+    });
+    expect(firstFileWindow.rows[firstFileWindow.files[1]!.rowStart]).toMatchObject({
+      kind: "line",
+    });
+    expect(measuredFragments(firstFileWindow, "a.ts")).toBeGreaterThan(0);
+    expect(measuredFragments(firstFileWindow, "b.ts")).toBe(0);
+    expect(measuredFragments(firstFileWindow, "c.ts")).toBe(0);
+    expect(measurementCount).toBeGreaterThan(0);
+  });
+
+  it("retains measured files while materializing a later unwrapped window", () => {
+    const files = [file("a.ts"), file("b.ts"), file("c.ts")];
+    const eager = buildDiffDocumentModel(input({ files, wrapLines: false }));
+    const first = buildDiffDocumentModel(
+      input({
+        files,
+        wrapLines: false,
+        materializationWindow: { top: 0, height: eager.files[0]!.bottom },
+      }),
+    );
+    const lastFile = eager.files[2]!;
+    const last = buildDiffDocumentModel(
+      input({
+        files,
+        wrapLines: false,
+        materializationWindow: { top: lastFile.top, height: lastFile.bottom - lastFile.top },
+        reuseFrom: [first],
+      }),
+    );
+
+    expect(measuredFragments(last, "a.ts")).toBeGreaterThan(0);
+    expect(measuredFragments(last, "b.ts")).toBe(0);
+    expect(measuredFragments(last, "c.ts")).toBeGreaterThan(0);
+    expect(last.height).toBe(eager.height);
+    expect(firstLine(last, "a.ts")).toBe(firstLine(first, "a.ts"));
+    expect(firstLine(last, "b.ts")).toBe(firstLine(first, "b.ts"));
+    expect(firstLineCells(last, "a.ts")).toBe(firstLineCells(first, "a.ts"));
+    expect(firstLineCells(last, "b.ts")).toBe(firstLineCells(first, "b.ts"));
+  });
+
+  it("keeps wrapped geometry fully measured", () => {
+    const model = buildDiffDocumentModel(
+      input({
+        files: [file("a.ts"), file("b.ts")],
+        wrapLines: true,
+        materializationWindow: { top: 0, height: FILE_HEADER_HEIGHT },
+      }),
+    );
+
+    expect(measuredFragments(model, "a.ts")).toBeGreaterThan(0);
+    expect(measuredFragments(model, "b.ts")).toBeGreaterThan(0);
+  });
 });
+
+function measuredFragments(model: ReturnType<typeof buildDiffDocumentModel>, path: string): number {
+  const fileSection = model.files.find((entry) => entry.path === path);
+  if (!fileSection) throw new Error(`Expected ${path}`);
+  return model.rows
+    .slice(fileSection.rowStart, fileSection.rowEnd)
+    .filter((row) => row.kind === "line")
+    .flatMap((row) => row.cells)
+    .reduce((count, cell) => count + (cell?.fragments.length ?? 0), 0);
+}
+
+function firstLineCells(model: ReturnType<typeof buildDiffDocumentModel>, path: string) {
+  return firstLine(model, path).cells;
+}
+
+function firstLine(model: ReturnType<typeof buildDiffDocumentModel>, path: string) {
+  const fileSection = model.files.find((entry) => entry.path === path);
+  if (!fileSection) throw new Error(`Expected ${path}`);
+  const row = model.rows[fileSection.rowStart];
+  if (!row || row.kind !== "line") throw new Error(`Expected a line in ${path}`);
+  return row;
+}
 
 function shapingMeasurer(measure: (text: string) => number): TextMeasurer {
   return {
