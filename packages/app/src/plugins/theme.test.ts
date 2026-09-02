@@ -64,7 +64,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
 
 describe("toPluginTheme", () => {
   it("maps the app theme into the plugin color tokens", () => {
-    expect(toPluginTheme(lightTheme)).toEqual({
+    expect(toPluginTheme(lightTheme, "md")).toEqual({
       colors: {
         surface0: lightTheme.colors.surface0,
         surface1: lightTheme.colors.surface1,
@@ -81,6 +81,10 @@ describe("toPluginTheme", () => {
         statusDangerTint: "rgba(157, 67, 59, 0.1)",
       },
     });
+  });
+
+  it.each(["xs", "sm"])("uses the compact sheet scrim at the %s breakpoint", (breakpoint) => {
+    expect(toPluginTheme(lightTheme, breakpoint).colors.scrim).toBe("rgba(0,0,0,0.45)");
   });
 });
 

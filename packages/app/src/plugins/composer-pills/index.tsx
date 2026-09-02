@@ -16,7 +16,9 @@ import { toPluginTheme } from "../theme";
 import type { InstalledPlugin, PluginComposerPillContribution } from "../types";
 import { pluginComposerPillStore } from "./store";
 
-const pluginThemeMapping = (theme: Theme) => ({ theme: toPluginTheme(theme) });
+const pluginThemeMapping = (theme: Theme, runtime: { breakpoint?: string }) => ({
+  theme: toPluginTheme(theme, runtime.breakpoint),
+});
 
 function resolvePlatform(): PluginComposerPillProps["layout"]["platform"] {
   if (Platform.OS === "ios") return "ios";

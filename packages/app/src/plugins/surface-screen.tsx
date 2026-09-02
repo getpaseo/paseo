@@ -30,8 +30,8 @@ import {
 
 const EMPTY_SHORTCUT_KEYS: ShortcutKey[] = [];
 const mutedColorMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
-const pluginThemeMapping = (theme: Theme) => ({
-  theme: toPluginTheme(theme),
+const pluginThemeMapping = (theme: Theme, runtime: { breakpoint?: string }) => ({
+  theme: toPluginTheme(theme, runtime.breakpoint),
 });
 const ThemedX = withUnistyles(X);
 const ThemedChevronDown = withUnistyles(ChevronDown);
