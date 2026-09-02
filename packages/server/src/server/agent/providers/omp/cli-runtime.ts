@@ -271,15 +271,15 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     this.process.send({ type: "follow_up", message, ...(images?.length ? { images } : {}) });
   }
 
-  async steerActiveTurn(
-    message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): Promise<{ accepted: boolean }> {
+  async steerActiveTurn(input: {
+    message: string;
+    images?: Array<{ type: "image"; data: string; mimeType: string }>;
+  }): Promise<{ accepted: boolean }> {
     const data = OmpSteerResultSchema.parse(
       await this.request({
         type: "steer",
-        message,
-        ...(images?.length ? { images } : {}),
+        message: input.message,
+        ...(input.images?.length ? { images: input.images } : {}),
         activeTurnOnly: true,
       }),
     );

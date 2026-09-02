@@ -354,11 +354,14 @@ export class FakeOmpSession implements OmpRuntimeSession {
     this.followUpRequests.push({ message, imageCount: images?.length ?? 0 });
   }
 
-  async steerActiveTurn(
-    message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): Promise<{ accepted: boolean }> {
-    this.steerActiveTurnRequests.push({ message, imageCount: images?.length ?? 0 });
+  async steerActiveTurn(input: {
+    message: string;
+    images?: Array<{ type: "image"; data: string; mimeType: string }>;
+  }): Promise<{ accepted: boolean }> {
+    this.steerActiveTurnRequests.push({
+      message: input.message,
+      imageCount: input.images?.length ?? 0,
+    });
     if (this.heldSteerResponseCount > 0) {
       this.heldSteerResponseCount -= 1;
       const { promise, resolve } = Promise.withResolvers<{ accepted: boolean }>();

@@ -941,13 +941,19 @@ describe("OMP active-turn steering", () => {
     await waitForImmediate();
 
     const again = userMessages(omp).filter((row) => row.text === "again");
-    expect(again.map((row) => row.clientMessageId).sort()).toEqual([
-      "client-steer-1",
-      "client-steer-2",
-    ]);
-    expect(again.flatMap((row) => (row.messageId ? [row.messageId] : [])).sort()).toEqual([
-      "entry-again-1",
-      "entry-again-2",
+    expect(again).toEqual([
+      {
+        type: "user_message",
+        text: "again",
+        messageId: "entry-again-1",
+        clientMessageId: "client-steer-1",
+      },
+      {
+        type: "user_message",
+        text: "again",
+        messageId: "entry-again-2",
+        clientMessageId: "client-steer-2",
+      },
     ]);
   });
 

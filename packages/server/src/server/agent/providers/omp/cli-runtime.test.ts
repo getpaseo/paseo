@@ -445,9 +445,10 @@ describe("OMP CLI runtime", () => {
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
 
     await expect(
-      session.steerActiveTurn("focus on the tests", [
-        { type: "image", data: "aGk=", mimeType: "image/png" },
-      ]),
+      session.steerActiveTurn({
+        message: "focus on the tests",
+        images: [{ type: "image", data: "aGk=", mimeType: "image/png" }],
+      }),
     ).resolves.toEqual({ accepted: true });
     expect(commands.map(withoutRequestId)).toEqual([
       {
@@ -464,7 +465,9 @@ describe("OMP CLI runtime", () => {
     replyToCommands(child, () => ({ accepted: false }));
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
 
-    await expect(session.steerActiveTurn("focus")).resolves.toEqual({ accepted: false });
+    await expect(session.steerActiveTurn({ message: "focus" })).resolves.toEqual({
+      accepted: false,
+    });
   });
 
   test("rejects malformed steer acknowledgements", async () => {
@@ -472,7 +475,7 @@ describe("OMP CLI runtime", () => {
     replyToCommands(child, () => ({}));
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
 
-    await expect(session.steerActiveTurn("focus")).rejects.toThrow();
+    await expect(session.steerActiveTurn({ message: "focus" })).rejects.toThrow();
   });
 
   test("sends the acknowledged clear_queue frame for interrupt", async () => {

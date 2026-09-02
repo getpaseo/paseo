@@ -81,10 +81,10 @@ export interface OmpRuntimeSession {
     images?: Array<{ type: "image"; data: string; mimeType: string }>,
   ): void;
   /** Request-based active-only steer; requires `capabilities.activeTurnSteering`. */
-  steerActiveTurn(
-    message: string,
-    images?: Array<{ type: "image"; data: string; mimeType: string }>,
-  ): Promise<{ accepted: boolean }>;
+  steerActiveTurn(input: {
+    message: string;
+    images?: Array<{ type: "image"; data: string; mimeType: string }>;
+  }): Promise<{ accepted: boolean }>;
   /** Acknowledged after OMP has discarded its queued steers. */
   clearQueueForInterrupt(): Promise<void>;
   readonly capabilities: OmpRuntimeSessionCapabilities;

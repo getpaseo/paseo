@@ -1071,7 +1071,10 @@ export class OmpAgentSession implements AgentSession {
     // A transport error leaves the steer's fate ambiguous: the error surfaces
     // to the caller and the provisional correlation stays registered until
     // terminal cleanup, in case OMP did read the steer.
-    const { accepted } = await this.runtimeSession.steerActiveTurn(payload.text, payload.images);
+    const { accepted } = await this.runtimeSession.steerActiveTurn({
+      message: payload.text,
+      images: payload.images,
+    });
     if (!accepted) {
       // OMP authoritatively rejected this steer; remove exactly this entry so
       // an identical-text steer registered later keeps its own correlation.
@@ -2230,10 +2233,10 @@ export class OmpAgentSession implements AgentSession {
           this.releaseExpectedUserEcho(claim);
           return undefined;
         }
-        // Latest unemitted match: each emission excludes its entry from the
-        // next resolution, so identical echoes take distinct native entries.
+        // Earliest unemitted match preserves FIFO pairing between concurrently
+        // resolving identical echoes and their provisional client identities.
         this.commitExpectedUserEcho(claim);
-        emitUserMessage(unemitted.at(-1)?.entryId);
+        emitUserMessage(unemitted[0]?.entryId);
         return undefined;
       })
       .catch((error: unknown) => {
