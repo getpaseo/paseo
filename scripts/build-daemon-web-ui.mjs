@@ -37,8 +37,16 @@ function run(command, args, options) {
 
 async function exportBrowserWebApp() {
   console.log("Exporting browser web app...");
+  const npmExecPath = process.env.npm_execpath;
+  if (npmExecPath) {
+    await run(process.execPath, [npmExecPath, "run", "build:web", "--workspace=@getpaseo/app"], {
+      cwd: REPO_ROOT,
+    });
+    return;
+  }
   await run("npm", ["run", "build:web", "--workspace=@getpaseo/app"], {
     cwd: REPO_ROOT,
+    shell: process.platform === "win32",
   });
 }
 

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Text, View } from "react-native";
+import { Button } from "@/components/ui/button";
+import { EditingTextInput } from "@/components/ui/text-input";
 import { StyleSheet } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useShallow } from "zustand/react/shallow";
@@ -17,6 +19,7 @@ import {
 } from "@/subagents/provider-store";
 import { useTranslation } from "react-i18next";
 import type { PendingPermission } from "@/types/shared";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import type { StreamItem } from "@/types/stream";
 import { deriveSidebarStateBucket } from "@/utils/sidebar-agent-state";
 import { TIMELINE_FETCH_PAGE_SIZE } from "@/timeline/timeline-fetch-policy";
@@ -66,6 +69,141 @@ function useProviderSubagentDescriptor(
   };
 }
 
+interface ProviderSubagentControlsProps {
+  client: DaemonClient;
+  parentAgentId: string;
+  subagentId: string;
+  status: "running" | "completed" | "failed" | "canceled";
+}
+
+function ProviderSubagentControls(props: ProviderSubagentControlsProps) {
+  const [message, setMessage] = useState("");
+  const [inputKey, setInputKey] = useState(0);
+  const [pending, setPending] = useState<"stop" | "steer" | "resume" | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const runControl = useCallback(
+    async (action: "stop" | "steer" | "resume") => {
+      if (pending) return;
+      const trimmed = message.trim();
+      if ((action === "steer" || action === "resume") && !trimmed) {
+        setError("Enter a message first");
+        return;
+      }
+      setPending(action);
+      setError(null);
+      try {
+        await props.client.controlProviderSubagent({
+          parentAgentId: props.parentAgentId,
+          subagentId: props.subagentId,
+          action,
+          ...(trimmed ? { message: trimmed } : {}),
+        });
+        if (action !== "stop") {
+          setMessage("");
+          setInputKey((value) => value + 1);
+        }
+      } catch (controlError) {
+        setError(controlError instanceof Error ? controlError.message : String(controlError));
+      } finally {
+        setPending(null);
+      }
+    },
+    [message, pending, props.client, props.parentAgentId, props.subagentId],
+  );
+  const handleSteer = useCallback(() => void runControl("steer"), [runControl]);
+  const handleStop = useCallback(() => void runControl("stop"), [runControl]);
+  const handleResume = useCallback(() => void runControl("resume"), [runControl]);
+
+  return (
+    <>
+      <View style={styles.controls} testID="provider-subagent-controls">
+        <EditingTextInput
+          key={inputKey}
+          style={styles.controlInput}
+          initialValue={message}
+          onChangeText={setMessage}
+          placeholder={
+            props.status === "running" ? "Steer this subagent" : "Message to resume this subagent"
+          }
+          placeholderTextColor={styles.placeholderColor.color}
+          editable={pending === null}
+          accessibilityLabel="Pi Subagent control message"
+        />
+        {props.status === "running" ? (
+          <>
+            <Button
+              size="xs"
+              variant="default"
+              loading={pending === "steer"}
+              disabled={pending !== null}
+              onPress={handleSteer}
+            >
+              Steer
+            </Button>
+            <Button
+              size="xs"
+              variant="outline"
+              loading={pending === "stop"}
+              disabled={pending !== null}
+              onPress={handleStop}
+            >
+              Stop
+            </Button>
+          </>
+        ) : (
+          <Button
+            size="xs"
+            variant="default"
+            loading={pending === "resume"}
+            disabled={pending !== null}
+            onPress={handleResume}
+          >
+            Resume
+          </Button>
+        )}
+      </View>
+      {error ? <Text style={styles.controlError}>{error}</Text> : null}
+    </>
+  );
+}
+
+interface ProviderSubagentHeaderProps {
+  subtitle: string | undefined;
+  controlsSupported: boolean;
+  client: DaemonClient | null;
+  descriptor: {
+    status: "running" | "completed" | "failed" | "canceled";
+  } | null;
+  parentAgentId: string;
+  subagentId: string;
+}
+
+function ProviderSubagentHeader(props: ProviderSubagentHeaderProps) {
+  if (!props.subtitle && !props.controlsSupported) return null;
+  return (
+    <View style={styles.controlHeader}>
+      {props.subtitle ? (
+        <Text
+          style={styles.subtitleText}
+          numberOfLines={1}
+          testID="provider-subagent-pane-subtitle"
+        >
+          {props.subtitle}
+        </Text>
+      ) : null}
+      {props.controlsSupported && props.client && props.descriptor ? (
+        <ProviderSubagentControls
+          client={props.client}
+          parentAgentId={props.parentAgentId}
+          subagentId={props.subagentId}
+          status={props.descriptor.status}
+        />
+      ) : null}
+    </View>
+  );
+}
+
 function ProviderSubagentPanel() {
   const { t } = useTranslation();
   const { serverId, target, openFileInWorkspace } = usePaneContext();
@@ -89,6 +227,8 @@ function ProviderSubagentPanel() {
   // COMPAT(providerSubagents): added in v0.2.11, remove after 2027-01-12.
   const supported = serverInfo?.features?.providerSubagents === true;
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  // COMPAT(providerSubagentControl): added in v0.5.1-pie.1, remove after 2027-02-24.
+  const controlsSupported = serverInfo?.features?.providerSubagentControl === true;
 
   useEffect(() => {
     if (!client || !supported) return;
@@ -184,17 +324,14 @@ function ProviderSubagentPanel() {
 
   return (
     <View style={styles.container} testID="provider-subagent-panel">
-      {subtitle ? (
-        <View style={styles.subtitleHeader}>
-          <Text
-            style={styles.subtitleText}
-            numberOfLines={1}
-            testID="provider-subagent-pane-subtitle"
-          >
-            {subtitle}
-          </Text>
-        </View>
-      ) : null}
+      <ProviderSubagentHeader
+        subtitle={subtitle}
+        controlsSupported={controlsSupported}
+        client={client}
+        descriptor={descriptor}
+        parentAgentId={target.parentAgentId}
+        subagentId={target.subagentId}
+      />
       <AgentStreamView
         agentId={streamId}
         serverId={serverId}
@@ -214,14 +351,39 @@ function ProviderSubagentPanel() {
 
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minHeight: 0 },
-  subtitleHeader: {
+  controlHeader: {
+    gap: theme.spacing[1],
     paddingHorizontal: theme.spacing[3],
-    paddingVertical: theme.spacing[1],
+    paddingVertical: theme.spacing[2],
     borderBottomWidth: theme.borderWidth[1],
     borderBottomColor: theme.colors.border,
   },
   subtitleText: {
     color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
+  },
+  controls: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[2],
+  },
+  controlInput: {
+    flex: 1,
+    minWidth: 0,
+    color: theme.colors.foreground,
+    backgroundColor: theme.colors.surface2,
+    borderWidth: theme.borderWidth[1],
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.lg,
+    paddingHorizontal: theme.spacing[2],
+    paddingVertical: theme.spacing[1],
+    fontSize: theme.fontSize.sm,
+  },
+  placeholderColor: {
+    color: theme.colors.foregroundMuted,
+  },
+  controlError: {
+    color: theme.colors.statusDanger,
     fontSize: theme.fontSize.sm,
   },
   unsupported: { flex: 1, alignItems: "center", justifyContent: "center", padding: 24 },

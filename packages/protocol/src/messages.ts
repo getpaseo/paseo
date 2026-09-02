@@ -1794,6 +1794,15 @@ export const ProviderSubagentTimelineRequestMessageSchema = z.object({
   limit: z.number().int().nonnegative().optional(),
 });
 
+export const ProviderSubagentControlRequestMessageSchema = z.object({
+  type: z.literal("agent.provider_subagents.control.request"),
+  parentAgentId: z.string(),
+  subagentId: z.string(),
+  action: z.enum(["stop", "steer", "resume"]),
+  message: z.string().optional(),
+  requestId: z.string(),
+});
+
 export const SetAgentTimelineSubscriptionRequestMessageSchema = z.object({
   type: z.literal("agent.timeline.set_subscription.request"),
   agentIds: z.array(z.string()),
@@ -3081,6 +3090,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   AgentTimelineListPromptsRequestMessageSchema,
   ProviderSubagentListRequestMessageSchema,
   ProviderSubagentTimelineRequestMessageSchema,
+  ProviderSubagentControlRequestMessageSchema,
   SetAgentTimelineSubscriptionRequestMessageSchema,
   AgentForkContextRequestMessageSchema,
   SetAgentModeRequestMessageSchema,
@@ -3447,6 +3457,8 @@ export const ServerInfoStatusPayloadSchema = z
         agentForkContextCursor: z.boolean().optional(),
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
         providerSubagents: z.boolean().optional(),
+        // COMPAT(providerSubagentControl): added in v0.5.1-pie.1, remove after 2027-02-24.
+        providerSubagentControl: z.boolean().optional(),
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: z.boolean().optional(),
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.
@@ -4429,6 +4441,19 @@ export const ProviderSubagentTimelineResponseMessageSchema = z.object({
         seq: z.number().int().nonnegative(),
       }),
     ),
+    error: z.string().nullable(),
+  }),
+});
+
+export const ProviderSubagentControlResponseMessageSchema = z.object({
+  type: z.literal("agent.provider_subagents.control.response"),
+  payload: z.object({
+    requestId: z.string(),
+    parentAgentId: z.string(),
+    subagentId: z.string(),
+    action: z.enum(["stop", "steer", "resume"]),
+    accepted: z.boolean(),
+    message: z.string().optional(),
     error: z.string().nullable(),
   }),
 });
@@ -6375,6 +6400,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentTimelineListPromptsResponseMessageSchema,
   ProviderSubagentListResponseMessageSchema,
   ProviderSubagentTimelineResponseMessageSchema,
+  ProviderSubagentControlResponseMessageSchema,
   ProviderSubagentUpdateMessageSchema,
   SetAgentTimelineSubscriptionResponseMessageSchema,
   AgentAttentionRequiredMessageSchema,

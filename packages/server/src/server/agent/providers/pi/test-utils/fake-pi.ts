@@ -106,6 +106,12 @@ export class FakePiSession implements PiRuntimeSession {
   readonly setThinkingLevelRequests: string[] = [];
   readonly treeNavigationRequests: string[] = [];
   readonly handoffRequests: Array<{ customInstructions?: string }> = [];
+  readonly subagentControlRequests: Array<{
+    requestId: string;
+    method: string;
+    params: Record<string, unknown>;
+  }> = [];
+  readonly subagentControlErrors: Error[] = [];
   readonly sessionNameRequests: string[] = [];
   readonly rawFrames: Array<object & { type: string }> = [];
   capturedUserEntries: Array<{ id: string; parentId: string | null; text: string }> = [];
@@ -181,6 +187,7 @@ export class FakePiSession implements PiRuntimeSession {
     }
     this.handleTreeNavigationCommand(message);
     this.handleEntryCaptureCommand(message);
+    this.handleSubagentControlCommand(message);
     return this.promptAck;
   }
 
@@ -409,6 +416,39 @@ export class FakePiSession implements PiRuntimeSession {
       id: `submitted-user-${entry.id}`,
       method: "notify",
       message: `PASEO_SUBMITTED_USER_ENTRY ${JSON.stringify({ entry })}`,
+    });
+  }
+
+  private handleSubagentControlCommand(message: string): void {
+    const prefix = "/paseo_subagent_control ";
+    if (!message.startsWith(prefix)) {
+      return;
+    }
+    const payload = JSON.parse(
+      Buffer.from(message.slice(prefix.length), "base64url").toString("utf8"),
+    ) as { requestId?: unknown; method?: unknown; params?: unknown };
+    if (
+      typeof payload.requestId !== "string" ||
+      typeof payload.method !== "string" ||
+      !payload.params ||
+      typeof payload.params !== "object" ||
+      Array.isArray(payload.params)
+    ) {
+      return;
+    }
+    this.subagentControlRequests.push({
+      requestId: payload.requestId,
+      method: payload.method,
+      params: payload.params as Record<string, unknown>,
+    });
+    const error = this.subagentControlErrors.shift();
+    if (error) {
+      this.emitExtensionCommandResult(payload.requestId, { ok: false, error: error.message });
+      return;
+    }
+    this.emitExtensionCommandResult(payload.requestId, {
+      ok: true,
+      result: { message: `${payload.method} accepted` },
     });
   }
 

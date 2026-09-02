@@ -38,6 +38,8 @@ import {
   type ListImportableSessionsOptions,
   type ProviderCatalog,
   type ProviderRefreshContext,
+  type ProviderSubagentControlInput,
+  type ProviderSubagentControlResult,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import { importSessionFromPersistence } from "../../provider-session-import.js";
@@ -67,6 +69,7 @@ import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
 import { listPiImportableSessions, readPiImportSessionConfig } from "./session-descriptor.js";
+import { PiSubagentsBridge } from "./subagents-bridge.js";
 import type { PiRuntime, PiRuntimeSession, PiStartSessionInput } from "./runtime.js";
 import type {
   PiAgentSessionEvent,
@@ -93,6 +96,7 @@ const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
 const PI_BINARY_COMMAND = process.env.PI_COMMAND ?? process.env.PI_ACP_PI_COMMAND ?? "pi";
 const PASEO_PI_TREE_EXTENSION_COMMAND = "paseo_tree";
 const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
+const PASEO_PI_SUBAGENT_CONTROL_EXTENSION_COMMAND = "paseo_subagent_control";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
@@ -667,6 +671,23 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	  );
 	}
 
+	function requestSubagentRpc(pi, request) {
+	  return new Promise((resolve, reject) => {
+	    const replyEvent = "subagents:rpc:v1:reply:" + request.requestId;
+	    let unsubscribe;
+	    const timer = setTimeout(() => {
+	      if (typeof unsubscribe === "function") unsubscribe();
+	      reject(new Error("Pi Subagents control request timed out"));
+	    }, 15000);
+	    unsubscribe = pi.events.on(replyEvent, (reply) => {
+	      clearTimeout(timer);
+	      if (typeof unsubscribe === "function") unsubscribe();
+	      resolve(reply);
+	    });
+	    pi.events.emit("subagents:rpc:v1:request", request);
+	  });
+	}
+
 	export default function paseoIntegration(pi) {
 	  const submittedUserMessages = [];
 
@@ -729,6 +750,31 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	    },
 	  });
 
+	  pi.registerCommand("${PASEO_PI_SUBAGENT_CONTROL_EXTENSION_COMMAND}", {
+	    description: "Internal Paseo Pi Subagents control bridge",
+	    handler: async (args, ctx) => {
+	      const payload = decodePayload(args.trim());
+	      try {
+	        const reply = await requestSubagentRpc(pi, {
+	          version: 1,
+	          requestId: payload.requestId,
+	          method: payload.method,
+	          params: payload.params,
+	          source: { extension: "paseo" },
+	        });
+	        if (reply && reply.success === true) {
+	          emitCommandResult(ctx, payload.requestId, { ok: true, result: reply.data });
+	          return;
+	        }
+	        const error = reply?.error?.message || "Pi Subagents rejected the control request";
+	        emitCommandResult(ctx, payload.requestId, { ok: false, error });
+	      } catch (error) {
+	        const message = error instanceof Error ? error.message : String(error);
+	        emitCommandResult(ctx, payload.requestId, { ok: false, error: message });
+	      }
+	    },
+	  });
+
 	  pi.registerCommand("${PASEO_PI_TREE_EXTENSION_COMMAND}", {
 	    description: "Internal Paseo tree navigation bridge",
 	    handler: async (args, ctx) => {
@@ -781,6 +827,13 @@ function withPiCapabilities(supportsMcpServers: boolean): AgentCapabilityFlags {
     ...PI_CAPABILITIES,
     supportsMcpServers,
   };
+}
+
+function parsePiSubagentStepIndex(childId: string): number | undefined {
+  const match = /^step:(\d+)$/.exec(childId);
+  if (!match) return undefined;
+  const index = Number.parseInt(match[1] ?? "", 10);
+  return Number.isSafeInteger(index) ? index : undefined;
 }
 
 function isPiRequestAbortError(error: unknown): boolean {
@@ -1224,6 +1277,8 @@ export class PiRpcAgentSession implements AgentSession {
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
+  private readonly subagentsBridge = new PiSubagentsBridge();
+  private readonly requestedSubagentInspections = new Set<string>();
   private activeAskUserDialog: ActiveAskUserDialog | null = null;
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
   private activeTurnId: string | null = null;
@@ -1311,6 +1366,74 @@ export class PiRpcAgentSession implements AgentSession {
       reduceFinalText: ({ current, item }) =>
         item.type === "assistant_message" ? `${current}${item.text}` : current,
     });
+  }
+
+  async controlProviderSubagent(
+    input: ProviderSubagentControlInput,
+  ): Promise<ProviderSubagentControlResult> {
+    const target = this.subagentsBridge.resolveTarget(input.subagentId);
+    if (!target) {
+      return { status: "unavailable", message: "Pi Subagents target is no longer available" };
+    }
+    const message = input.message?.trim();
+    if ((input.action === "steer" || input.action === "resume") && !message) {
+      return { status: "unavailable", message: `${input.action} requires a message` };
+    }
+
+    const params: Record<string, unknown> = { id: target.asyncId };
+    if (input.action === "stop" && target.childId) {
+      params.childId = target.childId;
+    }
+    if (input.action === "steer") {
+      const index = target.childId ? parsePiSubagentStepIndex(target.childId) : undefined;
+      if (target.childId && index === undefined) {
+        return {
+          status: "unavailable",
+          message: "This Pi Subagents child does not expose a steerable step index",
+        };
+      }
+      params.message = message;
+      params.mode = "steer";
+      if (index !== undefined) params.index = index;
+    }
+    if (input.action === "resume") {
+      params.message = message;
+    }
+
+    const attempts = input.action === "stop" ? 3 : 1;
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      try {
+        return await this.executePiSubagentControl(input.action, params);
+      } catch (error) {
+        if (
+          attempt === attempts ||
+          !/status file not found/i.test(toDiagnosticErrorMessage(error))
+        ) {
+          throw error;
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      }
+    }
+    return { status: "unavailable" };
+  }
+
+  private async executePiSubagentControl(
+    action: ProviderSubagentControlInput["action"],
+    params: Record<string, unknown>,
+  ): Promise<ProviderSubagentControlResult> {
+    const requestId = randomUUID();
+    const resultPromise = this.waitForExtensionResult(requestId);
+    const payload = Buffer.from(
+      JSON.stringify({ requestId, method: action, params }),
+      "utf8",
+    ).toString("base64url");
+    await this.runtimeSession.prompt(`/${PASEO_PI_SUBAGENT_CONTROL_EXTENSION_COMMAND} ${payload}`);
+    const result = await resultPromise;
+    const resultRecord = isRecord(result) ? result : null;
+    return {
+      status: "accepted",
+      ...(typeof resultRecord?.message === "string" ? { message: resultRecord.message } : {}),
+    };
   }
 
   async startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<StartTurnResult> {
@@ -2024,6 +2147,17 @@ export class PiRpcAgentSession implements AgentSession {
   private handleExtensionUiRequest(
     event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
   ): void {
+    const subagents = this.subagentsBridge.handleExtensionUiRequest(event);
+    if (subagents.handled) {
+      for (const bridgeEvent of subagents.events) {
+        this.emit(bridgeEvent);
+      }
+      for (const inspection of subagents.inspectionTargets) {
+        this.requestSubagentInspection(inspection.descriptorId, inspection.terminal);
+      }
+      return;
+    }
+
     const message = optionalString(event.message);
     if (event.method === "notify" && message) {
       if (
@@ -2061,6 +2195,27 @@ export class PiRpcAgentSession implements AgentSession {
       request,
       turnId: this.currentTurnIdForEvent(),
     });
+  }
+
+  private requestSubagentInspection(descriptorId: string, terminal: boolean): void {
+    const inspectionKey = `${descriptorId}:${terminal ? "terminal" : "live"}`;
+    if (this.requestedSubagentInspections.has(inspectionKey)) {
+      return;
+    }
+    const requestId = randomUUID();
+    const target = this.subagentsBridge.beginInspection(requestId, descriptorId);
+    if (!target) {
+      return;
+    }
+    this.requestedSubagentInspections.add(inspectionKey);
+    const child = target.childId ? ` ${target.childId}` : "";
+    void this.runtimeSession
+      .prompt(`/subagents-inspect-rpc ${requestId} ${target.asyncId}${child} --lines 100`)
+      .catch((error) => {
+        this.subagentsBridge.failInspection(requestId);
+        this.requestedSubagentInspections.delete(inspectionKey);
+        this.logger.debug({ err: error, descriptorId }, "Pi Subagents inspection command failed");
+      });
   }
 
   private respondToCombinedAskUserFollowUp(
