@@ -177,6 +177,14 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.workspaceTitleSource).toBe("title");
   });
 
+  it("defaults project workspaces to rows", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarProjectWorkspaceDisplay).toBe("rows");
+  });
+
   it("enables the chat outline by default", async () => {
     const deps = makeDeps();
 
@@ -282,6 +290,30 @@ describe("loadAppSettingsFromStorage", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result.workspaceTitleSource).toBe("title");
+  });
+
+  it("loads compact project workspaces from app settings", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarProjectWorkspaceDisplay: "compact" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarProjectWorkspaceDisplay).toBe("compact");
+  });
+
+  it("drops an unknown project workspace display back to rows", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarProjectWorkspaceDisplay: "dense" }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarProjectWorkspaceDisplay).toBe("rows");
   });
 
   it("normalizes terminal scrollback lines from storage", async () => {

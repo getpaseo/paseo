@@ -1054,6 +1054,11 @@ export const ru: TranslationResources = {
         title: "Заголовок",
         branch: "Имя ветки",
       },
+      projectWorkspaces: {
+        label: "Рабочие пространства проекта",
+        rows: "Строки",
+        compact: "Компактно",
+      },
       show: {
         label: "Показывать",
         branch: "Ветка",

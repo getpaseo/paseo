@@ -42,6 +42,21 @@ describe("resolveWorkspaceName", () => {
     expect(resolveWorkspaceDisplayName(record)).toBe("Renamed");
     expect(resolveWorkspaceDisplayName({ ...record, title: null })).toBe("main");
   });
+
+  test("persists schedule workspace identity when present", () => {
+    const record = createPersistedWorkspaceRecord({
+      workspaceId: "ws-scheduled",
+      projectId: "proj-1",
+      cwd: "/tmp/repo",
+      kind: "local_checkout",
+      displayName: "scheduled run",
+      scheduleId: "schedule-1",
+      createdAt: "2026-03-01T00:00:00.000Z",
+      updatedAt: "2026-03-01T00:00:00.000Z",
+    });
+
+    expect(record.scheduleId).toBe("schedule-1");
+  });
 });
 
 describe("workspace registries", () => {

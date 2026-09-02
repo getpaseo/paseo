@@ -6,12 +6,37 @@ import {
   expectMobileAgentSidebarHidden,
   expectMobileAgentSidebarVisible,
   openMobileAgentSidebar,
+  openSidebarDisplayPage,
   pinWorkspaceFromSidebar,
 } from "../support/helpers/sidebar";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { expectWorkspaceHeader } from "../support/helpers/workspace-ui";
 import { getServerId } from "../support/helpers/server-id";
 import { projectEquivalenceViewKey } from "../support/helpers/project-view-key";
+
+interface SidebarScheduleClient {
+  scheduleCreate(input: {
+    prompt: string;
+    cadence: { type: "cron"; expression: string };
+    target: {
+      type: "new-agent";
+      config: {
+        provider: "mock";
+        cwd: string;
+        model: string;
+        modeId: string;
+        archiveOnFinish: false;
+        isolation: "local";
+      };
+    };
+    runOnCreate: false;
+  }): Promise<{ schedule: { id: string } | null; error: string | null }>;
+  scheduleRunOnce(input: { id: string }): Promise<{
+    schedule: { runs: Array<{ workspaceId?: string | null }> } | null;
+    error: string | null;
+  }>;
+  scheduleDelete(input: { id: string }): Promise<{ error: string | null }>;
+}
 import { escapeRegex } from "../support/helpers/regex";
 import { openFilesPanel } from "../support/helpers/workspace-tabs";
 
@@ -115,6 +140,119 @@ test.describe("Sidebar workspace list", () => {
       await expect(projectRow).not.toContainText("test-owner/test-repo");
     } finally {
       await workspace.cleanup();
+    }
+  });
+
+  test("compact project rows expose workspace status targets without child rows", async ({
+    page,
+  }) => {
+    const seeded = await seedWorkspace({ repoPrefix: "sidebar-compact-workspaces-" });
+    const created = await seeded.client.createWorkspace({
+      source: {
+        kind: "directory",
+        path: seeded.repoPath,
+        projectId: seeded.projectId,
+      },
+      title: "Compact target",
+    });
+    if (!created.workspace) throw new Error(created.error ?? "Failed to create workspace");
+    const scheduleClient = seeded.client as unknown as SidebarScheduleClient;
+    const scheduleResult = await scheduleClient.scheduleCreate({
+      prompt: "Nightly sync",
+      cadence: { type: "cron", expression: "0 9 * * *" },
+      target: {
+        type: "new-agent",
+        config: {
+          provider: "mock",
+          cwd: seeded.repoPath,
+          model: "e2e-fast-stream",
+          modeId: "load-test",
+          archiveOnFinish: false,
+          isolation: "local",
+        },
+      },
+      runOnCreate: false,
+    });
+    if (!scheduleResult.schedule) {
+      throw new Error(scheduleResult.error ?? "Failed to create compact workspace schedule");
+    }
+    const scheduleId = scheduleResult.schedule.id;
+    const scheduleWorkspaceIds: string[] = [];
+    for (let runIndex = 0; runIndex < 2; runIndex += 1) {
+      const runResult = await scheduleClient.scheduleRunOnce({ id: scheduleId });
+      const workspaceId = runResult.schedule?.runs.at(-1)?.workspaceId;
+      if (!workspaceId) throw new Error(runResult.error ?? "Scheduled run has no workspace");
+      scheduleWorkspaceIds.push(workspaceId);
+    }
+    const [firstScheduleWorkspaceId, secondScheduleWorkspaceId] = scheduleWorkspaceIds;
+
+    try {
+      await gotoAppShell(page);
+      const serverId = getServerId();
+      const projectViewKey = projectEquivalenceViewKey(seeded.projectKey);
+      const projectRow = page.getByTestId(`sidebar-project-row-${projectViewKey}`);
+      const firstRow = page.getByTestId(getWorkspaceRowTestId(seeded.workspaceId));
+      const secondRow = page.getByTestId(getWorkspaceRowTestId(created.workspace.id));
+      const firstScheduleRow = page.getByTestId(getWorkspaceRowTestId(firstScheduleWorkspaceId));
+      const secondScheduleRow = page.getByTestId(getWorkspaceRowTestId(secondScheduleWorkspaceId));
+      const workTarget = page.getByTestId(
+        `sidebar-project-workspace-target-project:${projectViewKey}:work`,
+      );
+      const scheduleTarget = page.getByTestId(
+        `sidebar-project-workspace-target-project:${projectViewKey}:schedule`,
+      );
+
+      await expect(firstRow).toBeVisible({ timeout: 30_000 });
+      await expect(secondRow).toBeVisible({ timeout: 30_000 });
+      await expect(firstScheduleRow).toBeVisible({ timeout: 30_000 });
+      await expect(secondScheduleRow).toBeVisible({ timeout: 30_000 });
+      await openSidebarDisplayPage(page, "sidebar-display-project-workspaces");
+      await page.getByTestId("sidebar-project-workspace-display-compact").click();
+      await page.keyboard.press("Escape");
+
+      await expect(firstRow).toHaveCount(0);
+      await expect(secondRow).toHaveCount(0);
+      await expect(firstScheduleRow).toHaveCount(0);
+      await expect(secondScheduleRow).toHaveCount(0);
+      await expect(workTarget).toHaveCount(1);
+      await expect(scheduleTarget).toHaveCount(1);
+      await expect(
+        page.getByTestId(
+          `sidebar-project-workspace-target-${serverId}:${firstScheduleWorkspaceId}`,
+        ),
+      ).toHaveCount(0);
+
+      await workTarget.hover();
+      await expect(
+        page.getByTestId(`sidebar-project-workspace-tooltip-project:${projectViewKey}:work`),
+      ).toHaveText("Compact target");
+
+      await scheduleTarget.hover();
+      await expect(
+        page.getByTestId(`sidebar-project-workspace-tooltip-project:${projectViewKey}:schedule`),
+      ).toHaveText("Nightly sync");
+
+      await projectRow.click();
+      await expect(firstRow).toHaveCount(0);
+      await expect(secondRow).toHaveCount(0);
+      await expect(firstScheduleRow).toHaveCount(0);
+      await expect(secondScheduleRow).toHaveCount(0);
+
+      await workTarget.click();
+      await expectWorkspaceHeader(page, {
+        title: "Compact target",
+        subtitle: path.basename(seeded.repoPath),
+      });
+
+      await page.reload();
+      await expect(firstRow).toHaveCount(0);
+      await expect(secondRow).toHaveCount(0);
+      await expect(workTarget).toBeVisible({ timeout: 30_000 });
+      await expect(workTarget).toHaveCount(1);
+      await expect(scheduleTarget).toHaveCount(1);
+    } finally {
+      await scheduleClient.scheduleDelete({ id: scheduleId }).catch(() => undefined);
+      await seeded.cleanup();
     }
   });
 

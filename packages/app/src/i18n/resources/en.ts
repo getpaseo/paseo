@@ -1048,6 +1048,11 @@ export const en = {
         title: "Title",
         branch: "Branch name",
       },
+      projectWorkspaces: {
+        label: "Project workspaces",
+        rows: "Rows",
+        compact: "Compact",
+      },
       show: {
         label: "Show",
         branch: "Branch",

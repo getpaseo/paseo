@@ -222,6 +222,7 @@ type ScheduleAgentManager = Pick<
 interface ScheduleWorkspaceCreateInput {
   cwd: string;
   firstAgentContext: FirstAgentContext;
+  scheduleId: string;
 }
 
 export interface ScheduleServiceOptions {
@@ -237,6 +238,7 @@ export interface ScheduleServiceOptions {
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
   archiveWorkspace: (workspaceId: string) => Promise<void>;
+  setWorkspaceScheduleId: (workspaceId: string, scheduleId: string) => Promise<void>;
   now?: () => Date;
   runner?: (schedule: StoredSchedule, runId: string) => Promise<ScheduleExecutionResult>;
 }
@@ -254,6 +256,10 @@ export class ScheduleService {
     input: ScheduleWorkspaceCreateInput,
   ) => Promise<CreatePaseoWorktreeWorkflowResult>;
   private readonly archiveWorkspace: (workspaceId: string) => Promise<void>;
+  private readonly setWorkspaceScheduleId: (
+    workspaceId: string,
+    scheduleId: string,
+  ) => Promise<void>;
   private readonly now: () => Date;
   private readonly runner: (
     schedule: StoredSchedule,
@@ -271,11 +277,15 @@ export class ScheduleService {
     this.createDirectoryWorkspace = options.createDirectoryWorkspace;
     this.createPaseoWorktreeWorkspace = options.createPaseoWorktreeWorkspace;
     this.archiveWorkspace = options.archiveWorkspace;
+    this.setWorkspaceScheduleId = options.setWorkspaceScheduleId;
     this.now = options.now ?? (() => new Date());
     this.runner = options.runner ?? ((schedule, runId) => this.executeSchedule(schedule, runId));
   }
 
   async start(): Promise<void> {
+    void this.reconcileScheduleWorkspaceIds().catch((error) => {
+      this.logger.warn({ err: error }, "Failed to reconcile schedule workspace IDs");
+    });
     await this.recoverInterruptedRuns();
     await this.sweepOrphanedSchedules();
     if (this.tickTimer) {
@@ -288,6 +298,17 @@ export class ScheduleService {
     }, SCHEDULE_TICK_INTERVAL_MS);
     (timer as unknown as { unref?: () => void }).unref?.();
     this.tickTimer = timer;
+  }
+
+  private async reconcileScheduleWorkspaceIds(): Promise<void> {
+    const schedules = await this.store.list();
+    await Promise.all(
+      schedules.flatMap((schedule) =>
+        schedule.runs.flatMap((run) =>
+          run.workspaceId ? [this.setWorkspaceScheduleId(run.workspaceId, schedule.id)] : [],
+        ),
+      ),
+    );
   }
 
   async stop(): Promise<void> {
@@ -885,7 +906,7 @@ export class ScheduleService {
     let workspace: PersistedWorkspaceRecord | null = null;
     let agentId: string | null = null;
     try {
-      workspace = await this.createScheduleRunWorkspace(config, schedule.prompt);
+      workspace = await this.createScheduleRunWorkspace(config, schedule.prompt, schedule.id);
       await this.recordRunWorkspace({
         scheduleId: schedule.id,
         runId,
@@ -971,14 +992,14 @@ export class ScheduleService {
   private async createScheduleRunWorkspace(
     config: Extract<ScheduleTarget, { type: "new-agent" }>["config"],
     prompt: string,
+    scheduleId: string,
   ): Promise<PersistedWorkspaceRecord> {
-    const firstAgentContext = { prompt };
+    const input = { cwd: config.cwd, firstAgentContext: { prompt }, scheduleId };
     switch (config.isolation ?? "local") {
       case "local":
-        return this.createDirectoryWorkspace({ cwd: config.cwd, firstAgentContext });
+        return this.createDirectoryWorkspace(input);
       case "worktree":
-        return (await this.createPaseoWorktreeWorkspace({ cwd: config.cwd, firstAgentContext }))
-          .workspace;
+        return (await this.createPaseoWorktreeWorkspace(input)).workspace;
     }
   }
 

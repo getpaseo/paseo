@@ -89,6 +89,19 @@ describe("createSidebarWorkspaceEntry workspace directory label", () => {
   });
 });
 
+describe("createSidebarWorkspaceEntry schedule metadata", () => {
+  it("threads persisted schedule identity from the workspace", () => {
+    const descriptor = workspaceWithForge(undefined, "https://github.com/acme/repo/pull/42");
+    descriptor.scheduleId = "schedule-1";
+    const entry = createSidebarWorkspaceEntry({
+      serverId: "srv",
+      workspace: descriptor,
+    });
+
+    expect(entry.scheduleId).toBe("schedule-1");
+  });
+});
+
 interface OrderedItem {
   key: string;
 }

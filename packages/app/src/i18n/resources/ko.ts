@@ -1046,6 +1046,11 @@ export const ko: TranslationResources = {
         title: "제목",
         branch: "브랜치 이름",
       },
+      projectWorkspaces: {
+        label: "프로젝트 워크스페이스",
+        rows: "행",
+        compact: "컴팩트",
+      },
       show: {
         label: "표시 항목",
         branch: "브랜치",

@@ -232,6 +232,9 @@ test("archiveOnFinish=false local scheduled run emits upserts and remains active
 
   expect(workspaceId).toMatch(/^wks_/);
   await waitForWorkspaceUpsert(events.workspaceUpdates, workspaceId!);
+  expect(requireWorkspaceUpsert(events.workspaceUpdates, workspaceId!).scheduleId).toBe(
+    schedule.id,
+  );
   await waitForAgentUpsert(events.agentUpdates, agentId);
   expect(workspaceWasRemoved(events.workspaceUpdates, workspaceId!)).toBe(false);
   expect(await activeAgentIds()).toContain(agentId);

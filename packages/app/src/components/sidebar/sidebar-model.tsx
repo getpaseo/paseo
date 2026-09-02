@@ -23,6 +23,7 @@ import {
   hasAuthoritativeWorkspaceLabelCatalog,
   useWorkspaceLabelProjection,
 } from "@/workspace-labels";
+import { useAppSettings } from "@/hooks/use-settings";
 
 interface SidebarModel extends SidebarWorkspacesListResult {
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
@@ -46,6 +47,7 @@ interface SidebarModel extends SidebarWorkspacesListResult {
 }
 
 const SidebarModelContext = createContext<SidebarModel | null>(null);
+const EMPTY_COLLAPSED_PROJECT_KEYS = new Set<string>();
 
 export function SidebarModelProvider({
   active,
@@ -56,6 +58,9 @@ export function SidebarModelProvider({
 }) {
   const list = useSidebarWorkspacesList({ enabled: active });
   const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const {
+    settings: { sidebarProjectWorkspaceDisplay },
+  } = useAppSettings();
   const labelFilter = useSidebarViewStore((state) => state.labelFilter);
   const projectFilters = useSidebarViewStore((state) => state.projectFilters);
   const reconcileLabelFilter = useSidebarViewStore((state) => state.reconcileLabelFilter);
@@ -148,11 +153,15 @@ export function SidebarModelProvider({
       projectNamesByViewKey: list.projectNamesByViewKey,
       groupMode,
       pinnedCollapsed,
-      collapsedProjectKeys,
+      collapsedProjectKeys:
+        sidebarProjectWorkspaceDisplay === "compact"
+          ? EMPTY_COLLAPSED_PROJECT_KEYS
+          : collapsedProjectKeys,
       collapsedWorkspaceGroupKeys,
     }),
     [
       collapsedProjectKeys,
+      sidebarProjectWorkspaceDisplay,
       collapsedWorkspaceGroupKeys,
       groupMode,
       list.projectNamesByViewKey,

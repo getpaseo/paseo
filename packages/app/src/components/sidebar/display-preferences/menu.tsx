@@ -21,6 +21,7 @@ import {
   GitBranch,
   GitPullRequest,
   Globe,
+  List,
   Server,
   Settings2,
   Tag,
@@ -55,6 +56,10 @@ import type { WorkspaceTitleSource } from "@/hooks/use-settings";
 import { SIDEBAR_CHECKS_DISPLAYS, type SidebarChecksDisplay } from "./checks-display";
 import { useSidebarDisplayPreferences, type SidebarTrailingChoice } from "./model";
 import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
+import {
+  SIDEBAR_PROJECT_WORKSPACE_DISPLAYS,
+  type SidebarProjectWorkspaceDisplay,
+} from "./project-workspaces";
 import { useWorkspaceLabelProjection } from "@/workspace-labels";
 import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
 import { WorkspaceLabelManagerModal } from "@/workspace-labels/manager-modal";
@@ -96,6 +101,11 @@ const TITLE_SOURCE_ICONS: Record<WorkspaceTitleSource, OptionIcon> = {
   branch: withUnistyles(GitBranch),
 };
 
+const PROJECT_WORKSPACE_DISPLAY_ICONS: Record<SidebarProjectWorkspaceDisplay, OptionIcon> = {
+  rows: withUnistyles(Captions),
+  compact: withUnistyles(List),
+};
+
 // The same marks these things carry on the workspace row itself, so the menu and the row it
 // configures name each item the same way twice.
 const ROW_ITEM_ICONS: Record<SidebarRowItem, OptionIcon> = {
@@ -122,6 +132,8 @@ const TRAILING_ICONS: Record<SidebarTrailingChoice, OptionIcon> = {
 
 const GROUPING_MODES: readonly SidebarGroupMode[] = ["project", "status"];
 const TITLE_SOURCES: readonly WorkspaceTitleSource[] = ["title", "branch"];
+const PROJECT_WORKSPACE_DISPLAYS: readonly SidebarProjectWorkspaceDisplay[] =
+  SIDEBAR_PROJECT_WORKSPACE_DISPLAYS;
 const TRAILING_CHOICES: readonly SidebarTrailingChoice[] = ["diff", "timestamp"];
 
 const GROUPING_LABEL_KEYS: Record<SidebarGroupMode, string> = {
@@ -132,6 +144,11 @@ const GROUPING_LABEL_KEYS: Record<SidebarGroupMode, string> = {
 const TITLE_SOURCE_LABEL_KEYS: Record<WorkspaceTitleSource, string> = {
   title: "sidebar.display.titleSource.title",
   branch: "sidebar.display.titleSource.branch",
+};
+
+const PROJECT_WORKSPACE_DISPLAY_LABEL_KEYS: Record<SidebarProjectWorkspaceDisplay, string> = {
+  rows: "sidebar.display.projectWorkspaces.rows",
+  compact: "sidebar.display.projectWorkspaces.compact",
 };
 
 const ROW_ITEM_LABEL_KEYS: Record<SidebarRowItem, string> = {
@@ -202,6 +219,20 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
             selectedValue={preferences.grouping}
             onSelect={preferences.setGrouping}
             testIDPrefix="sidebar-grouping"
+          />
+        ),
+      },
+      {
+        id: "projectWorkspaces",
+        title: t("sidebar.display.projectWorkspaces.label"),
+        content: (
+          <OptionList
+            values={PROJECT_WORKSPACE_DISPLAYS}
+            icons={PROJECT_WORKSPACE_DISPLAY_ICONS}
+            labelKeys={PROJECT_WORKSPACE_DISPLAY_LABEL_KEYS}
+            selectedValue={preferences.projectWorkspaceDisplay}
+            onSelect={preferences.setProjectWorkspaceDisplay}
+            testIDPrefix="sidebar-project-workspace-display"
           />
         ),
       },
@@ -307,6 +338,13 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
             testID="sidebar-display-grouping"
           >
             {t("sidebar.display.grouping.label")}
+          </MenuSubTrigger>
+          <MenuSubTrigger
+            id="projectWorkspaces"
+            value={t(PROJECT_WORKSPACE_DISPLAY_LABEL_KEYS[preferences.projectWorkspaceDisplay])}
+            testID="sidebar-display-project-workspaces"
+          >
+            {t("sidebar.display.projectWorkspaces.label")}
           </MenuSubTrigger>
           <MenuSubTrigger
             id="titleSource"

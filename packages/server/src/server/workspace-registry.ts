@@ -92,6 +92,8 @@ const PersistedWorkspaceRecordSchema = z.object({
     .nullable()
     .optional()
     .transform((value) => value ?? null),
+  // COMPAT(scheduleWorkspaceIdentity): added in v0.6.2, remove optional parsing after 2027-08-27.
+  scheduleId: z.string().optional(),
   labels: z.array(z.string()).optional(),
 });
 
@@ -673,6 +675,7 @@ export function createPersistedWorkspaceRecord(input: {
   archivedAt?: string | null;
   autoArchivedChangeRequestUrl?: string | null;
   pinnedAt?: string | null;
+  scheduleId?: string;
   labels?: string[];
 }): PersistedWorkspaceRecord {
   return PersistedWorkspaceRecordSchema.parse({
@@ -686,6 +689,7 @@ export function createPersistedWorkspaceRecord(input: {
     archivedAt: input.archivedAt ?? null,
     autoArchivedChangeRequestUrl: input.autoArchivedChangeRequestUrl ?? null,
     pinnedAt: input.pinnedAt ?? null,
+    scheduleId: input.scheduleId,
   });
 }
 

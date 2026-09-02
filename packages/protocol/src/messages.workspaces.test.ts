@@ -574,6 +574,27 @@ describe("workspace message schemas", () => {
     expect(parsed.worktreeSlug).toBe("feature");
   });
 
+  test("preserves schedule workspace identity and accepts legacy omission", () => {
+    const workspace = {
+      id: "scheduled-workspace",
+      projectId: "project",
+      projectDisplayName: "repo",
+      projectRootPath: "/repo",
+      workspaceDirectory: "/repo",
+      projectKind: "git",
+      workspaceKind: "local_checkout",
+      name: "scheduled run",
+      status: "done",
+      activityAt: null,
+      scripts: [],
+    } as const;
+
+    expect(WorkspaceDescriptorPayloadSchema.parse(workspace).scheduleId).toBeUndefined();
+    expect(
+      WorkspaceDescriptorPayloadSchema.parse({ ...workspace, scheduleId: "schedule-1" }).scheduleId,
+    ).toBe("schedule-1");
+  });
+
   test("defaults omitted workspace archiving state and preserves present timestamps", () => {
     const baseWorkspace = {
       id: "ws-archiving",
