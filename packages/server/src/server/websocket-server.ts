@@ -1,5 +1,6 @@
 import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
+import type { Duplex } from "node:stream";
 import { join } from "path";
 import { hostname as getHostname } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -649,6 +650,10 @@ export class VoiceAssistantWebSocketServer {
     workspaceLabelService?: WorkspaceLabelService,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
+    // The shared HTTP server is passed by the bootstrapper but the WebSocket
+    // server runs detached (noServer) so it never attaches its own upgrade
+    // listener; the bootstrapper routes upgrades to handleUpgrade instead.
+    void server;
     this.workspaceSetupRuntime = workspaceSetupRuntime;
     this.advertiseDaemonStatusRpc = wsConfig.daemonStatusRpc !== false;
     this.advertiseRelayConfig = wsConfig.relayConfig !== false;
@@ -736,7 +741,7 @@ export class VoiceAssistantWebSocketServer {
       logger: this.logger,
     });
 
-    this.wss = this.createWebSocketServer(server, wsConfig, auth);
+    this.wss = this.createWebSocketServer(wsConfig, auth);
     this.startRuntimeMetricsInterval();
     this.startApplicationSocketLeaseInterval();
 
@@ -795,14 +800,21 @@ export class VoiceAssistantWebSocketServer {
     this.resolveScriptHealth = params.resolveScriptHealth ?? null;
   }
 
+  // The daemon HTTP server is shared with the script proxy, whose upgrades must
+  // be forwarded before the daemon WebSocket server sees the socket. Node's
+  // "upgrade" listeners cannot short-circuit one another (they are event
+  // listeners, not middleware), so handing the daemon its own listener on the
+  // same HTTP server would let both claim a script-bound upgrade. Instead the
+  // WebSocket server operates in noServer mode and the bootstrapper owns a
+  // single "upgrade" dispatcher that routes script hosts to the proxy and
+  // everything else to this handleUpgrade.
   private createWebSocketServer(
-    server: HTTPServer,
     wsConfig: WebSocketServerConfig,
     auth: DaemonAuthConfig | undefined,
   ): WebSocketServer {
     const password = auth?.password;
     const wss = new WebSocketServer({
-      server,
+      noServer: true,
       path: "/ws",
       handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
       verifyClient: ({ req }, callback) => {
@@ -818,6 +830,21 @@ export class VoiceAssistantWebSocketServer {
       void this.attachAuthenticatedSocket(ws, request, password);
     });
     return wss;
+  }
+
+  /**
+   * Completes a WebSocket upgrade for a request the bootstrapper routed to the
+   * daemon (i.e. one whose Host did not match a script-proxy route).
+   */
+  public handleUpgrade(
+    req: IncomingMessage,
+    socket: Duplex,
+    head: Buffer,
+    wss: WebSocketServer = this.wss,
+  ): void {
+    wss.handleUpgrade(req, socket, head, (ws, request) => {
+      wss.emit("connection", ws, request);
+    });
   }
 
   private startRuntimeMetricsInterval(): void {

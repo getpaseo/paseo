@@ -202,6 +202,12 @@ async function startBrowserToolsDaemonHarness(): Promise<BrowserToolsDaemonHarne
   const wsServer = createVoiceAssistantWebSocketServer({ httpServer, broker });
   const clients = new Set<DaemonClient>();
 
+  // The WebSocket server runs detached (noServer); route upgrades to it the
+  // same way the bootstrapper does with its single upgrade dispatcher.
+  httpServer.on("upgrade", (req, socket, head) => {
+    wsServer.handleUpgrade(req, socket, head);
+  });
+
   await listen(httpServer);
   const url = `ws://127.0.0.1:${getPort(httpServer)}/ws`;
 

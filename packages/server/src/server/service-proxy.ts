@@ -1,5 +1,6 @@
 import http, { createServer as createHTTPServer } from "node:http";
 import net from "node:net";
+import type { Duplex } from "node:stream";
 import { createHash } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
@@ -363,7 +364,7 @@ function proxyUpgradeRequest({
   logger,
 }: {
   req: IncomingMessage;
-  socket: net.Socket;
+  socket: Duplex;
   head: Buffer;
   route: ServiceProxyRoute;
   logger: Logger;
@@ -783,7 +784,7 @@ export function createScriptProxyUpgradeHandler({
   routeStore: ServiceProxyRouteRegistry;
   logger: Logger;
   passthroughUnknown?: boolean;
-}): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void {
+}): (req: IncomingMessage, socket: Duplex, head: Buffer) => void {
   return (req, socket, head) => {
     const classification = routeStore.classifyHost(req.headers.host);
     if (classification.type !== "registered-service") {
@@ -829,7 +830,13 @@ export interface ServiceProxySubsystem {
   middleware(): RequestHandler;
   upgradeHandler(options: {
     passthroughUnknown: boolean;
-  }): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void;
+  }): (req: IncomingMessage, socket: Duplex, head: Buffer) => void;
+  /**
+   * Returns the proxy route a Host header should be forwarded to, or null when
+   * the host does not belong to a registered service. Lets the bootstrapper
+   * build a single upgrade dispatcher (proxy first, daemon WebSocket after).
+   */
+  routeForHost(host: string | undefined): ServiceProxyRoute | null;
   startStandalone(options: {
     listenTarget: ServiceProxyListenTarget;
   }): Promise<ServiceProxyListenTarget>;
@@ -921,9 +928,13 @@ class NodeServiceProxySubsystem implements ServiceProxySubsystem {
     return createScriptProxyMiddleware({ routeStore: this.routes, logger: this.logger });
   }
 
+  routeForHost(host: string | undefined): ServiceProxyRoute | null {
+    return this.routes.findRoute(host ?? "");
+  }
+
   upgradeHandler(options: {
     passthroughUnknown: boolean;
-  }): (req: IncomingMessage, socket: net.Socket, head: Buffer) => void {
+  }): (req: IncomingMessage, socket: Duplex, head: Buffer) => void {
     // Pass passthroughUnknown explicitly: the factory defaults it to true, the
     // subsystem requires callers to choose.
     return createScriptProxyUpgradeHandler({
