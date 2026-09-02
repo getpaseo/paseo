@@ -125,6 +125,42 @@ function makeCanonicalEntries(rows: readonly AgentTimelineRow[]): WorkingEntry[]
   }));
 }
 
+function mergeIdentityMetadata(
+  existing: WorkingEntry,
+  entry: WorkingEntry,
+  collapseKind: TimelineProjectionKind,
+): Pick<WorkingEntry, "sourceSeqRanges" | "collapsed"> {
+  return {
+    sourceSeqRanges: mergeSeqRanges(existing.sourceSeqRanges, entry.sourceSeqRanges),
+    collapsed: existing.collapsed.includes(collapseKind)
+      ? existing.collapsed
+      : [...existing.collapsed, collapseKind],
+  };
+}
+
+function mergeIdentityEntries(existing: WorkingEntry, entry: WorkingEntry): WorkingEntry | null {
+  switch (entry.item.type) {
+    case "tool_call":
+      if (existing.item.type !== "tool_call" || existing.turnId !== entry.turnId) return null;
+      return {
+        ...existing,
+        item: mergeToolCallItems(existing.item, entry.item),
+        timestamp: entry.timestamp,
+        seqEnd: Math.max(existing.seqEnd, entry.seqEnd),
+        ...mergeIdentityMetadata(existing, entry, "tool_lifecycle"),
+      };
+    case "plugin":
+      if (existing.item.type !== "plugin") return null;
+      return {
+        ...entry,
+        seqStart: existing.seqStart,
+        ...mergeIdentityMetadata(existing, entry, "identity"),
+      };
+    default:
+      return null;
+  }
+}
+
 function collapseByIdentity(entries: readonly WorkingEntry[]): WorkingEntry[] {
   const output: WorkingEntry[] = [];
   const indexByIdentity = new Map<string, number>();
@@ -144,52 +180,13 @@ function collapseByIdentity(entries: readonly WorkingEntry[]): WorkingEntry[] {
     }
 
     const existing = output[existingIndex];
-    if (
-      !existing ||
-      (entry.item.type === "tool_call" &&
-        (existing.item.type !== "tool_call" || existing.turnId !== entry.turnId))
-    ) {
+    const merged = existing ? mergeIdentityEntries(existing, entry) : null;
+    if (!merged) {
       indexByIdentity.set(identity, output.length);
       output.push(entry);
       continue;
     }
-
-    const mergedRanges = mergeSeqRanges(existing.sourceSeqRanges, entry.sourceSeqRanges);
-    const collapseKind: TimelineProjectionKind =
-      entry.item.type === "tool_call" ? "tool_lifecycle" : "identity";
-    const collapsed = existing.collapsed.includes(collapseKind)
-      ? existing.collapsed
-      : [...existing.collapsed, collapseKind];
-
-    if (entry.item.type === "plugin") {
-      output[existingIndex] = {
-        ...entry,
-        seqStart: existing.seqStart,
-        sourceSeqRanges: mergedRanges,
-        collapsed,
-      };
-      continue;
-    }
-
-    if (entry.item.type !== "tool_call") {
-      output.push(entry);
-      continue;
-    }
-
-    if (existing.item.type !== "tool_call") {
-      indexByIdentity.set(identity, output.length);
-      output.push(entry);
-      continue;
-    }
-
-    output[existingIndex] = {
-      ...existing,
-      item: mergeToolCallItems(existing.item, entry.item),
-      timestamp: entry.timestamp,
-      seqEnd: Math.max(existing.seqEnd, entry.seqEnd),
-      sourceSeqRanges: mergedRanges,
-      collapsed,
-    };
+    output[existingIndex] = merged;
   }
 
   return output;

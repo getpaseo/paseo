@@ -48,6 +48,7 @@ const timelineItem = {
   kind: "plugin" as const,
   id: "item-1",
   pluginId: "reports",
+  pluginItemId: "item-1",
   itemKind: "test-report",
   version: 1,
   data: { label: "Four tests passed" },

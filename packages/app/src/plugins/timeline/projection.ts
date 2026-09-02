@@ -1,8 +1,27 @@
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
-import type { PluginTimelineStreamItem, StreamItem } from "@/types/stream";
+import type { AgentTimelineItem, ToolCallTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { AgentToolCallData, PluginTimelineStreamItem, StreamItem } from "@/types/stream";
 import type { TimelineItemTransform } from "./model";
 
 const projectionCache = new WeakMap<TimelineItemTransform, WeakMap<StreamItem, StreamItem[]>>();
+
+function sourceToolCallTimelineItem(data: AgentToolCallData): ToolCallTimelineItem {
+  const { callId, name, status, error, detail, metadata } = data;
+  const base = {
+    type: "tool_call" as const,
+    callId,
+    name,
+    detail,
+    ...(metadata ? { metadata } : {}),
+  };
+  switch (status) {
+    case "running":
+    case "completed":
+    case "canceled":
+      return { ...base, status, error: null };
+    case "failed":
+      return { ...base, status, error };
+  }
+}
 
 function sourceTimelineItem(item: StreamItem): AgentTimelineItem | null {
   switch (item.kind) {
@@ -23,8 +42,7 @@ function sourceTimelineItem(item: StreamItem): AgentTimelineItem | null {
       return { type: "reasoning", text: item.text };
     case "tool_call": {
       if (item.payload.source !== "agent") return null;
-      const { provider: _, ...toolCall } = item.payload.data;
-      return { type: "tool_call", ...toolCall } as AgentTimelineItem;
+      return sourceToolCallTimelineItem(item.payload.data);
     }
     case "todo_list":
       return { type: "todo", items: item.items };

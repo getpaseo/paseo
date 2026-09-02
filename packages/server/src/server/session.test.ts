@@ -1433,6 +1433,41 @@ describe("plugin timeline append RPC", () => {
       }),
     );
   });
+
+  test("rejects plugin data larger than the append budget", async () => {
+    const messages: SessionOutboundMessage[] = [];
+    const appendTimelineItem = vi.fn();
+    const session = createSessionForTest({
+      clientId: "plugin:review",
+      messages,
+      agentManager: { appendTimelineItem },
+    });
+
+    await session.handleMessage({
+      type: "agent.timeline.append.request",
+      requestId: "append-large",
+      agentId: "agent-1",
+      item: {
+        type: "plugin",
+        id: "review-1",
+        kind: "review",
+        version: 1,
+        data: { text: "x".repeat(64 * 1024) },
+      },
+    });
+
+    expect(appendTimelineItem).not.toHaveBeenCalled();
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: "rpc_error",
+        payload: expect.objectContaining({
+          requestId: "append-large",
+          code: "handler_error",
+          error: expect.stringContaining("65536 bytes"),
+        }),
+      }),
+    );
+  });
 });
 
 describe("agent detach RPC", () => {

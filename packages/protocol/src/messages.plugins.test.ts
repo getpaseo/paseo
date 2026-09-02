@@ -40,6 +40,17 @@ describe("plugin protocol compatibility", () => {
     ).toMatchObject({ features: { pluginTimelineItems: true } });
   });
 
+  it.each([0, -1, 1.5])("rejects plugin timeline version %s", (version) => {
+    expect(() =>
+      SessionInboundMessageSchema.parse({
+        type: "agent.timeline.append.request",
+        requestId: "append-1",
+        agentId: "agent-1",
+        item: { type: "plugin", id: "row-1", kind: "review", version, data: {} },
+      }),
+    ).toThrow();
+  });
+
   it("keeps old directory plugin config valid when enabled is absent", () => {
     const config = MutableDaemonConfigSchema.parse({
       mcp: { injectIntoAgents: true },

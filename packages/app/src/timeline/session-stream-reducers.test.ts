@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import type { AgentTimelineItem, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import {
   createUserMessage,
   hydrateStreamState,
@@ -22,17 +23,23 @@ import {
 // Test helpers
 // ---------------------------------------------------------------------------
 
+type TimelineResponseEntry = ProcessTimelineResponseInput["payload"]["entries"][number];
+
 function makeTimelineEntry(
   seq: number,
   text: string,
-  type: string = "assistant_message",
+  type: "assistant_message" | "user_message" | "reasoning" = "assistant_message",
   seqEnd = seq,
-) {
+): TimelineResponseEntry {
+  let item: AgentTimelineItem;
+  if (type === "assistant_message") item = { type, text };
+  else if (type === "user_message") item = { type, text };
+  else item = { type, text };
   return {
     seqStart: seq,
     seqEnd,
     provider: "claude",
-    item: { type, text },
+    item,
     timestamp: new Date(1000 + seq).toISOString(),
   };
 }
@@ -41,8 +48,8 @@ function makeToolCallTimelineEntry(
   seq: number,
   callId: string,
   status: "running" | "completed",
-  detail: Record<string, unknown>,
-) {
+  detail: ToolCallDetail,
+): TimelineResponseEntry {
   return {
     seqStart: seq,
     seqEnd: seq,
@@ -59,7 +66,7 @@ function makeToolCallTimelineEntry(
   };
 }
 
-function makePluginTimelineEntry(seq: number, status: string) {
+function makePluginTimelineEntry(seq: number, status: string): TimelineResponseEntry {
   return {
     seqStart: seq,
     seqEnd: seq,

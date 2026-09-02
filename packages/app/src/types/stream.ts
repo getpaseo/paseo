@@ -9,7 +9,6 @@ import type { AgentAttachment, AgentStreamEventPayload } from "@getpaseo/protoco
 import type { AttachmentMetadata } from "@/attachments/types";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
-import type { InstalledPluginTimelineItem } from "@/plugins/timeline";
 
 /**
  * Simple hash function for deterministic ID generation
@@ -803,10 +802,10 @@ export interface PluginTimelineStreamItem {
   turnId?: string;
   timestamp: Date;
   pluginId: string;
-  pluginItemId?: string;
+  pluginItemId: string;
   itemKind: string;
   version: number;
-  data: JsonValue | InstalledPluginTimelineItem["data"];
+  data: JsonValue;
 }
 
 export interface TodoEntry {
@@ -1023,22 +1022,8 @@ function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
 }
 
 export function streamTimelineItemIdentity(item: StreamItem): string | null {
-  if (isAgentToolCallItem(item)) {
-    return timelineItemIdentity({
-      type: "tool_call",
-      ...item.payload.data,
-    } as AgentTimelineItem);
-  }
-  if (item.kind === "plugin") {
-    return timelineItemIdentity({
-      type: "plugin",
-      id: item.pluginItemId ?? item.id.slice(`${item.pluginId}/`.length),
-      pluginId: item.pluginId,
-      kind: item.itemKind,
-      version: item.version,
-      data: item.data as JsonValue,
-    });
-  }
+  if (isAgentToolCallItem(item)) return item.payload.data.callId;
+  if (item.kind === "plugin") return `${item.pluginId}/${item.pluginItemId}`;
   return null;
 }
 

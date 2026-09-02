@@ -1519,7 +1519,7 @@ export const AgentTimelineAppendRequestSchema = z.object({
     type: z.literal("plugin"),
     id: z.string(),
     kind: z.string(),
-    version: z.number(),
+    version: z.number().int().positive(),
     data: JsonWireValueSchema,
   }),
 });

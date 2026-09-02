@@ -131,7 +131,7 @@ interface TimelineResponseEntry {
   collapsed?: string[];
   provider: string;
   turnId?: string;
-  item: AgentTimelineItem | Record<string, unknown>;
+  item: AgentTimelineItem;
   timestamp: string;
 }
 

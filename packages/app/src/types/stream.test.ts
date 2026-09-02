@@ -9,6 +9,7 @@ import {
   hydrateStreamState,
   mergeToolCallDetail,
   reduceStreamUpdate,
+  streamTimelineItemIdentity,
   type AgentToolCallItem,
   type StreamItem,
   isAgentToolCallItem,
@@ -18,10 +19,54 @@ import {
 import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { buildToolCallDisplayModel } from "@getpaseo/protocol/tool-call-display";
+import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 
 type CanonicalToolStatus = "running" | "completed" | "failed" | "canceled";
 
 describe("plugin timeline rows", () => {
+  it("uses the protocol identity format for stream tool and plugin rows", () => {
+    const tool = {
+      kind: "tool_call",
+      id: "tool-row",
+      timestamp: new Date(1),
+      payload: {
+        source: "agent",
+        data: {
+          provider: "codex",
+          callId: "call-1",
+          name: "read",
+          status: "running",
+          error: null,
+          detail: { type: "unknown", input: null, output: null },
+        },
+      },
+    } satisfies StreamItem;
+    const plugin = {
+      kind: "plugin",
+      id: "review/row-1",
+      pluginId: "review",
+      pluginItemId: "row-1",
+      itemKind: "review",
+      version: 1,
+      data: {},
+      timestamp: new Date(1),
+    } satisfies StreamItem;
+
+    expect(streamTimelineItemIdentity(tool)).toBe(
+      timelineItemIdentity({ type: "tool_call", ...tool.payload.data }),
+    );
+    expect(streamTimelineItemIdentity(plugin)).toBe(
+      timelineItemIdentity({
+        type: "plugin",
+        id: plugin.pluginItemId,
+        pluginId: plugin.pluginId,
+        kind: plugin.itemKind,
+        version: plugin.version,
+        data: plugin.data,
+      }),
+    );
+  });
+
   it("replaces a live row when the plugin-scoped identity repeats", () => {
     const first = reduceStreamUpdate(
       [],

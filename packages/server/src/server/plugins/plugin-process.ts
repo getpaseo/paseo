@@ -10,6 +10,7 @@ import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
 import { isPluginClientOnlySdkSpecifier, isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
+import { createPluginClientId } from "./plugin-session-identity.js";
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
 
@@ -106,7 +107,7 @@ const transportFactory = createPluginDaemonTransportFactory({
 async function initialize(message: Extract<PluginProcessRequest, { type: "initialize" }>) {
   daemonClient = new DaemonClient({
     url: `ipc://plugin/${encodeURIComponent(message.pluginId)}`,
-    clientId: `plugin:${message.pluginId}`,
+    clientId: createPluginClientId(message.pluginId),
     clientType: "cli",
     appVersion: message.appVersion,
     reconnect: { enabled: false },
