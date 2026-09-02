@@ -63,6 +63,23 @@ function readPluginOptions(env: Record<string, string>): {
 }
 
 describe("OpenCodeBridge", () => {
+  test("coalesces synchronous catalog updates and lets callers await refresh", async () => {
+    const bridge = new OpenCodeBridge({
+      paseoHome: "/tmp/paseo-opencode-bridge-refresh",
+      logger: createTestLogger(),
+    });
+    const refreshes: number[] = [];
+    bridge.subscribeManifestCatalog(async (version) => {
+      refreshes.push(version);
+    });
+
+    bridge.setManifestCatalog(null);
+    bridge.setManifestCatalog(createCatalog());
+    await bridge.waitForManifestCatalogRefresh();
+
+    expect(refreshes).toEqual([2]);
+  });
+
   test("loads packaged bundle bytes without invoking source compilation", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "paseo-opencode-artifact-"));
     temporaryDirectories.push(root);

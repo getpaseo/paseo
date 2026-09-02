@@ -12,6 +12,10 @@ import {
   serializePaseoToolInputParameters,
 } from "../../tools/paseo-tool-serialization.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
+import {
+  assertUtf8ByteLimit,
+  PLUGIN_TOOL_MAX_CATALOG_BYTES,
+} from "../../../plugins/plugin-tool.js";
 
 const INTERNAL_PREFIX = "/_internal/opencode";
 const MAX_REQUEST_BYTES = 1024 * 1024;
@@ -53,7 +57,9 @@ export class OpenCodeBridge {
   private pluginUrl: string | null = null;
   private manifestCatalog: PaseoToolCatalog | null = null;
   private manifestVersion = 0;
-  private readonly catalogSubscribers = new Set<() => void | Promise<void>>();
+  private readonly catalogSubscribers = new Set<(version: number) => void | Promise<void>>();
+  private catalogRefreshPromise: Promise<void> | null = null;
+  private catalogRefreshRequested = false;
 
   constructor(options: OpenCodeBridgeOptions) {
     this.paseoHome = options.paseoHome;
@@ -85,20 +91,23 @@ export class OpenCodeBridge {
   setManifestCatalog(catalog: PaseoToolCatalog | null): void {
     this.manifestCatalog = catalog;
     this.manifestVersion += 1;
-    for (const subscriber of this.catalogSubscribers) {
-      void Promise.resolve(subscriber()).catch((error) => {
-        this.logger.warn({ err: error }, "Failed to refresh OpenCode plugin catalog");
-      });
-    }
+    this.catalogRefreshRequested = true;
+    this.startCatalogRefresh();
   }
 
   getManifestCatalogVersion(): number {
     return this.manifestVersion;
   }
 
-  subscribeManifestCatalog(listener: () => void | Promise<void>): () => void {
+  subscribeManifestCatalog(listener: (version: number) => void | Promise<void>): () => void {
     this.catalogSubscribers.add(listener);
     return () => this.catalogSubscribers.delete(listener);
+  }
+
+  async waitForManifestCatalogRefresh(): Promise<void> {
+    while (this.catalogRefreshPromise) {
+      await this.catalogRefreshPromise;
+    }
   }
 
   bindSession(input: BindOpenCodeSessionInput): () => void {
@@ -207,7 +216,7 @@ export class OpenCodeBridge {
   private serializeManifest(): Array<Record<string, unknown>> {
     const catalog = this.manifestCatalog;
     if (!catalog) return [];
-    return [...catalog.tools.values()].map((tool) => {
+    const manifest = [...catalog.tools.values()].map((tool) => {
       const definition: Record<string, unknown> = {
         name: tool.name,
         description: tool.description,
@@ -215,6 +224,40 @@ export class OpenCodeBridge {
       };
       if (tool.title) definition.title = tool.title;
       return definition;
+    });
+    assertUtf8ByteLimit(
+      JSON.stringify(manifest),
+      "OpenCode tool manifest",
+      PLUGIN_TOOL_MAX_CATALOG_BYTES,
+    );
+    return manifest;
+  }
+
+  private startCatalogRefresh(): void {
+    if (this.catalogRefreshPromise) return;
+    this.catalogRefreshPromise = (async () => {
+      // Let synchronous catalog updates settle so one refresh loads the latest
+      // manifest version rather than rotating once per plugin notification.
+      await Promise.resolve();
+      while (this.catalogRefreshRequested) {
+        this.catalogRefreshRequested = false;
+        const version = this.manifestVersion;
+        await Promise.all(
+          [...this.catalogSubscribers].map(async (subscriber) => {
+            try {
+              await subscriber(version);
+            } catch (error) {
+              this.logger.warn(
+                { err: error, version },
+                "Failed to refresh OpenCode plugin catalog",
+              );
+            }
+          }),
+        );
+      }
+    })().finally(() => {
+      this.catalogRefreshPromise = null;
+      if (this.catalogRefreshRequested) this.startCatalogRefresh();
     });
   }
 

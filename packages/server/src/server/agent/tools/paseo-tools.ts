@@ -79,6 +79,11 @@ import type {
 import { resolveWorktreeSourceCwd } from "../../workspace-source.js";
 import type { WorkspaceScriptsService } from "../../session/workspace-scripts/workspace-scripts-service.js";
 import {
+  PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+  assertSafeJson,
+  assertSupportedJsonSchema,
+} from "../../plugins/plugin-tool.js";
+import {
   type ArchiveCommandDependencies,
   type CreatePaseoWorktreeCommandInput,
   createPaseoWorktreeCommand,
@@ -580,6 +585,24 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
   ) => {
     if (tools.has(name)) {
       throw new Error(`Duplicate Paseo tool name: ${name}`);
+    }
+    if (config.inputSchemaJson) {
+      assertSafeJson(
+        config.inputSchemaJson,
+        `Paseo tool ${name} input schema`,
+        PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+      );
+      assertSupportedJsonSchema(config.inputSchemaJson, `Paseo tool ${name} input schema`, {
+        requireObject: true,
+      });
+    }
+    if (config.outputSchemaJson) {
+      assertSafeJson(
+        config.outputSchemaJson,
+        `Paseo tool ${name} output schema`,
+        PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+      );
+      assertSupportedJsonSchema(config.outputSchemaJson, `Paseo tool ${name} output schema`);
     }
     tools.set(name, {
       name,

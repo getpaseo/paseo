@@ -18,10 +18,19 @@ async function createPlugin(id: string, source: string): Promise<string> {
   return directory;
 }
 
-function createReloadChild(name: string, events: string[], methods: string[] = []) {
+function createReloadChild(
+  name: string,
+  events: string[],
+  methods: string[] = [],
+  deferClose = false,
+) {
   const listeners = new Map<string, Array<(message: never) => void>>();
   const emit = (event: string, message: unknown) => {
     for (const listener of listeners.get(event) ?? []) listener(message as never);
+  };
+  const closeNow = () => {
+    events.push(`exit:${name}`);
+    emit("close", null);
   };
   return {
     stdout: new PassThrough(),
@@ -37,17 +46,14 @@ function createReloadChild(name: string, events: string[], methods: string[] = [
       if (message.type === "shutdown") {
         events.push(`shutdown:${name}`);
         this.connected = false;
-        queueMicrotask(() => {
-          events.push(`exit:${name}`);
-          emit("close", null);
-        });
+        if (!deferClose) queueMicrotask(closeNow);
       }
       return true;
     },
     kill() {
       this.killed = true;
       this.connected = false;
-      queueMicrotask(() => emit("close", null));
+      if (!deferClose) queueMicrotask(() => emit("close", null));
       return true;
     },
     disconnect() {
@@ -59,6 +65,7 @@ function createReloadChild(name: string, events: string[], methods: string[] = [
       listeners.set(event, registered);
       return this;
     },
+    closeNow,
   };
 }
 
@@ -166,6 +173,31 @@ describe("PluginRuntime", () => {
       { stream: "stdout", message: "[paseo] Stopping plugin" },
       { stream: "stdout", message: "[paseo] Plugin stopped" },
     ]);
+  });
+
+  it("waits for an old child to actually close before starting the same plugin", async () => {
+    const directory = await createPlugin(
+      "serialized-reload",
+      `export default function contribute(plugin: any) { return () => undefined; }`,
+    );
+    const events: string[] = [];
+    const first = createReloadChild("first", events, [], true);
+    const second = createReloadChild("second", events);
+    const children = [first, second];
+    const runtime = createTestRuntime({ spawnChild: () => children.shift()! });
+
+    await runtime.startPlugin("serialized-reload", directory);
+    const stopping = runtime.stopPluginById("serialized-reload");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const starting = runtime.startPlugin("serialized-reload", directory);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(events).toEqual(["start:first", "shutdown:first"]);
+    first.closeNow();
+    await stopping;
+    await starting;
+    expect(events).toEqual(["start:first", "shutdown:first", "exit:first", "start:second"]);
+    await runtime.stopAll();
   });
 
   it("fences the plugin delivery owner before stopping its process", async () => {

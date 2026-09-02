@@ -140,6 +140,7 @@ interface PluginDeliveryCleanupRetry {
   attempt: number;
   nextAt: number;
   timer: ReturnType<typeof setTimeout> | null;
+  cancelTimer?: () => void;
 }
 
 interface PendingConnection {
@@ -564,10 +565,11 @@ export class VoiceAssistantWebSocketServer {
   private readonly pluginDeliveryCleanupPromises = new Set<Promise<void>>();
   private readonly pluginDeliveryCleanupRetries = new Map<string, PluginDeliveryCleanupRetry>();
   private readonly pluginDeliveryCleanupInFlight = new Map<string, Promise<void>>();
+  private readonly pluginDeliveryCleanupWork = new Set<Promise<void>>();
   private readonly pluginDeliveryCleanupRetryPath: string;
   private readonly pluginDeliveryCleanupRetryLoad: Promise<void>;
   private pluginDeliveryCleanupRetryPersist: Promise<void> = Promise.resolve();
-  private readonly pluginClosingIds = new Set<string>();
+  private pluginDeliveryCleanupShuttingDown = false;
   private readonly serverId: string;
   private readonly daemonVersion: string;
   private readonly daemonRuntimeConfig: DaemonRuntimeConfig | undefined;
@@ -1027,9 +1029,6 @@ export class VoiceAssistantWebSocketServer {
     if (this.connectionLifecycle === "stopping") {
       throw new Error(`Cannot attach plugin session while shutting down: ${pluginId}`);
     }
-    if (this.pluginClosingIds.has(pluginId)) {
-      throw new Error(`Cannot attach plugin session while it is being uninstalled: ${pluginId}`);
-    }
     let resolveSocketClosed: () => void = () => undefined;
     const socketClosed = new Promise<void>((finish) => {
       resolveSocketClosed = finish;
@@ -1066,12 +1065,8 @@ export class VoiceAssistantWebSocketServer {
 
   /** Fence plugin delivery before PluginRuntime terminates its process. */
   public beginPluginShutdown(pluginId: string): void {
-    this.pluginClosingIds.add(pluginId);
     const principals = this.pluginDeliveryOwners.get(pluginId);
-    if (!principals || principals.size === 0) {
-      this.pluginClosingIds.delete(pluginId);
-      return;
-    }
+    if (!principals || principals.size === 0) return;
     for (const principalId of principals) {
       this.deliveryDispatchCoordinator.beginOwnerClosing(principalId);
       this.deliveryLedger.beginOwnerClosing(principalId);
@@ -2049,16 +2044,14 @@ export class VoiceAssistantWebSocketServer {
     await this.pluginDeliveryCleanupRetryLoad;
     this.deliveryDispatchCoordinator.beginOwnerClosing(principalId);
     this.deliveryLedger.beginOwnerClosing(principalId);
-    // The principal remains fenced until its tombstone is purged, but a fresh
-    // installation gets a different principal and must not wait on this one.
-    this.pluginClosingIds.delete(pluginId);
     const settled = await this.waitForPluginDeliveryIdle(principalId);
     if (!settled) {
       this.logger.warn(
         { pluginId, principalId, timeoutMs: PLUGIN_DELIVERY_SHUTDOWN_TIMEOUT_MS },
         "Plugin delivery shutdown timed out; retaining tombstoned ledger",
       );
-      void this.finishPluginDeliveryOwnerWhenIdle(pluginId, principalId);
+      this.schedulePluginDeliveryCleanupRetry(pluginId, principalId);
+      this.trackPluginDeliveryWork(this.finishPluginDeliveryOwnerWhenIdle(pluginId, principalId));
       return;
     }
     await this.finishPluginDeliveryOwner(pluginId, principalId);
@@ -2090,6 +2083,14 @@ export class VoiceAssistantWebSocketServer {
     });
   }
 
+  private trackPluginDeliveryWork(operation: Promise<void>): void {
+    const tracked = operation.catch((error) => {
+      this.logger.warn({ err: error }, "Plugin delivery cleanup operation failed");
+    });
+    this.pluginDeliveryCleanupWork.add(tracked);
+    void tracked.then(() => this.pluginDeliveryCleanupWork.delete(tracked));
+  }
+
   private async purgePluginDeliveryOwner(pluginId: string, principalId: string): Promise<void> {
     try {
       await this.deliveryLedger.reconcile(principalId).catch((error) => {
@@ -2104,10 +2105,9 @@ export class VoiceAssistantWebSocketServer {
       principals?.delete(principalId);
       if (principals?.size === 0) {
         this.pluginDeliveryOwners.delete(pluginId);
-        this.pluginClosingIds.delete(pluginId);
       }
       const retry = this.pluginDeliveryCleanupRetries.get(principalId);
-      if (retry?.timer) clearTimeout(retry.timer);
+      this.cancelPluginDeliveryCleanupRetryTimer(retry);
       this.pluginDeliveryCleanupRetries.delete(principalId);
       await this.persistPluginDeliveryCleanupRetries();
     } catch (error) {
@@ -2121,7 +2121,7 @@ export class VoiceAssistantWebSocketServer {
 
   private schedulePluginDeliveryCleanupRetry(pluginId: string, principalId: string): void {
     const previous = this.pluginDeliveryCleanupRetries.get(principalId);
-    if (previous?.timer) clearTimeout(previous.timer);
+    this.cancelPluginDeliveryCleanupRetryTimer(previous);
     const attempt = (previous?.attempt ?? 0) + 1;
     const delayMs = Math.min(
       PLUGIN_DELIVERY_RETRY_BASE_MS * 2 ** Math.min(attempt - 1, 16),
@@ -2134,8 +2134,10 @@ export class VoiceAssistantWebSocketServer {
       nextAt: Date.now() + delayMs,
       timer: null,
     };
-    this.armPluginDeliveryCleanupRetry(retry, delayMs);
     this.pluginDeliveryCleanupRetries.set(principalId, retry);
+    if (!this.pluginDeliveryCleanupShuttingDown) {
+      this.armPluginDeliveryCleanupRetry(retry, delayMs);
+    }
     void this.persistPluginDeliveryCleanupRetries();
     this.logger.warn(
       { pluginId, principalId, attempt, delayMs },
@@ -2144,10 +2146,30 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private armPluginDeliveryCleanupRetry(retry: PluginDeliveryCleanupRetry, delayMs: number): void {
+    let resolveTimer!: () => void;
+    const timerSettled = new Promise<void>((resolve) => {
+      resolveTimer = resolve;
+    });
+    retry.cancelTimer = resolveTimer;
     retry.timer = setTimeout(() => {
       retry.timer = null;
-      void this.finishPluginDeliveryOwner(retry.pluginId, retry.principalId);
+      retry.cancelTimer = undefined;
+      resolveTimer();
+      this.trackPluginDeliveryWork(
+        this.finishPluginDeliveryOwnerWhenIdle(retry.pluginId, retry.principalId),
+      );
     }, delayMs);
+    this.trackPluginDeliveryWork(timerSettled);
+  }
+
+  private cancelPluginDeliveryCleanupRetryTimer(
+    retry: PluginDeliveryCleanupRetry | undefined,
+  ): void {
+    if (!retry) return;
+    if (retry.timer) clearTimeout(retry.timer);
+    retry.timer = null;
+    retry.cancelTimer?.();
+    retry.cancelTimer = undefined;
   }
 
   private async loadPluginDeliveryCleanupRetries(): Promise<void> {
@@ -2190,28 +2212,29 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private async drainPluginDeliveryCleanupRetries(): Promise<void> {
+    this.pluginDeliveryCleanupShuttingDown = true;
     await this.pluginDeliveryCleanupRetryLoad;
     const deadline = Date.now() + PLUGIN_DELIVERY_SHUTDOWN_TIMEOUT_MS;
     for (const retry of this.pluginDeliveryCleanupRetries.values()) {
-      if (retry.timer) clearTimeout(retry.timer);
-      retry.timer = null;
-      void this.finishPluginDeliveryOwner(retry.pluginId, retry.principalId);
+      this.cancelPluginDeliveryCleanupRetryTimer(retry);
+      this.trackPluginDeliveryWork(
+        this.finishPluginDeliveryOwner(retry.pluginId, retry.principalId),
+      );
     }
-    while (this.pluginDeliveryCleanupInFlight.size > 0 && Date.now() < deadline) {
+    while (this.pluginDeliveryCleanupWork.size > 0 && Date.now() < deadline) {
       const remainingMs = Math.max(1, deadline - Date.now());
       await Promise.race([
-        Promise.allSettled(this.pluginDeliveryCleanupInFlight.values()),
+        Promise.allSettled(this.pluginDeliveryCleanupWork),
         new Promise<void>((resolve) => setTimeout(resolve, remainingMs)),
       ]);
     }
     for (const retry of this.pluginDeliveryCleanupRetries.values()) {
-      if (retry.timer) clearTimeout(retry.timer);
+      this.cancelPluginDeliveryCleanupRetryTimer(retry);
       this.logger.error(
         { pluginId: retry.pluginId, principalId: retry.principalId, attempt: retry.attempt },
         "Canceled plugin delivery cleanup retry during shutdown; tombstone remains",
       );
     }
-    this.pluginDeliveryCleanupRetries.clear();
     await this.persistPluginDeliveryCleanupRetries();
   }
 

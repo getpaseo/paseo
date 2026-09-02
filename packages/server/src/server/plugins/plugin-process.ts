@@ -23,7 +23,11 @@ import {
   PLUGIN_TOOL_MAX_UPDATE_BYTES,
   PLUGIN_TOOL_MAX_UPDATE_COUNT,
   PLUGIN_TOOL_MAX_ERROR_BYTES,
+  PLUGIN_TOOL_MAX_DESCRIPTION_BYTES,
+  PLUGIN_TOOL_MAX_NAME_BYTES,
+  PLUGIN_TOOL_MAX_TITLE_BYTES,
   assertSafeJson,
+  assertSafePluginToolText,
   clampPluginToolTimeout,
   serializePluginToolSchema,
   truncateUtf8,
@@ -45,6 +49,8 @@ interface RegisteredTool {
   definition: PluginToolContribution;
   handler: ToolHandler;
   timeoutMs: number;
+  inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
 }
 
 const handlers = new Map<string, RegisteredRpc>();
@@ -89,6 +95,7 @@ function validateName(name: string, kind: string): string {
   if (!/^[a-z][a-z0-9._-]*$/u.test(name)) {
     throw new Error(`Invalid plugin ${kind} name: ${name}`);
   }
+  assertSafePluginToolText(name, `Plugin ${kind} name`, PLUGIN_TOOL_MAX_NAME_BYTES);
   return name;
 }
 
@@ -110,15 +117,31 @@ function registerTool(definition: PluginToolContribution, handler?: ToolHandler)
   if (typeof definition.title !== "string" || definition.title.trim().length === 0) {
     throw new Error(`Plugin tool ${name} must provide a title`);
   }
+  assertSafePluginToolText(
+    definition.title,
+    `Plugin tool ${name} title`,
+    PLUGIN_TOOL_MAX_TITLE_BYTES,
+  );
   if (typeof definition.description !== "string" || definition.description.trim().length === 0) {
     throw new Error(`Plugin tool ${name} must provide a description`);
   }
+  assertSafePluginToolText(
+    definition.description,
+    `Plugin tool ${name} description`,
+    PLUGIN_TOOL_MAX_DESCRIPTION_BYTES,
+  );
   if (!definition.input || typeof definition.input.parseAsync !== "function") {
     throw new Error(`Plugin tool ${name} must provide a Zod input schema`);
   }
   if (definition.output !== undefined && typeof definition.output.parseAsync !== "function") {
     throw new Error(`Plugin tool ${name} output must be a Zod schema`);
   }
+  const inputSchema = serializePluginToolSchema(definition.input, `${name}.input`, {
+    requireObject: true,
+  });
+  const outputSchema = definition.output
+    ? serializePluginToolSchema(definition.output, `${name}.output`)
+    : undefined;
   const actualHandler = handler ?? (definition.handler as ToolHandler);
   if (typeof actualHandler !== "function")
     throw new Error(`Plugin tool ${name} must provide a handler`);
@@ -126,6 +149,8 @@ function registerTool(definition: PluginToolContribution, handler?: ToolHandler)
     definition: { ...definition, name },
     handler: actualHandler,
     timeoutMs: clampPluginToolTimeout(definition.timeoutMs),
+    inputSchema,
+    ...(outputSchema ? { outputSchema } : {}),
   });
 }
 
@@ -261,19 +286,10 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
         name,
         title: tool.definition.title,
         description: tool.definition.description,
-        inputSchema: serializePluginToolSchema(
-          tool.definition.input,
-          `${message.pluginId}.${name}.input`,
-          { requireObject: true },
-        ),
+        inputSchema: tool.inputSchema,
         timeoutMs: tool.timeoutMs,
       };
-      if (tool.definition.output) {
-        entry.outputSchema = serializePluginToolSchema(
-          tool.definition.output,
-          `${message.pluginId}.${name}.output`,
-        );
-      }
+      if (tool.outputSchema) entry.outputSchema = tool.outputSchema;
       return entry;
     });
   send({ type: "ready", methods: [...handlers.keys()].sort(), catalog });

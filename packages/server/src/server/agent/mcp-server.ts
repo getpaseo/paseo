@@ -7,7 +7,13 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import { fromJSONSchema } from "zod";
 
-import { assertSupportedJsonSchema } from "../plugins/plugin-tool.js";
+import {
+  PLUGIN_TOOL_MAX_CATALOG_BYTES,
+  PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+  assertSafeJson,
+  assertSupportedJsonSchema,
+  assertUtf8ByteLimit,
+} from "../plugins/plugin-tool.js";
 import { addModelVisibleStructuredContent } from "./tools/paseo-tool-serialization.js";
 import { createPaseoToolCatalog, type PaseoToolHostDependencies } from "./tools/paseo-tools.js";
 import type { PaseoToolDefinition, PaseoToolResult } from "./tools/types.js";
@@ -19,6 +25,11 @@ type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
 function toMcpInputSchema(tool: PaseoToolDefinition) {
   if (tool.inputSchema) return tool.inputSchema;
   if (!tool.inputSchemaJson) return undefined;
+  assertSafeJson(
+    tool.inputSchemaJson,
+    `Paseo tool ${tool.name} input schema`,
+    PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+  );
   assertSupportedJsonSchema(tool.inputSchemaJson, `Paseo tool ${tool.name} input schema`, {
     requireObject: true,
   });
@@ -41,6 +52,21 @@ function toMcpToolResult(result: PaseoToolResult): CallToolResult {
 
 export async function createAgentMcpServer(options: AgentMcpServerOptions): Promise<McpServer> {
   const catalog = await createPaseoToolCatalog(options);
+  const serializedManifest = [...catalog.tools.values()].map((tool) => {
+    const definition: Record<string, unknown> = {
+      name: tool.name,
+      title: tool.title,
+      description: tool.description,
+    };
+    if (tool.inputSchemaJson) definition.inputSchema = tool.inputSchemaJson;
+    if (tool.outputSchemaJson) definition.outputSchema = tool.outputSchemaJson;
+    return definition;
+  });
+  assertUtf8ByteLimit(
+    JSON.stringify(serializedManifest),
+    "MCP tool manifest",
+    PLUGIN_TOOL_MAX_CATALOG_BYTES,
+  );
   const server = new McpServer({
     name: "agent-mcp",
     version: "2.0.0",

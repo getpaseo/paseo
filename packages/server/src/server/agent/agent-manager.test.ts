@@ -5208,7 +5208,7 @@ test("createAgent closes and rejects a provider session that cannot honor MCP se
   });
 
   try {
-    await expect(
+    const create = () =>
       manager.createAgent(
         {
           provider: "codex",
@@ -5222,13 +5222,24 @@ test("createAgent closes and rejects a provider session that cannot honor MCP se
         },
         undefined,
         { workspaceId: undefined },
-      ),
-    ).rejects.toThrow("Provider 'codex' does not support MCP servers");
+      );
+    await expect(create()).rejects.toThrow("Provider 'codex' does not support MCP servers");
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await expect(create()).rejects.toThrow("Provider 'codex' does not support MCP servers");
+    }
 
     expect(sessionClosed).toBe(true);
     expect(promptStarted).toBe(false);
     expect(manager.getAgent(agentId)).toBeNull();
     expect(await storage.get(agentId)).toBeNull();
+    const internals = manager as unknown as {
+      mcpCapabilities: Map<string, unknown>;
+      mcpCapabilityByAgent: Map<string, unknown>;
+      pendingMcpCapabilities: Map<string, unknown>;
+    };
+    expect(internals.mcpCapabilities.size).toBe(0);
+    expect(internals.mcpCapabilityByAgent.size).toBe(0);
+    expect(internals.pendingMcpCapabilities.size).toBe(0);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
   }

@@ -19,6 +19,10 @@ export const PLUGIN_TOOL_MAX_RESULT_BYTES = 256 * 1024;
 export const PLUGIN_TOOL_MAX_SCHEMA_BYTES = 96 * 1024;
 export const PLUGIN_TOOL_MAX_CATALOG_TOOLS = 256;
 export const PLUGIN_TOOL_MAX_CATALOG_SCHEMA_BYTES = 512 * 1024;
+export const PLUGIN_TOOL_MAX_CATALOG_BYTES = 768 * 1024;
+export const PLUGIN_TOOL_MAX_NAME_BYTES = 256;
+export const PLUGIN_TOOL_MAX_TITLE_BYTES = 16 * 1024;
+export const PLUGIN_TOOL_MAX_DESCRIPTION_BYTES = 64 * 1024;
 export const PLUGIN_TOOL_MAX_JSON_DEPTH = 32;
 export const PLUGIN_TOOL_MAX_JSON_NODES = 20_000;
 
@@ -196,6 +200,13 @@ export function assertSupportedJsonSchema(
       if (value[key] !== undefined && typeof value[key] !== "string") {
         throw new Error(`${label}.${key} must be a string at ${path}`);
       }
+      if (typeof value[key] === "string") {
+        assertSafePluginToolText(
+          value[key],
+          `${label}.${key} at ${path}`,
+          PLUGIN_TOOL_MAX_DESCRIPTION_BYTES,
+        );
+      }
     }
     if (value.$schema !== undefined && typeof value.$schema !== "string") {
       throw new Error(`${label}.$schema must be a string at ${path}`);
@@ -341,12 +352,46 @@ export function assertSupportedJsonSchema(
     if (arrayKeywords.some((key) => value[key] !== undefined) && concreteType !== "array") {
       throw new Error(`${label} array limits require an array schema at ${path}`);
     }
-    if (value.uniqueItems !== undefined && typeof value.uniqueItems !== "boolean") {
-      throw new Error(`${label}.uniqueItems must be a boolean at ${path}`);
+    if (value.uniqueItems !== undefined) {
+      throw new Error(`${label} uses unsupported JSON Schema keyword 'uniqueItems' at ${path}`);
     }
     const objectKeywords = ["minProperties", "maxProperties"];
     if (objectKeywords.some((key) => value[key] !== undefined) && concreteType !== "object") {
       throw new Error(`${label} object limits require an object schema at ${path}`);
+    }
+
+    if (value.oneOf !== undefined) {
+      throw new Error(`${label} uses unsupported JSON Schema composition 'oneOf' at ${path}`);
+    }
+    const composition = value.anyOf !== undefined || value.oneOf !== undefined;
+    if (composition) {
+      const baseConstraintKeys = [
+        "type",
+        "properties",
+        "required",
+        "additionalProperties",
+        "items",
+        "enum",
+        "const",
+        "minLength",
+        "maxLength",
+        "pattern",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "minItems",
+        "maxItems",
+        "minProperties",
+        "maxProperties",
+      ];
+      const conflictingKey = baseConstraintKeys.find((key) => value[key] !== undefined);
+      if (conflictingKey) {
+        throw new Error(
+          `${label} cannot combine anyOf/oneOf with base constraint '${conflictingKey}' at ${path}`,
+        );
+      }
     }
 
     for (const key of ["anyOf", "oneOf"]) {
@@ -428,6 +473,43 @@ export function assertUtf8ByteLimit(value: string, label: string, maxBytes: numb
   }
 }
 
+// oxlint-disable-next-line no-control-regex -- reject non-printing protocol controls at the boundary.
+const DANGEROUS_CONTROL_CHARACTERS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
+
+export function assertSafePluginToolText(value: string, label: string, maxBytes: number): void {
+  assertUtf8ByteLimit(value, label, maxBytes);
+  if (DANGEROUS_CONTROL_CHARACTERS.test(value)) {
+    throw new Error(`${label} contains a dangerous control character`);
+  }
+}
+
+export function serializePluginToolCatalogEntry(tool: PluginToolCatalogEntry): string {
+  return JSON.stringify({
+    pluginId: tool.pluginId,
+    generation: tool.generation,
+    installationId: tool.installationId,
+    name: tool.name,
+    title: tool.title,
+    description: tool.description,
+    inputSchema: tool.inputSchema,
+    ...(tool.outputSchema ? { outputSchema: tool.outputSchema } : {}),
+    timeoutMs: tool.timeoutMs,
+  });
+}
+
+export function assertPluginToolCatalogBytes(
+  tools: readonly PluginToolCatalogEntry[],
+  label: string,
+): void {
+  let bytes = 2;
+  for (const tool of tools) {
+    bytes += Buffer.byteLength(serializePluginToolCatalogEntry(tool), "utf8") + 1;
+    if (bytes > PLUGIN_TOOL_MAX_CATALOG_BYTES) {
+      throw new Error(`${label} exceeds the ${PLUGIN_TOOL_MAX_CATALOG_BYTES}-byte limit`);
+    }
+  }
+}
+
 export function truncateUtf8(value: string, maxBytes: number): string {
   if (Buffer.byteLength(value, "utf8") <= maxBytes) return value;
   let used = 0;
@@ -441,6 +523,7 @@ export function truncateUtf8(value: string, maxBytes: number): string {
   return result;
 }
 
+// oxlint-disable-next-line complexity -- recursive JSON validation intentionally checks every boundary.
 export function assertSafeJson(
   value: unknown,
   label: string,
@@ -449,6 +532,7 @@ export function assertSafeJson(
   const seen = new WeakSet<object>();
   let nodes = 0;
 
+  // oxlint-disable-next-line complexity -- recursive JSON validation intentionally checks every boundary.
   const visit = (current: unknown, depth: number, path: string): void => {
     nodes += 1;
     if (nodes > PLUGIN_TOOL_MAX_JSON_NODES) {
@@ -457,7 +541,11 @@ export function assertSafeJson(
     if (depth > PLUGIN_TOOL_MAX_JSON_DEPTH) {
       throw new Error(`${label} exceeds the JSON depth limit at ${path}`);
     }
-    if (current === null || typeof current === "string" || typeof current === "boolean") return;
+    if (current === null || typeof current === "boolean") return;
+    if (typeof current === "string") {
+      assertSafePluginToolText(current, `${label} string at ${path}`, maxBytes);
+      return;
+    }
     if (typeof current === "number") {
       if (!Number.isFinite(current))
         throw new Error(`${label} contains a non-finite number at ${path}`);

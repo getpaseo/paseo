@@ -21,12 +21,17 @@ import {
   PLUGIN_TOOL_CANCEL_GRACE_MS,
   PLUGIN_TOOL_MAX_CATALOG_SCHEMA_BYTES,
   PLUGIN_TOOL_MAX_CATALOG_TOOLS,
+  PLUGIN_TOOL_MAX_DESCRIPTION_BYTES,
+  PLUGIN_TOOL_MAX_NAME_BYTES,
   PLUGIN_TOOL_MAX_RESULT_BYTES,
   PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+  PLUGIN_TOOL_MAX_TITLE_BYTES,
   PLUGIN_TOOL_MAX_TIMEOUT_MS,
   PLUGIN_TOOL_MAX_UPDATE_BYTES,
   PLUGIN_TOOL_NAME_PATTERN,
   assertSafeJson,
+  assertSafePluginToolText,
+  assertPluginToolCatalogBytes,
   assertSupportedJsonSchema,
   isReservedPluginToolName,
   truncateUtf8,
@@ -83,6 +88,7 @@ interface LoadedPlugin {
   pending: Map<string, PendingInvocation>;
   sessionSocket: PluginSessionSocket;
   sessionClosed: Promise<void>;
+  childClosed: Promise<void>;
   quarantined: boolean;
 }
 
@@ -252,6 +258,11 @@ export class PluginRuntime {
   private readonly nextGenerations = new Map<string, number>();
   private activeToolInvocations = 0;
   private readonly activeToolInvocationsByPlugin = new Map<string, number>();
+  private readonly closingPlugins = new Map<string, Set<Promise<void>>>();
+  private readonly closingPluginOperations = new WeakMap<
+    LoadedPlugin,
+    { stop: Promise<void>; closed: Promise<void> }
+  >();
 
   constructor(
     logger: pino.Logger,
@@ -286,6 +297,7 @@ export class PluginRuntime {
     configuredPath: string,
     canPublish: () => boolean = () => true,
   ): Promise<void> {
+    await this.waitForPluginClosing(pluginId);
     if (this.plugins.has(pluginId)) throw new Error(`Plugin is already running: ${pluginId}`);
     this.appendLog(pluginId, "stdout", "[paseo] Loading plugin");
     const loaded = await this.loadDirectoryPlugin(pluginId, configuredPath).catch((error) => {
@@ -293,13 +305,13 @@ export class PluginRuntime {
       throw error;
     });
     if (!canPublish()) {
-      await this.stopPlugin(loaded);
+      await this.trackPluginClosing(loaded);
       throw new Error(`Plugin start cancelled: ${pluginId}`);
     }
     try {
       this.assertAggregateToolCatalogWithinLimits([...this.plugins.values(), loaded]);
     } catch (error) {
-      await this.stopPlugin(loaded);
+      await this.trackPluginClosing(loaded);
       throw error;
     }
     this.plugins.set(pluginId, loaded);
@@ -319,7 +331,7 @@ export class PluginRuntime {
     this.sessionHost?.beginPluginShutdown?.(pluginId);
     this.plugins.delete(pluginId);
     this.rejectPending(loaded, `Plugin stopped: ${pluginId}`);
-    await this.stopPlugin(loaded);
+    await this.trackPluginClosing(loaded);
     return true;
   }
 
@@ -442,7 +454,8 @@ export class PluginRuntime {
     for (const plugin of loaded) {
       this.rejectPending(plugin, `Plugin stopped: ${plugin.id}`);
     }
-    await Promise.all(loaded.map((plugin) => this.stopPlugin(plugin)));
+    await Promise.all(loaded.map((plugin) => this.trackPluginClosing(plugin)));
+    await this.waitForAllPluginClosingsBounded(STOP_TIMEOUT_MS);
   }
 
   private async loadDirectoryPlugin(
@@ -461,6 +474,10 @@ export class PluginRuntime {
     });
     const sessionSocket = new PluginSessionSocket(child);
     const pending = new Map<string, PendingInvocation>();
+    let resolveChildClosed!: () => void;
+    const childClosed = new Promise<void>((resolve) => {
+      resolveChildClosed = resolve;
+    });
     const sessionAttachment = await sessionHost
       .attachPluginSocket(pluginId, sessionSocket)
       .catch((error) => {
@@ -510,6 +527,7 @@ export class PluginRuntime {
             }
           });
           child.on("close", () => {
+            resolveChildClosed();
             sessionSocket.peerClosed();
             if (!loaded) {
               fail(new Error(`Plugin ${pluginId} exited during initialization`));
@@ -564,6 +582,7 @@ export class PluginRuntime {
       pending,
       sessionSocket,
       sessionClosed: sessionAttachment.closed,
+      childClosed,
       quarantined: false,
     };
     this.logger.info(
@@ -637,22 +656,18 @@ export class PluginRuntime {
     if (loaded.child.killed) {
       loaded.sessionSocket.peerClosed();
       await Promise.race([
+        loaded.childClosed,
         loaded.sessionClosed,
         new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
       ]);
       this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
       return;
     }
-    const closed = new Promise<void>((resolve) =>
-      loaded.child.on("close", () => {
-        resolve();
-      }),
-    );
     if (loaded.child.connected) {
       await send(loaded.child, { type: "shutdown" }).catch(() => undefined);
     }
     await Promise.race([
-      closed,
+      loaded.childClosed,
       new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
     ]);
     if (loaded.child.connected || !loaded.child.killed) terminatePluginChild(loaded.child);
@@ -743,9 +758,46 @@ export class PluginRuntime {
       this.notify(loaded.id, reason);
     }
     this.rejectPending(loaded, reason);
-    void this.stopPlugin(loaded).catch((error) => {
-      this.logger.warn({ err: error, pluginId: loaded.id }, "Failed to quarantine plugin process");
+    void this.trackPluginClosing(loaded);
+  }
+
+  private async trackPluginClosing(loaded: LoadedPlugin): Promise<void> {
+    const existingOperation = this.closingPluginOperations.get(loaded);
+    if (existingOperation) {
+      await existingOperation.stop;
+      return;
+    }
+    const closing = this.closingPlugins.get(loaded.id) ?? new Set<Promise<void>>();
+    const stop = this.stopPlugin(loaded).catch((error) => {
+      this.logger.warn({ err: error, pluginId: loaded.id }, "Failed to stop plugin process");
     });
+    const closed = stop.then(() => loaded.childClosed);
+    closing.add(closed);
+    this.closingPlugins.set(loaded.id, closing);
+    this.closingPluginOperations.set(loaded, { stop, closed });
+    void closed.then(() => {
+      if (closing.delete(closed) && closing.size === 0) {
+        this.closingPlugins.delete(loaded.id);
+      }
+      return undefined;
+    });
+    await stop;
+  }
+
+  private async waitForPluginClosing(pluginId: string): Promise<void> {
+    const closing = this.closingPlugins.get(pluginId);
+    if (!closing || closing.size === 0) return;
+    await Promise.allSettled(closing);
+  }
+
+  private async waitForAllPluginClosingsBounded(timeoutMs: number): Promise<void> {
+    const closing: Promise<void>[] = [];
+    for (const operations of this.closingPlugins.values()) closing.push(...operations);
+    if (closing.length === 0) return;
+    await Promise.race([
+      Promise.allSettled(closing),
+      new Promise<void>((resolve) => setTimeout(resolve, timeoutMs)),
+    ]);
   }
 
   private invokeChild(
@@ -850,6 +902,33 @@ export class PluginRuntime {
       if (!PLUGIN_TOOL_NAME_PATTERN.test(raw.name)) {
         throw new Error(`Invalid plugin tool name: ${raw.name}`);
       }
+      assertSafePluginToolText(raw.name, "Plugin tool name", PLUGIN_TOOL_MAX_NAME_BYTES);
+      assertSafePluginToolText(
+        raw.pluginId,
+        `Plugin tool ${raw.name} pluginId`,
+        PLUGIN_TOOL_MAX_NAME_BYTES,
+      );
+      assertSafePluginToolText(
+        raw.installationId,
+        `Plugin tool ${raw.name} installationId`,
+        PLUGIN_TOOL_MAX_NAME_BYTES,
+      );
+      assertSafePluginToolText(
+        raw.title,
+        `Plugin tool ${raw.name} title`,
+        PLUGIN_TOOL_MAX_TITLE_BYTES,
+      );
+      if (raw.title.trim().length === 0) {
+        throw new Error(`Plugin tool ${raw.name} must provide a title`);
+      }
+      assertSafePluginToolText(
+        raw.description,
+        `Plugin tool ${raw.name} description`,
+        PLUGIN_TOOL_MAX_DESCRIPTION_BYTES,
+      );
+      if (raw.description.trim().length === 0) {
+        throw new Error(`Plugin tool ${raw.name} must provide a description`);
+      }
       if (isReservedPluginToolName(raw.name)) {
         throw new Error(`Plugin tool name is reserved: ${raw.name}`);
       }
@@ -880,6 +959,7 @@ export class PluginRuntime {
     if (schemaBytes > PLUGIN_TOOL_MAX_CATALOG_SCHEMA_BYTES) {
       throw new Error(`Plugin ${pluginId} tool catalog exceeds the schema byte limit`);
     }
+    assertPluginToolCatalogBytes([...tools.values()], `Plugin ${pluginId} tool catalog`);
     return tools;
   }
 
@@ -911,6 +991,7 @@ export class PluginRuntime {
         );
       }
     }
+    assertPluginToolCatalogBytes(tools, "Plugin tool aggregate catalog");
   }
 
   private toolNameConflict(name: string): "reserved" | "duplicate" | null {

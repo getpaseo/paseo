@@ -171,6 +171,7 @@ export type AgentRunCancellationResult =
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
+  mcpCapabilityToken: string | null;
 }
 
 interface NormalizeConfigOptions {
@@ -1090,6 +1091,19 @@ export class AgentManager {
     return capability.token;
   }
 
+  private revokeMcpCapabilityToken(token: string | null | undefined): void {
+    if (!token) return;
+    const capability = this.mcpCapabilities.get(token);
+    if (!capability) return;
+    this.mcpCapabilities.delete(token);
+    if (this.mcpCapabilityByAgent.get(capability.agentId) === capability) {
+      this.mcpCapabilityByAgent.delete(capability.agentId);
+    }
+    if (this.pendingMcpCapabilities.get(capability.agentId) === capability) {
+      this.pendingMcpCapabilities.delete(capability.agentId);
+    }
+  }
+
   private bindMcpCapability(agent: ActiveManagedAgent, generation: symbol): void {
     const capability = this.pendingMcpCapabilities.get(agent.id);
     if (!capability) return;
@@ -1466,32 +1480,38 @@ export class AgentManager {
     this.assertAcceptingAgentRegistrations();
     const resolvedAgentId = validateAgentId(agentId ?? this.idFactory(), "createAgent");
     await this.deleteAgentState(resolvedAgentId);
-    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
-      config,
-      resolvedAgentId,
-      options?.env,
-    );
-    this.requireEnabledProvider(storedConfig.provider);
-    const client = await this.requireAvailableClient({
-      provider: storedConfig.provider,
-    });
-    const launchContext = await this.buildLaunchContext(
-      resolvedAgentId,
-      client,
-      storedConfig.cwd,
-      options?.env,
-    );
-    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const createOptions = this.buildCreateSessionOptions(options);
-    const session = await client.createSession(providerLaunchConfig, launchContext, createOptions);
-    await this.requireExternalMcpSupport(session, storedConfig);
-    return this.registerSession(session, storedConfig, resolvedAgentId, {
-      labels: options.labels,
-      initialTitle: options.initialTitle,
-      workspaceId: options.workspaceId,
-      owner: options.owner,
-      historyPrimed: true,
-    });
+    const prepared = await this.prepareSessionConfig(config, resolvedAgentId, options?.env);
+    try {
+      const { storedConfig, launchConfig } = prepared;
+      this.requireEnabledProvider(storedConfig.provider);
+      const client = await this.requireAvailableClient({
+        provider: storedConfig.provider,
+      });
+      const launchContext = await this.buildLaunchContext(
+        resolvedAgentId,
+        client,
+        storedConfig.cwd,
+        options?.env,
+      );
+      const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+      const createOptions = this.buildCreateSessionOptions(options);
+      const session = await client.createSession(
+        providerLaunchConfig,
+        launchContext,
+        createOptions,
+      );
+      await this.requireExternalMcpSupport(session, storedConfig);
+      return await this.registerSession(session, storedConfig, resolvedAgentId, {
+        labels: options.labels,
+        initialTitle: options.initialTitle,
+        workspaceId: options.workspaceId,
+        owner: options.owner,
+        historyPrimed: true,
+      });
+    } catch (error) {
+      this.revokeMcpCapabilityToken(prepared.mcpCapabilityToken);
+      throw error;
+    }
   }
 
   private buildCreateSessionOptions(options?: {
@@ -1557,31 +1577,37 @@ export class AgentManager {
       ...overrides,
       provider: handle.provider,
     } as AgentSessionConfig;
-    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
-      mergedConfig,
-      resolvedAgentId,
-    );
-
-    const client = this.requireClient(handle.provider);
-    const available = await client.isAvailable();
-    if (!available) {
-      throw new Error(
-        `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
+    const prepared = await this.prepareSessionConfig(mergedConfig, resolvedAgentId);
+    try {
+      const { storedConfig, launchConfig } = prepared;
+      const client = this.requireClient(handle.provider);
+      const available = await client.isAvailable();
+      if (!available) {
+        throw new Error(
+          `Provider '${handle.provider}' is not available. Please ensure the CLI is installed.`,
+        );
+      }
+      const launchContext = await this.buildLaunchContext(
+        resolvedAgentId,
+        client,
+        storedConfig.cwd,
       );
+      const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+      const session = await client.resumeSession(
+        handle,
+        providerLaunchConfig,
+        launchContext,
+        resumeOptions,
+      );
+      await this.requireExternalMcpSupport(session, storedConfig);
+      return await this.registerSession(session, storedConfig, resolvedAgentId, {
+        ...options,
+        persistence: handle,
+      });
+    } catch (error) {
+      this.revokeMcpCapabilityToken(prepared.mcpCapabilityToken);
+      throw error;
     }
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
-    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const session = await client.resumeSession(
-      handle,
-      providerLaunchConfig,
-      launchContext,
-      resumeOptions,
-    );
-    await this.requireExternalMcpSupport(session, storedConfig);
-    return this.registerSession(session, storedConfig, resolvedAgentId, {
-      ...options,
-      persistence: handle,
-    });
   }
 
   importProviderSession(input: {
@@ -1610,31 +1636,37 @@ export class AgentManager {
       throw new Error(`Provider '${input.provider}' does not support importing sessions`);
     }
 
-    const { storedConfig, launchConfig } = await this.prepareSessionConfig(
+    const prepared = await this.prepareSessionConfig(
       {
         provider: input.provider,
         cwd: input.cwd,
       },
       resolvedAgentId,
     );
-    const launchContext = await this.buildLaunchContext(resolvedAgentId, client, storedConfig.cwd);
-    const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
-    const imported = await client.importSession(
-      {
-        providerHandleId: input.providerHandleId,
-        cwd: input.cwd,
-      },
-      { config: providerLaunchConfig, storedConfig, launchContext },
-    );
+    let importedSession: AgentSession | null = null;
     let handedToRegistration = false;
     try {
+      const { storedConfig, launchConfig } = prepared;
+      const launchContext = await this.buildLaunchContext(
+        resolvedAgentId,
+        client,
+        storedConfig.cwd,
+      );
+      const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+      const imported = await client.importSession(
+        {
+          providerHandleId: input.providerHandleId,
+          cwd: input.cwd,
+        },
+        { config: providerLaunchConfig, storedConfig, launchContext },
+      );
+      importedSession = imported.session;
       const importedConfig = await this.normalizeConfig(
         stripInternalPaseoMcpServer(imported.config),
       );
       const timelineRows = buildImportedTimelineRows(imported.timeline);
       const initialTitle = resolveImportedAgentTitle(importedConfig, timelineRows);
 
-      handedToRegistration = true;
       const agent = await this.registerSession(imported.session, importedConfig, resolvedAgentId, {
         labels: input.labels,
         workspaceId: input.workspaceId,
@@ -1645,15 +1677,16 @@ export class AgentManager {
         initialTitle,
         publishWhenReady: true,
       });
+      handedToRegistration = true;
       for (const event of imported.providerSubagentEvents ?? []) {
         const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
         this.dispatch({ type: "provider_subagent", event: update });
       }
       return agent;
     } finally {
-      if (!handedToRegistration) {
-        await this.closeUnregisteredSession(imported.session);
-      }
+      if (!handedToRegistration && importedSession)
+        await this.closeUnregisteredSession(importedSession);
+      if (!handedToRegistration) this.revokeMcpCapabilityToken(prepared.mcpCapabilityToken);
     }
   }
 
@@ -1696,6 +1729,7 @@ export class AgentManager {
     return tracked;
   }
 
+  // oxlint-disable-next-line complexity -- reload fencing and capability cleanup share one handoff.
   private async reloadAgentSessionInternal(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
@@ -1753,6 +1787,9 @@ export class AgentManager {
     let storedConfig: AgentSessionConfig;
     let launchContext: AgentLaunchContext;
     let providerLaunchConfig: AgentSessionConfig;
+    let mcpCapabilityToken: string | null = null;
+    let preparationComplete = false;
+    let handedToRegistration = false;
     try {
       await this.drainSessionEvents(agentId);
       this.assertFencedSessionIdentityCurrent(captured, "reload");
@@ -1763,6 +1800,7 @@ export class AgentManager {
       wasQuarantined ||= quarantinedAfterDrains;
 
       const prepared = await this.prepareSessionConfig(refreshConfig, agentId);
+      mcpCapabilityToken = prepared.mcpCapabilityToken;
       this.assertFencedSessionIdentityCurrent(captured, "reload");
       storedConfig = prepared.storedConfig;
       launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
@@ -1774,54 +1812,60 @@ export class AgentManager {
         allowFencedGeneration: true,
       });
       this.assertFencedSessionIdentityCurrent(captured, "reload");
+      preparationComplete = true;
     } finally {
       if (this.isFencedSessionIdentityCurrent(captured)) {
         this.cancelRunningProviderSubagents(agentId);
       }
       await this.closeReloadedSession(captured.session, agentId);
+      if (!preparationComplete) this.revokeMcpCapabilityToken(mcpCapabilityToken);
     }
 
-    // A quarantined provider session may still own the canceled turn even after close timed out.
-    // Never resume its native handle: a fresh provider session is the only safe replacement.
-    const quarantinedBeforeReplacement = await this.assertReloadSessionIdentityReady(captured);
-    // The readiness check above can await poisoned-session persistence. Recheck synchronously after
-    // that await so a quarantine raised during the final handoff cannot be missed.
-    this.assertFencedSessionIdentityCurrent(captured, "reload");
-    if (this.poisonedSessionIds.has(agentId)) {
-      await this.poisonedSessionPersistence.get(agentId);
-      throw this.sessionPersistenceUnavailable(agentId);
-    }
-    const quarantinedAtHandoff = this.quarantinedAgentIds.has(agentId);
-    let session: AgentSession;
-    if (wasQuarantined || quarantinedBeforeReplacement || quarantinedAtHandoff || !handle) {
-      session = await client.createSession(providerLaunchConfig, launchContext);
-    } else {
-      session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
-    }
-    await this.requireExternalMcpSupport(session, storedConfig);
-
-    let handedToRegistration = false;
     try {
-      this.assertAcceptingAgentRegistrations();
-
-      // Preserve existing labels and timeline during reload.
-      handedToRegistration = true;
-      return this.registerSession(session, storedConfig, agentId, {
-        labels: existing.labels,
-        workspaceId: existing.workspaceId,
-        owner: existing.owner,
-        createdAt: existing.createdAt,
-        updatedAt: existing.updatedAt,
-        lastUserMessageAt: existing.lastUserMessageAt,
-        historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
-        lastUsage: preservedLastUsage,
-        lastError: preservedLastError,
-        attention: preservedAttention,
-      });
-    } finally {
-      if (!handedToRegistration) {
-        await this.closeUnregisteredSession(session);
+      // A quarantined provider session may still own the canceled turn even after close timed out.
+      // Never resume its native handle: a fresh provider session is the only safe replacement.
+      const quarantinedBeforeReplacement = await this.assertReloadSessionIdentityReady(captured);
+      // The readiness check above can await poisoned-session persistence. Recheck synchronously after
+      // that await so a quarantine raised during the final handoff cannot be missed.
+      this.assertFencedSessionIdentityCurrent(captured, "reload");
+      if (this.poisonedSessionIds.has(agentId)) {
+        await this.poisonedSessionPersistence.get(agentId);
+        throw this.sessionPersistenceUnavailable(agentId);
       }
+      const quarantinedAtHandoff = this.quarantinedAgentIds.has(agentId);
+      let session: AgentSession;
+      if (wasQuarantined || quarantinedBeforeReplacement || quarantinedAtHandoff || !handle) {
+        session = await client.createSession(providerLaunchConfig, launchContext);
+      } else {
+        session = await client.resumeSession(handle, providerLaunchConfig, launchContext);
+      }
+      await this.requireExternalMcpSupport(session, storedConfig);
+
+      try {
+        this.assertAcceptingAgentRegistrations();
+
+        // Preserve existing labels and timeline during reload.
+        const registered = await this.registerSession(session, storedConfig, agentId, {
+          labels: existing.labels,
+          workspaceId: existing.workspaceId,
+          owner: existing.owner,
+          createdAt: existing.createdAt,
+          updatedAt: existing.updatedAt,
+          lastUserMessageAt: existing.lastUserMessageAt,
+          historyPrimed: rehydrateFromDisk ? false : preservedHistoryPrimed,
+          lastUsage: preservedLastUsage,
+          lastError: preservedLastError,
+          attention: preservedAttention,
+        });
+        handedToRegistration = true;
+        return registered;
+      } finally {
+        if (!handedToRegistration) {
+          await this.closeUnregisteredSession(session);
+        }
+      }
+    } finally {
+      if (!handedToRegistration) this.revokeMcpCapabilityToken(mcpCapabilityToken);
     }
   }
 
@@ -7718,16 +7762,25 @@ export class AgentManager {
     agentId: string,
     env?: Record<string, string>,
   ): Promise<PreparedSessionConfig> {
-    const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
-    const launchConfig = this.applyDaemonAppendSystemPrompt(
-      withRuntimePaseoMcpServer({
-        config: storedConfig,
-        agentId,
-        mcpBaseUrl: this.mcpBaseUrl,
-        mcpAuthToken: this.mcpBaseUrl ? this.issueMcpCapability(agentId, storedConfig.cwd) : null,
-      }),
-    );
-    return { storedConfig, launchConfig };
+    let mcpCapabilityToken: string | null = null;
+    try {
+      const storedConfig = await this.normalizeConfig(stripInternalPaseoMcpServer(config), { env });
+      mcpCapabilityToken = this.mcpBaseUrl
+        ? this.issueMcpCapability(agentId, storedConfig.cwd)
+        : null;
+      const launchConfig = this.applyDaemonAppendSystemPrompt(
+        withRuntimePaseoMcpServer({
+          config: storedConfig,
+          agentId,
+          mcpBaseUrl: this.mcpBaseUrl,
+          mcpAuthToken: mcpCapabilityToken,
+        }),
+      );
+      return { storedConfig, launchConfig, mcpCapabilityToken };
+    } catch (error) {
+      this.revokeMcpCapabilityToken(mcpCapabilityToken);
+      throw error;
+    }
   }
 
   private applyDaemonAppendSystemPrompt(config: AgentSessionConfig): AgentSessionConfig {

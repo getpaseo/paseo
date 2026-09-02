@@ -8,7 +8,11 @@ import {
 } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
 
-import { assertSupportedJsonSchema } from "../../plugins/plugin-tool.js";
+import {
+  PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+  assertSafeJson,
+  assertSupportedJsonSchema,
+} from "../../plugins/plugin-tool.js";
 import type { PaseoToolDefinition, PaseoToolResult } from "./types.js";
 
 function formatStructuredContentForModel(structuredContent: unknown): string {
@@ -63,6 +67,11 @@ export function serializePaseoToolInputParameters(
   tool: PaseoToolDefinition,
 ): Record<string, unknown> {
   if (tool.inputSchemaJson) {
+    assertSafeJson(
+      tool.inputSchemaJson,
+      `Paseo tool ${tool.name} input schema`,
+      PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+    );
     assertSupportedJsonSchema(tool.inputSchemaJson, `Paseo tool ${tool.name} input schema`, {
       requireObject: true,
     });
@@ -82,6 +91,7 @@ export function serializePaseoToolInputParameters(
   if (!jsonSchema || typeof jsonSchema !== "object" || Array.isArray(jsonSchema)) {
     throw new Error(`Paseo tool ${tool.name} must provide a supported object input schema`);
   }
+  assertSafeJson(jsonSchema, `Paseo tool ${tool.name} input schema`, PLUGIN_TOOL_MAX_SCHEMA_BYTES);
   assertSupportedJsonSchema(jsonSchema, `Paseo tool ${tool.name} input schema`, {
     requireObject: true,
   });

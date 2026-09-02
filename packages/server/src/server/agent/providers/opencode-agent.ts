@@ -1434,8 +1434,13 @@ export class OpenCodeAgentClient implements AgentClient {
         decorateServerEnv: this.bridge
           ? (env) => this.bridge?.decorateServerEnv(env) ?? env
           : undefined,
+        getCatalogVersion: this.bridge
+          ? () => this.bridge?.getManifestCatalogVersion() ?? 0
+          : undefined,
       });
-    this.bridge?.subscribeManifestCatalog(() => this.serverManager.refreshPluginCatalog?.());
+    this.bridge?.subscribeManifestCatalog((version) =>
+      this.serverManager.refreshPluginCatalog?.(version),
+    );
     this.resolveHomeDir = deps.resolveHomeDir ?? resolveOpenCodeHomeDir;
   }
 
@@ -1445,6 +1450,7 @@ export class OpenCodeAgentClient implements AgentClient {
     options?: AgentCreateSessionOptions,
   ): Promise<AgentSession> {
     const openCodeConfig = this.assertConfig(config);
+    await this.bridge?.waitForManifestCatalogRefresh();
     const acquisition = await this.acquireServer(openCodeConfig, launchContext);
     const { url } = acquisition.server;
     const client = this.createOpenCodeClient({
@@ -1474,7 +1480,11 @@ export class OpenCodeAgentClient implements AgentClient {
       }
 
       await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
-      const bridgeBinding = this.bindBridgeSession(session.id, launchContext);
+      const bridgeBinding = this.bindBridgeSession(
+        session.id,
+        launchContext,
+        acquisition.server.catalogVersion,
+      );
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1517,6 +1527,7 @@ export class OpenCodeAgentClient implements AgentClient {
       cwd,
     };
     const openCodeConfig = this.assertConfig(config);
+    await this.bridge?.waitForManifestCatalogRefresh();
     const registeredServerUrl = getOpenCodeChildSessionServerUrl(handle.sessionId);
     const registeredAcquisition = registeredServerUrl
       ? this.serverManager.acquireExisting(registeredServerUrl)
@@ -1531,7 +1542,11 @@ export class OpenCodeAgentClient implements AgentClient {
 
     try {
       await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
-      const bridgeBinding = this.bindBridgeSession(handle.sessionId, launchContext);
+      const bridgeBinding = this.bindBridgeSession(
+        handle.sessionId,
+        launchContext,
+        acquisition.server.catalogVersion,
+      );
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1571,6 +1586,7 @@ export class OpenCodeAgentClient implements AgentClient {
   private bindBridgeSession(
     sessionId: string,
     launchContext?: AgentLaunchContext,
+    catalogVersion?: number,
   ): { unbind: () => void; version: number } | undefined {
     if (!this.bridge || !launchContext) return undefined;
     const unbind = this.bridge.bindSession({
@@ -1578,7 +1594,7 @@ export class OpenCodeAgentClient implements AgentClient {
       env: launchContext.env ?? {},
       tools: launchContext.paseoTools,
     });
-    return { unbind, version: this.bridge.getManifestCatalogVersion() };
+    return { unbind, version: catalogVersion ?? this.bridge.getManifestCatalogVersion() };
   }
 
   async fetchCatalog(

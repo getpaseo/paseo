@@ -5,6 +5,7 @@ import {
   validatePluginProcessRequest,
 } from "./plugin-process-protocol.js";
 import { PLUGIN_TOOL_MAX_ERROR_BYTES } from "./plugin-tool.js";
+import { PLUGIN_TOOL_MAX_CATALOG_BYTES } from "./plugin-tool.js";
 
 const callerContext = {
   callerAgentId: "agent-1",
@@ -68,5 +69,21 @@ describe("plugin process tool protocol", () => {
         error: "€".repeat(PLUGIN_TOOL_MAX_ERROR_BYTES),
       }),
     ).toThrow(/byte|limit/i);
+  });
+
+  it("bounds every catalog field and the serialized metadata aggregate", () => {
+    const entry = {
+      pluginId: "plugin-a",
+      generation: 1,
+      installationId: "installation-a",
+      name: "acme.lookup",
+      title: "Lookup",
+      description: "x".repeat(PLUGIN_TOOL_MAX_CATALOG_BYTES),
+      inputSchema: { type: "object", properties: {} },
+      timeoutMs: 1_000,
+    };
+    expect(() =>
+      validatePluginProcessMessage({ type: "ready", methods: [], catalog: [entry] }),
+    ).toThrow(/description|byte|limit/i);
   });
 });

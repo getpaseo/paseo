@@ -1,5 +1,5 @@
 import pino from "pino";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 
 import type { PaseoToolCatalog, PaseoToolDefinition, PaseoToolResult } from "../../tools/types.js";
@@ -116,6 +116,10 @@ class OmpHostToolHarness {
 
   results() {
     return this.runtimeSession.hostToolResults;
+  }
+
+  routerInputForTest() {
+    return this.routerInput();
   }
 
   close(): void {
@@ -237,6 +241,49 @@ describe("OMP host tools", () => {
     expect(omp.wasControlledCallAborted()).toBe(true);
     expect(omp.results()).toEqual([]);
     expect(omp.updates()).toEqual([]);
+    omp.close();
+  });
+
+  test("rejects duplicate ids without allowing the old completion to remove the new entry", async () => {
+    let resolveFirst!: (result: PaseoToolResult) => void;
+    let started!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const omp = await OmpHostToolHarness.withTools([
+      {
+        name: "slow_tool",
+        description: "A slow tool.",
+        handler: async () => {
+          started();
+          return await new Promise<PaseoToolResult>((resolve) => {
+            resolveFirst = resolve;
+          });
+        },
+      },
+    ]);
+
+    const firstCall = {
+      type: "host_tool_call" as const,
+      id: "same-id",
+      toolCallId: "tool-1",
+      toolName: "slow_tool",
+      arguments: {},
+    };
+    handleOmpHostToolRuntimeEvent(firstCall, omp.routerInputForTest());
+    await firstStarted;
+    handleOmpHostToolRuntimeEvent({ ...firstCall, toolCallId: "tool-2" }, omp.routerInputForTest());
+    await vi.waitFor(() => expect(omp.results()).toHaveLength(1));
+    expect(omp.results()[0]).toMatchObject({
+      id: "same-id",
+      isError: true,
+      result: { content: [{ text: expect.stringContaining("already in flight") }] },
+    });
+
+    resolveFirst({ content: [{ type: "text", text: "done" }] });
+    await omp.waitForIdle();
+    expect(omp.results()).toHaveLength(2);
+    expect(omp.results()[1]).toMatchObject({ id: "same-id" });
     omp.close();
   });
 });

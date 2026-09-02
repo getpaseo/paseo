@@ -48,6 +48,27 @@ describe("plugin tool policy", () => {
         { requireObject: true },
       ),
     ).toThrow(/unsupported.*\$ref/);
+    expect(() =>
+      assertSupportedJsonSchema(
+        {
+          type: "object",
+          anyOf: [{ type: "object", properties: {} }],
+          minProperties: 1,
+        },
+        "composed.input",
+      ),
+    ).toThrow(/base constraint/);
+    expect(() =>
+      assertSupportedJsonSchema(
+        { type: "array", items: { type: "string" }, uniqueItems: true },
+        "unique.input",
+      ),
+    ).toThrow(/uniqueItems/);
+  });
+
+  it("bounds tool metadata and rejects dangerous controls", () => {
+    expect(() => assertSafeJson({ description: "bad\u0000text" }, "tool")).toThrow(/control/);
+    expect(() => assertSafeJson({ title: "x".repeat(100_000) }, "tool", 200_000)).not.toThrow();
   });
 
   it("caps timeouts and reserves Paseo namespaces", () => {

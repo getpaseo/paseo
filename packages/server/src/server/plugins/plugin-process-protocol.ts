@@ -1,12 +1,18 @@
 import { z } from "zod";
 
 import {
+  PLUGIN_TOOL_MAX_DESCRIPTION_BYTES,
   PLUGIN_TOOL_MAX_CATALOG_SCHEMA_BYTES,
   PLUGIN_TOOL_MAX_CATALOG_TOOLS,
   PLUGIN_TOOL_MAX_ERROR_BYTES,
+  PLUGIN_TOOL_MAX_NAME_BYTES,
   PLUGIN_TOOL_MAX_RESULT_BYTES,
+  PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+  PLUGIN_TOOL_MAX_TITLE_BYTES,
   PLUGIN_TOOL_MAX_UPDATE_BYTES,
+  assertPluginToolCatalogBytes,
   assertSafeJson,
+  assertSafePluginToolText,
   assertSupportedJsonSchema,
   assertUtf8ByteLimit,
 } from "./plugin-tool.js";
@@ -163,10 +169,41 @@ function validateProcessEnvelope(message: PluginProcessRequest | PluginProcessMe
   if (message.type === "ready" && message.catalog) {
     let schemaBytes = 0;
     for (const entry of message.catalog) {
+      assertSafePluginToolText(
+        entry.pluginId,
+        `Plugin tool ${entry.name} pluginId`,
+        PLUGIN_TOOL_MAX_NAME_BYTES,
+      );
+      assertSafePluginToolText(
+        entry.installationId,
+        `Plugin tool ${entry.name} installationId`,
+        PLUGIN_TOOL_MAX_NAME_BYTES,
+      );
+      assertSafePluginToolText(entry.name, "Plugin tool name", PLUGIN_TOOL_MAX_NAME_BYTES);
+      assertSafePluginToolText(
+        entry.title,
+        `Plugin tool ${entry.name} title`,
+        PLUGIN_TOOL_MAX_TITLE_BYTES,
+      );
+      assertSafePluginToolText(
+        entry.description,
+        `Plugin tool ${entry.name} description`,
+        PLUGIN_TOOL_MAX_DESCRIPTION_BYTES,
+      );
+      assertSafeJson(
+        entry.inputSchema,
+        `Plugin tool ${entry.name} input schema`,
+        PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+      );
       assertSupportedJsonSchema(entry.inputSchema, `Plugin tool ${entry.name} input schema`, {
         requireObject: true,
       });
       if (entry.outputSchema) {
+        assertSafeJson(
+          entry.outputSchema,
+          `Plugin tool ${entry.name} output schema`,
+          PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+        );
         assertSupportedJsonSchema(entry.outputSchema, `Plugin tool ${entry.name} output schema`);
       }
       schemaBytes += Buffer.byteLength(JSON.stringify(entry.inputSchema), "utf8");
@@ -180,6 +217,7 @@ function validateProcessEnvelope(message: PluginProcessRequest | PluginProcessMe
     if (schemaBytes > PLUGIN_TOOL_MAX_CATALOG_SCHEMA_BYTES) {
       throw new Error("Plugin tool catalog exceeds the schema byte limit");
     }
+    assertPluginToolCatalogBytes(message.catalog, "Plugin tool catalog");
   }
 }
 

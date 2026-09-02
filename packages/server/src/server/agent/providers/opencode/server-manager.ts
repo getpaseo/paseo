@@ -29,7 +29,7 @@ const OPENCODE_SERVER_GRACEFUL_SHUTDOWN_TIMEOUT_MS = 5_000;
 const OPENCODE_SERVER_FORCE_SHUTDOWN_TIMEOUT_MS = 1_000;
 
 export interface OpenCodeServerAcquisition {
-  server: { port: number; url: string };
+  server: { port: number; url: string; catalogVersion?: number };
   events: OpenCodeEventSource;
   release: () => Promise<void>;
 }
@@ -40,7 +40,7 @@ export interface OpenCodeServerManagerLike {
   acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition>;
   acquireExisting(url: string): OpenCodeServerAcquisition | null;
   /** Retire the shared server so the next acquisition loads the current plugin catalog. */
-  refreshPluginCatalog?(): Promise<void>;
+  refreshPluginCatalog?(catalogVersion?: number): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -50,6 +50,9 @@ export interface OpenCodeServerGeneration {
   url: string;
   refCount: number;
   retired: boolean;
+  /** A catalog-retired generation cannot be reacquired by a resumed child session. */
+  catalogRetired?: boolean;
+  catalogVersion?: number;
   ready: Promise<void>;
   events: OpenCodeEventConsumer;
   managedProcessId?: string;
@@ -76,6 +79,7 @@ export interface OpenCodeServerManagerOptions {
   spawnServerProcess?: OpenCodeServerProcessSpawner;
   createEventSource?: OpenCodeEventConsumerFactory;
   decorateServerEnv?: (env: Record<string, string>) => Record<string, string>;
+  getCatalogVersion?: () => number;
 }
 
 export class OpenCodeServerManager implements OpenCodeServerManagerLike {
@@ -85,6 +89,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private retiredServers = new Set<OpenCodeServerGeneration>();
   private startPromise: Promise<OpenCodeServerGeneration> | null = null;
   private newServerPromise: Promise<OpenCodeServerGeneration> | null = null;
+  private catalogRefreshPromise: Promise<void> | null = null;
   private readonly logger: Logger;
   private readonly baseEnv?: SpawnProcessOptions["baseEnv"];
   private readonly runtimeSettings?: ProviderRuntimeSettings;
@@ -97,6 +102,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   private readonly spawnServerProcess: OpenCodeServerProcessSpawner;
   private readonly createEventSource: OpenCodeEventConsumerFactory;
   private readonly decorateServerEnv?: (env: Record<string, string>) => Record<string, string>;
+  private readonly getCatalogVersion?: () => number;
 
   constructor(options: OpenCodeServerManagerOptions) {
     this.logger = options.logger;
@@ -114,6 +120,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     this.createEventSource =
       options.createEventSource ?? ((input) => new OpenCodeEventConsumer(input));
     this.decorateServerEnv = options.decorateServerEnv;
+    this.getCatalogVersion = options.getCatalogVersion;
   }
 
   static getInstance(
@@ -158,17 +165,28 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   async acquireCurrent(signal?: AbortSignal): Promise<OpenCodeServerAcquisition> {
-    signal?.throwIfAborted();
-    const server = await waitForServerAcquisition(this.getCurrentServer(), signal);
-    signal?.throwIfAborted();
-    return this.acquireServer(server);
+    for (;;) {
+      signal?.throwIfAborted();
+      const server = await waitForServerAcquisition(this.getCurrentServer(), signal);
+      signal?.throwIfAborted();
+      if (server.catalogRetired) continue;
+      return this.acquireServer(server);
+    }
   }
 
   async acquireNew(signal?: AbortSignal): Promise<OpenCodeServerAcquisition> {
-    signal?.throwIfAborted();
-    const server = await waitForServerAcquisition(this.getNewServer(), signal);
-    signal?.throwIfAborted();
-    return this.acquireServer(server);
+    for (;;) {
+      signal?.throwIfAborted();
+      const server = await waitForServerAcquisition(this.getNewServer(), signal);
+      signal?.throwIfAborted();
+      if (server.catalogRetired) {
+        const current = await waitForServerAcquisition(this.getCurrentServer(), signal);
+        signal?.throwIfAborted();
+        if (!current.catalogRetired) return this.acquireServer(current);
+        continue;
+      }
+      return this.acquireServer(server);
+    }
   }
 
   async acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition> {
@@ -190,8 +208,17 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     return server ? this.acquireServer(server) : null;
   }
 
-  async refreshPluginCatalog(): Promise<void> {
-    await this.rotateCurrentServer();
+  async refreshPluginCatalog(catalogVersion?: number): Promise<void> {
+    if (this.catalogRefreshPromise) return this.catalogRefreshPromise;
+    this.catalogRefreshPromise = (async () => {
+      await this.rotateCurrentServer();
+      const server = await this.startServer(undefined, catalogVersion);
+      this.currentServer = server;
+      await server.ready;
+    })().finally(() => {
+      this.catalogRefreshPromise = null;
+    });
+    return this.catalogRefreshPromise;
   }
 
   private findLiveServerByUrl(url: string): OpenCodeServerGeneration | null {
@@ -199,7 +226,11 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       ...(this.currentServer ? [this.currentServer] : []),
       ...Array.from(this.retiredServers),
     ];
-    return servers.find((server) => server.url === url && this.isServerLive(server)) ?? null;
+    return (
+      servers.find(
+        (server) => server.url === url && !server.catalogRetired && this.isServerLive(server),
+      ) ?? null
+    );
   }
 
   private isServerLive(server: OpenCodeServerGeneration): boolean {
@@ -211,10 +242,17 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   private acquireServer(server: OpenCodeServerGeneration): OpenCodeServerAcquisition {
+    if (server.catalogRetired) {
+      throw new Error(`OpenCode server generation is retired: ${server.url}`);
+    }
     server.refCount += 1;
     let releasePromise: Promise<void> | null = null;
     return {
-      server: { port: server.port, url: server.url },
+      server: {
+        port: server.port,
+        url: server.url,
+        ...(server.catalogVersion !== undefined ? { catalogVersion: server.catalogVersion } : {}),
+      },
       events: server.events,
       release: async () => {
         if (releasePromise) {
@@ -246,13 +284,15 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   private async getNewServer(): Promise<OpenCodeServerGeneration> {
+    if (this.catalogRefreshPromise)
+      return this.catalogRefreshPromise.then(() => this.getCurrentServer());
     if (this.newServerPromise) {
       return this.newServerPromise;
     }
 
     this.newServerPromise = Promise.resolve()
       .then(async () => {
-        await this.rotateCurrentServer();
+        await this.rotateCurrentServer(false);
         const server = await this.startServer();
         if (!server.retired) {
           this.currentServer = server;
@@ -267,6 +307,8 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   }
 
   private async getCurrentServer(): Promise<OpenCodeServerGeneration> {
+    if (this.catalogRefreshPromise)
+      return this.catalogRefreshPromise.then(() => this.getCurrentServer());
     if (this.newServerPromise) {
       return this.newServerPromise;
     }
@@ -298,26 +340,36 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
     return result;
   }
 
-  private async rotateCurrentServer(): Promise<void> {
+  private async rotateCurrentServer(awaitNewServer = true): Promise<void> {
+    if (awaitNewServer && this.newServerPromise) {
+      const pendingNew = this.newServerPromise;
+      const server = await pendingNew;
+      this.retireServer(server);
+    }
     const existing = this.currentServer;
     if (existing) {
-      existing.retired = true;
-      this.retiredServers.add(existing);
-      this.currentServer = null;
-      this.logger.info(generationLogContext(existing), "OpenCode server generation retired");
-      await this.cleanupRetiredServers();
+      this.retireServer(existing);
     }
     if (this.startPromise) {
       const pending = await this.startPromise;
-      pending.retired = true;
-      this.retiredServers.add(pending);
-      this.currentServer = null;
-      this.logger.info(generationLogContext(pending), "OpenCode server generation retired");
-      await this.cleanupRetiredServers();
+      this.retireServer(pending);
     }
+    await this.cleanupRetiredServers();
   }
 
-  private async startServer(launchEnv?: Record<string, string>): Promise<OpenCodeServerGeneration> {
+  private retireServer(server: OpenCodeServerGeneration): void {
+    server.retired = true;
+    server.catalogRetired = true;
+    this.retiredServers.add(server);
+    if (this.currentServer === server) this.currentServer = null;
+    this.logger.info(generationLogContext(server), "OpenCode server generation retired");
+  }
+
+  private async startServer(
+    launchEnv?: Record<string, string>,
+    catalogVersion?: number,
+  ): Promise<OpenCodeServerGeneration> {
+    const loadedCatalogVersion = catalogVersion ?? this.getCatalogVersion?.();
     const port = await this.portAllocator();
     const url = `http://127.0.0.1:${port}`;
     const launchPrefix = await this.resolveCommandPrefix();
@@ -363,6 +415,7 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
       url,
       refCount: 0,
       retired: false,
+      catalogVersion: loadedCatalogVersion,
       ready: Promise.resolve(),
       events: this.createEventSource({ serverUrl: url, processExit, logger: this.logger }),
       managedProcessRecord,

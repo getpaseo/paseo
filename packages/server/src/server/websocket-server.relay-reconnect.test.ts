@@ -110,6 +110,7 @@ interface WebSocketServerInternals {
   attachSocket(ws: unknown, req: unknown): Promise<void>;
   sendToClient(ws: unknown, message: unknown): void;
   deliveryLedger: { removeOwner(ownerId: string): Promise<void> };
+  pluginDeliveryCleanupRetries: Map<string, unknown>;
 }
 
 const TEST_DAEMON_VERSION = "1.2.3-test";
@@ -535,22 +536,19 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
-  test("blocks replacement plugin sockets until the closing owner is purged", async () => {
+  test("admits a replacement plugin socket while the old owner is being purged", async () => {
     const server = createServer();
     const firstSocket = new MockSocket();
     const firstAttachment = await server.attachPluginSocket("closing", firstSocket);
     firstSocket.emit("message", JSON.stringify(createHelloMessage("plugin:closing")));
 
     server.beginPluginShutdown("closing");
-    await expect(server.attachPluginSocket("closing", new MockSocket())).rejects.toThrow(
-      "being uninstalled",
-    );
+    const replacement = new MockSocket();
+    await expect(server.attachPluginSocket("closing", replacement)).resolves.toBeDefined();
 
     firstSocket.emit("close", 1000, "plugin stopped");
     await firstAttachment.closed;
     const firstPrincipal = sessionMock.instances[0]?.args.principalId;
-    const replacement = new MockSocket();
-    await expect(server.attachPluginSocket("closing", replacement)).resolves.toBeDefined();
     expect(sessionMock.instances[1]?.args.principalId).not.toBe(firstPrincipal);
     replacement.emit("close", 1000, "replacement stopped");
     await server.close();
@@ -576,6 +574,24 @@ describe("relay external socket reconnect behavior", () => {
 
     await server.close();
     expect(removeOwner.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("retains an unresolved cleanup retry after bounded shutdown", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    const attachment = await server.attachPluginSocket("durable-retry", socket);
+    socket.emit("message", JSON.stringify(createHelloMessage("plugin:durable-retry")));
+    vi.spyOn(
+      asInternals<WebSocketServerInternals>(server).deliveryLedger,
+      "removeOwner",
+    ).mockRejectedValue(new Error("disk still full"));
+
+    server.beginPluginShutdown("durable-retry");
+    socket.emit("close", 1000, "plugin stopped");
+    await attachment.closed;
+    await server.close();
+
+    expect(asInternals<WebSocketServerInternals>(server).pluginDeliveryCleanupRetries.size).toBe(1);
   });
 
   test("does not enqueue an oversized outbound WebSocket frame", async () => {

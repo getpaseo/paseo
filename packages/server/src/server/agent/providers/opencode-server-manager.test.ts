@@ -139,6 +139,19 @@ describe("OpenCodeServerManager generations", () => {
     await oldAcquisition.release();
   });
 
+  test("coalesces concurrent catalog refreshes into one server generation", async () => {
+    const { manager, runtime } = createTestManager([4231, 4232, 4233]);
+    const oldAcquisition = await manager.acquireCurrent();
+
+    await Promise.all([manager.refreshPluginCatalog(7), manager.refreshPluginCatalog(7)]);
+
+    expect(runtime.launchedPorts).toEqual([4231, 4232]);
+    const current = await manager.acquireCurrent();
+    expect(current.server.catalogVersion).toBe(7);
+    await current.release();
+    await oldAcquisition.release();
+  });
+
   test("concurrent new-server acquisitions share one fresh generation", async () => {
     const { manager, runtime } = createTestManager([4251, 4252, 4253]);
 

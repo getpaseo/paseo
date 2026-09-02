@@ -7,6 +7,10 @@ import {
 import type { PaseoToolCatalog, PaseoToolResult } from "../../tools/types.js";
 import type { OmpRuntimeSession } from "./runtime.js";
 import {
+  assertUtf8ByteLimit,
+  PLUGIN_TOOL_MAX_CATALOG_BYTES,
+} from "../../../plugins/plugin-tool.js";
+import {
   OmpRpcHostToolCallRequestSchema,
   OmpRpcHostToolCancelRequestSchema,
   OmpRpcHostToolUpdateSchema,
@@ -20,6 +24,7 @@ import {
 interface PendingOmpHostToolCall {
   controller: AbortController;
   canceled: boolean;
+  generation: number;
 }
 
 interface OmpHostToolRouterInput {
@@ -31,7 +36,7 @@ interface OmpHostToolRouterInput {
 const routersByRuntimeSession = new WeakMap<OmpRuntimeSession, OmpHostToolRouter>();
 
 export function serializeOmpHostTools(catalog: PaseoToolCatalog): OmpRpcHostToolDefinition[] {
-  return [...catalog.tools.values()].map((tool) => {
+  const definitions = [...catalog.tools.values()].map((tool) => {
     const definition: OmpRpcHostToolDefinition = {
       name: tool.name,
       description: tool.description,
@@ -43,6 +48,12 @@ export function serializeOmpHostTools(catalog: PaseoToolCatalog): OmpRpcHostTool
     }
     return definition;
   });
+  assertUtf8ByteLimit(
+    JSON.stringify(definitions),
+    "OMP host tool manifest",
+    PLUGIN_TOOL_MAX_CATALOG_BYTES,
+  );
+  return definitions;
 }
 
 export async function setOmpHostTools(
@@ -147,6 +158,7 @@ class OmpHostToolRouter {
   private readonly logger: Logger;
   private readonly pendingCalls = new Map<string, PendingOmpHostToolCall>();
   private readonly idleWaiters = new Set<() => void>();
+  private nextCallGeneration = 0;
 
   constructor(input: OmpHostToolRouterInput) {
     this.runtimeSession = input.runtimeSession;
@@ -155,9 +167,19 @@ class OmpHostToolRouter {
   }
 
   handleCall(request: OmpRpcHostToolCallRequest): void {
+    if (this.pendingCalls.has(request.id)) {
+      this.runtimeSession.sendHostToolResult(
+        toOmpHostToolErrorResult(
+          request.id,
+          `OMP host tool call is already in flight: ${request.id}`,
+        ),
+      );
+      return;
+    }
     const entry: PendingOmpHostToolCall = {
       controller: new AbortController(),
       canceled: false,
+      generation: ++this.nextCallGeneration,
     };
     this.pendingCalls.set(request.id, entry);
     void this.executeCall(request, entry).catch((error: unknown) => {
@@ -212,7 +234,10 @@ class OmpHostToolRouter {
       }
       this.runtimeSession.sendHostToolResult(toOmpHostToolErrorResult(request.id, error));
     } finally {
-      this.pendingCalls.delete(request.id);
+      const current = this.pendingCalls.get(request.id);
+      if (current === entry && current.generation === entry.generation) {
+        this.pendingCalls.delete(request.id);
+      }
       this.resolveIdleWaiters();
     }
   }
