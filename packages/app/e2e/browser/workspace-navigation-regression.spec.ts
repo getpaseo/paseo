@@ -6,7 +6,7 @@ import {
 import { expect, test, type Page } from "../support/fixtures";
 import { gotoAppShell, openSettings } from "../support/helpers/app";
 import {
-  createIdleAgent,
+  createMockIdleAgent,
   expectWorkspaceTabHidden,
   expectWorkspaceTabVisible,
   openWorkspaceWithAgents,
@@ -159,7 +159,7 @@ test.describe("Workspace navigation regression", () => {
     const workspace = await seedWorkspace({ repoPrefix: "workspace-reconnect-" });
 
     try {
-      const agent = await createIdleAgent(workspace.client, {
+      const agent = await createMockIdleAgent(workspace.client, {
         cwd: workspace.repoPath,
         workspaceId: workspace.workspaceId,
         title: `workspace-reconnect-${Date.now()}`,
@@ -180,6 +180,7 @@ test.describe("Workspace navigation regression", () => {
       await expectWorkspaceTabVisible(page, agent.id);
 
       await daemonGate.drop();
+      await daemonGate.waitForBlockedConnection();
       await expectReconnectingToastVisible(page);
       await expectWorkspaceHeader(page, {
         title: workspace.workspaceName,
@@ -217,12 +218,12 @@ test.describe("Workspace navigation regression", () => {
 
     try {
       await Promise.all([
-        createIdleAgent(primaryWorkspace.client, {
+        createMockIdleAgent(primaryWorkspace.client, {
           cwd: primaryWorkspace.repoPath,
           workspaceId: primaryWorkspace.workspaceId,
           title: "Active host agent",
         }),
-        createIdleAgent(secondaryWorkspace.client, {
+        createMockIdleAgent(secondaryWorkspace.client, {
           cwd: secondaryWorkspace.repoPath,
           workspaceId: secondaryWorkspace.workspaceId,
           title: "Inactive host agent",
@@ -319,12 +320,12 @@ test.describe("Workspace navigation regression", () => {
     const secondWorkspace = await seedWorkspace({ repoPrefix: "workspace-nav-reg-b-" });
 
     try {
-      const firstAgent = await createIdleAgent(firstWorkspace.client, {
+      const firstAgent = await createMockIdleAgent(firstWorkspace.client, {
         cwd: firstWorkspace.repoPath,
         workspaceId: firstWorkspace.workspaceId,
         title: `workspace-nav-a-${Date.now()}`,
       });
-      const secondAgent = await createIdleAgent(secondWorkspace.client, {
+      const secondAgent = await createMockIdleAgent(secondWorkspace.client, {
         cwd: secondWorkspace.repoPath,
         workspaceId: secondWorkspace.workspaceId,
         title: `workspace-nav-b-${Date.now()}`,

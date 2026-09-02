@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import ts from "typescript";
@@ -34,6 +34,25 @@ describe("plugin scaffold", () => {
     expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual({
       id: "hello-plugin",
     });
+    const cliPackageJson = JSON.parse(
+      await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
+    expect(JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"))).toEqual({
+      name: "hello-plugin",
+      private: true,
+      version: "0.0.0",
+      scripts: { typecheck: "tsc --noEmit" },
+      devDependencies: {
+        "@getpaseo/plugin": cliPackageJson.version,
+        "@tanstack/react-query": "^5.90.11",
+        "@types/react": "~19.2.0",
+        react: "19.1.0",
+        "react-native": "0.81.5",
+        typescript: "^5.9.3",
+        zod: "^4.4.3",
+      },
+    });
+    expect(await readdir(directory)).not.toContain("paseo-plugin.d.ts");
     await expect(readFile(path.join(directory, "index.ts"), "utf8")).resolves.toContain(
       'from "./main.client"',
     );
