@@ -640,7 +640,7 @@ plugin.addClientSlashCommand({
 
 `onSubmit` receives the matching Command Center callback context plus `args`. For `/review src`,
 `args` is `"src"`; Paseo trims only the remainder's leading and trailing whitespace. Paseo owns the
-autocomplete row, pending state, and error toast. A handled command is never sent to the agent.
+autocomplete row, input clearing, and error toast. A handled command is never sent to the agent.
 The compiler removes this registration from the plugin's server bundle.
 
 Precedence is built-in client commands, plugin commands, then provider commands. A lower-precedence

@@ -331,10 +331,10 @@ plugin.addClientSlashCommand({
 });
 ```
 
-Paseo owns autocomplete, pending state, and error toasts. It never sends the command text to the
-agent. Built-in client commands win name and alias collisions, plugin commands win provider-command
-collisions, and the first plugin in stable catalog order wins collisions between plugins. Plugin
-slash commands do not run when the composer has attachments.
+Paseo owns the autocomplete row, input clearing, and error toast. It never sends the command text to
+the agent. Built-in client commands win name and alias collisions, plugin commands win
+provider-command collisions, and the first plugin in stable catalog order wins collisions between
+plugins. Plugin slash commands do not run when the composer has attachments.
 
 ## Contribute composer attachments
 
