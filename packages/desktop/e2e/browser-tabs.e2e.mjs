@@ -197,11 +197,32 @@ async function startTargetPage() {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     response.end(`<!doctype html>
       <html>
-        <head><title>Desktop browser target</title></head>
+        <head>
+          <title>Desktop browser target</title>
+          <style>
+            html, body { min-height: 1600px; margin: 0; background: #111; }
+            #fixed-capture-header { position: fixed; z-index: 2; pointer-events: none; left: 0; top: 0; width: 100%; height: 30px; background: #f01414; }
+            #sticky-capture-label { position: sticky; top: 0; width: 180px; height: 30px; margin-top: 100px; background: #ffff00; }
+            #full-page-marker { position: absolute; left: 40px; top: 1870px; width: 200px; height: 100px; background: #00ff00; }
+          </style>
+        </head>
         <body>
+          <div id="fixed-capture-header"></div>
           <button id="bridge-target" onclick="this.textContent = 'Clicked'">Bridge target</button>
           <label for="typing-target">Typing target</label>
           <input id="typing-target" />
+          <div id="sticky-capture-label"></div>
+          <script>
+            let expanded = false;
+            addEventListener('scroll', () => {
+              if (expanded || scrollY <= 0) return;
+              expanded = true;
+              document.body.style.minHeight = '2000px';
+              const marker = document.createElement('div');
+              marker.id = 'full-page-marker';
+              document.body.appendChild(marker);
+            }, { passive: true });
+          </script>
         </body>
       </html>`);
   });
@@ -353,6 +374,129 @@ async function readViewport(client, browserId) {
     function: "() => ({ width: window.innerWidth, height: window.innerHeight })",
   });
   return JSON.parse(evaluated.resultJson);
+}
+
+async function readScreenshotPixel(page, input) {
+  return await page.evaluate(async ({ dataBase64, x, y }) => {
+    const image = new Image();
+    const loaded = new Promise((resolve, reject) => {
+      image.addEventListener("load", resolve, { once: true });
+      image.addEventListener("error", () => reject(new Error("Screenshot PNG did not decode")), {
+        once: true,
+      });
+    });
+    image.src = `data:image/png;base64,${dataBase64}`;
+    await loaded;
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("Screenshot canvas context was unavailable");
+    context.drawImage(image, 0, 0);
+    return {
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      rgba: Array.from(context.getImageData(x, y, 1, 1).data),
+    };
+  }, input);
+}
+
+async function callBrowserScreenshot(client, args) {
+  const response = await client.callTool({ name: "browser_screenshot", args });
+  const result = mcpPayload(response, "browser_screenshot");
+  const image = response.content.find((entry) => entry.type === "image");
+  assert(image?.data, `browser_screenshot returned no image content: ${JSON.stringify(response)}`);
+  return { ...result, dataBase64: image.data };
+}
+
+async function verifyFullPageScreenshot(page, client, browserId) {
+  const constraints = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => {
+      document.documentElement.style.scrollSnapType = "y mandatory";
+      document.body.style.overflow = "hidden";
+      globalThis.__paseoOriginalScrollTo = globalThis.scrollTo;
+      globalThis.scrollTo = () => {
+        (document.scrollingElement ?? document.documentElement).scrollTop = 0;
+      };
+      return {
+        snapType: document.documentElement.style.scrollSnapType,
+        overflow: document.body.style.overflow,
+        scrollToOverridden: globalThis.scrollTo !== globalThis.__paseoOriginalScrollTo
+      };
+    }`,
+  });
+  assert(
+    constraints.resultJson ===
+      '{"snapType":"y mandatory","overflow":"hidden","scrollToOverridden":true}',
+    `Full-page scroll constraints were not installed: ${constraints.resultJson}`,
+  );
+  const screenshot = await callBrowserScreenshot(client, { browserId, fullPage: true });
+  const scale = screenshot.height / 2000;
+  const markerPixel = await readScreenshotPixel(page, {
+    dataBase64: screenshot.dataBase64,
+    x: Math.round(100 * scale),
+    y: Math.round(1900 * scale),
+  });
+  assert(
+    markerPixel.width === screenshot.width && markerPixel.height === screenshot.height,
+    `Full-page screenshot metadata did not match its PNG: ${JSON.stringify(markerPixel)}`,
+  );
+  const [red, green, blue, alpha] = markerPixel.rgba;
+  assert(
+    red < 80 && green > 200 && blue < 100 && alpha === 255,
+    `Full-page screenshot did not include the dynamically added bottom marker: ${JSON.stringify(markerPixel)}`,
+  );
+  const fixedAtTop = await readScreenshotPixel(page, {
+    dataBase64: screenshot.dataBase64,
+    x: Math.round(350 * scale),
+    y: Math.round(15 * scale),
+  });
+  const fixedBelowFold = await readScreenshotPixel(page, {
+    dataBase64: screenshot.dataBase64,
+    x: Math.round(350 * scale),
+    y: Math.round(682 * scale),
+  });
+  assert(
+    fixedAtTop.rgba[0] > 200 && fixedAtTop.rgba[1] < 80 && fixedAtTop.rgba[2] < 80,
+    `Full-page screenshot lost the fixed header at the page top: ${JSON.stringify(fixedAtTop)}`,
+  );
+  assert(
+    !(fixedBelowFold.rgba[0] > 200 && fixedBelowFold.rgba[1] < 80 && fixedBelowFold.rgba[2] < 80),
+    `Full-page screenshot repeated the fixed header below the fold: ${JSON.stringify(fixedBelowFold)}`,
+  );
+  const restoredScroll = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: "() => ({ x: scrollX, y: scrollY })",
+  });
+  assert(
+    restoredScroll.resultJson === '{"x":0,"y":0}',
+    `Full-page screenshot did not restore page scroll: ${restoredScroll.resultJson}`,
+  );
+  const restoredStyles = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => ({
+      fixedVisibility: getComputedStyle(document.querySelector("#fixed-capture-header")).visibility,
+      stickyPosition: getComputedStyle(document.querySelector("#sticky-capture-label")).position,
+      captureStateCount: Object.keys(globalThis).filter((key) => key.startsWith("__paseoFullPageCapture_")).length
+    })`,
+  });
+  assert(
+    restoredStyles.resultJson ===
+      '{"fixedVisibility":"visible","stickyPosition":"sticky","captureStateCount":0}',
+    `Full-page screenshot did not restore temporary page styles: ${restoredStyles.resultJson}`,
+  );
+  const cleanup = await callBrowserTool(client, "browser_evaluate", {
+    browserId,
+    function: `() => {
+      globalThis.scrollTo = globalThis.__paseoOriginalScrollTo;
+      delete globalThis.__paseoOriginalScrollTo;
+      document.documentElement.style.removeProperty("scroll-snap-type");
+      document.body.style.removeProperty("overflow");
+      return true;
+    }`,
+  });
+  assert(cleanup.resultJson === "true", "Full-page test constraints were not removed");
 }
 
 async function clickGuestElement(page, client, browserId, selector) {
@@ -519,6 +663,8 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
     text: "Bridge target",
     timeoutMs: 5_000,
   });
+  await verifyFullPageScreenshot(page, client, browserId);
+
   const requestedViewport = { width: 640, height: 480 };
   await callBrowserTool(client, "browser_resize", { browserId, ...requestedViewport });
   recordViewportMismatch(

@@ -7,6 +7,16 @@ const { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, session } = requ
 
 const ROOT = __dirname;
 const OUT_DIR = process.env.PASEO_CAPTURE_HARNESS_OUT_DIR || path.join(ROOT, "out");
+const PRODUCTION_BROWSER_AUTOMATION_DIR = path.join(
+  ROOT,
+  "..",
+  "dist",
+  "features",
+  "browser-automation",
+);
+const { captureFullPage } = require(
+  path.join(PRODUCTION_BROWSER_AUTOMATION_DIR, "full-page-capture.js"),
+);
 const PRODUCTION_BROWSER_KEYBOARD_DIR = path.join(
   ROOT,
   "..",
@@ -248,6 +258,26 @@ function isBrightMagenta(bitmap, offset) {
   return c0 > 200 && c1 < 90 && c2 > 200;
 }
 
+function hasBottomMarker(bitmap, width, height, devicePixelRatio) {
+  const crop = {
+    left: Math.min(width, Math.round(40 * devicePixelRatio)),
+    top: Math.min(height, Math.round(1320 * devicePixelRatio)),
+    right: Math.min(width, Math.round(1150 * devicePixelRatio)),
+    bottom: Math.min(height, Math.round(1500 * devicePixelRatio)),
+  };
+  let pixels = 0;
+  let nonBright = 0;
+  for (let y = crop.top; y < crop.bottom; y += 1) {
+    for (let x = crop.left; x < crop.right; x += 1) {
+      pixels += 1;
+      if (!isBrightMagenta(bitmap, pixelOffset(width, x, y))) {
+        nonBright += 1;
+      }
+    }
+  }
+  return pixels > 0 && nonBright / pixels > 0.01;
+}
+
 function analyzeImage(image, expected, guestMetrics) {
   if (!image || image.isEmpty()) {
     return {
@@ -257,6 +287,7 @@ function analyzeImage(image, expected, guestMetrics) {
       logicalHeightAtDpr: 0,
       brightRatio: 0,
       textNonUniform: false,
+      bottomMarkerVisible: false,
       matchedSize: false,
       pass: false,
     };
@@ -326,6 +357,8 @@ function analyzeImage(image, expected, guestMetrics) {
     cropNonBright / cropPixels > 0.02 &&
     quantized.size >= 4 &&
     luminanceVariance > 100;
+  const bottomMarkerVisible = hasBottomMarker(bitmap, width, height, devicePixelRatio);
+  const requiredPixelsVisible = !expected.requiresBottomMarker || bottomMarkerVisible;
 
   return {
     width,
@@ -334,15 +367,25 @@ function analyzeImage(image, expected, guestMetrics) {
     logicalHeightAtDpr: height / devicePixelRatio,
     brightRatio,
     textNonUniform,
+    bottomMarkerVisible,
     matchedSize,
-    pass: matchedSize && brightRatio >= expected.minBrightRatio && textNonUniform,
+    pass:
+      matchedSize &&
+      brightRatio >= expected.minBrightRatio &&
+      textNonUniform &&
+      requiredPixelsVisible,
   };
 }
 
 function expectedForMode(mode) {
   return mode === "viewport"
     ? { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT, minBrightRatio: 0.65 }
-    : { width: VIEWPORT_WIDTH, height: FULL_PAGE_HEIGHT, minBrightRatio: 0.55 };
+    : {
+        width: VIEWPORT_WIDTH,
+        height: FULL_PAGE_HEIGHT,
+        minBrightRatio: 0.55,
+        requiresBottomMarker: true,
+      };
 }
 
 function summarizeAnalysis(analysis) {
@@ -354,6 +397,7 @@ function summarizeAnalysis(analysis) {
       logicalHeightAtDpr: 0,
       brightRatio: 0,
       textNonUniform: false,
+      bottomMarkerVisible: false,
       matchedSize: false,
       pass: false,
     };
@@ -365,6 +409,7 @@ function summarizeAnalysis(analysis) {
     logicalHeightAtDpr: analysis.logicalHeightAtDpr,
     brightRatio: analysis.brightRatio,
     textNonUniform: analysis.textNonUniform,
+    bottomMarkerVisible: analysis.bottomMarkerVisible,
     matchedSize: analysis.matchedSize,
     pass: analysis.pass,
   };
@@ -446,47 +491,29 @@ async function capturePageSequence(contents) {
   return await withTimeout(contents.capturePage(undefined, { stayHidden: false }), "capturePage");
 }
 
-async function captureFullPage(contents) {
+async function captureFullPageSequence(contents) {
   let attachedHere = false;
   if (!contents.debugger.isAttached()) {
     contents.debugger.attach("1.3");
     attachedHere = true;
   }
   try {
-    const metrics = await contents.debugger.sendCommand("Page.getLayoutMetrics");
-    const contentSize = metrics.cssContentSize ||
-      metrics.contentSize || {
-        x: 0,
-        y: 0,
-        width: VIEWPORT_WIDTH,
-        height: FULL_PAGE_HEIGHT,
-      };
-    const clip = {
-      x: Math.floor(contentSize.x || 0),
-      y: Math.floor(contentSize.y || 0),
-      width: Math.ceil(contentSize.width || VIEWPORT_WIDTH),
-      height: Math.ceil(contentSize.height || FULL_PAGE_HEIGHT),
-      scale: 1,
-    };
-    const result = await withTimeout(
-      contents.debugger.sendCommand("Page.captureScreenshot", {
-        format: "png",
-        captureBeyondViewport: true,
-        clip,
-      }),
-      "CDP Page.captureScreenshot",
-    );
-    return nativeImage.createFromBuffer(Buffer.from(result.data, "base64"));
+    return await captureFullPage({
+      executeJavaScript: (script) =>
+        withTimeout(contents.executeJavaScript(script, true), "full-page guest script"),
+      sendDebugCommand: (method, params) =>
+        withTimeout(contents.debugger.sendCommand(method, params), `full-page ${method}`),
+      invalidate: () => contents.invalidate(),
+      createImageFromPng: (dataBase64) =>
+        nativeImage.createFromBuffer(Buffer.from(dataBase64, "base64")),
+      createImageFromBitmap: (bitmap, size) =>
+        nativeImage.createFromBitmap(Buffer.from(bitmap), { ...size, scaleFactor: 1 }),
+    });
   } finally {
     if (attachedHere && contents.debugger.isAttached()) {
       contents.debugger.detach();
     }
   }
-}
-
-async function captureFullPageSequence(contents) {
-  contents.invalidate();
-  return await captureFullPage(contents);
 }
 
 function installHarnessWebviewGuards(win, options = {}) {
@@ -698,7 +725,7 @@ async function measurePermanentCapture({
           pass: true,
         };
         pass(
-          `permanent ${state.code} ${variant.code} ${phase} ${mode} webview ${targetIndex + 1} ${repeatIndex}/${repeatTotal} attempts=${attempt} size=${analysisSize(lastAnalysis)} logical=${analysisLogicalSize(lastAnalysis)} bright=${lastAnalysis.brightRatio.toFixed(4)} text=${lastAnalysis.textNonUniform} file=${outputPath}`,
+          `permanent ${state.code} ${variant.code} ${phase} ${mode} webview ${targetIndex + 1} ${repeatIndex}/${repeatTotal} attempts=${attempt} size=${analysisSize(lastAnalysis)} logical=${analysisLogicalSize(lastAnalysis)} bright=${lastAnalysis.brightRatio.toFixed(4)} text=${lastAnalysis.textNonUniform} bottom=${lastAnalysis.bottomMarkerVisible} file=${outputPath}`,
         );
         return result;
       }
@@ -813,7 +840,7 @@ async function captureWithPrep({
           );
           return analysis;
         }
-        lastFailure = `size=${size} logical=${logicalSize} bright=${bright} text=${analysis.textNonUniform}`;
+        lastFailure = `size=${size} logical=${logicalSize} bright=${bright} text=${analysis.textNonUniform} bottom=${analysis.bottomMarkerVisible}`;
       } catch (error) {
         lastFailure = error instanceof Error ? error.message : String(error);
       }

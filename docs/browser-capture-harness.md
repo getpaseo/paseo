@@ -10,8 +10,8 @@ It validates the compositor behavior that unit tests cannot see:
   stacking changes;
 - a newly attached resident webview whose first useful frame is delayed can be captured
   by retrying until the frame appears;
-- both viewport `capturePage` and full-page CDP screenshots return real pixels from
-  the permanent production parking state;
+- both viewport `capturePage` and the compiled production full-page capture return real pixels
+  from the permanent production parking state, including the fixture's bottom marker;
 - guest background throttling can be disabled once at attach without per-capture
   renderer coordination;
 - the real-Electron host-composer sentinel proves guest Enter cannot submit a focused
@@ -30,11 +30,10 @@ Run it with the repo Electron:
 npm run capture-harness --workspace=@getpaseo/desktop
 ```
 
-Build the desktop main process before the automation group so its production guest
-preload is available:
+The command builds the desktop main process first so the harness exercises the compiled
+production full-page capture, keyboard boundary, and guest preload. Run the automation group with:
 
 ```bash
-npm run build:main --workspace=@getpaseo/desktop
 PASEO_CAPTURE_HARNESS_GROUP=automation npm run capture-harness --workspace=@getpaseo/desktop
 ```
 
@@ -96,8 +95,15 @@ plane stays below the overlay plane regardless of body insertion order; menus ke
 layering inside `overlay-root`. Activating a presented browser also focuses its registered guest
 `WebContents` in main so macOS assigns keyboard first-responder ownership to the page.
 
-There is no renderer prep/restore handshake. Main disables guest background throttling
-once when the webview attaches, then screenshot capture uses the shared serialized queue,
-invalidates before each attempt, and retries known first-frame failures within the
-5-second capture budget. Viewport screenshots use `capturePage({ stayHidden:false })`;
-full-page screenshots use the existing CDP path with layout metrics and screenshot clip.
+There is no host-renderer parking handshake. Main disables guest background throttling once
+when the webview attaches, then screenshot capture uses the shared serialized queue, invalidates
+before each attempt, and retries known first-frame failures. Viewport screenshots retain the
+5-second budget and use `capturePage({ stayHidden:false })`.
+
+Electron guest `captureBeyondViewport` repeats the current compositor viewport below the fold,
+so full-page capture uses a bounded 30-second scroll-and-stitch path. It verifies the scroll before
+and after every CDP tile, retries changing layouts up to three passes, renders fixed elements only
+in the first viewport, temporarily removes sticky positioning, and restores page state afterward.
+Captures are capped at 128 tiles and a 128 MiB raw bitmap; timeout aborts the active capture instead
+of leaving work in the CDP queue. The harness checks the distinct bottom marker so a correctly
+sized repeated viewport cannot pass.
