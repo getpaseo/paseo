@@ -1,6 +1,8 @@
 import { Command, Option } from "commander";
 import { getStructuredAgentResponse, StructuredAgentResponseError } from "@getpaseo/server";
 import type { AgentSnapshotPayload } from "@getpaseo/protocol/messages";
+import { McpServersConfigSchema } from "@getpaseo/protocol/messages";
+import type { McpServerConfig } from "@getpaseo/protocol/agent-types";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type {
   CommandOptions,
@@ -82,6 +84,10 @@ export function addRunOptions(cmd: Command): Command {
         "--output-schema <schema>",
         "Output JSON matching the provided schema file path or inline JSON schema",
       )
+      .option(
+        "--mcp-config <path>",
+        "Path to a JSON file of MCP servers (name -> server config) to attach to the agent",
+      )
   );
 }
 
@@ -131,6 +137,7 @@ export interface AgentRunOptions extends CommandOptions {
   label?: string[];
   waitTimeout?: string;
   outputSchema?: string;
+  mcpConfig?: string;
 }
 
 function resolveNewWorkspaceKind(options: AgentRunOptions): string | undefined {
@@ -213,6 +220,57 @@ function loadOutputSchema(value: string): Record<string, unknown> {
   }
 
   return parsed as Record<string, unknown>;
+}
+
+function loadMcpConfig(value: string): Record<string, McpServerConfig> {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    const error: CommandError = {
+      code: "INVALID_MCP_CONFIG",
+      message: "--mcp-config cannot be empty",
+      details: "Provide a path to a JSON file mapping MCP server names to server configs",
+    };
+    throw error;
+  }
+
+  const path = resolve(trimmed);
+  let source: string;
+  try {
+    source = readFileSync(path, "utf8");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const error: CommandError = {
+      code: "INVALID_MCP_CONFIG",
+      message: `Failed to read MCP config file: ${trimmed}`,
+      details: message,
+    };
+    throw error;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(source);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const error: CommandError = {
+      code: "INVALID_MCP_CONFIG",
+      message: `Failed to parse MCP config JSON: ${trimmed}`,
+      details: message,
+    };
+    throw error;
+  }
+
+  const result = McpServersConfigSchema.safeParse(parsed);
+  if (!result.success) {
+    const error: CommandError = {
+      code: "INVALID_MCP_CONFIG",
+      message: `MCP config file does not match the expected schema: ${trimmed}`,
+      details: result.error.message,
+    };
+    throw error;
+  }
+
+  return result.data as Record<string, McpServerConfig>;
 }
 
 class StructuredRunStatusError extends Error {
@@ -588,6 +646,7 @@ export async function runRunCommand(
 ): Promise<SingleResult<AgentRunResult>> {
   const host = getDaemonHost({ host: options.host });
   const outputSchema = options.outputSchema ? loadOutputSchema(options.outputSchema) : undefined;
+  const mcpServers = options.mcpConfig ? loadMcpConfig(options.mcpConfig) : undefined;
 
   validateRunOptions(prompt, options, outputSchema);
   const waitTimeoutMs = parseWaitTimeoutOption(options.waitTimeout);
@@ -641,6 +700,7 @@ export async function runRunCommand(
             images,
             env: requestEnv,
             labels: Object.keys(labels).length > 0 ? labels : undefined,
+            mcpServers,
           });
         } else {
           await client.sendMessage(structuredAgent.id, structuredPrompt);
@@ -711,6 +771,7 @@ export async function runRunCommand(
       images,
       env: requestEnv,
       labels: Object.keys(labels).length > 0 ? labels : undefined,
+      mcpServers,
     });
 
     // Default run behavior is foreground: wait for completion unless background execution is set.

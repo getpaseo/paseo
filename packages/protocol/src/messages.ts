@@ -445,11 +445,13 @@ const McpSseServerConfigSchema = z.object({
   alwaysLoad: z.boolean().optional(),
 });
 
-const McpServerConfigSchema = z.discriminatedUnion("type", [
+export const McpServerConfigSchema = z.discriminatedUnion("type", [
   McpStdioServerConfigSchema,
   McpHttpServerConfigSchema,
   McpSseServerConfigSchema,
 ]);
+
+export const McpServersConfigSchema = z.record(z.string(), McpServerConfigSchema);
 
 const ProviderOptionsSchema = z.record(z.string(), z.json());
 

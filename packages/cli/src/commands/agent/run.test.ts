@@ -1,10 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   resolveExistingRunWorkspace,
   resolveRunCallerAgentId,
   runRunCommand,
   type AgentRunOptions,
 } from "./run";
+
+const createAgent = vi.fn();
+const waitForFinish = vi.fn();
+const close = vi.fn();
+
+vi.mock("../../utils/client.js", () => ({
+  connectToDaemon: vi.fn(async () => ({
+    createAgent,
+    waitForFinish,
+    close,
+  })),
+  getDaemonHost: vi.fn(() => "ws://127.0.0.1:6767"),
+}));
 
 describe("managed agent caller context", () => {
   it("propagates a trimmed PASEO_AGENT_ID", () => {
@@ -104,5 +120,101 @@ describe("runRunCommand option validation", () => {
       { newWorkspace: "worktree", worktreeMode: "container" },
       /Unsupported worktree mode/,
     );
+  });
+});
+
+describe("--mcp-config", () => {
+  const originalCallerAgentId = process.env.PASEO_AGENT_ID;
+
+  function writeConfigFile(content: string): string {
+    const dir = mkdtempSync(join(tmpdir(), "paseo-mcp-config-"));
+    const path = join(dir, "mcp.json");
+    writeFileSync(path, content, "utf8");
+    return path;
+  }
+
+  beforeEach(() => {
+    // Short-circuits workspace resolution so createAgent tests don't need to
+    // stub out createWorkspace as well.
+    process.env.PASEO_AGENT_ID = "parent-agent";
+    createAgent.mockReset();
+    waitForFinish.mockReset();
+    close.mockReset();
+  });
+
+  afterEach(() => {
+    if (originalCallerAgentId === undefined) {
+      delete process.env.PASEO_AGENT_ID;
+    } else {
+      process.env.PASEO_AGENT_ID = originalCallerAgentId;
+    }
+  });
+
+  it("omits mcpServers when --mcp-config is not provided", async () => {
+    createAgent.mockResolvedValueOnce({
+      id: "agent-1",
+      status: "running",
+      provider: "codex",
+      cwd: "/tmp/project",
+      title: null,
+    });
+
+    await runRunCommand("do something", { provider: "codex", background: true }, {} as never);
+
+    expect(createAgent).toHaveBeenCalledWith(expect.objectContaining({ mcpServers: undefined }));
+  });
+
+  it("parses a valid --mcp-config file and passes mcpServers to createAgent", async () => {
+    const path = writeConfigFile(
+      JSON.stringify({
+        apify: { type: "stdio", command: "actors-mcp-server", args: [] },
+      }),
+    );
+    createAgent.mockResolvedValueOnce({
+      id: "agent-1",
+      status: "running",
+      provider: "codex",
+      cwd: "/tmp/project",
+      title: null,
+    });
+
+    await runRunCommand(
+      "do something",
+      { provider: "codex", background: true, mcpConfig: path },
+      {} as never,
+    );
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mcpServers: {
+          apify: { type: "stdio", command: "actors-mcp-server", args: [] },
+        },
+      }),
+    );
+  });
+
+  it("rejects a nonexistent --mcp-config path before connecting to the daemon", async () => {
+    await expect(
+      runRunCommand("do something", { mcpConfig: "/no/such/mcp-config.json" }, {} as never),
+    ).rejects.toMatchObject({ code: "INVALID_MCP_CONFIG" });
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid JSON in --mcp-config", async () => {
+    const path = writeConfigFile("{ not valid json");
+
+    await expect(
+      runRunCommand("do something", { mcpConfig: path }, {} as never),
+    ).rejects.toMatchObject({ code: "INVALID_MCP_CONFIG" });
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it("rejects a --mcp-config file that fails MCP server schema validation", async () => {
+    const path = writeConfigFile(JSON.stringify({ apify: { type: "carrier-pigeon" } }));
+
+    await expect(
+      runRunCommand("do something", { mcpConfig: path }, {} as never),
+    ).rejects.toMatchObject({ code: "INVALID_MCP_CONFIG" });
+    expect(createAgent).not.toHaveBeenCalled();
   });
 });
