@@ -24,9 +24,9 @@ import {
 import {
   createTerminalKeyInput,
   dispatchTerminalKeyInput,
-  EMPTY_TERMINAL_KEY_MODIFIERS,
   type TerminalKeyModifierState,
 } from "@/terminal/runtime/terminal-key-dispatch";
+import { useTerminalModifiers } from "@/terminal/runtime/use-terminal-modifiers";
 import {
   getTerminalVirtualKeyboardControlId,
   shouldShowTerminalFloatingCopyAction,
@@ -97,8 +97,6 @@ const MODIFIER_LABELS = {
   shift: "Shift",
   alt: "Alt",
 } as const;
-
-const EMPTY_MODIFIERS = EMPTY_TERMINAL_KEY_MODIFIERS;
 
 type ModifierState = TerminalKeyModifierState;
 
@@ -259,7 +257,12 @@ export function TerminalPane({
   const [isAttaching, setIsAttaching] = useState(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [rendererReadyStreamKey, setRendererReadyStreamKey] = useState<string | null>(null);
-  const [modifiers, setModifiers] = useState<ModifierState>(EMPTY_MODIFIERS);
+  const {
+    modifiers,
+    readModifiers,
+    clearModifiers,
+    toggleModifier: toggleModifierState,
+  } = useTerminalModifiers();
   const [hasSelection, setHasSelection] = useState(false);
   const [hasClipboardText, setHasClipboardText] = useState(false);
   const [isKeyboardToggleVisible, setIsKeyboardToggleVisible] = useState(false);
@@ -467,13 +470,13 @@ export function TerminalPane({
       workspaceTerminalSession.snapshots.clear({ terminalId: exitedTerminalId });
       if (terminalIdRef.current === exitedTerminalId) {
         emulatorRef.current?.clear();
+        clearModifiers();
       }
       streamControllerRef.current?.handleTerminalExit({
         terminalId: exitedTerminalId,
       });
-      setModifiers({ ...EMPTY_MODIFIERS });
     });
-  }, [client, isConnected, isWorkspaceFocused, workspaceTerminalSession.snapshots]);
+  }, [clearModifiers, client, isConnected, isWorkspaceFocused, workspaceTerminalSession.snapshots]);
 
   useEffect(() => {
     measuredTerminalSizeRef.current = null;
@@ -675,8 +678,8 @@ export function TerminalPane({
   }, [flushPendingTerminalInput, isAttaching, streamError]);
 
   const clearPendingModifiers = useCallback(() => {
-    setModifiers({ ...EMPTY_MODIFIERS });
-  }, []);
+    clearModifiers();
+  }, [clearModifiers]);
 
   const sendTerminalKey = useCallback(
     (input: {
@@ -730,18 +733,19 @@ export function TerminalPane({
         return;
       }
 
-      if (hasPendingTerminalModifiers(modifiers)) {
+      const currentModifiers = readModifiers();
+      if (hasPendingTerminalModifiers(currentModifiers)) {
         const pendingResolution = resolvePendingModifierDataInput({
           data,
-          pendingModifiers: modifiers,
+          pendingModifiers: currentModifiers,
         });
         if (pendingResolution.mode === "key") {
           if (
             sendTerminalKey({
               key: pendingResolution.key,
-              ctrl: modifiers.ctrl,
-              shift: modifiers.shift,
-              alt: modifiers.alt,
+              ctrl: currentModifiers.ctrl,
+              shift: currentModifiers.shift,
+              alt: currentModifiers.alt,
               meta: false,
             })
           ) {
@@ -774,9 +778,9 @@ export function TerminalPane({
       clearPendingModifiers,
       client,
       dispatchTerminalInputEntry,
-      modifiers,
       sendTerminalKey,
       enqueuePendingTerminalInput,
+      readModifiers,
     ],
   );
 
@@ -928,20 +932,21 @@ export function TerminalPane({
 
   const toggleModifier = useCallback(
     (modifier: keyof ModifierState) => {
-      setModifiers((current) => ({ ...current, [modifier]: !current[modifier] }));
+      toggleModifierState(modifier);
       requestTerminalFocus();
       requestTerminalReflow();
     },
-    [requestTerminalFocus, requestTerminalReflow],
+    [requestTerminalFocus, requestTerminalReflow, toggleModifierState],
   );
 
   const sendVirtualKey = useCallback(
     (key: string) => {
+      const currentModifiers = readModifiers();
       sendTerminalKey({
         key,
-        ctrl: modifiers.ctrl,
-        shift: modifiers.shift,
-        alt: modifiers.alt,
+        ctrl: currentModifiers.ctrl,
+        shift: currentModifiers.shift,
+        alt: currentModifiers.alt,
         meta: false,
       });
       clearPendingModifiers();
@@ -950,11 +955,9 @@ export function TerminalPane({
     },
     [
       clearPendingModifiers,
-      modifiers.alt,
-      modifiers.ctrl,
-      modifiers.shift,
       requestTerminalFocus,
       requestTerminalReflow,
+      readModifiers,
       sendTerminalKey,
     ],
   );
