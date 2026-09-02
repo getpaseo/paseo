@@ -1,10 +1,14 @@
 import { z } from "zod";
 
 import {
-  PLUGIN_TOOL_MAX_RESULT_BYTES,
+  PLUGIN_TOOL_MAX_CATALOG_SCHEMA_BYTES,
+  PLUGIN_TOOL_MAX_CATALOG_TOOLS,
   PLUGIN_TOOL_MAX_ERROR_BYTES,
-  PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+  PLUGIN_TOOL_MAX_RESULT_BYTES,
+  PLUGIN_TOOL_MAX_UPDATE_BYTES,
   assertSafeJson,
+  assertSupportedJsonSchema,
+  assertUtf8ByteLimit,
 } from "./plugin-tool.js";
 
 export const MAX_PLUGIN_PROCESS_MESSAGE_BYTES = 4 * 1024 * 1024;
@@ -91,12 +95,13 @@ export const PluginProcessMessageSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("error"),
       requestId: z.string().min(1),
-      error: z.string().max(PLUGIN_TOOL_MAX_ERROR_BYTES),
+      error: z.string(),
     })
     .strict(),
   z
     .object({ type: z.literal("tool_update"), requestId: z.string().min(1), update: z.unknown() })
     .strict(),
+  z.object({ type: z.literal("tool_cancel_ack"), requestId: z.string().min(1) }).strict(),
   z
     .object({ type: z.literal("tool_result"), requestId: z.string().min(1), output: z.unknown() })
     .strict(),
@@ -104,12 +109,10 @@ export const PluginProcessMessageSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("tool_error"),
       requestId: z.string().min(1),
-      error: z.string().max(PLUGIN_TOOL_MAX_ERROR_BYTES),
+      error: z.string(),
     })
     .strict(),
-  z
-    .object({ type: z.literal("fatal"), error: z.string().max(PLUGIN_TOOL_MAX_ERROR_BYTES) })
-    .strict(),
+  z.object({ type: z.literal("fatal"), error: z.string() }).strict(),
   z
     .object({ type: z.literal("paseo_frame"), data: BinaryFrameSchema, isBinary: z.boolean() })
     .strict(),
@@ -149,10 +152,34 @@ function validateProcessEnvelope(message: PluginProcessRequest | PluginProcessMe
     assertSafeJson(message.context, "Plugin tool caller context", PLUGIN_TOOL_MAX_RESULT_BYTES);
   }
   if (message.type === "tool_update") {
-    assertSafeJson(message.update, "Plugin tool progress update", PLUGIN_TOOL_MAX_SCHEMA_BYTES);
+    assertSafeJson(message.update, "Plugin tool progress update", PLUGIN_TOOL_MAX_UPDATE_BYTES);
   }
   if (message.type === "tool_result" || message.type === "result") {
     assertSafeJson(message.output, "Plugin tool output", PLUGIN_TOOL_MAX_RESULT_BYTES);
+  }
+  if (message.type === "error" || message.type === "tool_error" || message.type === "fatal") {
+    assertUtf8ByteLimit(message.error, "Plugin process error", PLUGIN_TOOL_MAX_ERROR_BYTES);
+  }
+  if (message.type === "ready" && message.catalog) {
+    let schemaBytes = 0;
+    for (const entry of message.catalog) {
+      assertSupportedJsonSchema(entry.inputSchema, `Plugin tool ${entry.name} input schema`, {
+        requireObject: true,
+      });
+      if (entry.outputSchema) {
+        assertSupportedJsonSchema(entry.outputSchema, `Plugin tool ${entry.name} output schema`);
+      }
+      schemaBytes += Buffer.byteLength(JSON.stringify(entry.inputSchema), "utf8");
+      if (entry.outputSchema) {
+        schemaBytes += Buffer.byteLength(JSON.stringify(entry.outputSchema), "utf8");
+      }
+    }
+    if (message.catalog.length > PLUGIN_TOOL_MAX_CATALOG_TOOLS) {
+      throw new Error("Plugin tool catalog exceeds the tool count limit");
+    }
+    if (schemaBytes > PLUGIN_TOOL_MAX_CATALOG_SCHEMA_BYTES) {
+      throw new Error("Plugin tool catalog exceeds the schema byte limit");
+    }
   }
 }
 

@@ -806,6 +806,58 @@ export default function contribute(plugin: any) {
     await runtime.stopAll();
   });
 
+  it("holds all concurrency slots until an ignored cancellation quarantines the child", async () => {
+    const directory = await createPlugin(
+      "ignored-cancellation",
+      `import { z } from "zod";
+import { defineTool } from "@getpaseo/plugin/server";
+
+const wait = defineTool({
+  name: "ignore_abort",
+  title: "Ignore abort",
+  description: "Never settles.",
+  input: z.object({}),
+  timeoutMs: 30_000,
+  handler: () => new Promise(() => undefined),
+});
+
+export default function contribute(plugin: any) {
+  plugin.addTool(wait);
+  return () => undefined;
+}`,
+    );
+    const runtime = createTestRuntime({
+      resolveToolContext: async (callerAgentId) => ({
+        callerAgentId,
+        agent: null,
+        workspace: null,
+      }),
+    });
+    await runtime.startPlugin("ignored-cancellation", directory);
+
+    const controllers = Array.from({ length: 8 }, () => new AbortController());
+    const calls = controllers.map((controller) =>
+      runtime.invokeTool(
+        "ignored-cancellation",
+        "ignore_abort",
+        {},
+        { callerAgentId: "agent-1", signal: controller.signal },
+      ),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    controllers[0]?.abort(new Error("caller cancelled"));
+    await expect(calls[0]).rejects.toThrow("caller cancelled");
+
+    await expect(
+      runtime.invokeTool("ignored-cancellation", "ignore_abort", {}, { callerAgentId: "agent-1" }),
+    ).rejects.toThrow("concurrency limit");
+
+    await expect(Promise.allSettled(calls)).resolves.toEqual(
+      expect.arrayContaining([expect.objectContaining({ status: "rejected" })]),
+    );
+    await vi.waitFor(() => expect(runtime.toolCatalog()).toEqual([]), { timeout: 5_000 });
+  }, 8_000);
+
   it("does not start a tool after its plugin is stopped while context is resolving", async () => {
     const directory = await createPlugin(
       "resolving-tool",

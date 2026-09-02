@@ -4,6 +4,7 @@ import {
   validatePluginProcessMessage,
   validatePluginProcessRequest,
 } from "./plugin-process-protocol.js";
+import { PLUGIN_TOOL_MAX_ERROR_BYTES } from "./plugin-tool.js";
 
 const callerContext = {
   callerAgentId: "agent-1",
@@ -40,6 +41,9 @@ describe("plugin process tool protocol", () => {
       type: "tool_cancel",
       requestId: "request-1",
     });
+    expect(
+      validatePluginProcessMessage({ type: "tool_cancel_ack", requestId: "request-1" }),
+    ).toEqual({ type: "tool_cancel_ack", requestId: "request-1" });
   });
 
   it("rejects unknown fields and oversized messages", () => {
@@ -57,5 +61,12 @@ describe("plugin process tool protocol", () => {
         output: { value: "x".repeat(MAX_PLUGIN_PROCESS_MESSAGE_BYTES) },
       }),
     ).toThrow(/size|byte|limit/i);
+    expect(() =>
+      validatePluginProcessMessage({
+        type: "tool_error",
+        requestId: "request-1",
+        error: "€".repeat(PLUGIN_TOOL_MAX_ERROR_BYTES),
+      }),
+    ).toThrow(/byte|limit/i);
   });
 });

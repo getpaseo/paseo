@@ -308,6 +308,15 @@ interface ProviderEnabledFlag {
     toolPolicy: ToolPolicy | undefined,
   ) => AgentSessionConfig;
 }
+
+interface AgentMcpCapability {
+  token: string;
+  agentId: string;
+  cwd: string;
+  workspaceId: string | undefined;
+  generation: symbol | null;
+}
+
 type ProviderEnabledMap = Partial<Record<AgentProvider, ProviderEnabledFlag>>;
 type ProviderClientMap = Partial<Record<AgentProvider, AgentClient>>;
 
@@ -332,7 +341,6 @@ export interface AgentManagerOptions {
   durableTimelineStore?: AgentTimelineStore;
   terminalManager?: TerminalManager | null;
   mcpBaseUrl?: string;
-  mcpAuthToken?: string;
   paseoToolsEnabled?: boolean;
   paseoToolCatalogFactory?: PaseoToolCatalogFactory;
   appendSystemPrompt?: string;
@@ -900,6 +908,9 @@ export class AgentManager {
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
   private readonly sessionGenerationTokens = new Map<string, symbol>();
+  private readonly mcpCapabilities = new Map<string, AgentMcpCapability>();
+  private readonly mcpCapabilityByAgent = new Map<string, AgentMcpCapability>();
+  private readonly pendingMcpCapabilities = new Map<string, AgentMcpCapability>();
   private readonly fencedSessionGenerations = new Map<
     string,
     { agent: ActiveManagedAgent; generation: symbol; turnToken?: string }
@@ -934,7 +945,6 @@ export class AgentManager {
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
-  private readonly mcpAuthToken: string | null;
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private appendSystemPrompt: string;
@@ -953,7 +963,6 @@ export class AgentManager {
     this.onAgentAttention = options?.onAgentAttention;
     this.onWorkspaceStateMayHaveChanged = options?.onWorkspaceStateMayHaveChanged;
     this.mcpBaseUrl = options?.mcpBaseUrl ?? null;
-    this.mcpAuthToken = options?.mcpAuthToken ?? null;
     this.configurePaseoTools(options);
     this.appendSystemPrompt = options.appendSystemPrompt ?? "";
     this.logger = options.logger.child({ module: "agent", component: "agent-manager" });
@@ -1033,6 +1042,9 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+    this.mcpCapabilities.clear();
+    this.mcpCapabilityByAgent.clear();
+    this.pendingMcpCapabilities.clear();
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -1043,14 +1055,67 @@ export class AgentManager {
     this.paseoToolCatalogFactory = factory;
   }
 
-  /**
-   * Capability token the daemon's own MCP clients must present to the Agent MCP
-   * endpoint when a daemon password is configured. Read by the per-client
-   * session to authenticate its own MCP connection. Stays in the daemon — never
-   * sent to remote clients.
-   */
-  getMcpAuthToken(): string | null {
-    return this.mcpAuthToken;
+  /** Resolve a host-issued, generation-bound MCP capability to its active agent. */
+  resolveMcpCapability(token: string): { agentId: string } | null {
+    const capability = this.mcpCapabilities.get(token);
+    if (!capability) return null;
+    const agent = this.agents.get(capability.agentId);
+    if (
+      !agent ||
+      capability.generation === null ||
+      this.sessionGenerationTokens.get(capability.agentId) !== capability.generation ||
+      agent.cwd !== capability.cwd ||
+      agent.workspaceId !== capability.workspaceId
+    ) {
+      this.revokeMcpCapability(
+        capability.agentId,
+        capability.generation === null ? undefined : capability.generation,
+      );
+      return null;
+    }
+    return { agentId: capability.agentId };
+  }
+
+  private issueMcpCapability(agentId: string, cwd: string): string {
+    this.revokeMcpCapability(agentId);
+    const capability: AgentMcpCapability = {
+      token: randomUUID(),
+      agentId,
+      cwd,
+      workspaceId: undefined,
+      generation: null,
+    };
+    this.pendingMcpCapabilities.set(agentId, capability);
+    this.mcpCapabilities.set(capability.token, capability);
+    return capability.token;
+  }
+
+  private bindMcpCapability(agent: ActiveManagedAgent, generation: symbol): void {
+    const capability = this.pendingMcpCapabilities.get(agent.id);
+    if (!capability) return;
+    capability.generation = generation;
+    capability.workspaceId = agent.workspaceId;
+    this.pendingMcpCapabilities.delete(agent.id);
+    this.mcpCapabilityByAgent.set(agent.id, capability);
+  }
+
+  private revokeMcpCapability(agentId: string, generation?: symbol): void {
+    const capabilities = [
+      this.mcpCapabilityByAgent.get(agentId),
+      this.pendingMcpCapabilities.get(agentId),
+    ];
+    for (const capability of capabilities) {
+      if (!capability || (generation !== undefined && capability.generation !== generation)) {
+        continue;
+      }
+      this.mcpCapabilities.delete(capability.token);
+      if (this.mcpCapabilityByAgent.get(agentId) === capability) {
+        this.mcpCapabilityByAgent.delete(agentId);
+      }
+      if (this.pendingMcpCapabilities.get(agentId) === capability) {
+        this.pendingMcpCapabilities.delete(agentId);
+      }
+    }
   }
 
   setAppendSystemPrompt(prompt: string | null | undefined): void {
@@ -4287,7 +4352,9 @@ export class AgentManager {
         throw new Error(`Agent with id ${resolvedAgentId} already exists`);
       }
       this.agents.set(resolvedAgentId, managed);
-      this.sessionGenerationTokens.set(resolvedAgentId, Symbol(`session:${resolvedAgentId}`));
+      const generation = Symbol(`session:${resolvedAgentId}`);
+      this.sessionGenerationTokens.set(resolvedAgentId, generation);
+      this.bindMcpCapability(managed, generation);
       this.fencedSessionGenerations.delete(resolvedAgentId);
       // Historical settlements remain available to waiters holding an old token, but a newly
       // registered session must not report that old run to a fresh waitForAgentRunStart call.
@@ -4649,6 +4716,7 @@ export class AgentManager {
       generation,
       turnToken: this.latestTurnTokens.get(agent.id),
     });
+    this.revokeMcpCapability(agent.id, generation);
     this.sessionGenerationTokens.delete(agent.id);
     this.latestTurnTokens.delete(agent.id);
     this.turnTokensById.delete(agent.id);
@@ -4657,6 +4725,7 @@ export class AgentManager {
   private installSessionGeneration(agent: ActiveManagedAgent): symbol {
     const generation = Symbol(`session:${agent.id}`);
     this.sessionGenerationTokens.set(agent.id, generation);
+    this.bindMcpCapability(agent, generation);
     this.fencedSessionGenerations.delete(agent.id);
     this.subscribeToSession(agent);
     return generation;
@@ -7655,7 +7724,7 @@ export class AgentManager {
         config: storedConfig,
         agentId,
         mcpBaseUrl: this.mcpBaseUrl,
-        mcpAuthToken: this.mcpAuthToken,
+        mcpAuthToken: this.mcpBaseUrl ? this.issueMcpCapability(agentId, storedConfig.cwd) : null,
       }),
     );
     return { storedConfig, launchConfig };

@@ -8,12 +8,8 @@ import {
 } from "@modelcontextprotocol/sdk/server/zod-compat.js";
 import { toJsonSchemaCompat } from "@modelcontextprotocol/sdk/server/zod-json-schema-compat.js";
 
+import { assertSupportedJsonSchema } from "../../plugins/plugin-tool.js";
 import type { PaseoToolDefinition, PaseoToolResult } from "./types.js";
-
-const EMPTY_OBJECT_JSON_SCHEMA: Record<string, unknown> = {
-  type: "object",
-  properties: {},
-};
 
 function formatStructuredContentForModel(structuredContent: unknown): string {
   if (
@@ -66,14 +62,28 @@ export function addModelVisibleStructuredContent(result: PaseoToolResult): Paseo
 export function serializePaseoToolInputParameters(
   tool: PaseoToolDefinition,
 ): Record<string, unknown> {
-  if (tool.inputSchemaJson) return tool.inputSchemaJson;
-  const schema = normalizeObjectSchema(
-    tool.inputSchema as AnySchema | ZodRawShapeCompat | undefined,
-  );
-  return schema
-    ? toJsonSchemaCompat(schema, {
-        strictUnions: true,
-        pipeStrategy: "input",
-      })
-    : { ...EMPTY_OBJECT_JSON_SCHEMA };
+  if (tool.inputSchemaJson) {
+    assertSupportedJsonSchema(tool.inputSchemaJson, `Paseo tool ${tool.name} input schema`, {
+      requireObject: true,
+    });
+    return tool.inputSchemaJson;
+  }
+  if (tool.inputSchema === undefined) {
+    return { type: "object", properties: {} };
+  }
+  const schema = normalizeObjectSchema(tool.inputSchema as AnySchema | ZodRawShapeCompat);
+  if (!schema) {
+    throw new Error(`Paseo tool ${tool.name} must provide a supported object input schema`);
+  }
+  const jsonSchema = toJsonSchemaCompat(schema, {
+    strictUnions: true,
+    pipeStrategy: "input",
+  });
+  if (!jsonSchema || typeof jsonSchema !== "object" || Array.isArray(jsonSchema)) {
+    throw new Error(`Paseo tool ${tool.name} must provide a supported object input schema`);
+  }
+  assertSupportedJsonSchema(jsonSchema, `Paseo tool ${tool.name} input schema`, {
+    requireObject: true,
+  });
+  return jsonSchema as Record<string, unknown>;
 }

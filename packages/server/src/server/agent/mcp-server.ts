@@ -7,6 +7,7 @@ import type {
 } from "@modelcontextprotocol/sdk/types.js";
 import { fromJSONSchema } from "zod";
 
+import { assertSupportedJsonSchema } from "../plugins/plugin-tool.js";
 import { addModelVisibleStructuredContent } from "./tools/paseo-tool-serialization.js";
 import { createPaseoToolCatalog, type PaseoToolHostDependencies } from "./tools/paseo-tools.js";
 import type { PaseoToolDefinition, PaseoToolResult } from "./tools/types.js";
@@ -17,9 +18,11 @@ type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
 
 function toMcpInputSchema(tool: PaseoToolDefinition) {
   if (tool.inputSchema) return tool.inputSchema;
-  return tool.inputSchemaJson
-    ? fromJSONSchema(tool.inputSchemaJson as Parameters<typeof fromJSONSchema>[0])
-    : undefined;
+  if (!tool.inputSchemaJson) return undefined;
+  assertSupportedJsonSchema(tool.inputSchemaJson, `Paseo tool ${tool.name} input schema`, {
+    requireObject: true,
+  });
+  return fromJSONSchema(tool.inputSchemaJson as Parameters<typeof fromJSONSchema>[0]);
 }
 
 function toMcpToolResult(result: PaseoToolResult): CallToolResult {

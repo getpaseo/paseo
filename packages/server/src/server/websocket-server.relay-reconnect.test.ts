@@ -109,6 +109,7 @@ import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 interface WebSocketServerInternals {
   attachSocket(ws: unknown, req: unknown): Promise<void>;
   sendToClient(ws: unknown, message: unknown): void;
+  deliveryLedger: { removeOwner(ownerId: string): Promise<void> };
 }
 
 const TEST_DAEMON_VERSION = "1.2.3-test";
@@ -553,6 +554,28 @@ describe("relay external socket reconnect behavior", () => {
     expect(sessionMock.instances[1]?.args.principalId).not.toBe(firstPrincipal);
     replacement.emit("close", 1000, "replacement stopped");
     await server.close();
+  });
+
+  test("schedules failed owner cleanup and admits a new installation principal", async () => {
+    const server = createServer();
+    const firstSocket = new MockSocket();
+    const firstAttachment = await server.attachPluginSocket("retrying", firstSocket);
+    firstSocket.emit("message", JSON.stringify(createHelloMessage("plugin:retrying")));
+    const ledger = asInternals<WebSocketServerInternals>(server).deliveryLedger;
+    const removeOwner = vi
+      .spyOn(ledger, "removeOwner")
+      .mockRejectedValueOnce(new Error("disk full"));
+
+    server.beginPluginShutdown("retrying");
+    firstSocket.emit("close", 1000, "plugin stopped");
+    await firstAttachment.closed;
+
+    const replacement = new MockSocket();
+    await expect(server.attachPluginSocket("retrying", replacement)).resolves.toBeDefined();
+    expect(removeOwner).toHaveBeenCalledOnce();
+
+    await server.close();
+    expect(removeOwner.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 
   test("does not enqueue an oversized outbound WebSocket frame", async () => {

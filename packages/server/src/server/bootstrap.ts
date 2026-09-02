@@ -2,7 +2,6 @@ import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
 import { open, rm } from "fs/promises";
-import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -200,6 +199,7 @@ import { terminateWithTreeKill } from "../utils/tree-kill.js";
 import { isHostnameAllowed, type HostnamesConfig } from "./hostnames.js";
 import {
   createRequireBearerMiddleware,
+  extractHttpBearerToken,
   isAgentMcpRequestAuthorized,
   type DaemonAuthConfig,
 } from "./auth.js";
@@ -340,6 +340,33 @@ function createAgentMcpBaseUrl(listenTarget: ListenTarget | null): string | null
     "/mcp/agents",
     `http://${formatHostForHttpUrl(host)}:${listenTarget.port}`,
   ).toString();
+}
+
+async function authorizeAgentMcpRequest(input: {
+  agentManager: AgentManager;
+  password: string | undefined;
+  authorizationHeader: string | undefined;
+  headerAgentId: string | null;
+  queryAgentId: string | null;
+}): Promise<{ authorized: boolean; callerAgentId?: string }> {
+  const bearerToken = extractHttpBearerToken(input.authorizationHeader);
+  const capability = bearerToken ? input.agentManager.resolveMcpCapability(bearerToken) : null;
+  if (input.headerAgentId && input.queryAgentId && input.headerAgentId !== input.queryAgentId) {
+    return { authorized: false };
+  }
+  const hintedAgentId = input.headerAgentId ?? input.queryAgentId;
+  if (hintedAgentId && (!capability || capability.agentId !== hintedAgentId)) {
+    return { authorized: false };
+  }
+  const authorized =
+    capability !== null ||
+    ((bearerToken === null || input.password !== undefined) &&
+      (await isAgentMcpRequestAuthorized({
+        password: input.password,
+        capabilityToken: null,
+        authorizationHeader: input.authorizationHeader,
+      })));
+  return { authorized, ...(capability ? { callerAgentId: capability.agentId } : {}) };
 }
 
 function createTerminalActivityUrl(listenTarget: ListenTarget | null): string | null {
@@ -709,15 +736,6 @@ export async function createPaseoDaemon(
     ttlMs: downloadTokenTtlMs,
   });
 
-  // Capability token authenticating the daemon's own agents to the loopback
-  // Agent MCP endpoint (/mcp/agents). Random per daemon run, injected only into
-  // local agent configs and the daemon's own MCP client — never sent to remote
-  // clients — so it cannot be replayed off-box. This lets the injected MCP
-  // authenticate even when the daemon password is set via the app (hash only,
-  // no plaintext available). Mirrors the /api/files/download capability-token
-  // pattern.
-  const agentMcpAuthToken = randomUUID();
-
   const listenTarget = parseListenString(config.listen);
 
   const app = express();
@@ -1002,7 +1020,6 @@ export async function createPaseoDaemon(
     onWorkspaceStateMayHaveChanged: ({ cwd }) => {
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
-    mcpAuthToken: agentMcpAuthToken,
     logger,
   });
 
@@ -1553,13 +1570,17 @@ export async function createPaseoDaemon(
       // authenticates here using the injected capability token (or a valid
       // daemon password). Without this, a password-protected daemon would be
       // wide open on its agent control plane.
-      if (
-        !(await isAgentMcpRequestAuthorized({
-          password: config.auth?.password,
-          capabilityToken: agentMcpAuthToken,
-          authorizationHeader: req.header("authorization"),
-        }))
-      ) {
+      const headerAgentId = req.header("x-paseo-agent-id")?.trim() || null;
+      const queryAgentId =
+        typeof req.query.callerAgentId === "string" ? req.query.callerAgentId.trim() || null : null;
+      const authorization = await authorizeAgentMcpRequest({
+        agentManager,
+        password: config.auth?.password,
+        authorizationHeader: req.header("authorization"),
+        headerAgentId,
+        queryAgentId,
+      });
+      if (!authorization.authorized) {
         res.status(401).json({ error: "Unauthorized" });
         return;
       }
@@ -1590,11 +1611,7 @@ export async function createPaseoDaemon(
           });
           return;
         }
-        const callerAgentId = req.header("x-paseo-agent-id")?.trim() || undefined;
-        if (callerAgentId && !agentManager.getAgent(callerAgentId)) {
-          res.status(403).json({ error: "Caller agent is not active" });
-          return;
-        }
+        const callerAgentId = authorization.callerAgentId;
         const { server, transport } = await createAgentMcpSession(callerAgentId);
         res.on("close", () => {
           void transport.close();

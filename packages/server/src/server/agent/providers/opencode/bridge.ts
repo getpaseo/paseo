@@ -24,10 +24,13 @@ interface OpenCodeBridgeOptions {
 interface OpenCodeSessionBinding {
   env: Record<string, string>;
   tools?: PaseoToolCatalog;
+  catalogVersion: number;
 }
 
-interface BindOpenCodeSessionInput extends OpenCodeSessionBinding {
+interface BindOpenCodeSessionInput {
   sessionId: string;
+  env: Record<string, string>;
+  tools?: PaseoToolCatalog;
 }
 
 interface OpenCodePluginOptions {
@@ -49,6 +52,8 @@ export class OpenCodeBridge {
   private baseUrl: string | null = null;
   private pluginUrl: string | null = null;
   private manifestCatalog: PaseoToolCatalog | null = null;
+  private manifestVersion = 0;
+  private readonly catalogSubscribers = new Set<() => void | Promise<void>>();
 
   constructor(options: OpenCodeBridgeOptions) {
     this.paseoHome = options.paseoHome;
@@ -79,12 +84,28 @@ export class OpenCodeBridge {
 
   setManifestCatalog(catalog: PaseoToolCatalog | null): void {
     this.manifestCatalog = catalog;
+    this.manifestVersion += 1;
+    for (const subscriber of this.catalogSubscribers) {
+      void Promise.resolve(subscriber()).catch((error) => {
+        this.logger.warn({ err: error }, "Failed to refresh OpenCode plugin catalog");
+      });
+    }
+  }
+
+  getManifestCatalogVersion(): number {
+    return this.manifestVersion;
+  }
+
+  subscribeManifestCatalog(listener: () => void | Promise<void>): () => void {
+    this.catalogSubscribers.add(listener);
+    return () => this.catalogSubscribers.delete(listener);
   }
 
   bindSession(input: BindOpenCodeSessionInput): () => void {
     const binding: OpenCodeSessionBinding = {
       env: { ...input.env },
       ...(input.tools ? { tools: input.tools } : {}),
+      catalogVersion: this.manifestVersion,
     };
     this.sessions.set(input.sessionId, binding);
     return () => {
@@ -139,7 +160,10 @@ export class OpenCodeBridge {
       }
       const url = new URL(request.url ?? "/", this.requireBaseUrl());
       if (request.method === "GET" && url.pathname === `${INTERNAL_PREFIX}/tools`) {
-        sendJson(response, 200, { tools: this.serializeManifest() });
+        sendJson(response, 200, {
+          version: this.manifestVersion,
+          tools: this.serializeManifest(),
+        });
         return;
       }
 
@@ -207,6 +231,12 @@ export class OpenCodeBridge {
     }
     if (!binding.tools) {
       sendJson(input.response, 403, { error: "Paseo tools are disabled for this session" });
+      return;
+    }
+    if (binding.catalogVersion !== this.manifestVersion) {
+      sendJson(input.response, 409, {
+        error: "OpenCode session has a stale Paseo tool catalog; reload the session",
+      });
       return;
     }
     const body = await readJsonBody(input.request);

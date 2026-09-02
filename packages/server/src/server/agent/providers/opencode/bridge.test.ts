@@ -138,6 +138,7 @@ describe("OpenCodeBridge", () => {
 
       const manifest = await fetch(`${plugin.baseUrl}/_internal/opencode/tools`, { headers });
       expect(await manifest.json()).toEqual({
+        version: 1,
         tools: [
           {
             name: "echo_context",
@@ -179,6 +180,21 @@ describe("OpenCodeBridge", () => {
           { sessionID: "ses_one" },
         ),
       ).resolves.toMatchObject({ output: "through bundled plugin" });
+
+      bridge.setManifestCatalog(null);
+      const removedManifest = await fetch(`${plugin.baseUrl}/_internal/opencode/tools`, {
+        headers,
+      });
+      expect(await removedManifest.json()).toEqual({ version: 2, tools: [] });
+      const staleExecution = await fetch(
+        `${plugin.baseUrl}/_internal/opencode/sessions/ses_one/tools/echo_context`,
+        {
+          method: "POST",
+          headers: { ...headers, "Content-Type": "application/json" },
+          body: JSON.stringify({ value: "removed" }),
+        },
+      );
+      expect(staleExecution.status).toBe(409);
 
       release();
       const pluginError = vi.spyOn(console, "error").mockImplementation(() => undefined);

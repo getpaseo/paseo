@@ -1,6 +1,7 @@
 import { WebSocket, WebSocketServer } from "ws";
 import type { IncomingMessage, Server as HTTPServer } from "http";
 import { join } from "path";
+import { readFile } from "node:fs/promises";
 import { hostname as getHostname } from "node:os";
 import { randomUUID } from "node:crypto";
 import { monitorEventLoopDelay } from "node:perf_hooks";
@@ -101,6 +102,7 @@ import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DeliveryDispatchCoordinator, DeliveryLedger } from "./deliveries/delivery-ledger.js";
+import { writeJsonFileAtomic } from "./atomic-file.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
 import {
   APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
@@ -116,6 +118,8 @@ const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
 export { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/transport-limits";
 const WS_CLOSE_MESSAGE_TOO_BIG = 1009;
 const PLUGIN_DELIVERY_SHUTDOWN_TIMEOUT_MS = 5_000;
+const PLUGIN_DELIVERY_RETRY_BASE_MS = 250;
+const PLUGIN_DELIVERY_RETRY_MAX_MS = 30_000;
 
 export interface ExternalSocketMetadata {
   transport: "relay" | "hub";
@@ -128,6 +132,14 @@ export interface SessionAdmission {
   principalId: string;
   permissions: readonly DaemonPermission[];
   hubExecutionAgents?: HubExecutionAgents;
+}
+
+interface PluginDeliveryCleanupRetry {
+  pluginId: string;
+  principalId: string;
+  attempt: number;
+  nextAt: number;
+  timer: ReturnType<typeof setTimeout> | null;
 }
 
 interface PendingConnection {
@@ -549,6 +561,12 @@ export class VoiceAssistantWebSocketServer {
   private readonly pluginSocketIds = new WeakMap<WebSocketLike, string>();
   private readonly pluginSocketCleanup = new WeakMap<WebSocketLike, () => void>();
   private readonly pluginDeliveryOwners = new Map<string, Set<string>>();
+  private readonly pluginDeliveryCleanupPromises = new Set<Promise<void>>();
+  private readonly pluginDeliveryCleanupRetries = new Map<string, PluginDeliveryCleanupRetry>();
+  private readonly pluginDeliveryCleanupInFlight = new Map<string, Promise<void>>();
+  private readonly pluginDeliveryCleanupRetryPath: string;
+  private readonly pluginDeliveryCleanupRetryLoad: Promise<void>;
+  private pluginDeliveryCleanupRetryPersist: Promise<void> = Promise.resolve();
   private readonly pluginClosingIds = new Set<string>();
   private readonly serverId: string;
   private readonly daemonVersion: string;
@@ -692,6 +710,12 @@ export class VoiceAssistantWebSocketServer {
     this.workspaceAutoName = workspaceAutoName;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
+    this.pluginDeliveryCleanupRetryPath = join(
+      paseoHome,
+      "deliveries",
+      "plugin-cleanup-retries.json",
+    );
+    this.pluginDeliveryCleanupRetryLoad = this.loadPluginDeliveryCleanupRetries();
     this.deliveryLedger =
       deliveryLedger ??
       new DeliveryLedger(join(paseoHome, "deliveries"), {
@@ -1018,6 +1042,11 @@ export class VoiceAssistantWebSocketServer {
     owners.add(principalId);
     this.pluginDeliveryOwners.set(pluginId, owners);
     const closed = socketClosed.then(() => this.cleanupPluginDeliveryOwner(pluginId, principalId));
+    this.pluginDeliveryCleanupPromises.add(closed);
+    void closed.then(
+      () => this.pluginDeliveryCleanupPromises.delete(closed),
+      () => this.pluginDeliveryCleanupPromises.delete(closed),
+    );
     this.pluginSocketIds.set(ws, pluginId);
     this.pluginSocketCleanup.set(ws, resolveSocketClosed);
     try {
@@ -1147,6 +1176,8 @@ export class VoiceAssistantWebSocketServer {
     }
 
     await Promise.all(cleanupPromises);
+    await this.awaitPluginDeliveryCleanupPromises();
+    await this.drainPluginDeliveryCleanupRetries();
     await this.deliveryLedger.flush();
     this.providerSnapshotManager.destroy();
     this.checkoutDiffManager.dispose();
@@ -2015,8 +2046,12 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private async cleanupPluginDeliveryOwner(pluginId: string, principalId: string): Promise<void> {
+    await this.pluginDeliveryCleanupRetryLoad;
     this.deliveryDispatchCoordinator.beginOwnerClosing(principalId);
     this.deliveryLedger.beginOwnerClosing(principalId);
+    // The principal remains fenced until its tombstone is purged, but a fresh
+    // installation gets a different principal and must not wait on this one.
+    this.pluginClosingIds.delete(pluginId);
     const settled = await this.waitForPluginDeliveryIdle(principalId);
     if (!settled) {
       this.logger.warn(
@@ -2041,6 +2076,21 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private async finishPluginDeliveryOwner(pluginId: string, principalId: string): Promise<void> {
+    const existing = this.pluginDeliveryCleanupInFlight.get(principalId);
+    if (existing) {
+      await existing;
+      return;
+    }
+    const operation = this.purgePluginDeliveryOwner(pluginId, principalId);
+    this.pluginDeliveryCleanupInFlight.set(principalId, operation);
+    await operation.finally(() => {
+      if (this.pluginDeliveryCleanupInFlight.get(principalId) === operation) {
+        this.pluginDeliveryCleanupInFlight.delete(principalId);
+      }
+    });
+  }
+
+  private async purgePluginDeliveryOwner(pluginId: string, principalId: string): Promise<void> {
     try {
       await this.deliveryLedger.reconcile(principalId).catch((error) => {
         this.logger.warn(
@@ -2056,14 +2106,121 @@ export class VoiceAssistantWebSocketServer {
         this.pluginDeliveryOwners.delete(pluginId);
         this.pluginClosingIds.delete(pluginId);
       }
+      const retry = this.pluginDeliveryCleanupRetries.get(principalId);
+      if (retry?.timer) clearTimeout(retry.timer);
+      this.pluginDeliveryCleanupRetries.delete(principalId);
+      await this.persistPluginDeliveryCleanupRetries();
     } catch (error) {
-      // Leave the owner and plugin id tombstoned. A later cleanup retry can
-      // purge it, while a replacement cannot access the old ledger.
       this.logger.warn(
         { err: error, pluginId, principalId },
-        "Failed to purge plugin delivery ledger; retaining tombstone",
+        "Failed to purge plugin delivery ledger; retaining tombstone and scheduling retry",
+      );
+      this.schedulePluginDeliveryCleanupRetry(pluginId, principalId);
+    }
+  }
+
+  private schedulePluginDeliveryCleanupRetry(pluginId: string, principalId: string): void {
+    const previous = this.pluginDeliveryCleanupRetries.get(principalId);
+    if (previous?.timer) clearTimeout(previous.timer);
+    const attempt = (previous?.attempt ?? 0) + 1;
+    const delayMs = Math.min(
+      PLUGIN_DELIVERY_RETRY_BASE_MS * 2 ** Math.min(attempt - 1, 16),
+      PLUGIN_DELIVERY_RETRY_MAX_MS,
+    );
+    const retry: PluginDeliveryCleanupRetry = {
+      pluginId,
+      principalId,
+      attempt,
+      nextAt: Date.now() + delayMs,
+      timer: null,
+    };
+    this.armPluginDeliveryCleanupRetry(retry, delayMs);
+    this.pluginDeliveryCleanupRetries.set(principalId, retry);
+    void this.persistPluginDeliveryCleanupRetries();
+    this.logger.warn(
+      { pluginId, principalId, attempt, delayMs },
+      "Scheduled plugin delivery cleanup retry",
+    );
+  }
+
+  private armPluginDeliveryCleanupRetry(retry: PluginDeliveryCleanupRetry, delayMs: number): void {
+    retry.timer = setTimeout(() => {
+      retry.timer = null;
+      void this.finishPluginDeliveryOwner(retry.pluginId, retry.principalId);
+    }, delayMs);
+  }
+
+  private async loadPluginDeliveryCleanupRetries(): Promise<void> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(await readFile(this.pluginDeliveryCleanupRetryPath, "utf8")) as unknown;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      this.logger.error({ err: error }, "Failed to load plugin delivery cleanup retries");
+      return;
+    }
+    if (!Array.isArray(parsed)) {
+      this.logger.error({}, "Ignoring malformed plugin delivery cleanup retry queue");
+      return;
+    }
+    for (const value of parsed) {
+      if (!isPluginDeliveryCleanupRetry(value)) continue;
+      const retry: PluginDeliveryCleanupRetry = { ...value, timer: null };
+      this.pluginDeliveryCleanupRetries.set(retry.principalId, retry);
+      this.armPluginDeliveryCleanupRetry(retry, Math.max(0, retry.nextAt - Date.now()));
+    }
+  }
+
+  private async persistPluginDeliveryCleanupRetries(): Promise<void> {
+    const value = [...this.pluginDeliveryCleanupRetries.values()].map(
+      ({ pluginId, principalId, attempt, nextAt }) => ({
+        pluginId,
+        principalId,
+        attempt,
+        nextAt,
+      }),
+    );
+    this.pluginDeliveryCleanupRetryPersist = this.pluginDeliveryCleanupRetryPersist
+      .catch(() => undefined)
+      .then(() => writeJsonFileAtomic(this.pluginDeliveryCleanupRetryPath, value))
+      .catch((error) => {
+        this.logger.error({ err: error }, "Failed to persist plugin delivery cleanup retries");
+      });
+    await this.pluginDeliveryCleanupRetryPersist;
+  }
+
+  private async drainPluginDeliveryCleanupRetries(): Promise<void> {
+    await this.pluginDeliveryCleanupRetryLoad;
+    const deadline = Date.now() + PLUGIN_DELIVERY_SHUTDOWN_TIMEOUT_MS;
+    for (const retry of this.pluginDeliveryCleanupRetries.values()) {
+      if (retry.timer) clearTimeout(retry.timer);
+      retry.timer = null;
+      void this.finishPluginDeliveryOwner(retry.pluginId, retry.principalId);
+    }
+    while (this.pluginDeliveryCleanupInFlight.size > 0 && Date.now() < deadline) {
+      const remainingMs = Math.max(1, deadline - Date.now());
+      await Promise.race([
+        Promise.allSettled(this.pluginDeliveryCleanupInFlight.values()),
+        new Promise<void>((resolve) => setTimeout(resolve, remainingMs)),
+      ]);
+    }
+    for (const retry of this.pluginDeliveryCleanupRetries.values()) {
+      if (retry.timer) clearTimeout(retry.timer);
+      this.logger.error(
+        { pluginId: retry.pluginId, principalId: retry.principalId, attempt: retry.attempt },
+        "Canceled plugin delivery cleanup retry during shutdown; tombstone remains",
       );
     }
+    this.pluginDeliveryCleanupRetries.clear();
+    await this.persistPluginDeliveryCleanupRetries();
+  }
+
+  private async awaitPluginDeliveryCleanupPromises(): Promise<void> {
+    if (this.pluginDeliveryCleanupPromises.size === 0) return;
+    await Promise.race([
+      Promise.allSettled(this.pluginDeliveryCleanupPromises),
+      new Promise<void>((resolve) => setTimeout(resolve, PLUGIN_DELIVERY_SHUTDOWN_TIMEOUT_MS)),
+    ]);
   }
 
   private async waitForPluginDeliveryIdle(principalId: string): Promise<boolean> {
@@ -3116,4 +3273,20 @@ function extractRequestInfoFromUnknownWsInbound(
   }
 
   return null;
+}
+
+function isPluginDeliveryCleanupRetry(
+  value: unknown,
+): value is Omit<PluginDeliveryCleanupRetry, "timer"> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.pluginId === "string" &&
+    typeof record.principalId === "string" &&
+    typeof record.attempt === "number" &&
+    Number.isSafeInteger(record.attempt) &&
+    record.attempt > 0 &&
+    typeof record.nextAt === "number" &&
+    Number.isFinite(record.nextAt)
+  );
 }

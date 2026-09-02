@@ -124,6 +124,21 @@ describe("OpenCodeServerManager generations", () => {
     await oldAcquisition.release();
   });
 
+  test("refreshes the shared generation for a changed plugin catalog", async () => {
+    const { manager, runtime } = createTestManager([4221, 4222]);
+    const oldAcquisition = await manager.acquireCurrent();
+
+    await manager.refreshPluginCatalog();
+    const refreshed = await manager.acquireCurrent();
+
+    expect(oldAcquisition.server.url).toBe("http://127.0.0.1:4221");
+    expect(refreshed.server.url).toBe("http://127.0.0.1:4222");
+    expect(runtime.terminatedPorts).toEqual([]);
+
+    await refreshed.release();
+    await oldAcquisition.release();
+  });
+
   test("concurrent new-server acquisitions share one fresh generation", async () => {
     const { manager, runtime } = createTestManager([4251, 4252, 4253]);
 

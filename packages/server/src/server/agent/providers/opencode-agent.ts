@@ -1435,6 +1435,7 @@ export class OpenCodeAgentClient implements AgentClient {
           ? (env) => this.bridge?.decorateServerEnv(env) ?? env
           : undefined,
       });
+    this.bridge?.subscribeManifestCatalog(() => this.serverManager.refreshPluginCatalog?.());
     this.resolveHomeDir = deps.resolveHomeDir ?? resolveOpenCodeHomeDir;
   }
 
@@ -1473,7 +1474,7 @@ export class OpenCodeAgentClient implements AgentClient {
       }
 
       await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
-      const unbindBridge = this.bindBridgeSession(session.id, launchContext);
+      const bridgeBinding = this.bindBridgeSession(session.id, launchContext);
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1487,7 +1488,10 @@ export class OpenCodeAgentClient implements AgentClient {
         launchContext?.agentId,
         url,
         false,
-        unbindBridge,
+        bridgeBinding?.unbind,
+        bridgeBinding
+          ? () => this.bridge?.getManifestCatalogVersion() === bridgeBinding.version
+          : undefined,
       );
     } catch (error) {
       await acquisition.release();
@@ -1527,7 +1531,7 @@ export class OpenCodeAgentClient implements AgentClient {
 
     try {
       await this.populateModelContextWindowCache(client, openCodeConfig.cwd);
-      const unbindBridge = this.bindBridgeSession(handle.sessionId, launchContext);
+      const bridgeBinding = this.bindBridgeSession(handle.sessionId, launchContext);
 
       return new OpenCodeAgentSession(
         openCodeConfig,
@@ -1541,7 +1545,10 @@ export class OpenCodeAgentClient implements AgentClient {
         launchContext?.agentId,
         url,
         registeredAcquisition !== null,
-        unbindBridge,
+        bridgeBinding?.unbind,
+        bridgeBinding
+          ? () => this.bridge?.getManifestCatalogVersion() === bridgeBinding.version
+          : undefined,
       );
     } catch (error) {
       await acquisition.release();
@@ -1564,13 +1571,14 @@ export class OpenCodeAgentClient implements AgentClient {
   private bindBridgeSession(
     sessionId: string,
     launchContext?: AgentLaunchContext,
-  ): (() => void) | undefined {
+  ): { unbind: () => void; version: number } | undefined {
     if (!this.bridge || !launchContext) return undefined;
-    return this.bridge.bindSession({
+    const unbind = this.bridge.bindSession({
       sessionId,
       env: launchContext.env ?? {},
       tools: launchContext.paseoTools,
     });
+    return { unbind, version: this.bridge.getManifestCatalogVersion() };
   }
 
   async fetchCatalog(
@@ -3380,6 +3388,7 @@ class OpenCodeAgentSession implements AgentSession {
     private readonly serverUrl?: string,
     private readonly externallyDriven = false,
     releaseBridge?: () => void,
+    private readonly isCatalogCurrent?: () => boolean,
   ) {
     this.config = config;
     this.client = client;
@@ -3690,6 +3699,9 @@ class OpenCodeAgentSession implements AgentSession {
       await this.turnCancellationGate.waitForQuiescence(start);
       if (this.closed) {
         throw new Error("OpenCode session is closed");
+      }
+      if (this.isCatalogCurrent && !this.isCatalogCurrent()) {
+        throw new Error("OpenCode session has a stale Paseo tool catalog; reload the session");
       }
       if (this.turnState.status === "running") {
         throw new Error("A foreground turn is already active");

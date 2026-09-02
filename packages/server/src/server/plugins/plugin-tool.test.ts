@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   PLUGIN_TOOL_MAX_TIMEOUT_MS,
   assertSafeJson,
+  assertSupportedJsonSchema,
   clampPluginToolTimeout,
   isReservedPluginToolName,
   serializePluginToolSchema,
@@ -27,6 +28,26 @@ describe("plugin tool policy", () => {
     expect(() => assertSafeJson(cyclic, "input")).toThrow(/cyclic/);
     expect(() => assertSafeJson({ constructor: "blocked" }, "input")).toThrow(/dangerous/);
     expect(() => assertSafeJson("x".repeat(100), "input", 10)).toThrow(/byte limit/);
+  });
+
+  it("fails closed for scalar roots and unsupported schema keywords", () => {
+    expect(() =>
+      serializePluginToolSchema(z.string(), "scalar.input", { requireObject: true }),
+    ).toThrow(/object schema/);
+    expect(() =>
+      serializePluginToolSchema(
+        z.object({ value: z.string().min(2).max(4) }).strict(),
+        "bounded.input",
+        { requireObject: true },
+      ),
+    ).not.toThrow();
+    expect(() =>
+      assertSupportedJsonSchema(
+        { type: "object", properties: {}, $ref: "#/definitions/nope" },
+        "unsupported.input",
+        { requireObject: true },
+      ),
+    ).toThrow(/unsupported.*\$ref/);
   });
 
   it("caps timeouts and reserves Paseo namespaces", () => {

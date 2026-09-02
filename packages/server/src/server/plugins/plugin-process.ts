@@ -26,6 +26,7 @@ import {
   assertSafeJson,
   clampPluginToolTimeout,
   serializePluginToolSchema,
+  truncateUtf8,
 } from "./plugin-tool.js";
 import { isPluginClientOnlySdkSpecifier, isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
 
@@ -48,7 +49,10 @@ interface RegisteredTool {
 
 const handlers = new Map<string, RegisteredRpc>();
 const tools = new Map<string, RegisteredTool>();
-const activeTools = new Map<string, { controller: AbortController; done: Promise<void> }>();
+const activeTools = new Map<
+  string,
+  { controller: AbortController; done: Promise<void>; cancelAck: Promise<void> | null }
+>();
 let cleanup: (() => void | Promise<void>) | null = null;
 let daemonClient: DaemonClient | null = null;
 let paseo: PaseoPluginApi | null = null;
@@ -75,9 +79,7 @@ function describeError(error: unknown): string {
 }
 
 function boundError(error: unknown): string {
-  return Buffer.from(describeError(error), "utf8")
-    .subarray(0, PLUGIN_TOOL_MAX_ERROR_BYTES)
-    .toString("utf8");
+  return truncateUtf8(describeError(error), PLUGIN_TOOL_MAX_ERROR_BYTES);
 }
 
 function validateName(name: string, kind: string): string {
@@ -234,7 +236,7 @@ function invokeTool(message: Extract<PluginProcessRequest, { type: "tool_invoke"
       activeTools.delete(message.requestId);
     }
   })();
-  activeTools.set(message.requestId, { controller, done: run });
+  activeTools.set(message.requestId, { controller, done: run, cancelAck: null });
 }
 
 async function initialize(message: Extract<PluginProcessRequest, { type: "initialize" }>) {
@@ -262,6 +264,7 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
         inputSchema: serializePluginToolSchema(
           tool.definition.input,
           `${message.pluginId}.${name}.input`,
+          { requireObject: true },
         ),
         timeoutMs: tool.timeoutMs,
       };
@@ -321,9 +324,17 @@ process.on("message", (rawMessage: unknown) => {
     return;
   }
   if (message.type === "tool_cancel") {
-    activeTools
-      .get(message.requestId)
-      ?.controller.abort(new Error("Plugin tool invocation cancelled"));
+    const active = activeTools.get(message.requestId);
+    if (!active) {
+      send({ type: "tool_cancel_ack", requestId: message.requestId });
+      return;
+    }
+    active.controller.abort(new Error("Plugin tool invocation cancelled"));
+    active.cancelAck ??= active.done.then(
+      () => send({ type: "tool_cancel_ack", requestId: message.requestId }),
+      () => send({ type: "tool_cancel_ack", requestId: message.requestId }),
+    );
+    void active.cancelAck.catch(() => undefined);
     return;
   }
   if (message.type === "tool_invoke") {

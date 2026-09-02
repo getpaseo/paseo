@@ -72,6 +72,7 @@ interface StartProcessOptions {
   child?: ChildProcessWithoutNullStreams;
   defaultRequestTimeoutMs?: number;
   source?: string;
+  requestIdFactory?: () => string;
 }
 
 function createInMemoryChildProcess(): InMemoryChildProcess {
@@ -100,6 +101,7 @@ function startProcess(options: StartProcessOptions = {}): JsonlRpcProcess {
     },
     logger: pino({ level: "silent" }),
     defaultRequestTimeoutMs: options.defaultRequestTimeoutMs,
+    ...(options.requestIdFactory ? { requestIdFactory: options.requestIdFactory } : {}),
     ...(child ? { spawn: () => child } : {}),
   });
 }
@@ -280,6 +282,25 @@ describe("JsonlRpcProcess", () => {
     await expect(transport.request({ type: "echo", value: "after" })).rejects.toThrow(
       "JSONL RPC process is closed",
     );
+  });
+
+  test("rejects duplicate request ids before pending mutation and ignores late cancellation results", async () => {
+    const child = createInMemoryChildProcess();
+    const transport = startProcess({ child, requestIdFactory: () => "same-request" });
+    const first = transport.startRequest({ type: "hang" }, null);
+
+    await expect(transport.startRequest({ type: "echo" }, null).promise).rejects.toThrow(
+      "duplicate request id",
+    );
+    expect(transport.cancelRequest(first.id)).toBe(true);
+    await expect(first.promise).rejects.toThrow("request cancelled");
+
+    child.stdout.write(
+      `${JSON.stringify({ type: "response", id: first.id, success: true, data: "late" })}\n`,
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(transport.cancelRequest(first.id)).toBe(false);
+    await transport.close();
   });
 
   test("a non-writable stdin closes the transport instead of hanging the request", async () => {

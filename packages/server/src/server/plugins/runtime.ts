@@ -18,13 +18,18 @@ import {
 import {
   PLUGIN_TOOL_MAX_CONCURRENT_GLOBAL,
   PLUGIN_TOOL_MAX_CONCURRENT_PER_PLUGIN,
+  PLUGIN_TOOL_CANCEL_GRACE_MS,
+  PLUGIN_TOOL_MAX_CATALOG_SCHEMA_BYTES,
+  PLUGIN_TOOL_MAX_CATALOG_TOOLS,
   PLUGIN_TOOL_MAX_RESULT_BYTES,
   PLUGIN_TOOL_MAX_SCHEMA_BYTES,
   PLUGIN_TOOL_MAX_TIMEOUT_MS,
   PLUGIN_TOOL_MAX_UPDATE_BYTES,
   PLUGIN_TOOL_NAME_PATTERN,
   assertSafeJson,
+  assertSupportedJsonSchema,
   isReservedPluginToolName,
+  truncateUtf8,
 } from "./plugin-tool.js";
 import { PluginSessionSocket } from "./session-socket.js";
 
@@ -56,10 +61,14 @@ interface PluginChild {
 interface PendingInvocation {
   resolve: (output: unknown) => void;
   reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout: ReturnType<typeof setTimeout> | null;
+  cancelTimeout: ReturnType<typeof setTimeout> | null;
   kind: "rpc" | "tool";
   onUpdate?: (update: unknown) => void;
   cleanup?: () => void;
+  callerSettled: boolean;
+  cancellationRequested: boolean;
+  onComplete?: () => void;
 }
 
 interface LoadedPlugin {
@@ -74,6 +83,7 @@ interface LoadedPlugin {
   pending: Map<string, PendingInvocation>;
   sessionSocket: PluginSessionSocket;
   sessionClosed: Promise<void>;
+  quarantined: boolean;
 }
 
 interface PluginRuntimeDependencies {
@@ -286,6 +296,12 @@ export class PluginRuntime {
       await this.stopPlugin(loaded);
       throw new Error(`Plugin start cancelled: ${pluginId}`);
     }
+    try {
+      this.assertAggregateToolCatalogWithinLimits([...this.plugins.values(), loaded]);
+    } catch (error) {
+      await this.stopPlugin(loaded);
+      throw error;
+    }
     this.plugins.set(pluginId, loaded);
     this.appendLog(pluginId, "stdout", "[paseo] Plugin ready");
   }
@@ -318,10 +334,12 @@ export class PluginRuntime {
     for (const plugin of this.plugins.values()) {
       for (const tool of plugin.tools.values()) tools.push(Object.assign({}, tool));
     }
-    return tools.sort(
+    const sorted = tools.sort(
       (left, right) =>
         left.name.localeCompare(right.name) || left.pluginId.localeCompare(right.pluginId),
     );
+    this.assertAggregateToolCatalogWithinLimits([...this.plugins.values()], sorted.length, sorted);
+    return sorted;
   }
 
   getLogs(pluginId: string): PluginLogEntry[] {
@@ -403,9 +421,14 @@ export class PluginRuntime {
         loaded,
         { type: "tool_invoke", name, input, context },
         tool.timeoutMs,
-        { kind: "tool", signal: options.signal, onUpdate: options.onUpdate },
+        {
+          kind: "tool",
+          signal: options.signal,
+          onUpdate: options.onUpdate,
+          onComplete: release,
+        },
       );
-      return result.finally(release);
+      return result;
     } catch (error) {
       release();
       throw error;
@@ -541,6 +564,7 @@ export class PluginRuntime {
       pending,
       sessionSocket,
       sessionClosed: sessionAttachment.closed,
+      quarantined: false,
     };
     this.logger.info(
       { pluginId, generation, installationId, methods: ready.methods },
@@ -555,12 +579,19 @@ export class PluginRuntime {
       message.type !== "error" &&
       message.type !== "tool_result" &&
       message.type !== "tool_error" &&
-      message.type !== "tool_update"
+      message.type !== "tool_update" &&
+      message.type !== "tool_cancel_ack"
     ) {
       return;
     }
     const pending = loaded.pending.get(message.requestId);
     if (!pending) return;
+    if (message.type === "tool_cancel_ack") {
+      if (pending.kind === "tool" && pending.cancellationRequested) {
+        this.finishPending(loaded, message.requestId, pending);
+      }
+      return;
+    }
     if (message.type === "tool_update") {
       if (pending.kind !== "tool" || !pending.onUpdate) return;
       try {
@@ -582,12 +613,12 @@ export class PluginRuntime {
       }
       return;
     }
-    loaded.pending.delete(message.requestId);
-    clearTimeout(pending.timeout);
-    pending.cleanup?.();
-    if (message.type === "result" || message.type === "tool_result")
-      pending.resolve(message.output);
-    else pending.reject(new Error(message.error));
+    this.finishPending(loaded, message.requestId, pending, () => {
+      if (pending.cancellationRequested) return;
+      if (message.type === "result" || message.type === "tool_result")
+        pending.resolve(message.output);
+      else pending.reject(new Error(message.error));
+    });
   }
 
   private async handleChildClose(loaded: LoadedPlugin): Promise<void> {
@@ -596,7 +627,7 @@ export class PluginRuntime {
     if (wasPublished) {
       this.plugins.delete(loaded.id);
     }
-    this.rejectPending(loaded, `Plugin process exited: ${loaded.id}`);
+    this.rejectPending(loaded, `Plugin process exited: ${loaded.id}`, true);
     await loaded.sessionClosed;
     if (wasPublished) this.notify(loaded.id, `Plugin process exited: ${loaded.id}`);
   }
@@ -633,16 +664,88 @@ export class PluginRuntime {
     this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
   }
 
-  private rejectPending(loaded: LoadedPlugin, message: string): void {
+  private rejectPending(loaded: LoadedPlugin, message: string, childGone = false): void {
     for (const [requestId, invocation] of loaded.pending) {
-      clearTimeout(invocation.timeout);
+      if (invocation.timeout) clearTimeout(invocation.timeout);
+      invocation.timeout = null;
+      if (invocation.cancelTimeout) clearTimeout(invocation.cancelTimeout);
+      invocation.cancelTimeout = null;
+      invocation.cancellationRequested = true;
       invocation.cleanup?.();
-      if (invocation.kind === "tool") {
+      if (!invocation.callerSettled) {
+        invocation.callerSettled = true;
+        invocation.reject(new Error(message));
+      }
+      if (invocation.kind === "tool" && !childGone) {
         void send(loaded.child, { type: "tool_cancel", requestId }).catch(() => undefined);
       }
-      invocation.reject(new Error(message));
     }
-    loaded.pending.clear();
+    if (childGone) {
+      for (const [requestId, invocation] of loaded.pending) {
+        this.finishPending(loaded, requestId, invocation);
+      }
+    }
+  }
+
+  private finishPending(
+    loaded: LoadedPlugin,
+    requestId: string,
+    invocation: PendingInvocation,
+    settleCaller?: () => void,
+  ): void {
+    if (loaded.pending.get(requestId) !== invocation) return;
+    loaded.pending.delete(requestId);
+    if (invocation.timeout) clearTimeout(invocation.timeout);
+    if (invocation.cancelTimeout) clearTimeout(invocation.cancelTimeout);
+    invocation.timeout = null;
+    invocation.cancelTimeout = null;
+    invocation.cleanup?.();
+    if (settleCaller && !invocation.callerSettled) {
+      invocation.callerSettled = true;
+      settleCaller();
+    }
+    invocation.onComplete?.();
+  }
+
+  private requestCancellation(
+    loaded: LoadedPlugin,
+    requestId: string,
+    invocation: PendingInvocation,
+    reason: Error,
+  ): void {
+    if (loaded.pending.get(requestId) !== invocation || invocation.cancellationRequested) return;
+    invocation.cancellationRequested = true;
+    if (invocation.timeout) clearTimeout(invocation.timeout);
+    invocation.timeout = null;
+    invocation.cleanup?.();
+    if (!invocation.callerSettled) {
+      invocation.callerSettled = true;
+      invocation.reject(reason);
+    }
+    invocation.cancelTimeout = setTimeout(() => {
+      if (loaded.pending.get(requestId) !== invocation) return;
+      this.quarantinePlugin(
+        loaded,
+        `Plugin ${loaded.id} did not acknowledge tool cancellation within ${PLUGIN_TOOL_CANCEL_GRACE_MS}ms`,
+      );
+    }, PLUGIN_TOOL_CANCEL_GRACE_MS);
+    void send(loaded.child, { type: "tool_cancel", requestId }).catch((error) => {
+      this.quarantinePlugin(loaded, `Plugin cancellation delivery failed: ${describeError(error)}`);
+    });
+  }
+
+  private quarantinePlugin(loaded: LoadedPlugin, reason: string): void {
+    if (loaded.quarantined) return;
+    loaded.quarantined = true;
+    if (this.plugins.get(loaded.id) === loaded) {
+      this.plugins.delete(loaded.id);
+      this.sessionHost?.beginPluginShutdown?.(loaded.id);
+      this.notify(loaded.id, reason);
+    }
+    this.rejectPending(loaded, reason);
+    void this.stopPlugin(loaded).catch((error) => {
+      this.logger.warn({ err: error, pluginId: loaded.id }, "Failed to quarantine plugin process");
+    });
   }
 
   private invokeChild(
@@ -655,58 +758,72 @@ export class PluginRuntime {
       kind?: "rpc" | "tool";
       signal?: AbortSignal;
       onUpdate?: (update: unknown) => void;
+      onComplete?: () => void;
     } = {},
   ): Promise<unknown> {
     const kind = options.kind ?? "rpc";
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {
-      let settled = false;
-      let abort = (): void => undefined;
-      let pending: PendingInvocation;
-      const settle = (callback: () => void): void => {
-        if (settled) return;
-        settled = true;
-        callback();
-      };
-      const cancel = (): void => {
-        if (kind === "tool") {
-          void send(loaded.child, { type: "tool_cancel", requestId }).catch(() => undefined);
-        }
-      };
-      const timeout = setTimeout(() => {
-        loaded.pending.delete(requestId);
-        pending.cleanup?.();
-        cancel();
-        settle(() => reject(new Error(`Plugin ${kind} timed out: ${loaded.id}`)));
-      }, timeoutMs);
-      pending = {
-        resolve: (output) => settle(() => resolve(output)),
-        reject: (error) => settle(() => reject(error)),
-        timeout,
-        kind,
-        onUpdate: options.onUpdate,
-      };
-      pending.cleanup = () => options.signal?.removeEventListener("abort", abort);
-      loaded.pending.set(requestId, pending);
-      abort = (): void => {
-        loaded.pending.delete(requestId);
-        clearTimeout(timeout);
-        cancel();
-        const reason = options.signal?.reason;
-        settle(() =>
-          reject(reason instanceof Error ? reason : new Error("Plugin tool invocation cancelled")),
-        );
-      };
       if (options.signal?.aborted) {
-        abort();
+        reject(
+          options.signal.reason instanceof Error
+            ? options.signal.reason
+            : new Error("Plugin invocation cancelled"),
+        );
         return;
       }
+      let abort = (): void => undefined;
+      const pending: PendingInvocation = {
+        resolve,
+        reject,
+        timeout: null,
+        cancelTimeout: null,
+        kind,
+        onUpdate: options.onUpdate,
+        callerSettled: false,
+        cancellationRequested: false,
+        onComplete: options.onComplete,
+      };
+      pending.cleanup = () => options.signal?.removeEventListener("abort", abort);
+      pending.timeout = setTimeout(() => {
+        if (kind === "tool") {
+          this.requestCancellation(
+            loaded,
+            requestId,
+            pending,
+            new Error(`Plugin ${kind} timed out: ${loaded.id}`),
+          );
+          return;
+        }
+        this.finishPending(loaded, requestId, pending, () =>
+          reject(new Error(`Plugin ${kind} timed out: ${loaded.id}`)),
+        );
+      }, timeoutMs);
+      loaded.pending.set(requestId, pending);
+      abort = (): void => {
+        if (kind !== "tool") {
+          this.finishPending(loaded, requestId, pending, () =>
+            reject(
+              options.signal?.reason instanceof Error
+                ? options.signal.reason
+                : new Error("Plugin invocation cancelled"),
+            ),
+          );
+          return;
+        }
+        this.requestCancellation(
+          loaded,
+          requestId,
+          pending,
+          options.signal?.reason instanceof Error
+            ? options.signal.reason
+            : new Error("Plugin tool invocation cancelled"),
+        );
+      };
       options.signal?.addEventListener("abort", abort, { once: true });
       void send(loaded.child, { ...request, requestId } as PluginProcessRequest).catch((error) => {
-        loaded.pending.delete(requestId);
-        clearTimeout(timeout);
-        pending.cleanup?.();
-        settle(() => reject(error instanceof Error ? error : new Error(String(error))));
+        if (loaded.pending.get(requestId) !== pending) return;
+        this.quarantinePlugin(loaded, `Plugin request delivery failed: ${describeError(error)}`);
       });
     });
   }
@@ -718,6 +835,10 @@ export class PluginRuntime {
     catalog: PluginToolCatalogEntry[],
   ): ReadonlyMap<string, PluginToolCatalogEntry> {
     const tools = new Map<string, PluginToolCatalogEntry>();
+    let schemaBytes = 0;
+    if (catalog.length > PLUGIN_TOOL_MAX_CATALOG_TOOLS) {
+      throw new Error(`Plugin ${pluginId} tool catalog exceeds the tool count limit`);
+    }
     for (const raw of catalog) {
       if (
         raw.pluginId !== pluginId ||
@@ -740,17 +861,56 @@ export class PluginRuntime {
         `Plugin tool ${raw.name} input schema`,
         PLUGIN_TOOL_MAX_SCHEMA_BYTES,
       );
+      assertSupportedJsonSchema(raw.inputSchema, `Plugin tool ${raw.name} input schema`, {
+        requireObject: true,
+      });
+      schemaBytes += Buffer.byteLength(JSON.stringify(raw.inputSchema), "utf8");
       if (raw.outputSchema) {
         assertSafeJson(
           raw.outputSchema,
           `Plugin tool ${raw.name} output schema`,
           PLUGIN_TOOL_MAX_SCHEMA_BYTES,
         );
+        assertSupportedJsonSchema(raw.outputSchema, `Plugin tool ${raw.name} output schema`);
+        schemaBytes += Buffer.byteLength(JSON.stringify(raw.outputSchema), "utf8");
       }
       if (tools.has(raw.name)) throw new Error(`Duplicate plugin tool name: ${raw.name}`);
       tools.set(raw.name, { ...raw });
     }
+    if (schemaBytes > PLUGIN_TOOL_MAX_CATALOG_SCHEMA_BYTES) {
+      throw new Error(`Plugin ${pluginId} tool catalog exceeds the schema byte limit`);
+    }
     return tools;
+  }
+
+  private assertAggregateToolCatalogWithinLimits(
+    plugins: readonly LoadedPlugin[],
+    sortedCount?: number,
+    sortedTools?: readonly PluginToolCatalogEntry[],
+  ): void {
+    const tools =
+      sortedTools ??
+      plugins
+        .flatMap((plugin) => [...plugin.tools.values()])
+        .sort(
+          (left, right) =>
+            left.name.localeCompare(right.name) || left.pluginId.localeCompare(right.pluginId),
+        );
+    if ((sortedCount ?? tools.length) > PLUGIN_TOOL_MAX_CATALOG_TOOLS) {
+      throw new Error("Plugin tool aggregate catalog exceeds the tool count limit");
+    }
+    let schemaBytes = 0;
+    for (const tool of tools) {
+      schemaBytes += Buffer.byteLength(JSON.stringify(tool.inputSchema), "utf8");
+      if (tool.outputSchema) {
+        schemaBytes += Buffer.byteLength(JSON.stringify(tool.outputSchema), "utf8");
+      }
+      if (schemaBytes > PLUGIN_TOOL_MAX_CATALOG_SCHEMA_BYTES) {
+        throw new Error(
+          `Plugin tool aggregate catalog exceeds the schema byte limit at ${tool.pluginId}.${tool.name}`,
+        );
+      }
+    }
   }
 
   private toolNameConflict(name: string): "reserved" | "duplicate" | null {
@@ -759,7 +919,7 @@ export class PluginRuntime {
   }
 
   private appendLog(pluginId: string, stream: PluginLogEntry["stream"], message: string): void {
-    const boundedMessage = Buffer.from(message).subarray(0, MAX_LOG_LINE_BYTES).toString("utf8");
+    const boundedMessage = truncateUtf8(message, MAX_LOG_LINE_BYTES);
     let tail = this.logTails.get(pluginId);
     if (!tail) {
       tail = { entries: [], bytes: 0, nextSequence: 1 };

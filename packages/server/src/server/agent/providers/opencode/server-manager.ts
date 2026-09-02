@@ -39,6 +39,8 @@ export interface OpenCodeServerManagerLike {
   acquireNew(signal?: AbortSignal): Promise<OpenCodeServerAcquisition>;
   acquireDedicated(env: Record<string, string>): Promise<OpenCodeServerAcquisition>;
   acquireExisting(url: string): OpenCodeServerAcquisition | null;
+  /** Retire the shared server so the next acquisition loads the current plugin catalog. */
+  refreshPluginCatalog?(): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -186,6 +188,10 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
   acquireExisting(url: string): OpenCodeServerAcquisition | null {
     const server = this.findLiveServerByUrl(url);
     return server ? this.acquireServer(server) : null;
+  }
+
+  async refreshPluginCatalog(): Promise<void> {
+    await this.rotateCurrentServer();
   }
 
   private findLiveServerByUrl(url: string): OpenCodeServerGeneration | null {

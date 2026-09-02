@@ -51,6 +51,7 @@ export interface JsonlRpcProcessOptions {
   logger: Logger;
   diagnosticName?: string;
   defaultRequestTimeoutMs?: number;
+  requestIdFactory?: () => string;
   spawn?: (launch: JsonlRpcLaunch) => ChildProcessWithoutNullStreams;
 }
 
@@ -76,6 +77,7 @@ export class JsonlRpcProcess {
   private readonly child: ChildProcessWithoutNullStreams;
   private readonly diagnosticName: string;
   private readonly pending = new Map<string, PendingRequest>();
+  private readonly usedRequestIds = new Set<string>();
   private readonly messageSubscribers = new Set<(message: Record<string, unknown>) => void>();
   private readonly exitSubscribers = new Set<(exit: JsonlRpcExit) => void>();
   private stderrBuffer = "";
@@ -146,15 +148,28 @@ export class JsonlRpcProcess {
         promise: Promise.reject(new Error(`${this.diagnosticName} process is closed`)),
       };
     }
-    const id = `req_${this.nextRequestId}`;
+    const id = this.options.requestIdFactory?.() ?? `req_${this.nextRequestId}`;
     this.nextRequestId += 1;
+    if (typeof id !== "string" || id.length === 0 || this.usedRequestIds.has(id)) {
+      return {
+        id: typeof id === "string" ? id : "",
+        promise: Promise.reject(new Error(`${this.diagnosticName} duplicate request id: ${id}`)),
+      };
+    }
+    this.usedRequestIds.add(id);
     const requestTimeoutMs =
       timeoutMs === undefined
         ? (this.options.defaultRequestTimeoutMs ?? JSONL_RPC_DEFAULT_TIMEOUT_MS)
         : timeoutMs;
     const startedAt = Date.now();
     const promise = new Promise<unknown>((resolve, reject) => {
+      const pending: PendingRequest = {
+        resolve,
+        reject,
+        timer: null,
+      };
       const timer = createRequestTimeout(requestTimeoutMs, () => {
+        if (this.pending.get(id) !== pending) return;
         this.pending.delete(id);
         reject(
           new Error(
@@ -162,7 +177,8 @@ export class JsonlRpcProcess {
           ),
         );
       });
-      this.pending.set(id, { resolve, reject, timer });
+      pending.timer = timer;
+      this.pending.set(id, pending);
       this.send({ ...command, id });
     });
     return { id, promise };
@@ -173,6 +189,20 @@ export class JsonlRpcProcess {
     timeoutMs?: number | null,
   ): Promise<unknown> {
     return this.startRequest(command, timeoutMs).promise;
+  }
+
+  /** Cancel a request while preserving correlation against a later child response. */
+  cancelRequest(
+    id: string,
+    error = new Error(`${this.diagnosticName} request cancelled`),
+  ): boolean {
+    const pending = this.pending.get(id);
+    if (!pending) return false;
+    if (pending.timer) clearTimeout(pending.timer);
+    if (this.pending.get(id) !== pending) return false;
+    this.pending.delete(id);
+    pending.reject(error);
+    return true;
   }
 
   send(message: Record<string, unknown>): void {
@@ -237,6 +267,9 @@ export class JsonlRpcProcess {
     }
     const pending = this.pending.get(response.id);
     if (!pending) {
+      return;
+    }
+    if (this.pending.get(response.id) !== pending) {
       return;
     }
     if (pending.timer) {

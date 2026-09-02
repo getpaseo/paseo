@@ -5146,7 +5146,10 @@ test("createAgent injects paseo MCP server only into provider launch config", as
     paseo: {
       type: "http",
       url: "http://127.0.0.1:6767/mcp/agents",
-      headers: { "X-Paseo-Agent-ID": snapshot.id },
+      headers: {
+        "X-Paseo-Agent-ID": snapshot.id,
+        Authorization: expect.stringMatching(/^Bearer /),
+      },
     },
     custom: {
       type: "stdio",
@@ -5424,7 +5427,6 @@ test("createAgent allows best-effort internal MCP when the provider session repo
     registry: storage,
     logger,
     mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
-    mcpAuthToken: "cap-token",
     idFactory: () => "00000000-0000-4000-8000-000000000104",
   });
 
@@ -5437,12 +5439,17 @@ test("createAgent allows best-effort internal MCP when the provider session repo
     { workspaceId: undefined },
   );
 
-  expect(manager.getMcpAuthToken()).toBe("cap-token");
   expect(client.lastConfig?.mcpServers?.paseo).toEqual({
     type: "http",
     url: "http://127.0.0.1:6767/mcp/agents",
-    headers: { "X-Paseo-Agent-ID": snapshot.id, Authorization: "Bearer cap-token" },
+    headers: {
+      "X-Paseo-Agent-ID": snapshot.id,
+      Authorization: expect.stringMatching(/^Bearer /),
+    },
   });
+  const token = client.lastConfig?.mcpServers?.paseo?.headers?.Authorization?.slice(7);
+  expect(token).toEqual(expect.any(String));
+  expect(manager.resolveMcpCapability(token as string)).toEqual({ agentId: snapshot.id });
 
   rmSync(workdir, { recursive: true, force: true });
 });
@@ -5487,7 +5494,10 @@ test("resumeAgentFromPersistence replaces stored internal paseo MCP with current
     paseo: {
       type: "http",
       url: "http://127.0.0.1:6768/mcp/agents",
-      headers: { "X-Paseo-Agent-ID": snapshot.id },
+      headers: {
+        "X-Paseo-Agent-ID": snapshot.id,
+        Authorization: expect.stringMatching(/^Bearer /),
+      },
     },
     custom: {
       type: "stdio",
