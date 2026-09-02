@@ -53,11 +53,20 @@ describe("plugin scaffold", () => {
       },
     });
     expect(await readdir(directory)).not.toContain("paseo-plugin.d.ts");
-    await expect(readFile(path.join(directory, "index.ts"), "utf8")).resolves.toContain(
-      'from "./main.client"',
+    await expect(readFile(path.join(directory, "index.client.tsx"), "utf8")).resolves.toContain(
+      'from "./client/greeting"',
     );
-    await expect(readFile(path.join(directory, "main.client.tsx"), "utf8")).resolves.toContain(
-      "Hello from my plugin",
+    await expect(readFile(path.join(directory, "index.server.ts"), "utf8")).resolves.toContain(
+      'from "./server/greeting"',
+    );
+    await expect(readFile(path.join(directory, "client/greeting.tsx"), "utf8")).resolves.toContain(
+      "useRpc(greetingRpc)",
+    );
+    await expect(readFile(path.join(directory, "server/greeting.ts"), "utf8")).resolves.toContain(
+      '"Hello, " + name + "!"',
+    );
+    await expect(readFile(path.join(directory, "shared/greeting.ts"), "utf8")).resolves.toContain(
+      'name: "greeting.create"',
     );
   });
 
@@ -155,23 +164,21 @@ export function contributeClient(client: PluginClientContext) {
 `,
       ),
       writeFile(
-        path.join(directory, "index.ts"),
-        `import type { PluginContext } from "@getpaseo/plugin";
+        path.join(directory, "index.client.tsx"),
+        `import type { PluginClientContext } from "@getpaseo/plugin";
 import { AgentPanel, contributeClient, Surface } from "./main.client";
-import { inspectConfig } from "./inspect.server";
 import { inspect } from "./inspect.shared";
 
-export default function contribute(plugin: PluginContext) {
-  plugin.handle(inspect, inspectConfig);
-  plugin.addSurface("main", Surface);
-  plugin.addWorkspacePanel({
+export default function contribute(client: PluginClientContext) {
+  client.addSurface("main", Surface);
+  client.addWorkspacePanel({
     id: "review",
     title: "Review",
     icon: "Scan",
     context: "agent",
     Component: AgentPanel,
   });
-  plugin.addCommandCenterItem({
+  client.addCommandCenterItem({
     id: "open-review",
     title: "Open review",
     icon: "Scan",
@@ -182,7 +189,18 @@ export default function contribute(plugin: PluginContext) {
       openPanel("review");
     },
   });
-  plugin.addClientSide(contributeClient);
+  return contributeClient(client);
+}
+`,
+      ),
+      writeFile(
+        path.join(directory, "index.server.ts"),
+        `import type { PluginServerContext } from "@getpaseo/plugin";
+import { inspectConfig } from "./inspect.server";
+import { inspect } from "./inspect.shared";
+
+export default function contribute(server: PluginServerContext) {
+  server.handle(inspect, inspectConfig);
   return () => {};
 }
 `,

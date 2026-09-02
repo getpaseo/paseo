@@ -19,20 +19,59 @@ const TSCONFIG = {
   include: ["**/*.ts", "**/*.tsx"],
 };
 
-const ENTRY = `import type { PluginContext } from "@getpaseo/plugin";
-import { MainSurface } from "./main.client";
+const CLIENT_ENTRY = `import type { PluginClientContext } from "@getpaseo/plugin";
+import { GreetingSurface } from "./client/greeting";
 
-export default function contribute(plugin: PluginContext) {
-  plugin.addSurface("main", MainSurface);
+export default function contribute(client: PluginClientContext) {
+  client.addSurface("greeting", GreetingSurface);
+  client.addSidebarItem({
+    id: "greeting",
+    title: "Greeting",
+    icon: "MessageCircle",
+    surface: "greeting",
+  });
   return () => {};
 }
 `;
 
-const CLIENT_SURFACE = `import type { PluginSurfaceProps } from "@getpaseo/plugin";
-import React, { useMemo } from "react";
-import { Text, View } from "react-native";
+const SERVER_ENTRY = `import type { PluginServerContext } from "@getpaseo/plugin";
+import { createGreeting } from "./server/greeting";
+import { greetingRpc } from "./shared/greeting";
 
-export function MainSurface({ theme, layout }: PluginSurfaceProps) {
+export default function contribute(server: PluginServerContext) {
+  server.handle(greetingRpc, createGreeting);
+  return () => {};
+}
+`;
+
+const SHARED_GREETING = `import { defineRpc } from "@getpaseo/plugin/server";
+import { z } from "zod";
+
+export const greetingRpc = defineRpc({
+  name: "greeting.create",
+  input: z.object({ name: z.string() }),
+  output: z.object({ message: z.string() }),
+});
+`;
+
+const SERVER_GREETING = `import type { output as ZodOutput } from "zod";
+import { greetingRpc } from "../shared/greeting";
+
+export function createGreeting({ name }: ZodOutput<typeof greetingRpc.input>) {
+  return { message: "Hello, " + name + "!" };
+}
+`;
+
+const CLIENT_GREETING = `import type { PluginSurfaceProps } from "@getpaseo/plugin";
+import { useRpc } from "@getpaseo/plugin";
+import { useMutation } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { Pressable, Text, View } from "react-native";
+import { greetingRpc } from "../shared/greeting";
+
+export function GreetingSurface({ theme, layout }: PluginSurfaceProps) {
+  const createGreeting = useRpc(greetingRpc);
+  const greeting = useMutation({ mutationFn: createGreeting });
   const styles = useMemo(
     () => ({
       screen: {
@@ -41,12 +80,22 @@ export function MainSurface({ theme, layout }: PluginSurfaceProps) {
         backgroundColor: theme.colors.surface0,
       },
       text: { color: theme.colors.foreground },
+      button: { padding: 12, backgroundColor: theme.colors.accent },
+      buttonText: { color: theme.colors.accentForeground },
     }),
     [theme, layout.compact],
   );
   return (
     <View style={styles.screen}>
-      <Text style={styles.text}>Hello from my plugin</Text>
+      <Text style={styles.text}>{greeting.data?.message ?? "Ask the daemon for a greeting."}</Text>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Create greeting"
+        style={styles.button}
+        onPress={() => greeting.mutate({ name: "Paseo" })}
+      >
+        <Text style={styles.buttonText}>Create greeting</Text>
+      </Pressable>
     </View>
   );
 }
@@ -88,9 +137,15 @@ export async function scaffoldPluginDirectory(
     ["paseo-plugin.json", `${JSON.stringify({ id }, null, 2)}\n`],
     ["package.json", `${JSON.stringify(packageJson, null, 2)}\n`],
     ["tsconfig.json", `${JSON.stringify(TSCONFIG, null, 2)}\n`],
-    ["index.ts", ENTRY],
-    ["main.client.tsx", CLIENT_SURFACE],
+    ["index.client.tsx", CLIENT_ENTRY],
+    ["index.server.ts", SERVER_ENTRY],
+    ["shared/greeting.ts", SHARED_GREETING],
+    ["server/greeting.ts", SERVER_GREETING],
+    ["client/greeting.tsx", CLIENT_GREETING],
   ]);
+  await Promise.all(
+    ["shared", "server", "client"].map((name) => mkdir(path.join(directory, name))),
+  );
   await Promise.all(
     [...files].map(([filename, contents]) =>
       writeFile(path.join(directory, filename), contents, { flag: "wx" }),
