@@ -93,11 +93,12 @@ async function prepareCachedTimeline(input: {
 export interface TimelineReplica {
   prepare(agentId: string): Promise<void>;
   readCursor(agentId: string): { epoch: string; endSeq: number } | undefined;
+  readRange(agentId: string): AgentTimelineCursorState | undefined;
   timelineUpdated(agentId: string): void;
 }
 
 class TimelineReplicaOwner implements TimelineReplica {
-  private readonly cachedCursors = new Map<string, { epoch: string; endSeq: number }>();
+  private readonly cachedRanges = new Map<string, AgentTimelineCursorState>();
   private readonly preparations = new Map<string, Promise<void>>();
 
   constructor(
@@ -127,22 +128,24 @@ class TimelineReplicaOwner implements TimelineReplica {
     });
     if (!stored) return;
     if (stored.range) {
-      this.cachedCursors.set(agentId, {
-        epoch: stored.range.epoch,
-        endSeq: stored.range.endSeq,
-      });
+      this.cachedRanges.set(agentId, stored.range);
     }
   }
 
   readCursor(agentId: string): { epoch: string; endSeq: number } | undefined {
-    return this.cachedCursors.get(agentId);
+    const range = this.cachedRanges.get(agentId);
+    return range ? { epoch: range.epoch, endSeq: range.endSeq } : undefined;
+  }
+
+  readRange(agentId: string): AgentTimelineCursorState | undefined {
+    return this.cachedRanges.get(agentId);
   }
 
   timelineUpdated(agentId: string): void {
     const session = useSessionStore.getState().sessions[this.serverId];
     const timeline = selectAgentTimelineState(session, agentId);
     if (timeline.status !== "synced") return;
-    this.cachedCursors.delete(agentId);
+    this.cachedRanges.delete(agentId);
     this.storage.commitTimeline(this.serverId, agentId, {
       agentId,
       items: [...timeline.items, ...(session?.agentStreamHead.get(agentId) ?? [])],
@@ -249,6 +252,7 @@ function finalizeProcessedTimeline(input: {
 function applyAuthoritativeTimelineResponse(input: {
   serverId: string;
   payload: TimelineResponsePayload;
+  cachedCursor?: AgentTimelineCursorState;
   recoverGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
   drainQueuedAgentMessage: (agentId: string) => void;
   transformTimelineItem?: TimelineItemTransform;
@@ -259,7 +263,8 @@ function applyAuthoritativeTimelineResponse(input: {
   const session = useSessionStore.getState().sessions[serverId];
   const timeline = selectAgentTimelineState(session, agentId);
   const activeInitDeferred = getInitDeferred(initKey);
-  const currentCursor = timeline.status === "synced" ? (timeline.range ?? undefined) : undefined;
+  const currentCursor =
+    timeline.status === "synced" ? (timeline.range ?? undefined) : input.cachedCursor;
   const result = processTimelineResponse({
     payload,
     currentTail: timeline.status === "cold" ? [] : timeline.items,
@@ -397,6 +402,7 @@ export function createViewedTimelineOwner(input: {
       const accepted = applyAuthoritativeTimelineResponse({
         serverId: input.serverId,
         payload,
+        cachedCursor: input.replica.readRange(payload.agentId),
         recoverGap: (agentId, cursor) => sync.recoverGap(agentId, cursor),
         drainQueuedAgentMessage: input.drainQueuedAgentMessage,
         transformTimelineItem,

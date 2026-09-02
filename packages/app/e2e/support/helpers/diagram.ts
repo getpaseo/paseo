@@ -25,13 +25,16 @@ export async function expectDiagramWithLabels(
   }
 }
 
-export async function expectDiagramRemainsRenderedWhileStreaming(page: Page): Promise<void> {
-  const { diagram, svg } = renderedDiagram(page);
-  const samples = 80;
-  for (let sample = 0; sample < samples; sample += 1) {
-    await expect(diagram).toBeVisible({ timeout: 100 });
-    await expect(svg).toBeVisible({ timeout: 500 });
-    await page.waitForTimeout(25);
+export async function expectDiagramRemainsRenderedWhileStreaming(
+  page: Page,
+  completion: Promise<void>,
+): Promise<void> {
+  const diagram = page.getByRole("img", { name: DIAGRAM_NAME }).last();
+  const completed = completion.then(() => true);
+  for (;;) {
+    expect(await diagram.isVisible()).toBe(true);
+    const didComplete = await Promise.race([completed, page.waitForTimeout(16).then(() => false)]);
+    if (didComplete) return completion;
   }
 }
 
