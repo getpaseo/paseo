@@ -8,6 +8,8 @@ import {
   isAgentMcpRequestAuthorized,
   isBearerTokenValidAsync,
   isBearerTokenValid,
+  isLoopbackConnection,
+  isLoopbackPasswordExempt,
   shouldBypassBearerAuth,
 } from "./auth.js";
 
@@ -119,5 +121,90 @@ describe("agent MCP request authorizer", () => {
         authorizationHeader: "Bearer wrong-token",
       }),
     ).toBe(false);
+  });
+});
+
+describe("loopback password exemption", () => {
+  const AUTH = {
+    password: CORRECT_PASSWORD_HASH,
+    allowLoopbackWithoutPassword: true,
+  };
+
+  test("recognizes loopback peers, including IPv6 and IPv4-mapped forms", () => {
+    for (const remoteAddress of [
+      "127.0.0.1",
+      "127.0.0.53",
+      "::1",
+      "0:0:0:0:0:0:0:1",
+      "::ffff:127.0.0.1",
+    ]) {
+      expect(isLoopbackConnection({ remoteAddress, headers: {} })).toBe(true);
+    }
+  });
+
+  test("treats a Unix socket peer, which has no address, as loopback", () => {
+    expect(isLoopbackConnection({ remoteAddress: undefined, headers: {} })).toBe(true);
+  });
+
+  test("rejects non-loopback peers", () => {
+    for (const remoteAddress of [
+      "192.168.1.10",
+      "10.0.0.4",
+      "::ffff:192.168.1.10",
+      "2001:db8::1",
+    ]) {
+      expect(isLoopbackConnection({ remoteAddress, headers: {} })).toBe(false);
+    }
+  });
+
+  test("rejects a loopback peer that forwarded someone else's request", () => {
+    // A reverse proxy on the same host connects from 127.0.0.1 for every remote
+    // client, so a forwarding header means the real caller is not local.
+    expect(
+      isLoopbackConnection({
+        remoteAddress: "127.0.0.1",
+        headers: { "x-forwarded-for": "203.0.113.7" },
+      }),
+    ).toBe(false);
+    expect(
+      isLoopbackConnection({
+        remoteAddress: "127.0.0.1",
+        headers: { forwarded: "for=203.0.113.7" },
+      }),
+    ).toBe(false);
+    expect(
+      isLoopbackConnection({ remoteAddress: "127.0.0.1", headers: { "x-real-ip": "203.0.113.7" } }),
+    ).toBe(false);
+  });
+
+  test("exempts loopback only when the config opts in", () => {
+    const origin = { remoteAddress: "127.0.0.1", headers: {} };
+
+    expect(isLoopbackPasswordExempt(AUTH, origin)).toBe(true);
+    expect(isLoopbackPasswordExempt({ password: CORRECT_PASSWORD_HASH }, origin)).toBe(false);
+    expect(
+      isLoopbackPasswordExempt(
+        { password: CORRECT_PASSWORD_HASH, allowLoopbackWithoutPassword: false },
+        origin,
+      ),
+    ).toBe(false);
+    expect(isLoopbackPasswordExempt(undefined, origin)).toBe(false);
+  });
+
+  test("never exempts a remote peer, even with the option on", () => {
+    expect(isLoopbackPasswordExempt(AUTH, { remoteAddress: "192.168.1.10", headers: {} })).toBe(
+      false,
+    );
+  });
+
+  test("opens the agent MCP endpoint to exempt loopback callers", async () => {
+    expect(
+      await isAgentMcpRequestAuthorized({
+        password: CORRECT_PASSWORD_HASH,
+        capabilityToken: "cap-token-abc123",
+        authorizationHeader: undefined,
+        loopbackExempt: true,
+      }),
+    ).toBe(true);
   });
 });

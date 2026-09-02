@@ -153,6 +153,9 @@
                 "password": {
                   "type": "string",
                   "pattern": "^\\$2[aby]\\$\\d{2}\\$[./A-Za-z0-9]{53}$"
+                },
+                "allowLoopbackWithoutPassword": {
+                  "type": "boolean"
                 }
               },
               "additionalProperties": false

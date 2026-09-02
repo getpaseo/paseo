@@ -39,6 +39,47 @@ describe("daemon auth config", () => {
     );
   });
 
+  test("loads the loopback exemption from config.json", async () => {
+    const paseoHome = await createPaseoHome({
+      version: 1,
+      daemon: {
+        auth: { password: CONFIG_PASSWORD_HASH, allowLoopbackWithoutPassword: true },
+      },
+    });
+
+    expect(loadConfig(paseoHome, { env: {} }).auth?.allowLoopbackWithoutPassword).toBe(true);
+  });
+
+  test("leaves the loopback exemption off unless config.json sets it", async () => {
+    const paseoHome = await createPaseoHome({
+      version: 1,
+      daemon: { auth: { password: CONFIG_PASSWORD_HASH } },
+    });
+
+    expect(loadConfig(paseoHome, { env: {} }).auth?.allowLoopbackWithoutPassword).toBeUndefined();
+  });
+
+  test("keeps the config.json loopback exemption when PASEO_PASSWORD supplies the password", async () => {
+    const paseoHome = await createPaseoHome({
+      version: 1,
+      daemon: { auth: { allowLoopbackWithoutPassword: true } },
+    });
+
+    const config = loadConfig(paseoHome, { env: { PASEO_PASSWORD: "from-env" } });
+
+    expect(config.auth?.allowLoopbackWithoutPassword).toBe(true);
+    expect(isBearerTokenValid({ password: config.auth?.password, token: "from-env" })).toBe(true);
+  });
+
+  test("ignores the loopback exemption when no password is configured", async () => {
+    const paseoHome = await createPaseoHome({
+      version: 1,
+      daemon: { auth: { allowLoopbackWithoutPassword: true } },
+    });
+
+    expect(loadConfig(paseoHome, { env: {} }).auth).toBeUndefined();
+  });
+
   test("lets PASEO_PASSWORD override config.json auth password hash", async () => {
     const paseoHome = await createPaseoHome({
       version: 1,
