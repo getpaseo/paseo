@@ -882,26 +882,17 @@ describe("OMP active-turn steering", () => {
     // A steer with the same text as the already-surfaced foreground entry.
     await omp.steer("work", { expectedTurnId: turnId, clientMessageId: "client-steer-1" });
 
-    // OMP re-emits the foreground frame (still no entryId). It resolves to an
-    // already-emitted entry, so it is dropped and the steer expectation stays.
+    // Hold the duplicate lookup while the genuine same-text echo arrives. The
+    // duplicate sees only the old entry and must not reserve the steer identity.
+    runtime.holdNextBranchMessageResponses(2);
     runtime.acceptPromptWithoutId("work");
-    await waitForImmediate();
-    expect(userMessages(omp)).toEqual([
-      {
-        type: "user_message",
-        text: "work",
-        messageId: "entry-work",
-        clientMessageId: "client-prompt-1",
-      },
-    ]);
-
-    // The genuine steer echo lands as a new branch entry and still correlates.
-    runtime.branchMessages = [
+    runtime.acceptPromptWithoutId("work");
+    expect(runtime.getBranchMessagesRequestCount).toBe(3);
+    await runtime.releaseHeldBranchMessageResponse(0, [{ entryId: "entry-work", text: "work" }]);
+    await runtime.releaseHeldBranchMessageResponse(0, [
       { entryId: "entry-work", text: "work" },
       { entryId: "entry-steer", text: "work" },
-    ];
-    runtime.acceptPromptWithoutId("work");
-    await waitForImmediate();
+    ]);
     expect(userMessages(omp)).toEqual([
       {
         type: "user_message",

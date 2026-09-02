@@ -1132,12 +1132,6 @@ export class OmpAgentSession implements AgentSession {
     }
   }
 
-  private releaseExpectedUserEcho(claim: OmpExpectedUserEcho | null): void {
-    if (claim) {
-      this.claimedUserEchoes.delete(claim);
-    }
-  }
-
   private removeExpectedUserEcho(entry: OmpExpectedUserEcho): void {
     this.claimedUserEchoes.delete(entry);
     const index = this.expectedUserEchoes.indexOf(entry);
@@ -2191,9 +2185,10 @@ export class OmpAgentSession implements AgentSession {
       // pending steer correlation.
       return;
     }
-    const claim = this.claimExpectedUserEcho(text);
-    const clientMessageId = claim?.clientMessageId ?? null;
-    const emitUserMessage = (resolvedMessageId?: string): void => {
+    const emitUserMessage = (
+      resolvedMessageId: string | undefined,
+      clientMessageId: string | null,
+    ): void => {
       if (resolvedMessageId) {
         // OMP re-emits user message_end frames for entries it has already
         // surfaced (e.g. after steer or a resumed process); emit each native
@@ -2216,8 +2211,9 @@ export class OmpAgentSession implements AgentSession {
       });
     };
     if (messageId) {
+      const claim = this.claimExpectedUserEcho(text);
       this.commitExpectedUserEcho(claim);
-      emitUserMessage(messageId);
+      emitUserMessage(messageId, claim?.clientMessageId ?? null);
       return;
     }
     // Real OMP user message_end frames carry no id/entryId; resolve their
@@ -2234,20 +2230,21 @@ export class OmpAgentSession implements AgentSession {
         );
         if (matches.length > 0 && unemitted.length === 0) {
           // Every native entry with this text was already surfaced: OMP
-          // re-emitted a known frame. Drop it and keep the expectation for the
-          // genuine echo.
-          this.releaseExpectedUserEcho(claim);
+          // re-emitted a known frame. Drop it without claiming a pending
+          // expectation that belongs to a later genuine echo.
           return undefined;
         }
+        const claim = this.claimExpectedUserEcho(text);
         this.commitExpectedUserEcho(claim);
-        emitUserMessage(unemitted[0]?.entryId);
+        emitUserMessage(unemitted[0]?.entryId, claim?.clientMessageId ?? null);
       } catch (error: unknown) {
         this.logger.debug(
           { err: error, sessionFile: this.state.sessionFile },
           "OMP native user message ID lookup failed",
         );
+        const claim = this.claimExpectedUserEcho(text);
         this.commitExpectedUserEcho(claim);
-        emitUserMessage();
+        emitUserMessage(undefined, claim?.clientMessageId ?? null);
       }
       return undefined;
     });
