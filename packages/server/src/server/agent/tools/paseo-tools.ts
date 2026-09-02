@@ -2037,14 +2037,18 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       const registeredProviderIds = new Set(providerSnapshotManager.listRegisteredProviderIds());
       const storedAgents = storedRecords
         .filter((record) => !record.internal && !liveIds.has(record.id))
-        .filter((record) => includeArchived || !record.archivedAt)
         .filter(
           (record) =>
             includeArchived || isStoredAgentProviderAvailable(record, registeredProviderIds),
         )
         .map((record) => buildStoredAgentPayload(record, registeredProviderIds));
+      // Archive filtering belongs on the combined list, not the stored branch
+      // alone. An archived agent that is also live -- resumed into memory to
+      // serve a history read -- arrives through liveAgents, so filtering only
+      // the stored side returns it as though it were active.
       const agents = [...liveAgents, ...storedAgents]
         .map(toAgentListItemPayload)
+        .filter((agent) => includeArchived || !agent.archivedAt)
         .filter((agent) => !requestedCwd || isSameOrDescendantPath(requestedCwd, agent.cwd))
         .filter((agent) => !statusFilter || statusFilter.has(agent.status))
         .filter((agent) => !agent.archivedAt || resolveAgentListActivityTime(agent) >= sinceMs)
