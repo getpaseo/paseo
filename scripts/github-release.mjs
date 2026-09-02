@@ -4,15 +4,22 @@ function parseJson(output) {
   return JSON.parse(output);
 }
 
+function isNotFoundError(error) {
+  return String(error?.stderr ?? "").includes("HTTP 404");
+}
+
 export function getGitHubRelease(repo, tag, execFileSync = nodeExecFileSync) {
   try {
     return parseJson(
       execFileSync("gh", ["api", `repos/${repo}/releases/tags/${tag}`], {
         encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
       }),
     );
-  } catch {
+  } catch (error) {
+    if (!isNotFoundError(error)) {
+      throw error;
+    }
     const expectedName = `Paseo ${tag}`;
     const output = execFileSync(
       "gh",

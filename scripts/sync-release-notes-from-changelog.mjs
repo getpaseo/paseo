@@ -166,19 +166,6 @@ export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
 
     try {
       runGh(createArgs, execFileSync);
-      for (let attempt = 0; attempt < 5; attempt += 1) {
-        const createdRelease = getGitHubRelease(args.repo, targetTag, execFileSync);
-        if (createdRelease) {
-          updateReleaseNotes(
-            { releaseId: createdRelease.id, repo: args.repo, notesPath },
-            execFileSync,
-          );
-          console.log(`Created release ${targetTag} with changelog notes.`);
-          return;
-        }
-        sleepSync(1_000);
-      }
-      throw new Error(`Created release ${targetTag} could not be resolved.`);
     } catch (createError) {
       console.warn(
         `Release creation failed for ${targetTag}; attempting edit in case another workflow created it concurrently.`,
@@ -193,7 +180,22 @@ export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
       if (createError instanceof Error) {
         console.warn(createError.message);
       }
+      return;
     }
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const createdRelease = getGitHubRelease(args.repo, targetTag, execFileSync);
+      if (createdRelease) {
+        updateReleaseNotes(
+          { releaseId: createdRelease.id, repo: args.repo, notesPath },
+          execFileSync,
+        );
+        console.log(`Created release ${targetTag} with changelog notes.`);
+        return;
+      }
+      sleepSync(1_000);
+    }
+    throw new Error(`Created release ${targetTag} could not be resolved.`);
   } finally {
     rmSync(tempDir, { force: true, recursive: true });
   }

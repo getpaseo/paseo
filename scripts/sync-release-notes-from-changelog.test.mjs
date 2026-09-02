@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { getReleaseLookupTag } from "./github-release.mjs";
+import { getGitHubRelease, getReleaseLookupTag } from "./github-release.mjs";
 import { syncReleaseNotes } from "./sync-release-notes-from-changelog.mjs";
 
 function withTempChangelog(fn, changelogText = "## 0.1.60-beta.1 - 2026-04-20\n\n- Beta notes.\n") {
@@ -20,6 +20,10 @@ function withTempChangelog(fn, changelogText = "## 0.1.60-beta.1 - 2026-04-20\n\
   }
 }
 
+function notFoundError() {
+  return Object.assign(new Error("release not found"), { stderr: "gh: Not Found (HTTP 404)" });
+}
+
 test("uses the untagged URL slug for draft release CLI operations", () => {
   assert.equal(
     getReleaseLookupTag({
@@ -29,6 +33,22 @@ test("uses the untagged URL slug for draft release CLI operations", () => {
     }),
     "untagged-draft",
   );
+});
+
+test("does not treat GitHub authentication failures as missing releases", () => {
+  const calls = [];
+  const authError = Object.assign(new Error("authentication failed"), {
+    stderr: "gh: HTTP 401: Bad credentials",
+  });
+  assert.throws(
+    () =>
+      getGitHubRelease("getpaseo/paseo", "v0.1.60-beta.1", (command, args) => {
+        calls.push({ args, command });
+        throw authError;
+      }),
+    authError,
+  );
+  assert.equal(calls.length, 1, "authentication failures must not fall back to draft lookup");
 });
 
 test("updates an existing release body through the release id API", () => {
@@ -84,7 +104,7 @@ test("updates a draft release body without publishing it", () => {
       calls.push({ args, command, options });
 
       if (args[0] === "api" && args[1] === "repos/getpaseo/paseo/releases/tags/v0.1.60-beta.1") {
-        throw new Error("drafts are not returned by the tag endpoint");
+        throw notFoundError();
       }
 
       if (args[0] === "api" && args[1] === "repos/getpaseo/paseo/releases?per_page=100") {
@@ -131,7 +151,7 @@ test("creates missing beta releases as drafts", () => {
       calls.push({ args, command, options });
 
       if (args[0] === "api" && args[1] === "repos/getpaseo/paseo/releases/tags/v0.1.60-beta.1") {
-        throw new Error("release not found");
+        throw notFoundError();
       }
 
       if (args[0] === "api" && args[1] === "repos/getpaseo/paseo/releases?per_page=100") {

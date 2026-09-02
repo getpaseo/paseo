@@ -561,11 +561,11 @@ jobs:
           gh release upload "$release_lookup" "${files[@]}" --clobber --repo "${{ github.repository }}"
 
           failed_builds=()
-          [[ "${{ needs.publish-macos.result }}" == "failure" ]] && failed_builds+=(macOS)
-          [[ "${{ needs.publish-linux.result }}" == "failure" ]] && failed_builds+=(Linux)
-          [[ "${{ needs.publish-windows.result }}" == "failure" ]] && failed_builds+=(Windows)
+          [[ "${{ needs.publish-macos.result }}" =~ ^(success|skipped)$ ]] || failed_builds+=(macOS)
+          [[ "${{ needs.publish-linux.result }}" =~ ^(success|skipped)$ ]] || failed_builds+=(Linux)
+          [[ "${{ needs.publish-windows.result }}" =~ ^(success|skipped)$ ]] || failed_builds+=(Windows)
           if (( ${#failed_builds[@]} > 0 )); then
-            echo "::error::Desktop builds failed for ${failed_builds[*]}; the release remains a draft"
+            echo "::error::Desktop builds did not complete for ${failed_builds[*]}; the release remains a draft"
             exit 1
           fi
 
