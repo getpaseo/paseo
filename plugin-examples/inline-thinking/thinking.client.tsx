@@ -1,6 +1,6 @@
 import type { PluginTimelineItemProps } from "@getpaseo/plugin";
 import { useRevealedText } from "@getpaseo/plugin/react-native";
-import { useMemo } from "react";
+import React, { useMemo } from "react";
 import { Text } from "react-native";
 import { z } from "zod";
 
