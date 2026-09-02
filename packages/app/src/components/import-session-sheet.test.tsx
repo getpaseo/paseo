@@ -553,19 +553,34 @@ describe("ImportSessionSheet", () => {
   });
 
   it("imports a selected session by provider handle and reports the imported agent", async () => {
-    const fetchRecentProviderSessions = vi.fn(async () => ({
-      requestId: "recent-provider-sessions",
-      entries: [
-        createProviderSessionEntry({
-          providerId: "claude",
-          providerLabel: "Claude Code",
-          cwd: "/repo/paseo-realpath",
+    const events: string[] = [];
+    let fetchCount = 0;
+    const fetchRecentProviderSessions = vi.fn(async () => {
+      fetchCount += 1;
+      events.push("fetch");
+      if (fetchCount > 1) {
+        return await new Promise<never>(() => {});
+      }
+      return {
+        requestId: "recent-provider-sessions",
+        entries: [
+          createProviderSessionEntry({
+            providerId: "claude",
+            providerLabel: "Claude Code",
+            cwd: "/repo/paseo-realpath",
+          }),
+        ],
+      };
+    });
+    let resolveImport!: (agent: ReturnType<typeof createImportedAgentSnapshot>) => void;
+    const importAgent = vi.fn(
+      () =>
+        new Promise<ReturnType<typeof createImportedAgentSnapshot>>((resolve) => {
+          resolveImport = resolve;
         }),
-      ],
-    }));
-    const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
-    const onClose = vi.fn();
-    const onImportedAgent = vi.fn();
+    );
+    const onClose = vi.fn(() => events.push("close"));
+    const onImportedAgent = vi.fn(() => events.push("navigate"));
 
     renderSheet(
       { fetchRecentProviderSessions, importAgent } as Pick<
@@ -580,7 +595,13 @@ describe("ImportSessionSheet", () => {
       },
     );
 
-    fireEvent.click(await screen.findByTestId("import-session-session-claude-provider-thread-1"));
+    const row = await screen.findByTestId("import-session-session-claude-provider-thread-1");
+    expect(events).toEqual(["fetch"]);
+    fireEvent.click(row);
+
+    await screen.findByText("Importing...");
+    expect(events).toEqual(["fetch"]);
+    resolveImport(createImportedAgentSnapshot("agent-imported"));
 
     await waitFor(() => {
       expect(importAgent).toHaveBeenCalledWith({
@@ -589,9 +610,11 @@ describe("ImportSessionSheet", () => {
         cwd: "/repo/paseo-realpath",
         workspaceId: "ws-current",
       });
+      expect(events).toEqual(["fetch", "close", "navigate"]);
     });
     expect(onImportedAgent).toHaveBeenCalledWith("agent-imported");
     expect(onClose).toHaveBeenCalledTimes(1);
+    expect(fetchRecentProviderSessions).toHaveBeenCalledTimes(1);
   });
 
   it("shows an import error state without closing when selected session import fails", async () => {

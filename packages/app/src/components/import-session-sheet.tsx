@@ -603,14 +603,17 @@ export function ImportSessionSheet({
       });
       return { agent, target };
     },
-    onSuccess: async ({ agent, target }) => {
-      await queryClient.invalidateQueries({ queryKey: sessionsQueryRoot });
+    onSuccess: ({ agent, target }) => {
       onClose();
       if (target.crossWorkspace) {
         onImported?.(agent);
-        return;
+      } else {
+        onImportedAgent?.(agent.id);
       }
-      onImportedAgent?.(agent.id);
+      void queryClient.invalidateQueries({
+        queryKey: sessionsQueryRoot,
+        refetchType: "none",
+      });
     },
   });
 
