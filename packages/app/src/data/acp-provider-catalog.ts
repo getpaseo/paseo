@@ -326,6 +326,15 @@ const CATALOG_DATA = [
     command: ["npx", "-y", "@qwen-code/qwen-code@0.20.1", "--acp", "--experimental-skills"],
   },
   {
+    id: "reasonix",
+    title: "Reasonix",
+    description: "Cache-first DeepSeek coding agent for the terminal",
+    version: "1.24.1",
+    iconId: "reasonix",
+    installLink: "https://github.com/esengine/DeepSeek-Reasonix",
+    command: ["npx", "-y", "reasonix@1.24.1", "acp"],
+  },
+  {
     id: "sigit",
     title: "siGit Code",
     description:

@@ -54,6 +54,7 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [Poolside](https://docs.poolside.ai/cli/pool), Poolside's coding agent.
 - [Qoder](https://qoder.com), agentic coding assistant.
 - [Qwen Code](https://qwenlm.github.io/qwen-code-docs/en/users/overview), Alibaba's Qwen coding assistant.
+- [Reasonix](https://github.com/esengine/DeepSeek-Reasonix), cache-first DeepSeek coding agent for the terminal.
 - [siGit Code](https://github.com/getsigit/sigit), local-first coding agent with optional on-device LLM.
 - [Stakpak](https://stakpak.dev/), Rust-based DevOps agent.
 - [TRAE CLI](https://docs.trae.cn/cli_get-started-with-trae-cli), ByteDance's official TRAE coding agent.
