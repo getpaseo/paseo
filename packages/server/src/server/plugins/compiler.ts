@@ -324,6 +324,7 @@ async function compileTarget(entryPath: string, target: PluginBuildTarget): Prom
     },
     bundle: true,
     format: "cjs",
+    jsx: target === "client" ? "automatic" : undefined,
     platform: target === "server" ? "node" : "neutral",
     target: target === "server" ? "node20" : "es2020",
     // Metro lowers async syntax before Hermes sees app code. Plugin client bundles bypass Metro,

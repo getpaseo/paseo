@@ -171,6 +171,30 @@ describe("plugin contribution targets", () => {
 });
 
 describe("plugin client runtime syntax", () => {
+  it("uses the automatic JSX runtime without a React import", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.tsx");
+    await writeFile(
+      entryPath,
+      `import { Text } from "react-native";
+
+function Surface() {
+  return <Text>Automatic JSX</Text>;
+}
+
+export default function contribute(plugin) {
+  plugin.addSurface("automatic-jsx", Surface);
+  return () => undefined;
+}
+`,
+    );
+
+    const { clientBundle } = await compilePlugin(entryPath);
+    expect(clientBundle).toContain("react/jsx-runtime");
+    expect(clientBundle).not.toContain("React.createElement");
+  });
+
   it("lowers async callbacks before Hermes evaluates the client bundle", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);
