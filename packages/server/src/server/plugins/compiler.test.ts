@@ -432,6 +432,34 @@ export default function contribute() { void value; return () => undefined; }`,
     expect(serverBundle).toContain("linked dependency");
   });
 
+  it("does not treat the plugin package manifest as a linked dependency root", async () => {
+    const entries = await createSplitPlugin();
+    const dependency = path.join(entries.directory, "node_modules", "fixture-dependency");
+    const secret = path.join(entries.directory, "secret.ts");
+    await mkdir(dependency, { recursive: true });
+    await Promise.all([
+      writeFile(
+        path.join(entries.directory, "package.json"),
+        JSON.stringify({ name: "fixture-dependency" }),
+      ),
+      writeFile(
+        path.join(dependency, "package.json"),
+        JSON.stringify({ name: "fixture-dependency", main: "index.js" }),
+      ),
+      writeFile(secret, `export const secret = "plugin root";`),
+      symlink(secret, path.join(dependency, "index.js")),
+      writeFile(
+        entries.client,
+        `import { secret } from "fixture-dependency";
+export default function contribute() { void secret; return () => undefined; }`,
+      ),
+    ]);
+
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      `Plugin modules belong in client/, server/, or shared/: ${secret}`,
+    );
+  });
+
   it("builds a single runtime when the other entry is absent", async () => {
     const entries = await createSplitPlugin();
     const { clientBundle, serverBundle } = await compilePlugin({

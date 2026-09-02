@@ -94,14 +94,23 @@ function dependencyName(specifier: string): string {
   return specifier.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0];
 }
 
-function findDependencyRoot(resolvedPath: string, specifier: string): string | null {
+function findDependencyRoot(
+  resolvedPath: string,
+  specifier: string,
+  pluginDirectory: string,
+): string | null {
   const expectedName = dependencyName(specifier);
   let directory = path.dirname(resolvedPath);
   for (;;) {
     const manifestPath = path.join(directory, "package.json");
     if (existsSync(manifestPath)) {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { name?: unknown };
-      if (manifest.name === expectedName) return directory;
+      if (manifest.name === expectedName) {
+        if (containsPath(pluginDirectory, directory) || containsPath(directory, pluginDirectory)) {
+          return null;
+        }
+        return directory;
+      }
     }
     const parent = path.dirname(directory);
     if (parent === directory) return null;
@@ -139,7 +148,7 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
           if ([...linkedDependencyRoots].some((root) => containsPath(root, resolvedPath)))
             return null;
           if (!args.path.startsWith(".") && !path.isAbsolute(args.path)) {
-            const dependencyRoot = findDependencyRoot(resolvedPath, args.path);
+            const dependencyRoot = findDependencyRoot(resolvedPath, args.path, pluginDirectory);
             if (dependencyRoot) {
               linkedDependencyRoots.add(dependencyRoot);
               return null;
