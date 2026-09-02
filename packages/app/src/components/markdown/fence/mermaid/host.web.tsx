@@ -12,7 +12,7 @@ import { mermaidRuntimeHtml } from "./runtime/html.gen";
 import { parseMermaidRuntimeMessage, type MermaidRuntimeRenderMessage } from "./runtime/messages";
 import { MermaidRuntimeRequestDriver } from "./runtime/request-driver";
 import { useMermaidRenderModel } from "./use-render-model";
-import { getDiagramBoxStyle } from "./presentation";
+import { getDiagramBoxStyle, MAX_PREVIEW_HEIGHT } from "./presentation";
 
 interface MermaidIframeRuntimeProps {
   request: MermaidRenderRequest | null;
@@ -141,7 +141,7 @@ function MermaidFenceHostImpl({
   const visible = state.visible;
   const canShowDiagram = visible !== null && hasRuntimeContent;
   const diagramVisible = canShowDiagram && !showSource;
-  const runtimeHeight = Math.max(visible?.height ?? 240, 1);
+  const runtimeHeight = Math.min(Math.max(visible?.height ?? 240, 1), MAX_PREVIEW_HEIGHT);
   const actions = useMemo(
     () => [
       {
@@ -202,21 +202,23 @@ function MermaidFenceHostImpl({
           ) : null}
         </View>
       ) : null}
-      <ZoomableViewport
-        accessibilityLabel={t("message.diagram.diagram")}
-        actions={actions}
-        contentSize={diagramSize}
-        style={viewportStyle}
-        testID="mermaid-viewport"
-        wheelActivation="modifier"
-      >
-        <MermaidIframeRuntime
-          request={request}
-          height="100%"
-          onRendered={handleRendered}
-          onRenderFailed={renderFailed}
-        />
-      </ZoomableViewport>
+      {/* Outer box clips to the capped height; the viewport pans the natural-sized diagram. */}
+      <View style={viewportStyle}>
+        <ZoomableViewport
+          accessibilityLabel={t("message.diagram.diagram")}
+          actions={actions}
+          contentSize={diagramSize}
+          testID="mermaid-viewport"
+          wheelActivation="modifier"
+        >
+          <MermaidIframeRuntime
+            request={request}
+            height="100%"
+            onRendered={handleRendered}
+            onRenderFailed={renderFailed}
+          />
+        </ZoomableViewport>
+      </View>
     </>
   );
 }

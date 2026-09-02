@@ -54,6 +54,17 @@ function setViewport(interactive: boolean): void {
     );
 }
 
+function measureNaturalSize(
+  svgEl: SVGSVGElement | null,
+  host: HTMLElement,
+): { width: number; height: number } {
+  const viewBox = svgEl?.viewBox.baseVal;
+  if (viewBox && viewBox.width > 0 && viewBox.height > 0) {
+    return { width: Math.ceil(viewBox.width), height: Math.ceil(viewBox.height) };
+  }
+  return { width: Math.ceil(host.scrollWidth), height: Math.ceil(host.scrollHeight) };
+}
+
 let latestRevision = 0;
 let pendingRender: MermaidRuntimeRenderMessage | null = null;
 let isRendering = false;
@@ -72,14 +83,14 @@ async function render(message: MermaidRuntimeRenderMessage): Promise<void> {
       return;
     }
     host.innerHTML = svg;
-    const rect = host.querySelector("svg")?.getBoundingClientRect();
+    const { width, height } = measureNaturalSize(host.querySelector("svg"), host);
     sendToHost({
       type: "rendered",
       revision: message.revision,
       source: message.source,
       colorScheme: message.colorScheme,
-      height: Math.ceil(rect?.height ?? host.scrollHeight),
-      width: Math.ceil(rect?.width ?? host.scrollWidth),
+      height,
+      width,
     });
   } catch {
     if (message.revision === latestRevision) {
