@@ -55,6 +55,8 @@ export function resolveWorkingDiffComparisonFromState(
   input: WorkingDiffCheckoutIdentity & { isDirty: boolean },
 ): WorkingDiffComparison {
   const override = state.overrides[workingDiffComparisonKey(input)];
+  // Status can render before boundary expiry runs, so resolution must also mask a stale
+  // selection under any ordering of the two updates.
   if (override?.isDirtyAtSelection === input.isDirty) {
     return override.comparison;
   }
@@ -65,6 +67,8 @@ export function expireWorkingDiffComparisonsInState(
   state: WorkingDiffComparisonState,
   input: { serverId: string; cwd: string; isDirty: boolean },
 ): WorkingDiffComparisonState {
+  // Expire at the status boundary so selections cannot return after an unmounted surface
+  // misses a dirty-state transition.
   const staleKeys = Object.entries(state.overrides)
     .filter(
       ([, override]) =>
