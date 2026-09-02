@@ -108,11 +108,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
   readonly steerRequests: Array<{ message: string; imageCount: number }> = [];
   readonly followUpRequests: Array<{ message: string; imageCount: number }> = [];
   readonly steerActiveTurnRequests: Array<{ message: string; imageCount: number }> = [];
-  readonly controlRequests: string[] = [];
+  readonly controlRequests: Array<{ type: "abort"; clearQueue?: true }> = [];
   readonly capabilities = { activeTurnSteering: true };
   steerAccepted = true;
   steerActiveTurnError: Error | null = null;
-  clearQueueError: Error | null = null;
   readonly hostToolSetRequests: OmpRpcHostToolDefinition[][] = [];
   readonly hostToolResults: OmpRpcHostToolResult[] = [];
   readonly hostToolUpdates: OmpRpcHostToolUpdate[] = [];
@@ -253,8 +252,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     };
   }
 
-  async abort(): Promise<void> {
-    this.controlRequests.push("abort");
+  async abort(input: { clearQueue?: boolean }): Promise<void> {
+    this.controlRequests.push(
+      input.clearQueue ? { type: "abort", clearQueue: true } : { type: "abort" },
+    );
     if (this.abortError) {
       throw this.abortError;
     }
@@ -418,13 +419,6 @@ export class FakeOmpSession implements OmpRuntimeSession {
     const { promise, resolve } = Promise.withResolvers<void>();
     setImmediate(resolve);
     await promise;
-  }
-
-  async clearQueueForInterrupt(): Promise<void> {
-    this.controlRequests.push("clear_queue");
-    if (this.clearQueueError) {
-      throw this.clearQueueError;
-    }
   }
 
   sendHostToolResult(result: OmpRpcHostToolResult): void {

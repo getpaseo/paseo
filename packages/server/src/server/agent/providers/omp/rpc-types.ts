@@ -510,7 +510,7 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
     customInstructions: z.string().optional(),
   }),
   z.object({ ...OmpCommandBase, type: z.literal("set_auto_compaction"), enabled: z.boolean() }),
-  z.object({ ...OmpCommandBase, type: z.literal("abort") }),
+  z.object({ ...OmpCommandBase, type: z.literal("abort"), clearQueue: z.literal(true).optional() }),
   z.object({ ...OmpCommandBase, type: z.literal("get_state") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_messages") }),
   z.object({ ...OmpCommandBase, type: z.literal("get_available_models") }),
@@ -546,7 +546,6 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
     images: z.array(OmpImageContentSchema).optional(),
     activeTurnOnly: z.literal(true),
   }),
-  z.object({ ...OmpCommandBase, type: z.literal("clear_queue"), forInterrupt: z.literal(true) }),
   z.object({
     ...OmpCommandBase,
     type: z.literal("handoff"),

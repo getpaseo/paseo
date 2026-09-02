@@ -159,8 +159,11 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
     await this.request({ type: "set_auto_compaction", enabled });
   }
 
-  async abort(): Promise<void> {
-    await this.request({ type: "abort" });
+  async abort(input: { clearQueue?: boolean }): Promise<void> {
+    await this.request({
+      type: "abort",
+      ...(input.clearQueue ? { clearQueue: true } : {}),
+    });
   }
 
   async getState(): Promise<OmpSessionState> {
@@ -284,10 +287,6 @@ class OmpCliRuntimeSession implements OmpRuntimeSession {
       }),
     );
     return { accepted: data.accepted };
-  }
-
-  async clearQueueForInterrupt(): Promise<void> {
-    await this.request({ type: "clear_queue", forInterrupt: true });
   }
 
   async handoff(customInstructions?: string): Promise<void> {

@@ -1122,7 +1122,7 @@ describe("OMP active-turn steering", () => {
     expect(omp.pendingPermissions()).toHaveLength(1);
   });
 
-  test("clears the OMP queue before aborting on interrupt", async () => {
+  test("atomically clears the OMP queue while aborting an active turn", async () => {
     const omp = new OmpHarness();
     await omp.start();
     const runtime = omp.runtime();
@@ -1131,26 +1131,26 @@ describe("OMP active-turn steering", () => {
 
     await omp.interrupt();
 
-    expect(runtime.controlRequests).toEqual(["clear_queue", "abort"]);
+    expect(runtime.controlRequests).toEqual([{ type: "abort", clearQueue: true }]);
     expect(omp.canceledTurnCount()).toBe(1);
   });
 
-  test("does not abort when clearing the queue fails", async () => {
+  test("does not terminalize locally when atomic abort-with-clear fails", async () => {
     const omp = new OmpHarness();
     await omp.start();
     const runtime = omp.runtime();
     await omp.startTrackedTurn("work");
     runtime.beginTurn();
 
-    runtime.clearQueueError = new Error("clear_queue failed");
-    await expect(omp.interrupt()).rejects.toThrow("clear_queue failed");
+    runtime.abortError = new Error("atomic abort failed");
+    await expect(omp.interrupt()).rejects.toThrow("atomic abort failed");
 
-    expect(runtime.controlRequests).toEqual(["clear_queue"]);
+    expect(runtime.controlRequests).toEqual([{ type: "abort", clearQueue: true }]);
     expect(runtime.abortRequested).toBe(false);
     expect(omp.canceledTurnCount()).toBe(0);
   });
 
-  test("interrupts without clear_queue when the binary lacks steering", async () => {
+  test("sends plain abort when the binary lacks steering", async () => {
     const omp = new OmpHarness();
     await omp.start();
     const runtime = omp.runtime();
@@ -1160,7 +1160,7 @@ describe("OMP active-turn steering", () => {
 
     await omp.interrupt();
 
-    expect(runtime.controlRequests).toEqual(["abort"]);
+    expect(runtime.controlRequests).toEqual([{ type: "abort" }]);
     expect(omp.canceledTurnCount()).toBe(1);
   });
 

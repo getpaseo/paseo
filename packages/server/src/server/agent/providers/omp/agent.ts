@@ -1246,14 +1246,12 @@ export class OmpAgentSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     const turnId = this.activeTurnId;
-    if (this.runtimeSession.capabilities.activeTurnSteering) {
-      // OMP delivers queued steers into whatever turn reads them next, so the
-      // queue must be confirmed empty before abort. If clearing fails the
-      // interrupt fails without aborting: aborting anyway could let a queued
-      // steer resume the turn the user just stopped.
-      await this.runtimeSession.clearQueueForInterrupt();
-    }
-    await this.runtimeSession.abort();
+    // Steering-capable OMP atomically clears unread queued steers and starts
+    // abort in one acknowledged request. Older binaries receive plain abort.
+    // Local terminalization begins only after that request succeeds.
+    await this.runtimeSession.abort({
+      clearQueue: this.runtimeSession.capabilities.activeTurnSteering,
+    });
     if (turnId && this.activeTurnId === turnId) {
       this.terminalizeActiveWork();
       this.usagePoller.stopTurn();

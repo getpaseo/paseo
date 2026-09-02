@@ -55,7 +55,7 @@ export interface OmpRuntimeSession {
   ): Promise<OmpPromptAck>;
   compact(customInstructions?: string): Promise<void>;
   setAutoCompaction(enabled: boolean): Promise<void>;
-  abort(): Promise<void>;
+  abort(input: { clearQueue?: boolean }): Promise<void>;
   getState(): Promise<OmpSessionState>;
   getMessages(): Promise<OmpAgentMessage[]>;
   getAvailableModels(timeoutMs?: number | null): Promise<OmpModel[]>;
@@ -85,8 +85,6 @@ export interface OmpRuntimeSession {
     message: string;
     images?: Array<{ type: "image"; data: string; mimeType: string }>;
   }): Promise<{ accepted: boolean }>;
-  /** Acknowledged after OMP has discarded its queued steers. */
-  clearQueueForInterrupt(): Promise<void>;
   readonly capabilities: OmpRuntimeSessionCapabilities;
   handoff(customInstructions?: string): Promise<void>;
   respondToExtensionUiRequest(

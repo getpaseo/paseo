@@ -478,7 +478,7 @@ describe("OMP CLI runtime", () => {
     await expect(session.steerActiveTurn({ message: "focus" })).rejects.toThrow();
   });
 
-  test("sends the acknowledged clear_queue frame for interrupt", async () => {
+  test("sends one acknowledged atomic abort-with-clear request", async () => {
     const child = createOmpChild({ features: { activeTurnSteering: 1 } });
     const commands: Record<string, unknown>[] = [];
     replyToCommands(child, (command) => {
@@ -487,8 +487,22 @@ describe("OMP CLI runtime", () => {
     });
     const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
 
-    await session.clearQueueForInterrupt();
+    await session.abort({ clearQueue: true });
 
-    expect(commands.map(withoutRequestId)).toEqual([{ type: "clear_queue", forInterrupt: true }]);
+    expect(commands.map(withoutRequestId)).toEqual([{ type: "abort", clearQueue: true }]);
+  });
+
+  test("sends plain abort for a legacy session", async () => {
+    const child = createOmpChild();
+    const commands: Record<string, unknown>[] = [];
+    replyToCommands(child, (command) => {
+      commands.push(command);
+      return undefined;
+    });
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    await session.abort({});
+
+    expect(commands.map(withoutRequestId)).toEqual([{ type: "abort" }]);
   });
 });
