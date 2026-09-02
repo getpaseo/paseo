@@ -4,6 +4,18 @@ import type { TimelineItemTransform } from "./model";
 
 const projectionCache = new WeakMap<TimelineItemTransform, WeakMap<StreamItem, StreamItem[]>>();
 
+function cloneAndFreeze<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return Object.freeze(value.map((entry) => cloneAndFreeze(entry))) as T;
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.freeze(
+      Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, cloneAndFreeze(entry)])),
+    ) as T;
+  }
+  return value;
+}
+
 function sourceToolCallTimelineItem(data: AgentToolCallData): ToolCallTimelineItem {
   const { callId, name, status, error, detail, metadata } = data;
   const base = {
@@ -72,7 +84,11 @@ function transformSourceItem(
     item.payload.source === "agent" &&
     item.payload.data.status === "running";
   const phase = isStreamingThought || isStreamingToolCall ? "streaming" : "complete";
-  const transformed = transformTimelineItem({ item: source, phase, sourceId: item.id });
+  const transformed = transformTimelineItem({
+    item: cloneAndFreeze(source),
+    phase,
+    sourceId: item.id,
+  });
   if (transformed === undefined) return [item];
   return transformed.map((pluginItem) => {
     const projected: PluginTimelineStreamItem = {

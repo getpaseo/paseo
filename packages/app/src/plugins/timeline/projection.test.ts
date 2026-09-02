@@ -14,6 +14,35 @@ function thought(text: string, status: "loading" | "ready" = "loading"): StreamI
 }
 
 describe("plugin timeline projection", () => {
+  it("does not expose mutable tool detail from stream state", () => {
+    const detail = { type: "read" as const, filePath: "/repo/original.ts" };
+    const source: StreamItem = {
+      kind: "tool_call",
+      id: "tool-1",
+      timestamp: new Date("2026-01-01T00:00:00.000Z"),
+      payload: {
+        source: "agent",
+        data: {
+          provider: "claude",
+          callId: "call-1",
+          name: "Read",
+          status: "completed",
+          error: null,
+          detail,
+        },
+      },
+    };
+    const mutateDetail: TimelineItemTransform = ({ item }) => {
+      if (item.type === "tool_call" && item.detail.type === "read") {
+        item.detail.filePath = "/repo/mutated.ts";
+      }
+      return undefined;
+    };
+
+    expect(() => projectPluginTimelineItems([source], mutateDetail)).toThrow(TypeError);
+    expect(detail.filePath).toBe("/repo/original.ts");
+  });
+
   it("projects a streaming reasoning row from its first delta", () => {
     const transform: TimelineItemTransform = vi.fn(({ item, phase, sourceId }) => [
       {
