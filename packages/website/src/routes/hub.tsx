@@ -12,7 +12,7 @@ import { DiscordIcon, GitHubIcon, SlackIcon } from "~/components/brand-icons";
 import { AGENT_PAGES } from "~/data/agent-pages";
 import { FAQItem } from "~/components/faq-item";
 import { SiteShell } from "~/components/site-shell";
-import { getHubPlans, type HubBillingPlan } from "~/hub-plans";
+import { getHostedOffer, type HubHostedOffer } from "~/hub-plans";
 import { pageMeta } from "~/meta";
 
 export const Route = createFileRoute("/hub")({
@@ -22,7 +22,7 @@ export const Route = createFileRoute("/hub")({
       "Run Paseo Hub yourself and start agents on your own machines from GitHub, Slack, and Discord.",
       "/hub",
     ),
-  loader: async () => ({ plans: await getHubPlans() }),
+  loader: async () => ({ hosted: await getHostedOffer() }),
   component: Hub,
 });
 
@@ -31,7 +31,7 @@ const HOSTED_HUB_URL = "https://hub.paseo.sh";
 const LINK_CLASS = "underline hover:text-white/80";
 
 function Hub() {
-  const { plans } = Route.useLoaderData();
+  const { hosted } = Route.useLoaderData();
   return (
     <SiteShell width="default">
       <h1 className="text-3xl font-medium tracking-tight mb-4">Paseo Hub</h1>
@@ -44,7 +44,7 @@ function Hub() {
         <Triggers />
         <Agents />
         <Shape />
-        <Pricing hosted={plans.find((plan) => plan.slug === "hosted") ?? null} />
+        <Pricing hosted={hosted} />
         <FaqSection />
       </div>
     </SiteShell>
@@ -74,8 +74,7 @@ const SELF_HOSTED_FEATURES: readonly PlanFeature[] = [
     tooltip: null,
   },
 ];
-function Pricing({ hosted }: { hosted: HubBillingPlan | null }) {
-  const monthly = hosted?.prices.find((price) => price.interval === "monthly") ?? null;
+function Pricing({ hosted }: { hosted: HubHostedOffer }) {
   return (
     <section className="space-y-6" aria-labelledby="pricing-heading">
       <div className="space-y-2">
@@ -96,18 +95,16 @@ function Pricing({ hosted }: { hosted: HubBillingPlan | null }) {
           actionHref="/docs/hub/quickstart"
           actionLabel="Self-host Hub"
         />
-        {hosted !== null && monthly !== null && (
-          <PlanCard
-            name={hosted.name}
-            price={formatPrice(monthly)}
-            priceQualifier={`per ${hosted.billing.unit.label} / month`}
-            priceTooltip={monthly.tooltip}
-            features={hosted.features}
-            actionHref={HOSTED_HUB_URL}
-            actionLabel="Start 14-day trial"
-            featured
-          />
-        )}
+        <PlanCard
+          name={hosted.name}
+          price={formatPrice(hosted.price)}
+          priceQualifier={`per ${hosted.billing.unit.label} / ${formatBillingPeriod(hosted.price)}`}
+          priceTooltip={hosted.price.tooltip}
+          features={hosted.features}
+          actionHref={HOSTED_HUB_URL}
+          actionLabel="Start free trial"
+          featured
+        />
       </div>
     </section>
   );
@@ -179,12 +176,16 @@ function InfoTip({ text }: { text: string }) {
   );
 }
 
-function formatPrice(price: HubBillingPlan["prices"][number]): string {
+function formatPrice(price: HubHostedOffer["price"]): string {
   return new Intl.NumberFormat("en", {
     style: "currency",
     currency: price.currency.toUpperCase(),
     minimumFractionDigits: 0,
   }).format(price.unitAmount / 100);
+}
+
+function formatBillingPeriod(price: HubHostedOffer["price"]): string {
+  return price.intervalCount === 1 ? "month" : `${price.intervalCount} months`;
 }
 
 const TRIGGER_SURFACES = [
@@ -531,8 +532,7 @@ function FaqSection() {
           you want.
         </FAQItem>
         <FAQItem question="Is there a hosted version?">
-          Yes. The hosted service includes a 14-day free trial and runs the same Hub software you
-          can self-host.
+          Yes. The hosted service runs the same Hub software you can self-host.
         </FAQItem>
         <FAQItem question="What else is planned?">
           <p>Not built yet, listed so you know where this is going.</p>

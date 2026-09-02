@@ -3,39 +3,49 @@ import { createServerFn } from "@tanstack/react-start";
 const HUB_PLANS_URL =
   import.meta.env.VITE_HUB_PLANS_URL ?? "https://hub.paseo.sh/api/billing/plans";
 
-export interface HubBillingPlan {
-  slug: string;
+export interface HubHostedOffer {
   name: string;
   billing: {
     model: "per_unit";
     unit: { key: string; label: string };
   };
   features: Array<{ key: string; label: string; tooltip: string | null }>;
-  prices: Array<{
-    interval: "monthly" | "annual";
-    intervalCount: number;
-    unitAmount: number;
-    currency: string;
-    tooltip: string | null;
-  }>;
+  price: HubBillingPrice & { interval: "monthly" };
 }
 
-export function parseHubPlansResponse(value: unknown): HubBillingPlan[] {
+interface HubBillingPrice {
+  interval: "monthly" | "annual";
+  intervalCount: number;
+  unitAmount: number;
+  currency: string;
+  tooltip: string | null;
+}
+
+interface HubBillingPlan extends Omit<HubHostedOffer, "price"> {
+  slug: string;
+  prices: HubBillingPrice[];
+}
+
+export function parseHostedOfferResponse(value: unknown): HubHostedOffer {
   if (!isRecord(value) || !Array.isArray(value["plans"])) throw new Error("Invalid Hub plans");
-  return value["plans"].map(parsePlan);
+  const hosted = value["plans"].map(parsePlan).find((plan) => plan.slug === "hosted");
+  const price = hosted?.prices.find(isMonthlyPrice);
+  if (hosted === undefined || price === undefined) throw new Error("Hosted Hub is unavailable");
+  return {
+    name: hosted.name,
+    billing: hosted.billing,
+    features: hosted.features,
+    price,
+  };
 }
 
-export const getHubPlans = createServerFn({ method: "GET" }).handler(async () => {
-  try {
-    const response = await fetch(HUB_PLANS_URL, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!response.ok) return [];
-    return parseHubPlansResponse(await response.json());
-  } catch {
-    return [];
-  }
+export const getHostedOffer = createServerFn({ method: "GET" }).handler(async () => {
+  const response = await fetch(HUB_PLANS_URL, {
+    headers: { accept: "application/json" },
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (!response.ok) throw new Error(`Hub plans request failed (${response.status})`);
+  return parseHostedOfferResponse(await response.json());
 });
 
 function parsePlan(value: unknown): HubBillingPlan {
@@ -53,7 +63,7 @@ function parsePlan(value: unknown): HubBillingPlan {
   };
 }
 
-function parseBilling(value: unknown): HubBillingPlan["billing"] {
+function parseBilling(value: unknown): HubHostedOffer["billing"] {
   if (!isRecord(value) || value["model"] !== "per_unit" || !isRecord(value["unit"]))
     throw new Error("Invalid Hub plan billing model");
   const unit = value["unit"];
@@ -65,7 +75,7 @@ function parseBilling(value: unknown): HubBillingPlan["billing"] {
   };
 }
 
-function parseFeature(value: unknown): HubBillingPlan["features"][number] {
+function parseFeature(value: unknown): HubHostedOffer["features"][number] {
   if (
     !isRecord(value) ||
     typeof value["key"] !== "string" ||
@@ -76,11 +86,14 @@ function parseFeature(value: unknown): HubBillingPlan["features"][number] {
   return { key: value["key"], label: value["label"], tooltip: value["tooltip"] };
 }
 
-function parsePrice(value: unknown): HubBillingPlan["prices"][number] {
+function parsePrice(value: unknown): HubBillingPrice {
+  const intervalCount = isRecord(value) ? value["intervalCount"] : undefined;
   if (
     !isRecord(value) ||
     (value["interval"] !== "monthly" && value["interval"] !== "annual") ||
-    typeof value["intervalCount"] !== "number" ||
+    typeof intervalCount !== "number" ||
+    !Number.isInteger(intervalCount) ||
+    intervalCount < 1 ||
     typeof value["unitAmount"] !== "number" ||
     typeof value["currency"] !== "string" ||
     !isNullableString(value["tooltip"])
@@ -88,11 +101,17 @@ function parsePrice(value: unknown): HubBillingPlan["prices"][number] {
     throw new Error("Invalid Hub plan price");
   return {
     interval: value["interval"],
-    intervalCount: value["intervalCount"],
+    intervalCount,
     unitAmount: value["unitAmount"],
     currency: value["currency"],
     tooltip: value["tooltip"],
   };
+}
+
+function isMonthlyPrice(
+  price: HubBillingPrice,
+): price is HubBillingPrice & { interval: "monthly" } {
+  return price.interval === "monthly";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

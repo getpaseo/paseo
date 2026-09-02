@@ -8,7 +8,7 @@ category: Hub
 
 # Hosted Hub
 
-[Paseo Hub](https://hub.paseo.sh) is the managed service. Sign in or create an account to start a 14-day free trial. Hosted Hub is €15 per seat each month; members and pending invitations count as seats.
+[Paseo Hub](https://hub.paseo.sh) is the managed service. Sign in or create an account to start a free trial.
 
 To start now, [run Hub yourself](/docs/hub/self-hosting). Projects, configuration, triggers, daemons, and activity use the same model in both forms. The managed service owns its GitHub App, Slack app, and Discord application; a self-hosted Hub uses apps you create and control.
 
