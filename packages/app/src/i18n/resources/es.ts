@@ -289,6 +289,7 @@ export const es: TranslationResources = {
       zoomIn: "Acercar",
       zoomOut: "Alejar",
       resetZoom: "Restablecer vista",
+      fullscreen: "Pantalla completa",
       viewSource: "Ver fuente",
       viewDiagram: "Ver diagrama",
     },

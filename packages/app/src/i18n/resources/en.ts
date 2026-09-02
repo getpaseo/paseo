@@ -284,6 +284,7 @@ export const en = {
       zoomIn: "Zoom in",
       zoomOut: "Zoom out",
       resetZoom: "Reset view",
+      fullscreen: "Fullscreen",
       viewSource: "View source",
       viewDiagram: "View diagram",
     },
