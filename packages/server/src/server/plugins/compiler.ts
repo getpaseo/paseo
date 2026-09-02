@@ -79,6 +79,7 @@ function directoryTarget(filePath: string, pluginDirectory: string): PluginBuild
   const relative = path.relative(pluginDirectory, filePath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
   const segments = relative.split(path.sep);
+  if (segments.includes("node_modules")) return null;
   if (segments.includes("client")) return "client";
   if (segments.includes("server")) return "server";
   return null;

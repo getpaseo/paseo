@@ -205,6 +205,39 @@ export default function contribute() { void secret; return () => undefined; }`,
     );
   });
 
+  it("does not classify dependency directories as plugin runtime boundaries", async () => {
+    const entries = await createSplitPlugin();
+    const dependency = path.join(entries.directory, "node_modules", "fixture-dependency");
+    await mkdir(path.join(dependency, "client"), { recursive: true });
+    await Promise.all([
+      writeFile(
+        path.join(dependency, "package.json"),
+        JSON.stringify({ name: "fixture-dependency", main: "index.js" }),
+      ),
+      writeFile(
+        path.join(dependency, "index.js"),
+        `const { label } = require("./client/label");
+module.exports = { label };`,
+      ),
+      writeFile(
+        path.join(dependency, "client", "label.js"),
+        `module.exports = { label: "dependency client directory" };`,
+      ),
+      writeFile(
+        entries.server,
+        `import { label } from "fixture-dependency";
+export default function contribute() {
+  void label;
+  return () => undefined;
+}`,
+      ),
+    ]);
+
+    const { serverBundle } = await compilePlugin(entries);
+
+    expect(serverBundle).toContain("dependency client directory");
+  });
+
   it("builds a single runtime when the other entry is absent", async () => {
     const entries = await createSplitPlugin();
     const { clientBundle, serverBundle } = await compilePlugin({
