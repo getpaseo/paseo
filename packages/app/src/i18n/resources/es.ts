@@ -360,6 +360,7 @@ export const es: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "Importar sesión",
     filters: {
       all: "Todo",
@@ -1116,7 +1117,6 @@ export const es: TranslationResources = {
       addProject: "Agregar proyecto",
       newWorkspace: "Nuevo espacio de trabajo",
       hosts: "Hosts",
-      home: "Hogar",
       settings: "Ajustes",
       closeSidebar: "Cerrar barra lateral",
     },

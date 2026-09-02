@@ -357,6 +357,7 @@ export const ar: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "جلسة الاستيراد",
     filters: {
       all: "الجميع",
@@ -1082,7 +1083,6 @@ export const ar: TranslationResources = {
       addProject: "إضافة مشروع",
       newWorkspace: "مساحة عمل جديدة",
       hosts: "المضيفون",
-      home: "بيت",
       settings: "إعدادات",
       closeSidebar: "إغلاق الشريط الجانبي",
     },

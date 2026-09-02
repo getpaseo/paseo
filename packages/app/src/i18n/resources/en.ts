@@ -356,6 +356,7 @@ export const en = {
   },
   importSession: {
     title: "Import session",
+    chooseHostTitle: "Import from host",
     filters: {
       all: "All",
     },
@@ -1091,7 +1092,6 @@ export const en = {
       addProject: "Add project",
       newWorkspace: "New workspace",
       hosts: "Hosts",
-      home: "Home",
       settings: "Settings",
       closeSidebar: "Close sidebar",
     },
@@ -1423,7 +1423,7 @@ export const en = {
       },
       importSession: {
         title: "Import session",
-        description: "Bring in recent external CLI sessions",
+        description: "Open a Claude Code, Codex or other session you started in a terminal",
       },
       setupProviders: {
         title: "Setup providers",

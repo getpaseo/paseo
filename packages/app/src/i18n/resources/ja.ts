@@ -360,6 +360,7 @@ export const ja: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "セッションをインポート",
     filters: {
       all: "すべて",
@@ -1094,7 +1095,6 @@ export const ja: TranslationResources = {
       addProject: "プロジェクトを追加",
       newWorkspace: "新しいワークスペース",
       hosts: "ホスト",
-      home: "ホーム",
       settings: "設定",
       closeSidebar: "サイドバーを閉じる",
     },

@@ -357,6 +357,7 @@ export const zhCN: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "导入会话",
     filters: {
       all: "全部",
@@ -1074,7 +1075,6 @@ export const zhCN: TranslationResources = {
       addProject: "添加 project",
       newWorkspace: "新建工作区",
       hosts: "Hosts",
-      home: "首页",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
     },

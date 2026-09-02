@@ -359,6 +359,7 @@ export const ru: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "Импортировать сессию",
     filters: {
       all: "Все",
@@ -1098,7 +1099,6 @@ export const ru: TranslationResources = {
       addProject: "Добавить проект",
       newWorkspace: "Новое рабочее пространство",
       hosts: "Хосты",
-      home: "Главная",
       settings: "Настройки",
       closeSidebar: "Закрыть боковую панель",
     },
