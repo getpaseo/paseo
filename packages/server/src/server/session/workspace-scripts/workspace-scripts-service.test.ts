@@ -77,6 +77,7 @@ interface BuildOptions {
   project?: PersistedProjectRecord | null;
   spawnThrows?: string;
   gitService?: Pick<WorkspaceGitService, "peekSnapshot">;
+  automationError?: Error;
 }
 
 function buildService(options: BuildOptions = {}) {
@@ -119,6 +120,9 @@ function buildService(options: BuildOptions = {}) {
         port: null,
         terminalId: "terminal-1",
       };
+    },
+    assertAutomationAllowed: async () => {
+      if (options.automationError) throw options.automationError;
     },
   });
 
@@ -269,6 +273,29 @@ describe("stop", () => {
 });
 
 describe("start", () => {
+  test("refuses to start a script while repository automation is blocked", async () => {
+    const { service, emitted, spawnCalls } = buildService({
+      automationError: new Error(
+        "Setup and scripts are blocked because change request #42 comes from contributor/paseo, a different repository. Run workspace setup to allow them for this workspace.",
+      ),
+    });
+
+    await service.start(request);
+
+    expect(spawnCalls).toEqual([]);
+    expect(emitted).toContainEqual({
+      type: "start_workspace_script_response",
+      payload: {
+        requestId: "req-1",
+        workspaceId: "ws-1",
+        scriptName: "app",
+        terminalId: null,
+        error:
+          "Setup and scripts are blocked because change request #42 comes from contributor/paseo, a different repository. Run workspace setup to allow them for this workspace.",
+      },
+    });
+  });
+
   test("reports an error when workspace scripts are unavailable", async () => {
     const { service, emitted, spawnCalls } = buildService({ terminalManager: null });
     await service.start(request);

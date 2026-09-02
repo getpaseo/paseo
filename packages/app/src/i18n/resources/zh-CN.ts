@@ -491,14 +491,23 @@ export const zhCN: TranslationResources = {
         completed: "Setup 已完成",
         failed: "Setup 失败",
         workspace: "Workspace setup",
+        blocked: "设置已阻止",
       },
       status: {
         running: "正在运行",
         completed: "已完成",
         failed: "失败",
         waiting: "正在等待 setup 输出",
+        blocked: "已阻止",
       },
       waiting: "正在 setup workspace...",
+      blocked: {
+        title: "未运行设置",
+        description:
+          "此 PR 来自另一个仓库 {{repository}}。其设置和脚本可能会运行你尚未审查的代码。",
+        run: "运行设置",
+        runFailed: "运行工作区设置失败",
+      },
       empty: {
         noCommands: "此 workspace 没有运行 setup 命令。",
       },

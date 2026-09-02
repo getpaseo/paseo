@@ -495,14 +495,23 @@ export const fr: TranslationResources = {
         completed: "Configuration terminée",
         failed: "Échec de l'installation",
         workspace: "ConfigurationWorkspace",
+        blocked: "Configuration bloquée",
       },
       status: {
         running: "En cours d'exécution",
         completed: "Complété",
         failed: "Échoué",
         waiting: "En attente de la sortie de configuration",
+        blocked: "Bloqué",
       },
       waiting: "Configuration de l'espace de travail...",
+      blocked: {
+        title: "La configuration n’a pas été exécutée",
+        description:
+          "Cette PR provient de {{repository}}, un dépôt différent. Sa configuration et ses scripts pourraient exécuter du code que vous n’avez pas examiné.",
+        run: "Exécuter la configuration",
+        runFailed: "Échec de la configuration de l’espace de travail",
+      },
       empty: {
         noCommands: "Aucune commande de configuration n'a été exécutée pour cet espace de travail.",
       },

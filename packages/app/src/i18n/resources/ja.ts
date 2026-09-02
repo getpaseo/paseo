@@ -495,14 +495,23 @@ export const ja: TranslationResources = {
         completed: "セットアップ完了",
         failed: "セットアップ失敗",
         workspace: "ワークスペースセットアップ",
+        blocked: "セットアップはブロックされました",
       },
       status: {
         running: "実行中",
         completed: "完了",
         failed: "失敗",
         waiting: "セットアップ出力を待機中",
+        blocked: "ブロック済み",
       },
       waiting: "ワークスペースをセットアップ中...",
+      blocked: {
+        title: "セットアップは実行されませんでした",
+        description:
+          "このPRは別のリポジトリ {{repository}} からのものです。セットアップとスクリプトは未確認のコードを実行する可能性があります。",
+        run: "セットアップを実行",
+        runFailed: "ワークスペースのセットアップに失敗しました",
+      },
       empty: {
         noCommands: "このワークスペースでセットアップコマンドは実行されませんでした。",
       },
