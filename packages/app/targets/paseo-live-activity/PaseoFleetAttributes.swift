@@ -41,7 +41,6 @@ public struct PaseoFleetAttributes: ActivityAttributes {
     public var todoDone: Int?
     public var todoTotal: Int?
     public var permissionToolName: String?
-    public var permissionDetail: String?
     public var needsYouCount: Int
     public var runningCount: Int
     /// Whole-surface tap destination: the exact hero agent, plus the pending
@@ -65,7 +64,6 @@ public struct PaseoFleetAttributes: ActivityAttributes {
       todoDone: Int? = nil,
       todoTotal: Int? = nil,
       permissionToolName: String? = nil,
-      permissionDetail: String? = nil,
       needsYouCount: Int,
       runningCount: Int,
       heroDeepLink: String,
@@ -81,7 +79,6 @@ public struct PaseoFleetAttributes: ActivityAttributes {
       self.todoDone = todoDone
       self.todoTotal = todoTotal
       self.permissionToolName = permissionToolName
-      self.permissionDetail = permissionDetail
       self.needsYouCount = needsYouCount
       self.runningCount = runningCount
       self.heroDeepLink = heroDeepLink
@@ -97,5 +94,12 @@ public struct PaseoFleetAttributes: ActivityAttributes {
     }
   }
 
-  public init() {}
+  /// Daemon that owns this activity. Static for the activity's lifetime, which
+  /// is what lets the app find its own activity again after a relaunch and keep
+  /// one activity per connected daemon instead of one per device.
+  public var serverId: String
+
+  public init(serverId: String) {
+    self.serverId = serverId
+  }
 }

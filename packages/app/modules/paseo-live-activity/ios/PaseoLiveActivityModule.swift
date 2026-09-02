@@ -11,7 +11,6 @@ internal struct PaseoFleetStateRecord: Record {
   @Field var todoDone: Int?
   @Field var todoTotal: Int?
   @Field var permissionToolName: String?
-  @Field var permissionDetail: String?
   @Field var needsYouCount: Int = 0
   @Field var runningCount: Int = 0
   @Field var heroDeepLink: String = ""
@@ -36,7 +35,6 @@ extension PaseoFleetStateRecord {
       todoDone: todoDone,
       todoTotal: todoTotal,
       permissionToolName: permissionToolName,
-      permissionDetail: permissionDetail,
       needsYouCount: needsYouCount,
       runningCount: runningCount,
       heroDeepLink: heroDeepLink,
@@ -60,42 +58,60 @@ internal final class LiveActivityRequestFailedException: GenericException<String
   }
 }
 
-/// Owns the single fleet-mode activity.
+/// Owns one fleet activity per connected daemon.
+///
+/// Several controllers can be live at once (one per daemon the app is connected
+/// to), so every operation is keyed by `serverId` and never touches another
+/// server's activity. `PaseoFleetAttributes.serverId` is the durable key: the
+/// dictionary is only a cache, and after a relaunch or JS reload the store
+/// re-adopts activities by matching their attributes.
+///
+/// An actor because `AsyncFunction` calls from two controllers can overlap and
+/// each one suspends mid-operation (`Activity.end` is async). A plain class
+/// would let a second `start` interleave between the end and the request and
+/// leave the dictionary pointing at an activity it does not own.
 ///
 /// Isolated in its own `@available` type so the module class itself stays
 /// buildable against the app's iOS 15.1 deployment target.
 @available(iOS 16.2, *)
-internal final class PaseoFleetActivityStore {
+internal actor PaseoFleetActivityStore {
   static let shared = PaseoFleetActivityStore()
 
-  private var activity: Activity<PaseoFleetAttributes>?
+  private var activities: [String: Activity<PaseoFleetAttributes>] = [:]
+
+  /// Every live activity this app owns for `serverId`. More than one only
+  /// happens if a previous launch left one behind.
+  private func systemActivities(serverId: String) -> [Activity<PaseoFleetAttributes>] {
+    Activity<PaseoFleetAttributes>.activities.filter { $0.attributes.serverId == serverId }
+  }
 
   /// Adopts an activity that outlived the JS handle (app relaunch, JS reload).
   /// Without this, `update` after a reload would silently do nothing while a
   /// stale banner stayed on the lock screen.
-  private func liveActivity() -> Activity<PaseoFleetAttributes>? {
-    if let activity, activity.activityState == .active {
-      return activity
+  private func liveActivity(serverId: String) -> Activity<PaseoFleetAttributes>? {
+    if let cached = activities[serverId], cached.activityState == .active {
+      return cached
     }
-    let adopted = Activity<PaseoFleetAttributes>.activities.first { $0.activityState == .active }
-    activity = adopted
+    let adopted = systemActivities(serverId: serverId).first { $0.activityState == .active }
+    activities[serverId] = adopted
     return adopted
   }
 
-  private func endAll(dismissalPolicy: ActivityUIDismissalPolicy) async {
-    activity = nil
-    for existing in Activity<PaseoFleetAttributes>.activities {
+  private func endOwn(serverId: String, dismissalPolicy: ActivityUIDismissalPolicy) async {
+    activities[serverId] = nil
+    for existing in systemActivities(serverId: serverId) {
       await existing.end(nil, dismissalPolicy: dismissalPolicy)
     }
   }
 
-  func start(state: PaseoFleetAttributes.ContentState) async throws {
-    // Idempotent: one Paseo activity at a time, including leftovers from a
-    // previous launch that ActivityKit still considers live.
-    await endAll(dismissalPolicy: .immediate)
+  func start(serverId: String, state: PaseoFleetAttributes.ContentState) async throws {
+    // Idempotent per daemon: replaces this server's activity, including a
+    // leftover from a previous launch that ActivityKit still considers live.
+    // Activities belonging to other daemons are left alone.
+    await endOwn(serverId: serverId, dismissalPolicy: .immediate)
     do {
-      activity = try Activity.request(
-        attributes: PaseoFleetAttributes(),
+      activities[serverId] = try Activity.request(
+        attributes: PaseoFleetAttributes(serverId: serverId),
         content: ActivityContent(state: state, staleDate: nil),
         pushType: nil
       )
@@ -104,13 +120,17 @@ internal final class PaseoFleetActivityStore {
     }
   }
 
-  func update(state: PaseoFleetAttributes.ContentState) async {
-    guard let activity = liveActivity() else { return }
+  func update(serverId: String, state: PaseoFleetAttributes.ContentState) async {
+    guard let activity = liveActivity(serverId: serverId) else { return }
     await activity.update(ActivityContent(state: state, staleDate: nil))
   }
 
-  func end(state: PaseoFleetAttributes.ContentState, dismissAfterSeconds: Double) async {
-    guard let activity = liveActivity() else { return }
+  func end(
+    serverId: String,
+    state: PaseoFleetAttributes.ContentState,
+    dismissAfterSeconds: Double
+  ) async {
+    guard let activity = liveActivity(serverId: serverId) else { return }
     let policy: ActivityUIDismissalPolicy =
       dismissAfterSeconds > 0
       ? .after(Date().addingTimeInterval(dismissAfterSeconds))
@@ -119,7 +139,7 @@ internal final class PaseoFleetActivityStore {
       ActivityContent(state: state, staleDate: nil),
       dismissalPolicy: policy
     )
-    self.activity = nil
+    activities[serverId] = nil
   }
 }
 
@@ -132,19 +152,27 @@ public final class PaseoLiveActivityModule: Module {
       return ActivityAuthorizationInfo().areActivitiesEnabled
     }
 
-    AsyncFunction("start") { (state: PaseoFleetStateRecord) in
+    AsyncFunction("start") { (serverId: String, state: PaseoFleetStateRecord) in
       guard #available(iOS 16.2, *) else { throw LiveActivityUnsupportedException() }
-      try await PaseoFleetActivityStore.shared.start(state: state.contentState)
+      try await PaseoFleetActivityStore.shared.start(
+        serverId: serverId,
+        state: state.contentState
+      )
     }
 
-    AsyncFunction("update") { (state: PaseoFleetStateRecord) in
+    AsyncFunction("update") { (serverId: String, state: PaseoFleetStateRecord) in
       guard #available(iOS 16.2, *) else { return }
-      await PaseoFleetActivityStore.shared.update(state: state.contentState)
+      await PaseoFleetActivityStore.shared.update(
+        serverId: serverId,
+        state: state.contentState
+      )
     }
 
-    AsyncFunction("end") { (state: PaseoFleetStateRecord, dismissAfterSeconds: Double) in
+    AsyncFunction("end") {
+      (serverId: String, state: PaseoFleetStateRecord, dismissAfterSeconds: Double) in
       guard #available(iOS 16.2, *) else { return }
       await PaseoFleetActivityStore.shared.end(
+        serverId: serverId,
         state: state.contentState,
         dismissAfterSeconds: dismissAfterSeconds
       )

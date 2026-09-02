@@ -35,18 +35,19 @@ function selectPrimaryPermissionAction(
     : { id: "accept", label: "Accept" };
 }
 
+/**
+ * Never carries `request.description` or `request.input`: both can hold credentials, file
+ * paths, or arbitrary user text, and Live Activity state is rendered on the Lock Screen and
+ * expanded Dynamic Island outside the app's own access control.
+ */
 function pendingPermissionInput(agent: Agent): FleetPendingPermission | undefined {
   const request = agent.pendingPermissions.at(-1);
   if (request === undefined) {
     return undefined;
   }
-  const detailSource =
-    request.description ??
-    (request.input !== undefined ? JSON.stringify(request.input) : undefined);
   return {
     requestId: request.id,
     toolName: request.title ?? request.name,
-    detail: detailSource !== undefined ? (detailSource.split("\n")[0] ?? "") : undefined,
     sinceMs: (agent.attentionTimestamp ?? agent.lastActivityAt).getTime(),
     primaryAction: selectPrimaryPermissionAction(request),
   };

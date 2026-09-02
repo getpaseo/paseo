@@ -74,7 +74,8 @@ interface ActivityLifecycle {
   graceTimer: ReturnType<typeof setTimeout> | null;
   pendingSnapshot: FleetSnapshot | null;
   presenterEpoch: number;
-  inFlightUpdate: Promise<void> | null;
+  /** The currently running (or most recently chained) native start/update/end call, if any. */
+  presenterInFlight: Promise<void> | null;
 }
 
 function createActivityLifecycle(): ActivityLifecycle {
@@ -87,7 +88,7 @@ function createActivityLifecycle(): ActivityLifecycle {
     graceTimer: null,
     pendingSnapshot: null,
     presenterEpoch: 0,
-    inFlightUpdate: null,
+    presenterInFlight: null,
   };
 }
 
@@ -107,33 +108,43 @@ function clearGraceTimer(lifecycle: ActivityLifecycle): void {
   lifecycle.graceTimer = null;
 }
 
-async function runPresenterUpdate(
+/**
+ * Runs one native call. When nothing is in flight, `task` runs immediately (synchronously up to
+ * its first `await`), matching the pre-serialization dispatch latency. When a previous call is
+ * still in flight, `task` is chained after it instead of racing it. Either way, a later call
+ * always settles after an earlier one: a deferred `end` can't outrun an unresolved `start`, and a
+ * stale `end` can't terminate a replacement activity that started after it was scheduled.
+ */
+function enqueuePresenterTask(
   lifecycle: ActivityLifecycle,
-  snapshot: FleetSnapshot,
+  task: () => Promise<void>,
 ): Promise<void> {
+  const previous = lifecycle.presenterInFlight;
+  const run =
+    previous === null
+      ? task().catch(() => undefined)
+      : previous.then(() => task().catch(() => undefined));
+  lifecycle.presenterInFlight = run;
+  void run.finally(() => {
+    if (lifecycle.presenterInFlight === run) {
+      lifecycle.presenterInFlight = null;
+    }
+  });
+  return run;
+}
+
+function runPresenterUpdate(lifecycle: ActivityLifecycle, snapshot: FleetSnapshot): Promise<void> {
   const epoch = lifecycle.presenterEpoch;
-  if (lifecycle.activityStartMs === null) {
-    return;
-  }
-  const updatePromise = (async () => {
-    try {
-      await presenter.update(snapshot);
-    } catch {
+  return enqueuePresenterTask(lifecycle, async () => {
+    if (lifecycle.presenterEpoch !== epoch || lifecycle.activityStartMs === null) {
       return;
     }
+    await presenter.update(snapshot);
     if (lifecycle.presenterEpoch !== epoch || lifecycle.activityStartMs === null) {
       return;
     }
     lifecycle.lastMaterial = materialState(snapshot);
-  })();
-  lifecycle.inFlightUpdate = updatePromise;
-  try {
-    await updatePromise;
-  } finally {
-    if (lifecycle.inFlightUpdate === updatePromise) {
-      lifecycle.inFlightUpdate = null;
-    }
-  }
+  });
 }
 
 function scheduleDebouncedUpdate(lifecycle: ActivityLifecycle, snapshot: FleetSnapshot): void {
@@ -165,19 +176,7 @@ function endActivity(lifecycle: ActivityLifecycle, serverId: string): void {
   };
   lifecycle.activityStartMs = null;
   lifecycle.lastMaterial = null;
-  const inFlight = lifecycle.inFlightUpdate;
-  if (inFlight === null) {
-    void presenter.end(receipt).catch(() => undefined);
-    return;
-  }
-  void (async () => {
-    await inFlight.catch(() => undefined);
-    try {
-      await presenter.end(receipt);
-    } catch {
-      return;
-    }
-  })();
+  void enqueuePresenterTask(lifecycle, () => presenter.end(receipt));
 }
 
 function reconcileActivity(
@@ -208,7 +207,13 @@ function reconcileActivity(
     lifecycle.activityStartMs = Date.now();
     lifecycle.lastMaterial = materialState(snapshot);
     clearPendingUpdate(lifecycle);
-    void presenter.start(snapshot).catch(() => undefined);
+    const epoch = lifecycle.presenterEpoch;
+    void enqueuePresenterTask(lifecycle, async () => {
+      if (lifecycle.presenterEpoch !== epoch || lifecycle.activityStartMs === null) {
+        return;
+      }
+      await presenter.start(snapshot);
+    });
     return;
   }
 

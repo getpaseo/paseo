@@ -84,7 +84,6 @@ function contentStateFromHero(hero: FleetHero, snapshot: FleetSnapshot): LiveAct
     todoDone: hero.todoDone,
     todoTotal: hero.todoTotal,
     permissionToolName: hero.permissionToolName,
-    permissionDetail: hero.permissionDetail,
     needsYouCount: snapshot.needsYouCount,
     runningCount: snapshot.runningCount,
     heroDeepLink: heroDeepLinkFor(hero),
@@ -100,14 +99,20 @@ export async function start(snapshot: FleetSnapshot): Promise<void> {
   if (!supported() || snapshot.hero === null) {
     return;
   }
-  await PaseoLiveActivityModule.start(contentStateFromHero(snapshot.hero, snapshot));
+  await PaseoLiveActivityModule.start(
+    snapshot.hero.serverId,
+    contentStateFromHero(snapshot.hero, snapshot),
+  );
 }
 
 export async function update(snapshot: FleetSnapshot): Promise<void> {
   if (!supported() || snapshot.hero === null) {
     return;
   }
-  await PaseoLiveActivityModule.update(contentStateFromHero(snapshot.hero, snapshot));
+  await PaseoLiveActivityModule.update(
+    snapshot.hero.serverId,
+    contentStateFromHero(snapshot.hero, snapshot),
+  );
 }
 
 export async function end(receipt: FleetReceipt): Promise<void> {
@@ -119,6 +124,7 @@ export async function end(receipt: FleetReceipt): Promise<void> {
     agentId: receipt.agentId,
   });
   await PaseoLiveActivityModule.end(
+    receipt.serverId,
     {
       heroTitle: receipt.finishedTitle,
       heroState: "finished",

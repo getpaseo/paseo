@@ -12,8 +12,6 @@ export interface FleetHero {
   state: FleetAgentState;
   /** set when needs_you is due to a pending permission request */
   permissionToolName?: string;
-  /** first line of the permission command/input, truncated to 80 chars */
-  permissionDetail?: string;
   /** id of the pending permission request driving needs_you, when applicable */
   permissionRequestId?: string;
   /** provider action link-worthy as the primary Live Activity action, per selection rules */
@@ -39,7 +37,6 @@ export interface FleetSnapshot {
 export interface FleetPendingPermission {
   requestId: string;
   toolName: string;
-  detail?: string;
   sinceMs: number;
   /** provider-selected primary action, per selection rules; absent means no primary shortcut */
   primaryAction?: { id: string; label: string };
@@ -111,14 +108,6 @@ function compareActiveFleetAgents(a: ActiveFleetAgent, b: ActiveFleetAgent): num
   return a.index - b.index;
 }
 
-function truncatePermissionDetail(detail: string | undefined): string | undefined {
-  if (detail === undefined) {
-    return undefined;
-  }
-  const firstLine = detail.split("\n")[0] ?? "";
-  return firstLine.slice(0, 80);
-}
-
 function heroState(input: FleetAgentInput): FleetAgentState {
   if (input.pendingPermission !== undefined) {
     return "needs_you";
@@ -152,7 +141,6 @@ function buildHero(input: FleetAgentInput): FleetHero {
     title: input.title,
     state: heroState(input),
     permissionToolName: input.pendingPermission?.toolName,
-    permissionDetail: truncatePermissionDetail(input.pendingPermission?.detail),
     permissionRequestId: input.pendingPermission?.requestId,
     permissionPrimaryAction: input.pendingPermission?.primaryAction,
     phase: input.phase,

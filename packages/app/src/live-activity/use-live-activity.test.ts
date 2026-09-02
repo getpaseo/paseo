@@ -106,10 +106,10 @@ describe("useLiveActivity", () => {
     expect(presenterMock.start.mock.calls[0]?.[0]?.hero?.agentId).toBe("agent-1");
   });
 
-  it("debounces an update 1000ms after a material change, keeping the hero via hysteresis", () => {
+  it("debounces an update 1000ms after a material change, keeping the hero via hysteresis", async () => {
     renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
 
-    act(() => {
+    await act(async () => {
       setAgents([
         makeAgent({
           id: "agent-1",
@@ -164,10 +164,10 @@ describe("useLiveActivity", () => {
     expect(presenterMock.update).not.toHaveBeenCalled();
   });
 
-  it("ends the activity with a receipt after a 120s grace period once the fleet goes inactive", () => {
+  it("ends the activity with a receipt after a 120s grace period once the fleet goes inactive", async () => {
     renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
 
-    act(() => {
+    await act(async () => {
       setAgents([makeAgent({ status: "running", activeTurn: { turnId: "t1", startedAt: NOW } })]);
     });
     expect(presenterMock.start).toHaveBeenCalledTimes(1);
@@ -192,10 +192,10 @@ describe("useLiveActivity", () => {
     expect(presenterMock.end.mock.calls[0]?.[0]?.agentId).toBe("agent-1");
   });
 
-  it("debounces an update when the pending permission's requestId changes while the hero stays needs_you", () => {
+  it("debounces an update when the pending permission's requestId changes while the hero stays needs_you", async () => {
     renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
 
-    act(() => {
+    await act(async () => {
       setAgents([
         makeAgent({
           status: "idle",
@@ -250,10 +250,10 @@ describe("useLiveActivity", () => {
     expect(presenterMock.start).toHaveBeenCalledTimes(1);
   });
 
-  it("ends immediately on unmount, bypassing the grace period", () => {
+  it("ends immediately on unmount, bypassing the grace period", async () => {
     const { unmount } = renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
 
-    act(() => {
+    await act(async () => {
       setAgents([makeAgent({ status: "running", activeTurn: { turnId: "t1", startedAt: NOW } })]);
     });
     expect(presenterMock.start).toHaveBeenCalledTimes(1);
@@ -265,10 +265,10 @@ describe("useLiveActivity", () => {
     expect(presenterMock.end).toHaveBeenCalledTimes(1);
   });
 
-  it("ends immediately when the daemon disconnects", () => {
+  it("ends immediately when the daemon disconnects", async () => {
     const { rerender } = renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
 
-    act(() => {
+    await act(async () => {
       setAgents([makeAgent({ status: "running", activeTurn: { turnId: "t1", startedAt: NOW } })]);
     });
     expect(presenterMock.start).toHaveBeenCalledTimes(1);
@@ -281,10 +281,10 @@ describe("useLiveActivity", () => {
     expect(presenterMock.end).toHaveBeenCalledTimes(1);
   });
 
-  it("does not apply a debounced update after the activity has ended", () => {
+  it("does not apply a debounced update after the activity has ended", async () => {
     renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
 
-    act(() => {
+    await act(async () => {
       setAgents([makeAgent({ status: "running", activeTurn: { turnId: "t1", startedAt: NOW } })]);
     });
     act(() => {
@@ -344,10 +344,10 @@ describe("useLiveActivity", () => {
     expect(presenterMock.update).not.toHaveBeenCalled();
   });
 
-  it("delivers a pending material update after the fleet resumes within the grace period", () => {
+  it("delivers a pending material update after the fleet resumes within the grace period", async () => {
     renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
 
-    act(() => {
+    await act(async () => {
       setAgents([
         makeAgent({
           id: "agent-1",
@@ -398,10 +398,10 @@ describe("useLiveActivity", () => {
     expect(presenterMock.update.mock.calls[0]?.[0]?.runningCount).toBe(2);
   });
 
-  it("starts again and resets hysteresis after reconnecting to an active fleet", () => {
+  it("starts again and resets hysteresis after reconnecting to an active fleet", async () => {
     const { rerender } = renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
 
-    act(() => {
+    await act(async () => {
       setAgents([
         makeAgent({
           id: "agent-hero",
@@ -418,13 +418,13 @@ describe("useLiveActivity", () => {
     expect(presenterMock.start).toHaveBeenCalledTimes(1);
     expect(presenterMock.start.mock.calls[0]?.[0]?.hero?.agentId).toBe("agent-fresher");
 
-    act(() => {
+    await act(async () => {
       hostRuntimeMock.useHostRuntimeIsConnected.mockReturnValue(false);
       rerender();
     });
     expect(presenterMock.end).toHaveBeenCalledTimes(1);
 
-    act(() => {
+    await act(async () => {
       hostRuntimeMock.useHostRuntimeIsConnected.mockReturnValue(true);
       rerender();
     });
@@ -433,10 +433,10 @@ describe("useLiveActivity", () => {
     expect(presenterMock.start.mock.calls[1]?.[0]?.hero?.agentId).toBe("agent-fresher");
   });
 
-  it("suppresses a pending debounced update when the daemon disconnects", () => {
+  it("suppresses a pending debounced update when the daemon disconnects", async () => {
     const { rerender } = renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
 
-    act(() => {
+    await act(async () => {
       setAgents([makeAgent({ status: "running", activeTurn: { turnId: "t1", startedAt: NOW } })]);
     });
     act(() => {
@@ -477,7 +477,7 @@ describe("useLiveActivity", () => {
 
     const { rerender } = renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
 
-    act(() => {
+    await act(async () => {
       setAgents([makeAgent({ status: "running", activeTurn: { turnId: "t1", startedAt: NOW } })]);
     });
     act(() => {
@@ -507,6 +507,70 @@ describe("useLiveActivity", () => {
 
     expect(presenterMock.update).toHaveBeenCalledTimes(1);
     expect(presenterMock.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for an unresolved start before ending the activity", async () => {
+    let resolveStart: (() => void) | undefined;
+    presenterMock.start.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveStart = resolve;
+        }),
+    );
+    const { rerender } = renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
+
+    act(() => {
+      setAgents([makeAgent({ status: "running", activeTurn: { turnId: "t1", startedAt: NOW } })]);
+    });
+    expect(presenterMock.start).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      hostRuntimeMock.useHostRuntimeIsConnected.mockReturnValue(false);
+      rerender();
+    });
+    expect(presenterMock.end).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveStart?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(presenterMock.end).toHaveBeenCalledTimes(1);
+  });
+
+  it("waits for an unresolved end before starting a replacement activity", async () => {
+    let resolveEnd: (() => void) | undefined;
+    presenterMock.end.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveEnd = resolve;
+        }),
+    );
+    const { rerender } = renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
+
+    await act(async () => {
+      setAgents([makeAgent({ status: "running", activeTurn: { turnId: "t1", startedAt: NOW } })]);
+    });
+    expect(presenterMock.start).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      hostRuntimeMock.useHostRuntimeIsConnected.mockReturnValue(false);
+      rerender();
+    });
+    expect(presenterMock.end).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      hostRuntimeMock.useHostRuntimeIsConnected.mockReturnValue(true);
+      rerender();
+    });
+    expect(presenterMock.start).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveEnd?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(presenterMock.start).toHaveBeenCalledTimes(2);
   });
 
   it("does not start an activity for finished-attention-only agents", () => {

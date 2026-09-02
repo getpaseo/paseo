@@ -118,7 +118,6 @@ describe("deriveFleetAgentInputs", () => {
     expect(input?.pendingPermission).toEqual({
       requestId: "p1",
       toolName: "Run bash",
-      detail: "ls -la",
       sinceMs: attentionTimestamp.getTime(),
       primaryAction: { id: "accept", label: "Accept" },
     });
@@ -132,20 +131,33 @@ describe("deriveFleetAgentInputs", () => {
     expect(input?.pendingPermission?.toolName).toBe("bash");
   });
 
-  it("falls back to the input's first line when a pending permission has no description", () => {
+  it("never copies request.description or request.input into the Live Activity permission state", () => {
+    const attentionTimestamp = new Date("2026-04-01T02:45:00.000Z");
     const agent = makeAgent({
+      attentionTimestamp,
       pendingPermissions: [
         {
           id: "p1",
           provider: "codex",
           name: "bash",
           kind: "tool",
-          input: { command: "rm -rf /tmp\nnext" },
+          description: "Export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+          input: {
+            command: "curl -H 'Authorization: Bearer sk-live-topsecret' https://api.example.com",
+          },
         },
       ],
     });
     const [input] = derive([agent]);
-    expect(input?.pendingPermission?.detail).toBe(JSON.stringify({ command: "rm -rf /tmp\nnext" }));
+    expect(input?.pendingPermission).toEqual({
+      requestId: "p1",
+      toolName: "bash",
+      sinceMs: attentionTimestamp.getTime(),
+      primaryAction: { id: "accept", label: "Accept" },
+    });
+    const serialized = JSON.stringify(input?.pendingPermission);
+    expect(serialized).not.toContain("AWS_SECRET_ACCESS_KEY");
+    expect(serialized).not.toContain("sk-live-topsecret");
   });
 
   it("falls back to lastActivityAt for a pending permission's sinceMs when attentionTimestamp is unset", () => {

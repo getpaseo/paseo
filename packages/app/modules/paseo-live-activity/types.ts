@@ -17,7 +17,6 @@ export interface LiveActivityContentState {
   todoDone?: number;
   todoTotal?: number;
   permissionToolName?: string;
-  permissionDetail?: string;
   needsYouCount: number;
   runningCount: number;
   /** opens the exact hero agent; used for widgetURL on Lock Screen/banner/compact/minimal */
@@ -31,10 +30,19 @@ export interface LiveActivityContentState {
 export interface PaseoLiveActivityModule {
   /** false on Android, web, iOS < 16.2, or Activities disabled in Settings */
   isSupported(): boolean;
-  /** idempotent: replaces any existing Paseo activity */
-  start(state: LiveActivityContentState): Promise<void>;
-  /** no-op when no activity is live */
-  update(state: LiveActivityContentState): Promise<void>;
-  /** pushes final frame, dismisses after dismissAfterSeconds */
-  end(state: LiveActivityContentState, dismissAfterSeconds: number): Promise<void>;
+  /**
+   * Idempotent per daemon: replaces this server's activity and leaves activities
+   * belonging to other daemons alone. `serverId` becomes the activity's static
+   * `PaseoFleetAttributes.serverId`, which is how the native side finds this
+   * server's activity again after an app relaunch.
+   */
+  start(serverId: string, state: LiveActivityContentState): Promise<void>;
+  /** no-op when this server has no live activity */
+  update(serverId: string, state: LiveActivityContentState): Promise<void>;
+  /** pushes this server's final frame, dismisses after dismissAfterSeconds */
+  end(
+    serverId: string,
+    state: LiveActivityContentState,
+    dismissAfterSeconds: number,
+  ): Promise<void>;
 }

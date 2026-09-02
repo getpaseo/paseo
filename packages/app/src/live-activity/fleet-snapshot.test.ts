@@ -39,7 +39,6 @@ describe("selectFleetSnapshot", () => {
         title: "a1",
         state: "running",
         permissionToolName: undefined,
-        permissionDetail: undefined,
         phase: "editing",
         todoDone: undefined,
         todoTotal: undefined,
@@ -192,24 +191,6 @@ describe("selectFleetSnapshot", () => {
     const snapshot = selectFleetSnapshot(agents, null);
     expect(snapshot.needsYouCount).toBe(3);
     expect(snapshot.runningCount).toBe(1);
-  });
-
-  it("truncates permission detail to its first line and 80 characters", () => {
-    const longLine = "x".repeat(120);
-    const agents = [
-      agent({
-        agentId: "blocked",
-        pendingPermission: {
-          requestId: "req-blocked",
-          toolName: "bash",
-          detail: `${longLine}\nsecond line`,
-          sinceMs: 100,
-        },
-      }),
-    ];
-    const snapshot = selectFleetSnapshot(agents, null);
-    expect(snapshot.hero?.permissionDetail).toBe(longLine.slice(0, 80));
-    expect(snapshot.hero?.permissionDetail).toHaveLength(80);
   });
 
   it("computes longestRunningSinceMs from plain running agents only", () => {

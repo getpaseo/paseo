@@ -92,13 +92,6 @@ extension PaseoFleetAttributes.ContentState {
     return "Approve: \(tool)"
   }
 
-  fileprivate var monospacedDetail: String? {
-    guard heroState == .needsYou, let detail = permissionDetail, !detail.isEmpty else {
-      return nil
-    }
-    return detail
-  }
-
   fileprivate var phaseLine: String? {
     guard let phase, !phase.isEmpty else { return nil }
     return phase
@@ -282,12 +275,6 @@ private struct LockScreenBanner: View {
           .font(.caption.weight(.semibold))
           .foregroundStyle(PaseoColor.needsYou)
           .lineLimit(1)
-        if let detail = state.monospacedDetail {
-          Text(detail)
-            .font(.caption2.monospaced())
-            .foregroundStyle(.secondary)
-            .lineLimit(2)
-        }
       }
 
       if let phase = state.phaseLine {
@@ -350,12 +337,6 @@ struct PaseoFleetLiveActivity: Widget {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(PaseoColor.needsYou)
                 .lineLimit(1)
-              if let detail = state.monospacedDetail {
-                Text(detail)
-                  .font(.caption2.monospaced())
-                  .foregroundStyle(.secondary)
-                  .lineLimit(1)
-              }
             }
 
             if let phase = state.phaseLine {
