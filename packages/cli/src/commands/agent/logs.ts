@@ -155,6 +155,13 @@ export async function runLogsCommand(
       return;
     }
 
+    const opts = _command.optsWithGlobals();
+    if (opts.json || opts.format === "json") {
+      const itemsToKeep = tailCount !== undefined ? timelineItems.slice(-tailCount) : timelineItems;
+      console.log(JSON.stringify(itemsToKeep, null, 2));
+      return;
+    }
+
     const transcript = formatAgentActivityTranscript(timelineItems, tailCount);
     console.log(transcript);
   } catch (err) {
