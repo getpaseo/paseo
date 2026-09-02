@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { StreamItem } from "@/types/stream";
+import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
+import { findMountedWindowStart } from "./history-window";
 import { buildAgentStreamRenderModel } from "./model";
 
 function createTimestamp(seed: number): Date {
@@ -72,6 +74,31 @@ describe("buildAgentStreamRenderModel", () => {
       completedAt: tail[3]?.timestamp,
       durationMs: 1000,
     });
+  });
+
+  it("keeps the mounted boundary stable when a transformer filters an earlier item", () => {
+    const tail = [
+      userMessage("filtered", 1),
+      assistantMessage("hidden", 2),
+      userMessage("visible-u", 3),
+      assistantMessage("visible-a", 4),
+    ];
+
+    const projectedTail = projectPluginTimelineItems(tail, ({ sourceId }) =>
+      sourceId === "filtered" ? [] : undefined,
+    );
+    const historyStart = findMountedWindowStart({ items: projectedTail, minMountedCount: 2 });
+    const model = buildAgentStreamRenderModel({
+      isTurnActive: false,
+      activeTurnStartedAt: null,
+      tail: projectedTail,
+      head: [],
+      platform: "native",
+      isMobileBreakpoint: false,
+      historyStart,
+    });
+
+    expect(model.history.map((item) => item.id)).toEqual(["visible-a", "visible-u"]);
   });
 
   it("keeps head separate from committed history on desktop web", () => {

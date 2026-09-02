@@ -1,101 +1,112 @@
-import { describe, expect, it } from "vitest";
-import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import { describe, expect, it, vi } from "vitest";
+import type { StreamItem } from "@/types/stream";
 import type { TimelineItemTransform } from "./model";
-import {
-  processAgentStreamEvent,
-  processTimelineResponse,
-} from "@/timeline/session-stream-reducers";
+import { projectPluginTimelineItems } from "./projection";
 
-const transform: TimelineItemTransform = (item) => {
-  if (item.type !== "tool_call" || item.status === "running") return;
-  return [
-    {
-      type: "plugin",
-      pluginId: "reports",
-      kind: "test-report",
-      version: 1,
-      data: { name: item.name },
-    },
-  ];
-};
-
-const event: AgentStreamEventPayload = {
-  type: "timeline",
-  provider: "claude",
-  item: {
-    type: "tool_call",
-    callId: "call-1",
-    name: "tests",
-    detail: { type: "unknown", input: null, output: null },
-    status: "completed",
-    error: null,
-  },
-};
+function thought(text: string, status: "loading" | "ready" = "loading"): StreamItem {
+  return {
+    kind: "thought",
+    id: "thought-1",
+    text,
+    status,
+    timestamp: new Date("2026-01-01T00:00:00.000Z"),
+  };
+}
 
 describe("plugin timeline projection", () => {
-  it("applies the same transform to fetched projected history", () => {
-    const result = processTimelineResponse({
+  it("does not expose mutable tool detail from stream state", () => {
+    const detail = { type: "read" as const, filePath: "/repo/original.ts" };
+    const source: StreamItem = {
+      kind: "tool_call",
+      id: "tool-1",
+      timestamp: new Date("2026-01-01T00:00:00.000Z"),
       payload: {
-        agentId: "agent-1",
-        direction: "tail",
-        projection: "projected",
-        reset: true,
-        epoch: "epoch-1",
-        window: { minSeq: 1, maxSeq: 1, nextSeq: 2 },
-        startCursor: { seq: 1 },
-        endCursor: { seq: 1 },
-        entries: [
-          {
-            seqStart: 1,
-            seqEnd: 1,
-            provider: "claude",
-            item: event.item,
-            timestamp: "2026-01-01T00:00:00.000Z",
-          },
-        ],
-        error: null,
-        hasNewer: false,
-        hasOlder: false,
+        source: "agent",
+        data: {
+          provider: "claude",
+          callId: "call-1",
+          name: "Read",
+          status: "completed",
+          error: null,
+          detail,
+        },
       },
-      currentTail: [],
-      currentHead: [],
-      currentCursor: undefined,
-      isInitializing: true,
-      hasActiveInitDeferred: true,
-      initRequestDirection: "tail",
-      sendingClientMessageIds: [],
-      transformTimelineItem: transform,
-    });
+    };
+    const mutateDetail: TimelineItemTransform = ({ item }) => {
+      if (item.type === "tool_call" && item.detail.type === "read") {
+        item.detail.filePath = "/repo/mutated.ts";
+      }
+      return undefined;
+    };
 
-    expect(result.tail).toMatchObject([
+    expect(() => projectPluginTimelineItems([source], mutateDetail)).toThrow(TypeError);
+    expect(detail.filePath).toBe("/repo/original.ts");
+  });
+
+  it("projects a streaming reasoning row from its first delta", () => {
+    const transform: TimelineItemTransform = vi.fn(({ item, phase, sourceId }) => [
+      {
+        type: "plugin" as const,
+        id: `${sourceId}/0`,
+        pluginId: "inline-thinking",
+        kind: "reasoning",
+        version: 1,
+        data: { text: item.type === "reasoning" ? item.text : "", phase },
+      },
+    ]);
+
+    expect(projectPluginTimelineItems([thought("First")], transform)).toMatchObject([
       {
         kind: "plugin",
-        pluginId: "reports",
-        itemKind: "test-report",
-        data: { name: "tests" },
-        timelineCursor: { epoch: "epoch-1", seq: 1 },
+        id: "inline-thinking/thought-1/0",
+        data: { text: "First", phase: "streaming" },
       },
     ]);
   });
 
-  it("requests authoritative projection when a live delta matches", () => {
-    const result = processAgentStreamEvent({
-      event,
-      seq: 1,
-      epoch: "epoch-1",
-      currentTail: [],
-      currentHead: [],
-      currentCursor: undefined,
-      timestamp: new Date("2026-01-01T00:00:00.000Z"),
-      transformTimelineItem: transform,
-    });
+  it("memoizes projection on the source row reference", () => {
+    const source = thought("Stable");
+    const transform: TimelineItemTransform = vi.fn(() => undefined);
+    projectPluginTimelineItems([source], transform);
+    projectPluginTimelineItems([source], transform);
 
-    expect(result.tail).toMatchObject([
+    expect(transform).toHaveBeenCalledOnce();
+  });
+
+  it("reprojects when streaming produces a new source row", () => {
+    const transform: TimelineItemTransform = vi.fn(() => undefined);
+    projectPluginTimelineItems([thought("First")], transform);
+    projectPluginTimelineItems([thought("First second")], transform);
+
+    expect(transform).toHaveBeenCalledTimes(2);
+  });
+
+  it("filters and explodes source rows", () => {
+    const source = thought("Split", "ready");
+    const exploded = projectPluginTimelineItems([source], ({ sourceId }) => [
       {
-        kind: "tool_call",
-        timelineCursor: { epoch: "epoch-1", seq: 1 },
+        type: "plugin",
+        id: `${sourceId}/left`,
+        pluginId: "split",
+        kind: "part",
+        version: 1,
+        data: { side: "left" },
+      },
+      {
+        type: "plugin",
+        id: `${sourceId}/right`,
+        pluginId: "split",
+        kind: "part",
+        version: 1,
+        data: { side: "right" },
       },
     ]);
-    expect(result.sideEffects).toContainEqual({ type: "reproject" });
+    const filtered = projectPluginTimelineItems([source], () => []);
+
+    expect(exploded.map((item) => item.id)).toEqual([
+      "split/thought-1/left",
+      "split/thought-1/right",
+    ]);
+    expect(filtered).toEqual([]);
   });
 });

@@ -13,6 +13,8 @@ Local plugins are directory sources installed into one Paseo daemon. A plugin ca
 - React Native surfaces and sidebar items to Paseo clients;
 - workspace and agent panels opened as workspace tabs;
 - global, workspace, and agent actions in the Command Center;
+- client slash commands in the message composer;
+- transformed and daemon-pushed agent timeline rows;
 - dark themes in Settings → Appearance;
 - schema-validated RPC handlers running beside the daemon;
 - normal Paseo operations through the TypeScript SDK;
@@ -39,7 +41,9 @@ The required root manifest is `paseo-plugin.json`. It contains the default plugi
 { "id": "my-plugin" }
 ```
 
-The entry point is `index.ts` at the plugin root. Plugin, surface, sidebar-item, workspace-panel, Command Center item, and attachment-source IDs start with a lowercase letter and contain lowercase letters, numbers, or hyphens.
+The entry point is `index.ts` at the plugin root. Plugin, surface, sidebar-item, workspace-panel,
+Command Center item, and attachment-source IDs start with a lowercase letter and contain lowercase
+letters, numbers, or hyphens. Client slash-command names follow the same rule.
 
 The generated `package.json` installs `@getpaseo/plugin` and the other host modules as development
 dependencies for local typechecking and tests. Paseo supplies their runtime instances. Consumers do
@@ -271,9 +275,9 @@ Showing another toast replaces the currently visible toast. An empty message is 
 
 ## Timeline items
 
-A plugin can replace a projected timeline entry with its own data and React Native renderer. Both
-registrations are client contributions. A matching live event refreshes the projected tail before
-replacement, so provider lifecycle deltas are never exposed as plugin items.
+A plugin can replace an agent timeline entry with its own data and React Native renderer. Both
+registrations are client contributions. Paseo applies the transformer while building the render
+model, including every live streaming update.
 
 ```tsx
 import type { PluginContext, PluginTimelineItemProps } from "@getpaseo/plugin";
@@ -290,15 +294,14 @@ export default function contribute(plugin: PluginContext) {
   plugin.addTimelineTransformer({
     id: "command-card",
     query: { itemType: "tool_call" },
-    transform({ item }) {
-      if (item.status === "running") return;
+    transform({ item, phase }) {
       return {
         items: [
           {
             type: "plugin",
             kind: "command-card",
             version: 1,
-            data: { label: item.name },
+            data: { label: item.name, phase },
           },
         ],
       };
@@ -316,15 +319,49 @@ export default function contribute(plugin: PluginContext) {
 
 `query.itemType` is the stable, coarse selector. Inspect the selected item inside `transform` for
 provider- or tool-specific recognition. Returning `undefined` keeps the original entry. Returning
-`items` replaces it; an empty array removes it. Item `data` must be JSON-compatible.
+`items` replaces it; an empty array removes it. Item `data` must be JSON-compatible. The `phase`
+input is `"streaming"` for running tool calls and loading reasoning, and `"complete"` otherwise.
+Each replacement may set an optional plugin-local `id`; otherwise Paseo uses its index within that
+source item's output.
 
 Renderers receive `agentId`, `item`, `timestamp`, `theme`, `host`, and `layout`. Paseo validates
 `item.data` with the registered schema before rendering. Keep transformers synchronous and
-deterministic because Paseo reruns them while reconciling projected history.
+deterministic. Paseo memoizes results by source-item reference and derives replacement identity from
+the source row, so updates to one streaming item do not remount its renderer. Use the exported
+`useRevealedText(text, phase)` hook when a renderer should pace streaming text like Paseo's built-in
+assistant rows.
 
-Check `navigation` before showing an action that depends on it. Older Paseo clients leave the
-capability undefined. Let Paseo own route construction so the action works without reloading on
-desktop, browser, iOS, and Android.
+### Append a timeline row from the daemon
+
+A server handler can add a plugin-owned row to canonical history:
+
+```ts
+import type { PluginHandlerContext } from "@getpaseo/plugin";
+
+async function publishReview(agentId: string, { paseo }: PluginHandlerContext) {
+  await paseo.agents.ref(agentId).timeline.append({
+    type: "plugin",
+    id: "review",
+    kind: "review-result",
+    version: 1,
+    data: { verdict: "ready" },
+  });
+}
+```
+
+| Field     | Type             | Required | Behavior                                                       |
+| --------- | ---------------- | -------- | -------------------------------------------------------------- |
+| `type`    | `"plugin"`       | Yes      | Selects the plugin timeline variant.                           |
+| `id`      | `string`         | Yes      | Stable plugin-local identity. Reusing it replaces the old row. |
+| `kind`    | `string`         | Yes      | Selects the registered renderer.                               |
+| `version` | positive integer | Yes      | Selects the renderer contract version.                         |
+| `data`    | JSON-compatible  | Yes      | Renderer payload, at most 64 KiB after JSON serialization.     |
+
+The daemon stamps `pluginId` from the calling plugin session and rejects this RPC from non-plugin
+sessions. The row appears live, survives timeline refetches, and keeps only the latest value for the
+same plugin and `id`. If its renderer is missing, Paseo shows the existing unavailable row. Daemons
+reject `data` over the limit rather than truncating it. Daemons that support this operation
+advertise `server_info.features.pluginTimelineItems`.
 
 ## Theme and layout
 
@@ -574,6 +611,41 @@ Every callback receives:
 | `openPanel(id, options?)` | Workspace and agent | Opens a registered panel in the callback's current context. Pass `{ location: "explorer" }` to target Explorer. |
 
 An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown surface and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. Use `rpc` for plugin-specific filesystem, credential, vendor, or daemon-local work.
+
+## Client slash commands
+
+Register a command that runs entirely in the Paseo client when the user submits it from the message
+composer:
+
+```ts
+plugin.addClientSlashCommand({
+  name: "review",
+  description: "Run the review bot",
+  argumentHint: "[scope]",
+  context: "agent",
+  async onSubmit({ args, agent, rpc, openPanel }) {
+    await rpc(refreshReview, { agentId: agent.id, scope: args });
+    openPanel("review");
+  },
+});
+```
+
+| Field          | Required | Meaning                                        |
+| -------------- | -------- | ---------------------------------------------- |
+| `name`         | Yes      | Command name without the leading slash.        |
+| `description`  | Yes      | Composer autocomplete description.             |
+| `argumentHint` | Yes      | Short usage hint shown after the command name. |
+| `context`      | Yes      | `"workspace"` or `"agent"`.                    |
+| `onSubmit`     | Yes      | Client callback for the matching context.      |
+
+`onSubmit` receives the matching Command Center callback context plus `args`. For `/review src`,
+`args` is `"src"`; Paseo trims only the remainder's leading and trailing whitespace. Paseo owns the
+autocomplete row, input clearing, and error toast. A handled command is never sent to the agent.
+The compiler removes this registration from the plugin's server bundle.
+
+Precedence is built-in client commands, plugin commands, then provider commands. A lower-precedence
+collision is omitted. Built-in aliases also reserve their names. The first plugin in stable catalog
+order wins a collision between plugins. Commands do not run while the composer has attachments.
 
 ## Composer pills
 

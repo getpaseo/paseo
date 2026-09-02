@@ -8,6 +8,7 @@ import type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
   PluginClientContribution,
+  PluginClientSlashCommandContribution,
   PluginContext,
   PluginSidebarContribution,
   PluginSurfaceContribution,
@@ -27,6 +28,7 @@ interface PluginCollector {
   addSidebarItem(contribution: PluginSidebarContribution): void;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
+  addClientSlashCommand(contribution: PluginClientSlashCommandContribution): void;
   addClientSide(contribution: PluginClientContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
   addTheme(contribution: PluginThemeContribution): void;
@@ -39,6 +41,7 @@ export interface PluginRegistrationCollector {
   sidebarItems: PluginSidebarContribution[];
   workspacePanels: PluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
+  clientSlashCommands: PluginClientSlashCommandContribution[];
   clientSide: PluginClientContribution | null;
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
@@ -54,6 +57,7 @@ export function createPluginContext(
   | "addSidebarItem"
   | "addWorkspacePanel"
   | "addCommandCenterItem"
+  | "addClientSlashCommand"
   | "addClientSide"
   | "addAttachmentSource"
   | "addTheme"
@@ -72,6 +76,9 @@ export function createPluginContext(
     },
     addCommandCenterItem(contribution) {
       collector.addCommandCenterItem(contribution);
+    },
+    addClientSlashCommand(contribution) {
+      collector.addClientSlashCommand(contribution);
     },
     addClientSide(contribution) {
       collector.addClientSide(contribution);

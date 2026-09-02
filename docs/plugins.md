@@ -1,8 +1,9 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-composer pills, app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
-subprocess and evaluates the client contribution in the app runtime.
+client slash commands, timeline items, composer pills, app themes, and composer attachment sources
+from one `index.ts`. Paseo executes the server contribution in a subprocess and evaluates the client
+contribution in the app runtime.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
 
@@ -209,13 +210,13 @@ When the same plugin contribution exists on multiple hosts, Paseo shows it once 
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
 query cache. Plugin code cannot address another host.
 
-Workspace panels and Command Center items remain client contributions. The daemon transports their
-compiled bundle without interpreting placement or callbacks. Panel props contain workspace and agent
-IDs. Required-selector hooks read normalized client state synchronously and use shallow equality, so a
-panel does not subscribe to fields it does not render. Command callbacks materialize their snapshots
-only when invoked. Contribution discovery and panel opening never fetch active context through plugin
-RPC. Snapshot DTOs are deeply readonly and frozen at runtime so plugin code cannot mutate normalized
-app state or a memoized selection. Panels use one persisted
+Workspace panels, Command Center items, and client slash commands are client contributions. The
+daemon transports their compiled bundle without interpreting placement or callbacks. Panel props
+contain workspace and agent IDs. Required-selector hooks read normalized client state synchronously
+and use shallow equality, so a panel does not subscribe to fields it does not render. Command
+callbacks materialize their snapshots only when invoked. Contribution discovery and panel opening
+never fetch active context through plugin RPC. Snapshot DTOs are deeply readonly and frozen at
+runtime so plugin code cannot mutate normalized app state or a memoized selection. Panels use one persisted
 `plugin` workspace-tab target, so reload, disable, removal, and restoration resolve through the
 current installed-plugin catalog. A missing contribution renders unavailable inside the tab.
 Panels declare `locations: ["workspace", "explorer"]` to opt into Explorer hosting; omission means
@@ -275,19 +276,65 @@ the host, or unloading the app tears down the contribution.
 ## Contribute timeline items
 
 Timeline transformers and renderers are client contributions. The daemon's canonical rows and
-built-in projection stay unchanged. The app transforms fetched projected history before building
-its render model. A matching live event requests a fresh projected tail, so lifecycle deltas are
-collapsed before the transformer replaces anything.
+built-in projection stay unchanged. The app transforms each source item while building the render
+model, for both fetched history and live events. The input includes `phase: "streaming" | "complete"`.
+Paseo memoizes by source-item reference and derives every replacement ID from the source identity, so
+streaming updates preserve mounted component identity.
 
 `query.itemType` selects one public `AgentTimelineItem.type`. The callback owns any detailed
 recognition and returns plain plugin item objects. `undefined` keeps the source item, `items`
 replaces it, and an empty array removes it. Output `data` must be JSON-compatible. Paseo adds the
-runtime plugin ID, preserves the source timeline cursor, validates renderer data with its Zod
-schema, and mounts the component inside the normal plugin runtime and error boundary.
+runtime plugin ID, preserves the source timeline cursor and identity, validates renderer data with
+its Zod schema, and mounts the component inside the normal plugin runtime and error boundary. An
+optional output `id` distinguishes several stable replacements from the same source item; its output
+index is the default.
 
 Transformers run synchronously and must be deterministic. When several transformers match, the
 first one that returns a result owns that source item. Plugin and registration ordering is stable.
 See `plugin-examples/timeline-items` for the complete contract.
+
+A plugin subprocess can also append a canonical plugin row from a server handler:
+
+```ts
+await paseo.agents.ref(agentId).timeline.append({
+  type: "plugin",
+  id: "review",
+  kind: "review-result",
+  version: 1,
+  data: { status: "ready" },
+});
+```
+
+The daemon stamps the runtime `pluginId`; plugin code never supplies it. Reusing the same `id`
+replaces the previous row from that plugin on live clients and fresh timeline fetches. The row stays
+in canonical history and renders an unavailable placeholder when its renderer is not installed.
+Serialized `data` must be at most 64 KiB; the daemon rejects a larger append instead of storing a
+payload that cannot be rendered intact. The daemon advertises this RPC through
+`server_info.features.pluginTimelineItems`.
+
+## Contribute client slash commands
+
+`addClientSlashCommand` registers an agent- or workspace-context command in the composer. The
+callback runs in the app, receives the trimmed text after the command name as `args`, and receives
+the same `paseo`, `rpc`, `openSurface`, workspace, agent, and `openPanel` capabilities as the matching
+Command Center callback.
+
+```ts
+plugin.addClientSlashCommand({
+  name: "review",
+  description: "Run the review bot",
+  argumentHint: "[scope]",
+  context: "agent",
+  async onSubmit({ args, agent, rpc }) {
+    await rpc(startReview, { agentId: agent.id, scope: args });
+  },
+});
+```
+
+Paseo owns the autocomplete row, input clearing, and error toast. It never sends the command text to
+the agent. Built-in client commands win name and alias collisions, plugin commands win
+provider-command collisions, and the first plugin in stable catalog order wins collisions between
+plugins. Plugin slash commands do not run when the composer has attachments.
 
 ## Contribute composer attachments
 
