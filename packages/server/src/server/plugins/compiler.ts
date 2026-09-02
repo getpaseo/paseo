@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import type { Plugin } from "esbuild";
+import type { OnResolveResult, Plugin } from "esbuild";
 import {
   PLUGIN_CLIENT_ONLY_SDK_SPECIFIERS,
   PLUGIN_SDK_SPECIFIERS,
@@ -118,6 +118,40 @@ function findDependencyRoot(
   }
 }
 
+function moduleBoundaryError(
+  moduleLocation: PluginModuleLocation | null,
+  target: PluginBuildTarget,
+  filePath: string,
+): OnResolveResult | null {
+  if (moduleLocation === "invalid") {
+    return {
+      errors: [{ text: `Plugin modules belong in client/, server/, or shared/: ${filePath}` }],
+    };
+  }
+  if (moduleLocation === null || moduleLocation === "shared" || moduleLocation === target) {
+    return null;
+  }
+  return {
+    errors: [
+      {
+        text: `${moduleLocation}-only module cannot be imported into the plugin ${target} bundle: ${filePath}`,
+      },
+    ],
+  };
+}
+
+function lexicalBoundaryError(
+  specifier: string,
+  resolveDirectory: string,
+  pluginDirectory: string,
+  target: PluginBuildTarget,
+): OnResolveResult | null {
+  if (!specifier.startsWith(".") && !path.isAbsolute(specifier)) return null;
+  const lexicalPath = path.resolve(resolveDirectory, specifier);
+  if (!containsPath(pluginDirectory, lexicalPath)) return null;
+  return moduleBoundaryError(directoryTarget(lexicalPath, pluginDirectory), target, lexicalPath);
+}
+
 function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory: string): Plugin {
   const boundaryResolution = {};
   const linkedDependencyRoots = new Set<string>();
@@ -127,6 +161,13 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
       buildContext.onResolve({ filter: /.*/ }, async (args) => {
         if (args.kind === "entry-point") return null;
         if (args.pluginData === boundaryResolution) return null;
+        const lexicalError = lexicalBoundaryError(
+          args.path,
+          args.resolveDir,
+          pluginDirectory,
+          target,
+        );
+        if (lexicalError) return lexicalError;
         const resolution = await buildContext.resolve(args.path, {
           importer: args.importer,
           namespace: args.namespace,
@@ -145,8 +186,13 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
         const resolvedPath = resolution.path;
         const importedTarget = directoryTarget(resolvedPath, pluginDirectory);
         if (importedTarget === "invalid") {
-          if ([...linkedDependencyRoots].some((root) => containsPath(root, resolvedPath)))
+          if (
+            [...linkedDependencyRoots].some(
+              (root) => containsPath(root, args.importer) && containsPath(root, resolvedPath),
+            )
+          ) {
             return null;
+          }
           if (!args.path.startsWith(".") && !path.isAbsolute(args.path)) {
             const dependencyRoot = findDependencyRoot(resolvedPath, args.path, pluginDirectory);
             if (dependencyRoot) {
@@ -154,24 +200,9 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
               return null;
             }
           }
-          return {
-            errors: [
-              {
-                text: `Plugin modules belong in client/, server/, or shared/: ${resolvedPath}`,
-              },
-            ],
-          };
+          return moduleBoundaryError(importedTarget, target, resolvedPath);
         }
-        if (importedTarget === null || importedTarget === "shared" || importedTarget === target) {
-          return null;
-        }
-        return {
-          errors: [
-            {
-              text: `${importedTarget}-only module cannot be imported into the plugin ${target} bundle: ${resolvedPath}`,
-            },
-          ],
-        };
+        return moduleBoundaryError(importedTarget, target, resolvedPath);
       });
     },
   };

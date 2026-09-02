@@ -460,6 +460,40 @@ export default function contribute() { void secret; return () => undefined; }`,
     );
   });
 
+  it("does not let remembered linked roots hide plugin-local runtime boundaries", async () => {
+    const entries = await createSplitPlugin();
+    const linkedPackage = await mkdtemp(path.join(tmpdir(), "paseo-plugin-linked-boundary-"));
+    temporaryDirectories.push(linkedPackage);
+    await mkdir(path.join(entries.directory, "node_modules"));
+    await Promise.all([
+      writeFile(
+        path.join(linkedPackage, "package.json"),
+        JSON.stringify({ name: "fixture-dependency", main: "index.js" }),
+      ),
+      writeFile(path.join(linkedPackage, "index.js"), `module.exports = "linked dependency";`),
+      writeFile(path.join(linkedPackage, "secret.ts"), `export const secret = "linked secret";`),
+      symlink(
+        linkedPackage,
+        path.join(entries.directory, "node_modules", "fixture-dependency"),
+        process.platform === "win32" ? "junction" : "dir",
+      ),
+      symlink(
+        path.join(linkedPackage, "secret.ts"),
+        path.join(entries.directory, "server", "linked-secret.ts"),
+      ),
+      writeFile(
+        entries.client,
+        `import value from "fixture-dependency";
+import { secret } from "./server/linked-secret";
+export default function contribute() { void value; void secret; return () => undefined; }`,
+      ),
+    ]);
+
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      "server-only module cannot be imported into the plugin client bundle",
+    );
+  });
+
   it("builds a single runtime when the other entry is absent", async () => {
     const entries = await createSplitPlugin();
     const { clientBundle, serverBundle } = await compilePlugin({
