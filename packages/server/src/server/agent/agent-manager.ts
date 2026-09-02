@@ -74,7 +74,7 @@ import {
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
-import { resolveCreateAgentTitles } from "./create-agent-title.js";
+import { resolveCreateAgentTitles, resolveLastAgentTitle } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import {
   ProviderSubagentStore,
@@ -636,6 +636,20 @@ function resolveImportedAgentTitle(
 function getFirstUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): string | null {
   for (const row of rows) {
     const item = row.item;
+    if (item.type !== "user_message") {
+      continue;
+    }
+    const text = item.text.trim();
+    if (text) {
+      return text;
+    }
+  }
+  return null;
+}
+
+function getLastUserMessageTextFromRows(rows: readonly AgentTimelineRow[]): string | null {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const item = rows[i].item;
     if (item.type !== "user_message") {
       continue;
     }
@@ -1790,6 +1804,25 @@ export class AgentManager {
     }
     this.touchUpdatedAt(agent);
     await this.persistSnapshot(agent, { title: normalizedTitle });
+    this.emitState(agent, { persist: false });
+  }
+
+  private titleAutoUpdater(agent: ActiveManagedAgent, derivedTitle: string): void {
+    if (agent.internal) {
+      return;
+    }
+    if (this.agentsAwaitingInitialSnapshotPersist.has(agent.id) && this.registry) {
+      if (this.registry.get(agent.id) === null) {
+        return;
+      }
+    }
+    this.touchUpdatedAt(agent);
+    this.persistSnapshot(agent, { title: derivedTitle }).catch((err) => {
+      this.logger.warn(
+        { agentId: agent.id, title: derivedTitle, err },
+        "Failed to auto-update agent title",
+      );
+    });
     this.emitState(agent, { persist: false });
   }
 
@@ -4081,6 +4114,18 @@ export class AgentManager {
     this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
     if (event.item.type === "user_message") {
       agent.lastUserMessageAt = new Date();
+      const lastMessageText = getLastUserMessageTextFromRows(this.timelineStore.getRows(agent.id));
+      if (lastMessageText) {
+        const derivedLastTitle = resolveLastAgentTitle(lastMessageText);
+        if (derivedLastTitle) {
+          const currentTitle = this.registry
+            ? ((await this.registry.get(agent.id))?.title ?? null)
+            : null;
+          if (derivedLastTitle !== currentTitle) {
+            this.titleAutoUpdater(agent, derivedLastTitle);
+          }
+        }
+      }
       this.emitState(agent);
     }
     flags.shouldDispatchEvent = false;
