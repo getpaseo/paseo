@@ -62,7 +62,11 @@ import {
   waitForSidebarHydration,
   waitForWorkspaceInSidebar,
 } from "../support/helpers/workspace-ui";
-import { dropFileOnComposer, expectAttachmentPill } from "../support/helpers/composer";
+import {
+  dropFileOnComposer,
+  expectAttachmentPill,
+  selectGithubOption,
+} from "../support/helpers/composer";
 
 const BACKGROUND_RESOLUTION_FILE = {
   name: "background-context.json",
@@ -969,6 +973,56 @@ test.describe("New workspace flow", () => {
         title: pr.title,
         headRef: pr.branch,
       });
+      await expectComposerGithubAttachmentPill(page, {
+        number: pr.number,
+        title: pr.title,
+      });
+    } finally {
+      await ghRepo.cleanup();
+    }
+  });
+
+  test("PR added from the attachment menu becomes the starting ref until a branch is chosen", async ({
+    page,
+  }) => {
+    test.skip(!hasGithubAuth(), "Requires GitHub authentication (gh auth login)");
+
+    const ghRepo = await createTempGithubRepo({
+      category: "new-workspace-pr-menu",
+      prs: [{ title: "Attach from menu selects start ref", state: "open" }],
+    });
+    const pr = ghRepo.prs[0]!;
+
+    try {
+      const openedProject = await openProjectViaDaemon(client, pr.localPath);
+      localWorkspaceIds.add(openedProject.workspaceId);
+
+      await gotoAppShell(page);
+      await waitForSidebarHydration(page);
+      await openNewWorkspaceComposer(page, {
+        projectKey: openedProject.projectKey,
+        projectDisplayName: openedProject.projectDisplayName,
+      });
+      await selectWorkspaceIsolation(page, "worktree");
+      // The project checkout sits on the PR branch, so that branch is the untouched default.
+      await expectPickerSelected(page, pr.branch);
+
+      await selectGithubOption(page, pr.title, `change_request:${pr.number}`);
+
+      await expectStartingRefPickerTriggerPr(page, {
+        number: pr.number,
+        title: pr.title,
+        headRef: pr.branch,
+      });
+      await expectComposerGithubAttachmentPill(page, {
+        number: pr.number,
+        title: pr.title,
+      });
+
+      // An explicit branch choice afterwards wins, and the PR stays attached as context.
+      await openStartingRefPicker(page);
+      await searchAndSelectBranchInPicker(page, "main");
+      await expectPickerSelected(page, "main");
       await expectComposerGithubAttachmentPill(page, {
         number: pr.number,
         title: pr.title,
