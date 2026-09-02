@@ -17,6 +17,15 @@ vi.mock("@/constants/layout", () => ({
 vi.mock("../navigation", () => ({
   createPluginNavigation: () => ({}),
 }));
+vi.mock("../composer-pills/lifecycle", () => ({
+  createPluginClientRuntime: () => ({
+    paseo: {},
+    rpc: async () => undefined,
+    openSurface: () => undefined,
+    openPanel: () => undefined,
+    addComposerPill: () => () => undefined,
+  }),
+}));
 vi.mock("../icons", () => ({
   Icon: () => null,
   resolvePluginIcon: () => () => null,
@@ -96,6 +105,7 @@ const recoveredTimelineItem = { ...timelineItem, data: { label: "Recovered" } };
 
 const roots: Array<ReturnType<typeof createRoot>> = [];
 const containers: HTMLElement[] = [];
+const daemonClient = {} as DaemonClient;
 
 beforeEach(() => {
   vi.stubGlobal("React", React);
@@ -111,7 +121,9 @@ afterEach(() => {
 
 describe("PluginTimelineItemView", () => {
   it("validates and renders the matching plugin component", () => {
-    pluginRegistry.installCatalog("host-1", [{ id: "reports", clientBundle: bundle }]);
+    pluginRegistry.installCatalog("host-1", [{ id: "reports", clientBundle: bundle }], {
+      client: daemonClient,
+    });
 
     const markup = renderToStaticMarkup(
       <PluginTimelineItemView serverId="host-1" agentId="agent-1" item={timelineItem} />,
@@ -123,7 +135,9 @@ describe("PluginTimelineItemView", () => {
   it("contains renderer crashes to one timeline item", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    pluginRegistry.installCatalog("host-1", [{ id: "reports", clientBundle: failingBundle }]);
+    pluginRegistry.installCatalog("host-1", [{ id: "reports", clientBundle: failingBundle }], {
+      client: daemonClient,
+    });
     const container = document.createElement("div");
     containers.push(container);
     document.body.appendChild(container);
@@ -148,7 +162,9 @@ describe("PluginTimelineItemView", () => {
   it("recovers when a streaming item's data changes", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     vi.spyOn(console, "error").mockImplementation(() => undefined);
-    pluginRegistry.installCatalog("host-1", [{ id: "reports", clientBundle: recoveringBundle }]);
+    pluginRegistry.installCatalog("host-1", [{ id: "reports", clientBundle: recoveringBundle }], {
+      client: daemonClient,
+    });
     const container = document.createElement("div");
     containers.push(container);
     document.body.appendChild(container);

@@ -127,7 +127,20 @@ export interface PluginClientOpenPanelOptions extends PluginOpenPanelOptions {
 }
 
 export interface PluginClientContext extends PluginCommandCapabilities {
+  addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): PluginCleanup;
+  addSidebarItem(contribution: PluginSidebarContribution): PluginCleanup;
+  addWorkspacePanel(contribution: PluginWorkspacePanelContribution): PluginCleanup;
+  addCommandCenterItem(contribution: PluginCommandCenterItemContribution): PluginCleanup;
+  addSlashCommand(contribution: PluginClientSlashCommandContribution): PluginCleanup;
   addComposerPill(contribution: PluginComposerPillContribution): PluginCleanup;
+  addAttachmentSource(contribution: PluginAttachmentSourceContribution): PluginCleanup;
+  addTheme(contribution: PluginThemeContribution): PluginCleanup;
+  addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
+    contribution: PluginTimelineTransformerContribution<ItemType>,
+  ): PluginCleanup;
+  addTimelineRenderer<Schema extends ZodType>(
+    contribution: PluginTimelineRendererContribution<Schema>,
+  ): PluginCleanup;
   openPanel(id: string, options: PluginClientOpenPanelOptions): void;
 }
 
@@ -296,7 +309,7 @@ export interface PluginHandlerContext {
   paseo: PaseoApi;
 }
 
-export interface PluginContext {
+export interface PluginServerContext {
   handle<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
     handler: (
@@ -304,22 +317,8 @@ export interface PluginContext {
       context: PluginHandlerContext,
     ) => ZodInput<OutputSchema> | Promise<ZodInput<OutputSchema>>,
   ): void;
-  addSurface(id: string, Component: ComponentType<PluginSurfaceProps>): void;
-  addSidebarItem(contribution: PluginSidebarContribution): void;
-  addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
-  addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
-  addClientSlashCommand(contribution: PluginClientSlashCommandContribution): void;
-  addClientSide(contribution: PluginClientContribution): void;
-  addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
-  addTheme(contribution: PluginThemeContribution): void;
-  addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
-    contribution: PluginTimelineTransformerContribution<ItemType>,
-  ): void;
-  addTimelineRenderer<Schema extends ZodType>(
-    contribution: PluginTimelineRendererContribution<Schema>,
-  ): void;
 }
 
 export type PluginCleanup = () => void | Promise<void>;
 
-export type PluginContribution = (plugin: PluginContext) => PluginCleanup;
+export type PluginServerContribution = (server: PluginServerContext) => PluginCleanup;

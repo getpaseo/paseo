@@ -10,7 +10,7 @@ import {
 } from "@getpaseo/plugin";
 import { useCallback, useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
-import { incrementRpc } from "./increment.shared";
+import { incrementRpc } from "../shared/increment";
 
 export function OpenCounterPill({ theme, workspaceId, agentId }: PluginComposerPillProps) {
   const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));

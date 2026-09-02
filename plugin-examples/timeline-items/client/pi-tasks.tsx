@@ -2,7 +2,7 @@ import type { PluginTimelineItemProps } from "@getpaseo/plugin";
 import { useMemo } from "react";
 import { Text, View } from "react-native";
 import type { z } from "zod";
-import { piTaskListSchema } from "./pi-tasks";
+import { piTaskListSchema } from "../shared/pi-tasks";
 
 type TaskListData = z.output<typeof piTaskListSchema>;
 

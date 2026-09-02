@@ -478,20 +478,37 @@ export default function contribute(plugin: unknown) {
     await runtime.stopAll();
   });
 
-  it("rejects an index.ts plugin with the migration path", async () => {
+  it("loads the official Linear attachment extension", async () => {
     const directory = path.resolve(
       path.dirname(fileURLToPath(import.meta.url)),
       "../../../../../plugin-examples/linear",
     );
     const runtime = createTestRuntime();
 
-    await expect(runtime.startPlugin("linear", directory)).rejects.toThrow(
+    await runtime.startPlugin("linear", directory);
+
+    expect(runtime.catalog().map((plugin) => plugin.id)).toEqual(["linear"]);
+    expect(runtime.catalog()[0]?.clientBundle).toContain("Attach Linear issue");
+    expect(runtime.catalog()[0]?.clientBundle).not.toContain("LINEAR_API_KEY");
+    expect(runtime.catalog()[0]?.clientBundle).not.toContain("api.linear.app");
+    await runtime.stopAll();
+  });
+
+  it("rejects an index.ts plugin with the migration path", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
+    temporaryDirectories.push(directory);
+    await Promise.all([
+      writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: "legacy" })),
+      writeFile(path.join(directory, "index.ts"), "export default function contribute() {}"),
+    ]);
+    const runtime = createTestRuntime();
+
+    await expect(runtime.startPlugin("legacy", directory)).rejects.toThrow(
       "Plugin entry split is required",
     );
-    await expect(runtime.startPlugin("linear", directory)).rejects.toThrow(
+    await expect(runtime.startPlugin("legacy", directory)).rejects.toThrow(
       "https://paseo.sh/docs/plugins/migration",
     );
-    await runtime.stopAll();
   });
 
   it("loads a client-only plugin without spawning a subprocess", async () => {

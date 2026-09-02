@@ -17,7 +17,7 @@ function plugin(input: {
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
-    clientSide: null,
+    clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [

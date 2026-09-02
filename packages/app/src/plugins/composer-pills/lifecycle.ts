@@ -1,8 +1,4 @@
-import type {
-  PluginCleanup,
-  PluginClientContext,
-  PluginClientOpenPanelOptions,
-} from "@getpaseo/plugin";
+import type { PluginClientOpenPanelOptions } from "@getpaseo/plugin";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   createPluginAgentActionContext,
@@ -13,13 +9,13 @@ import { createPluginClientStateSource } from "../client-state/source";
 import { createPluginNavigation } from "../navigation";
 import { createPluginSurfaceRuntime } from "../surface-runtime";
 import type { InstalledPlugin } from "../types";
+import type { PluginClientRuntime } from "../evaluate";
 import { pluginComposerPillStore } from "./store";
 
-export function startPluginClientSide(
+export function createPluginClientRuntime(
   installation: InstalledPlugin,
   daemonClient: DaemonClient,
-): PluginCleanup {
-  if (!installation.clientSide) return () => undefined;
+): PluginClientRuntime {
   const runtime = createPluginSurfaceRuntime(daemonClient, installation.id);
   if (!runtime) throw new Error("Plugin host is offline");
   const state = createPluginClientStateSource(installation.serverId);
@@ -28,7 +24,7 @@ export function startPluginClientSide(
     runtime,
     createPluginNavigation({ serverId: installation.serverId, workspaceId: null }),
   );
-  const context: PluginClientContext = {
+  return {
     ...capabilities,
     addComposerPill(contribution) {
       return pluginComposerPillStore.add(installation, contribution);
@@ -36,25 +32,6 @@ export function startPluginClientSide(
     openPanel(panelId, options) {
       openClientPanel({ installation, runtime, state, panelId, options });
     },
-  };
-
-  let cleanup: PluginCleanup;
-  try {
-    cleanup = installation.clientSide(context);
-    if (typeof cleanup !== "function") {
-      throw new Error("Plugin client-side entrypoint must return a cleanup function");
-    }
-  } catch (error) {
-    pluginComposerPillStore.removeInstallation(installation);
-    throw error;
-  }
-
-  let stopped = false;
-  return async () => {
-    if (stopped) return;
-    stopped = true;
-    pluginComposerPillStore.removeInstallation(installation);
-    await cleanup();
   };
 }
 

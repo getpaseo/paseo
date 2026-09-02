@@ -1,6 +1,6 @@
 import type { PluginAttachmentSearchPayload } from "@getpaseo/plugin/server";
 import type { output as ZodOutput } from "zod";
-import { searchIssuesRpc } from "./issues.shared";
+import { searchIssuesRpc } from "../shared/issues";
 import { createLinearIssueSearch } from "./linear";
 
 export async function searchIssues({

@@ -1,8 +1,8 @@
-import type { PluginContext } from "@getpaseo/plugin";
-import { InlineThinking, inlineThinkingSchema } from "./thinking.client";
+import type { PluginClientContext } from "@getpaseo/plugin";
+import { InlineThinking, inlineThinkingSchema } from "./client/thinking";
 
-export default function contribute(plugin: PluginContext) {
-  plugin.addTimelineTransformer({
+export default function contribute(client: PluginClientContext) {
+  client.addTimelineTransformer({
     id: "inline-thinking",
     query: { itemType: "reasoning" },
     transform: ({ item, phase }) => ({
@@ -16,7 +16,7 @@ export default function contribute(plugin: PluginContext) {
       ],
     }),
   });
-  plugin.addTimelineRenderer({
+  client.addTimelineRenderer({
     kind: "inline-thinking",
     version: 1,
     schema: inlineThinkingSchema,

@@ -21,8 +21,8 @@ test("plugin handlers create workspaces and agents through their Paseo API", asy
     JSON.stringify({ id: "paseo-api" }),
   );
   await writeFile(
-    path.join(pluginDirectory, "index.tsx"),
-    `import { defineRpc, type PluginContext } from "@getpaseo/plugin";
+    path.join(pluginDirectory, "index.server.ts"),
+    `import { defineRpc, type PluginServerContext } from "@getpaseo/plugin";
 import { z } from "zod";
 
 const create = defineRpc({
@@ -43,8 +43,8 @@ const append = defineRpc({
   output: z.object({ seq: z.number(), epoch: z.string() }),
 });
 
-export default function contribute(plugin: PluginContext) {
-  plugin.handle(create, async ({ path }, { paseo }) => {
+export default function contribute(server: PluginServerContext) {
+  server.handle(create, async ({ path }, { paseo }) => {
     const workspace = await paseo.workspaces.create({
       source: { kind: "directory", path },
       title: "Plugin workspace",
@@ -55,11 +55,11 @@ export default function contribute(plugin: PluginContext) {
     });
     return { workspaceId: workspace.id, agentId: agent.id };
   });
-  plugin.handle(list, async (_input, { paseo }) => {
+  server.handle(list, async (_input, { paseo }) => {
     const result = await paseo.agents.list({ page: { limit: 100 } });
     return { agentIds: result.entries.map((entry) => entry.agent.id) };
   });
-  plugin.handle(append, ({ agentId, status }, { paseo }) =>
+  server.handle(append, ({ agentId, status }, { paseo }) =>
     paseo.agents.ref(agentId).timeline.append({
       type: "plugin",
       id: "review-1",
@@ -144,9 +144,9 @@ test("daemon config reload enables and disables configured plugins without resta
     JSON.stringify({ id: "reloadable-plugin" }),
   );
   await writeFile(
-    path.join(pluginDirectory, "index.tsx"),
-    `export default function contribute(plugin: unknown) {
-  void plugin;
+    path.join(pluginDirectory, "index.server.ts"),
+    `export default function contribute(server: unknown) {
+  void server;
   return () => undefined;
     }`,
   );

@@ -1,5 +1,5 @@
 import type { output as ZodOutput } from "zod";
-import { incrementRpc } from "./increment.shared";
+import { incrementRpc } from "../shared/increment";
 
 export function increment(input: ZodOutput<typeof incrementRpc.input>) {
   return {

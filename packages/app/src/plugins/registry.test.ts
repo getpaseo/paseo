@@ -1,5 +1,32 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { pluginRegistry } from "./registry";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { pluginRegistry as registry } from "./registry";
+
+vi.mock("./navigation", () => ({
+  createPluginNavigation: () => ({}),
+}));
+vi.mock("./composer-pills/lifecycle", () => ({
+  createPluginClientRuntime: () => ({
+    paseo: {},
+    rpc: async () => undefined,
+    openSurface: () => undefined,
+    openPanel: () => undefined,
+    addComposerPill: () => () => undefined,
+  }),
+}));
+
+const daemonClient = {} as DaemonClient;
+const pluginRegistry = {
+  getSnapshot: registry.getSnapshot,
+  removeHost: registry.removeHost.bind(registry),
+  installCatalog(
+    serverId: string,
+    catalog: Parameters<typeof registry.installCatalog>[1],
+    options: { replacePluginId?: string } = {},
+  ) {
+    return registry.installCatalog(serverId, catalog, { ...options, client: daemonClient });
+  },
+};
 
 function bundle(marker: string): string {
   return `(function() {
