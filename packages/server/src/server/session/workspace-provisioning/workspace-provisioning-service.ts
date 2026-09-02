@@ -115,18 +115,28 @@ export function createWorkspaceProvisioningService(deps: {
       };
     }
 
-    const projectsBeforeImport = await projectRegistry.list();
-    const workspace = await createWorkspaceForDirectory(input.cwd);
+    const [projectsBeforeImport, workspacesBeforeImport] = await Promise.all([
+      projectRegistry.list(),
+      workspaceRegistry.list(),
+    ]);
+    const workspace = await findOrCreateWorkspaceForDirectory(input.cwd);
+    const createdWorkspace = workspacesBeforeImport.some(
+      (candidate) => candidate.workspaceId === workspace.workspaceId,
+    )
+      ? null
+      : workspace;
     const previousProject =
       projectsBeforeImport.find((project) => project.projectId === workspace.projectId) ?? null;
 
     try {
       return {
         value: await operation(workspace),
-        createdWorkspace: workspace,
+        createdWorkspace,
       };
     } catch (error) {
-      await rollbackFailedImportWorkspace(workspace, previousProject);
+      if (createdWorkspace) {
+        await rollbackFailedImportWorkspace(createdWorkspace, previousProject);
+      }
       throw error;
     }
   }

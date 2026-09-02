@@ -10,6 +10,7 @@ import { gotoAppShell } from "../support/helpers/app";
 import { openCommandCenter } from "../support/helpers/command-center";
 import {
   connectNewWorkspaceDaemonClient,
+  openProjectViaDaemon,
   type OpenedProject,
 } from "../support/helpers/new-workspace";
 import { getServerId } from "../support/helpers/server-id";
@@ -49,6 +50,7 @@ test.use({
 
 interface ImportFlowScenario {
   project: OpenedProject;
+  reuseTarget: OpenedProject;
   projectName: string;
   projectRoot: string;
   worktreeDirectory: string;
@@ -97,6 +99,7 @@ test.beforeAll(async () => {
     workspaceName: project.workspace.name,
     workspaceDirectory: project.workspace.workspaceDirectory,
   };
+  const reuseTarget = await openProjectViaDaemon(client, unrelated.path);
   const importSessionId = "fixture-custom-title";
   await seedClaudeSessions({
     projectRoot: repo.path,
@@ -106,6 +109,7 @@ test.beforeAll(async () => {
   });
   scenario = {
     project: openedProject,
+    reuseTarget,
     projectName: project.workspace.projectDisplayName,
     projectRoot: repo.path,
     worktreeDirectory,
@@ -118,6 +122,7 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await client?.removeProject(scenario?.project.projectId).catch(() => undefined);
+  await client?.removeProject(scenario?.reuseTarget.projectId).catch(() => undefined);
   await client?.close().catch(() => undefined);
   await scenario?.repoCleanup().catch(() => undefined);
   await scenario?.unrelatedCleanup().catch(() => undefined);
@@ -151,7 +156,9 @@ test("captures the compact import-session journey", async ({ page }, testInfo) =
     await expect(rowFolder(page, "fixture-worktree")).toHaveText(
       `${scenario.projectName} · worktrees/review-fix`,
     );
-    await expect(rowFolder(page, "fixture-unrelated")).toHaveText(scenario.unrelatedDirectory);
+    await expect(rowFolder(page, "fixture-unrelated")).toHaveText(
+      scenario.reuseTarget.projectDisplayName,
+    );
     await expect(page.getByTestId("import-session-provider-errors")).toContainText(
       "Could not load Broken ACP sessions",
     );
@@ -221,8 +228,24 @@ test("captures the compact import-session journey", async ({ page }, testInfo) =
     await capture(page, testInfo, "09-mobile-workspace-scoped.png");
     await page.getByTestId("import-session-show-all").click();
     await expect(page.getByTestId("import-session-scope")).toContainText("Sessions on");
-    await expect(rowFolder(page, "fixture-unrelated")).toHaveText(scenario.unrelatedDirectory);
+    await expect(rowFolder(page, "fixture-unrelated")).toHaveText(
+      scenario.reuseTarget.projectDisplayName,
+    );
     await capture(page, testInfo, "10-mobile-workspace-show-all.png");
+
+    const reusedRow = page.getByTestId(rowTestId("fixture-root-03"));
+    await reusedRow.click();
+    await expect(page.getByTestId("import-session-sheet")).toHaveCount(0, { timeout: 30_000 });
+    await expect(page).toHaveURL(
+      buildHostWorkspaceRoute(getServerId(), scenario.reuseTarget.workspaceId),
+      { timeout: 30_000 },
+    );
+    const targetWorkspace = page.getByTestId(
+      `workspace-deck-entry-${getServerId()}:${scenario.reuseTarget.workspaceId}`,
+    );
+    await expect(targetWorkspace.getByTestId("user-message")).toContainText(
+      "Review fixture item 3",
+    );
   });
 });
 
