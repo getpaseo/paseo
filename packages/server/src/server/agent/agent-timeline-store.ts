@@ -196,6 +196,32 @@ export class InMemoryAgentTimelineStore {
     return cloneRow(enriched);
   }
 
+  updateSubmittedUserMessage(
+    agentId: string,
+    clientMessageId: string,
+    updates: { turnId?: string; providerMessageId?: string },
+  ): AgentTimelineRow | null {
+    const state = this.requireState(agentId);
+    const index = state.rows.findIndex(
+      (candidate) =>
+        candidate.item.type === "user_message" &&
+        candidate.item.clientMessageId === clientMessageId,
+    );
+    const row = state.rows[index];
+    if (!row || row.item.type !== "user_message") {
+      return null;
+    }
+    const updated: AgentTimelineRow = {
+      ...row,
+      ...(updates.turnId !== undefined ? { turnId: updates.turnId } : {}),
+      ...(updates.providerMessageId !== undefined
+        ? { providerMessageId: updates.providerMessageId }
+        : {}),
+    };
+    state.rows[index] = updated;
+    return cloneRow(updated);
+  }
+
   getEpoch(agentId: string): string {
     return this.requireState(agentId).epoch;
   }

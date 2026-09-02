@@ -17,10 +17,11 @@ export interface ForegroundTurnWaiter {
 }
 
 export interface PendingForegroundRun {
-  token: string;
+  readonly token: string;
   kind: "foreground";
   readonly generation: symbol;
   stagedEvents: PendingAgentSessionEvent[];
+  providerStartStarted: boolean;
   start:
     | { status: "pending" }
     | { status: "started"; turnId: string }
@@ -292,6 +293,7 @@ function createPendingForegroundRun(generation: symbol): PendingForegroundRun {
     generation,
     start: { status: "pending" },
     stagedEvents: [],
+    providerStartStarted: false,
   };
 }
 
