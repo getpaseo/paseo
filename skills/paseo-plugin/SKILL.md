@@ -71,14 +71,17 @@ The manifest supplies the default install ID:
 Each runtime has its own optional entry. A plugin must have at least one. Both entries accept
 `.ts` or `.tsx`; use `.tsx` when an entry imports components.
 
-| Path                                        | Runtime           |
-| ------------------------------------------- | ----------------- |
-| `index.client.tsx`, `client/`, `*.client.*` | App               |
-| `index.server.ts`, `server/`, `*.server.*`  | Daemon subprocess |
-| `shared/`, `*.shared.*`                     | Both              |
+| Path                             | Runtime           |
+| -------------------------------- | ----------------- |
+| `index.client.tsx` and `client/` | App               |
+| `index.server.ts` and `server/`  | Daemon subprocess |
+| `shared/`                        | Both              |
 
-A client import of `server/` or `*.server.*`, a server import of `client/` or `*.client.*`, and every
-`node:` import reachable from client code is a compile error. Shared modules contain Zod contracts
+Do not put any other code modules in the plugin root.
+
+A client import of `server/`, a server import of `client/`, and every `node:` import reachable from
+client code is a compile error. A relative import to another code file in the plugin root is also a
+compile error; move it into `client/`, `server/`, or `shared/`. Shared modules contain Zod contracts
 and plain values; they do not import Node or React Native runtime APIs.
 
 Default-export one contribution function from each entry and return cleanup:
@@ -224,13 +227,32 @@ export default function contribute(client: PluginClientContext) {
 
 Icons are Lucide icon names. `theme` is a typed `PluginTheme` on every surface and panel. Primary text uses `theme.colors.foreground`; labels use `theme.colors.foregroundMuted`; the root view uses `theme.colors.surface0`. `layout.compact` is true on mobile and narrow windows. Paseo owns the route, header, host picker, close action, error boundary, and per-installation query client.
 
-Client code may import `react`, `react-native`, `@tanstack/react-query`, `zod`, `@getpaseo/plugin`, `@getpaseo/plugin/react-native`, and `@getpaseo/plugin/server`. Install dependencies locally for typechecking; Paseo supplies these runtime modules. JSX compiles with the automatic runtime, so no `React` import is needed for JSX.
+Client code may import `react`, `react-native`, `@tanstack/react-query`, `zod`, `@getpaseo/plugin`, and `@getpaseo/plugin/react-native`. Install dependencies locally for typechecking; Paseo supplies these runtime modules. JSX compiles with the automatic runtime, so no `React` import is needed for JSX. Importing a `node:` module from client code is a compile error.
 
-| Module                          | Use it for                                                               |
-| ------------------------------- | ------------------------------------------------------------------------ |
-| `@getpaseo/plugin`              | contribution contracts, `usePaseo`, `useRpc`, `useWorkspace`, `useAgent` |
-| `@getpaseo/plugin/react-native` | Paseo UI: `Icon`, `Modal`, `useToast`, `useRevealedText`                 |
-| `@getpaseo/plugin/server`       | `defineRpc`, `defineAttachmentSource`, handler types                     |
+| Module                          | Use it for                                                                                               |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `@getpaseo/plugin`              | contribution contracts, shared definitions, RPC input/output types, `usePaseo`, `useRpc`, and data hooks |
+| `@getpaseo/plugin/react-native` | Paseo UI: `Icon`, `Modal`, `useToast`, `useRevealedText`                                                 |
+| `@getpaseo/plugin/server`       | handler-only types such as `PluginHandlerContext`                                                        |
+
+## Works on mobile
+
+Before reporting a plugin done:
+
+- Use React Native primitives only: `View`, `Text`, `Pressable`, `ScrollView`, and `TextInput`.
+- Do not use HTML elements, `className`, CSS strings, or `onClick`.
+- Put DOM globals only in `client/web.ts`. Start it with `/// <reference lib="dom" />`, gate every
+  export on `Platform.OS === "web"`, and provide the native alternative or a no-op.
+- Take colors from `theme.colors`.
+- Check the compact layout.
+
+Run this audit on `client/`:
+
+```bash
+rg -n "document\.|window\.|localStorage|navigator\.|<[a-z]+[ >]|className=|onClick=" client/
+```
+
+A hit outside `client/web.ts` is a bug.
 
 ## Choose the correct API
 
@@ -276,7 +298,7 @@ call it from client code with `useRpc()`:
 
 ```ts
 // shared/greeting.ts
-import { defineRpc } from "@getpaseo/plugin/server";
+import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
 const greeting = defineRpc({
@@ -287,15 +309,23 @@ const greeting = defineRpc({
 ```
 
 ```ts
+// server/greeting.ts
+import type { RpcInput } from "@getpaseo/plugin";
+import { greeting } from "../shared/greeting";
+
+export async function createGreeting({ name }: RpcInput<typeof greeting>) {
+  return { message: `Hello, ${name}!` };
+}
+```
+
+```ts
 // index.server.ts
 import type { PluginServerContext } from "@getpaseo/plugin";
+import { createGreeting } from "./server/greeting";
 import { greeting } from "./shared/greeting";
 
 export default function contribute(server: PluginServerContext) {
-  server.handle(greeting, async ({ name }, { paseo }) => {
-    const { config } = await paseo.config.get();
-    return { message: `${name}: plugins are ${config.pluginsEnabled ? "on" : "off"}` };
-  });
+  server.handle(greeting, createGreeting);
   return () => {};
 }
 ```
@@ -341,7 +371,7 @@ the client:
 
 ```ts
 // shared/issues.ts
-import { defineAttachmentSource, defineRpc } from "@getpaseo/plugin/server";
+import { defineAttachmentSource, defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
 const searchIssues = defineRpc({

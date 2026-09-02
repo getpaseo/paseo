@@ -140,15 +140,18 @@ log credentials or tokens.
 ## Contribute behavior and UI
 
 Default export one contribution function from each runtime entry. Keep the entries to registration
-wiring. Runtime code lives behind directory and filename boundaries:
+wiring. Runtime code lives behind directory boundaries:
 
-| Path                                        | Owns                                                                 |
-| ------------------------------------------- | -------------------------------------------------------------------- |
-| `index.client.tsx`, `client/`, `*.client.*` | React, React Native, hooks, styles, surfaces, panels, and callbacks. |
-| `index.server.ts`, `server/`, `*.server.*`  | Node APIs, filesystem and process access, credentials, and handlers. |
-| `shared/`, `*.shared.*`                     | Zod RPC contracts and plain values used by both runtimes.            |
+| Path                             | Owns                                                                 |
+| -------------------------------- | -------------------------------------------------------------------- |
+| `index.client.tsx` and `client/` | React, React Native, hooks, styles, surfaces, panels, and callbacks. |
+| `index.server.ts` and `server/`  | Node APIs, filesystem and process access, credentials, and handlers. |
+| `shared/`                        | Zod RPC contracts and plain values used by both runtimes.            |
 
-Shared files import contracts from `@getpaseo/plugin/server`. Client files import Paseo UI from
+Do not put any other code modules in the plugin root.
+
+Shared files import contract helpers and types from `@getpaseo/plugin`. Server handler files import
+`PluginHandlerContext` from `@getpaseo/plugin/server`. Client files import Paseo UI from
 `@getpaseo/plugin/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
 set; an unknown name renders nothing so it cannot break the plugin surface.
 Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
@@ -157,16 +160,23 @@ Plugin UI runs on desktop and mobile across multiple themes: color every `Text` 
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
 See `public-docs/plugins/reference.md`.
 
-| Module                          | Use it for                                               |
-| ------------------------------- | -------------------------------------------------------- |
-| `@getpaseo/plugin`              | contribution contracts and client data hooks             |
-| `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks               |
-| `@getpaseo/plugin/server`       | `defineRpc`, `defineAttachmentSource`, and handler types |
+| Module                          | Use it for                                                                                |
+| ------------------------------- | ----------------------------------------------------------------------------------------- |
+| `@getpaseo/plugin`              | contribution contracts, shared definitions, RPC input/output types, and client data hooks |
+| `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks                                                |
+| `@getpaseo/plugin/server`       | handler-only types such as `PluginHandlerContext`                                         |
 
-The compiler rejects a client import of `server/` or `*.server.*`, a server import of `client/`
-or `*.client.*`, and every `node:` import reachable from client code. Shared modules cannot import
-runtime-owned modules. These are compile errors naming the importing file and boundary rule.
-Top-level React Native calls such as `StyleSheet.create` belong in `client/` or `*.client.*`.
+The compiler rejects a client import of `server/`, a server import of `client/`, and every `node:`
+import reachable from client code. Shared modules cannot import runtime-owned modules. A relative
+import to any other code file in the plugin root is also rejected; move it into `client/`, `server/`,
+or `shared/`. These are compile errors naming the importing file and boundary rule. Top-level React
+Native calls such as `StyleSheet.create` belong in `client/`.
+
+The scaffold omits the DOM library from `tsconfig.json` so browser globals are not available by
+default. Put sanctioned web-only APIs in `client/web.ts`, start that file with its DOM library
+reference, gate each export with `Platform.OS === "web"`, and provide a native implementation or
+no-op. See the [public plugin reference](../public-docs/plugins/reference.md#works-on-mobile) for the
+complete pattern.
 
 ```ts
 // index.server.ts
