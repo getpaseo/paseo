@@ -32,5 +32,6 @@ export interface ToastApi {
 export declare const Icon: ComponentType<PluginIconProps>;
 export declare const Modal: ModalComponent;
 export declare function useToast(): ToastApi;
+export declare function useRevealedText(text: string, phase: "streaming" | "complete"): string;
 
 export type { PluginIconProps } from "./contracts.js";

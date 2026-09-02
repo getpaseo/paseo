@@ -18,6 +18,7 @@ const INBOUND_PERMISSION = {
   "agent.skills.save_selection.request": "daemon.manage",
   "agent.skills.uninstall.request": "daemon.manage",
   "agent.timeline.list_prompts.request": "workspace.read",
+  "agent.timeline.append.request": "workspace.write",
   "agent.timeline.set_subscription.request": "workspace.read",
   agent_permission_response: "workspace.write",
   archive_agent_request: "workspace.write",
@@ -197,6 +198,7 @@ const INBOUND_PERMISSION = {
   "workspace.script.stop.request": "workspace.write",
   "workspace.title.set.request": "workspace.manage",
   workspace_setup_status_request: "workspace.read",
+  "workspace.setup.run.request": "workspace.write",
   write_project_config_request: "workspace.write",
 } as const satisfies Record<InboundOperation, DaemonPermission | null>;
 
@@ -215,6 +217,7 @@ const OUTBOUND_PERMISSION = {
   "agent.skills.save_selection.response": "daemon.manage",
   "agent.skills.uninstall.response": "daemon.manage",
   "agent.timeline.list_prompts.response": "workspace.read",
+  "agent.timeline.append.response": "workspace.write",
   "agent.timeline.replacement": "workspace.read",
   "agent.timeline.set_subscription.response": "workspace.read",
   agent_archived: "workspace.read",
@@ -407,6 +410,7 @@ const OUTBOUND_PERMISSION = {
   "workspace.title.set.response": "workspace.manage",
   workspace_setup_progress: "workspace.read",
   workspace_setup_status_response: "workspace.read",
+  "workspace.setup.run.response": "workspace.write",
   workspace_update: "workspace.read",
   write_project_config_response: "workspace.write",
 } as const satisfies Record<OutboundOperation, DaemonPermission | null>;

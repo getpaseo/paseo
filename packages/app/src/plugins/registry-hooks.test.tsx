@@ -5,10 +5,10 @@ import { renderHook } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 
 vi.mock("./evaluate", () => ({
-  evaluatePluginClientBundle: vi.fn(),
+  runPluginClientBundle: vi.fn(),
 }));
-vi.mock("./composer-pills/lifecycle", () => ({
-  startPluginClientSide: vi.fn(),
+vi.mock("./client-runtime", () => ({
+  createPluginClientRuntime: vi.fn(),
 }));
 
 import { usePluginInstallations } from "./registry";

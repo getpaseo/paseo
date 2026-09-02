@@ -1,9 +1,7 @@
 import { useMemo, type ReactNode } from "react";
-import { Pressable, Text, View, type StyleProp, type ViewStyle } from "react-native";
-import { useTranslation } from "react-i18next";
-import { Info } from "lucide-react-native";
-import { StyleSheet, useUnistyles } from "react-native-unistyles";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Text, View, type StyleProp, type ViewStyle } from "react-native";
+import { StyleSheet } from "react-native-unistyles";
+import { SettingsInfoTip } from "@/screens/settings/settings-info-tip";
 
 interface SettingsGroupProps {
   title: string;
@@ -28,8 +26,6 @@ export function SettingsGroup({
   style,
   children,
 }: SettingsGroupProps) {
-  const { t } = useTranslation();
-  const { theme } = useUnistyles();
   const groupStyle = useMemo(() => [styles.group, style], [style]);
   return (
     <View style={groupStyle} testID={testID}>
@@ -37,22 +33,11 @@ export function SettingsGroup({
         <View style={styles.titleRow}>
           <Text style={styles.title}>{title}</Text>
           {info ? (
-            <Tooltip delayDuration={0} enabledOnDesktop enabledOnMobile>
-              <TooltipTrigger asChild>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={t("settings.groupInfo", { title })}
-                  testID={testID ? `${testID}-info` : undefined}
-                  hitSlop={8}
-                  style={styles.infoButton}
-                >
-                  <Info size={theme.iconSize.sm} color={theme.colors.foregroundMuted} />
-                </Pressable>
-              </TooltipTrigger>
-              <TooltipContent side="top" align="start" offset={8}>
-                <Text style={styles.tooltipText}>{info}</Text>
-              </TooltipContent>
-            </Tooltip>
+            <SettingsInfoTip
+              title={title}
+              info={info}
+              testID={testID ? `${testID}-info` : undefined}
+            />
           ) : null}
         </View>
         {trailing}
@@ -82,15 +67,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.normal,
-  },
-  infoButton: {
-    padding: theme.spacing[1],
-    marginLeft: -theme.spacing[1],
-  },
-  tooltipText: {
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    maxWidth: 280,
-    lineHeight: theme.fontSize.base * 1.4,
   },
 }));

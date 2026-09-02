@@ -10,10 +10,12 @@ export const zhCN: TranslationResources = {
       cancel: "取消",
       close: "关闭",
       copy: "复制",
+      copyLine: "复制行",
       dismiss: "关闭",
       retry: "重试",
       search: "搜索",
       select: "选择",
+      selectAll: "全选",
     },
     placeholders: {
       search: "搜索...",
@@ -33,6 +35,7 @@ export const zhCN: TranslationResources = {
     errors: {
       error: "错误",
       unableToSave: "无法保存",
+      unableToCopy: "无法复制",
       nameRequired: "名称必填",
       daemonUnavailable: "Daemon 不可用",
       daemonClientUnavailable: "Daemon client 不可用",
@@ -286,6 +289,7 @@ export const zhCN: TranslationResources = {
       zoomIn: "放大",
       zoomOut: "缩小",
       resetZoom: "重置视图",
+      fullscreen: "全屏",
       viewSource: "查看源码",
       viewDiagram: "查看图表",
     },
@@ -357,7 +361,13 @@ export const zhCN: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "导入会话",
+    searchPlaceholder: "搜索会话...",
+    scope: {
+      host: "{{host}} 上的会话",
+      workspace: "此 workspace",
+    },
     filters: {
       all: "全部",
     },
@@ -366,12 +376,13 @@ export const zhCN: TranslationResources = {
       updateHost: "更新 Host 以导入会话。",
       noProviders: "没有已启用的可导入 Provider。",
       loading: "正在加载最近会话...",
-      failedAll: "无法加载最近会话。",
-      failedProviders: "无法加载 {{providers}} 的会话。",
+      failedProvider: "无法加载 {{provider}} 的会话",
       failedImport: "无法导入所选会话。",
     },
     actions: {
       refresh: "刷新会话",
+      showAll: "显示全部",
+      loadMore: "加载更多",
     },
     preview: {
       untitledSession: "未命名会话",
@@ -379,6 +390,7 @@ export const zhCN: TranslationResources = {
     },
     empty: {
       noRecent: "没有可导入的最近会话。",
+      noMatches: "没有与搜索匹配的会话。",
       alreadyImported: "所有最近会话都已导入。",
       noProviderSessions: "没有找到 {{provider}} 会话。",
     },
@@ -491,14 +503,23 @@ export const zhCN: TranslationResources = {
         completed: "Setup 已完成",
         failed: "Setup 失败",
         workspace: "Workspace setup",
+        blocked: "设置已阻止",
       },
       status: {
         running: "正在运行",
         completed: "已完成",
         failed: "失败",
         waiting: "正在等待 setup 输出",
+        blocked: "已阻止",
       },
       waiting: "正在 setup workspace...",
+      blocked: {
+        title: "未运行设置",
+        description:
+          "此 PR 来自另一个仓库 {{repository}}。其设置和脚本可能会运行你尚未审查的代码。",
+        run: "运行设置",
+        runFailed: "运行工作区设置失败",
+      },
       empty: {
         noCommands: "此 workspace 没有运行 setup 命令。",
       },
@@ -1074,7 +1095,6 @@ export const zhCN: TranslationResources = {
       addProject: "添加 project",
       newWorkspace: "新建工作区",
       hosts: "Hosts",
-      home: "首页",
       settings: "设置",
       closeSidebar: "关闭侧边栏",
     },
@@ -1091,6 +1111,7 @@ export const zhCN: TranslationResources = {
     },
     sections: {
       sessions: "历史",
+      search: "搜索",
       schedules: "计划",
     },
     worktreeSetup: {
@@ -2071,6 +2092,12 @@ export const zhCN: TranslationResources = {
       chatOutline: {
         title: "聊天大纲",
         description: "显示用于在提示词之间跳转的大纲",
+      },
+      sidebar: {
+        title: "侧边栏",
+        description: "选择侧边栏顶部显示的项目及其顺序",
+        moveUp: "上移",
+        moveDown: "下移",
       },
       fonts: {
         title: "字体",
