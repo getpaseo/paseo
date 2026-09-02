@@ -167,6 +167,15 @@ export type TimelineResponsePayload = Extract<
   { type: "fetch_agent_timeline_response" }
 >["payload"];
 
+export function consumeForcedTimelineTailReplacement(
+  payload: TimelineResponsePayload,
+  replacements: Set<string>,
+): TimelineResponsePayload {
+  if (payload.direction !== "tail") return payload;
+  if (!replacements.delete(payload.agentId)) return payload;
+  return { ...payload, reset: true };
+}
+
 function clearAgentInitializingFlag(serverId: string, agentId: string): void {
   useSessionStore.getState().setInitializingAgents(serverId, (previous) => {
     if (previous.get(agentId) !== true) return previous;
