@@ -476,12 +476,16 @@ function resolveAuthConfig(
   persisted: ReturnType<typeof loadPersistedConfig>,
 ): PaseoDaemonConfig["auth"] {
   const envPassword = env.PASEO_PASSWORD?.trim();
-  if (envPassword) {
-    return { password: hashDaemonPassword(envPassword) };
+  const password = envPassword ? hashDaemonPassword(envPassword) : persisted.daemon?.auth?.password;
+  if (!password) {
+    return undefined;
   }
-  return persisted.daemon?.auth?.password
-    ? { password: persisted.daemon.auth.password }
-    : undefined;
+  // The exemption is read from config.json even when PASEO_PASSWORD supplies the
+  // password, so a container that takes its password from the environment can
+  // still open loopback in the file.
+  return persisted.daemon?.auth?.allowLoopbackWithoutPassword === true
+    ? { password, allowLoopbackWithoutPassword: true }
+    : { password };
 }
 
 function resolveWorktreesRoot(

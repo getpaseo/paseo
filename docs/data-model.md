@@ -205,7 +205,7 @@ snapshot so a mixed edit can apply its live subset and still name the paths that
     agentProfiles: AgentProfile[],        // named agent launch bundles; omitted means none
     cors: { allowedOrigins: string[] },
     relay: { enabled: boolean, endpoint: string, publicEndpoint: string, useTls: boolean, publicUseTls: boolean }, // new homes materialize enabled: false
-    auth: { password: string }    // bcrypt hash, optional
+    auth: { password: string, allowLoopbackWithoutPassword: boolean }  // bcrypt hash, optional; exemption is config-file only
   },
   app: {
     baseUrl: string

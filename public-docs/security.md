@@ -92,10 +92,13 @@ If you enable the [bundled web UI](/docs/web-ui), its static files are also serv
 
 The password is stored as a bcrypt hash in `config.json`, the daemon never stores it in plaintext. See [Configuration](/docs/configuration#password-authentication) for setup instructions.
 
+`daemon.auth.allowLoopbackWithoutPassword` exempts clients on the daemon's own machine, so remote devices authenticate while `paseo` on the box and agents do not. The daemon decides from the kernel-reported peer address, and refuses the exemption to any request carrying a forwarding header, so a reverse proxy on the same host cannot launder remote clients through it. Leave it off when a proxy fronts the daemon, since one that strips those headers still defeats the check. See [Configuration](/docs/configuration#exempting-this-machine).
+
 ### What password auth does and does not do
 
 - **Does:** Prevents unauthorized clients from controlling your agents, even if they can reach the daemon over the network.
 - **Does not:** Encrypt traffic. Password auth protects access, not confidentiality. If you need encrypted connections over an untrusted network, use the relay (which provides end-to-end encryption) or a VPN like Tailscale.
+- **Does not:** Keep other processes on the daemon's own machine out, once you enable the loopback exemption. `config.json` stores a bcrypt hash rather than the password, so a local process cannot read the password back out and authenticate with it. The password is a real barrier against local callers, and the exemption gives it up deliberately. Turn it on only where you accept that anything running on that machine can drive your agents.
 
 ### When to use it
 
