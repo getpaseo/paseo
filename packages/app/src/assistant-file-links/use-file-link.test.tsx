@@ -4,7 +4,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import React, { useCallback, useMemo, useState, type ReactNode } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ToastApi } from "@/components/toast-host";
 import type { InlinePathTarget } from "./parse";
 import { AssistantFileLinkResolverProvider } from "./provider";
@@ -12,8 +12,12 @@ import type { DirectorySuggestionResult } from "./resolver";
 import { useFileLink } from "./use-file-link";
 import type { OpenFileDisposition } from "@/workspace/file-open";
 
-vi.mock("@/utils/open-external-url", () => ({
-  openExternalUrl: vi.fn(async () => {}),
+const { confirmationGate } = vi.hoisted(() => ({
+  confirmationGate: vi.fn(async () => {}),
+}));
+
+vi.mock("@/utils/confirm-agent-external-url", () => ({
+  confirmAndOpenAgentExternalUrl: confirmationGate,
 }));
 
 const SOURCE = {
@@ -21,6 +25,8 @@ const SOURCE = {
   text: "dumm.md",
   markup: "linkify",
 };
+
+const EXTERNAL_SOURCE = { href: "https://example.com/live?source=agent" };
 
 function resolvedSuggestions(
   entries: DirectorySuggestionResult["entries"],
@@ -99,6 +105,47 @@ function createWrapper(input: { client: TestClient; openedFiles: OpenedFile[]; t
 }
 
 describe("useFileLink", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("sends external assistant links through the confirmation gate", async () => {
+    const openedFiles: OpenedFile[] = [];
+    const { result } = renderHook(() => useFileLink(EXTERNAL_SOURCE), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions: async () => resolvedSuggestions([]) },
+        openedFiles,
+      }),
+    });
+
+    act(() => {
+      result.current.onPress();
+    });
+
+    await waitFor(() => {
+      expect(confirmationGate).toHaveBeenCalledWith("https://example.com/live?source=agent");
+    });
+  });
+
+  it("keeps direct workspace file links in the existing in-app path", async () => {
+    const openedFiles: OpenedFile[] = [];
+    const { result } = renderHook(() => useFileLink({ href: "src/message.tsx:12" }), {
+      wrapper: createWrapper({
+        client: { getDirectorySuggestions: async () => resolvedSuggestions([]) },
+        openedFiles,
+      }),
+    });
+
+    act(() => {
+      result.current.onPress();
+    });
+
+    await waitFor(() => {
+      expect(openedFiles).toHaveLength(1);
+    });
+    expect(confirmationGate).not.toHaveBeenCalled();
+  });
+
   it("returns the same object across no-op parent rerenders", () => {
     const getDirectorySuggestions = vi.fn(async () => resolvedSuggestions([]));
     const queryClient = createQueryClient();
