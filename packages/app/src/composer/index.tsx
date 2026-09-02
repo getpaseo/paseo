@@ -1,7 +1,9 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
+import { QUEUE_ACTION_BUTTON_SIZE, queueTrackMaxHeight } from "@/composer/queue-track-metrics";
 import {
   View,
   Pressable,
+  ScrollView,
   Text,
   StyleSheet as RNStyleSheet,
   type PressableStateCallbackType,
@@ -376,17 +378,27 @@ function renderQueueTrack(args: RenderQueueTrackArgs): ReactElement | null {
     args;
   if (queuedMessages.length === 0) return null;
   return (
-    <View style={styles.queueTrack}>
-      {queuedMessages.map((item) => (
-        <QueuedMessageRow
-          key={item.id}
-          item={item}
-          onEdit={handleEditQueuedMessage}
-          onSendNow={handleSendQueuedNow}
-          editLabel={editLabel}
-          sendNowLabel={sendNowLabel}
-        />
-      ))}
+    // Bounded so a long queue cannot push the composer off screen. The list stays
+    // in send order with the next message on top, and does not auto-scroll: the
+    // item about to go in should stay in view while later ones scroll.
+    <View style={styles.queueTrack} testID="composer-queue-track">
+      <ScrollView
+        style={styles.queueScroll}
+        testID="composer-queue-scroll"
+        contentContainerStyle={styles.queueTrackContent}
+        keyboardShouldPersistTaps="always"
+      >
+        {queuedMessages.map((item) => (
+          <QueuedMessageRow
+            key={item.id}
+            item={item}
+            onEdit={handleEditQueuedMessage}
+            onSendNow={handleSendQueuedNow}
+            editLabel={editLabel}
+            sendNowLabel={sendNowLabel}
+          />
+        ))}
+      </ScrollView>
     </View>
   );
 }
@@ -2462,6 +2474,17 @@ const styles = StyleSheet.create((theme: Theme) => ({
     opacity: 0.5,
   },
   queueTrack: {
+    // Derived from the row box rather than a magic number, so changing the
+    // action button size or row padding keeps showing the same item count.
+    maxHeight: queueTrackMaxHeight({
+      spacing: theme.spacing[2],
+      borderWidth: theme.borderWidth[1],
+    }),
+  },
+  queueScroll: {
+    flexGrow: 0,
+  },
+  queueTrackContent: {
     flexDirection: "column",
     gap: theme.spacing[2],
   },
@@ -2488,8 +2511,8 @@ const styles = StyleSheet.create((theme: Theme) => ({
     gap: theme.spacing[2],
   },
   queueActionButton: {
-    width: 32,
-    height: 32,
+    width: QUEUE_ACTION_BUTTON_SIZE,
+    height: QUEUE_ACTION_BUTTON_SIZE,
     borderRadius: theme.borderRadius.full,
     alignItems: "center",
     justifyContent: "center",
