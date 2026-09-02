@@ -1039,7 +1039,11 @@ test("does not install a replacement before an in-flight old start is torn down"
     }
   }
 
-  const manager = new AgentManager({ clients: { codex: new ReplacementClient() }, logger });
+  const manager = new AgentManager({
+    clients: { codex: new ReplacementClient() },
+    logger,
+    rescueTimeouts: { reloadSessionCloseMs: 1_000 },
+  });
   let agentId: string | null = null;
   let oldStream: AsyncGenerator<AgentStreamEvent> | undefined;
   try {
@@ -1055,6 +1059,16 @@ test("does not install a replacement before an in-flight old start is torn down"
     await vi.waitFor(() => expect(sessions[0]?.startTurnCalls).toBe(1));
     expect(sessions).toHaveLength(1);
     expect(manager.getAgent(agent.id)?.persistence?.sessionId).toBe(sessions[0]?.id);
+
+    const replacementInstalledEarly = await Promise.race([
+      replacement.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 25)),
+    ]);
+    expect(replacementInstalledEarly).toBe(false);
+    expect(sessions).toHaveLength(1);
 
     releaseStart.resolve({ turnId: "old-turn" });
     await expect(oldNext).rejects.toMatchObject({ code: "TURN_START_CANCELED" });
@@ -1181,6 +1195,91 @@ test("does not create a provider turn when prompt admission storage fails", asyn
   }
 });
 
+test("pre-provider replacement failure clears replacement state and wakes exact start waiters", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-replacement-admission-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durable = new RejectingFirstTimelineStore();
+
+  class ActiveSession extends TestAgentSession {
+    private turnNumber = 0;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = `active-turn-${++this.turnNumber}`;
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+
+    override async interrupt(): Promise<void> {
+      this.pushEvent({
+        type: "turn_canceled",
+        provider: this.provider,
+        turnId: `active-turn-${this.turnNumber}`,
+        reason: "interrupted",
+      });
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+          return new ActiveSession(config);
+        }
+      })(),
+    },
+    durableTimelineStore: durable,
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000313",
+  });
+  let firstRun: AsyncGenerator<AgentStreamEvent> | undefined;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    firstRun = manager.streamAgent(agent.id, "first run");
+    void (async () => {
+      for await (const _event of firstRun!) {
+        // Keep the active run subscribed until replacement cancels it.
+      }
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    const replacement = await manager.replaceAgentRun(agent.id, "replacement", {
+      clientMessageId: "replacement-admission-failure",
+    });
+    const waitForStart = manager.waitForAgentRunStart(agent.id).catch((error: unknown) => error);
+    const replacementError = await (async () => {
+      try {
+        for await (const _event of replacement) {
+          // Drain the replacement stream until admission fails.
+        }
+        return null;
+      } catch (error) {
+        return error;
+      }
+    })();
+
+    expect(replacementError).toBeInstanceOf(DurableTimelineMutationError);
+    await expect(waitForStart).resolves.toBeInstanceOf(Error);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "error",
+      pendingReplacement: false,
+    });
+    await manager.flush();
+    await expect(storage.get(agent.id)).resolves.toMatchObject({
+      lastStatus: "error",
+      lastError: expect.stringContaining("failed"),
+    });
+  } finally {
+    if (firstRun) await firstRun.return?.().catch(() => undefined);
+    await manager.closeAgent("00000000-0000-4000-8000-000000000313").catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("quarantines a session when post-dispatch prompt identity persistence fails", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-post-dispatch-failure-"));
   const durable = new RejectingPromptIdentityTimelineStore();
@@ -1256,6 +1355,88 @@ test("poisons a durable timeline lane after timeout and blocks late memory mutat
       await expect(durable.getCommittedRows(agent.id)).resolves.toHaveLength(1);
     });
     expect(manager.getTimeline(agent.id)).toEqual([]);
+  } finally {
+    durable.releaseBulkInsert.resolve();
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("poisonSession clears active ownership, settles streams, and persists terminal error state", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-poison-active-run-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const durable = new BlockingTimelineStore();
+
+  class ActiveSession extends TestAgentSession {
+    override async startTurn(): Promise<{ turnId: string }> {
+      const turnId = "poisoned-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  const session = new ActiveSession({ provider: "codex", cwd: workdir });
+  const manager = new AgentManager({
+    clients: {
+      codex: new (class extends TestAgentClient {
+        override async createSession(): Promise<AgentSession> {
+          return session;
+        }
+      })(),
+    },
+    durableTimelineStore: durable,
+    registry: storage,
+    rescueTimeouts: {
+      durableTimelineMutationMs: 10,
+      reloadSessionCloseMs: 10,
+      interruptSessionMs: 10,
+    },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000315",
+  });
+
+  let agentId: string | null = null;
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = agent.id;
+    const stream = manager.streamAgent(agent.id, "poison me");
+    const terminalEvent = (async () => {
+      for await (const event of stream) {
+        if (event.type === "turn_failed") return event;
+      }
+      return null;
+    })();
+    await manager.waitForAgentRunStart(agent.id);
+
+    const append = manager.appendTimelineItem(agent.id, {
+      type: "assistant_message",
+      text: "blocked write",
+    });
+    await durable.bulkInsertStarted.promise;
+    await expect(append).rejects.toMatchObject({ code: "DURABLE_TIMELINE_MUTATION_TIMEOUT" });
+
+    await expect(terminalEvent).resolves.toMatchObject({
+      type: "turn_failed",
+      turnId: "poisoned-turn",
+    });
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "error",
+      activeForegroundTurnId: null,
+      activeTurnId: null,
+      pendingReplacement: false,
+    });
+    await manager.flush();
+    await expect(storage.get(agent.id)).resolves.toMatchObject({
+      lastStatus: "error",
+      lastError: expect.stringContaining("timeline append"),
+    });
+    await expect(manager.reloadAgentSession(agent.id)).rejects.toMatchObject({
+      code: "DURABLE_TIMELINE_PERSISTENCE_UNAVAILABLE",
+    });
   } finally {
     durable.releaseBulkInsert.resolve();
     if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
@@ -4124,6 +4305,48 @@ test("cancelAgentRun cancels the exact active turn", async () => {
   }
 });
 
+test("cancelAgentRun fences the captured generation before awaiting interrupt", async () => {
+  const interruptEntered = deferred<void>();
+  const releaseInterrupt = deferred<void>();
+  const fixture = await createControlledInterruptFixture({
+    name: "interrupt-generation-fence",
+    agentId: "00000000-0000-4000-8000-000000000312",
+    turnId: "captured-turn",
+    interrupt: async () => {
+      interruptEntered.resolve();
+      await releaseInterrupt.promise;
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+    const cancel = fixture.manager.cancelAgentRun(fixture.agentId, "captured-turn");
+    await interruptEntered.promise;
+
+    fixture.session.pushEvent({
+      type: "turn_completed",
+      provider: fixture.session.provider,
+      turnId: "captured-turn",
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "running",
+      activeForegroundTurnId: "captured-turn",
+    });
+
+    releaseInterrupt.resolve();
+    await expect(cancel).resolves.toEqual({ status: "settled" });
+    expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
+      lifecycle: "idle",
+      activeForegroundTurnId: null,
+    });
+  } finally {
+    releaseInterrupt.resolve();
+    await fixture.cleanup();
+  }
+});
+
 test("cancelAgentRun refuses a stale turn without interrupting the newer turn", async () => {
   const fixture = await createControlledInterruptFixture({
     name: "interrupt-stale-turn",
@@ -4198,20 +4421,18 @@ test("cancelAgentRun preserves the active turn when the provider rejects the int
   }
 });
 
-test("cancelAgentRun quarantines when the foreground turn finishes before the provider rejects the interrupt", async () => {
+test("cancelAgentRun quarantines when a terminal event arrives before the provider rejects", async () => {
   let fixture!: ControlledInterruptFixture;
   fixture = await createControlledInterruptFixture({
     name: "interrupt-after-completion",
     agentId: "00000000-0000-4000-8000-000000000305",
     turnId: "naturally-completed-turn",
     interrupt: async (session) => {
-      const settled = waitForAgentLifecycle(fixture.manager, fixture.agentId, "idle");
       session.pushEvent({
         type: "turn_completed",
         provider: session.provider,
         turnId: "naturally-completed-turn",
       });
-      await settled;
       throw new Error("turn already completed");
     },
   });
@@ -4224,8 +4445,8 @@ test("cancelAgentRun quarantines when the foreground turn finishes before the pr
     });
     expect(fixture.session.closeCalled).toBe(true);
     expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
-      lifecycle: "idle",
-      activeForegroundTurnId: null,
+      lifecycle: "running",
+      activeForegroundTurnId: "naturally-completed-turn",
     });
   } finally {
     await fixture.cleanup();
@@ -4255,8 +4476,8 @@ test("cancelAgentRun quarantines when the provider queues completion before reje
     });
     expect(fixture.session.closeCalled).toBe(true);
     expect(fixture.manager.getAgent(fixture.agentId)).toMatchObject({
-      lifecycle: "idle",
-      activeForegroundTurnId: null,
+      lifecycle: "running",
+      activeForegroundTurnId: "queued-completion-turn",
     });
   } finally {
     await fixture.cleanup();
@@ -5618,6 +5839,103 @@ test("registration reconciles retained and durable timeline rows by stable seque
       item: { type: "user_message", text: "current imported row" },
     }),
   ]);
+});
+
+test("registration preserves repeated canonical tool lifecycle rows with the same call id", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-register-tool-lifecycle-"));
+  const agentId = "00000000-0000-4000-8000-000000000314";
+  const durable = new RecordingTimelineStore();
+  const toolRows: AgentTimelineRow[] = [
+    {
+      seq: 1,
+      timestamp: "2026-01-02T00:00:01.000Z",
+      turnId: "turn-1",
+      item: {
+        type: "tool_call",
+        callId: "same-call",
+        name: "shell",
+        status: "running",
+        error: null,
+        detail: { type: "shell", command: "echo one" },
+      },
+    },
+    {
+      seq: 2,
+      timestamp: "2026-01-02T00:00:02.000Z",
+      turnId: "turn-1",
+      item: {
+        type: "tool_call",
+        callId: "same-call",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: { type: "shell", command: "echo one", output: "one", exitCode: 0 },
+      },
+    },
+    {
+      seq: 3,
+      timestamp: "2026-01-02T00:00:03.000Z",
+      turnId: "turn-2",
+      item: {
+        type: "tool_call",
+        callId: "same-call",
+        name: "shell",
+        status: "running",
+        error: null,
+        detail: { type: "shell", command: "echo two" },
+      },
+    },
+    {
+      seq: 4,
+      timestamp: "2026-01-02T00:00:04.000Z",
+      turnId: "turn-2",
+      item: {
+        type: "tool_call",
+        callId: "same-call",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: { type: "shell", command: "echo two", output: "two", exitCode: 0 },
+      },
+    },
+  ];
+  await durable.replaceCommitted(agentId, toolRows, { epoch: "tool-epoch", nextSeq: 5 });
+
+  class ToolLifecycleImportClient extends TestAgentClient {
+    override async importSession() {
+      return {
+        session: new TestAgentSession({ provider: "codex", cwd: workdir }),
+        config: { provider: "codex" as const, cwd: workdir },
+        persistence: {
+          provider: "codex" as const,
+          sessionId: "tool-lifecycle-session",
+        },
+        timeline: [],
+      };
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new ToolLifecycleImportClient() },
+    durableTimelineStore: durable,
+    idFactory: () => agentId,
+    logger,
+  });
+
+  try {
+    const imported = await manager.importProviderSession({
+      provider: "codex",
+      providerHandleId: "tool-lifecycle-session",
+      cwd: workdir,
+      workspaceId: "workspace",
+    });
+
+    await expect(manager.getTimelineRows(imported.id)).resolves.toEqual(toolRows);
+    expect(manager.getTimeline(imported.id)).toEqual(toolRows.map((row) => row.item));
+  } finally {
+    await manager.closeAgent(agentId).catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
 
 test("reloadAgentSession passes daemon launch env through the provider launch context", async () => {
@@ -8150,7 +8468,7 @@ test("preserves terminal fallback when no active turn identity was observed", as
   );
 });
 
-test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", async () => {
+test("cancelAgentRun settles an acknowledged autonomous interrupt without waiting for a terminal event", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-cancel-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -8231,7 +8549,7 @@ test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", 
   await capturedSession.interruptCalled.promise;
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  expect(cancelSettled).toBe(false);
+  expect(cancelSettled).toBe(true);
   expect(client.lastSession?.interruptCount).toBe(1);
 
   capturedSession.pushEvent({
@@ -8242,6 +8560,7 @@ test("cancelAgentRun waits for an acknowledged autonomous interrupt to settle", 
   });
 
   await expect(cancelPromise).resolves.toEqual({ status: "settled" });
+  await new Promise<void>((resolve) => setImmediate(resolve));
   expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
 });
 

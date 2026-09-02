@@ -72,6 +72,7 @@ import {
   type ForegroundTurnWaiter,
   type PendingAgentSessionEvent,
   type PendingForegroundRun,
+  type TrackedAgentRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
@@ -605,6 +606,15 @@ interface QuarantineSessionOptions {
   notifyPendingRun?: boolean;
 }
 
+interface CapturedRunCancellation {
+  agent: ActiveManagedAgent;
+  session: AgentSession;
+  generation: symbol;
+  run: TrackedAgentRun;
+  turnToken: string;
+  turnId: string | null;
+}
+
 interface DurableTimelineLane {
   tail: Promise<void>;
   poisoned: DurableTimelineMutationError | null;
@@ -705,7 +715,9 @@ function stableTimelineRowId(row: AgentTimelineRow): string | null {
     case "assistant_message":
       return row.item.messageId ? `assistant:${row.item.messageId}` : null;
     case "tool_call":
-      return `tool:${row.item.callId}`;
+      // A provider may reuse a call id for lifecycle snapshots and across turns. The durable
+      // sequence is the row identity; keep the call id as a collision guard for malformed stores.
+      return `tool:${row.seq}:${row.item.callId}`;
     default:
       return null;
   }
@@ -887,6 +899,7 @@ export class AgentManager {
   private readonly quarantinedAgentIds = new Set<string>();
   private readonly poisonedSessionIds = new Set<string>();
   private readonly poisonedSessionReasons = new Map<string, DurableTimelineMutationError>();
+  private readonly poisonedSessionPersistence = new Map<string, Promise<void>>();
   private readonly pendingRunSettlements = new Map<string, Map<string, PendingRunSettlement>>();
   private readonly latestPendingRunSettlementTokens = new Map<string, string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
@@ -1559,6 +1572,7 @@ export class AgentManager {
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     if (this.poisonedSessionIds.has(agentId)) {
+      await this.poisonedSessionPersistence.get(agentId);
       throw this.sessionPersistenceUnavailable(agentId);
     }
     let existing = this.requireSessionAgent(agentId);
@@ -1567,11 +1581,17 @@ export class AgentManager {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
     }
-    await this.awaitPendingProviderStartTeardown(agentId, pendingStart, "reload");
+    await this.awaitPendingProviderStartTeardown(existing, pendingStart, "reload");
     const wasQuarantined = this.quarantinedAgentIds.has(agentId);
     // Stop the old generation before reading anything to preserve. Detached provider work can
     // still be awaiting native I/O; it must not get a chance to write into the replacement.
-    this.fenceSessionGeneration(existing, { settlePendingStart: true });
+    const currentGeneration = this.sessionGenerationTokens.get(agentId);
+    if (this.agents.get(agentId) !== existing) {
+      throw new AgentRunCancellationError(agentId, "reload");
+    }
+    if (currentGeneration) {
+      this.fenceSessionGeneration(existing, currentGeneration, { settlePendingStart: true });
+    }
     await this.drainSessionEvents(agentId);
     await this.drainCoalescedTimeline(agentId);
     await this.drainDurableTimelineMutations(agentId);
@@ -1698,7 +1718,7 @@ export class AgentManager {
   }
 
   private async awaitPendingProviderStartTeardown(
-    agentId: string,
+    agent: ActiveManagedAgent,
     pendingRun: PendingForegroundRun | null,
     action: "reload" | "replace",
   ): Promise<void> {
@@ -1708,13 +1728,15 @@ export class AgentManager {
       timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
       onLateError: (error) => {
         this.logger.warn(
-          { err: error, agentId },
+          { err: error, agentId: agent.id },
           "Provider start settled after replacement timeout",
         );
       },
     });
     if (result === "timed_out") {
-      throw new AgentRunCancellationError(agentId, action);
+      const error = new AgentRunCancellationError(agent.id, action);
+      await this.quarantineAgentSession(agent, pendingRun.generation, agent.session, error);
+      throw error;
     }
   }
 
@@ -2514,7 +2536,14 @@ export class AgentManager {
       // before touching the provider, regardless of clientMessageId/admission persistence.
       this.assertPendingForegroundRunCurrent(agent, pendingRun);
       pendingRun.providerStartStarted = true;
-      const result = await agent.session.startTurn(prompt, options);
+      let providerStart: Promise<{ turnId: string }>;
+      try {
+        providerStart = agent.session.startTurn(prompt, options);
+      } catch (error) {
+        pendingRun.resolveProviderStartSettled();
+        throw error;
+      }
+      const result = await providerStart.finally(() => pendingRun.resolveProviderStartSettled());
       this.assertPendingForegroundRunCurrent(agent, pendingRun);
       return result.turnId;
     } catch (error) {
@@ -2523,6 +2552,8 @@ export class AgentManager {
         if (pendingRun.providerStartStarted) {
           await this.quarantineAgentSession(
             agent,
+            pendingRun.generation,
+            agent.session,
             error instanceof TurnStartCanceledError
               ? new Error("Provider start completed after its session generation was fenced")
               : error,
@@ -2554,8 +2585,6 @@ export class AgentManager {
       this.finalizeForegroundTurn(agent);
       this.runs.settleForegroundRun(agentId, pendingRun.token);
       throw error;
-    } finally {
-      pendingRun.resolveProviderStartSettled();
     }
   }
 
@@ -2746,7 +2775,7 @@ export class AgentManager {
       } catch (error) {
         if (this.runs.getRun(agentId) === pendingRun && !pendingRun.settled) {
           if (providerStartCompleted) {
-            await this.quarantineAgentSession(agent, error, {
+            await this.quarantineAgentSession(agent, pendingRun.generation, agent.session, error, {
               pendingRunStatus: "failed",
               pendingRunError: error instanceof Error ? error.message : "Failed to admit turn",
               notifyPendingRun: true,
@@ -2760,7 +2789,9 @@ export class AgentManager {
             error: error instanceof Error ? error.message : "Failed to admit turn",
           };
           pendingRun.stagedEvents.length = 0;
-          pendingRun.resolveProviderStartSettled();
+          if (isReplacement) {
+            agent.pendingReplacement = false;
+          }
           this.rememberPendingRunSettlement(agentId, {
             token: pendingRun.token,
             status: "failed",
@@ -2771,8 +2802,15 @@ export class AgentManager {
           this.touchUpdatedAt(agent);
           this.emitState(agent, {
             generation: pendingRun.generation,
-            persist: false,
           });
+          try {
+            await this.persistSnapshot(agent, { generation: pendingRun.generation });
+          } catch (persistError) {
+            this.logger.error(
+              { err: persistError, agentId },
+              "Failed to persist pre-provider foreground run failure",
+            );
+          }
           this.runs.settleForegroundRun(agentId, pendingRun.token);
         }
         throw error;
@@ -2908,15 +2946,14 @@ export class AgentManager {
 
     try {
       await this.cancelAgentRunBefore(agentId, "replace");
-      await this.awaitPendingProviderStartTeardown(agentId, pendingStart, "replace");
+      await this.awaitPendingProviderStartTeardown(agent, pendingStart, "replace");
       if (this.quarantinedAgentIds.has(agentId)) {
         await this.reloadAgentSession(agentId);
       }
       return this.streamAgent(agentId, prompt, options);
     } catch (error) {
-      const latest = this.agents.get(agentId);
-      if (latest) {
-        latest.pendingReplacement = false;
+      if (this.agents.get(agentId) === agent) {
+        agent.pendingReplacement = false;
       }
       throw error;
     }
@@ -3084,9 +3121,8 @@ export class AgentManager {
       await this.cancelAgentRunBefore(agent.id, "replace");
       return this.streamAgent(agent.id, prompt, options);
     } catch (error) {
-      const latest = this.agents.get(agent.id);
-      if (latest) {
-        latest.pendingReplacement = false;
+      if (this.agents.get(agent.id) === agent) {
+        agent.pendingReplacement = false;
       }
       throw error;
     }
@@ -3336,6 +3372,8 @@ export class AgentManager {
     pendingRun: PendingForegroundRun,
   ): Promise<AgentRunCancellationResult> {
     const agent = this.requireSessionAgent(agentId);
+    const generation = pendingRun.generation;
+    const session = agent.session;
     if (expectedTurnId !== undefined && agent.activeTurnId !== expectedTurnId) {
       return { status: "stale_turn" };
     }
@@ -3346,12 +3384,14 @@ export class AgentManager {
     if (!pendingRun.providerStartStarted) {
       // Fence before returning. The async generator may not have been consumed yet, so without
       // this generation change its first pull could still dispatch a provider turn after cancel.
-      this.fenceSessionGeneration(agent, {
+      this.fenceSessionGeneration(agent, generation, {
         settlePendingStart: true,
         pendingRunStatus: "canceled",
         notifyPendingRun: true,
       });
-      this.installSessionGeneration(agent);
+      if (this.agents.get(agentId) === agent && !this.sessionGenerationTokens.has(agentId)) {
+        this.installSessionGeneration(agent);
+      }
       return { status: "settled" };
     }
 
@@ -3359,14 +3399,16 @@ export class AgentManager {
     // result/events cannot activate this reservation, then use the provider's bounded interrupt
     // and quarantine path to avoid leaving a native turn owner behind.
     this.quarantinedAgentIds.add(agentId);
-    this.fenceSessionGeneration(agent, {
+    this.fenceSessionGeneration(agent, generation, {
       settlePendingStart: true,
       pendingRunStatus: "canceled",
       notifyPendingRun: true,
     });
-    const interruptResult = await this.interruptSession(agent.session, agentId);
+    const interruptResult = await this.interruptSession(session, agentId);
     await this.quarantineAgentSession(
       agent,
+      generation,
+      session,
       interruptResult.error ??
         new Error("Provider start was canceled after durable prompt admission"),
     );
@@ -3397,80 +3439,94 @@ export class AgentManager {
       return await this.cancelPendingForegroundRun(agentId, expectedTurnId, run);
     }
 
-    const interruptResult = await this.interruptSession(agent.session, agentId, expectedTurnId);
-    const settlement = await this.waitWithTimeout({
-      operation: run.settledPromise,
-      timeoutMs: interruptResult.acknowledged
-        ? this.rescueTimeouts.interruptSessionMs
-        : this.rescueTimeouts.interruptSessionMs,
-    });
+    const generation = this.sessionGenerationTokens.get(agentId);
+    if (!generation) {
+      return { status: "refused" };
+    }
+    const captured: CapturedRunCancellation = {
+      agent,
+      session: agent.session,
+      generation,
+      run,
+      turnToken: run.token,
+      turnId: this.runs.getTurnId(agentId) ?? agent.activeTurnId,
+    };
+
+    // Capture ownership and fence synchronously. The provider interrupt can yield, emit late
+    // events, or race a reload; none of those paths may resolve this turn by looking up the
+    // agent id again.
+    this.quarantinedAgentIds.add(agentId);
+    this.fenceSessionGeneration(agent, generation);
+
+    const interruptResult = await this.interruptSession(captured.session, agentId, expectedTurnId);
 
     if (!interruptResult.acknowledged) {
-      await this.quarantineAgentSession(agent, interruptResult.error);
+      await this.quarantineAgentSession(
+        captured.agent,
+        captured.generation,
+        captured.session,
+        interruptResult.error,
+      );
       return { status: "refused" };
     }
 
-    const runTurnId = this.runs.getTurnId(agentId);
-    if (settlement === "timed_out" && runTurnId) {
-      this.logger.warn(
-        { agentId, turnId: runTurnId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      // Fence before publication. The subscriber may synchronously attempt a replacement;
-      // that attempt must observe the quarantined session, never reuse this turn.
-      const quarantine = this.quarantineAgentSession(
-        agent,
-        new Error("Provider cancellation was acknowledged but the run did not settle in time"),
-      );
-      this.dispatchStream(agent.id, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-        turnId: runTurnId,
-      });
-      await quarantine;
-    } else if (settlement === "timed_out" && run.kind === "foreground") {
-      this.logger.warn(
-        { agentId, kind: run.kind },
-        "cancelAgentRun: acknowledged pending turn still active after timeout, clearing it",
-      );
-      const quarantine = this.quarantineAgentSession(
-        agent,
-        new Error("Provider cancellation was acknowledged but the pending run did not settle"),
-      );
-      this.dispatchStream(agent.id, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-      });
-      await quarantine;
-    } else if (settlement === "timed_out" && run.kind === "autonomous") {
-      this.logger.warn(
-        { agentId, kind: run.kind },
-        "cancelAgentRun: acknowledged turn still active after timeout, force-canceling",
-      );
-      const quarantine = this.quarantineAgentSession(
-        agent,
-        new Error("Provider cancellation was acknowledged but the run did not settle in time"),
-      );
-      this.dispatchStream(agent.id, {
-        type: "turn_canceled",
-        provider: agent.provider,
-        reason: "interrupted",
-      });
-      await quarantine;
+    this.settleAcknowledgedCancellation(captured);
+    return { status: "settled" };
+  }
+
+  private settleAcknowledgedCancellation(captured: CapturedRunCancellation): void {
+    const { agent, session, generation, run, turnToken, turnId } = captured;
+    if (
+      this.agents.get(agent.id) !== agent ||
+      agent.session !== session ||
+      this.sessionGenerationTokens.get(agent.id) === generation ||
+      this.sessionGenerationTokens.has(agent.id) ||
+      run.token !== turnToken
+    ) {
+      return;
     }
 
-    if (settlement === "timed_out") {
-      return { status: "settled" };
+    // The old subscription was fenced before interrupt. Reopen the same provider session under
+    // a new generation only after the provider has acknowledged that the captured turn is gone.
+    if (turnId) {
+      this.runs.rememberFinalizedTurn(agent, turnId);
     }
-
+    if (this.runs.getRun(agent.id) === run) {
+      this.runs.cancelWaiters(agent, (waiterTurnId) => ({
+        type: "turn_canceled",
+        provider: agent.provider,
+        reason: "interrupted",
+        turnId: waiterTurnId,
+      }));
+      this.runs.clearAgentRun(agent.id);
+    }
+    if (turnId && agent.activeForegroundTurnId === turnId) {
+      agent.activeForegroundTurnId = null;
+      this.applyActiveTurnTerminal(agent, turnId);
+    }
+    agent.lastError = undefined;
+    agent.lifecycle = agent.pendingReplacement ? "running" : "idle";
+    // Publish while the captured generation is still quarantined. Subscribers that synchronously
+    // try to replace the turn must not enter the session between cancellation and reinstallation.
+    this.dispatch({
+      type: "agent_stream",
+      agentId: agent.id,
+      event: {
+        type: "turn_canceled",
+        provider: agent.provider,
+        reason: "interrupted",
+        ...(turnId ? { turnId } : {}),
+      },
+    });
+    this.quarantinedAgentIds.delete(agent.id);
+    const nextGeneration = this.installSessionGeneration(agent);
+    this.touchUpdatedAt(agent);
+    this.emitState(agent, { generation: nextGeneration });
     if (agent.pendingPermissions.size > 0) {
       this.resolvePendingPermissionsForAgent(agent, agent.provider, undefined, "Interrupted");
       this.touchUpdatedAt(agent);
-      this.emitState(agent);
+      this.emitState(agent, { generation: nextGeneration });
     }
-    return { status: "settled" };
   }
 
   private async cancelAgentRunBefore(
@@ -3516,20 +3572,30 @@ export class AgentManager {
 
   private async quarantineAgentSession(
     agent: ActiveManagedAgent,
+    generation: symbol,
+    session: AgentSession,
     reason?: unknown,
     options?: QuarantineSessionOptions,
   ): Promise<void> {
-    const ownsCurrentSession = this.agents.get(agent.id) === agent;
-    if (ownsCurrentSession) {
+    // Capture ownership before the first await. A later agent-id lookup may refer to a successor;
+    // only this exact object/session/generation may be fenced or have its run state cleared.
+    const ownsCapturedSession = this.agents.get(agent.id) === agent && agent.session === session;
+    const currentGeneration = this.sessionGenerationTokens.get(agent.id);
+    const ownsCapturedGeneration = currentGeneration === generation;
+    const ownsCapturedState =
+      ownsCapturedSession && (ownsCapturedGeneration || currentGeneration === undefined);
+    if (ownsCapturedState) {
       this.quarantinedAgentIds.add(agent.id);
       // This is synchronous on purpose: reload must observe a settled, fenced run before it can
       // preserve any state or install a replacement session.
-      this.fenceSessionGeneration(agent, {
-        settlePendingStart: true,
-        pendingRunStatus: options?.pendingRunStatus,
-        pendingRunError: options?.pendingRunError,
-        notifyPendingRun: options?.notifyPendingRun,
-      });
+      if (ownsCapturedGeneration) {
+        this.fenceSessionGeneration(agent, generation, {
+          settlePendingStart: true,
+          pendingRunStatus: options?.pendingRunStatus,
+          pendingRunError: options?.pendingRunError,
+          notifyPendingRun: options?.notifyPendingRun,
+        });
+      }
       this.agentStreamCoalescer.discard(agent.id);
       this.runs.cancelWaiters(agent, (turnId) => ({
         type: "turn_canceled",
@@ -3537,23 +3603,25 @@ export class AgentManager {
         reason: "interrupted",
         turnId,
       }));
-      this.runs.clearAgentRun(agent.id);
+      if (this.runs.getRun(agent.id)?.generation === generation) {
+        this.runs.clearAgentRun(agent.id);
+      }
     }
     this.logger.error(
       { err: reason, agentId: agent.id, provider: agent.provider },
       "Quarantining agent session after cancellation failure",
     );
-    const existingClose = this.sessionClosePromises.get(agent.session);
+    const existingClose = this.sessionClosePromises.get(session);
     const close =
       existingClose ??
       this.closeSessionBounded(
-        agent.session,
+        session,
         agent.id,
         "quarantine",
         this.rescueTimeouts.interruptSessionMs,
       );
     if (!existingClose) {
-      this.sessionClosePromises.set(agent.session, close);
+      this.sessionClosePromises.set(session, close);
     }
     try {
       const closed = await close;
@@ -4200,7 +4268,10 @@ export class AgentManager {
     agent: LiveManagedAgent,
     cancelReason: string,
   ): ManagedAgentClosed {
-    this.fenceSessionGeneration(agent, { settlePendingStart: true });
+    const generation = this.sessionGenerationTokens.get(agent.id);
+    if (generation) {
+      this.fenceSessionGeneration(agent, generation, { settlePendingStart: true });
+    }
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     this.agents.delete(agent.id);
     this.previousStatuses.delete(agent.id);
@@ -4228,10 +4299,16 @@ export class AgentManager {
     };
   }
 
-  private invalidateSessionGeneration(agentId: string): void {
-    this.sessionGenerationTokens.delete(agentId);
-    this.latestTurnTokens.delete(agentId);
-    this.turnTokensById.delete(agentId);
+  private invalidateSessionGeneration(agent: ActiveManagedAgent, generation: symbol): void {
+    if (
+      this.agents.get(agent.id) !== agent ||
+      this.sessionGenerationTokens.get(agent.id) !== generation
+    ) {
+      return;
+    }
+    this.sessionGenerationTokens.delete(agent.id);
+    this.latestTurnTokens.delete(agent.id);
+    this.turnTokensById.delete(agent.id);
   }
 
   private installSessionGeneration(agent: ActiveManagedAgent): symbol {
@@ -4243,13 +4320,18 @@ export class AgentManager {
 
   private fenceSessionGeneration(
     agent: ActiveManagedAgent,
+    generation: symbol,
     options?: FenceSessionGenerationOptions,
   ): void {
-    const generation = this.sessionGenerationTokens.get(agent.id);
+    if (
+      this.agents.get(agent.id) !== agent ||
+      this.sessionGenerationTokens.get(agent.id) !== generation
+    ) {
+      return;
+    }
     const pendingRun = this.runs.getPendingRun(agent.id);
     if (
       options?.settlePendingStart &&
-      generation !== undefined &&
       pendingRun?.generation === generation &&
       pendingRun.start.status === "pending"
     ) {
@@ -4262,7 +4344,7 @@ export class AgentManager {
             : (options.pendingRunError ?? "Agent session generation was fenced before turn start"),
       });
     }
-    this.invalidateSessionGeneration(agent.id);
+    this.invalidateSessionGeneration(agent, generation);
     if (agent.unsubscribeSession) {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
@@ -4277,7 +4359,6 @@ export class AgentManager {
   ): void {
     pendingRun.start = { status: "failed", error: options.error };
     pendingRun.stagedEvents.length = 0;
-    pendingRun.resolveProviderStartSettled();
     this.rememberPendingRunSettlement(agent.id, {
       token: pendingRun.token,
       status,
@@ -5150,11 +5231,7 @@ export class AgentManager {
     const eventTurnId = identified.turnId;
     const isForegroundEvent = agent.activeForegroundTurnId === eventTurnId;
     this.traceHandleStreamEventStart(agent, event, eventTurnId, isForegroundEvent);
-    if (
-      eventTurnId &&
-      isTurnTerminalEvent(event) &&
-      this.runs.hasFinalizedTurn(agent, eventTurnId)
-    ) {
+    if (eventTurnId && this.runs.hasFinalizedTurn(agent, eventTurnId)) {
       return false;
     }
 
@@ -6751,22 +6828,78 @@ export class AgentManager {
 
     const agent = this.agents.get(agentId);
     if (!agent) return;
+    const generation = this.sessionGenerationTokens.get(agentId);
+    const session = agent.session;
+    const turnId = agent.activeTurnId ?? agent.activeForegroundTurnId;
+    const terminalError =
+      reason instanceof Error ? reason.message : "Durable timeline persistence is unavailable";
+
+    // Poisoning is one atomic manager transition: fence callbacks, release every waiter, clear
+    // all live-turn ownership, publish the terminal failure, then persist the same snapshot.
     this.quarantinedAgentIds.add(agentId);
-    this.fenceSessionGeneration(agent, {
-      settlePendingStart: true,
-      pendingRunStatus: "failed",
-      pendingRunError: "Durable timeline persistence is unavailable",
-      notifyPendingRun: true,
-    });
+    if (generation) {
+      this.fenceSessionGeneration(agent, generation, {
+        settlePendingStart: true,
+        pendingRunStatus: "failed",
+        pendingRunError: terminalError,
+        notifyPendingRun: false,
+      });
+    }
     this.agentStreamCoalescer.discard(agentId);
-    this.runs.cancelWaiters(agent, (turnId) => ({
-      type: "turn_canceled",
+    agent.activeForegroundTurnId = null;
+    agent.activeTurnId = null;
+    agent.activeTurnStartedAt = null;
+    agent.pendingReplacement = false;
+    agent.pendingPermissions.clear();
+    agent.bufferedPermissionResolutions.clear();
+    agent.inFlightPermissionResponses.clear();
+    agent.lifecycle = "error";
+    agent.lastError = terminalError;
+    this.runs.cancelWaiters(agent, (waiterTurnId) => ({
+      type: "turn_failed",
       provider: agent.provider,
-      reason: "Durable timeline persistence is unavailable",
-      turnId,
+      error: terminalError,
+      turnId: waiterTurnId,
     }));
-    this.runs.clearAgentRun(agentId);
-    this.trackBackgroundTask(this.quarantineAgentSession(agent, reason));
+    if (!generation || this.runs.getRun(agentId)?.generation === generation) {
+      this.runs.clearAgentRun(agentId);
+    }
+    this.dispatch({
+      type: "agent_stream",
+      agentId,
+      event: {
+        type: "turn_failed",
+        provider: agent.provider,
+        error: terminalError,
+        ...(turnId ? { turnId } : {}),
+      },
+    });
+    this.dispatchFencedAgentState(agent);
+
+    const persisted = this.registry
+      ? this.registry.applySnapshot(
+          agent,
+          undefined,
+          () => this.agents.get(agentId) === agent && this.poisonedSessionIds.has(agentId),
+        )
+      : Promise.resolve();
+    const persistedSafely = persisted.catch((error) => {
+      this.logger.error({ err: error, agentId }, "Failed to persist poisoned agent state");
+    });
+    this.poisonedSessionPersistence.set(agentId, persistedSafely);
+    this.trackBackgroundTask(persistedSafely);
+    if (generation) {
+      this.trackBackgroundTask(this.quarantineAgentSession(agent, generation, session, reason));
+    } else {
+      this.trackBackgroundTask(
+        this.closeSessionBounded(
+          session,
+          agentId,
+          "quarantine",
+          this.rescueTimeouts.interruptSessionMs,
+        ).then(() => undefined),
+      );
+    }
   }
 
   private trackBackgroundTask(task: Promise<void>): void {
