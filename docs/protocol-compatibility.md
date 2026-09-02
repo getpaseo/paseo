@@ -38,6 +38,12 @@ The app checks for the capability and either runs the feature or tells the user 
 
 Existing functionality keeps working across versions because of the protocol contract. Gating a new feature never substitutes for that.
 
+Plugin tool IPC is a private daemon-to-child protocol, separate from the app WebSocket contract. A
+plugin reports a bounded tool catalog only in its ready message, including installation identity and
+generation. The host validates each invoke, update, result, cancellation, and error envelope. A
+provider session captures the ready catalog; plugin reloads affect new sessions and immediately
+reject calls against removed generations.
+
 Durable delivery payload compaction is negotiated through `server_info.features.deliveryPayloadTombstones`.
 Only records admitted by a client advertising that capability may lose their acknowledged payload. A
 client without it never receives a payloadless row; the daemon filters older clients from already

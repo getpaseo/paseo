@@ -7693,7 +7693,10 @@ export class AgentManager {
       client.capabilities.supportsNativePaseoTools &&
       this.paseoToolCatalogFactory
     ) {
-      context.paseoTools = await this.paseoToolCatalogFactory({ callerAgentId: agentId });
+      context.paseoTools = await this.paseoToolCatalogFactory({
+        callerAgentId: agentId,
+        includePluginTools: true,
+      });
     }
     return context;
   }

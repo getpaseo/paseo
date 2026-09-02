@@ -25,7 +25,12 @@ function createCatalog(): PaseoToolCatalog {
     name: "echo_context",
     title: "Echo context",
     description: "Returns the supplied value.",
-    inputSchema: { value: z.string() },
+    inputSchemaJson: {
+      type: "object",
+      properties: { value: { type: "string", minLength: 1 } },
+      required: ["value"],
+      additionalProperties: false,
+    },
     async handler(input: unknown) {
       const parsed = z.object({ value: z.string() }).parse(input);
       return { content: [{ type: "text", text: parsed.value }] };
@@ -140,9 +145,9 @@ describe("OpenCodeBridge", () => {
             description: "Returns the supplied value.",
             inputSchema: {
               type: "object",
-              properties: { value: { type: "string" } },
+              properties: { value: { type: "string", minLength: 1 } },
               required: ["value"],
-              $schema: "http://json-schema.org/draft-07/schema#",
+              additionalProperties: false,
             },
           },
         ],

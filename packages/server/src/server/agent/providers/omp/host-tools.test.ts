@@ -128,6 +128,34 @@ class OmpHostToolHarness {
 }
 
 describe("OMP host tools", () => {
+  test("passes a server-owned plugin JSON schema to the native host", () => {
+    const parameters = {
+      type: "object",
+      properties: { query: { type: "string", minLength: 1 } },
+      required: ["query"],
+      additionalProperties: false,
+    };
+    const catalog = createCatalog([
+      {
+        name: "acme.lookup",
+        title: "Lookup",
+        description: "Look up a record.",
+        inputSchemaJson: parameters,
+        handler: async () => ({ content: [] }),
+      },
+    ]);
+
+    expect(serializeOmpHostTools(catalog)).toEqual([
+      {
+        name: "acme.lookup",
+        label: "Lookup",
+        description: "Look up a record.",
+        loadMode: "essential",
+        parameters,
+      },
+    ]);
+  });
+
   test("marks every caller-scoped Paseo tool essential for direct invocation", () => {
     const catalog = createCatalog([
       {

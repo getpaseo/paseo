@@ -5145,7 +5145,8 @@ test("createAgent injects paseo MCP server only into provider launch config", as
   expect(client.lastConfig?.mcpServers).toEqual({
     paseo: {
       type: "http",
-      url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
+      url: "http://127.0.0.1:6767/mcp/agents",
+      headers: { "X-Paseo-Agent-ID": snapshot.id },
     },
     custom: {
       type: "stdio",
@@ -5439,8 +5440,8 @@ test("createAgent allows best-effort internal MCP when the provider session repo
   expect(manager.getMcpAuthToken()).toBe("cap-token");
   expect(client.lastConfig?.mcpServers?.paseo).toEqual({
     type: "http",
-    url: `http://127.0.0.1:6767/mcp/agents?callerAgentId=${snapshot.id}`,
-    headers: { Authorization: "Bearer cap-token" },
+    url: "http://127.0.0.1:6767/mcp/agents",
+    headers: { "X-Paseo-Agent-ID": snapshot.id, Authorization: "Bearer cap-token" },
   });
 
   rmSync(workdir, { recursive: true, force: true });
@@ -5485,7 +5486,8 @@ test("resumeAgentFromPersistence replaces stored internal paseo MCP with current
   expect(client.resumeOverrides[0]?.mcpServers).toEqual({
     paseo: {
       type: "http",
-      url: `http://127.0.0.1:6768/mcp/agents?callerAgentId=${snapshot.id}`,
+      url: "http://127.0.0.1:6768/mcp/agents",
+      headers: { "X-Paseo-Agent-ID": snapshot.id },
     },
     custom: {
       type: "stdio",

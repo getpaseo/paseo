@@ -120,6 +120,40 @@ export default function contribute(plugin: PluginContext) {
 });
 
 describe("plugin contribution targets", () => {
+  it("keeps model-facing tools out of the client bundle", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `import { lookup } from "./lookup.server";
+
+export default function contribute(plugin) {
+  plugin.addTool(lookup);
+  return () => undefined;
+}
+`,
+    );
+    await writeFile(
+      path.join(directory, "lookup.server.ts"),
+      `import { z } from "zod";
+import { defineTool } from "@getpaseo/plugin/server";
+
+export const lookup = defineTool({
+  name: "lookup",
+  title: "Lookup",
+  description: "Look something up.",
+  input: z.object({ query: z.string() }),
+  handler: async (input) => ({ value: input.query }),
+});
+`,
+    );
+
+    const { clientBundle, serverBundle } = await compilePlugin(entryPath);
+    expect(clientBundle).not.toContain("lookup");
+    expect(serverBundle).toContain("lookup");
+  });
+
   it("keeps client contributions out of the server bundle", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);

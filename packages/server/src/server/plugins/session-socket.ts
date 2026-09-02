@@ -8,11 +8,13 @@ interface PluginProcessSender {
 type SocketEvent = "message" | "close" | "error";
 type SocketListener = (...args: unknown[]) => void;
 
-function normalizeBinaryFrame(data: Uint8Array | ArrayBuffer): Uint8Array {
+function normalizeBinaryFrame(
+  data: Uint8Array<ArrayBufferLike> | ArrayBuffer,
+): Uint8Array<ArrayBuffer> {
   if (data instanceof Uint8Array) {
-    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength) as Uint8Array<ArrayBuffer>;
   }
-  return new Uint8Array(data);
+  return new Uint8Array(data) as Uint8Array<ArrayBuffer>;
 }
 
 function frameByteLength(data: string | Uint8Array): number {

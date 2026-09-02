@@ -831,6 +831,23 @@ describe("browser MCP tools", () => {
       browserToolsEnabled: true,
       browserToolsBroker: broker as BrowserToolsBroker,
       callerAgentId: "agent-1",
+      pluginTools: [
+        {
+          name: "acme.lookup",
+          title: "Lookup",
+          description: "Look up a record.",
+          inputSchemaJson: {
+            type: "object",
+            properties: { query: { type: "string", minLength: 1 } },
+            required: ["query"],
+            additionalProperties: false,
+          },
+          handler: async (input: unknown) => ({
+            content: [],
+            structuredContent: { query: z.object({ query: z.string().min(1) }).parse(input).query },
+          }),
+        },
+      ],
       logger,
     };
     const server = await createAgentMcpServer(serverOptions);
@@ -844,6 +861,10 @@ describe("browser MCP tools", () => {
       const listAgentsResult = await client.callTool({
         name: "list_agents",
         arguments: {},
+      });
+      const pluginResult = await client.callTool({
+        name: "acme.lookup",
+        arguments: { query: "Paseo" },
       });
 
       expect(broker.calls).toEqual([
@@ -864,6 +885,7 @@ describe("browser MCP tools", () => {
       expect(listAgentsResult.structuredContent).toEqual({
         agents: [],
       });
+      expect(pluginResult.structuredContent).toEqual({ query: "Paseo" });
       expectSingleTextContent(browserResult);
       expect(expectSingleTextContent(listAgentsResult)).toContain('"agents": []');
 
@@ -871,6 +893,14 @@ describe("browser MCP tools", () => {
       expect(listedTools.tools.map((tool) => tool.name)).toEqual(
         expect.arrayContaining(["browser_list_tabs", "list_agents"]),
       );
+      expect(listedTools.tools.map((tool) => tool.name)).toContain("acme.lookup");
+      expect(listedTools.tools.find((tool) => tool.name === "acme.lookup")?.inputSchema).toEqual({
+        $schema: "http://json-schema.org/draft-07/schema#",
+        type: "object",
+        properties: { query: { type: "string", minLength: 1 } },
+        required: ["query"],
+        additionalProperties: false,
+      });
       for (const tool of listedTools.tools) {
         expect(tool, `${tool.name} outputSchema`).not.toHaveProperty("outputSchema");
       }

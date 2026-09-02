@@ -372,7 +372,8 @@ describe("agent MCP end-to-end (offline)", () => {
       expect(recorder.recordedLaunches.at(-1)?.mcpServers).toMatchObject({
         paseo: {
           type: "http",
-          url: `http://127.0.0.1:${port}/mcp/agents?callerAgentId=${agentId!}`,
+          url: `http://127.0.0.1:${port}/mcp/agents`,
+          headers: { "X-Paseo-Agent-ID": agentId! },
         },
       });
       const injectedAgent = daemon.agentManager.getAgent(agentId!);
@@ -461,7 +462,8 @@ describe("agent MCP end-to-end (offline)", () => {
       expect(recorder.recordedLaunches.at(-1)?.mcpServers).toMatchObject({
         paseo: {
           type: "http",
-          url: `http://127.0.0.1:${port}/mcp/agents?callerAgentId=${agentId!}`,
+          url: `http://127.0.0.1:${port}/mcp/agents`,
+          headers: { "X-Paseo-Agent-ID": agentId! },
         },
       });
       const injectedAgent = daemon.agentManager.getAgent(agentId!);

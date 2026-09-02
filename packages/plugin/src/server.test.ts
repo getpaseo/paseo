@@ -2,6 +2,8 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
+import { defineTool } from "./server.js";
 
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
 const forbiddenSpecifiers = new Set([
@@ -53,5 +55,19 @@ describe("@getpaseo/plugin/server", () => {
   it("does not load react or the client hook graph", () => {
     const specifiers = collectBareSpecifiers(path.join(srcDir, "server.ts"));
     expect(specifiers.filter((specifier) => forbiddenSpecifiers.has(specifier))).toEqual([]);
+  });
+
+  it("keeps the model-facing tool contract on the server entry", () => {
+    const tool = defineTool({
+      name: "acme.lookup",
+      title: "Lookup",
+      description: "Look up a record.",
+      input: z.object({ query: z.string() }),
+      output: z.object({ value: z.string() }),
+      handler: (input) => ({ value: input.query }),
+    });
+
+    expect(tool.name).toBe("acme.lookup");
+    expect(tool.input.parse({ query: "Paseo" })).toEqual({ query: "Paseo" });
   });
 });

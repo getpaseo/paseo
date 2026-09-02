@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import pino from "pino";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { DaemonConfigStore } from "../daemon-config-store.js";
 import { PluginService } from "./index.js";
 import { ManagedPluginSources } from "./managed-source.js";
@@ -155,6 +155,53 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
 }
 
 describe("PluginService", () => {
+  it("adapts the immutable plugin catalog to a caller-scoped Paseo catalog", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const invokeTool = vi.fn(async () => ({ ok: true }));
+    const runtime: TestPluginRuntime = {
+      catalog: () => [],
+      toolCatalog: () => [
+        {
+          pluginId: "acme",
+          generation: 3,
+          installationId: "installation-3",
+          name: "acme.lookup",
+          title: "Lookup",
+          description: "Look up a record.",
+          inputSchema: { type: "object", properties: {} },
+          timeoutMs: 30_000,
+        },
+      ],
+      invoke: async () => undefined,
+      invokeTool,
+      getLogs: () => [],
+      clearLogs: () => undefined,
+      startPlugin: async () => undefined,
+      stopPluginById: async () => false,
+      stopAll: async () => undefined,
+      subscribe: () => () => undefined,
+      bindPaseoSessionHost: () => undefined,
+    };
+    const service = createService(home, {}, { runtime });
+    const [definition] = service.modelToolDefinitions("agent-authoritative");
+    if (!definition) throw new Error("Plugin tool definition was not created");
+
+    const result = await definition.handler({ query: "Paseo" }, { sendUpdate: vi.fn() });
+
+    expect(result).toEqual({ content: [], structuredContent: { ok: true } });
+    expect(invokeTool).toHaveBeenCalledWith(
+      "acme",
+      "acme.lookup",
+      { query: "Paseo" },
+      expect.objectContaining({
+        generation: 3,
+        installationId: "installation-3",
+        callerAgentId: "agent-authoritative",
+      }),
+    );
+  });
+
   it("retains logs when disabled and clears them only when removed", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);

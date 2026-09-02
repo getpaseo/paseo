@@ -402,7 +402,7 @@ export default function contribute(plugin: unknown) {
     await rm(cleanupFile, { force: true });
   });
 
-  it("does not kill a healthy child while its graceful cleanup is still running", async () => {
+  it("kills a child whose graceful cleanup exceeds the stop bound", async () => {
     vi.useFakeTimers();
     try {
       const directory = await createPlugin(
@@ -412,27 +412,19 @@ export default function contribute(plugin: unknown) {
       const events: string[] = [];
       const child = createReloadChild("held-cleanup", events);
       const originalSend = child.send.bind(child);
-      let releaseCleanup = () => undefined;
       child.send = (message, callback) => {
         if (message.type !== "shutdown") return originalSend(message, callback);
         callback?.(null);
         events.push("shutdown:held-cleanup");
-        releaseCleanup = () => {
-          child.connected = false;
-          child.kill();
-          child.killed = false;
-        };
         return true;
       };
       const runtime = createTestRuntime({ spawnChild: () => child });
       await runtime.startPlugin("held-cleanup", directory);
 
       const stopping = runtime.stopPluginById("held-cleanup");
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(child.killed).toBe(false);
-
-      releaseCleanup();
+      await vi.advanceTimersByTimeAsync(2_001);
       await stopping;
+      expect(child.killed).toBe(true);
       expect(events).toContain("shutdown:held-cleanup");
     } finally {
       vi.useRealTimers();
@@ -577,6 +569,286 @@ export default function contribute(plugin: any) {
     });
     await expect(runtime.invoke("hello", "greet", { name: 7 })).rejects.toThrow();
 
+    await runtime.stopAll();
+  });
+
+  it("publishes and invokes model-facing tools with host-owned context", async () => {
+    const directory = await createPlugin(
+      "model-tools",
+      `import { z } from "zod";
+import { defineTool } from "@getpaseo/plugin/server";
+
+const echo = defineTool({
+  name: "echo_value",
+  title: "Echo value",
+  description: "Echo a value with the active caller identity.",
+  input: z.object({ value: z.string(), callerAgentId: z.string().optional() }),
+  output: z.object({ value: z.string(), callerAgentId: z.string() }),
+  handler(input, context) {
+    context.progress?.({ stage: "started" });
+    return { value: input.value, callerAgentId: context.callerAgentId };
+  },
+});
+
+export default function contribute(plugin: any) {
+  plugin.addTool(echo);
+  return () => undefined;
+}`,
+    );
+    const updates: unknown[] = [];
+    const runtime = createTestRuntime({
+      resolveToolContext: async (callerAgentId) => ({
+        callerAgentId,
+        agent: { id: callerAgentId, status: "running" },
+        workspace: { id: "workspace-1" },
+      }),
+    });
+
+    await runtime.startPlugin("model-tools", directory);
+
+    expect(runtime.toolCatalog()).toEqual([
+      expect.objectContaining({
+        pluginId: "model-tools",
+        generation: 1,
+        name: "echo_value",
+        title: "Echo value",
+        timeoutMs: 30_000,
+        inputSchema: expect.objectContaining({
+          type: "object",
+          properties: expect.objectContaining({ value: expect.anything() }),
+        }),
+        outputSchema: expect.objectContaining({ type: "object" }),
+      }),
+    ]);
+
+    await expect(
+      runtime.invokeTool(
+        "model-tools",
+        "echo_value",
+        { value: "hello" },
+        {
+          callerAgentId: "agent-authoritative",
+          onUpdate: (update) => updates.push(update),
+        },
+      ),
+    ).resolves.toEqual({ value: "hello", callerAgentId: "agent-authoritative" });
+    expect(updates).toEqual([{ stage: "started" }]);
+
+    await expect(
+      runtime.invokeTool(
+        "model-tools",
+        "echo_value",
+        { value: "hello", callerAgentId: "model-spoof" },
+        { callerAgentId: "agent-authoritative" },
+      ),
+    ).resolves.toEqual({ value: "hello", callerAgentId: "agent-authoritative" });
+
+    await expect(
+      runtime.invokeTool(
+        "model-tools",
+        "echo_value",
+        { value: 7 },
+        {
+          callerAgentId: "agent-authoritative",
+        },
+      ),
+    ).rejects.toThrow();
+    await runtime.stopAll();
+  });
+
+  it("rejects duplicate and reserved model-facing tool names", async () => {
+    const duplicateDirectory = await createPlugin(
+      "duplicate-tools",
+      `import { z } from "zod";
+import { defineTool } from "@getpaseo/plugin/server";
+
+const first = defineTool({ name: "acme.duplicate", title: "First", description: "First.", input: z.object({}), handler: () => ({ ok: true }) });
+const second = defineTool({ name: "acme.duplicate", title: "Second", description: "Second.", input: z.object({}), handler: () => ({ ok: true }) });
+
+export default function contribute(plugin: any) {
+  plugin.addTool(first);
+  plugin.addTool(second);
+  return () => undefined;
+}`,
+    );
+    const reservedDirectory = await createPlugin(
+      "reserved-tools",
+      `import { z } from "zod";
+import { defineTool } from "@getpaseo/plugin/server";
+
+const reserved = defineTool({ name: "get_agent_status", title: "Reserved", description: "Reserved.", input: z.object({}), handler: () => ({ ok: true }) });
+
+export default function contribute(plugin: any) {
+  plugin.addTool(reserved);
+  return () => undefined;
+}`,
+    );
+
+    const runtime = createTestRuntime({
+      resolveToolContext: async (callerAgentId) => ({
+        callerAgentId,
+        agent: null,
+        workspace: null,
+      }),
+    });
+    await expect(runtime.startPlugin("duplicate-tools", duplicateDirectory)).rejects.toThrow(
+      "Duplicate plugin tool name: acme.duplicate",
+    );
+    await expect(runtime.startPlugin("reserved-tools", reservedDirectory)).rejects.toThrow(
+      "Plugin tool name is reserved: get_agent_status",
+    );
+    expect(runtime.toolCatalog()).toEqual([]);
+    await runtime.stopAll();
+  });
+
+  it("fences a stale tool catalog across plugin reloads", async () => {
+    const directory = await createPlugin(
+      "reloadable-tools",
+      `import { z } from "zod";
+import { defineTool } from "@getpaseo/plugin/server";
+
+const tool = defineTool({ name: "acme.reload", title: "Reload", description: "Reload.", input: z.object({}), handler: () => ({ ok: true }) });
+
+export default function contribute(plugin: any) {
+  plugin.addTool(tool);
+  return () => undefined;
+}`,
+    );
+    const runtime = createTestRuntime({
+      resolveToolContext: async (callerAgentId) => ({
+        callerAgentId,
+        agent: null,
+        workspace: null,
+      }),
+    });
+
+    await runtime.startPlugin("reloadable-tools", directory);
+    const [first] = runtime.toolCatalog();
+    if (!first) throw new Error("First plugin tool was not published");
+    await runtime.stopPluginById("reloadable-tools");
+    await runtime.startPlugin("reloadable-tools", directory);
+    const [second] = runtime.toolCatalog();
+    if (!second) throw new Error("Reloaded plugin tool was not published");
+
+    expect(second.generation).toBe(first.generation + 1);
+    expect(second.installationId).not.toBe(first.installationId);
+    await expect(
+      runtime.invokeTool(
+        "reloadable-tools",
+        "acme.reload",
+        {},
+        {
+          generation: first.generation,
+          installationId: first.installationId,
+          callerAgentId: "agent-1",
+        },
+      ),
+    ).rejects.toThrow("no longer available");
+    await runtime.stopAll();
+  });
+
+  it("propagates cancellation and host timeout without killing the plugin", async () => {
+    const directory = await createPlugin(
+      "model-tool-cancellation",
+      `import { z } from "zod";
+import { defineTool } from "@getpaseo/plugin/server";
+
+const wait = defineTool({
+  name: "wait_for_signal",
+  title: "Wait for signal",
+  description: "Wait until the host cancels the invocation.",
+  input: z.object({}),
+  timeoutMs: 20,
+  handler(_input, context) {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => resolve({ ok: true }), 200);
+      context.signal.addEventListener("abort", () => {
+        clearTimeout(timer);
+        reject(context.signal.reason ?? new Error("cancelled"));
+      }, { once: true });
+    });
+  },
+});
+
+export default function contribute(plugin: any) {
+  plugin.addTool(wait);
+  return () => undefined;
+}`,
+    );
+    const runtime = createTestRuntime({
+      resolveToolContext: async (callerAgentId) => ({
+        callerAgentId,
+        agent: null,
+        workspace: null,
+      }),
+    });
+    await runtime.startPlugin("model-tool-cancellation", directory);
+
+    const controller = new AbortController();
+    const canceled = runtime.invokeTool(
+      "model-tool-cancellation",
+      "wait_for_signal",
+      {},
+      { callerAgentId: "agent-1", signal: controller.signal },
+    );
+    controller.abort(new Error("caller cancelled"));
+    await expect(canceled).rejects.toThrow("caller cancelled");
+
+    await expect(
+      runtime.invokeTool(
+        "model-tool-cancellation",
+        "wait_for_signal",
+        {},
+        { callerAgentId: "agent-1" },
+      ),
+    ).rejects.toThrow("timed out");
+    expect(runtime.catalog()).toHaveLength(1);
+    await runtime.stopAll();
+  });
+
+  it("does not start a tool after its plugin is stopped while context is resolving", async () => {
+    const directory = await createPlugin(
+      "resolving-tool",
+      `import { z } from "zod";
+import { defineTool } from "@getpaseo/plugin/server";
+
+const tool = defineTool({ name: "acme.resolving", title: "Resolving", description: "Resolving.", input: z.object({}), handler: () => ({ ok: true }) });
+
+export default function contribute(plugin: any) {
+  plugin.addTool(tool);
+  return () => undefined;
+}`,
+    );
+    let markContextResolutionStarted = () => undefined;
+    const contextResolutionStarted = new Promise<void>((resolve) => {
+      markContextResolutionStarted = resolve;
+    });
+    let releaseContextResolution = () => undefined;
+    const contextResolution = new Promise<void>((resolve) => {
+      releaseContextResolution = resolve;
+    });
+    const runtime = createTestRuntime({
+      resolveToolContext: async (callerAgentId) => {
+        markContextResolutionStarted();
+        await contextResolution;
+        return { callerAgentId, agent: null, workspace: null };
+      },
+    });
+    await runtime.startPlugin("resolving-tool", directory);
+
+    const invocation = runtime.invokeTool(
+      "resolving-tool",
+      "acme.resolving",
+      {},
+      {
+        callerAgentId: "agent-1",
+      },
+    );
+    await contextResolutionStarted;
+    await runtime.stopPluginById("resolving-tool");
+    releaseContextResolution();
+
+    await expect(invocation).rejects.toThrow("no longer available");
     await runtime.stopAll();
   });
 

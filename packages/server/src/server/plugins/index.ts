@@ -13,10 +13,29 @@ import type { DaemonConfigStore } from "../daemon-config-store.js";
 import { type ManagedPluginCandidate, ManagedPluginSources } from "./managed-source.js";
 import { readPluginManifest } from "./manifest.js";
 import { PluginRuntime } from "./runtime.js";
+import type { PluginToolCallerContext, PluginToolCatalogEntry } from "./plugin-process-protocol.js";
+import type {
+  PaseoToolDefinition,
+  PaseoToolExecutionContext,
+  PaseoToolResult,
+} from "../agent/tools/types.js";
 
 interface PluginRuntimePort {
   catalog(): Array<{ id: string; clientBundle: string }>;
+  toolCatalog?(): PluginToolCatalogEntry[];
   invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  invokeTool?(
+    pluginId: string,
+    name: string,
+    input: unknown,
+    options: {
+      generation?: number;
+      installationId?: string;
+      callerAgentId: string;
+      signal?: AbortSignal;
+      onUpdate?: (update: unknown) => void;
+    },
+  ): Promise<unknown>;
   getLogs(pluginId: string): PluginLogEntry[];
   clearLogs(pluginId: string): void;
   validatePlugin?(path: string): Promise<void>;
@@ -25,6 +44,17 @@ interface PluginRuntimePort {
   stopAll(): Promise<void>;
   subscribe(listener: (pluginId: string, error?: string) => void): () => void;
   bindPaseoSessionHost(sessionHost: Parameters<PluginRuntime["bindPaseoSessionHost"]>[0]): void;
+  bindToolContextResolver?(
+    resolver: (callerAgentId: string) => Promise<PluginToolCallerContext>,
+  ): void;
+}
+
+interface PluginToolInvocationOptions {
+  generation?: number;
+  installationId?: string;
+  callerAgentId: string;
+  signal?: AbortSignal;
+  onUpdate?: (update: unknown) => void;
 }
 
 interface PluginServiceDependencies {
@@ -130,6 +160,59 @@ export class PluginService {
 
   catalog(): Array<{ id: string; clientBundle: string }> {
     return this.runtime.catalog();
+  }
+
+  toolCatalog(): PluginToolCatalogEntry[] {
+    return this.runtime.toolCatalog?.() ?? [];
+  }
+
+  modelToolDefinitions(callerAgentId?: string): PaseoToolDefinition[] {
+    return this.toolCatalog().map((tool) => {
+      const definition: PaseoToolDefinition = {
+        name: tool.name,
+        title: tool.title,
+        description: tool.description,
+        inputSchemaJson: tool.inputSchema,
+        handler: (input: unknown, context: PaseoToolExecutionContext) =>
+          callerAgentId
+            ? this.invokeModelTool(tool, callerAgentId, input, context)
+            : Promise.reject(new Error("Plugin tool caller context is unavailable")),
+      };
+      if (tool.outputSchema) definition.outputSchemaJson = tool.outputSchema;
+      return definition;
+    });
+  }
+
+  private async invokeModelTool(
+    tool: PluginToolCatalogEntry,
+    callerAgentId: string,
+    input: unknown,
+    context: PaseoToolExecutionContext,
+  ): Promise<PaseoToolResult> {
+    const output = await this.invokePluginTool(tool.pluginId, tool.name, input, {
+      generation: tool.generation,
+      installationId: tool.installationId,
+      callerAgentId,
+      signal: context.signal,
+      onUpdate: (update) => context.sendUpdate?.({ content: [], structuredContent: update }),
+    });
+    return { content: [], structuredContent: output };
+  }
+
+  bindToolContextResolver(
+    resolver: (callerAgentId: string) => Promise<PluginToolCallerContext>,
+  ): void {
+    this.runtime.bindToolContextResolver?.(resolver);
+  }
+
+  invokePluginTool(
+    pluginId: string,
+    name: string,
+    input: unknown,
+    options: PluginToolInvocationOptions,
+  ): Promise<unknown> {
+    if (!this.runtime.invokeTool) throw new Error("Plugin tool runtime is unavailable");
+    return this.runtime.invokeTool(pluginId, name, input, options);
   }
 
   async installDirectory(input: { path: string; id?: string }): Promise<PluginListItem> {

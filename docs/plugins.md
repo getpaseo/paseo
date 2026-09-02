@@ -1,6 +1,6 @@
 # Plugins
 
-Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
+Local plugins contribute daemon RPCs, model-facing agent tools, native app surfaces, workspace panels, Command Center items,
 composer pills, app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
 subprocess and evaluates the client contribution in the app runtime. Plugin code is trusted code;
 Paseo does not sandbox it.
@@ -130,11 +130,11 @@ Plugin UI runs on desktop and mobile across multiple themes: color every `Text` 
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
 See `public-docs/plugins/reference.md`.
 
-| Module                          | Use it for                                               |
-| ------------------------------- | -------------------------------------------------------- |
-| `@getpaseo/plugin`              | contribution contracts and client data hooks             |
-| `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks               |
-| `@getpaseo/plugin/server`       | `defineRpc`, `defineAttachmentSource`, and handler types |
+| Module                          | Use it for                                                             |
+| ------------------------------- | ---------------------------------------------------------------------- |
+| `@getpaseo/plugin`              | contribution contracts and client data hooks                           |
+| `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks                             |
+| `@getpaseo/plugin/server`       | `defineRpc`, `defineTool`, `defineAttachmentSource`, and handler types |
 
 The compiler removes client registrations and imports from the server entry point, and server
 registrations and imports from the client entry point. Importing a `*.server` module from a client
@@ -168,6 +168,59 @@ and render error boundary. The contributed component owns the complete body belo
 RPC contracts validate inputs and outputs in both the app and plugin subprocess. `useRpc` returns a
 typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
 Paseo gives each plugin installation its own query client.
+
+## Contribute a model-facing tool
+
+Define tools in a `*.server.ts` module and register them with `plugin.addTool`. The server-only
+`@getpaseo/plugin/server` contract keeps the tool definition and handler out of the client bundle.
+The name is exact and global across Paseo's built-in and plugin tools, so use a project-specific
+lowercase name such as `linear.lookup_issue`.
+
+```ts
+// issue-tool.server.ts
+import { z } from "zod";
+import { defineTool } from "@getpaseo/plugin/server";
+
+export const lookupIssue = defineTool({
+  name: "linear.lookup_issue",
+  title: "Lookup Linear issue",
+  description: "Find one issue by its identifier.",
+  input: z.object({ identifier: z.string().min(1) }),
+  output: z.object({ title: z.string(), url: z.string().url() }),
+  timeoutMs: 10_000,
+  async handler(input, context) {
+    return fetchIssue(input.identifier, context.paseo);
+  },
+});
+```
+
+Register it from `index.ts`:
+
+```ts
+import type { PluginContext } from "@getpaseo/plugin";
+import { lookupIssue } from "./issue-tool.server";
+
+export default function contribute(plugin: PluginContext) {
+  plugin.addTool(lookupIssue);
+  return () => {};
+}
+```
+
+The handler receives the host-derived `callerAgentId`, immutable agent and workspace snapshots,
+the installation-scoped `paseo` API, an `AbortSignal`, and a bounded best-effort `progress`
+callback. Model input cannot provide or replace these values. The child process validates the Zod
+input and output and accepts JSON-compatible values only. The host applies default and maximum
+timeouts, cancellation, progress, result, error, and concurrency limits; canceling a tool never
+stops the agent.
+
+Tools use the same transport-neutral `PaseoToolCatalog` as MCP, OMP, and OpenCode/native provider
+paths. A tool is published only after its plugin is ready. Stopping or reloading a plugin removes
+its tools for new calls immediately and rejects pending calls. Provider sessions use the catalog
+captured when they start; a newly loaded catalog applies to new sessions.
+
+Plugins run with the owner's trust. A plugin tool can use every operation available through its
+scoped Paseo API, so installing a plugin delegates that authority to its handlers. Do not install
+unreviewed plugins or treat a plugin tool as a separate security boundary.
 
 `usePaseo()` and the handler's `{ paseo }` context expose the scoped `PaseoPluginApi`: projects,
 workspaces, agents, providers, and daemon config. It omits backend-owned durable deliveries and

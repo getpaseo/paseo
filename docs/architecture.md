@@ -73,8 +73,9 @@ not retain non-Git directories.
 | `server/workspace-labels/`      | Host-local label catalog, assignment mutations, and explicit subscriptions     |
 | `server/agent/agent-manager.ts` | Agent lifecycle state machine, timeline tracking, subscriber management        |
 | `server/agent/agent-storage.ts` | File-backed JSON persistence at `$PASEO_HOME/agents/`                          |
-| `server/agent/tools/`           | Transport-neutral catalog for workspaces, agents, permissions, and automation  |
+| `server/agent/tools/`           | Transport-neutral catalog for built-in and plugin model-facing tools           |
 | `server/agent/mcp-server.ts`    | Thin MCP adapter that registers the Paseo tool catalog with the MCP SDK        |
+| `server/plugins/`               | Trusted plugin subprocesses, tool catalogs, scoped APIs, and lifecycle fences  |
 | `server/agent/providers/`       | Provider adapters (see "Agent providers" below)                                |
 | `server/orchestration-skills/`  | Bundled catalog, host selection, convergence, and skill-directory transactions |
 | `server/relay-transport.ts`     | Outbound relay connection with E2E encryption                                  |
@@ -99,6 +100,12 @@ backend-owned durable deliveries. `PaseoPluginApi` is the scoped plugin facade a
 backend-owned delivery ledger. `PaseoClient` adds connection lifecycle. App plugin surfaces borrow
 an API over their selected host's client; plugin subprocesses use the same facade over a host-owned
 IPC transport.
+
+The plugin runtime publishes model-facing tool metadata only after a child process is ready. The
+daemon merges those entries into each caller-scoped `PaseoToolCatalog`, which MCP, OMP, OpenCode,
+and native providers consume through their existing adapters. A catalog captures one plugin
+generation for a provider session. Stopping a plugin removes its entries before rejecting pending
+invocations; a replacement generation is visible to new sessions.
 
 ### `packages/app` — Mobile + web client (Expo)
 

@@ -5,14 +5,22 @@ import type {
   ServerNotification,
   ServerRequest,
 } from "@modelcontextprotocol/sdk/types.js";
+import { fromJSONSchema } from "zod";
 
 import { addModelVisibleStructuredContent } from "./tools/paseo-tool-serialization.js";
 import { createPaseoToolCatalog, type PaseoToolHostDependencies } from "./tools/paseo-tools.js";
-import type { PaseoToolResult } from "./tools/types.js";
+import type { PaseoToolDefinition, PaseoToolResult } from "./tools/types.js";
 
 export type AgentMcpServerOptions = PaseoToolHostDependencies;
 
 type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+function toMcpInputSchema(tool: PaseoToolDefinition) {
+  if (tool.inputSchema) return tool.inputSchema;
+  return tool.inputSchemaJson
+    ? fromJSONSchema(tool.inputSchemaJson as Parameters<typeof fromJSONSchema>[0])
+    : undefined;
+}
 
 function toMcpToolResult(result: PaseoToolResult): CallToolResult {
   const modelVisibleResult = addModelVisibleStructuredContent(result);
@@ -41,7 +49,7 @@ export async function createAgentMcpServer(options: AgentMcpServerOptions): Prom
       {
         title: tool.title,
         description: tool.description,
-        inputSchema: tool.inputSchema,
+        inputSchema: toMcpInputSchema(tool),
       },
       async (args: unknown, context?: McpToolContext) =>
         toMcpToolResult(await catalog.executeTool(tool.name, args, { signal: context?.signal })),

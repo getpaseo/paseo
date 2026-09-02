@@ -15,6 +15,7 @@ Local plugins are directory sources installed into one Paseo daemon. A plugin ca
 - global, workspace, and agent actions in the Command Center;
 - dark themes in Settings → Appearance;
 - schema-validated RPC handlers running beside the daemon;
+- model-facing tools with Zod-validated inputs and outputs;
 - normal Paseo operations through the TypeScript SDK;
 - searchable external resources in the message composer.
 
@@ -69,16 +70,16 @@ Paseo builds separate client and server bundles from `index.ts`. It rejects impo
 
 Paseo provides these modules to client code:
 
-| Module                          | Use it for                            |
-| ------------------------------- | ------------------------------------- |
-| `@getpaseo/plugin`              | Contribution contracts and data hooks |
-| `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks      |
-| `@getpaseo/plugin/server`       | Shared RPC and attachment contracts   |
-| `@tanstack/react-query`         | Request state and caching             |
-| `react`                         | Components and hooks                  |
-| `react/jsx-runtime`             | Compiled JSX                          |
-| `react-native`                  | Cross-platform UI                     |
-| `zod`                           | Shared schemas                        |
+| Module                          | Use it for                                      |
+| ------------------------------- | ----------------------------------------------- |
+| `@getpaseo/plugin`              | Contribution contracts and data hooks           |
+| `@getpaseo/plugin/react-native` | Paseo UI components and UI hooks                |
+| `@getpaseo/plugin/server`       | Server-only RPC, tool, and attachment contracts |
+| `@tanstack/react-query`         | Request state and caching                       |
+| `react`                         | Components and hooks                            |
+| `react/jsx-runtime`             | Compiled JSX                                    |
+| `react-native`                  | Cross-platform UI                               |
+| `zod`                           | Shared schemas                                  |
 
 These exact module specifiers use the host's runtime instances. A client bundle that requests another host module fails with `Module "<name>" is not available in plugin client code`.
 
@@ -91,6 +92,40 @@ There is no plugin storage API. Browser storage does not persist settings across
 ### Server runtime
 
 Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`, and `zod` to server code. Backend contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem, process, credential, and other machine-local work in `*.server.ts` files.
+
+### Model-facing tools
+
+Define tools in `*.server.ts` and import `defineTool` from `@getpaseo/plugin/server`:
+
+```ts
+import { z } from "zod";
+import { defineTool } from "@getpaseo/plugin/server";
+
+export const lookup = defineTool({
+  name: "acme.lookup",
+  title: "Lookup record",
+  description: "Look up one record by key.",
+  input: z.object({ key: z.string().min(1) }),
+  output: z.object({ value: z.string() }),
+  timeoutMs: 10_000,
+  async handler(input, context) {
+    return { value: await lookupRecord(input.key, context.paseo) };
+  },
+});
+```
+
+Register the definition with `plugin.addTool(lookup)` in `index.ts`. Tool names are exact global
+names and cannot collide with built-ins, reserved Paseo namespaces, or another plugin. The handler
+gets the daemon-derived caller agent ID, immutable agent/workspace snapshots, an installation-
+scoped Paseo API, an abort signal, and bounded optional progress. The model supplies only the
+validated input; it cannot spoof authority-bearing context.
+
+Paseo publishes tool metadata after the plugin subprocess is ready and shares it through the
+transport-neutral catalog used by MCP, OMP, and OpenCode/native providers. Reload or removal
+immediately blocks new calls and rejects pending calls. Existing provider sessions retain the
+catalog captured at session start; new sessions see the next generation. Tools are validated for
+JSON-safe bounded schemas, inputs, outputs, updates, errors, and concurrency. Plugin code is
+trusted owner delegation, not a sandbox or permission boundary.
 
 ## Entry point and cleanup
 

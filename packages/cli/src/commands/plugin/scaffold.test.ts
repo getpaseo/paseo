@@ -40,6 +40,9 @@ describe("plugin scaffold", () => {
     await expect(readFile(path.join(directory, "main.client.tsx"), "utf8")).resolves.toContain(
       "Hello from my plugin",
     );
+    await expect(readFile(path.join(directory, "tool.server.ts"), "utf8")).resolves.toContain(
+      "defineTool",
+    );
   });
 
   it("typechecks client and server Paseo API access", async () => {

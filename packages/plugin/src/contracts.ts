@@ -284,6 +284,45 @@ export interface PluginHandlerContext {
   paseo: PaseoPluginApi;
 }
 
+/**
+ * Context supplied by the daemon when a model invokes a plugin tool. Every
+ * authority-bearing field is resolved by Paseo; tool input cannot provide or
+ * replace it.
+ */
+export interface PluginToolHandlerContext {
+  readonly paseo: PaseoPluginApi;
+  readonly callerAgentId: string;
+  readonly agent: PluginAgentSnapshot | null;
+  readonly workspace: PluginWorkspaceSnapshot | null;
+  readonly signal: AbortSignal;
+  /** Bounded, best-effort progress updates visible to the calling provider. */
+  readonly progress?: (update: unknown) => void;
+}
+
+export type PluginToolContext = PluginToolHandlerContext;
+
+type PluginToolOutput<OutputSchema extends ZodType | undefined> = OutputSchema extends ZodType
+  ? ZodOutput<OutputSchema>
+  : unknown;
+
+export interface PluginToolContribution<
+  InputSchema extends ZodType = ZodType,
+  OutputSchema extends ZodType | undefined = ZodType | undefined,
+> {
+  /** Exact global name exposed to the model-facing provider tool catalog. */
+  name: string;
+  title: string;
+  description: string;
+  input: InputSchema;
+  output?: OutputSchema;
+  /** Host-capped execution deadline in milliseconds. */
+  timeoutMs?: number;
+  handler(
+    input: ZodOutput<InputSchema>,
+    context: PluginToolHandlerContext,
+  ): PluginToolOutput<OutputSchema> | Promise<PluginToolOutput<OutputSchema>>;
+}
+
 export interface PluginContext {
   handle<InputSchema extends ZodType, OutputSchema extends ZodType>(
     contract: PluginRpcContract<InputSchema, OutputSchema>,
@@ -298,6 +337,13 @@ export interface PluginContext {
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
   addClientSide(contribution: PluginClientContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
+  /** Server-only model-facing tool registration. */
+  addTool<
+    InputSchema extends ZodType,
+    OutputSchema extends ZodType | undefined = ZodType | undefined,
+  >(
+    contribution: PluginToolContribution<InputSchema, OutputSchema>,
+  ): void;
   addTheme(contribution: PluginThemeContribution): void;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,

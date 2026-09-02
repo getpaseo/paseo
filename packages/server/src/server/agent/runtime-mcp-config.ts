@@ -47,10 +47,11 @@ export function withRuntimePaseoMcpServer(params: {
     mcpServers: {
       [PASEO_MCP_SERVER_NAME]: {
         type: "http",
-        url: `${params.mcpBaseUrl}?callerAgentId=${params.agentId}`,
-        ...(params.mcpAuthToken
-          ? { headers: { Authorization: `Bearer ${params.mcpAuthToken}` } }
-          : {}),
+        url: params.mcpBaseUrl,
+        headers: {
+          "X-Paseo-Agent-ID": params.agentId,
+          ...(params.mcpAuthToken ? { Authorization: `Bearer ${params.mcpAuthToken}` } : {}),
+        },
       },
       ...storedConfig.mcpServers,
     },

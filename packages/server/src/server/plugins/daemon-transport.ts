@@ -6,12 +6,14 @@ interface PluginProcessPort {
   onMessage(handler: (message: PluginProcessRequest) => void): () => void;
 }
 
-function normalizeFrame(data: string | Uint8Array | ArrayBuffer): string | Uint8Array {
+function normalizeFrame(
+  data: string | Uint8Array<ArrayBufferLike> | ArrayBuffer,
+): string | Uint8Array<ArrayBuffer> {
   if (typeof data === "string") return data;
   if (data instanceof Uint8Array) {
-    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+    return new Uint8Array(data.buffer, data.byteOffset, data.byteLength) as Uint8Array<ArrayBuffer>;
   }
-  return new Uint8Array(data);
+  return new Uint8Array(data) as Uint8Array<ArrayBuffer>;
 }
 
 export function createPluginDaemonTransportFactory(

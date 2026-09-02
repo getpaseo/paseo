@@ -143,6 +143,8 @@ export interface PaseoToolHostDependencies {
   resolveCallerContext?: (callerAgentId: string) => VoiceCallerContext | null;
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
+  /** Ready plugin tools for the caller-scoped catalog. */
+  pluginTools?: readonly PaseoToolDefinition[];
   logger: Logger;
 }
 
@@ -576,12 +578,17 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Tool handlers are schema-validated at registration boundaries.
     handler: (input: any, context: PaseoToolExecutionContext) => Promise<PaseoToolResult>,
   ) => {
+    if (tools.has(name)) {
+      throw new Error(`Duplicate Paseo tool name: ${name}`);
+    }
     tools.set(name, {
       name,
       title: config.title,
       description: config.description ?? name,
       inputSchema: config.inputSchema,
       outputSchema: config.outputSchema,
+      inputSchemaJson: config.inputSchemaJson,
+      outputSchemaJson: config.outputSchemaJson,
       handler: handler as PaseoToolDefinition["handler"],
     });
   };
@@ -3152,6 +3159,19 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       };
     },
   );
+
+  for (const tool of options.pluginTools ?? []) {
+    registerTool(
+      tool.name,
+      {
+        title: tool.title,
+        description: tool.description,
+        inputSchemaJson: tool.inputSchemaJson,
+        outputSchemaJson: tool.outputSchemaJson,
+      },
+      tool.handler,
+    );
+  }
 
   return toCatalog();
 }

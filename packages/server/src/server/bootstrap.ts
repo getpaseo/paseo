@@ -128,7 +128,7 @@ import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/confi
 import type { LocalSpeechProviderConfig } from "./speech/providers/local/config.js";
 import type { RequestedSpeechProviders } from "./speech/speech-types.js";
 import { createSpeechService } from "./speech/speech-runtime.js";
-import { AgentManager } from "./agent/agent-manager.js";
+import { AgentManager, type ManagedAgent } from "./agent/agent-manager.js";
 import { AgentStorage } from "./agent/agent-storage.js";
 import { attachAgentStoragePersistence } from "./persistence-hooks.js";
 import { createAgentMcpServer } from "./agent/mcp-server.js";
@@ -171,6 +171,7 @@ import type { PushNotificationSender } from "./push/index.js";
 import { getOrCreateServerId } from "./server-id.js";
 import { resolveDaemonVersion } from "./daemon-version.js";
 import type { AgentClient, AgentProvider } from "./agent/agent-sdk-types.js";
+import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type {
   AgentProfile,
   AgentSkillSelection,
@@ -227,9 +228,92 @@ import {
 import { DaemonExecutions } from "./hub/daemon-executions.js";
 import { PluginService } from "./plugins/index.js";
 import { ManagedPluginSources } from "./plugins/managed-source.js";
+import type { PluginToolCallerContext } from "./plugins/plugin-process-protocol.js";
+import { toAgentPayload } from "./agent/agent-projections.js";
 
 const MCP_DEBUG_BATCH_LIMIT = 10;
 const MCP_DEBUG_SECRET = "[redacted]";
+
+function resolvePluginWorkspaceStatus(
+  agent: ManagedAgent,
+): "needs_input" | "failed" | "running" | "attention" | "done" {
+  if (agent.lifecycle === "running") return "running";
+  if (agent.lifecycle === "error") return "failed";
+  if (agent.attention.requiresAttention) return "attention";
+  return "done";
+}
+
+async function resolvePluginToolCallerContext(input: {
+  callerAgentId: string;
+  agentManager: AgentManager;
+  workspaceRegistry: Pick<FileBackedWorkspaceRegistry, "get">;
+  projectRegistry: Pick<FileBackedProjectRegistry, "get">;
+  workspaceGitService: Pick<WorkspaceGitServiceImpl, "peekSnapshot">;
+}): Promise<PluginToolCallerContext> {
+  const agent = input.agentManager.getAgent(input.callerAgentId);
+  if (!agent) throw new Error(`Caller agent is not active: ${input.callerAgentId}`);
+
+  const payload = toAgentPayload(agent);
+  const agentSnapshot = {
+    id: payload.id,
+    workspaceId: payload.workspaceId ?? "",
+    provider: payload.provider,
+    status: payload.status,
+    createdAt: payload.createdAt,
+    updatedAt: payload.updatedAt,
+    lastActivityAt: payload.updatedAt,
+    title: payload.title,
+    cwd: payload.cwd,
+    model: payload.model,
+    currentModeId: payload.currentModeId,
+    thinkingOptionId: payload.thinkingOptionId ?? null,
+    requiresAttention: payload.requiresAttention ?? false,
+    attentionReason: payload.attentionReason ?? null,
+    parentAgentId: getParentAgentIdFromLabels(payload.labels) ?? null,
+    labels: payload.labels,
+  };
+
+  return {
+    callerAgentId: input.callerAgentId,
+    agent: agentSnapshot,
+    workspace: await resolvePluginWorkspaceSnapshot({
+      agent,
+      workspaceRegistry: input.workspaceRegistry,
+      projectRegistry: input.projectRegistry,
+      workspaceGitService: input.workspaceGitService,
+    }),
+  };
+}
+
+async function resolvePluginWorkspaceSnapshot(input: {
+  agent: ManagedAgent;
+  workspaceRegistry: Pick<FileBackedWorkspaceRegistry, "get">;
+  projectRegistry: Pick<FileBackedProjectRegistry, "get">;
+  workspaceGitService: Pick<WorkspaceGitServiceImpl, "peekSnapshot">;
+}): Promise<Record<string, unknown> | null> {
+  if (!input.agent.workspaceId) return null;
+  const workspaceRecord = await input.workspaceRegistry.get(input.agent.workspaceId);
+  if (!workspaceRecord) return null;
+  const [project, gitSnapshot] = await Promise.all([
+    input.projectRegistry.get(workspaceRecord.projectId),
+    Promise.resolve(input.workspaceGitService.peekSnapshot(workspaceRecord.cwd)),
+  ]);
+  return {
+    id: workspaceRecord.workspaceId,
+    projectId: workspaceRecord.projectId,
+    projectDisplayName: project?.customName ?? project?.displayName ?? "",
+    projectRootPath: project?.rootPath ?? workspaceRecord.cwd,
+    directory: workspaceRecord.cwd,
+    projectKind: project?.kind ?? "directory",
+    kind: workspaceRecord.kind,
+    name: workspaceRecord.title ?? workspaceRecord.displayName,
+    title: workspaceRecord.title,
+    status: resolvePluginWorkspaceStatus(input.agent),
+    statusEnteredAt: input.agent.updatedAt.toISOString(),
+    archivingAt: null,
+    diffStat: gitSnapshot?.git.diffStat ?? null,
+  };
+}
 const DOWNLOAD_OPEN_FLAGS =
   process.platform === "win32" ? constants.O_RDONLY : constants.O_RDONLY | constants.O_NOFOLLOW;
 
@@ -735,7 +819,10 @@ export async function createPaseoDaemon(
     if (origin && (allowedOrigins.has("*") || allowedOrigins.has(origin))) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, X-Paseo-Agent-ID",
+      );
       res.setHeader("Access-Control-Allow-Credentials", "true");
     }
     if (req.method === "OPTIONS") {
@@ -1331,6 +1418,16 @@ export async function createPaseoDaemon(
   );
   logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
 
+  pluginRuntime.bindToolContextResolver((callerAgentId) =>
+    resolvePluginToolCallerContext({
+      callerAgentId,
+      agentManager,
+      workspaceRegistry,
+      projectRegistry,
+      workspaceGitService,
+    }),
+  );
+
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
   ): PaseoToolHostDependencies => ({
@@ -1385,6 +1482,9 @@ export async function createPaseoDaemon(
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     callerAgentId: runtime.callerAgentId,
+    pluginTools: runtime.includePluginTools
+      ? pluginRuntime.modelToolDefinitions(runtime.callerAgentId)
+      : undefined,
     enableVoiceTools: runtime.enableVoiceTools,
     voiceOnly: runtime.voiceOnly,
     resolveSpeakHandler: (agentId) => wsServer?.resolveVoiceSpeakHandler(agentId) ?? null,
@@ -1394,7 +1494,9 @@ export async function createPaseoDaemon(
   const createAgentToolCatalog = (runtime: PaseoToolRuntimeContext) =>
     createPaseoToolCatalog(createAgentToolHostDependencies(runtime));
   const setAgentProviderToolsEnabled = (enabled: boolean) => {
-    agentProviderRuntime.setPaseoToolCatalog(enabled ? createAgentToolCatalog({}) : null);
+    agentProviderRuntime.setPaseoToolCatalog(
+      enabled ? createAgentToolCatalog({ includePluginTools: true }) : null,
+    );
   };
   agentManager.setPaseoToolCatalogFactory(createAgentToolCatalog);
   agentManager.setPaseoToolsEnabled(config.mcpInjectIntoAgents !== false);
@@ -1402,12 +1504,20 @@ export async function createPaseoDaemon(
 
   let mcpEnabled = config.mcpEnabled ?? true;
   let agentMcpBaseUrl: string | null = null;
+  pluginRuntime.subscribe(() => {
+    setAgentProviderToolsEnabled(
+      mcpEnabled && daemonConfigStore.get().mcp.injectIntoAgents !== false,
+    );
+  });
   {
     const agentMcpRoute = "/mcp/agents";
 
     const createAgentMcpSession = async (callerAgentId?: string) => {
       const agentMcpServer = await createAgentMcpServer(
-        createAgentToolHostDependencies({ callerAgentId }),
+        createAgentToolHostDependencies({
+          callerAgentId,
+          includePluginTools: callerAgentId !== undefined,
+        }),
       );
 
       // Stateless mode: each HTTP request builds a fresh server + transport that is
@@ -1480,12 +1590,10 @@ export async function createPaseoDaemon(
           });
           return;
         }
-        const callerAgentIdRaw = req.query.callerAgentId;
-        let callerAgentId: string | undefined;
-        if (typeof callerAgentIdRaw === "string") {
-          callerAgentId = callerAgentIdRaw;
-        } else if (Array.isArray(callerAgentIdRaw) && typeof callerAgentIdRaw[0] === "string") {
-          callerAgentId = callerAgentIdRaw[0];
+        const callerAgentId = req.header("x-paseo-agent-id")?.trim() || undefined;
+        if (callerAgentId && !agentManager.getAgent(callerAgentId)) {
+          res.status(403).json({ error: "Caller agent is not active" });
+          return;
         }
         const { server, transport } = await createAgentMcpSession(callerAgentId);
         res.on("close", () => {

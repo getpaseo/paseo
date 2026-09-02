@@ -42,6 +42,33 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
     paseo: PaseoPluginApi;
   }
 
+  export interface PluginToolHandlerContext {
+    readonly paseo: PaseoPluginApi;
+    readonly callerAgentId: string;
+    readonly agent: import("@getpaseo/plugin").PluginAgentSnapshot | null;
+    readonly workspace: import("@getpaseo/plugin").PluginWorkspaceSnapshot | null;
+    readonly signal: AbortSignal;
+    readonly progress?: (update: unknown) => void;
+  }
+
+  export type PluginToolContext = PluginToolHandlerContext;
+
+  export interface PluginToolContribution<
+    InputSchema extends ZodType = ZodType,
+    OutputSchema extends ZodType | undefined = ZodType | undefined,
+  > {
+    name: string;
+    title: string;
+    description: string;
+    input: InputSchema;
+    output?: OutputSchema;
+    timeoutMs?: number;
+    handler(
+      input: ZodOutput<InputSchema>,
+      context: PluginToolHandlerContext,
+    ): OutputSchema extends ZodType ? ZodOutput<OutputSchema> | Promise<ZodOutput<OutputSchema>> : unknown | Promise<unknown>;
+  }
+
   export function defineRpc<InputSchema extends ZodType, OutputSchema extends ZodType>(definition: {
     name: string;
     input: InputSchema;
@@ -51,6 +78,11 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
   export function defineAttachmentSource<Definition extends PluginAttachmentSourceContribution>(
     definition: Definition,
   ): Definition;
+
+  export function defineTool<
+    InputSchema extends ZodType,
+    OutputSchema extends ZodType | undefined = undefined,
+  >(definition: PluginToolContribution<InputSchema, OutputSchema>): PluginToolContribution<InputSchema, OutputSchema>;
 
   export const PluginAttachmentItemSchema: import("zod").ZodType<PluginAttachmentItem>;
   export const PluginAttachmentSearchPayloadSchema: import("zod").ZodType<PluginAttachmentSearchPayload>;
@@ -105,6 +137,9 @@ declare module "@getpaseo/plugin" {
     PluginAttachmentSourceContribution,
     PluginHandlerContext,
     PluginRpcContract,
+    PluginToolContribution,
+    PluginToolContext,
+    PluginToolHandlerContext,
   } from "@getpaseo/plugin/server";
 
   export {
@@ -117,6 +152,9 @@ declare module "@getpaseo/plugin" {
     type PluginAttachmentSourceContribution,
     type PluginHandlerContext,
     type PluginRpcContract,
+    type PluginToolContribution,
+    type PluginToolContext,
+    type PluginToolHandlerContext,
   } from "@getpaseo/plugin/server";
 
   export interface PluginTheme {
@@ -332,6 +370,10 @@ declare module "@getpaseo/plugin" {
     addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
     addClientSide(contribution: PluginClientContribution): void;
     addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
+    addTool<
+      InputSchema extends ZodType,
+      OutputSchema extends ZodType | undefined = ZodType | undefined,
+    >(contribution: PluginToolContribution<InputSchema, OutputSchema>): void;
     addTheme(contribution: PluginThemeContribution): void;
     addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(contribution: PluginTimelineTransformerContribution<ItemType>): void;
     addTimelineRenderer<Schema extends ZodType>(contribution: PluginTimelineRendererContribution<Schema>): void;
@@ -378,11 +420,29 @@ const TSCONFIG = {
 
 const ENTRY = `import type { PluginContext } from "@getpaseo/plugin";
 import { MainSurface } from "./main.client";
+import { exampleTool } from "./tool.server";
 
 export default function contribute(plugin: PluginContext) {
   plugin.addSurface("main", MainSurface);
+  plugin.addTool(exampleTool);
   return () => {};
 }
+`;
+
+const SERVER_TOOL = `import { z } from "zod";
+import { defineTool } from "@getpaseo/plugin/server";
+
+export const exampleTool = defineTool({
+  name: "example.lookup",
+  title: "Lookup example",
+  description: "Look up an example value.",
+  input: z.object({ value: z.string().min(1) }),
+  output: z.object({ value: z.string() }),
+  async handler(input, context) {
+    void context;
+    return { value: input.value };
+  },
+});
 `;
 
 const CLIENT_SURFACE = `import type { PluginSurfaceProps } from "@getpaseo/plugin";
@@ -449,6 +509,7 @@ export async function scaffoldPluginDirectory(
     ["paseo-plugin.d.ts", SDK_DECLARATIONS],
     ["index.ts", ENTRY],
     ["main.client.tsx", CLIENT_SURFACE],
+    ["tool.server.ts", SERVER_TOOL],
   ]);
   await Promise.all(
     [...files].map(([filename, contents]) =>

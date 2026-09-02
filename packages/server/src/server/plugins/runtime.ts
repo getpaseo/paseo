@@ -7,13 +7,32 @@ import type pino from "pino";
 import type { PluginLogEntry } from "@getpaseo/protocol/messages";
 import { compilePlugin } from "./compiler.js";
 import { readPluginManifest } from "./manifest.js";
-import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
+import {
+  validatePluginProcessMessage,
+  validatePluginProcessRequest,
+  type PluginProcessMessage,
+  type PluginProcessRequest,
+  type PluginToolCallerContext,
+  type PluginToolCatalogEntry,
+} from "./plugin-process-protocol.js";
+import {
+  PLUGIN_TOOL_MAX_CONCURRENT_GLOBAL,
+  PLUGIN_TOOL_MAX_CONCURRENT_PER_PLUGIN,
+  PLUGIN_TOOL_MAX_RESULT_BYTES,
+  PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+  PLUGIN_TOOL_MAX_TIMEOUT_MS,
+  PLUGIN_TOOL_MAX_UPDATE_BYTES,
+  PLUGIN_TOOL_NAME_PATTERN,
+  assertSafeJson,
+  isReservedPluginToolName,
+} from "./plugin-tool.js";
 import { PluginSessionSocket } from "./session-socket.js";
 
 const ENTRY_FILENAME = "index.ts";
 // COMPAT(plugin-index-tsx): added in v0.4, remove after 2027-02-17
 const LEGACY_ENTRY_FILENAME = "index.tsx";
 const REQUEST_TIMEOUT_MS = 30_000;
+const STOP_TIMEOUT_MS = 2_000;
 const MAX_LOG_ENTRIES = 500;
 const MAX_LOG_BYTES = 256 * 1024;
 const MAX_LOG_LINE_BYTES = 16 * 1024;
@@ -38,12 +57,18 @@ interface PendingInvocation {
   resolve: (output: unknown) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
+  kind: "rpc" | "tool";
+  onUpdate?: (update: unknown) => void;
+  cleanup?: () => void;
 }
 
 interface LoadedPlugin {
   id: string;
+  generation: number;
+  installationId: string;
   clientBundle: string;
   methods: ReadonlySet<string>;
+  tools: ReadonlyMap<string, PluginToolCatalogEntry>;
   child: PluginChild;
   outputCapture: PluginOutputCapture;
   pending: Map<string, PendingInvocation>;
@@ -54,6 +79,7 @@ interface LoadedPlugin {
 interface PluginRuntimeDependencies {
   spawnChild?: () => PluginChild;
   sessionHost?: PluginPaseoSessionHost;
+  resolveToolContext?: (callerAgentId: string) => Promise<PluginToolCallerContext>;
 }
 
 interface PluginLogTail {
@@ -179,7 +205,14 @@ function describeError(error: unknown): string {
 
 function send(child: PluginChild, message: PluginProcessRequest): Promise<void> {
   return new Promise((resolve, reject) => {
-    child.send(message, (error) => {
+    let validated: PluginProcessRequest;
+    try {
+      validated = validatePluginProcessRequest(message);
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    child.send(validated, (error) => {
       if (error) {
         reject(error);
         return;
@@ -204,7 +237,11 @@ export class PluginRuntime {
   private readonly logger: pino.Logger;
   private readonly spawnChild: () => PluginChild;
   private sessionHost: PluginPaseoSessionHost | null;
+  private resolveToolContext: ((callerAgentId: string) => Promise<PluginToolCallerContext>) | null;
   private readonly listeners = new Set<(pluginId: string, error?: string) => void>();
+  private readonly nextGenerations = new Map<string, number>();
+  private activeToolInvocations = 0;
+  private readonly activeToolInvocationsByPlugin = new Map<string, number>();
 
   constructor(
     logger: pino.Logger,
@@ -214,6 +251,13 @@ export class PluginRuntime {
     this.logger = logger.child({ module: "plugins" });
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
     this.sessionHost = dependencies.sessionHost ?? null;
+    this.resolveToolContext = dependencies.resolveToolContext ?? null;
+  }
+
+  bindToolContextResolver(
+    resolver: (callerAgentId: string) => Promise<PluginToolCallerContext>,
+  ): void {
+    this.resolveToolContext = resolver;
   }
 
   bindPaseoSessionHost(sessionHost: PluginPaseoSessionHost): void {
@@ -269,6 +313,17 @@ export class PluginRuntime {
       .sort((left, right) => left.id.localeCompare(right.id));
   }
 
+  toolCatalog(): PluginToolCatalogEntry[] {
+    const tools: PluginToolCatalogEntry[] = [];
+    for (const plugin of this.plugins.values()) {
+      for (const tool of plugin.tools.values()) tools.push(Object.assign({}, tool));
+    }
+    return tools.sort(
+      (left, right) =>
+        left.name.localeCompare(right.name) || left.pluginId.localeCompare(right.pluginId),
+    );
+  }
+
   getLogs(pluginId: string): PluginLogEntry[] {
     return (
       this.logTails.get(pluginId)?.entries.map((entry) => ({
@@ -289,19 +344,72 @@ export class PluginRuntime {
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
     if (!loaded.methods.has(method))
       throw new Error(`Plugin ${pluginId} does not contribute RPC ${method}`);
-    const requestId = randomUUID();
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        loaded.pending.delete(requestId);
-        reject(new Error(`Plugin RPC timed out: ${pluginId}.${method}`));
-      }, REQUEST_TIMEOUT_MS);
-      loaded.pending.set(requestId, { resolve, reject, timeout });
-      void send(loaded.child, { type: "invoke", requestId, method, input }).catch((error) => {
-        clearTimeout(timeout);
-        loaded.pending.delete(requestId);
-        reject(error);
-      });
+    return this.invokeChild(loaded, {
+      type: "invoke",
+      method,
+      input,
     });
+  }
+
+  async invokeTool(
+    pluginId: string,
+    name: string,
+    input: unknown,
+    options: {
+      generation?: number;
+      installationId?: string;
+      callerAgentId: string;
+      signal?: AbortSignal;
+      onUpdate?: (update: unknown) => void;
+    },
+  ): Promise<unknown> {
+    const loaded = this.plugins.get(pluginId);
+    if (
+      !loaded ||
+      (options.generation !== undefined && loaded.generation !== options.generation) ||
+      (options.installationId !== undefined && loaded.installationId !== options.installationId)
+    ) {
+      throw new Error(`Plugin tool is no longer available: ${pluginId}.${name}`);
+    }
+    const tool = loaded.tools.get(name);
+    if (!tool) throw new Error(`Plugin ${pluginId} does not contribute tool ${name}`);
+    if (!this.resolveToolContext) throw new Error("Plugin tool caller context is unavailable");
+    if (this.activeToolInvocations >= PLUGIN_TOOL_MAX_CONCURRENT_GLOBAL) {
+      throw new Error("Plugin tool global concurrency limit reached");
+    }
+    const pluginActive = this.activeToolInvocationsByPlugin.get(pluginId) ?? 0;
+    if (pluginActive >= PLUGIN_TOOL_MAX_CONCURRENT_PER_PLUGIN) {
+      throw new Error(`Plugin tool concurrency limit reached: ${pluginId}`);
+    }
+    this.activeToolInvocations += 1;
+    this.activeToolInvocationsByPlugin.set(pluginId, pluginActive + 1);
+    const release = (): void => {
+      this.activeToolInvocations = Math.max(0, this.activeToolInvocations - 1);
+      const remaining = (this.activeToolInvocationsByPlugin.get(pluginId) ?? 1) - 1;
+      if (remaining <= 0) this.activeToolInvocationsByPlugin.delete(pluginId);
+      else this.activeToolInvocationsByPlugin.set(pluginId, remaining);
+    };
+    try {
+      assertSafeJson(input, "Plugin tool input", PLUGIN_TOOL_MAX_RESULT_BYTES);
+      const context = await this.resolveToolContext(options.callerAgentId);
+      if (
+        this.plugins.get(pluginId) !== loaded ||
+        (options.generation !== undefined && loaded.generation !== options.generation) ||
+        (options.installationId !== undefined && loaded.installationId !== options.installationId)
+      ) {
+        throw new Error(`Plugin tool is no longer available: ${pluginId}.${name}`);
+      }
+      const result = this.invokeChild(
+        loaded,
+        { type: "tool_invoke", name, input, context },
+        tool.timeoutMs,
+        { kind: "tool", signal: options.signal, onUpdate: options.onUpdate },
+      );
+      return result.finally(release);
+    } catch (error) {
+      release();
+      throw error;
+    }
   }
 
   async stopAll(): Promise<void> {
@@ -337,51 +445,84 @@ export class PluginRuntime {
         throw error;
       });
     let loaded: LoadedPlugin | null = null;
-    let methods: string[];
+    const generation = (this.nextGenerations.get(pluginId) ?? 0) + 1;
+    this.nextGenerations.set(pluginId, generation);
+    const installationId = randomUUID();
+    let ready: { methods: string[]; catalog: PluginToolCatalogEntry[] };
     try {
-      methods = await new Promise<string[]>((resolve, reject) => {
-        let settled = false;
-        const timeout = setTimeout(
-          () => fail(new Error(`Plugin ${pluginId} did not initialize`)),
-          REQUEST_TIMEOUT_MS,
-        );
-        const fail = (error: Error): void => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timeout);
-          reject(error);
-        };
-        child.on("message", (message) => {
-          if (message.type === "paseo_frame") {
-            sessionSocket.receive(message.data, message.isBinary);
-          } else if (message.type === "paseo_close") {
-            sessionSocket.peerClosed();
-          } else if (message.type === "ready") {
+      ready = await new Promise<{ methods: string[]; catalog: PluginToolCatalogEntry[] }>(
+        (resolve, reject) => {
+          let settled = false;
+          const timeout = setTimeout(
+            () => fail(new Error(`Plugin ${pluginId} did not initialize`)),
+            REQUEST_TIMEOUT_MS,
+          );
+          const fail = (error: Error): void => {
             if (settled) return;
             settled = true;
             clearTimeout(timeout);
-            resolve(message.methods);
-          } else if (message.type === "fatal") {
-            fail(new Error(message.error));
-          } else if (loaded) {
-            this.handleChildMessage(loaded, message);
-          }
-        });
-        child.on("close", () => {
-          sessionSocket.peerClosed();
-          if (!loaded) {
-            fail(new Error(`Plugin ${pluginId} exited during initialization`));
-            return;
-          }
-          void this.handleChildClose(loaded);
-        });
-        void send(child, {
-          type: "initialize",
-          pluginId,
-          appVersion: this.daemonVersion,
-          bundle: bundles.serverBundle,
-        }).catch(fail);
-      });
+            reject(error);
+          };
+          child.on("message", (rawMessage) => {
+            let message: PluginProcessMessage;
+            try {
+              message = validatePluginProcessMessage(rawMessage);
+            } catch (error) {
+              fail(new Error(`Invalid plugin process message: ${describeError(error)}`));
+              return;
+            }
+            if (message.type === "paseo_frame") {
+              sessionSocket.receive(message.data, message.isBinary);
+            } else if (message.type === "paseo_close") {
+              sessionSocket.peerClosed();
+            } else if (message.type === "ready") {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timeout);
+              resolve({ methods: message.methods, catalog: message.catalog ?? [] });
+            } else if (message.type === "fatal") {
+              fail(new Error(message.error));
+            } else if (loaded) {
+              this.handleChildMessage(loaded, message);
+            }
+          });
+          child.on("close", () => {
+            sessionSocket.peerClosed();
+            if (!loaded) {
+              fail(new Error(`Plugin ${pluginId} exited during initialization`));
+              return;
+            }
+            void this.handleChildClose(loaded);
+          });
+          void send(child, {
+            type: "initialize",
+            pluginId,
+            appVersion: this.daemonVersion,
+            generation,
+            installationId,
+            bundle: bundles.serverBundle,
+          }).catch(fail);
+        },
+      );
+    } catch (error) {
+      sessionSocket.close();
+      await sessionAttachment.closed;
+      terminatePluginChild(child);
+      throw error;
+    }
+    let tools: ReadonlyMap<string, PluginToolCatalogEntry>;
+    try {
+      tools = this.validateToolCatalog(pluginId, generation, installationId, ready.catalog);
+      const conflict = [...tools.keys()]
+        .sort()
+        .map((name) => ({ name, kind: this.toolNameConflict(name) }))
+        .find((entry) => entry.kind !== null);
+      if (conflict?.kind === "reserved") {
+        throw new Error(`Plugin tool name is reserved: ${conflict.name}`);
+      }
+      if (conflict?.kind === "duplicate") {
+        throw new Error(`Duplicate plugin tool name across plugins: ${conflict.name}`);
+      }
     } catch (error) {
       sessionSocket.close();
       await sessionAttachment.closed;
@@ -390,25 +531,62 @@ export class PluginRuntime {
     }
     loaded = {
       id: pluginId,
+      generation,
+      installationId,
       clientBundle: bundles.clientBundle,
-      methods: new Set(methods),
+      methods: new Set(ready.methods),
+      tools,
       child,
       outputCapture,
       pending,
       sessionSocket,
       sessionClosed: sessionAttachment.closed,
     };
-    this.logger.info({ pluginId, methods }, "Loaded plugin");
+    this.logger.info(
+      { pluginId, generation, installationId, methods: ready.methods },
+      "Loaded plugin",
+    );
     return loaded;
   }
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
-    if (message.type !== "result" && message.type !== "error") return;
+    if (
+      message.type !== "result" &&
+      message.type !== "error" &&
+      message.type !== "tool_result" &&
+      message.type !== "tool_error" &&
+      message.type !== "tool_update"
+    ) {
+      return;
+    }
     const pending = loaded.pending.get(message.requestId);
     if (!pending) return;
+    if (message.type === "tool_update") {
+      if (pending.kind !== "tool" || !pending.onUpdate) return;
+      try {
+        assertSafeJson(message.update, "Plugin tool progress update", PLUGIN_TOOL_MAX_UPDATE_BYTES);
+      } catch (error) {
+        this.logger.debug(
+          { err: error, pluginId: loaded.id },
+          "Dropped invalid plugin tool update",
+        );
+        return;
+      }
+      try {
+        pending.onUpdate(message.update);
+      } catch (error) {
+        this.logger.debug(
+          { err: error, pluginId: loaded.id },
+          "Plugin tool update consumer failed",
+        );
+      }
+      return;
+    }
     loaded.pending.delete(message.requestId);
     clearTimeout(pending.timeout);
-    if (message.type === "result") pending.resolve(message.output);
+    pending.cleanup?.();
+    if (message.type === "result" || message.type === "tool_result")
+      pending.resolve(message.output);
     else pending.reject(new Error(message.error));
   }
 
@@ -427,7 +605,10 @@ export class PluginRuntime {
     this.appendLog(loaded.id, "stdout", "[paseo] Stopping plugin");
     if (loaded.child.killed) {
       loaded.sessionSocket.peerClosed();
-      await loaded.sessionClosed;
+      await Promise.race([
+        loaded.sessionClosed,
+        new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
+      ]);
       this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
       return;
     }
@@ -439,18 +620,142 @@ export class PluginRuntime {
     if (loaded.child.connected) {
       await send(loaded.child, { type: "shutdown" }).catch(() => undefined);
     }
-    await closed;
+    await Promise.race([
+      closed,
+      new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
+    ]);
+    if (loaded.child.connected || !loaded.child.killed) terminatePluginChild(loaded.child);
     loaded.sessionSocket.peerClosed();
-    await loaded.sessionClosed;
+    await Promise.race([
+      loaded.sessionClosed,
+      new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
+    ]);
     this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
   }
 
   private rejectPending(loaded: LoadedPlugin, message: string): void {
-    for (const invocation of loaded.pending.values()) {
+    for (const [requestId, invocation] of loaded.pending) {
       clearTimeout(invocation.timeout);
+      invocation.cleanup?.();
+      if (invocation.kind === "tool") {
+        void send(loaded.child, { type: "tool_cancel", requestId }).catch(() => undefined);
+      }
       invocation.reject(new Error(message));
     }
     loaded.pending.clear();
+  }
+
+  private invokeChild(
+    loaded: LoadedPlugin,
+    request:
+      | { type: "invoke"; method: string; input: unknown }
+      | { type: "tool_invoke"; name: string; input: unknown; context: PluginToolCallerContext },
+    timeoutMs: number = REQUEST_TIMEOUT_MS,
+    options: {
+      kind?: "rpc" | "tool";
+      signal?: AbortSignal;
+      onUpdate?: (update: unknown) => void;
+    } = {},
+  ): Promise<unknown> {
+    const kind = options.kind ?? "rpc";
+    const requestId = randomUUID();
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let abort = (): void => undefined;
+      let pending: PendingInvocation;
+      const settle = (callback: () => void): void => {
+        if (settled) return;
+        settled = true;
+        callback();
+      };
+      const cancel = (): void => {
+        if (kind === "tool") {
+          void send(loaded.child, { type: "tool_cancel", requestId }).catch(() => undefined);
+        }
+      };
+      const timeout = setTimeout(() => {
+        loaded.pending.delete(requestId);
+        pending.cleanup?.();
+        cancel();
+        settle(() => reject(new Error(`Plugin ${kind} timed out: ${loaded.id}`)));
+      }, timeoutMs);
+      pending = {
+        resolve: (output) => settle(() => resolve(output)),
+        reject: (error) => settle(() => reject(error)),
+        timeout,
+        kind,
+        onUpdate: options.onUpdate,
+      };
+      pending.cleanup = () => options.signal?.removeEventListener("abort", abort);
+      loaded.pending.set(requestId, pending);
+      abort = (): void => {
+        loaded.pending.delete(requestId);
+        clearTimeout(timeout);
+        cancel();
+        const reason = options.signal?.reason;
+        settle(() =>
+          reject(reason instanceof Error ? reason : new Error("Plugin tool invocation cancelled")),
+        );
+      };
+      if (options.signal?.aborted) {
+        abort();
+        return;
+      }
+      options.signal?.addEventListener("abort", abort, { once: true });
+      void send(loaded.child, { ...request, requestId } as PluginProcessRequest).catch((error) => {
+        loaded.pending.delete(requestId);
+        clearTimeout(timeout);
+        pending.cleanup?.();
+        settle(() => reject(error instanceof Error ? error : new Error(String(error))));
+      });
+    });
+  }
+
+  private validateToolCatalog(
+    pluginId: string,
+    generation: number,
+    installationId: string,
+    catalog: PluginToolCatalogEntry[],
+  ): ReadonlyMap<string, PluginToolCatalogEntry> {
+    const tools = new Map<string, PluginToolCatalogEntry>();
+    for (const raw of catalog) {
+      if (
+        raw.pluginId !== pluginId ||
+        raw.generation !== generation ||
+        raw.installationId !== installationId
+      ) {
+        throw new Error(`Plugin ${pluginId} reported an invalid tool installation identity`);
+      }
+      if (!PLUGIN_TOOL_NAME_PATTERN.test(raw.name)) {
+        throw new Error(`Invalid plugin tool name: ${raw.name}`);
+      }
+      if (isReservedPluginToolName(raw.name)) {
+        throw new Error(`Plugin tool name is reserved: ${raw.name}`);
+      }
+      if (raw.timeoutMs > PLUGIN_TOOL_MAX_TIMEOUT_MS) {
+        throw new Error(`Plugin tool timeout exceeds host maximum: ${raw.name}`);
+      }
+      assertSafeJson(
+        raw.inputSchema,
+        `Plugin tool ${raw.name} input schema`,
+        PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+      );
+      if (raw.outputSchema) {
+        assertSafeJson(
+          raw.outputSchema,
+          `Plugin tool ${raw.name} output schema`,
+          PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+        );
+      }
+      if (tools.has(raw.name)) throw new Error(`Duplicate plugin tool name: ${raw.name}`);
+      tools.set(raw.name, { ...raw });
+    }
+    return tools;
+  }
+
+  private toolNameConflict(name: string): "reserved" | "duplicate" | null {
+    if (isReservedPluginToolName(name)) return "reserved";
+    return [...this.plugins.values()].some((plugin) => plugin.tools.has(name)) ? "duplicate" : null;
   }
 
   private appendLog(pluginId: string, stream: PluginLogEntry["stream"], message: string): void {

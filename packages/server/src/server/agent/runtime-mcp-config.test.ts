@@ -19,8 +19,11 @@ describe("withRuntimePaseoMcpServer", () => {
 
     expect(result.mcpServers?.paseo).toEqual({
       type: "http",
-      url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
-      headers: { Authorization: "Bearer cap-token" },
+      url: "http://127.0.0.1:6767/mcp/agents",
+      headers: {
+        "X-Paseo-Agent-ID": "agent-1",
+        Authorization: "Bearer cap-token",
+      },
     });
   });
 
@@ -34,7 +37,8 @@ describe("withRuntimePaseoMcpServer", () => {
 
     expect(result.mcpServers?.paseo).toEqual({
       type: "http",
-      url: "http://127.0.0.1:6767/mcp/agents?callerAgentId=agent-1",
+      url: "http://127.0.0.1:6767/mcp/agents",
+      headers: { "X-Paseo-Agent-ID": "agent-1" },
     });
   });
 

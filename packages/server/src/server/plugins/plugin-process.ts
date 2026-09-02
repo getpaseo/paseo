@@ -1,24 +1,54 @@
-import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
 import { createRequire } from "node:module";
 import {
   defineAttachmentSource,
   defineRpc,
+  defineTool,
   type PluginHandlerContext,
   type PluginRpcContract,
+  type PluginToolContribution,
+  type PluginToolHandlerContext,
 } from "@getpaseo/plugin/server";
 import { createPaseoPluginApi, type PaseoPluginApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
+import {
+  validatePluginProcessMessage,
+  validatePluginProcessRequest,
+  type PluginProcessMessage,
+  type PluginProcessRequest,
+  type PluginToolCallerContext,
+  type PluginToolCatalogEntry,
+} from "./plugin-process-protocol.js";
+import {
+  PLUGIN_TOOL_MAX_UPDATE_BYTES,
+  PLUGIN_TOOL_MAX_UPDATE_COUNT,
+  PLUGIN_TOOL_MAX_ERROR_BYTES,
+  assertSafeJson,
+  clampPluginToolTimeout,
+  serializePluginToolSchema,
+} from "./plugin-tool.js";
 import { isPluginClientOnlySdkSpecifier, isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
+type ToolHandler = (
+  input: unknown,
+  context: PluginToolHandlerContext,
+) => unknown | Promise<unknown>;
 
 interface RegisteredRpc {
   contract: PluginRpcContract;
   handler: RpcHandler;
 }
 
+interface RegisteredTool {
+  definition: PluginToolContribution;
+  handler: ToolHandler;
+  timeoutMs: number;
+}
+
 const handlers = new Map<string, RegisteredRpc>();
+const tools = new Map<string, RegisteredTool>();
+const activeTools = new Map<string, { controller: AbortController; done: Promise<void> }>();
 let cleanup: (() => void | Promise<void>) | null = null;
 let daemonClient: DaemonClient | null = null;
 let paseo: PaseoPluginApi | null = null;
@@ -26,7 +56,8 @@ let stopping = false;
 const nodeRequire = createRequire(import.meta.url);
 
 function send(message: PluginProcessMessage): void {
-  process.send?.(message);
+  const validated = validatePluginProcessMessage(message);
+  process.send?.(validated);
 }
 
 function sendAndWait(message: PluginProcessMessage): Promise<void> {
@@ -35,7 +66,7 @@ function sendAndWait(message: PluginProcessMessage): Promise<void> {
       resolve();
       return;
     }
-    process.send(message, () => resolve());
+    process.send(validatePluginProcessMessage(message), () => resolve());
   });
 }
 
@@ -43,28 +74,63 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function validateMethod(method: string): string {
-  const normalized = method.trim();
-  if (!/^[a-z][a-z0-9._-]*$/.test(normalized)) {
-    throw new Error(`Invalid plugin RPC method: ${method}`);
+function boundError(error: unknown): string {
+  return Buffer.from(describeError(error), "utf8")
+    .subarray(0, PLUGIN_TOOL_MAX_ERROR_BYTES)
+    .toString("utf8");
+}
+
+function validateName(name: string, kind: string): string {
+  if (typeof name !== "string" || name.length === 0 || name.trim() !== name) {
+    throw new Error(`Invalid plugin ${kind} name: ${name}`);
   }
-  if (handlers.has(normalized)) {
-    throw new Error(`Duplicate plugin RPC method: ${normalized}`);
+  if (!/^[a-z][a-z0-9._-]*$/u.test(name)) {
+    throw new Error(`Invalid plugin ${kind} name: ${name}`);
   }
-  return normalized;
+  return name;
 }
 
 function register(contract: PluginRpcContract, handler: RpcHandler): void {
   if (typeof handler !== "function") {
     throw new Error(`Plugin RPC ${contract.name} must provide a handler`);
   }
-  const method = validateMethod(contract.name);
+  const method = validateName(contract.name, "RPC");
+  if (handlers.has(method)) throw new Error(`Duplicate plugin RPC method: ${method}`);
   handlers.set(method, { contract: { ...contract, name: method }, handler });
+}
+
+function registerTool(definition: PluginToolContribution, handler?: ToolHandler): void {
+  if (typeof definition !== "object" || definition === null) {
+    throw new Error("Plugin tool definition must be an object");
+  }
+  const name = validateName(definition.name, "tool");
+  if (tools.has(name)) throw new Error(`Duplicate plugin tool name: ${name}`);
+  if (typeof definition.title !== "string" || definition.title.trim().length === 0) {
+    throw new Error(`Plugin tool ${name} must provide a title`);
+  }
+  if (typeof definition.description !== "string" || definition.description.trim().length === 0) {
+    throw new Error(`Plugin tool ${name} must provide a description`);
+  }
+  if (!definition.input || typeof definition.input.parseAsync !== "function") {
+    throw new Error(`Plugin tool ${name} must provide a Zod input schema`);
+  }
+  if (definition.output !== undefined && typeof definition.output.parseAsync !== "function") {
+    throw new Error(`Plugin tool ${name} output must be a Zod schema`);
+  }
+  const actualHandler = handler ?? (definition.handler as ToolHandler);
+  if (typeof actualHandler !== "function")
+    throw new Error(`Plugin tool ${name} must provide a handler`);
+  tools.set(name, {
+    definition: { ...definition, name },
+    handler: actualHandler,
+    timeoutMs: clampPluginToolTimeout(definition.timeoutMs),
+  });
 }
 
 const pluginAuthorRuntime = {
   defineAttachmentSource,
   defineRpc,
+  defineTool,
   Icon() {
     throw new Error("Icon is available only in plugin client code");
   },
@@ -88,7 +154,7 @@ function evaluateBundle(bundle: string): void {
   if (typeof setup !== "function") {
     throw new Error("Plugin server bundle must default export a function");
   }
-  const contributedCleanup = setup({ handle: register });
+  const contributedCleanup = setup({ handle: register, addTool: registerTool });
   if (typeof contributedCleanup !== "function") {
     throw new Error("Plugin contribution must return a cleanup function");
   }
@@ -103,6 +169,74 @@ const transportFactory = createPluginDaemonTransportFactory({
   },
 });
 
+function freezeSnapshot<T>(value: T, seen = new WeakSet<object>()): T {
+  if (value === null || typeof value !== "object" || seen.has(value)) return value;
+  seen.add(value);
+  for (const child of Object.values(value)) freezeSnapshot(child, seen);
+  return Object.freeze(value);
+}
+
+function createToolContext(
+  message: PluginToolCallerContext,
+  controller: AbortController,
+  reportProgress: (update: unknown) => void,
+): PluginToolHandlerContext {
+  if (!paseo) throw new Error("Plugin Paseo API is unavailable");
+  return {
+    paseo,
+    callerAgentId: message.callerAgentId,
+    agent: freezeSnapshot(message.agent),
+    workspace: freezeSnapshot(message.workspace),
+    signal: controller.signal,
+    progress: reportProgress,
+  } as PluginToolHandlerContext;
+}
+
+function invokeTool(message: Extract<PluginProcessRequest, { type: "tool_invoke" }>): void {
+  const registered = tools.get(message.name);
+  if (!registered) {
+    send({
+      type: "tool_error",
+      requestId: message.requestId,
+      error: `Unknown plugin tool: ${message.name}`,
+    });
+    return;
+  }
+  const controller = new AbortController();
+  let updateCount = 0;
+  const reportProgress = (update: unknown): void => {
+    if (updateCount >= PLUGIN_TOOL_MAX_UPDATE_COUNT) return;
+    try {
+      assertSafeJson(update, "Plugin tool progress update", PLUGIN_TOOL_MAX_UPDATE_BYTES);
+      updateCount += 1;
+      send({ type: "tool_update", requestId: message.requestId, update });
+    } catch (error) {
+      // Progress is best effort. The final tool result still has a chance to
+      // complete when a plugin emits an invalid progress value.
+      console.error(`Plugin tool progress dropped: ${describeError(error)}`);
+    }
+  };
+  const run = (async () => {
+    try {
+      const input = await registered.definition.input.parseAsync(message.input);
+      const output = await registered.handler(
+        input,
+        createToolContext(message.context, controller, reportProgress),
+      );
+      const parsedOutput = registered.definition.output
+        ? await registered.definition.output.parseAsync(output)
+        : output;
+      assertSafeJson(parsedOutput, "Plugin tool output");
+      send({ type: "tool_result", requestId: message.requestId, output: parsedOutput });
+    } catch (error) {
+      send({ type: "tool_error", requestId: message.requestId, error: boundError(error) });
+    } finally {
+      activeTools.delete(message.requestId);
+    }
+  })();
+  activeTools.set(message.requestId, { controller, done: run });
+}
+
 async function initialize(message: Extract<PluginProcessRequest, { type: "initialize" }>) {
   daemonClient = new DaemonClient({
     url: `ipc://plugin/${encodeURIComponent(message.pluginId)}`,
@@ -115,12 +249,43 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
   paseo = createPaseoPluginApi(daemonClient);
   await daemonClient.connect();
   evaluateBundle(message.bundle);
-  send({ type: "ready", methods: [...handlers.keys()].sort() });
+  const catalog: PluginToolCatalogEntry[] = Array.from(tools.entries())
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, tool]) => {
+      const entry: PluginToolCatalogEntry = {
+        pluginId: message.pluginId,
+        generation: message.generation ?? 1,
+        installationId: message.installationId,
+        name,
+        title: tool.definition.title,
+        description: tool.definition.description,
+        inputSchema: serializePluginToolSchema(
+          tool.definition.input,
+          `${message.pluginId}.${name}.input`,
+        ),
+        timeoutMs: tool.timeoutMs,
+      };
+      if (tool.definition.output) {
+        entry.outputSchema = serializePluginToolSchema(
+          tool.definition.output,
+          `${message.pluginId}.${name}.output`,
+        );
+      }
+      return entry;
+    });
+  send({ type: "ready", methods: [...handlers.keys()].sort(), catalog });
 }
 
 async function shutdown(): Promise<void> {
   if (stopping) return;
   stopping = true;
+  for (const active of activeTools.values())
+    active.controller.abort(new Error("Plugin is stopping"));
+  const active = [...activeTools.values()].map(({ done }) => done);
+  await Promise.race([
+    Promise.allSettled(active),
+    new Promise((resolve) => setTimeout(resolve, 2_000)),
+  ]);
   const currentCleanup = cleanup;
   cleanup = null;
   try {
@@ -132,19 +297,37 @@ async function shutdown(): Promise<void> {
   await sendAndWait({ type: "paseo_close" });
   daemonClient = null;
   paseo = null;
-  process.disconnect();
+  process.disconnect?.();
+  process.exit(0);
 }
 
-process.on("message", (message: PluginProcessRequest) => {
+process.on("message", (rawMessage: unknown) => {
+  let message: PluginProcessRequest;
+  try {
+    message = validatePluginProcessRequest(rawMessage);
+  } catch (error) {
+    send({ type: "fatal", error: `Invalid plugin process request: ${describeError(error)}` });
+    return;
+  }
   if (message.type === "initialize") {
     void initialize(message).catch(async (error) => {
-      send({ type: "fatal", error: describeError(error) });
+      send({ type: "fatal", error: boundError(error) });
       await daemonClient?.close().catch(() => undefined);
     });
     return;
   }
   if (message.type === "shutdown") {
     void shutdown();
+    return;
+  }
+  if (message.type === "tool_cancel") {
+    activeTools
+      .get(message.requestId)
+      ?.controller.abort(new Error("Plugin tool invocation cancelled"));
+    return;
+  }
+  if (message.type === "tool_invoke") {
+    if (!stopping) invokeTool(message);
     return;
   }
   if (message.type === "paseo_frame" || message.type === "paseo_close") return;
@@ -167,6 +350,6 @@ process.on("message", (message: PluginProcessRequest) => {
     .then((output) => registered.contract.output.parseAsync(output))
     .then(
       (output) => send({ type: "result", requestId: message.requestId, output }),
-      (error) => send({ type: "error", requestId: message.requestId, error: describeError(error) }),
+      (error) => send({ type: "error", requestId: message.requestId, error: boundError(error) }),
     );
 });

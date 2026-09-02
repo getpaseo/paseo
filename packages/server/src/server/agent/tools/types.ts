@@ -15,7 +15,10 @@ export interface PaseoToolConfig {
   title?: string;
   description?: string;
   inputSchema?: z.ZodRawShape | z.ZodType;
-  outputSchema?: z.ZodRawShape;
+  outputSchema?: z.ZodRawShape | z.ZodType;
+  /** Pre-serialized schema for server-owned child-process tools. */
+  inputSchemaJson?: Record<string, unknown>;
+  outputSchemaJson?: Record<string, unknown>;
 }
 
 export interface PaseoToolDefinition extends PaseoToolConfig {
@@ -38,6 +41,8 @@ export interface PaseoToolRuntimeContext {
   callerAgentId?: string;
   enableVoiceTools?: boolean;
   voiceOnly?: boolean;
+  /** Model-facing plugin tools are enabled only for a host-derived caller. */
+  includePluginTools?: boolean;
 }
 
 export type PaseoToolCatalogFactory = (
