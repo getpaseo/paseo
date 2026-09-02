@@ -395,9 +395,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
     const timelineEpoch = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineCursor.get(agentId)?.epoch ?? null,
     );
-    const timelineWindowGeneration = useSessionStore(
-      (state) => state.sessions[resolvedServerId]?.agentTimelineWindowGeneration.get(agentId) ?? 0,
-    );
     const isTimelineDetached = useSessionStore(
       (state) => state.sessions[resolvedServerId]?.agentTimelineHasNewer.get(agentId) === true,
     );
@@ -578,7 +575,6 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       agentId,
       items: projectedPlugins.tail,
       loadRemoteOlder,
-      resetKey: timelineWindowGeneration,
     });
     const isLoadingOlder = remoteIsLoadingOlder;
     const hasOlder = hasLocalHistory || remoteHasOlder;

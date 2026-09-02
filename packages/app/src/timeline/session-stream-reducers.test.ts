@@ -381,7 +381,6 @@ describe("processTimelineResponse", () => {
     expect(result.cursorChanged).toBe(false);
     expect(result.acknowledgedClientMessageIds).toEqual([]);
     expect(result.sideEffects).toEqual([{ type: "flush_pending_updates" }]);
-    expect(result.resetHistoryWindow).toBe(false);
   });
 
   it("atomically replaces history when a resume tail leaves a middle gap", () => {
@@ -415,31 +414,6 @@ describe("processTimelineResponse", () => {
     expect(getUserTexts(result.tail)).toEqual(["latest 200", "latest 240"]);
     expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 200, endSeq: 240 });
     expect(result.sideEffects).toEqual([{ type: "flush_pending_updates" }]);
-    expect(result.resetHistoryWindow).toBe(true);
-  });
-
-  it("recenters mounted history when a resume tail appends missed items", () => {
-    const result = processTimelineResponse({
-      ...baseTimelineInput,
-      currentTail: [
-        {
-          ...makeAssistantItem("existing", "existing"),
-          timelineCursor: { epoch: "epoch-1", seq: 40 },
-        },
-      ],
-      currentCursor: { epoch: "epoch-1", startSeq: 1, endSeq: 40 },
-      payload: {
-        ...baseTimelineInput.payload,
-        direction: "tail",
-        window: { minSeq: 1, maxSeq: 50, nextSeq: 51 },
-        startCursor: { seq: 40 },
-        endCursor: { seq: 50 },
-        entries: [makeTimelineEntry(40, "existing"), makeTimelineEntry(41, "missed")],
-      },
-    });
-
-    expect(result.commit).toBe("apply");
-    expect(result.resetHistoryWindow).toBe(true);
   });
 
   it("reconciles in-flight live rows and an unresolved submission during gap replacement", () => {

@@ -393,7 +393,6 @@ export interface SessionState {
   agentTimelineHasOlder: Map<string, boolean>;
   agentTimelineHasNewer: Map<string, boolean>;
   agentTimelineOlderFetchInFlight: Map<string, boolean>;
-  agentTimelineWindowGeneration: Map<string, number>;
   historySyncGeneration: number;
   agentHistorySyncGeneration: Map<string, number>;
   agentAuthoritativeHistoryApplied: Map<string, boolean>;
@@ -542,7 +541,6 @@ interface SessionStoreActions {
       newer: boolean;
       synchronized: boolean;
       acknowledgedClientMessageIds: string[];
-      resetHistoryWindow?: boolean;
     },
   ) => void;
 
@@ -652,7 +650,6 @@ function createInitialSessionState(
     agentTimelineHasOlder: new Map(),
     agentTimelineHasNewer: new Map(),
     agentTimelineOlderFetchInFlight: new Map(),
-    agentTimelineWindowGeneration: new Map(),
     historySyncGeneration: 0,
     agentHistorySyncGeneration: new Map(),
     agentAuthoritativeHistoryApplied: new Map(),
@@ -1465,14 +1462,6 @@ export const useSessionStore = create<SessionStore>()(
           nextHasNewer.set(agentId, state.newer);
           const nextAuthoritative = new Map(session.agentAuthoritativeHistoryApplied);
           const nextSyncGeneration = new Map(session.agentHistorySyncGeneration);
-          let nextWindowGeneration = session.agentTimelineWindowGeneration;
-          if (state.resetHistoryWindow) {
-            nextWindowGeneration = new Map(session.agentTimelineWindowGeneration);
-            nextWindowGeneration.set(
-              agentId,
-              (session.agentTimelineWindowGeneration.get(agentId) ?? 0) + 1,
-            );
-          }
           const currentSubmissions = session.messageSubmissions.get(agentId) ?? [];
           const observedSubmissions = observeMessageSubmissionCanonical(
             currentSubmissions,
@@ -1510,7 +1499,6 @@ export const useSessionStore = create<SessionStore>()(
                 agentTimelineHasNewer: nextHasNewer,
                 agentAuthoritativeHistoryApplied: nextAuthoritative,
                 agentHistorySyncGeneration: nextSyncGeneration,
-                agentTimelineWindowGeneration: nextWindowGeneration,
                 messageSubmissions,
               },
             },
