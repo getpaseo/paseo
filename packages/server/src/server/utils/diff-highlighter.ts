@@ -41,10 +41,19 @@ interface ParseAndHighlightDiffOptions {
 /**
  * Parse a unified diff into structured data
  */
-// Git's default patch headers use paired a/path and b/path prefixes, while
-// diff.noprefix emits plain paths that may legitimately start with a/ or b/.
+// Git's default patch headers use paired a/path and b/path prefixes. With
+// diff.mnemonicPrefix enabled, git instead emits c/ (commit), i/ (index),
+// w/ (worktree), or o/ (object) depending on what is being compared, always
+// as a mixed pair such as i/path w/path or c/path i/path. Meanwhile
+// diff.noprefix emits plain paths that may legitimately start with any of
+// these, so leading characters only count as prefixes when the two sides
+// carry different ones.
+const DIFF_PATH_PREFIX = /^([abciow])\//;
+
 function usesDiffPathPrefixes(oldPath: string, newPath: string): boolean {
-  return oldPath.startsWith("a/") && newPath.startsWith("b/");
+  const oldPrefix = oldPath.match(DIFF_PATH_PREFIX)?.[1];
+  const newPrefix = newPath.match(DIFF_PATH_PREFIX)?.[1];
+  return oldPrefix !== undefined && newPrefix !== undefined && oldPrefix !== newPrefix;
 }
 
 function extractPathFromMetadata(lines: string[], prefix: "--- " | "+++ "): string | null {
@@ -59,15 +68,20 @@ function extractPathFromMetadata(lines: string[], prefix: "--- " | "+++ "): stri
 
 function extractPathFromDiffHeader(lines: string[]): string {
   const firstLine = lines[0] ?? "";
-  const prefixedPathMatch = firstLine.match(/^a\/(.+) b\/(.+)$/);
-  if (prefixedPathMatch) {
-    return prefixedPathMatch[2];
+  const prefixedPathMatch = firstLine.match(/^([abciow])\/(.+) ([abciow])\/(.+)$/);
+  if (prefixedPathMatch && prefixedPathMatch[1] !== prefixedPathMatch[3]) {
+    return prefixedPathMatch[4];
   }
 
-  const metadataPath =
-    extractPathFromMetadata(lines, "+++ ") ?? extractPathFromMetadata(lines, "--- ");
+  const oldMetadataPath = extractPathFromMetadata(lines, "--- ");
+  const newMetadataPath = extractPathFromMetadata(lines, "+++ ");
+  const metadataPath = newMetadataPath ?? oldMetadataPath;
   if (metadataPath) {
-    return metadataPath;
+    return oldMetadataPath &&
+      newMetadataPath &&
+      usesDiffPathPrefixes(oldMetadataPath, newMetadataPath)
+      ? metadataPath.slice(2)
+      : metadataPath;
   }
 
   const pathMatch = firstLine.match(/^(\S+)\s+(\S+)$/);
