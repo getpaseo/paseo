@@ -193,7 +193,7 @@ const CATALOG_DATA = [
     description:
       "Runs on the Claude/Codex/Gemini subscription you already pay for. Plan-before-mutation workflows, evidence-gated execution, and approval prompts for shell and destructive edits.",
     version: "manual",
-    iconId: null,
+    iconId: "gjc",
     installLink: "https://gajae-code.com",
     command: ["gjc", "acp"],
     env: {
