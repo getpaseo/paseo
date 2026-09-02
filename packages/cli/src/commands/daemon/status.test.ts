@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { selectRelayStatus } from "./status.js";
+import { PROVIDER_BINARIES, selectRelayStatus } from "./status.js";
+
+describe("PROVIDER_BINARIES", () => {
+  test("includes Pi in the local fallback probe", () => {
+    expect(PROVIDER_BINARIES).toContainEqual({ label: "Pi", binary: "pi" });
+  });
+});
 
 describe("selectRelayStatus", () => {
   const persisted = {
