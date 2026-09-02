@@ -132,6 +132,37 @@ describe("applyStreamEvent", () => {
     expect(result.tail[0].kind).toBe("assistant_message");
   });
 
+  it("replaces a stale tail item with the finalized head item on turn completion", () => {
+    const result = applyStreamEvent({
+      tail: [
+        {
+          kind: "assistant_message",
+          id: "assistant-shared",
+          text: "Partial answer",
+          timestamp: new Date(0),
+        },
+      ],
+      head: [
+        {
+          kind: "assistant_message",
+          id: "assistant-shared",
+          text: "Partial answer with the final result",
+          timestamp: new Date(1),
+        },
+      ],
+      event: completionEvent(),
+      timestamp: baseTimestamp,
+    });
+
+    expect(result.head).toHaveLength(0);
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toMatchObject({
+      kind: "assistant_message",
+      id: "assistant-shared",
+      text: "Partial answer with the final result",
+    });
+  });
+
   it("does not continue a tail assistant message when the incoming message id differs", () => {
     const result = applyStreamEvent({
       tail: [
