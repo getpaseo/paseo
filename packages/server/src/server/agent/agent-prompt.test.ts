@@ -28,6 +28,19 @@ interface CapturedLogger {
   nextRecord: Promise<void>;
 }
 
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve(value: T): void;
+}
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 function createCapturedLogger(): CapturedLogger {
   const records: Array<Record<string, unknown>> = [];
   let resolveNextRecord!: () => void;
@@ -98,6 +111,7 @@ function createFinishNotificationScenario(
     }
     return null;
   });
+  Reflect.set(agentManager, "listAgents", () => [childAgent, callerAgent]);
   Reflect.set(agentManager, "subscribe", (callback: (event: AgentManagerEvent) => void) => {
     subscriber = callback;
     return () => {
@@ -108,7 +122,11 @@ function createFinishNotificationScenario(
     return options?.childLastAssistantMessage ?? null;
   });
   Reflect.set(agentManager, "tryRunOutOfBand", () => false);
-  Reflect.set(agentManager, "hasInFlightRun", () => Boolean(options?.parentPromptError));
+  Reflect.set(
+    agentManager,
+    "hasInFlightRun",
+    (agentId: string) => agentId === "caller-agent" && Boolean(options?.parentPromptError),
+  );
   Reflect.set(agentManager, "steerOrReplaceActiveTurn", async () => {
     steerAttemptCount += 1;
     return { status: "inactive" };
@@ -278,6 +296,129 @@ test("finish notifications tell the parent the child's last assistant message", 
     ),
   );
   expect(scenario.steerAttemptCount()).toBe(1);
+});
+
+test("finish notification waits for an asynchronously woken dispatcher", async () => {
+  const grandchildRecordRead = createDeferred<void>();
+  const dispatcherPromptSent = createDeferred<void>();
+  const parentPrompts: string[] = [];
+  const dispatcherPrompts: string[] = [];
+  const subscribers = new Set<(event: AgentManagerEvent) => void>();
+  let dispatcherResponse = "The dispatcher is waiting for its grandchild.";
+
+  function createAgent(id: string, title: string, lifecycle: "idle" | "running"): ManagedAgent {
+    const agent: ManagedAgent = Object.create(null);
+    Reflect.set(agent, "id", id);
+    Reflect.set(agent, "lifecycle", lifecycle);
+    Reflect.set(agent, "config", { title });
+    Reflect.set(agent, "pendingPermissions", new Map());
+    return agent;
+  }
+
+  function emitState(agent: ManagedAgent): void {
+    for (const subscriber of subscribers) {
+      subscriber({ type: "agent_state", agent });
+    }
+  }
+
+  const caller = createAgent("caller-agent", "Caller", "idle");
+  const dispatcher = createAgent("dispatcher-agent", "Dispatcher", "running");
+  const grandchild = createAgent("grandchild-agent", "Grandchild", "running");
+
+  const agentManager: AgentManager = Object.create(AgentManager.prototype);
+  Reflect.set(agentManager, "getAgent", (agentId: string) => {
+    if (agentId === caller.id) return caller;
+    if (agentId === dispatcher.id) return dispatcher;
+    if (agentId === grandchild.id) return grandchild;
+    return null;
+  });
+  Reflect.set(agentManager, "subscribe", (callback: (event: AgentManagerEvent) => void) => {
+    subscribers.add(callback);
+    return () => subscribers.delete(callback);
+  });
+  Reflect.set(agentManager, "listAgents", () => [caller, dispatcher, grandchild]);
+  Reflect.set(agentManager, "getLastAssistantMessage", async (agentId: string) => {
+    return agentId === dispatcher.id ? dispatcherResponse : null;
+  });
+  Reflect.set(agentManager, "tryRunOutOfBand", () => false);
+  Reflect.set(agentManager, "hasInFlightRun", () => false);
+  Reflect.set(agentManager, "steerOrReplaceActiveTurn", async () => ({ status: "inactive" }));
+  Reflect.set(agentManager, "streamAgent", (agentId: string, prompt: string) => {
+    if (agentId === caller.id) {
+      parentPrompts.push(prompt);
+    }
+    if (agentId === dispatcher.id) {
+      dispatcherPrompts.push(prompt);
+      dispatcherPromptSent.resolve();
+    }
+    return (async function* noop() {})();
+  });
+  Reflect.set(agentManager, "replaceAgentRun", async () => (async function* noop() {})());
+
+  const getAgentRecord = vi.fn(async (agentId: string) => {
+    if (agentId === grandchild.id) {
+      await grandchildRecordRead.promise;
+    }
+    const agent = agentManager.getAgent(agentId);
+    if (!agent) return null;
+    let parentAgentId: string | null = null;
+    if (agentId === dispatcher.id) {
+      parentAgentId = caller.id;
+    } else if (agentId === grandchild.id) {
+      parentAgentId = dispatcher.id;
+    }
+    return {
+      title: agent.config.title,
+      labels: parentAgentId ? { "paseo.parent-agent-id": parentAgentId } : {},
+    };
+  });
+  const agentStorage: AgentStorage = Object.create(AgentStorage.prototype);
+  Reflect.set(agentStorage, "get", getAgentRecord);
+
+  setupFinishNotification({
+    agentManager,
+    agentStorage,
+    childAgentId: dispatcher.id,
+    callerAgentId: caller.id,
+    logger: createTestLogger(),
+  });
+  setupFinishNotification({
+    agentManager,
+    agentStorage,
+    childAgentId: grandchild.id,
+    callerAgentId: dispatcher.id,
+    logger: createTestLogger(),
+  });
+
+  dispatcher.lifecycle = "idle";
+  emitState(dispatcher);
+  await Promise.resolve();
+  expect(parentPrompts).toHaveLength(0);
+
+  grandchild.lifecycle = "idle";
+  emitState(grandchild);
+  await vi.waitFor(() => expect(getAgentRecord).toHaveBeenCalledWith(grandchild.id));
+  expect(parentPrompts).toHaveLength(0);
+  expect(dispatcherPrompts).toHaveLength(0);
+
+  grandchildRecordRead.resolve();
+  await dispatcherPromptSent.promise;
+
+  expect(parentPrompts).toHaveLength(0);
+
+  dispatcher.lifecycle = "running";
+  emitState(dispatcher);
+  dispatcherResponse = "The dispatcher completed the grandchild follow-up.";
+  dispatcher.lifecycle = "idle";
+  emitState(dispatcher);
+
+  await vi.waitFor(() => expect(parentPrompts).toHaveLength(1));
+  expect(dispatcherPrompts).toHaveLength(1);
+  expect(parentPrompts[0]).toEqual(
+    formatSystemNotificationPrompt(
+      "Agent dispatcher-agent (Dispatcher) finished.\n\n<agent-response>\nThe dispatcher completed the grandchild follow-up.\n</agent-response>",
+    ),
+  );
 });
 
 test("finish notifications truncate oversized child responses", async () => {
@@ -482,6 +623,7 @@ it("does not notify archived callers", async () => {
       return null;
     }),
   );
+  Reflect.set(agentManager, "listAgents", () => [childAgent, callerAgent]);
   Reflect.set(
     agentManager,
     "subscribe",

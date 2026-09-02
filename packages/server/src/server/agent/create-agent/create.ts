@@ -16,7 +16,11 @@ import type { AgentPromptInput, AgentRunOptions, AgentSessionConfig } from "../a
 import type { AgentStorage } from "../agent-storage.js";
 import type { AgentOwner } from "../agent-owner.js";
 import type { ProviderSnapshotManager } from "../provider-snapshot-manager.js";
-import { setupFinishNotification, startCreatedAgentInitialPrompt } from "../agent-prompt.js";
+import {
+  type PromptDispatchDisposition,
+  setupFinishNotification,
+  startCreatedAgentInitialPrompt,
+} from "../agent-prompt.js";
 import { resolveCreateAgentTitles } from "../create-agent-title.js";
 import { buildAgentPrompt } from "../prompt-attachments.js";
 import { normalizeClientMessageId, resolveClientMessageId } from "../../client-message-id.js";
@@ -125,6 +129,7 @@ export interface CreateAgentCommandResult {
   liveSnapshot: ManagedAgent;
   background: boolean;
   initialPromptStarted: boolean;
+  finishNotificationRegistered: boolean;
   initialPromptError: unknown | null;
   createdWorktree?: CreatePaseoWorktreeWorkflowResult;
 }
@@ -191,6 +196,7 @@ export async function createAgentCommand(
 
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;
+  let initialPromptDisposition: PromptDispatchDisposition | null = null;
   let initialPromptError: unknown | null = null;
   if (input.kind === "mcp") {
     input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
@@ -198,16 +204,23 @@ export async function createAgentCommand(
   if (resolved.prompt !== undefined) {
     const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot);
     initialPromptStarted = sendResult.started;
+    initialPromptDisposition = sendResult.disposition;
     liveSnapshot = sendResult.liveSnapshot;
     initialPromptError = sendResult.error ?? null;
   }
 
-  if (input.kind === "mcp" && input.notifyOnFinish && input.callerAgentId && initialPromptStarted) {
+  const finishNotificationRegistered =
+    input.kind === "mcp" &&
+    input.background &&
+    input.notifyOnFinish &&
+    !!input.callerAgentId &&
+    initialPromptDisposition === "turn_started";
+  if (finishNotificationRegistered) {
     setupFinishNotification({
       agentManager: dependencies.agentManager,
       agentStorage: dependencies.agentStorage,
       childAgentId: snapshot.id,
-      callerAgentId: input.callerAgentId,
+      callerAgentId: input.callerAgentId!,
       requireParentOwnership: true,
       logger: dependencies.logger,
     });
@@ -218,6 +231,7 @@ export async function createAgentCommand(
     liveSnapshot,
     background: resolved.background,
     initialPromptStarted,
+    finishNotificationRegistered,
     initialPromptError,
     ...(resolved.createdWorktree ? { createdWorktree: resolved.createdWorktree } : {}),
   };
@@ -448,13 +462,18 @@ async function sendInitialPrompt(
   dependencies: CreateAgentCommandDependencies,
   resolved: ResolvedCreateAgent,
   snapshot: ManagedAgent,
-): Promise<{ started: boolean; liveSnapshot: ManagedAgent; error?: unknown }> {
+): Promise<{
+  started: boolean;
+  disposition: PromptDispatchDisposition | null;
+  liveSnapshot: ManagedAgent;
+  error?: unknown;
+}> {
   try {
     const prompt = resolved.prompt;
     if (prompt === undefined) {
-      return { started: false, liveSnapshot: snapshot };
+      return { started: false, disposition: null, liveSnapshot: snapshot };
     }
-    const liveSnapshot = await startCreatedAgentInitialPrompt({
+    const { liveSnapshot, disposition } = await startCreatedAgentInitialPrompt({
       agentManager: dependencies.agentManager,
       agentId: snapshot.id,
       snapshot,
@@ -462,16 +481,16 @@ async function sendInitialPrompt(
       runOptions: resolved.runOptions,
       logger: resolved.promptLogger ?? dependencies.logger,
     });
-    return { started: true, liveSnapshot };
+    return { started: true, disposition, liveSnapshot };
   } catch (error) {
     if (resolved.promptFailure === "throw") {
       throw error;
     }
     if (resolved.promptFailure === "return-error") {
-      return { started: false, liveSnapshot: snapshot, error };
+      return { started: false, disposition: null, liveSnapshot: snapshot, error };
     }
     dependencies.logger.error({ err: error, agentId: snapshot.id }, "Failed to run initial prompt");
-    return { started: false, liveSnapshot: snapshot };
+    return { started: false, disposition: null, liveSnapshot: snapshot };
   }
 }
 

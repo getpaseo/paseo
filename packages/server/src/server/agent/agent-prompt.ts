@@ -8,6 +8,7 @@ import type {
 import type { AgentManager, ManagedAgent } from "./agent-manager.js";
 import type { AgentStorage } from "./agent-storage.js";
 import { ensureAgentLoaded } from "./agent-loading.js";
+import { type FinishNotificationReason, watchAgentFinish } from "./finish-notifications.js";
 import { getParentAgentIdFromLabels } from "@getpaseo/protocol/agent-labels";
 import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 
@@ -297,14 +298,14 @@ export async function sendPromptToAgent(
 
 export async function startCreatedAgentInitialPrompt(
   params: StartCreatedAgentInitialPromptParams,
-): Promise<ManagedAgent> {
+): Promise<{ liveSnapshot: ManagedAgent; disposition: PromptDispatchDisposition | null }> {
   const currentSnapshot = params.agentManager.getAgent(params.agentId) ?? params.snapshot ?? null;
   if (!currentSnapshot) {
     throw new Error(`Agent ${params.agentId} not found`);
   }
 
   if (params.prompt === null) {
-    return currentSnapshot;
+    return { liveSnapshot: currentSnapshot, disposition: null };
   }
 
   const dispatchResult = await startAgentRun(
@@ -325,7 +326,7 @@ export async function startCreatedAgentInitialPrompt(
   if (!refreshedSnapshot) {
     throw new Error(`Agent ${params.agentId} not found`);
   }
-  return refreshedSnapshot;
+  return { liveSnapshot: refreshedSnapshot, disposition: dispatchResult.disposition };
 }
 
 export interface SetupFinishNotificationParams {
@@ -336,8 +337,6 @@ export interface SetupFinishNotificationParams {
   requireParentOwnership?: boolean;
   logger: Logger;
 }
-
-type FinishNotificationReason = "finished" | "errored" | "needs permission" | "was closed";
 
 const FINISH_NOTIFICATION_MESSAGE_LIMIT = 4000;
 
@@ -377,11 +376,6 @@ function formatFinishNotificationBody(params: FinishNotificationBodyInput): stri
   return sections.join("\n\n");
 }
 
-interface NotifySafelyOptions {
-  terminal?: boolean;
-  permissionRequest?: AgentPermissionRequest;
-}
-
 export function setupFinishNotification(params: SetupFinishNotificationParams): void {
   const {
     agentManager,
@@ -391,18 +385,6 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     requireParentOwnership = false,
     logger,
   } = params;
-  let hasSeenRunning = false;
-  let stopped = false;
-  const notifiedPermissionRequestIds = new Set<string>();
-  let unsubscribe: (() => void) | null = null;
-  let notificationQueue = Promise.resolve();
-
-  function stop(): void {
-    if (stopped) return;
-    stopped = true;
-    unsubscribe?.();
-  }
-
   async function notify(
     reason: FinishNotificationReason,
     permissionRequest?: AgentPermissionRequest,
@@ -437,95 +419,12 @@ export function setupFinishNotification(params: SetupFinishNotificationParams): 
     });
   }
 
-  function notifySafely(reason: FinishNotificationReason, options: NotifySafelyOptions = {}): void {
-    if (stopped) return;
-    if (options.terminal ?? true) stop();
-    notificationQueue = notificationQueue
-      .then(() => notify(reason, options.permissionRequest))
-      .catch((error) => {
-        logger.error(
-          { err: error, childAgentId, callerAgentId, reason },
-          "Failed to notify caller agent",
-        );
-      });
-  }
-
-  unsubscribe = agentManager.subscribe(
-    (event) => {
-      if (stopped) {
-        return;
-      }
-
-      if (event.type === "agent_state") {
-        for (const requestId of notifiedPermissionRequestIds) {
-          if (!event.agent.pendingPermissions.has(requestId)) {
-            notifiedPermissionRequestIds.delete(requestId);
-          }
-        }
-        if (event.agent.lifecycle === "running") {
-          if (event.agent.pendingPermissions.size === 0) {
-            hasSeenRunning = true;
-          }
-          return;
-        }
-        if (event.agent.lifecycle === "error") {
-          notifySafely("errored");
-          return;
-        }
-        if (event.agent.lifecycle === "idle" && hasSeenRunning) {
-          notifySafely("finished");
-          return;
-        }
-        if (event.agent.lifecycle === "closed") {
-          notifySafely("was closed");
-          return;
-        }
-        return;
-      }
-
-      if (event.type === "timeline_replacement") {
-        return;
-      }
-
-      if (event.event.type === "permission_requested") {
-        // A permission pause is an intermediate checkpoint. Forget the run
-        // observed before it so an idle state during follow-up startup cannot
-        // masquerade as the final completion.
-        hasSeenRunning = false;
-        if (!notifiedPermissionRequestIds.has(event.event.request.id)) {
-          notifiedPermissionRequestIds.add(event.event.request.id);
-          notifySafely("needs permission", {
-            terminal: false,
-            permissionRequest: event.event.request,
-          });
-        }
-        return;
-      }
-
-      if (event.event.type === "permission_resolved") {
-        notifiedPermissionRequestIds.delete(event.event.requestId);
-        const childAgent = agentManager.getAgent(childAgentId);
-        if (childAgent?.pendingPermissions.size === 0) {
-          hasSeenRunning = childAgent.lifecycle === "running";
-        }
-      }
-    },
-    { agentId: childAgentId, replayState: false },
-  );
-
-  // Check if the child is already running (catches the case where
-  // the lifecycle flipped before our subscribe call was processed).
-  // Do NOT treat an immediate "idle" as "finished" — the agent may
-  // not have started yet (streamAgent sets a pending run before
-  // transitioning to "running").
-  const childSnapshot = agentManager.getAgent(childAgentId);
-  if (!childSnapshot || childSnapshot.lifecycle === "closed") {
-    stop();
-    return;
-  }
-  if (childSnapshot.lifecycle === "running") {
-    hasSeenRunning = true;
-  } else if (childSnapshot.lifecycle === "error") {
-    notifySafely("errored");
-  }
+  watchAgentFinish({
+    agentManager,
+    childAgentId,
+    callerAgentId,
+    requireParentOwnership,
+    logger,
+    deliver: ({ reason, permissionRequest }) => notify(reason, permissionRequest),
+  });
 }

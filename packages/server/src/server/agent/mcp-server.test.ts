@@ -3126,6 +3126,52 @@ describe("create_agent MCP tool", () => {
     );
   });
 
+  it("does not register finish notifications for out-of-band initial prompts", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const parentAgent = {
+      id: "parent-agent",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "codex",
+      currentModeId: "full-access",
+    } as ManagedAgent;
+    const childAgent = {
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "running",
+      currentModeId: null,
+      availableModes: [],
+      labels: { [PARENT_AGENT_ID_LABEL]: "parent-agent" },
+      pendingPermissions: new Map(),
+      config: { title: "Child" },
+    } as ManagedAgent;
+    spies.agentManager.getAgent.mockImplementation((agentId: string) => {
+      if (agentId === "parent-agent") return parentAgent;
+      if (agentId === "child-agent") return childAgent;
+      return null;
+    });
+    spies.agentManager.createAgent.mockResolvedValue(childAgent);
+    spies.agentManager.tryRunOutOfBand.mockReturnValue(true);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    const response = await registeredTool(server, "create_agent").handler({
+      ...subagentCurrentWorkspace(),
+      title: "Child",
+      provider: "codex/gpt-5.4",
+      initialPrompt: "Do work",
+    });
+
+    expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
+    expect(response.structuredContent).not.toHaveProperty("guidance");
+  });
+
   it("creates detached caller agents without a parent label", async () => {
     const { agentManager, agentStorage, spies } = createTestDeps();
     spies.agentManager.getAgent.mockReturnValue({
@@ -3605,6 +3651,7 @@ describe("send_agent_prompt MCP tool", () => {
       lifecycle: "running",
       currentModeId: null,
       availableModes: [],
+      pendingPermissions: new Map(),
       config: { title: "Child" },
     } as ManagedAgent;
     spies.agentManager.getAgent.mockImplementation((agentId: string) => {
@@ -3642,6 +3689,48 @@ describe("send_agent_prompt MCP tool", () => {
     expect(response.structuredContent.guidance).toBe(
       "You will get notified when the prompted agent finishes, errors, or needs permission. Do not poll for status; continue with other work until the notification arrives.",
     );
+  });
+
+  it("does not register finish notifications for out-of-band prompts", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    const parentAgent = {
+      id: "parent-agent",
+      cwd: existingCwd,
+      workspaceId: "wks_parent",
+      provider: "codex",
+      currentModeId: "full-access",
+    } as ManagedAgent;
+    const childAgent = {
+      id: "child-agent",
+      cwd: existingCwd,
+      lifecycle: "running",
+      currentModeId: null,
+      availableModes: [],
+      pendingPermissions: new Map(),
+      config: { title: "Child" },
+    } as ManagedAgent;
+    spies.agentManager.getAgent.mockImplementation((agentId: string) => {
+      if (agentId === "parent-agent") return parentAgent;
+      if (agentId === "child-agent") return childAgent;
+      return null;
+    });
+    spies.agentManager.tryRunOutOfBand.mockReturnValue(true);
+
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    const response = await invokeToolWithParsedInput(registeredTool(server, "send_agent_prompt"), {
+      agentId: "child-agent",
+      prompt: "Follow up",
+    });
+
+    expect(spies.agentManager.subscribe).not.toHaveBeenCalled();
+    expect(response.structuredContent).not.toHaveProperty("guidance");
   });
 
   it("keeps top-level prompts blocking by default", async () => {
