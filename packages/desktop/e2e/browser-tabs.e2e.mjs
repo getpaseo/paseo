@@ -580,7 +580,19 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   const responsiveViewport = await readViewport(client, browserId);
 
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
-  await page.waitForTimeout(500);
+  await page.waitForFunction(
+    ({ id, webContentsId }) => {
+      const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+      return (
+        webview?.parentElement?.getAttribute("data-paseo-browser-surface") === id &&
+        webview.parentElement.style.width === "1px" &&
+        webview.parentElement.style.pointerEvents === "none" &&
+        webview.getWebContentsId() === webContentsId
+      );
+    },
+    { id: browserId, webContentsId: firstGuest.webContentsId },
+    { timeout: timeoutMs },
+  );
   try {
     await callBrowserToolUntilReady(client, "browser_screenshot", { browserId });
   } catch (error) {
