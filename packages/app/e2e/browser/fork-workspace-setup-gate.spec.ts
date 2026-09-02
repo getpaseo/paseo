@@ -63,9 +63,7 @@ test("fork workspace setup stays blocked until the user runs it", async ({ page 
     });
     if (!result.workspace || result.error)
       throw new Error(result.error ?? "Workspace creation failed");
-    expect(result.setupSkippedReason).toContain(
-      "Setup and scripts are blocked because change request #2",
-    );
+    expect(result.setupSkippedReason).toContain("Scripts are blocked for PR #2");
 
     await openHomeWithProject(page, repo.path);
     await page.goto(buildHostWorkspaceRoute(getServerId(), result.workspace.id));
@@ -84,9 +82,7 @@ test("fork workspace setup stays blocked until the user runs it", async ({ page 
     await test.step("starting a script explains why it is blocked", async () => {
       await openWorkspaceScriptsMenu(page);
       await startWorkspaceScriptFromMenu(page, "dev");
-      await expect(
-        page.getByText(/Setup and scripts are blocked because change request #2/),
-      ).toBeVisible();
+      await expect(page.getByText(/Scripts are blocked for PR #2/)).toBeVisible();
       await page.screenshot({
         path: path.join(evidenceDir, "blocked-script-error.png"),
         fullPage: true,

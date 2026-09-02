@@ -28,7 +28,7 @@ export async function runSetupCommand(
     } satisfies CommandError;
   });
   try {
-    // COMPAT(workspaceSetupRun): added in v0.6.0, remove gate after 2027-09-02.
+    // COMPAT(workspaceSetupRun): added in v0.7.3, remove gate after 2027-09-02.
     if (!client.getLastServerInfoMessage()?.features?.workspaceSetupRun) {
       throw { code: "DAEMON_UPDATE_REQUIRED", message: "Update the host to run workspace setup." };
     }

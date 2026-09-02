@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   WorkspaceAutomationBlockedError,
   assertWorkspaceAutomationAllowed,
+  formatWorkspaceAutomationBlockedMessage,
 } from "./workspace-automation-gate.js";
 
 describe("workspace automation gate", () => {
@@ -25,5 +26,21 @@ describe("workspace automation gate", () => {
 
   it("allows executable repository automation for ordinary workspaces", () => {
     expect(() => assertWorkspaceAutomationAllowed(undefined)).not.toThrow();
+  });
+
+  it.each([
+    ["github", "PR"],
+    ["gitea", "PR"],
+    ["forgejo", "PR"],
+    ["gitlab", "MR"],
+  ])("uses the %s change request noun", (forge, noun) => {
+    expect(
+      formatWorkspaceAutomationBlockedMessage({
+        kind: "change_request",
+        forge,
+        number: 42,
+        headRepository: "contributor/paseo",
+      }),
+    ).toBe(`Scripts are blocked for ${noun} #42 from contributor/paseo. Run setup to allow them.`);
   });
 });

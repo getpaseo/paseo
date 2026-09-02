@@ -8,7 +8,8 @@ export interface UntrustedWorkspaceSource {
 }
 
 export function formatWorkspaceAutomationBlockedMessage(source: UntrustedWorkspaceSource): string {
-  return `Setup and scripts are blocked because change request #${source.number} comes from ${source.headRepository}, a different repository. Run workspace setup to allow them for this workspace.`;
+  const changeRequestNoun = source.forge === "gitlab" ? "MR" : "PR";
+  return `Scripts are blocked for ${changeRequestNoun} #${source.number} from ${source.headRepository}. Run setup to allow them.`;
 }
 
 export class WorkspaceAutomationBlockedError extends Error {

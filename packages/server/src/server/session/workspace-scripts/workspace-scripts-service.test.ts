@@ -276,7 +276,7 @@ describe("start", () => {
   test("refuses to start a script while repository automation is blocked", async () => {
     const { service, emitted, spawnCalls } = buildService({
       automationError: new Error(
-        "Setup and scripts are blocked because change request #42 comes from contributor/paseo, a different repository. Run workspace setup to allow them for this workspace.",
+        "Scripts are blocked for PR #42 from contributor/paseo. Run setup to allow them.",
       ),
     });
 
@@ -290,8 +290,7 @@ describe("start", () => {
         workspaceId: "ws-1",
         scriptName: "app",
         terminalId: null,
-        error:
-          "Setup and scripts are blocked because change request #42 comes from contributor/paseo, a different repository. Run workspace setup to allow them for this workspace.",
+        error: "Scripts are blocked for PR #42 from contributor/paseo. Run setup to allow them.",
       },
     });
   });
