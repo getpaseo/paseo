@@ -60,7 +60,7 @@ export function useStreamHistoryWindow(input: {
     () => findMountedWindowStart({ items, minMountedCount: getMountedRecentStreamItems() }),
     [items],
   );
-  const initialBoundaryItemId = initialStart === 0 ? null : (items[initialStart]?.id ?? null);
+  const initialBoundaryItemId = items[initialStart]?.id ?? null;
   const [window, setWindow] = useState<HistoryWindowBoundary>(() => ({
     agentId,
     boundaryItemId: initialBoundaryItemId,
@@ -73,9 +73,7 @@ export function useStreamHistoryWindow(input: {
       : -1;
   let start = initialStart;
   if (window.agentId === agentId && window.initialized) {
-    if (window.boundaryItemId === null) {
-      start = 0;
-    } else if (boundaryIndex >= 0) {
+    if (boundaryIndex >= 0) {
       start = boundaryIndex;
     }
   }

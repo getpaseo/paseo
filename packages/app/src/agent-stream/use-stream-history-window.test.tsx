@@ -79,22 +79,6 @@ describe("useStreamHistoryWindow", () => {
     expect(result.current.start).toBe(4);
   });
 
-  it("keeps a canonical prepend visible when the complete window is mounted", () => {
-    Object.defineProperty(globalThis, "__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", {
-      value: 4,
-      configurable: true,
-    });
-    const local = message("local", "user_message");
-    const { result, rerender } = renderHook(
-      ({ history }) =>
-        useStreamHistoryWindow({ agentId: "agent-1", items: history, loadRemoteOlder: vi.fn() }),
-      { initialProps: { history: [local] } },
-    );
-
-    rerender({ history: [message("remote", "user_message"), local] });
-    expect(result.current.start).toBe(0);
-  });
-
   it("keeps live appends inside the rendered window", () => {
     Object.defineProperty(globalThis, "__PASEO_E2E_WEB_MOUNTED_RECENT_STREAM_ITEMS", {
       value: 2,
