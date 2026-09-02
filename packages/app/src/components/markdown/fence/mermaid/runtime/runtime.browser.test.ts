@@ -116,4 +116,21 @@ describe("Mermaid sandbox runtime", () => {
     expect(current).toMatchObject({ type: "rendered", revision: 11, source: currentSource });
     expect(obsoleteResponses).toEqual([]);
   });
+
+  it("reports the diagram's natural size, not the container-constrained size", async () => {
+    const frame = await mountRuntime();
+    // Frame narrower than the diagram, so a layout-based measure would report ~300.
+    frame.style.width = "300px";
+    frame.style.height = "80px";
+    const wideSource = `flowchart LR\n${Array.from({ length: 12 }, (_, index) => `N${index} --> N${index + 1}`).join("\n")}`;
+
+    const result = await render(frame, { revision: 1, source: wideSource });
+
+    expect(result.type).toBe("rendered");
+    if (result.type !== "rendered") {
+      return;
+    }
+    expect(result.width).toBeGreaterThan(600);
+    expect(result.width).toBeGreaterThan(result.height);
+  });
 });
