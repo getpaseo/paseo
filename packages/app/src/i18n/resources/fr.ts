@@ -65,6 +65,9 @@ export const fr: TranslationResources = {
       workspaces: "Espaces de travail",
       agents: "Agents",
       newAgent: "Nouvel agent",
+      open: "Ouvrir {{name}}",
+      openInSidePane: "Ouvrir {{name}} dans le panneau latéral",
+      openInFocusedPane: "Ouvrir {{name}} dans le volet actif",
       addProject: "Ajouter un projet",
       home: "Maison",
       groupByProject: "Grouper par projet",
@@ -202,6 +205,7 @@ export const fr: TranslationResources = {
     empty: "Commencez à discuter avec cet agent...",
     scrollToBottom: "Faire défiler vers le bas",
     historyLoadFailed: "Impossible de charger l’historique de l’agent",
+    messageCapped: "Ce message a été tronqué ({{bytes}} octets).",
     permission: {
       plan: "Plan",
       required: "Autorisation requise",
@@ -346,7 +350,6 @@ export const fr: TranslationResources = {
         added: "Ajoutée",
         started: "Commencée",
         completed: "Terminée",
-        reopened: "Rouverte",
       },
     },
     compaction: {
@@ -417,6 +420,8 @@ export const fr: TranslationResources = {
     },
     fileActions: {
       openFile: "Ouvrir le fichier",
+      openIn: "Ouvrir dans {{target}}",
+      openToSide: "Ouvrir sur le côté",
       copyPath: "Copier le chemin",
       copyRelativePath: "Copier le chemin relatif",
       revealIn: "Afficher dans {{target}}",
@@ -557,7 +562,6 @@ export const fr: TranslationResources = {
       loading: "Chargement...",
       modified: "Modifications non enregistrées",
       loadingAgentTitle: "Titre d'agent de chargement",
-      emptyPane: "Aucun onglet dans ce volet.",
       fallback: {
         newAgent: "Nouvel agent",
         setup: "Installation",
@@ -584,6 +588,7 @@ export const fr: TranslationResources = {
         closeLeft: "Près de la gauche",
         closeRight: "Près de la droite",
         closeOthers: "Fermer les autres onglets",
+        moveToMain: "Déplacer vers le panneau principal",
         reloadAgent: "Agent de rechargement",
         reloadAgentTooltip:
           "Rechargez l'agent pour mettre à jour les compétences, les MCP ou le statut de connexion.",
@@ -600,6 +605,7 @@ export const fr: TranslationResources = {
         newBrowser: "Nouveau navigateur",
         maximizePane: "Agrandir le volet",
         restorePane: "Restaurer le volet",
+        closePane: "Fermer le volet",
         exitFocusMode: "Quitter le mode concentration",
         splitRight: "Volet divisé à droite",
         splitDown: "Diviser le volet vers le bas",
@@ -607,12 +613,12 @@ export const fr: TranslationResources = {
         files: "Fichiers",
         pullRequest: "Demande de fusion",
         terminalProfilesMenu: "Terminal profiles",
-        editTerminalProfiles: "Edit profiles…",
+        editTerminalProfiles: "Edit profiles",
       },
-      explorer: {
-        open: "Ouvrir l'explorateur",
-        close: "Fermer l'explorateur",
-        toggle: "Basculer l'explorateur",
+      explorerSidebar: {
+        open: "Ouvrir le panneau latéral",
+        close: "Fermer le panneau latéral",
+        toggle: "Basculer le panneau latéral",
         changes: "Changements",
         files: "Fichiers",
       },
@@ -715,6 +721,10 @@ export const fr: TranslationResources = {
         startFailed: "Échec du démarrage de{{scriptName}}",
         stopFailed: "Échec de l'arrêt de{{scriptName}}",
       },
+    },
+    tree: {
+      showFolderTree: "Afficher l'arborescence des dossiers",
+      hideFolderTree: "Masquer l'arborescence des dossiers",
     },
     git: {
       actions: {
@@ -876,6 +886,7 @@ export const fr: TranslationResources = {
       },
       diff: {
         openChangesTab: "Ouvrir l'onglet Modifications",
+        openDiffTab: "Ouvrir l'onglet Diff",
         closeChangesTab: "Fermer l'onglet Modifications",
         binaryFile: "Fichier binaire",
         tooLarge: "Diff trop grand pour être affiché",
@@ -885,9 +896,8 @@ export const fr: TranslationResources = {
         split: "Différent côte à côte",
         switchToUnified: "Passer au diff unifié",
         switchToSplit: "Passer au diff côte à côte",
-        showTreeView: "Afficher l'arborescence des dossiers",
-        hideTreeView: "Masquer l'arborescence des dossiers",
         options: "Options du diff",
+        inlineDiff: "Diff intégré",
         hideWhitespace: "Masquer les espaces",
         showWhitespace: "Afficher les espaces",
         scrollLongLines: "Faire défiler les longues lignes",
@@ -902,6 +912,8 @@ export const fr: TranslationResources = {
         failedRefresh: "Échec de l'actualisation de l'état git.",
         emptyHiddenWhitespace: "Aucun changement visible après avoir masqué les espaces",
         emptyUncommitted: "Aucune modification non validée",
+        seeUncommittedChanges: "Voir les modifications non validées",
+        seeCommittedChanges: "Voir les modifications validées",
         emptyAgainstBase: "Aucun changement par rapport à{{baseRef}}",
         checkingRepository: "Vérification du référentiel...",
         notRepository: "Pas un dépôt git",
@@ -959,6 +971,16 @@ export const fr: TranslationResources = {
         accessibility: {
           pullRequest: "Demande de tirage #{{number}}",
           pullRequest_mr: "Demande de fusion !{{number}}",
+          checkStatus: {
+            passed: "Réussi",
+            failed: "Échec",
+            warning: "Avertissement",
+            actionRequired: "Action requise",
+            manual: "Manuel",
+            pending: "En attente",
+            skipped: "Ignoré",
+            cancelled: "Annulé",
+          },
         },
         states: {
           draft: "Brouillon",
@@ -1016,9 +1038,6 @@ export const fr: TranslationResources = {
     },
     filter: {
       clear: "Effacer le filtre",
-      noMatchesTitle: "Aucun espace de travail ne correspond",
-      noMatchesDescription:
-        "Modifiez ou effacez le filtre d’étiquettes pour afficher les espaces de travail.",
     },
     manage: {
       open: "Gérer les étiquettes…",
@@ -1074,6 +1093,16 @@ export const fr: TranslationResources = {
         label: "Hôte",
         all: "Tous les hôtes",
       },
+      projectFilter: {
+        label: "Projet",
+        all: "Tous les projets",
+      },
+    },
+    filterEmpty: {
+      title: "Aucun espace de travail ne correspond",
+      description:
+        "Modifiez ou effacez les filtres de la barre latérale pour afficher les espaces de travail.",
+      clear: "Effacer les filtres",
     },
     pinned: {
       title: "Épinglés",
@@ -1145,6 +1174,14 @@ export const fr: TranslationResources = {
         serviceRunning: "Service {{name}} en cours",
         serviceUnhealthy: "Service {{name}} en échec",
         creating: "Création...",
+      },
+      checks: {
+        passed: "Réussis : {{count}}",
+        failed: "Échecs : {{count}}",
+        warning: "Avertissements : {{count}}",
+        actionRequired: "Action requise : {{count}}",
+        manual: "Manuels : {{count}}",
+        pending: "En attente : {{count}}",
       },
       actions: {
         menu: "ActionsWorkspace",
@@ -1231,6 +1268,12 @@ export const fr: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "Réduire la fenêtre",
+      maximize: "Agrandir la fenêtre",
+      restore: "Restaurer la fenêtre",
+      close: "Fermer la fenêtre",
+    },
     quitting: {
       title: "QuitterPaseo...",
       detail: "Arrêt du démon local.",
@@ -1563,6 +1606,10 @@ export const fr: TranslationResources = {
         title: "Connexion directe",
         description: "Réseau local ou VPN.",
       },
+      remoteSsh: {
+        title: "SSH distant",
+        description: "Connectez-vous avec le client SSH de bureau.",
+      },
       scanQr: {
         title: "Scanner le codeQR",
         description: "Connexion relais cryptée.",
@@ -1613,6 +1660,23 @@ export const fr: TranslationResources = {
         unableToConnect:
           "Impossible de se connecter. Vérifiez l'hôte/portet que le démon est accessible.",
         details: "Détails:{{detail}}",
+      },
+    },
+    remoteSsh: {
+      title: "SSH distant",
+      helper: "Connectez-vous à un daemon Paseo sur l’hôte distant.",
+      fields: {
+        target: "Hôte SSH",
+      },
+      actions: {
+        cancel: "Annuler",
+        connect: "Connecter",
+        connecting: "Connexion...",
+      },
+      errors: {
+        targetRequired: "L’hôte SSH est requis",
+        invalidTarget: "Saisissez un hôte ssh:// valide",
+        failedToConnect: "Connexion SSH impossible. {{detail}}",
       },
     },
     link: {
@@ -1666,6 +1730,8 @@ export const fr: TranslationResources = {
       updateRequired: "Mettez à jour l’hôte pour activer le relais depuis Paseo Desktop.",
       unavailable: "Offre de jumelage indisponible.",
       hint: "Scannez ce codeQRavecPaseosur votre téléphone ou copiez le lien ci-dessous.",
+      securityWarning:
+        "Traitez ce lien d’association comme un mot de passe. Toute personne qui le possède peut accéder à ce daemon.",
       qrUnavailable: "CodeQRindisponible.",
       qrAccessibility: "Code QR de couplage",
       retry: "Réessayer",
@@ -1739,6 +1805,7 @@ export const fr: TranslationResources = {
       loading: "Chargement du fichier...",
       noPreview: "Aucun aperçu disponible",
       binaryPreviewUnavailable: "Aperçu binaire indisponible",
+      tooLargeToDisplay: "Ce fichier est trop volumineux pour être affiché",
       failedToLoad: "Échec du chargement du fichier",
       failedToLoadPreview: "Échec du chargement de l'aperçu du fichier",
       editor: {
@@ -1767,6 +1834,7 @@ export const fr: TranslationResources = {
       label: "Fichiers",
       subtitle: "Fichiers de l’espace de travail",
       tooltip: "Parcourir les fichiers de l’espace de travail",
+      chooseFile: "Choisissez un fichier",
     },
     pullRequest: {
       label: "Demande de fusion",
@@ -1777,6 +1845,7 @@ export const fr: TranslationResources = {
     },
     diff: {
       changesLabel: "Modifications",
+      diffLabel: "Diff",
       changesSubtitle: "Différences de l'arbre de travail",
       commitSubtitle: "Différences du commit",
       uncommittedSubtitle: "Modifications non validées",
@@ -1871,6 +1940,7 @@ export const fr: TranslationResources = {
     sections: {
       general: "Général",
       appearance: "Apparence",
+      layout: en.settings.sections.layout,
       editor: "Éditeur",
       shortcuts: "Raccourcis",
       integrations: "Intégrations",
@@ -1879,6 +1949,7 @@ export const fr: TranslationResources = {
       diagnostics: "Diagnostic",
       about: "À propos",
     },
+    layout: en.settings.layout,
     editor: {
       title: "Éditeur",
       vimKeybindings: "Raccourcis Vim",
@@ -2086,13 +2157,18 @@ export const fr: TranslationResources = {
         interfaceFontHint:
           "Utilisé dans toute l'application. Laisser vide pour la valeur par défaut du système",
         interfaceFontAccessibility: "Famille de polices d'interface",
-        baseSize: "Taille de base",
-        baseSizeAccessibility: "Taille de base de la police",
+        interfaceSize: "Taille de l'interface",
+        interfaceSizeHint: "Utilisée pour la navigation, les contrôles et les libellés",
+        interfaceSizeAccessibility: "Taille de police de l'interface",
+        contentSize: "Taille du contenu",
+        contentSizeHint: "Utilisée pour le texte du chat et le Markdown rendu",
+        contentSizeAccessibility: "Taille de police du contenu",
         codeFont: "Police de code",
         codeFontHint:
           "Utilisé dans le code, les différences et la sortie du terminal. Laisser vide pour la valeur par défaut du système",
         codeFontAccessibility: "Famille de polices de code",
         codeSize: "Taille du code",
+        codeSizeHint: "Utilisée pour le code, les diffs et la sortie du terminal",
         codeSizeAccessibility: "Taille de la police du code",
       },
       syntax: {
@@ -2100,7 +2176,9 @@ export const fr: TranslationResources = {
         highlightTheme: "Thème de surbrillance",
         highlightThemeHint: "Couleurs du code, indépendamment du thème de l'application",
         highlightThemeAccessibility: "Thème phare:{{value}}",
-        previewAccessibility: "Aperçu en direct du thème de syntaxe et de la police de code",
+        previewAccessibility:
+          "Aperçu en direct de la typographie du contenu, du thème de syntaxe et de la police de code",
+        previewContent: "Aperçu du contenu et du code",
       },
     },
     shortcuts: {
@@ -2155,11 +2233,10 @@ export const fr: TranslationResources = {
         toggleCommandCenter: "Basculer le centre de commande",
         showKeyboardShortcuts: "Afficher les raccourcis clavier",
         toggleLeftSidebar: "Basculer la barre latérale gauche",
-        toggleRightSidebar: "Basculer la barre latérale droite",
+        toggleRightSidebar: "Basculer le panneau latéral",
         toggleBothSidebars: "Basculer les deux barres latérales",
         toggleSettings: "Basculer les paramètres",
         toggleFocusMode: "Basculer le mode de mise au point",
-        toggleExplorerPaneMaximization: "Basculer l’agrandissement du volet Explorateur",
         cycleTheme: "Thème du cycle",
         focusMessageInput: "Saisie du message de focus",
         cycleAgentMode: "Parcourir les modes de l'agent",
@@ -2244,6 +2321,7 @@ export const fr: TranslationResources = {
       badges: {
         relay: "Relais",
         local: "Locale",
+        remoteSsh: "SSH distant",
       },
       connections: {
         title: "Relations",
@@ -2380,11 +2458,10 @@ export const fr: TranslationResources = {
         featuresLabel: "Caractéristiques",
         featureCount: "{{count}} caractéristiques",
         featureCountOne: "{{count}} caractéristique",
-        notesLabel: "Notes pour les agents",
+        notesLabel: "Quand l’utiliser",
         notesPlaceholder:
           "À utiliser pour le travail sur l'UI — composants, mise en page et tokens de design.",
-        notesHint:
-          "Renvoyé par l'outil MCP « list_profiles ». Rédigez-le comme une instruction destinée à un autre agent.",
+        notesHint: "Aide les agents à choisir ce profil lorsqu’ils démarrent un autre agent.",
         save: "Enregistrer",
         saving: "Enregistrement...",
         remove: "Supprimer",

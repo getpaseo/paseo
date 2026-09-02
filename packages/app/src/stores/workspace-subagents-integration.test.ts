@@ -108,15 +108,17 @@ function reconcileWorkspaceTabs(workspaceKey: string, visibility: WorkspaceAgent
       terminalsHydrated: true,
       knownTerminalIds: [],
       standaloneTerminalIds: [],
+      hasActivePendingTerminalCreate: false,
       hasActivePendingDraftCreate: false,
     }),
   );
 }
 
-function getWorkspaceTabIds(workspaceKey: string): string[] {
+function getWorkspaceAgentTabIds(workspaceKey: string): string[] {
   return useWorkspaceLayoutStore
     .getState()
     .getWorkspaceTabs(workspaceKey)
+    .filter((tab) => tab.target.kind === "agent")
     .map((tab) => tab.tabId);
 }
 
@@ -152,13 +154,13 @@ describe("workspace subagents integration", () => {
 
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
-    expect(getWorkspaceTabIds(workspaceKey!)).toEqual([]);
+    expect(getWorkspaceAgentTabIds(workspaceKey!)).toEqual([]);
 
     appendAgent(parent);
 
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
-    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_parent-agent"]);
+    expect(getWorkspaceAgentTabIds(workspaceKey!)).toEqual(["agent_parent-agent"]);
     expect(
       selectSubagentsForParent(
         useSessionStore.getState(),
@@ -191,7 +193,7 @@ describe("workspace subagents integration", () => {
     initializeAgents([parent, child]);
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
-    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_parent-agent"]);
+    expect(getWorkspaceAgentTabIds(workspaceKey!)).toEqual(["agent_parent-agent"]);
     expect(
       selectSubagentsForParent(
         useSessionStore.getState(),
@@ -206,7 +208,10 @@ describe("workspace subagents integration", () => {
     appendAgent({ ...child, parentAgentId: null, labels: {} });
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
-    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_parent-agent", "agent_child-agent"]);
+    expect(getWorkspaceAgentTabIds(workspaceKey!)).toEqual([
+      "agent_parent-agent",
+      "agent_child-agent",
+    ]);
     expect(
       selectSubagentsForParent(
         useSessionStore.getState(),
@@ -240,7 +245,7 @@ describe("workspace subagents integration", () => {
     initializeAgents([parent, child]);
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
-    expect(getWorkspaceTabIds(workspaceKey!)).toEqual(["agent_child-agent"]);
+    expect(getWorkspaceAgentTabIds(workspaceKey!)).toEqual(["agent_child-agent"]);
     expect(
       selectSubagentsForParent(
         useSessionStore.getState(),
@@ -253,7 +258,7 @@ describe("workspace subagents integration", () => {
     ).toEqual([child.id]);
   });
 
-  it("opens a subagent in the explorer pane when focused", () => {
+  it("opens a subagent in Explorer when Explorer is preferred", () => {
     const workspaceKey = buildWorkspaceTabPersistenceKey({
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
@@ -274,22 +279,26 @@ describe("workspace subagents integration", () => {
     reconcileWorkspaceTabs(workspaceKey!, deriveVisibilityFromSession());
 
     const store = useWorkspaceLayoutStore.getState();
-    const tabId = store.openTabInExplorerPaneFocused(workspaceKey!, {
+    const paneId = store.showExplorerSidebar(workspaceKey!) as string;
+    const tabId = store.openTab({
+      workspaceKey: workspaceKey!,
       target: { kind: "agent", agentId: child.id },
+      intent: "reveal",
       parentTabId: `agent_${parent.id}`,
+      placement: { mode: "prefer", paneId },
     });
 
     const state = useWorkspaceLayoutStore.getState();
     const layout = state.layoutByWorkspace[workspaceKey!];
-    const explorerPaneId = state.explorerPaneIdByWorkspace[workspaceKey!];
+    const explorerSidebarPaneId = state.explorerSidebarPaneIdByWorkspace[workspaceKey!];
 
-    expect(explorerPaneId).toBeTruthy();
-    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(explorerPaneId);
-    expect(findPaneById(layout.root, explorerPaneId!)?.hidden).toBeUndefined();
-    expect(layout.focusedPaneId).toBe(explorerPaneId);
+    expect(explorerSidebarPaneId).toBeTruthy();
+    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(explorerSidebarPaneId);
+    expect(findPaneById(layout.root, explorerSidebarPaneId!)?.hidden).toBeUndefined();
+    expect(layout.focusedPaneId).toBe("main");
   });
 
-  it("opens a provider subagent in the explorer pane when focused", () => {
+  it("opens a provider subagent in Explorer when Explorer is preferred", () => {
     const workspaceKey = buildWorkspaceTabPersistenceKey({
       serverId: SERVER_ID,
       workspaceId: WORKSPACE_ID,
@@ -297,18 +306,22 @@ describe("workspace subagents integration", () => {
     expect(workspaceKey).toBeTruthy();
 
     const store = useWorkspaceLayoutStore.getState();
-    const tabId = store.openTabInExplorerPaneFocused(workspaceKey!, {
+    const paneId = store.showExplorerSidebar(workspaceKey!) as string;
+    const tabId = store.openTab({
+      workspaceKey: workspaceKey!,
       target: { kind: "provider_subagent", parentAgentId: "parent-agent", subagentId: "task-1" },
+      intent: "reveal",
       parentTabId: "agent_parent-agent",
+      placement: { mode: "prefer", paneId },
     });
 
     const state = useWorkspaceLayoutStore.getState();
     const layout = state.layoutByWorkspace[workspaceKey!];
-    const explorerPaneId = state.explorerPaneIdByWorkspace[workspaceKey!];
+    const explorerSidebarPaneId = state.explorerSidebarPaneIdByWorkspace[workspaceKey!];
 
-    expect(explorerPaneId).toBeTruthy();
-    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(explorerPaneId);
-    expect(findPaneById(layout.root, explorerPaneId!)?.hidden).toBeUndefined();
-    expect(layout.focusedPaneId).toBe(explorerPaneId);
+    expect(explorerSidebarPaneId).toBeTruthy();
+    expect(findPaneContainingTab(layout.root, tabId!)?.id).toBe(explorerSidebarPaneId);
+    expect(findPaneById(layout.root, explorerSidebarPaneId!)?.hidden).toBeUndefined();
+    expect(layout.focusedPaneId).toBe("main");
   });
 });

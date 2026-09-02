@@ -49,7 +49,7 @@ function collectBareSpecifiers(entry: string): string[] {
   return bare;
 }
 
-describe("@paseo/plugin/server", () => {
+describe("@getpaseo/plugin/server", () => {
   it("does not load react or the client hook graph", () => {
     const specifiers = collectBareSpecifiers(path.join(srcDir, "server.ts"));
     expect(specifiers.filter((specifier) => forbiddenSpecifiers.has(specifier))).toEqual([]);

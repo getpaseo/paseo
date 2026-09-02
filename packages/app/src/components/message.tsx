@@ -42,7 +42,6 @@ import {
   CircleDot,
   Copy,
   Plus,
-  RotateCcw,
   TriangleAlertIcon,
   Scissors,
   MicVocal,
@@ -75,12 +74,14 @@ import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { MarkdownFenceBlock } from "@/components/markdown/fence";
 import type { MarkdownPhase } from "@/components/markdown/fence/types";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import { useRevealedText } from "@/hooks/use-revealed-text";
 import { colorMarkdownLinkChildren } from "@/components/markdown/link-children";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
 import { formatDuration, formatMessageTimestamp } from "@/utils/time";
 import { writeMarkdownToRichClipboard } from "@/utils/rich-clipboard";
 import { getDefaultMarkdownClipboardEnvironment } from "@/utils/rich-clipboard-default-environment";
 import { setAssistantMarkdownBlockHeight } from "@/utils/assistant-message-height-estimate";
+import { isRenderProfileEnabled } from "@/utils/render-profiler";
 import { getAgentAttachmentPillContent } from "@/attachments/attachment-pill-content";
 import { PlanCard } from "./plan-card";
 import { useToolCallSheet } from "./tool-call-sheet";
@@ -101,7 +102,7 @@ import {
   AttachmentLabel,
   AttachmentThumbnail,
 } from "@/components/attachment-pill";
-import { AttachmentLightbox } from "@/components/attachment-lightbox";
+import { AttachmentLightbox, type ImageLightboxSource } from "@/components/attachment-lightbox";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { isWeb, isNative } from "@/constants/platform";
 import type { AgentCapabilityFlags } from "@getpaseo/protocol/agent-types";
@@ -115,6 +116,7 @@ import {
   markdownCopyTableCellDataSet,
   type MarkdownCopyInlineTag,
 } from "@/assistant-selection-copy/markup";
+import { capAssistantMessageForRender, getUtf8ByteLength } from "./assistant-message-render-limit";
 export type { InlinePathTarget } from "@/assistant-file-links";
 export type { AssistantForkTarget };
 
@@ -354,9 +356,12 @@ const userMessageStylesheet = StyleSheet.create((theme) => ({
   },
   text: {
     color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.content,
     ...(isWeb
-      ? { lineHeight: Math.round(theme.fontSize.base * 1.4), overflowWrap: "anywhere" as const }
+      ? {
+          lineHeight: Math.round(theme.fontSize.content * 1.4),
+          overflowWrap: "anywhere" as const,
+        }
       : {}),
   },
   imagePreviewContainer: {
@@ -436,6 +441,10 @@ export const UserMessage = memo(function UserMessage({
   const [isHovered, setIsHovered] = useState(false);
   const [lightboxMetadata, setLightboxMetadata] = useState<UserMessageImageAttachment | null>(null);
   const handleLightboxClose = useCallback(() => setLightboxMetadata(null), []);
+  const lightboxSource = useMemo<ImageLightboxSource | null>(
+    () => (lightboxMetadata ? { type: "attachment", metadata: lightboxMetadata } : null),
+    [lightboxMetadata],
+  );
   const resolvedDisableOuterSpacing = useDisableOuterSpacing(disableOuterSpacing);
   const hasText = message.trim().length > 0;
   const hasImages = images.length > 0;
@@ -561,7 +570,7 @@ export const UserMessage = memo(function UserMessage({
           </View>
         ) : null}
       </View>
-      <AttachmentLightbox metadata={lightboxMetadata} onClose={handleLightboxClose} />
+      <AttachmentLightbox source={lightboxSource} onClose={handleLightboxClose} />
     </View>
   );
 });
@@ -569,7 +578,7 @@ export const UserMessage = memo(function UserMessage({
 interface AssistantTurnFooterProps {
   getContent: () => string;
   completedAt?: Date;
-  durationMs?: number;
+  durationMs?: number | null;
   onFork?: (target: AssistantForkTarget) => Promise<void> | void;
 }
 
@@ -607,9 +616,8 @@ const TIMESTAMP_REVEAL_MS = 3000;
 
 /**
  * Footer rendered next to the copy button at the end of an assistant turn.
- * Always shows the turn duration; swaps to the end timestamp on hover (web)
- * or tap (native). The hidden sizer keeps the label width stable while the
- * visible text swaps.
+ * Shows the turn duration and swaps to the end timestamp when both are known.
+ * A turn without a visible start shows its end timestamp directly.
  */
 export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   getContent,
@@ -631,7 +639,10 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
   }, []);
 
   const durationLabel = useMemo(
-    () => (durationMs !== undefined ? `Worked for ${formatDuration(durationMs)}` : ""),
+    () =>
+      durationMs !== undefined && durationMs !== null
+        ? `Worked for ${formatDuration(durationMs)}`
+        : "",
     [durationMs],
   );
   const timestampLabel = useMemo(
@@ -639,7 +650,8 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
     [completedAt],
   );
 
-  const canSwap = Boolean(timestampLabel);
+  const primaryLabel = durationLabel || timestampLabel;
+  const canSwap = Boolean(durationLabel && timestampLabel);
   const showTimestamp = canSwap && (isWeb ? hovered : pressedReveal);
 
   const handleHoverIn = useCallback(() => setHovered(true), []);
@@ -670,22 +682,22 @@ export const AssistantTurnFooter = memo(function AssistantTurnFooter({
         containerStyle={assistantTurnFooterStylesheet.copyButton}
       />
       {canFork ? <AssistantForkMenu onFork={handleFork} /> : null}
-      {durationLabel ? (
+      {primaryLabel ? (
         <Pressable
           onPress={handlePress}
           onHoverIn={handleHoverIn}
           onHoverOut={handleHoverOut}
           accessibilityRole={canSwap ? "button" : undefined}
-          accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : durationLabel}
+          accessibilityLabel={canSwap ? `${durationLabel}, ended ${timestampLabel}` : primaryLabel}
         >
           <View style={assistantTurnFooterStylesheet.labelWrapper}>
             {/* Sizer reserves space for whichever label is longer so the
                 container width is stable across hover transitions. */}
             <Text style={assistantTurnFooterStylesheet.labelSizer} aria-hidden>
-              {durationLabel.length >= timestampLabel.length ? durationLabel : timestampLabel}
+              {primaryLabel.length >= timestampLabel.length ? primaryLabel : timestampLabel}
             </Text>
             <Text style={assistantTurnFooterStylesheet.labelOverlay}>
-              {showTimestamp ? timestampLabel : durationLabel}
+              {showTimestamp ? timestampLabel : primaryLabel}
             </Text>
           </View>
         </Pressable>
@@ -755,6 +767,13 @@ export const assistantMessageStylesheet = StyleSheet.create((theme) => ({
   containerCompactBottom: {
     paddingBottom: 0,
   },
+  cappedNotice: {
+    marginTop: theme.spacing[3],
+    fontFamily: theme.fontFamily.ui,
+    fontSize: theme.fontSize.base,
+    fontStyle: "italic",
+    color: theme.colors.foregroundMuted,
+  },
   imageFrame: {
     width: "100%",
     minHeight: 160,
@@ -811,6 +830,10 @@ function AssistantMarkdownImage({
   workspaceRoot?: string;
   serverId?: string;
 }) {
+  const { t } = useTranslation();
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const openViewer = useCallback(() => setViewerOpen(true), []);
+  const closeViewer = useCallback(() => setViewerOpen(false), []);
   const containerStyle = useMemo<StyleProp<ViewStyle>>(
     () => ({
       marginTop: hasLeadingContent ? 16 : 0,
@@ -843,6 +866,14 @@ function AssistantMarkdownImage({
     () => [assistantMessageStylesheet.imageSurface, imageSizeStyle],
     [imageSizeStyle],
   );
+  const lightboxSource = useMemo<ImageLightboxSource | null>(() => {
+    if (!viewerOpen || !imageUri) return null;
+    return {
+      type: "uri",
+      uri: imageUri,
+      contentSize: aspectRatio ? { width: aspectRatio, height: 1 } : undefined,
+    };
+  }, [aspectRatio, imageUri, viewerOpen]);
 
   const stateFrameStyle = useMemo<StyleProp<ViewStyle>>(
     () => [
@@ -872,21 +903,34 @@ function AssistantMarkdownImage({
 
   return (
     <View style={frameStyle}>
-      <View style={surfaceStyle} accessibilityRole="image" accessibilityLabel={alt}>
-        <Image
-          ref={binding.onRef}
-          source={imageSource}
+      <Pressable
+        accessibilityLabel={t("composer.attachments.openImage")}
+        accessibilityRole="button"
+        disabled={image.status !== "loaded"}
+        onPress={openViewer}
+        style={surfaceStyle}
+      >
+        <View
           style={assistantMessageStylesheet.image}
-          resizeMode="contain"
-          onLoad={binding.onLoad}
-          onError={binding.onError}
-        />
-        {image.status === "loading" ? (
-          <View pointerEvents="none" style={assistantMessageStylesheet.imageLoadingOverlay}>
-            <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
-          </View>
-        ) : null}
-      </View>
+          accessibilityRole="image"
+          accessibilityLabel={alt}
+        >
+          <Image
+            ref={binding.onRef}
+            source={imageSource}
+            style={assistantMessageStylesheet.image}
+            resizeMode="contain"
+            onLoad={binding.onLoad}
+            onError={binding.onError}
+          />
+          {image.status === "loading" ? (
+            <View pointerEvents="none" style={assistantMessageStylesheet.imageLoadingOverlay}>
+              <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
+            </View>
+          ) : null}
+        </View>
+      </Pressable>
+      <AttachmentLightbox source={lightboxSource} onClose={closeViewer} />
     </View>
   );
 }
@@ -1455,11 +1499,20 @@ export const AssistantMessage = memo(function AssistantMessage({
   spacing = "default",
   phase,
 }: AssistantMessageProps) {
+  const { t } = useTranslation();
   const markdownParser = useMemo(createAssistantMarkdownParser, []);
+  const renderedMessage = useMemo(() => capAssistantMessageForRender(message), [message]);
+  // Paint a paced prefix while the turn is streaming so text arrives at a steady
+  // rate instead of in whatever lumps the daemon's coalescing window produced.
+  const revealedMessage = useRevealedText(renderedMessage.text, phase);
+  const fullMessageByteLength = useMemo(
+    () => (renderedMessage.capped && phase === "complete" ? getUtf8ByteLength(message) : null),
+    [message, phase, renderedMessage.capped],
+  );
 
   const fileLinkActions = useAssistantFileLinkActions();
   const handleMarkdownLinkPress = useStableEvent((url: string) => {
-    fileLinkActions.open({ href: url }, "side");
+    fileLinkActions.open({ href: url }, "preferred");
     // react-native-markdown-display opens the link itself when this returns true.
     // We already handled it above, so return false to avoid duplicate opens.
     return false;
@@ -1894,7 +1947,7 @@ export const AssistantMessage = memo(function AssistantMessage({
     };
   }, [client, fileLinkActions, markdownParser, occurrenceKey, phase, serverId, workspaceRoot]);
 
-  const blocks = useMemo(() => splitMarkdownBlocks(message), [message]);
+  const blocks = useMemo(() => splitMarkdownBlocks(revealedMessage), [revealedMessage]);
   const keyedBlocks = useMemo(
     () => blocks.map((block, index) => ({ key: `block:${index}`, block })),
     [blocks],
@@ -1910,9 +1963,16 @@ export const AssistantMessage = memo(function AssistantMessage({
     ],
     [spacing],
   );
+  const revealDataSet = useMemo(
+    () =>
+      isRenderProfileEnabled()
+        ? { revealKey: occurrenceKey, revealLength: String(revealedMessage.length) }
+        : undefined,
+    [occurrenceKey, revealedMessage.length],
+  );
 
   return (
-    <View testID="assistant-message" style={assistantContainerStyle}>
+    <View testID="assistant-message" dataSet={revealDataSet} style={assistantContainerStyle}>
       {keyedBlocks.map(({ key, block }, index) => (
         <AssistantMessageBlockContainer
           key={key}
@@ -1927,6 +1987,14 @@ export const AssistantMessage = memo(function AssistantMessage({
           />
         </AssistantMessageBlockContainer>
       ))}
+      {fullMessageByteLength !== null ? (
+        <Text
+          testID="assistant-message-capped-notice"
+          style={assistantMessageStylesheet.cappedNotice}
+        >
+          {t("agentStream.messageCapped", { bytes: fullMessageByteLength })}
+        </Text>
+      ) : null}
     </View>
   );
 });
@@ -1958,8 +2026,8 @@ const speakMessageStylesheet = StyleSheet.create((theme) => ({
   },
   text: {
     fontFamily: theme.fontFamily.ui,
-    fontSize: theme.fontSize.base,
-    lineHeight: Math.round(theme.fontSize.base * 1.4),
+    fontSize: theme.fontSize.content,
+    lineHeight: Math.round(theme.fontSize.content * 1.4),
     color: theme.colors.foreground,
   },
 }));
@@ -2246,8 +2314,6 @@ function taskActivityIcon(activity: TaskActivity) {
       return CircleDot;
     case "completed":
       return Check;
-    case "reopened":
-      return RotateCcw;
     default:
       return CheckSquare;
   }
@@ -3105,6 +3171,7 @@ export const ToolCall = memo(function ToolCall({
   const handleToggle = useCallback(() => {
     if (!shouldRenderInline) {
       openToolCall({
+        toolName,
         displayName: presentation.displayName,
         summary: presentation.summary,
         detail: effectiveDetail,
@@ -3118,6 +3185,7 @@ export const ToolCall = memo(function ToolCall({
   }, [
     shouldRenderInline,
     openToolCall,
+    toolName,
     presentation.displayName,
     presentation.summary,
     presentation.errorText,
@@ -3158,6 +3226,7 @@ export const ToolCall = memo(function ToolCall({
     if (!shouldRenderInline) return null;
     return (
       <ToolCallDetailsContent
+        toolName={toolName}
         detail={effectiveDetail}
         errorText={presentation.errorText}
         maxHeight={maxDetailHeight}
@@ -3166,6 +3235,7 @@ export const ToolCall = memo(function ToolCall({
     );
   }, [
     shouldRenderInline,
+    toolName,
     effectiveDetail,
     presentation.errorText,
     presentation.isLoadingDetails,

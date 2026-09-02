@@ -1,10 +1,13 @@
 import { memo, useCallback, type ReactElement } from "react";
+import { WorkspaceDiffStatPill } from "@/composer/diff-stat-pill";
+import { useWorkspaceHasDiffStat } from "@/composer/workspace-diff-stat";
 import { AgentTaskList } from "@/composer/task-list";
 import { ComposerTrackBar } from "@/composer/tracks";
 import { supportsDesktopPaneSplits, useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
+import { useSettings } from "@/hooks/use-settings";
+import { PluginComposerPills } from "@/plugins";
 import { useSessionStore } from "@/stores/session-store";
-import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import {
   type ArchiveFinishedStatus,
   useArchiveSubagent,
@@ -15,30 +18,42 @@ import { SubagentsTrack } from "@/subagents/track";
 import type { TodoEntry } from "@/types/stream";
 import { navigateToAgent } from "@/utils/navigate-to-agent";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
+import { openPreferredWorkspaceTarget } from "@/workspace-tabs/open-beside";
+import { openComposerChanges } from "@/workspace-tabs/open-supporting-view";
 
 /**
- * The pane's trackers — its subagents and its task list — as a row of pills above the composer.
+ * The pane's ambient context — workspace changes, subagents, and tasks — as a row of pills above
+ * the composer.
  *
  * The row shares the composer's keyboard transform and owns the space between itself and the
- * transcript. Its data remains agent state: a subagent row opens a tab and the task list reads
- * the agent's stream.
+ * transcript. Each pill owns its action while tab placement stays behind the workspace boundary.
  */
 export const AgentTracks = memo(function AgentTracks({
   serverId,
+  workspaceId,
+  agentId,
+  cwd,
   subagentRows,
   tasks,
   archiveFinishedStatus,
   onArchiveFinished,
+  hasPluginComposerPills,
 }: {
   serverId: string;
+  workspaceId: string;
+  agentId: string;
+  cwd: string;
   subagentRows: SubagentRow[];
   tasks: TodoEntry[] | undefined;
   archiveFinishedStatus: ArchiveFinishedStatus;
   onArchiveFinished: () => void;
+  hasPluginComposerPills: boolean;
 }): ReactElement | null {
-  const { workspaceId, tabId, openTab } = usePaneContext();
+  const { tabId, openTab } = usePaneContext();
+  const hasWorkspaceDiffStat = useWorkspaceHasDiffStat(serverId, workspaceId);
   const isCompact = useIsCompactFormFactor();
   const canSplit = supportsDesktopPaneSplits() && !isCompact;
+  const openInSidePane = useSettings((settings) => settings.openInSidePane);
   const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
   const canDetachSubagents = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.agentDetach === true,
@@ -54,36 +69,64 @@ export const AgentTracks = memo(function AgentTracks({
         return;
       }
       if (canSplit && workspaceKey) {
-        useWorkspaceLayoutStore.getState().openTabInExplorerPaneFocused(workspaceKey, {
+        openPreferredWorkspaceTarget({
+          isCompact,
+          workspaceKey,
           target: { kind: "agent", agentId: subagentId },
+          source: "subagents",
+          preferences: openInSidePane,
           parentTabId: tabId,
         });
         return;
       }
       navigateToAgent({ serverId, agentId: subagentId });
     },
-    [canSplit, serverId, tabId, workspaceId, workspaceKey],
+    [canSplit, isCompact, openInSidePane, serverId, tabId, workspaceId, workspaceKey],
   );
   const handleOpenProviderSubagent = useCallback(
     (parentAgentId: string, subagentId: string) => {
       if (canSplit && workspaceKey) {
-        useWorkspaceLayoutStore.getState().openTabInExplorerPaneFocused(workspaceKey, {
+        openPreferredWorkspaceTarget({
+          isCompact,
+          workspaceKey,
           target: { kind: "provider_subagent", parentAgentId, subagentId },
+          source: "subagents",
+          preferences: openInSidePane,
           parentTabId: tabId,
         });
         return;
       }
       openTab({ kind: "provider_subagent", parentAgentId, subagentId });
     },
-    [canSplit, openTab, tabId, workspaceKey],
+    [canSplit, isCompact, openInSidePane, openTab, tabId, workspaceKey],
   );
+  const handleOpenChanges = useCallback(() => {
+    if (!workspaceKey) {
+      return;
+    }
+    openComposerChanges({
+      isCompact,
+      workspaceKey,
+      checkout: { serverId, cwd, isGit: true },
+      preferences: openInSidePane,
+    });
+  }, [cwd, isCompact, openInSidePane, serverId, workspaceKey]);
 
-  if (!hasAgentTracks({ subagentRows, tasks, archiveFinishedStatus })) {
+  if (
+    !hasWorkspaceDiffStat &&
+    !hasAgentTracks({
+      subagentRows,
+      tasks,
+      archiveFinishedStatus,
+      hasPluginComposerPills,
+    })
+  ) {
     return null;
   }
 
   return (
     <ComposerTrackBar>
+      <AgentTaskList tasks={tasks} />
       <SubagentsTrack
         rows={subagentRows}
         onOpenSubagent={handleOpenSubagent}
@@ -93,7 +136,17 @@ export const AgentTracks = memo(function AgentTracks({
         archiveFinishedStatus={archiveFinishedStatus}
         onDetachSubagent={canDetachSubagents ? detachSubagent : undefined}
       />
-      <AgentTaskList tasks={tasks} />
+      <PluginComposerPills
+        serverId={serverId}
+        workspaceId={workspaceId}
+        agentId={agentId}
+        compact={isCompact}
+      />
+      <WorkspaceDiffStatPill
+        serverId={serverId}
+        workspaceId={workspaceId}
+        onPress={handleOpenChanges}
+      />
     </ComposerTrackBar>
   );
 });
@@ -102,10 +155,17 @@ export function hasAgentTracks({
   subagentRows,
   tasks,
   archiveFinishedStatus,
+  hasPluginComposerPills = false,
 }: {
   subagentRows: readonly SubagentRow[];
   tasks: readonly TodoEntry[] | undefined;
   archiveFinishedStatus: ArchiveFinishedStatus;
+  hasPluginComposerPills?: boolean;
 }): boolean {
-  return subagentRows.length > 0 || Boolean(tasks?.length) || archiveFinishedStatus.kind !== "idle";
+  return (
+    subagentRows.length > 0 ||
+    Boolean(tasks?.length) ||
+    archiveFinishedStatus.kind !== "idle" ||
+    hasPluginComposerPills
+  );
 }

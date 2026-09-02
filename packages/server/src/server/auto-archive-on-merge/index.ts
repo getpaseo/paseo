@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { LRUCache } from "lru-cache";
 import type { Logger } from "pino";
 
 import { archiveIfSafe, type AutoArchiveArchiveOptions } from "./archive-if-safe.js";
@@ -16,6 +17,8 @@ export interface AutoArchiveOnMergeDependencies {
   resolvePath: typeof resolve;
 }
 
+const OPEN_PULL_REQUEST_LATCH_MAX = 1_024;
+
 const defaultDependencies: AutoArchiveOnMergeDependencies = {
   archiveIfSafe,
   resolvePath: resolve,
@@ -27,16 +30,30 @@ export function setupAutoArchiveOnMerge(
 ): WorkspaceGitSubscription {
   const log = options.logger.child({ module: "auto-archive-on-merge" });
   const inFlightCwds = new Set<string>();
+  const openPullRequestUrlsByCwd = new LRUCache<string, string>({
+    max: OPEN_PULL_REQUEST_LATCH_MAX,
+  });
 
   return options.workspaceGitService.onSnapshotUpdated((snapshot) => {
-    if (!snapshot.forge.pullRequest?.isMerged) {
-      return;
-    }
+    const snapshotCwd = deps.resolvePath(snapshot.cwd);
     if (options.daemonConfigStore.get().autoArchiveAfterMerge !== true) {
+      openPullRequestUrlsByCwd.delete(snapshotCwd);
       return;
     }
 
-    const snapshotCwd = deps.resolvePath(snapshot.cwd);
+    const pullRequest = snapshot.forge.pullRequest;
+    if (!pullRequest?.isMerged) {
+      if (pullRequest?.state.toLowerCase() === "open") {
+        openPullRequestUrlsByCwd.set(snapshotCwd, pullRequest.url);
+      } else {
+        openPullRequestUrlsByCwd.delete(snapshotCwd);
+      }
+      return;
+    }
+    if (openPullRequestUrlsByCwd.get(snapshotCwd) !== pullRequest.url) {
+      openPullRequestUrlsByCwd.delete(snapshotCwd);
+      return;
+    }
     if (inFlightCwds.has(snapshotCwd)) {
       return;
     }
@@ -55,7 +72,15 @@ export function setupAutoArchiveOnMerge(
         );
         return;
       }
-      if (!freshSnapshot?.forge.pullRequest?.isMerged) {
+      const freshPullRequest = freshSnapshot?.forge.pullRequest;
+      if (
+        !freshPullRequest?.isMerged ||
+        freshPullRequest.url !== pullRequest.url ||
+        openPullRequestUrlsByCwd.get(snapshotCwd) !== pullRequest.url
+      ) {
+        if (openPullRequestUrlsByCwd.get(snapshotCwd) === pullRequest.url) {
+          openPullRequestUrlsByCwd.delete(snapshotCwd);
+        }
         return;
       }
 

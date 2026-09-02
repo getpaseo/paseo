@@ -655,15 +655,15 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       ).rejects.toThrow("Base branch not found: does-not-exist");
     });
 
-    it("fails with invalid branch name", async () => {
+    it("fails with a Git-invalid branch name", async () => {
       await expect(
         createLegacyWorktreeForTest({
-          branchName: "INVALID_UPPERCASE",
+          branchName: "bad..name",
           cwd: repoDir,
           baseBranch: "main",
           worktreeSlug: "test",
         }),
-      ).rejects.toThrow("Invalid branch name");
+      ).rejects.toThrow("Git rejected ref name 'bad..name'");
     });
 
     it("throws a typed error when checking out an invalid existing branch name", async () => {

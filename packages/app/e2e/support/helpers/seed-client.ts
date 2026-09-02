@@ -12,6 +12,7 @@ export interface SeedWorkspaceDescriptor {
   projectDisplayName: string;
   projectRootPath: string;
   workspaceDirectory: string;
+  diffStat: { additions: number; deletions: number } | null;
   labels?: string[];
 }
 
@@ -68,6 +69,7 @@ export interface SeedDaemonClient {
     workspace: SeedWorkspaceDescriptor | null;
     error: string | null;
   }>;
+  archiveWorkspace(workspaceId: string): Promise<{ error: string | null }>;
   /**
    * Force the daemon to recompute its git snapshot and diff for a checkout,
    * mirroring the UI's manual refresh. Tests use this to make an out-of-band

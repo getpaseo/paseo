@@ -1,9 +1,10 @@
-# Local plugins
+# Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
-subprocess and evaluates the client contribution in the app runtime. Plugin code is trusted code;
-this first slice does not sandbox it.
+composer pills, app themes, and composer attachment sources from one `index.ts`. Paseo executes the server contribution in a
+subprocess and evaluates the client contribution in the app runtime.
+
+> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
 
 ## Install a directory source
 
@@ -47,15 +48,13 @@ my-plugin/
   paseo-plugin.json
   index.ts
   main.client.tsx
-  paseo-plugin.d.ts
   package.json
   tsconfig.json
 ```
 
-Paseo compiles TypeScript and TSX when loading the plugin, so these packages are development dependencies only.
-The generated declaration file supplies `@paseo/plugin` and `@paseo/plugin/server` types until the
-SDK is distributed as a public package. Regenerate new plugins with the matching Paseo CLI when the
-SDK contract changes.
+The generated `package.json` installs `@getpaseo/plugin` and the other host modules as development
+dependencies for local typechecking and tests. Paseo compiles TypeScript and TSX and supplies the
+runtime modules, so consumers do not install these packages when adding the plugin.
 
 ```json
 {
@@ -74,13 +73,62 @@ backend code can access the daemon machine, while client contributions run insid
 
 Source changes are explicit. Run `paseo plugin reload <id>` to stop and fully tear down the old
 plugin before compiling and starting from disk. A failed reload stays failed; Paseo does not restore
-the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Remove deletes only its
-configuration, never its source directory. The global `pluginsEnabled` switch remains available.
+the old code. Use `enable`, `disable`, and `remove` to manage one plugin. Removing a directory source
+never deletes it. The global `pluginsEnabled` switch remains available.
+
+## Install a Git source
+
+GitHub repositories use an `owner/repository` shorthand. Other hosts use a Git URL. An existing
+directory always wins over shorthand resolution.
+
+```bash
+paseo plugin add owner/repository
+paseo plugin add https://gitlab.com/group/repository.git
+paseo plugin add https://git.example.com/owner/repository.git
+paseo plugin add owner/monorepo:plugins/review
+paseo plugin add owner/repository --ref main
+paseo plugin status
+paseo plugin update review
+paseo plugin update --all
+```
+
+Append `:relative/path` to the source when the plugin lives below the repository root.
+
+Omitting `--ref` tracks the remote's default branch. A branch passed with `--ref` also tracks;
+tags and commits stay pinned. `status` fetches tracked refs and reports the installed and available
+commits. Removing a Git source deletes Paseo's managed checkout.
+
+### Declare Git preparation
+
+Most plugins should omit `build`. Use it only when the staged checkout must install a dependency
+that Paseo does not provide, generate source or assets, or perform another required preparation
+step:
+
+```json
+{
+  "id": "review",
+  "build": [
+    ["npm", "ci"],
+    ["npm", "run", "build"]
+  ]
+}
+```
+
+`build` is an optional list of argv arrays. Each array must contain at least one non-empty string;
+shell command strings are rejected. Paseo starts the executable directly, without a shell, from the
+plugin directory in the staged checkout. It never detects lockfiles or chooses a package manager.
+
+On install and every update, Paseo resolves the exact Git revision and manifest, runs the declared
+commands, then validates, compiles, and activates the candidate. It logs each argv command and its
+output in the daemon log. If a command fails, the error includes its output, Paseo discards the
+candidate, and the existing installed and running version stays untouched. On a remote daemon, all
+of this happens on the remote daemon host.
 
 Server contributions can write to stdout and stderr with normal Node logging. Paseo adds `[paseo]`
 entries for loading, ready, stopping, and stopped transitions. Compilation and load failures are
 recorded as stderr entries before a subprocess exists. Inspect the recent in-memory
-tail from the host plugin settings or with `paseo plugin logs <id>`. Reload, disable, and process
+tail from the host plugin settings or with `paseo plugin logs <id>`. Git preparation commands are
+recorded in `$PASEO_HOME/daemon.log` before a plugin exists, rather than the plugin log tail. Reload, disable, and process
 failure retain the tail; removing the plugin clears it. Daemon restarts do not retain the tail, but
 structured copies remain in `$PASEO_HOME/daemon.log`. Plugin output can contain secrets, so do not
 log credentials or tokens.
@@ -96,15 +144,20 @@ code lives behind filename boundaries:
 | `*.server.ts`  | Node APIs, filesystem and process access, credentials, and handlers. |
 | `*.shared.ts`  | Zod RPC contracts and plain values used by both runtimes.            |
 
-Shared files import contracts from `@paseo/plugin/server`. Client files import hooks from
-`@paseo/plugin`. Plugin UI runs on desktop and mobile across multiple themes: color every
-`Text` from `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from
-`layout.compact`. See `public-docs/plugins/reference.md`.
+Shared files import contracts from `@getpaseo/plugin/server`. Client files import Paseo UI from
+`@getpaseo/plugin/react-native`. Its `Icon` resolves a Lucide name using the client's installed icon
+set; an unknown name renders nothing so it cannot break the plugin surface.
+Its controlled modal keeps presentation metadata on `<Modal title="…" icon={…}>` and body UI in
+`<Modal.Content>`.
+Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
+`theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
+See `public-docs/plugins/reference.md`.
 
-| Module                 | Use it for                                               |
-| ---------------------- | -------------------------------------------------------- |
-| `@paseo/plugin`        | hooks and UI types                                       |
-| `@paseo/plugin/server` | `defineRpc`, `defineAttachmentSource`, and handler types |
+| Module                          | Use it for                                               |
+| ------------------------------- | -------------------------------------------------------- |
+| `@getpaseo/plugin`              | contribution contracts and client data hooks             |
+| `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks               |
+| `@getpaseo/plugin/server`       | `defineRpc`, `defineAttachmentSource`, and handler types |
 
 The compiler removes client registrations and imports from the server entry point, and server
 registrations and imports from the client entry point. Importing a `*.server` module from a client
@@ -113,7 +166,7 @@ such as `StyleSheet.create` belong in `*.client.tsx`; placing them in `index.ts`
 server bundle.
 
 ```ts
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 import { Greeting } from "./greeting.client";
 import { createGreeting } from "./greeting.server";
 import { greetRpc } from "./greeting.shared";
@@ -139,8 +192,8 @@ RPC contracts validate inputs and outputs in both the app and plugin subprocess.
 typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
 Paseo gives each plugin installation its own query client.
 
-`usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: workspaces, agents,
-providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
+`usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
+workspaces, agents, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
 selected host's existing connection; switching the screen's host changes both `usePaseo()` and
 `useRpc()` to that host. An offline selected host fails there and never falls through to another
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
@@ -165,11 +218,76 @@ RPC. Snapshot DTOs are deeply readonly and frozen at runtime so plugin code cann
 app state or a memoized selection. Panels use one persisted
 `plugin` workspace-tab target, so reload, disable, removal, and restoration resolve through the
 current installed-plugin catalog. A missing contribution renders unavailable inside the tab.
+Panels declare `locations: ["workspace", "explorer"]` to opt into Explorer hosting; omission means
+workspace only. Location controls hosting, not context. An agent panel target keeps its `agentId`
+when moved between hosts. Explorer configuration can create workspace-context panels and remove
+existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
 
 Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
-They use typed plugin RPC only for plugin-specific backend work. Navigation is limited to the
-plugin's registered global surfaces and workspace panels; plugins do not receive Expo Router or
-workspace-layout store access.
+They use typed plugin RPC only for plugin-specific backend work. Surface and panel props expose
+optional client-owned agent and workspace navigation; its absence is the compatibility gate for
+older clients. Other navigation remains limited to registered global surfaces and workspace panels.
+Plugins do not receive Expo Router or workspace-layout store access.
+
+## Contribute composer pills
+
+Register a headless client entrypoint, then add and remove targeted pills from that client
+lifecycle. `addClientSide` runs once per plugin installation in each connected app and never runs
+in the daemon subprocess. It can subscribe to the client API, call plugin RPCs, and own arbitrary
+client state without mounting a panel or surface.
+
+```tsx
+export function contributeClient(client: PluginClientContext) {
+  const pills = new Map<string, () => void>();
+  const unsubscribe = client.paseo.agents.subscribe((update) => {
+    if (update.kind !== "upsert" || !update.agent.workspaceId) return;
+    const { id: agentId, workspaceId } = update.agent;
+    pills.get(agentId)?.();
+    pills.set(
+      agentId,
+      client.addComposerPill({
+        id: "review",
+        title: "Open review",
+        workspaceId,
+        agentId,
+        Component: ReviewPill,
+        async onPress() {
+          await client.rpc(refreshReview, { agentId });
+          client.openPanel("review", { workspaceId, agentId });
+        },
+      }),
+    );
+  });
+  return () => {
+    unsubscribe();
+    for (const remove of pills.values()) remove();
+  };
+}
+```
+
+Wire it from `index.ts` with `plugin.addClientSide(contributeClient)`. `addComposerPill` exists only
+on `PluginClientContext`; it returns an idempotent removal function. A pill appears only in the
+matching workspace and agent track bar alongside Tasks and Subagents. Paseo owns the pressable,
+shared chrome, pending state, error reporting, and placement. The component owns its icon and text;
+the callback is client code by construction. Removing the pill, reloading the plugin, disconnecting
+the host, or unloading the app tears down the contribution.
+
+## Contribute timeline items
+
+Timeline transformers and renderers are client contributions. The daemon's canonical rows and
+built-in projection stay unchanged. The app transforms fetched projected history before building
+its render model. A matching live event requests a fresh projected tail, so lifecycle deltas are
+collapsed before the transformer replaces anything.
+
+`query.itemType` selects one public `AgentTimelineItem.type`. The callback owns any detailed
+recognition and returns plain plugin item objects. `undefined` keeps the source item, `items`
+replaces it, and an empty array removes it. Output `data` must be JSON-compatible. Paseo adds the
+runtime plugin ID, preserves the source timeline cursor, validates renderer data with its Zod
+schema, and mounts the component inside the normal plugin runtime and error boundary.
+
+Transformers run synchronously and must be deterministic. When several transformers match, the
+first one that returns a result owns that source item. Plugin and registration ordering is stable.
+See `plugin-examples/timeline-items` for the complete contract.
 
 ## Contribute composer attachments
 
@@ -178,7 +296,7 @@ search picker, drafts, selected pill, and submission. The plugin returns complet
 credentials and vendor API calls stay in the daemon handler.
 
 ```ts
-import type { PluginContext } from "@paseo/plugin";
+import type { PluginContext } from "@getpaseo/plugin";
 import { search } from "./issues.server";
 import { issues, searchIssues } from "./issues.shared";
 
@@ -194,5 +312,29 @@ on several hosts are not coalesced. The selected snapshot submits as a text atta
 external-resource presentation, so it remains readable if the plugin is removed or an older peer
 drops the optional presentation fields.
 
-See `plugin-examples/local-plugin` for a native surface and `plugin-examples/linear` for a complete
-attachment-source example.
+## Contribute a theme
+
+`addTheme` takes a small light or dark palette and a display name. Paseo expands it through the
+same semantic builders as the built-in themes, so plugins do not depend on the complete app token
+contract. Unistyles needs every theme name at `StyleSheet.configure` time, so
+`packages/app/src/styles/theme.ts` reserves one light and one dark plugin slot. The appearance
+provider rewrites the matching slot when the selection changes. See [unistyles.md](unistyles.md)
+for the runtime-patching rules the appearance settings share.
+
+`addTheme` is a client registration, so the compiler strips it from the backend bundle. A daemon
+that predates it does not, and the plugin fails to start there. Daemons advertise
+`features.pluginThemes` in `server_info`; the plugin theme catalog is the one place the app reads it, and
+a host without it contributes no themes.
+
+The selection persists as `theme: "plugin"` plus a `pluginThemeId` of `<pluginId>/theme/<themeId>`,
+so equal themes on several hosts coalesce the way sidebar contributions do. Two hosts can answer
+that id with different palettes, so picking a theme records its host through
+`rememberPluginContributionHost` and resolution prefers it; a peer connecting or dropping then does
+not repaint the app. Without a preference the sorted registry snapshot decides, so the result is
+stable rather than arrival-ordered. The app resolves that id
+against the installed catalog on every change; an id nothing contributes falls back to the default
+preference instead of painting the reserved slot's placeholder colors.
+
+See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
+attachment-source example, `plugin-examples/timeline-items` for timeline projection, and
+`plugin-examples/catppuccin` for a theme.

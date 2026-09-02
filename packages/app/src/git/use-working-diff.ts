@@ -21,6 +21,7 @@ interface UseWorkingDiffOptions {
   ignoreWhitespace: boolean;
   enabled: boolean;
   queryScope?: string;
+  modeScope: string;
 }
 
 export function useWorkingDiff({
@@ -30,6 +31,7 @@ export function useWorkingDiff({
   ignoreWhitespace,
   enabled,
   queryScope,
+  modeScope,
 }: UseWorkingDiffOptions) {
   const {
     status,
@@ -59,19 +61,25 @@ export function useWorkingDiff({
       }),
     [baseRef, cwd, ignoreWhitespace, serverId, workspaceId],
   );
+  const modeScopeKey = `${reviewDraftScopeKey}:surface=${encodeURIComponent(modeScope)}`;
   const diffMode = useResolvedDiffMode({
-    scopeKey: reviewDraftScopeKey,
+    scopeKey: modeScopeKey,
     hasUncommittedChanges,
   });
   const setDiffModeOverride = useSetDiffModeOverride();
   const selectDiffMode = useCallback(
-    (mode: "uncommitted" | "base") => {
+    (nextMode: "uncommitted" | "base") => {
       setDiffModeOverride({
-        scopeKey: reviewDraftScopeKey,
-        override: { serverId, cwd, mode, isDirtyAtSelection: hasUncommittedChanges },
+        scopeKey: modeScopeKey,
+        override: {
+          serverId,
+          cwd,
+          mode: nextMode,
+          isDirtyAtSelection: hasUncommittedChanges,
+        },
       });
     },
-    [cwd, hasUncommittedChanges, reviewDraftScopeKey, serverId, setDiffModeOverride],
+    [cwd, hasUncommittedChanges, modeScopeKey, serverId, setDiffModeOverride],
   );
   const selectUncommitted = useCallback(() => selectDiffMode("uncommitted"), [selectDiffMode]);
   const selectBase = useCallback(() => selectDiffMode("base"), [selectDiffMode]);

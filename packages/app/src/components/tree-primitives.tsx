@@ -18,7 +18,8 @@ export const WORKSPACE_TREE_ICON_LABEL_GAP = SPACING[2];
  * The extra 2px is optical: text ink ends inside its layout box, while the
  * header icons' strokes extend to theirs.
  */
-export const WORKSPACE_FILE_ROW_TRAILING_PADDING = SPACING[4] + 2;
+/** Shared painted-edge rail for pane headers, toolbars, and tree/diff rows. */
+export const WORKSPACE_PANE_TRAILING_GLYPH_RAIL = SPACING[2];
 
 /** Left padding for a row in either workspace tree. */
 export function treeRowPaddingLeft(depth: number): number {
@@ -49,7 +50,7 @@ export const workspaceTreeRowStyles = StyleSheet.create((theme: Theme) => ({
     alignItems: "center",
     justifyContent: "space-between",
     paddingVertical: WORKSPACE_FILE_ROW_VERTICAL_PADDING,
-    paddingRight: WORKSPACE_FILE_ROW_TRAILING_PADDING,
+    paddingRight: WORKSPACE_PANE_TRAILING_GLYPH_RAIL,
   },
   active: {
     backgroundColor: theme.colors.surfaceSidebarHover,

@@ -9,8 +9,6 @@ import {
   type StyleProp,
   type ViewStyle,
 } from "react-native";
-import { useMutation } from "@tanstack/react-query";
-import { AdaptiveRenameModal } from "@/components/rename-modal";
 import {
   memo,
   useCallback,
@@ -36,15 +34,9 @@ import type { Theme } from "@/styles/theme";
 import type { SidebarSurfaceBackdrop } from "@/styles/surface-backdrop";
 import { getSidebarRowBackdrop } from "@/components/sidebar/sidebar-row-backdrop";
 import { type GestureType } from "react-native-gesture-handler";
-import * as Clipboard from "expo-clipboard";
-import {
-  ExternalLink,
-  GitPullRequest,
-  Settings,
-  MoreVertical,
-  Plus,
-  Trash2,
-} from "lucide-react-native";
+import { WorkspaceRenameModal } from "@/components/workspace-rename-modal";
+import { useWorkspaceClipboardActions } from "@/hooks/use-workspace-clipboard-actions";
+import { ExternalLink, Settings, MoreVertical, Plus, Trash2 } from "lucide-react-native";
 import { NestableScrollContainer } from "react-native-draggable-flatlist";
 import { DraggableList, type DraggableRenderItemInfo } from "./draggable-list";
 import type { DraggableListDragHandleProps } from "./draggable-list.types";
@@ -118,7 +110,7 @@ import {
 } from "@/components/sidebar/sidebar-workspace-row-content";
 import { useOpenKebabMenuVisibility } from "@/components/sidebar/use-open-kebab-menu-visibility";
 import {
-  SidebarLabelFilterEmptyState,
+  SidebarFilterEmptyState,
   SidebarProjectEmptyState,
 } from "@/components/sidebar/empty-states";
 import { selectWorkspaceServiceSummary } from "@/components/sidebar/workspace-meta-row";
@@ -142,7 +134,6 @@ import {
 } from "@/utils/sidebar-project-row-model";
 import { redirectIfArchivingActiveWorkspace } from "@/utils/sidebar-workspace-archive-redirect";
 import { openExternalUrl } from "@/utils/open-external-url";
-import { requireWorkspaceDirectory } from "@/utils/workspace-directory";
 import { useWorkspaceArchive } from "@/workspace/use-workspace-archive";
 import {
   getCurrentProjectRemoveReadiness,
@@ -159,6 +150,7 @@ import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { useHostBadges } from "@/hosts/use-host-badges";
 import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
+import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
 
@@ -166,7 +158,6 @@ const projectViewKeyExtractor = (project: SidebarProjectEntry) => project.viewKe
 
 const WORKSPACE_STATUS_DOT_WIDTH = 14;
 const ThemedExternalLink = withUnistyles(ExternalLink);
-const ThemedGitPullRequest = withUnistyles(GitPullRequest);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
 const ThemedPlus = withUnistyles(Plus);
 const ThemedMoreVertical = withUnistyles(MoreVertical);
@@ -179,26 +170,6 @@ const foregroundColorMapping = (theme: Theme) => ({
 const foregroundMutedColorMapping = (theme: Theme) => ({
   color: theme.colors.foregroundMuted,
 });
-const redColorMapping = (theme: Theme) => ({
-  color: theme.colors.statusDanger,
-});
-const greenColorMapping = (theme: Theme) => ({
-  color: theme.colors.statusSuccess,
-});
-const purpleColorMapping = (theme: Theme) => ({
-  color: theme.colors.statusMerged,
-});
-
-function getPrIconUniMapping(state: PrHint["state"]) {
-  switch (state) {
-    case "merged":
-      return purpleColorMapping;
-    case "open":
-      return greenColorMapping;
-    case "closed":
-      return redColorMapping;
-  }
-}
 
 function isWorkspaceSelected(input: {
   selection: ActiveWorkspaceSelection | null;
@@ -245,7 +216,9 @@ interface SidebarWorkspaceListProps {
   projectIconTargets: SidebarProjectIconTarget[];
   pinnedGroups: PinnedSidebarGroups;
   projects: SidebarProjectEntry[];
-  hasProjectsBeforeLabelFilter: boolean;
+  hasProjectsBeforeFilter: boolean;
+  /** Whether a project filter is actually being applied — the resolved list, not the stored one. */
+  hasActiveProjectFilter: boolean;
   workspaceEntriesByKey: ReadonlyMap<string, SidebarWorkspaceEntry>;
   collapsedProjectKeys: ReadonlySet<string>;
   onToggleProjectCollapsed: (projectViewKey: string) => void;
@@ -261,7 +234,7 @@ interface SidebarWorkspaceListProps {
   listHeaderComponent?: ReactElement | null;
   /** Gesture ref for coordinating with parent gestures (e.g., sidebar close) */
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
-  dragGestureHostPresented?: boolean;
+  dragGestureHostActive?: boolean;
 }
 
 interface ProjectHeaderRowProps {
@@ -350,7 +323,6 @@ export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewS
   const textStyle = isHovered
     ? [prBadgeStyles.text, prBadgeStyles.textHovered]
     : prBadgeStyles.text;
-  const iconUniProps = isHovered ? foregroundColorMapping : getPrIconUniMapping(hint.state);
   const presentation = getForgePresentation(normalizeForge(hint.forge));
 
   return (
@@ -368,9 +340,9 @@ export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewS
       style={pressableStyle}
     >
       {isHovered ? (
-        <ThemedExternalLink size={12} uniProps={iconUniProps} />
+        <ThemedExternalLink size={12} uniProps={foregroundColorMapping} />
       ) : (
-        <ThemedGitPullRequest size={12} uniProps={iconUniProps} />
+        <PullRequestStateIcon state={hint.state} size={12} />
       )}
       <Text style={textStyle} numberOfLines={1}>
         {hint.number}
@@ -1289,42 +1261,14 @@ function WorkspaceRowWithMenu({
     archiveController.archive();
   }, [archiveController, isArchiving]);
 
+  const clipboard = useWorkspaceClipboardActions();
   const handleCopyPath = useCallback(() => {
-    let copyTargetDirectory: string;
-    try {
-      copyTargetDirectory = requireWorkspaceDirectory({
-        workspaceId: workspace.workspaceId,
-        workspaceDirectory: workspace.workspaceDirectory,
-      });
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : t("sidebar.workspace.toasts.workspacePathUnavailable"),
-      );
-      return;
-    }
-    void Clipboard.setStringAsync(copyTargetDirectory);
-    toast.copied(t("sidebar.workspace.toasts.pathCopied"));
-  }, [t, toast, workspace.workspaceDirectory, workspace.workspaceId]);
+    clipboard.copyPath(workspace);
+  }, [clipboard, workspace]);
 
   const handleCopyBranchName = useCallback(() => {
-    if (!workspace.currentBranch) {
-      return;
-    }
-    void Clipboard.setStringAsync(workspace.currentBranch);
-    toast.copied(t("sidebar.workspace.toasts.branchNameCopied"));
-  }, [t, toast, workspace.currentBranch]);
-
-  const renameMutation = useMutation({
-    mutationFn: async (title: string) => {
-      const client = getHostRuntimeStore().getClient(workspace.serverId);
-      if (!client) {
-        throw new Error(t("sidebar.workspace.toasts.hostDisconnected"));
-      }
-      await client.setWorkspaceTitle(workspace.workspaceId, title.length === 0 ? null : title);
-    },
-  });
+    clipboard.copyBranchName(workspace);
+  }, [clipboard, workspace]);
 
   const handleOpenRename = useCallback(() => {
     setIsRenameOpen(true);
@@ -1333,13 +1277,6 @@ function WorkspaceRowWithMenu({
   const handleCloseRename = useCallback(() => {
     setIsRenameOpen(false);
   }, []);
-
-  const handleSubmitRename = useCallback(
-    async (value: string) => {
-      await renameMutation.mutateAsync(value.trim());
-    },
-    [renameMutation],
-  );
 
   const isPinned = workspace.pinnedAt != null;
   const handleTogglePin = useCallback(() => {
@@ -1399,14 +1336,10 @@ function WorkspaceRowWithMenu({
         onTogglePin={onTogglePin}
         reserveIdleStatusIndicatorSpace={reserveIdleStatusIndicatorSpace}
       />
-      <AdaptiveRenameModal
+      <WorkspaceRenameModal
         visible={isRenameOpen}
-        title={t("sidebar.workspace.rename.title")}
-        initialValue={workspace.title ?? workspace.name}
-        placeholder={workspace.name}
-        submitLabel={t("sidebar.workspace.rename.submit")}
+        workspace={workspace}
         onClose={handleCloseRename}
-        onSubmit={handleSubmitRename}
         testID={`sidebar-workspace-rename-modal-${workspace.workspaceKey}`}
       />
     </>
@@ -1607,7 +1540,7 @@ function ProjectBlock({
   isDragging,
   dragHandleProps,
   useNestable,
-  dragGestureHostPresented,
+  dragGestureHostActive,
   creatingWorkspaceIds,
   activeWorkspaceSelection,
   hostBadgeByServerId,
@@ -1632,7 +1565,7 @@ function ProjectBlock({
   isDragging: boolean;
   dragHandleProps?: DraggableListDragHandleProps;
   useNestable: boolean;
-  dragGestureHostPresented?: boolean;
+  dragGestureHostActive?: boolean;
   creatingWorkspaceIds: ReadonlySet<string>;
   activeWorkspaceSelection: ActiveWorkspaceSelection | null;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
@@ -1812,7 +1745,7 @@ function ProjectBlock({
             useDragHandle
             nestable={useNestable}
             simultaneousGestureRef={parentGestureRef}
-            gestureHostPresented={dragGestureHostPresented}
+            gestureHostPresented={dragGestureHostActive}
             containerStyle={styles.workspaceListContainer}
           />
           {canToggleWorkspaces ? (
@@ -1896,7 +1829,7 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.isDragging === next.isDragging &&
     previous.dragHandleProps === next.dragHandleProps &&
     previous.useNestable === next.useNestable &&
-    previous.dragGestureHostPresented === next.dragGestureHostPresented &&
+    previous.dragGestureHostActive === next.dragGestureHostActive &&
     previous.creatingWorkspaceIds === next.creatingWorkspaceIds &&
     areProjectBlockSelectionsEqual(previous, next)
   );
@@ -1935,7 +1868,8 @@ export function SidebarWorkspaceList({
   projectIconTargets,
   pinnedGroups,
   projects,
-  hasProjectsBeforeLabelFilter,
+  hasProjectsBeforeFilter,
+  hasActiveProjectFilter,
   workspaceEntriesByKey,
   collapsedProjectKeys,
   onToggleProjectCollapsed,
@@ -1948,7 +1882,7 @@ export function SidebarWorkspaceList({
   listFooterComponent,
   listHeaderComponent,
   parentGestureRef,
-  dragGestureHostPresented,
+  dragGestureHostActive,
 }: SidebarWorkspaceListProps) {
   const pathname = usePathname();
   const hosts = useHosts();
@@ -1999,8 +1933,12 @@ export function SidebarWorkspaceList({
   // A filter that matches nothing swaps the list's body and nothing above it. It used to replace
   // this whole subtree, which unmounted the header — and the header is where the display menu's
   // trigger lives, so filtering the last row away closed the menu you were filtering from.
-  const labelFilterEmpty =
-    hasActiveLabelFilter && hasProjectsBeforeLabelFilter && projects.length === 0;
+  //
+  // Only the label filter can get here. The project filter resolves against the projects it can
+  // see and falls back to "all projects" when nothing matches, so it either keeps at least one
+  // project or is not applied at all — it can narrow this list but never empty it.
+  const sidebarFilterEmpty =
+    hasActiveLabelFilter && hasProjectsBeforeFilter && projects.length === 0;
 
   // Project mode is the one that keeps its project headers; every other grouping mode is a flat
   // list of grouped rows, so a new mode lands in the grouped branch rather than silently in this
@@ -2019,9 +1957,9 @@ export function SidebarWorkspaceList({
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
         listHeaderComponent={listHeaderComponent}
-        labelFilterEmpty={labelFilterEmpty}
+        sidebarFilterEmpty={sidebarFilterEmpty}
         parentGestureRef={parentGestureRef}
-        dragGestureHostPresented={dragGestureHostPresented}
+        dragGestureHostActive={dragGestureHostActive}
       />
     ) : (
       <ProjectModeList
@@ -2036,9 +1974,10 @@ export function SidebarWorkspaceList({
         onAddProject={onAddProject}
         listFooterComponent={listFooterComponent}
         listHeaderComponent={listHeaderComponent}
-        labelFilterEmpty={labelFilterEmpty}
+        sidebarFilterEmpty={sidebarFilterEmpty}
+        hasActiveProjectFilter={hasActiveProjectFilter}
         parentGestureRef={parentGestureRef}
-        dragGestureHostPresented={dragGestureHostPresented}
+        dragGestureHostActive={dragGestureHostActive}
         pathname={pathname}
         hostBadgeByServerId={hostBadgeByServerId}
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
@@ -2069,9 +2008,9 @@ function SidebarGroupedModeList({
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
   listHeaderComponent,
-  labelFilterEmpty,
+  sidebarFilterEmpty,
   parentGestureRef,
-  dragGestureHostPresented,
+  dragGestureHostActive,
 }: {
   workspaceGroups: SidebarWorkspaceGroup[];
   pinnedGroups: PinnedSidebarGroups;
@@ -2084,9 +2023,9 @@ function SidebarGroupedModeList({
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
   listHeaderComponent?: ReactElement | null;
-  labelFilterEmpty: boolean;
+  sidebarFilterEmpty: boolean;
   parentGestureRef?: MutableRefObject<GestureType | undefined>;
-  dragGestureHostPresented?: boolean;
+  dragGestureHostActive?: boolean;
 }) {
   const showShortcutBadges = useShowShortcutBadges();
   const pinnedWorkspaces = useMemo(
@@ -2111,9 +2050,9 @@ function SidebarGroupedModeList({
       onToggleWorkspacePin={onToggleWorkspacePin}
       onPinnedWorkspaceReorder={onPinnedWorkspaceReorder}
       listHeaderComponent={listHeaderComponent}
-      labelFilterEmpty={labelFilterEmpty}
+      sidebarFilterEmpty={sidebarFilterEmpty}
       parentGestureRef={parentGestureRef}
-      dragGestureHostPresented={dragGestureHostPresented}
+      dragGestureHostActive={dragGestureHostActive}
     />
   );
 }
@@ -2130,9 +2069,10 @@ function ProjectModeList({
   onAddProject,
   listFooterComponent,
   listHeaderComponent,
-  labelFilterEmpty,
+  sidebarFilterEmpty,
+  hasActiveProjectFilter,
   parentGestureRef,
-  dragGestureHostPresented,
+  dragGestureHostActive,
   pathname,
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
@@ -2144,12 +2084,12 @@ function ProjectModeList({
   | "workspaceGroups"
   | "projectIconTargets"
   | "groupMode"
-  | "hasProjectsBeforeLabelFilter"
+  | "hasProjectsBeforeFilter"
   | "isRefreshing"
   | "onRefresh"
 > & {
   /** Swaps the list body for the label filter's empty state. Never the header above it. */
-  labelFilterEmpty: boolean;
+  sidebarFilterEmpty: boolean;
   projectIconByProjectViewKey: ReadonlyMap<string, string | null>;
   pathname: string;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
@@ -2349,7 +2289,7 @@ function ProjectModeList({
           isDragging={dragState.isDragging}
           dragHandleProps={dragState.dragHandleProps}
           useNestable={platformIsNative}
-          dragGestureHostPresented={dragGestureHostPresented}
+          dragGestureHostActive={dragGestureHostActive}
           creatingWorkspaceIds={creatingWorkspaceIds}
           activeWorkspaceSelection={activeWorkspaceSelection}
           hostBadgeByServerId={hostBadgeByServerId}
@@ -2371,7 +2311,7 @@ function ProjectModeList({
       onWorkspacePress,
       onToggleProjectCollapsed,
       parentGestureRef,
-      dragGestureHostPresented,
+      dragGestureHostActive,
       projectIconByProjectViewKey,
       selectionEnabled,
       shortcutIndexByWorkspaceKey,
@@ -2448,7 +2388,7 @@ function ProjectModeList({
         useDragHandle
         nestable={platformIsNative}
         simultaneousGestureRef={parentGestureRef}
-        gestureHostPresented={dragGestureHostPresented}
+        gestureHostPresented={dragGestureHostActive}
         containerStyle={styles.projectListContainer}
       />
     );
@@ -2471,7 +2411,7 @@ function ProjectModeList({
                 useDragHandle
                 nestable={platformIsNative}
                 simultaneousGestureRef={parentGestureRef}
-                gestureHostPresented={dragGestureHostPresented}
+                gestureHostPresented={dragGestureHostActive}
                 containerStyle={styles.workspaceListContainer}
               />
               {canTogglePinnedChats ? (
@@ -2487,11 +2427,17 @@ function ProjectModeList({
       ) : null}
       {/* The header carries the display menu, which is the only way back out of a filter, so it
         stays for as long as a filter is what emptied the list. It is absent only when the
-        sidebar is genuinely empty, where a section heading would sit over nothing. */}
-      {unpinnedProjects.length > 0 || hasActiveHostFilter || labelFilterEmpty
+        sidebar is genuinely empty, where a section heading would sit over nothing.
+        Every filter that can empty this branch needs a term here: a project filter pinned to a
+        project whose chats are all pinned leaves `unpinnedProjects` empty, and without its term
+        the header would go with it, taking the only route back to the filter page. */}
+      {unpinnedProjects.length > 0 ||
+      hasActiveHostFilter ||
+      hasActiveProjectFilter ||
+      sidebarFilterEmpty
         ? listHeaderComponent
         : null}
-      {labelFilterEmpty ? <SidebarLabelFilterEmptyState /> : projectBody}
+      {sidebarFilterEmpty ? <SidebarFilterEmptyState /> : projectBody}
       {listFooterComponent}
     </>
   );

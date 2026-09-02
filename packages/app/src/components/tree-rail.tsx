@@ -27,16 +27,20 @@ export interface TreeRailProps {
    */
   children: ReactNode;
   testID?: string;
+  width?: number;
+  onWidthChange?: (width: number) => void;
+  minimumWidth?: number;
 }
 
 /** Content-left/tree-right master-detail geometry with one app-wide tree width. */
-export function TreeRail({ children, testID }: TreeRailProps) {
+export function TreeRail({ children, testID, width, onWidthChange, minimumWidth }: TreeRailProps) {
   const [content, tree] = Children.toArray(children);
-  const requestedWidth = usePanelStore((state) => state.treeRailWidth);
-  const setTreeRailWidth = usePanelStore((state) => state.setTreeRailWidth);
+  const sharedWidth = usePanelStore((state) => state.treeRailWidth);
+  const setSharedWidth = usePanelStore((state) => state.setTreeRailWidth);
+  const requestedWidth = width ?? sharedWidth;
   const { width: viewportWidth } = useWindowDimensions();
   const [containerWidth, setContainerWidth] = useState(viewportWidth);
-  const visibleWidth = resolveVisibleTreeRailWidth(requestedWidth, containerWidth);
+  const visibleWidth = resolveVisibleTreeRailWidth(requestedWidth, containerWidth, minimumWidth);
   const startWidthRef = useRef(visibleWidth);
   const resizeWidth = useSharedValue(visibleWidth);
   const [resizePressed, setResizePressed] = useState(false);
@@ -62,11 +66,21 @@ export function TreeRail({ children, testID }: TreeRailProps) {
           resizeWidth.value = resolveVisibleTreeRailWidth(
             startWidthRef.current - event.translationX,
             containerWidth,
+            minimumWidth,
           );
         })
-        .onEnd(() => runOnJS(setTreeRailWidth)(resizeWidth.value))
+        .onEnd(() => runOnJS(onWidthChange ?? setSharedWidth)(resizeWidth.value))
         .onFinalize(() => scheduleOnRN(hideResizeGrip)),
-    [containerWidth, hideResizeGrip, resizeWidth, setTreeRailWidth, showResizeGrip, visibleWidth],
+    [
+      containerWidth,
+      hideResizeGrip,
+      onWidthChange,
+      minimumWidth,
+      resizeWidth,
+      setSharedWidth,
+      showResizeGrip,
+      visibleWidth,
+    ],
   );
   const railWidthStyle = useAnimatedStyle(() => ({ width: resizeWidth.value }));
   const handleLayout = useCallback(

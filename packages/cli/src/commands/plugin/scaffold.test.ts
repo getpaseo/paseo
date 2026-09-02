@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import ts from "typescript";
@@ -34,6 +34,25 @@ describe("plugin scaffold", () => {
     expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual({
       id: "hello-plugin",
     });
+    const cliPackageJson = JSON.parse(
+      await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
+    ) as { version: string };
+    expect(JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"))).toEqual({
+      name: "hello-plugin",
+      private: true,
+      version: "0.0.0",
+      scripts: { typecheck: "tsc --noEmit" },
+      devDependencies: {
+        "@getpaseo/plugin": cliPackageJson.version,
+        "@tanstack/react-query": "^5.90.11",
+        "@types/react": "~19.2.0",
+        react: "19.1.0",
+        "react-native": "0.81.5",
+        typescript: "^5.9.3",
+        zod: "^4.4.3",
+      },
+    });
+    expect(await readdir(directory)).not.toContain("paseo-plugin.d.ts");
     await expect(readFile(path.join(directory, "index.ts"), "utf8")).resolves.toContain(
       'from "./main.client"',
     );
@@ -50,7 +69,7 @@ describe("plugin scaffold", () => {
     await Promise.all([
       writeFile(
         path.join(directory, "inspect.shared.ts"),
-        `import { defineRpc } from "@paseo/plugin/server";
+        `import { defineRpc } from "@getpaseo/plugin/server";
 import { z } from "zod";
 
 export const inspect = defineRpc({
@@ -62,7 +81,7 @@ export const inspect = defineRpc({
       ),
       writeFile(
         path.join(directory, "inspect.server.ts"),
-        `import type { PluginHandlerContext } from "@paseo/plugin/server";
+        `import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import type { output as ZodOutput } from "zod";
 import { inspect } from "./inspect.shared";
 
@@ -78,20 +97,28 @@ export async function inspectConfig(
         path.join(directory, "main.client.tsx"),
         `import React from "react";
 import { Text } from "react-native";
+import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
 import {
   type PluginAgentPanelProps,
+  type PluginClientContext,
+  type PluginComposerPillProps,
+  type PluginSurfaceProps,
   useAgent,
   usePaseo,
   useWorkspace,
-} from "@paseo/plugin";
+} from "@getpaseo/plugin";
+import { inspect } from "./inspect.shared";
 
-export function Surface() {
+export function Surface({ navigation }: PluginSurfaceProps) {
   const paseo = usePaseo();
+  const toast = useToast();
   const createWorkspace = () => paseo.workspaces.create({
     source: { kind: "directory", path: "/repo" },
   });
+  navigation?.openAgent({ agentId: "agent-1" });
+  navigation?.openWorkspace({ workspaceId: "workspace-1" });
   void createWorkspace;
-  return <Text>Paseo API</Text>;
+  return <><Icon name="Settings" size={18} color="#123456" /><Text onPress={() => toast.show("Ready")}>Paseo API</Text><Modal title="Example" icon={<Icon name="Settings" />} open={false} onOpenChange={() => {}}><Modal.Content><Text>Modal</Text></Modal.Content></Modal></>;
 }
 
 export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
@@ -107,12 +134,30 @@ export function AgentPanel({ workspaceId, agentId }: PluginAgentPanelProps) {
   });
   return <Text>{workspaceName}: {agentTitle}</Text>;
 }
+
+export function ComposerPill({ workspaceId, agentId }: PluginComposerPillProps) {
+  return <Text>{workspaceId}: {agentId}</Text>;
+}
+
+export function contributeClient(client: PluginClientContext) {
+  return client.addComposerPill({
+    id: "open-review",
+    title: "Open review",
+    workspaceId: "workspace-a",
+    agentId: "agent-a",
+    Component: ComposerPill,
+    async onPress() {
+      await client.rpc(inspect, {});
+      client.openPanel("review", { workspaceId: "workspace-a", agentId: "agent-a" });
+    },
+  });
+}
 `,
       ),
       writeFile(
         path.join(directory, "index.ts"),
-        `import type { PluginContext } from "@paseo/plugin";
-import { AgentPanel, Surface } from "./main.client";
+        `import type { PluginContext } from "@getpaseo/plugin";
+import { AgentPanel, contributeClient, Surface } from "./main.client";
 import { inspectConfig } from "./inspect.server";
 import { inspect } from "./inspect.shared";
 
@@ -137,6 +182,7 @@ export default function contribute(plugin: PluginContext) {
       openPanel("review");
     },
   });
+  plugin.addClientSide(contributeClient);
   return () => {};
 }
 `,

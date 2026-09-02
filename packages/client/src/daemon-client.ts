@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
+import { parsePluginSourceReference } from "@getpaseo/protocol/plugin-source-reference";
 import {
   AgentCreateFailedStatusPayloadSchema,
   AgentCreatedStatusPayloadSchema,
@@ -105,6 +106,8 @@ import type {
   WorkspaceRecoveryState,
   PluginListItem,
   PluginLogEntry,
+  PluginSourceStatusItem,
+  PluginSourceUpdateItem,
   AgentSkillSelection,
   AgentSkillsStatus,
   AgentSkillsSaveResult,
@@ -307,7 +310,7 @@ export type BrowserAutomationExecuteResponseMessage = BrowserAutomationExecuteRe
 export interface DaemonClientConfig {
   url: string;
   clientId: string;
-  clientType?: "mobile" | "browser" | "cli" | "mcp";
+  clientType?: "mobile" | "browser" | "cli" | "mcp" | "hub";
   appVersion?: string;
   runtimeGeneration?: number | null;
   password?: string;
@@ -831,6 +834,7 @@ interface CorrelatedResponseIdentity {
 interface PendingBinaryFileRead {
   cwd: string;
   path: string;
+  maxBytes?: number;
 }
 
 interface BinaryFileTransferState extends PendingBinaryFileRead {
@@ -4308,6 +4312,7 @@ export class DaemonClient {
     mode: "list" | "file",
     requestId?: string,
     acceptBinary = false,
+    maxBytes?: number,
   ): Promise<FileExplorerPayload> {
     return this.sendCorrelatedSessionRequest({
       requestId,
@@ -4317,6 +4322,7 @@ export class DaemonClient {
         path,
         mode,
         ...(acceptBinary ? { acceptBinary: true } : {}),
+        ...(maxBytes ? { maxBytes } : {}),
       },
       responseType: "file_explorer_response",
     });
@@ -4337,11 +4343,23 @@ export class DaemonClient {
     return payload.directory;
   }
 
-  async readFile(cwd: string, path: string, requestId?: string): Promise<FileReadResult> {
+  async readFile(
+    cwd: string,
+    path: string,
+    requestId?: string,
+    maxBytes?: number,
+  ): Promise<FileReadResult> {
     const resolvedRequestId = this.createRequestId(requestId);
-    this.pendingBinaryFileReads.set(resolvedRequestId, { cwd, path });
+    this.pendingBinaryFileReads.set(resolvedRequestId, { cwd, path, maxBytes });
     try {
-      const payload = await this.requestFileExplorer(cwd, path, "file", resolvedRequestId, true);
+      const payload = await this.requestFileExplorer(
+        cwd,
+        path,
+        "file",
+        resolvedRequestId,
+        true,
+        maxBytes,
+      );
       if (payload.error) {
         throw new Error(payload.error);
       }
@@ -4663,12 +4681,33 @@ export class DaemonClient {
     });
   }
 
-  async connectHub(hubUrl: string, token: string, requestId?: string) {
+  async connectHub(
+    hubUrl: string,
+    token: string,
+    permissions: readonly string[] = [],
+    requestId?: string,
+  ) {
     this.requireHubRelationshipSupport();
     return this.sendCorrelatedSessionRequest({
       requestId,
-      message: { type: "hub.management.daemon.connect.request", hubUrl, token },
+      message: { type: "hub.management.daemon.connect.request", hubUrl, token, permissions },
       responseType: "hub.management.daemon.connect.response",
+    });
+  }
+
+  async updateHubPermissions(
+    input: { grant?: readonly string[]; revoke?: readonly string[] },
+    requestId?: string,
+  ) {
+    this.requireHubRelationshipSupport();
+    return this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "hub.management.daemon.permissions.update.request",
+        grant: input.grant ?? [],
+        revoke: input.revoke ?? [],
+      },
+      responseType: "hub.management.daemon.permissions.update.response",
     });
   }
 
@@ -4927,6 +4966,56 @@ export class DaemonClient {
       responseType: "plugin.directory.install.response",
     });
     return payload.plugin;
+  }
+
+  async installPluginSource(input: {
+    source: string;
+    id?: string;
+    ref?: string;
+  }): Promise<PluginListItem> {
+    const requestId = this.createRequestId();
+    const reference = parsePluginSourceReference(input.source);
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "plugin.source.install.request",
+        requestId,
+        source: reference.source,
+        ...(reference.pluginPath ? { pluginPath: reference.pluginPath } : {}),
+        ...(input.id ? { id: input.id } : {}),
+        ...(input.ref ? { ref: input.ref } : {}),
+      },
+      responseType: "plugin.source.install.response",
+    });
+    return payload.plugin;
+  }
+
+  async getPluginSourceStatus(pluginId?: string): Promise<PluginSourceStatusItem[]> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "plugin.source.status.request",
+        requestId,
+        ...(pluginId ? { pluginId } : {}),
+      },
+      responseType: "plugin.source.status.response",
+    });
+    return payload.plugins;
+  }
+
+  async updatePluginSources(pluginId?: string): Promise<PluginSourceUpdateItem[]> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: {
+        type: "plugin.source.update.request",
+        requestId,
+        ...(pluginId ? { pluginId } : {}),
+      },
+      responseType: "plugin.source.update.response",
+    });
+    return payload.plugins;
   }
 
   async inspectDirectoryPlugin(path: string): Promise<{ id: string }> {
@@ -5761,7 +5850,30 @@ export class DaemonClient {
     }
 
     if (frame.opcode === FileTransferOpcode.FileChunk) {
+      // COMPAT(fileReadByteBudget): added in v0.5.0, remove after 2027-02-21 once daemon floor >= v0.5.0.
+      // Old daemons stream despite maxBytes; discard before client-side accumulation.
+      if (transfer.maxBytes && transfer.size > transfer.maxBytes) {
+        return;
+      }
       transfer.chunks.push(frame.payload);
+      return;
+    }
+
+    // COMPAT(fileReadByteBudget): added in v0.5.0, remove after 2027-02-21 once daemon floor >= v0.5.0.
+    if (transfer.maxBytes && transfer.size > transfer.maxBytes) {
+      this.activeBinaryFileTransfers.delete(frame.requestId);
+      this.handleSessionMessage({
+        type: "file_explorer_response",
+        payload: {
+          cwd: transfer.cwd,
+          path: transfer.path,
+          mode: "file",
+          directory: null,
+          file: null,
+          error: "File is too large to display",
+          requestId: frame.requestId,
+        },
+      });
       return;
     }
 
