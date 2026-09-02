@@ -54,11 +54,13 @@ class FakeRealtimeSession extends EventEmitter implements StreamingTranscription
 class FakeSttProvider implements SpeechToTextProvider {
   public readonly id = "fake";
   public lastLanguage?: string;
+  public lastPrompt?: string;
   constructor(private readonly session: FakeRealtimeSession) {}
   createSession(
     params: Parameters<SpeechToTextProvider["createSession"]>[0],
   ): StreamingTranscriptionSession {
     this.lastLanguage = params.language;
+    this.lastPrompt = params.prompt;
     return this.session;
   }
 }
@@ -216,6 +218,51 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
     });
 
     expect(sttProvider.lastLanguage).toBe("pt");
+  });
+
+  it("does not inject a transcription prompt when the override is unset", async () => {
+    const original = process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT;
+    delete process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT;
+
+    try {
+      const sttProvider = await startWithResolvedDictationLanguage({
+        persisted: {
+          features: {
+            dictation: {
+              stt: {
+                language: "zh",
+              },
+            },
+          },
+        },
+      });
+
+      expect(sttProvider.lastLanguage).toBe("zh");
+      expect(sttProvider.lastPrompt).toBeUndefined();
+    } finally {
+      if (original === undefined) {
+        delete process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT;
+      } else {
+        process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT = original;
+      }
+    }
+  });
+
+  it("forwards an explicit transcription prompt override", async () => {
+    const original = process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT;
+    process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT = "Keep Chinese product names verbatim.";
+
+    try {
+      const sttProvider = await startWithResolvedDictationLanguage({});
+
+      expect(sttProvider.lastPrompt).toBe("Keep Chinese product names verbatim.");
+    } finally {
+      if (original === undefined) {
+        delete process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT;
+      } else {
+        process.env.PASEO_DICTATION_TRANSCRIPTION_PROMPT = original;
+      }
+    }
   });
 
   it("does not require OPENAI_API_KEY", async () => {
