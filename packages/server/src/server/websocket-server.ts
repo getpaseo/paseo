@@ -1835,6 +1835,10 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(durableDeliveryTargeting): added in v0.7.2; old durable
         // delivery hosts must not silently downgrade targeted sends to pulls.
         durableDeliveryTargeting: true,
+        // COMPAT(deliveryPayloadTombstones): added in v0.7.3; clients must
+        // advertise the matching capability before acknowledged payloads can
+        // be compacted or omitted from their responses.
+        deliveryPayloadTombstones: true,
       },
     };
   }

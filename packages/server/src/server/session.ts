@@ -2088,6 +2088,10 @@ export class Session {
             deliveryId: request.deliveryId,
             ...(targetAgentId === undefined ? {} : { targetAgentId }),
             ...(messageId === undefined ? {} : { messageId }),
+            payloadTombstoneEligible: this.supportsForSource(
+              CLIENT_CAPS.deliveryPayloadTombstones,
+              source ?? this.defaultTimelineSubscriptionSource,
+            ),
             payload: request.payload,
           })
           .then(async (result) => {
@@ -2125,6 +2129,10 @@ export class Session {
           ...(request.limit !== undefined ? { limit: request.limit } : {}),
           responseRequestId: request.requestId,
           maxEncodedBytes: MAX_DELIVERY_RESPONSE_BYTES,
+          allowPayloadTombstones: this.supportsForSource(
+            CLIENT_CAPS.deliveryPayloadTombstones,
+            source ?? this.defaultTimelineSubscriptionSource,
+          ),
         };
         return this.deliveryLedger.get(this.principalId, options).then((result) => {
           this.emitDeliveryResponse(
@@ -2145,7 +2153,12 @@ export class Session {
       case "deliveries.acknowledge.request": {
         const request = DeliveriesAcknowledgeRequestSchema.parse(msg);
         return this.deliveryLedger
-          .acknowledge(this.principalId, DeliveryIdSchema.parse(request.deliveryId))
+          .acknowledge(this.principalId, DeliveryIdSchema.parse(request.deliveryId), {
+            allowPayloadTombstones: this.supportsForSource(
+              CLIENT_CAPS.deliveryPayloadTombstones,
+              source ?? this.defaultTimelineSubscriptionSource,
+            ),
+          })
           .then((delivery) => {
             this.emitDeliveryResponse(
               {

@@ -3,6 +3,7 @@ import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-ca
 import {
   assertDeliveryPayload,
   DeliveryTargetAgentIdSchema,
+  MAX_DELIVERY_REQUEST_ID_BYTES,
   type DeliveryPayload,
   type DeliveryRecord,
 } from "@getpaseo/protocol/deliveries";
@@ -356,38 +357,10 @@ export interface SendMessageOptions {
 
 export interface SendDeliveryOptions {
   deliveryId?: string;
-  /** The exact agent id used by the daemon's native dispatch path. */
-  targetAgentId?: string;
   /** Stable provider-facing message id. Defaults to deliveryId on the daemon. */
   messageId?: string;
   requestId?: string;
   timeout?: number;
-}
-
-const SEND_DELIVERY_OPTION_KEYS = new Set([
-  "deliveryId",
-  "targetAgentId",
-  "messageId",
-  "requestId",
-  "timeout",
-]);
-
-/** Distinguish the legacy `(payload, options?)` call from `(agentId, payload, options?)`. */
-export function isTargetedDeliveryCall(
-  first: DeliveryPayload | string,
-  second: DeliveryPayload | SendDeliveryOptions | undefined,
-  _third: SendDeliveryOptions | undefined,
-  argumentCount: number,
-): boolean {
-  if (argumentCount >= 3) return true;
-  if (argumentCount < 2 || typeof first !== "string") return false;
-  // An explicitly omitted options argument is still a valid legacy call with
-  // a string payload. `null` remains a targeted JSON payload when supplied as
-  // the second argument.
-  if (second === undefined) return false;
-  if (second === null || typeof second !== "object") return true;
-  if (Array.isArray(second)) return true;
-  return Object.keys(second).some((key) => !SEND_DELIVERY_OPTION_KEYS.has(key));
 }
 
 export interface GetDeliveriesOptions {
@@ -3096,48 +3069,29 @@ export class DaemonClient {
   // ============================================================================
 
   async sendDelivery(
+    targetAgentId: string,
     payload: DeliveryPayload,
     options?: SendDeliveryOptions,
   ): Promise<DeliveryRecord>;
   async sendDelivery(
     targetAgentId: string,
     payload: DeliveryPayload,
-    options?: SendDeliveryOptions,
-  ): Promise<DeliveryRecord>;
-  async sendDelivery(
-    payloadOrTargetAgentId: DeliveryPayload | string,
-    payloadOrOptions?: DeliveryPayload | SendDeliveryOptions,
     maybeOptions?: SendDeliveryOptions,
   ): Promise<DeliveryRecord> {
     this.requireDurableDeliveriesSupport();
-    const targeted = isTargetedDeliveryCall(
-      payloadOrTargetAgentId,
-      payloadOrOptions,
-      maybeOptions,
-      arguments.length,
-    );
-    const options = targeted ? maybeOptions : (payloadOrOptions as SendDeliveryOptions | undefined);
-    let targetAgentId: string | undefined;
-    if (targeted) {
-      targetAgentId = DeliveryTargetAgentIdSchema.parse(payloadOrTargetAgentId);
-    } else if (options?.targetAgentId !== undefined) {
-      targetAgentId = DeliveryTargetAgentIdSchema.parse(options.targetAgentId);
-    }
-    if (targetAgentId !== undefined) {
-      this.requireTargetedDeliverySupport();
-    }
-    const payload = (targeted ? payloadOrOptions : payloadOrTargetAgentId) as DeliveryPayload;
+    this.requireTargetedDeliverySupport();
+    const normalizedTargetAgentId = DeliveryTargetAgentIdSchema.parse(targetAgentId);
     assertDeliveryPayload(payload);
     const result = await this.sendNamespacedCorrelatedSessionRequest<"deliveries.send.response">({
-      requestId: options?.requestId,
+      requestId: maybeOptions?.requestId,
       message: {
         type: "deliveries.send.request",
         payload,
-        ...(targetAgentId !== undefined ? { targetAgentId } : {}),
-        ...(options?.deliveryId !== undefined ? { deliveryId: options.deliveryId } : {}),
-        ...(options?.messageId !== undefined ? { messageId: options.messageId } : {}),
+        targetAgentId: normalizedTargetAgentId,
+        ...(maybeOptions?.deliveryId !== undefined ? { deliveryId: maybeOptions.deliveryId } : {}),
+        ...(maybeOptions?.messageId !== undefined ? { messageId: maybeOptions.messageId } : {}),
       },
-      timeout: options?.timeout,
+      timeout: maybeOptions?.timeout,
     });
     return result.delivery;
   }
@@ -5725,7 +5679,11 @@ export class DaemonClient {
   // ============================================================================
 
   private createRequestId(requestId?: string): string {
-    return requestId ?? crypto.randomUUID();
+    const resolved = requestId ?? crypto.randomUUID();
+    if (new TextEncoder().encode(resolved).byteLength > MAX_DELIVERY_REQUEST_ID_BYTES) {
+      throw new Error(`Request ID exceeds the ${MAX_DELIVERY_REQUEST_ID_BYTES}-byte SDK limit`);
+    }
+    return resolved;
   }
 
   getLastServerInfoMessage(): ServerInfoStatusPayload | null {
@@ -5790,6 +5748,7 @@ export class DaemonClient {
           [CLIENT_CAPS.projectUpdates]: true,
           [CLIENT_CAPS.compactProviderSnapshots]: true,
           [CLIENT_CAPS.durableDeliveries]: true,
+          [CLIENT_CAPS.deliveryPayloadTombstones]: true,
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),

@@ -610,6 +610,36 @@ test("dispatches a targeted delivery through the injected native agent seam", as
   }
 });
 
+test("requires a target for new durable delivery sends", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const home = mkdtempSync(join(tmpdir(), "paseo-target-required-delivery-"));
+  const session = createSessionForTest({
+    paseoHome: home,
+    principalId: "owner",
+    messages,
+    clientCapabilities: { [CLIENT_CAPS.durableDeliveries]: true },
+  });
+
+  try {
+    await session.handleMessage({
+      type: "deliveries.send.request",
+      requestId: "target-required",
+      deliveryId: "target-required-delivery",
+      payload: { event: "refresh" },
+    });
+    expect(messages).toContainEqual({
+      type: "rpc_error",
+      payload: expect.objectContaining({
+        requestId: "target-required",
+        code: "delivery_target_required",
+      }),
+    });
+  } finally {
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("coalesces concurrent targeted sends into one native dispatch", async () => {
   const messages: SessionOutboundMessage[] = [];
   const home = mkdtempSync(join(tmpdir(), "paseo-concurrent-delivery-"));

@@ -36,6 +36,7 @@ test("recovers durable deliveries across reconnect and daemon restart", async ()
   try {
     client = await createClient(daemon);
     const sent = await client.sendDelivery(
+      "agent-e2e",
       { event: "agent.finished", agentId: "agent-e2e" },
       { deliveryId: "delivery-e2e" },
     );
@@ -46,6 +47,7 @@ test("recovers durable deliveries across reconnect and daemon restart", async ()
     client = await createClient(daemon);
     await expect(
       client.sendDelivery(
+        "agent-e2e",
         { event: "agent.finished", agentId: "agent-e2e" },
         { deliveryId: "delivery-e2e" },
       ),
@@ -73,7 +75,7 @@ test("recovers durable deliveries across reconnect and daemon restart", async ()
       code: "delivery_transition_invalid",
     });
     await expect(client.getDeliveries()).resolves.toMatchObject({
-      deliveries: [expect.objectContaining({ deliveryId: "delivery-e2e", status: "recorded" })],
+      deliveries: [expect.objectContaining({ deliveryId: "delivery-e2e", status: "failed" })],
     });
   } finally {
     await client?.close().catch(() => undefined);

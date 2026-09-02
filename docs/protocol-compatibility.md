@@ -38,6 +38,12 @@ The app checks for the capability and either runs the feature or tells the user 
 
 Existing functionality keeps working across versions because of the protocol contract. Gating a new feature never substitutes for that.
 
+Durable delivery payload compaction is negotiated through `server_info.features.deliveryPayloadTombstones`.
+Only records admitted by a client advertising that capability may lose their acknowledged payload. A
+client without it never receives a payloadless row; the daemon filters older clients from already
+compacted rows. Delivery request IDs remain wire-compatible strings bounded by the complete
+WebSocket frame, while newly generated SDK IDs stay at the 256-byte application limit.
+
 Exact-turn cancellation is gated by `server_info.features.exactTurnCancellation`.
 `agentTurnIdentity` only says that snapshots may identify the active turn; it does not
 promise that cancellation is safe at the provider boundary.

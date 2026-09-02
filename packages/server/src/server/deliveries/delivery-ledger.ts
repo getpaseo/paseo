@@ -35,7 +35,9 @@ const MAX_OWNER_ID_BYTES = 256;
 const MAX_ERROR_BYTES = 16 * 1024;
 const READ_CHUNK_BYTES = 64 * 1024;
 const TRANSIENT_RETRY_COUNT = 3;
-const O_NOFOLLOW = (fsConstants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+// A zero fallback silently turns every guarded open into a symlink-following
+// open on platforms without O_NOFOLLOW. Delivery persistence is fail-closed.
+const O_NOFOLLOW = (fsConstants as { O_NOFOLLOW?: number }).O_NOFOLLOW;
 const O_DIRECTORY = (fsConstants as { O_DIRECTORY?: number }).O_DIRECTORY ?? 0;
 
 export interface DeliveryLedgerGetOptions {
@@ -47,6 +49,8 @@ export interface DeliveryLedgerGetOptions {
   /** Used by the session layer to budget the complete encoded WS envelope. */
   responseRequestId?: string;
   maxEncodedBytes?: number;
+  /** Only a client advertising deliveryPayloadTombstones may see compacted rows. */
+  allowPayloadTombstones?: boolean;
 }
 
 export interface DeliveryLedgerSendInput {
@@ -54,6 +58,8 @@ export interface DeliveryLedgerSendInput {
   targetAgentId?: string;
   messageId?: string;
   payload: DeliveryPayload;
+  /** Set only when the admitting client negotiated payload tombstones. */
+  payloadTombstoneEligible?: boolean;
 }
 
 export interface DeliveryLedgerSendResult {
@@ -101,6 +107,8 @@ type DeliveryLedgerErrorCode =
   | "delivery_transition_invalid"
   | "delivery_payload_invalid"
   | "delivery_payload_too_large"
+  | "delivery_payload_unavailable"
+  | "delivery_target_required"
   | "delivery_owner_closing"
   | "delivery_response_too_large";
 
@@ -128,6 +136,8 @@ interface OwnerState {
   loadPromise: Promise<void> | null;
   mutationTail: Promise<void>;
   closing: boolean;
+  /** Once purged, this in-process identity can never be reopened. */
+  retired: boolean;
 }
 
 interface PersistedDeliveryLedger {
@@ -213,33 +223,104 @@ function payloadFingerprint(payload: DeliveryPayload): string {
   return createHash("sha256").update(stableSerialize(payload), "utf8").digest("hex");
 }
 
-function normalizeLoadedRecord(value: unknown, sequence: number | undefined): LedgerRecord {
-  const parsed = DeliveryRecordSchema.parse(value);
-  const status = statusOf(parsed);
+interface LoadedRecordOptions {
+  sequence?: number;
+  allowLegacyPull: boolean;
+  maxPayloadBytes: number;
+}
+
+function assertLoadedRecordIdentity(
+  parsed: DeliveryRecord,
+  status: DeliveryStatus,
+  legacyPull: boolean,
+): void {
   if (status === "acknowledged" && parsed.acknowledgedAt === null) {
     throw new Error(`Acknowledged delivery ${parsed.deliveryId} has no acknowledgement timestamp`);
   }
+  if (parsed.targetAgentId === undefined && !legacyPull) {
+    throw new Error(`Delivery ${parsed.deliveryId} has no target agent`);
+  }
+  if (parsed.targetAgentId !== undefined && parsed.deliveryMode === "legacy_pull") {
+    throw new Error(`Targeted delivery ${parsed.deliveryId} cannot be legacy pull state`);
+  }
+}
+
+function assertLoadedRecordPayload(
+  parsed: DeliveryRecord,
+  status: DeliveryStatus,
+  maxPayloadBytes: number,
+): void {
   if (parsed.payload === undefined && !parsed.payloadFingerprint) {
     throw new Error(`Tombstone ${parsed.deliveryId} has no payload fingerprint`);
   }
-  const normalized = DeliveryRecordSchema.parse({
+  if (parsed.payload === undefined && status !== "acknowledged") {
+    throw new Error(`Pending delivery ${parsed.deliveryId} has no payload`);
+  }
+  if (parsed.payload !== undefined) {
+    assertDeliveryPayload(parsed.payload, { maxBytes: maxPayloadBytes });
+    const recomputedFingerprint = payloadFingerprint(parsed.payload);
+    if (
+      parsed.payloadFingerprint !== undefined &&
+      parsed.payloadFingerprint !== recomputedFingerprint
+    ) {
+      throw new Error(`Delivery ${parsed.deliveryId} has a mismatched payload fingerprint`);
+    }
+  }
+}
+
+function acceptedAtForLoadedRecord(
+  parsed: DeliveryRecord,
+  status: DeliveryStatus,
+  legacyPull: boolean,
+): string | null {
+  if (legacyPull && status === "accepted") return parsed.acceptedAt ?? parsed.createdAt;
+  return parsed.acceptedAt ?? null;
+}
+
+function normalizedLoadedRecordInput(
+  parsed: DeliveryRecord,
+  sequence: number | undefined,
+  status: DeliveryStatus,
+  legacyPull: boolean,
+): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {
     deliveryId: parsed.deliveryId,
-    ...(parsed.targetAgentId === undefined ? {} : { targetAgentId: parsed.targetAgentId }),
+    deliveryMode: legacyPull ? "legacy_pull" : "targeted",
     sequence: parsed.sequence ?? sequence,
     messageId: parsed.messageId ?? parsed.deliveryId,
     status,
-    ...(parsed.payload === undefined ? {} : { payload: parsed.payload }),
-    payloadFingerprint:
-      parsed.payloadFingerprint ??
-      (parsed.payload === undefined ? undefined : payloadFingerprint(parsed.payload)),
     createdAt: parsed.createdAt,
     dispatchingAt: parsed.dispatchingAt ?? null,
-    acceptedAt: parsed.acceptedAt ?? null,
+    acceptedAt: acceptedAtForLoadedRecord(parsed, status, legacyPull),
     failedAt: parsed.failedAt ?? null,
     ambiguousAt: parsed.ambiguousAt ?? null,
     error: parsed.error ?? null,
     acknowledgedAt: parsed.acknowledgedAt,
-  });
+  };
+  if (parsed.targetAgentId !== undefined) normalized.targetAgentId = parsed.targetAgentId;
+  if (parsed.payload !== undefined) normalized.payload = parsed.payload;
+  if (parsed.payloadFingerprint !== undefined) {
+    normalized.payloadFingerprint = parsed.payloadFingerprint;
+  } else if (parsed.payload !== undefined) {
+    normalized.payloadFingerprint = payloadFingerprint(parsed.payload);
+  }
+  if (!legacyPull && parsed.payloadTombstoneEligible === true) {
+    normalized.payloadTombstoneEligible = true;
+  }
+  return normalized;
+}
+
+function normalizeLoadedRecord(value: unknown, options: LoadedRecordOptions): LedgerRecord {
+  const parsed = DeliveryRecordSchema.parse(value);
+  const legacyPull =
+    parsed.targetAgentId === undefined &&
+    (parsed.deliveryMode === "legacy_pull" || options.allowLegacyPull);
+  const status = legacyPull && statusOf(parsed) !== "acknowledged" ? "accepted" : statusOf(parsed);
+  assertLoadedRecordIdentity(parsed, status, legacyPull);
+  assertLoadedRecordPayload(parsed, status, options.maxPayloadBytes);
+  const normalized = DeliveryRecordSchema.parse(
+    normalizedLoadedRecordInput(parsed, options.sequence, status, legacyPull),
+  );
   if (
     typeof normalized.sequence !== "number" ||
     !Number.isSafeInteger(normalized.sequence) ||
@@ -271,11 +352,17 @@ function compareLegacyDeliveries(left: unknown, right: unknown): number {
 function normalizeLedgerRecords(
   values: unknown[],
   migrateSequence: boolean,
+  allowLegacyPull: boolean,
+  maxPayloadBytes: number,
 ): Map<string, LedgerRecord> {
   const records = new Map<string, LedgerRecord>();
   const sequences = new Set<number>();
   for (const [index, value] of values.entries()) {
-    const record = normalizeLoadedRecord(value, migrateSequence ? index + 1 : undefined);
+    const record = normalizeLoadedRecord(value, {
+      sequence: migrateSequence ? index + 1 : undefined,
+      allowLegacyPull,
+      maxPayloadBytes,
+    });
     if (records.has(record.deliveryId)) throw new Error(`Duplicate delivery ${record.deliveryId}`);
     if (sequences.has(record.sequence)) {
       throw new Error(`Duplicate delivery sequence ${record.sequence}`);
@@ -330,6 +417,29 @@ function deliveryIdentityMatches(
   return true;
 }
 
+function isVisibleDelivery(
+  record: LedgerRecord | undefined,
+  includeAcknowledged: boolean,
+  allowPayloadTombstones: boolean,
+): record is LedgerRecord {
+  return (
+    record !== undefined &&
+    (includeAcknowledged || statusOf(record) !== "acknowledged") &&
+    (record.payload !== undefined || allowPayloadTombstones)
+  );
+}
+
+function hasVisibleDeliveryAfter(
+  records: LedgerRecord[],
+  startIndex: number,
+  includeAcknowledged: boolean,
+  allowPayloadTombstones: boolean,
+): boolean {
+  return records
+    .slice(startIndex + 1)
+    .some((record) => isVisibleDelivery(record, includeAcknowledged, allowPayloadTombstones));
+}
+
 function isTransientFsError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
   return code === "EAGAIN" || code === "EINTR" || code === "EMFILE" || code === "ENFILE";
@@ -355,6 +465,16 @@ function sameFile(
   return left.dev === right.dev && left.ino === right.ino;
 }
 
+function noFollowFlag(): number {
+  if (typeof O_NOFOLLOW !== "number" || O_NOFOLLOW <= 0) {
+    throw new DeliveryLedgerError(
+      "delivery_ledger_unavailable",
+      "Delivery persistence requires platform O_NOFOLLOW support",
+    );
+  }
+  return O_NOFOLLOW;
+}
+
 /** Serialize native delivery attempts and fence an owner during teardown. */
 export class DeliveryDispatchCoordinator {
   private readonly inFlight = new Map<string, Promise<unknown>>();
@@ -362,13 +482,13 @@ export class DeliveryDispatchCoordinator {
   private readonly closingOwners = new Set<string>();
 
   run<TResult>(key: string, operation: () => Promise<TResult>, ownerId?: string): Promise<TResult> {
-    const existing = this.inFlight.get(key);
-    if (existing) return existing as Promise<TResult>;
     if (ownerId && this.closingOwners.has(ownerId)) {
       return Promise.reject(
         new DeliveryLedgerError("delivery_owner_closing", `Delivery owner ${ownerId} is closing`),
       );
     }
+    const existing = this.inFlight.get(key);
+    if (existing) return existing as Promise<TResult>;
     const current = Promise.resolve().then(operation);
     this.inFlight.set(key, current);
     if (ownerId) {
@@ -427,7 +547,9 @@ export class DeliveryDispatchCoordinator {
   }
 
   finishOwner(ownerId: string): void {
-    this.closingOwners.delete(ownerId);
+    // Owner identities are installation identities. Once closed, a late
+    // dispatch must remain fenced for the life of this coordinator.
+    this.closingOwners.add(ownerId);
   }
 }
 
@@ -507,11 +629,18 @@ export class DeliveryLedger {
 
   async send(ownerId: string, input: DeliveryLedgerSendInput): Promise<DeliveryLedgerSendResult> {
     const normalizedOwnerId = validateOwnerId(ownerId);
+    this.assertOwnerOpen(this.ownerState(normalizedOwnerId), normalizedOwnerId);
     const deliveryId = DeliveryIdSchema.parse(input.deliveryId ?? randomUUID());
     const targetAgentId =
       input.targetAgentId === undefined
         ? undefined
         : DeliveryTargetAgentIdSchema.parse(input.targetAgentId);
+    if (targetAgentId === undefined) {
+      throw new DeliveryLedgerError(
+        "delivery_target_required",
+        "New durable deliveries require an exact target agent",
+      );
+    }
     const messageId = DeliveryMessageIdSchema.parse(input.messageId ?? deliveryId);
     try {
       assertDeliveryPayload(input.payload, { maxBytes: this.maxPayloadBytes });
@@ -530,7 +659,10 @@ export class DeliveryLedger {
 
     return this.enqueue(normalizedOwnerId, async (state) => {
       this.assertOwnerOpen(state, normalizedOwnerId);
-      const compacted = this.compactAcknowledged(state.records);
+      const compacted = this.compactAcknowledged(
+        state.records,
+        input.payloadTombstoneEligible === true,
+      );
       if (compacted.changed) {
         await this.persist(normalizedOwnerId, compacted.records, state.nextSequence);
         state.records = compacted.records;
@@ -551,9 +683,11 @@ export class DeliveryLedger {
       const record = DeliveryRecordSchema.parse({
         deliveryId,
         sequence: state.nextSequence,
-        ...(targetAgentId === undefined ? {} : { targetAgentId }),
+        targetAgentId,
         messageId,
         status: "recorded",
+        deliveryMode: "targeted",
+        ...(input.payloadTombstoneEligible === true ? { payloadTombstoneEligible: true } : {}),
         payload,
         payloadFingerprint: fingerprint,
         createdAt: this.now().toISOString(),
@@ -580,30 +714,70 @@ export class DeliveryLedger {
     options: DeliveryLedgerGetOptions = {},
   ): Promise<DeliveryLedgerGetResult> {
     const normalizedOwnerId = validateOwnerId(ownerId);
-    await this.gc(normalizedOwnerId);
+    const allowPayloadTombstones = options.allowPayloadTombstones === true;
+    await this.gc(normalizedOwnerId, allowPayloadTombstones);
     const state = this.ownerState(normalizedOwnerId);
     await state.mutationTail;
     await this.ensureLoaded(state, normalizedOwnerId);
     const requestId = options.responseRequestId ?? "delivery-request";
     const maxEncodedBytes = options.maxEncodedBytes ?? MAX_DELIVERY_RESPONSE_BYTES;
-
     if (options.deliveryId !== undefined) {
-      const deliveryId = DeliveryIdSchema.parse(options.deliveryId);
-      const delivery = state.records.get(deliveryId);
-      const result = {
-        delivery: delivery ? cloneDelivery(delivery) : null,
-        deliveries: delivery ? [cloneDelivery(delivery)] : [],
-        nextCursor: null,
-      } satisfies DeliveryLedgerGetResult;
-      this.assertGetResponseWithinBudget(requestId, result, maxEncodedBytes);
-      return result;
+      return this.getByDeliveryId(
+        state,
+        options.deliveryId,
+        requestId,
+        maxEncodedBytes,
+        allowPayloadTombstones,
+      );
     }
 
     const includeAcknowledged = options.includeAcknowledged === true;
     const limit = this.parseLimit(options.limit);
     const records = this.sortedRecords(state.records);
     const cursor = options.cursor !== undefined ? DeliveryCursorSchema.parse(options.cursor) : null;
-    const cursorResult = this.findCursor(records, cursor, state.nextSequence);
+    return this.getPage(
+      records,
+      state.nextSequence,
+      cursor,
+      includeAcknowledged,
+      limit,
+      requestId,
+      maxEncodedBytes,
+      allowPayloadTombstones,
+    );
+  }
+
+  private getByDeliveryId(
+    state: OwnerState,
+    deliveryId: string,
+    requestId: string,
+    maxEncodedBytes: number,
+    allowPayloadTombstones: boolean,
+  ): DeliveryLedgerGetResult {
+    const normalizedId = DeliveryIdSchema.parse(deliveryId);
+    const delivery = state.records.get(normalizedId);
+    const visibleDelivery =
+      delivery && (delivery.payload !== undefined || allowPayloadTombstones) ? delivery : null;
+    const result = {
+      delivery: visibleDelivery ? cloneDelivery(visibleDelivery) : null,
+      deliveries: visibleDelivery ? [cloneDelivery(visibleDelivery)] : [],
+      nextCursor: null,
+    } satisfies DeliveryLedgerGetResult;
+    this.assertGetResponseWithinBudget(requestId, result, maxEncodedBytes);
+    return result;
+  }
+
+  private getPage(
+    records: LedgerRecord[],
+    nextSequence: number,
+    cursor: string | null,
+    includeAcknowledged: boolean,
+    limit: number,
+    requestId: string,
+    maxEncodedBytes: number,
+    allowPayloadTombstones: boolean,
+  ): DeliveryLedgerGetResult {
+    const cursorResult = this.findCursor(records, cursor, nextSequence);
     if (!cursorResult.valid) {
       throw new DeliveryLedgerError(
         "delivery_cursor_invalid",
@@ -618,15 +792,18 @@ export class DeliveryLedger {
       index += 1
     ) {
       const record = records[index];
-      if (!record || (!includeAcknowledged && statusOf(record) === "acknowledged")) continue;
+      if (!isVisibleDelivery(record, includeAcknowledged, allowPayloadTombstones)) continue;
       const candidate = eligible.concat({ record, index });
-      const hasMoreAfterCandidate = records
-        .slice(index + 1)
-        .some((item) => includeAcknowledged || statusOf(item) !== "acknowledged");
+      const hasMoreAfterCandidate = hasVisibleDeliveryAfter(
+        records,
+        index,
+        includeAcknowledged,
+        allowPayloadTombstones,
+      );
       const candidateResult: DeliveryLedgerGetResult = {
         delivery: null,
         deliveries: candidate.map(({ record: item }) => cloneDelivery(item)),
-        nextCursor: hasMoreAfterCandidate ? String(record.sequence) : null,
+        nextCursor: hasMoreAfterCandidate ? encodeSequenceCursor(record.sequence) : null,
       };
       if (!this.getResponseFits(requestId, candidateResult, maxEncodedBytes)) {
         if (eligible.length === 0) {
@@ -641,22 +818,24 @@ export class DeliveryLedger {
     }
 
     const last = eligible.at(-1);
-    const hasMore = last
-      ? records
-          .slice(last.index + 1)
-          .some((record) => includeAcknowledged || statusOf(record) !== "acknowledged")
-      : false;
+    const hasMore =
+      last !== undefined &&
+      hasVisibleDeliveryAfter(records, last.index, includeAcknowledged, allowPayloadTombstones);
     const result: DeliveryLedgerGetResult = {
       delivery: null,
       deliveries: eligible.map(({ record }) => cloneDelivery(record)),
-      nextCursor: hasMore ? String(last?.record.sequence) : null,
+      nextCursor: hasMore ? encodeSequenceCursor(last?.record.sequence ?? 0) : null,
     };
     this.assertGetResponseWithinBudget(requestId, result, maxEncodedBytes);
     return result;
   }
 
-  async acknowledge(ownerId: string, deliveryId: string): Promise<DeliveryRecord> {
-    return this.transition(ownerId, deliveryId, "acknowledged");
+  async acknowledge(
+    ownerId: string,
+    deliveryId: string,
+    options: { allowPayloadTombstones?: boolean } = {},
+  ): Promise<DeliveryRecord> {
+    return this.transition(ownerId, deliveryId, "acknowledged", undefined, options);
   }
 
   async markDispatching(ownerId: string, deliveryId: string): Promise<DeliveryRecord> {
@@ -680,12 +859,13 @@ export class DeliveryLedger {
     deliveryId: string,
     status: DeliveryStatus,
     error?: string,
+    options: { allowPayloadTombstones?: boolean } = {},
   ): Promise<DeliveryRecord> {
     const normalizedOwnerId = validateOwnerId(ownerId);
     const nextStatus = DeliveryStatusSchema.parse(status);
     const normalizedId = DeliveryIdSchema.parse(deliveryId);
     return this.enqueue(normalizedOwnerId, (state) =>
-      this.applyTransition(state, normalizedOwnerId, normalizedId, nextStatus, error),
+      this.applyTransition(state, normalizedOwnerId, normalizedId, nextStatus, error, options),
     );
   }
 
@@ -695,16 +875,31 @@ export class DeliveryLedger {
     deliveryId: string,
     nextStatus: DeliveryStatus,
     error?: string,
+    options: { allowPayloadTombstones?: boolean } = {},
   ): Promise<DeliveryRecord> {
     const existing = this.validateTransition(state, ownerId, deliveryId, nextStatus);
     const currentStatus = statusOf(existing);
+    if (
+      currentStatus === "acknowledged" &&
+      nextStatus === "acknowledged" &&
+      existing.payload === undefined &&
+      options.allowPayloadTombstones !== true
+    ) {
+      throw new DeliveryLedgerError(
+        "delivery_payload_unavailable",
+        `Acknowledged delivery ${deliveryId} has no payload for this client`,
+      );
+    }
     if (currentStatus === nextStatus || currentStatus === "acknowledged") {
       return cloneDelivery(existing);
     }
     const nextRecord = this.buildTransitionRecord(existing, nextStatus, error);
     const nextRecords = new Map(state.records);
     nextRecords.set(deliveryId, nextRecord);
-    const compacted = this.compactAcknowledged(nextRecords);
+    const compacted = this.compactAcknowledged(
+      nextRecords,
+      options.allowPayloadTombstones === true,
+    );
     this.assertWithinQuota(compacted.records);
     await this.persist(ownerId, compacted.records, state.nextSequence);
     state.records = compacted.records;
@@ -791,10 +986,10 @@ export class DeliveryLedger {
     }) as LedgerRecord;
   }
 
-  async gc(ownerId: string): Promise<void> {
+  async gc(ownerId: string, allowPayloadTombstones = false): Promise<void> {
     const normalizedOwnerId = validateOwnerId(ownerId);
     await this.enqueue(normalizedOwnerId, async (state) => {
-      const compacted = this.compactAcknowledged(state.records);
+      const compacted = this.compactAcknowledged(state.records, allowPayloadTombstones);
       if (!compacted.changed) return;
       await this.persist(normalizedOwnerId, compacted.records, state.nextSequence);
       state.records = compacted.records;
@@ -822,7 +1017,7 @@ export class DeliveryLedger {
         );
         changed = true;
       }
-      const compacted = this.compactAcknowledged(nextRecords);
+      const compacted = this.compactAcknowledged(nextRecords, false);
       if (changed || compacted.changed) {
         await this.persist(normalizedOwnerId, compacted.records, state.nextSequence);
         state.records = compacted.records;
@@ -843,7 +1038,10 @@ export class DeliveryLedger {
         state.records = new Map();
         state.nextSequence = 1;
         state.loaded = true;
-        state.closing = false;
+        state.retired = true;
+        // A rejected load promise is historical state after a purge. Do not
+        // retain it for flush/shutdown or allow a later caller to observe it.
+        state.loadPromise = null;
         return undefined;
       });
     state.mutationTail = next.then(
@@ -861,7 +1059,9 @@ export class DeliveryLedger {
     await Promise.all(
       [...this.owners.values()].map(async (state) => {
         await state.mutationTail;
-        await state.loadPromise;
+        // Shutdown must not fail because a closed owner retained a historical
+        // load rejection (for example, a quarantined symlinked ledger).
+        await state.loadPromise?.catch(() => undefined);
       }),
     );
   }
@@ -877,6 +1077,7 @@ export class DeliveryLedger {
         loadPromise: null,
         mutationTail: Promise.resolve(),
         closing: false,
+        retired: false,
       };
       this.owners.set(normalizedOwnerId, state);
     }
@@ -884,7 +1085,7 @@ export class DeliveryLedger {
   }
 
   private assertOwnerOpen(state: OwnerState, ownerId: string): void {
-    if (state.closing) {
+    if (state.closing || state.retired) {
       throw new DeliveryLedgerError(
         "delivery_owner_closing",
         `Delivery owner ${ownerId} is closing`,
@@ -937,12 +1138,17 @@ export class DeliveryLedger {
     const ordered = needsSequenceMigration
       ? [...parsed.deliveries].sort(compareLegacyDeliveries)
       : parsed.deliveries;
-    const records = normalizeLedgerRecords(ordered, needsSequenceMigration);
+    const records = normalizeLedgerRecords(
+      ordered,
+      needsSequenceMigration,
+      parsed.version === LEGACY_LEDGER_VERSION,
+      this.maxPayloadBytes,
+    );
     const maximumSequence = Math.max(0, ...[...records.values()].map((record) => record.sequence));
     const nextSequence = resolveNextSequence(parsed, maximumSequence);
     this.assertWithinQuota(records);
     const reconciled = this.reconcileRecords(records);
-    const compacted = this.compactAcknowledged(reconciled.records);
+    const compacted = this.compactAcknowledged(reconciled.records, false);
     return {
       records: compacted.records,
       nextSequence,
@@ -990,7 +1196,10 @@ export class DeliveryLedger {
     return { records: nextRecords, changed };
   }
 
-  private compactAcknowledged(records: Map<string, LedgerRecord>): {
+  private compactAcknowledged(
+    records: Map<string, LedgerRecord>,
+    allowPayloadTombstones: boolean,
+  ): {
     records: Map<string, LedgerRecord>;
     changed: boolean;
   } {
@@ -1007,7 +1216,13 @@ export class DeliveryLedger {
     }
 
     const acknowledgedWithPayload = [...nextRecords.values()]
-      .filter((record) => statusOf(record) === "acknowledged" && record.payload !== undefined)
+      .filter(
+        (record) =>
+          statusOf(record) === "acknowledged" &&
+          record.payload !== undefined &&
+          record.payloadTombstoneEligible === true &&
+          allowPayloadTombstones,
+      )
       .sort((left, right) => left.sequence - right.sequence);
     let payloadCount = acknowledgedWithPayload.length;
     let payloadBytes = acknowledgedWithPayload.reduce(
@@ -1060,6 +1275,7 @@ export class DeliveryLedger {
     }
     try {
       await this.ensureSecureRoot();
+      const noFollow = noFollowFlag();
       const filePath = deliveryLedgerFilePath(this.baseDir, ownerId);
       await this.assertWritableLedgerPath(filePath, ownerId);
       const tempPath = path.join(
@@ -1073,7 +1289,7 @@ export class DeliveryLedger {
           handle = await withTransientRetry(() =>
             fs.open(
               tempPath,
-              fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | O_NOFOLLOW,
+              fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | noFollow,
               0o600,
             ),
           );
@@ -1141,8 +1357,14 @@ export class DeliveryLedger {
     nextSequence: number,
   ): { valid: boolean; index: number } {
     if (cursor === null) return { valid: true, index: -1 };
-    if (/^[1-9]\d*$/.test(cursor)) {
-      const sequence = Number(cursor);
+    // COMPAT(durableDeliveryCursor): resolve an exact legacy delivery ID
+    // before interpreting a numeric value as a pre-v2 sequence.
+    const deliveryIdIndex = records.findIndex((record) => record.deliveryId === cursor);
+    if (deliveryIdIndex >= 0) return { valid: true, index: deliveryIdIndex };
+
+    const sequenceText = cursor.startsWith("seq:") ? cursor.slice(4) : cursor;
+    if (/^[1-9]\d*$/.test(sequenceText)) {
+      const sequence = Number(sequenceText);
       if (!Number.isSafeInteger(sequence) || sequence >= nextSequence) {
         return { valid: false, index: -1 };
       }
@@ -1151,10 +1373,7 @@ export class DeliveryLedger {
       const nextIndex = records.findIndex((record) => record.sequence > sequence);
       return { valid: true, index: nextIndex < 0 ? records.length - 1 : nextIndex - 1 };
     }
-    // COMPAT(durableDeliveryCursor): translate an old delivery-id cursor once;
-    // all emitted cursors are owner sequences.
-    const index = records.findIndex((record) => record.deliveryId === cursor);
-    return { valid: index >= 0, index };
+    return { valid: false, index: -1 };
   }
 
   private getResponseFits(
@@ -1187,6 +1406,7 @@ export class DeliveryLedger {
   }
 
   private async ensureSecureRoot(): Promise<void> {
+    const noFollow = noFollowFlag();
     let info: Awaited<ReturnType<typeof fs.lstat>>;
     try {
       info = await withTransientRetry(() => fs.lstat(this.baseDir));
@@ -1220,7 +1440,7 @@ export class DeliveryLedger {
     let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
     try {
       handle = await withTransientRetry(() =>
-        fs.open(this.baseDir, fsConstants.O_RDONLY | O_DIRECTORY | O_NOFOLLOW),
+        fs.open(this.baseDir, fsConstants.O_RDONLY | O_DIRECTORY | noFollow),
       );
       const opened = await withTransientRetry(() => handle!.stat());
       if (!opened.isDirectory() || !sameFile(info, opened)) {
@@ -1244,6 +1464,7 @@ export class DeliveryLedger {
   }
 
   private async readLedgerFile(filePath: string, ownerId: string): Promise<string | null> {
+    const noFollow = noFollowFlag();
     let info: Awaited<ReturnType<typeof fs.lstat>>;
     try {
       info = await withTransientRetry(() => fs.lstat(filePath));
@@ -1263,7 +1484,7 @@ export class DeliveryLedger {
     }
     let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
     try {
-      handle = await withTransientRetry(() => fs.open(filePath, fsConstants.O_RDONLY | O_NOFOLLOW));
+      handle = await withTransientRetry(() => fs.open(filePath, fsConstants.O_RDONLY | noFollow));
       const opened = await withTransientRetry(() => handle!.stat());
       if (!opened.isFile() || !sameFile(info, opened)) {
         throw new Error("Delivery ledger changed while opening");
@@ -1308,6 +1529,7 @@ export class DeliveryLedger {
   }
 
   private async assertWritableLedgerPath(filePath: string, ownerId: string): Promise<void> {
+    const noFollow = noFollowFlag();
     try {
       const info = await withTransientRetry(() => fs.lstat(filePath));
       if (info.isSymbolicLink() || !info.isFile()) {
@@ -1315,6 +1537,16 @@ export class DeliveryLedger {
           "delivery_ledger_unavailable",
           `Delivery ledger is not a regular file for ${ownerId}`,
         );
+      }
+      let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+      try {
+        handle = await withTransientRetry(() => fs.open(filePath, fsConstants.O_RDONLY | noFollow));
+        const opened = await withTransientRetry(() => handle!.stat());
+        if (!opened.isFile() || !sameFile(info, opened)) {
+          throw new Error("Delivery ledger changed while checking its write path");
+        }
+      } finally {
+        await handle?.close().catch(() => undefined);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
@@ -1328,20 +1560,82 @@ export class DeliveryLedger {
   }
 
   private async assertSecureLedgerFile(filePath: string, ownerId: string): Promise<void> {
+    const noFollow = noFollowFlag();
     const info = await withTransientRetry(() => fs.lstat(filePath));
-    if (info.isSymbolicLink() || !info.isFile() || (info.mode & 0o7777) !== 0o600) {
+    if (info.isSymbolicLink() || !info.isFile()) {
       throw new DeliveryLedgerError(
         "delivery_ledger_unavailable",
         `Delivery ledger mode could not be enforced for ${ownerId}`,
       );
     }
+    let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+    try {
+      handle = await withTransientRetry(() => fs.open(filePath, fsConstants.O_RDONLY | noFollow));
+      const opened = await withTransientRetry(() => handle!.stat());
+      if (!opened.isFile() || !sameFile(info, opened)) {
+        throw new Error("Delivery ledger changed while checking its mode");
+      }
+      await withTransientRetry(() => handle!.chmod(0o600));
+      const secured = await withTransientRetry(() => handle!.stat());
+      if (!secured.isFile() || (secured.mode & 0o7777) !== 0o600) {
+        throw new Error("Delivery ledger mode could not be enforced");
+      }
+    } catch (error) {
+      if (error instanceof DeliveryLedgerError) throw error;
+      throw new DeliveryLedgerError(
+        "delivery_ledger_unavailable",
+        `Delivery ledger mode could not be enforced for ${ownerId}`,
+        { cause: error },
+      );
+    } finally {
+      await handle?.close().catch(() => undefined);
+    }
   }
 
   private async quarantine(filePath: string, ownerId: string, error: unknown): Promise<string> {
     const quarantinePath = `${filePath}.quarantine-${Date.now()}-${randomUUID()}`;
+    const noFollow = noFollowFlag();
     try {
+      await this.ensureSecureRoot();
+      const sourceInfo = await withTransientRetry(() => fs.lstat(filePath));
+      if (sourceInfo.isSymbolicLink() || !sourceInfo.isFile()) {
+        throw new Error("Delivery ledger changed before quarantine");
+      }
+      let sourceHandle: Awaited<ReturnType<typeof fs.open>> | null = null;
+      try {
+        sourceHandle = await withTransientRetry(() =>
+          fs.open(filePath, fsConstants.O_RDONLY | noFollow),
+        );
+        const opened = await withTransientRetry(() => sourceHandle!.stat());
+        if (!opened.isFile() || !sameFile(sourceInfo, opened)) {
+          throw new Error("Delivery ledger changed before quarantine");
+        }
+      } finally {
+        await sourceHandle?.close().catch(() => undefined);
+      }
+      // Recheck the parent immediately before the path operation. The rename
+      // never follows the source link; the parent checks keep the destination
+      // inside the private ledger directory across ordinary replacement races.
+      await this.ensureSecureRoot();
       await withTransientRetry(() => fs.rename(filePath, quarantinePath));
-      await withTransientRetry(() => fs.chmod(quarantinePath, 0o600));
+      await this.ensureSecureRoot();
+      let quarantineHandle: Awaited<ReturnType<typeof fs.open>> | null = null;
+      try {
+        quarantineHandle = await withTransientRetry(() =>
+          fs.open(quarantinePath, fsConstants.O_RDONLY | noFollow),
+        );
+        const quarantined = await withTransientRetry(() => quarantineHandle!.stat());
+        if (!quarantined.isFile() || !sameFile(sourceInfo, quarantined)) {
+          throw new Error("Quarantine target changed while renaming");
+        }
+        await withTransientRetry(() => quarantineHandle!.chmod(0o600));
+        const secured = await withTransientRetry(() => quarantineHandle!.stat());
+        if (!secured.isFile() || (secured.mode & 0o7777) !== 0o600) {
+          throw new Error("Quarantine mode could not be enforced");
+        }
+      } finally {
+        await quarantineHandle?.close().catch(() => undefined);
+      }
       return quarantinePath;
     } catch (renameError) {
       throw new DeliveryLedgerError(
@@ -1400,6 +1694,10 @@ function nonNegativeInteger(value: number, name: string): number {
     throw new Error(`${name} must be a non-negative safe integer`);
   }
   return value;
+}
+
+function encodeSequenceCursor(sequence: number): string {
+  return `seq:${sequence}`;
 }
 
 function isAllowedTransition(from: DeliveryStatus, to: DeliveryStatus): boolean {

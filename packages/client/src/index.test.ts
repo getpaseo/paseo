@@ -172,10 +172,14 @@ function createAgent(input: Partial<PaseoAgent> = {}): PaseoAgent {
   };
 }
 
-test("createPaseoClient exposes durable deliveries through the daemon client", async () => {
-  const { client, ws } = await connectClient({ durableDeliveries: true });
+test("createPaseoClient exposes targeted durable deliveries through the daemon client", async () => {
+  const { client, ws } = await connectClient({
+    durableDeliveries: true,
+    durableDeliveryTargeting: true,
+  });
 
   const sendPromise = client.deliveries.send(
+    "agent_sdk",
     { event: "agent.finished", agentId: "agent_sdk" },
     { deliveryId: "delivery-sdk", requestId: "delivery-send" },
   );
@@ -299,21 +303,30 @@ test("targeted delivery does not downgrade on an older durable host", async () =
   await client.close();
 });
 
-test("legacy string payloads remain pull deliveries with explicit undefined options", async () => {
-  const { client, ws } = await connectClient({ durableDeliveries: true });
+test("targeted durable deliveries require an exact target for string payloads", async () => {
+  const { client, ws } = await connectClient({
+    durableDeliveries: true,
+    durableDeliveryTargeting: true,
+  });
 
-  const sendPromise = client.deliveries.send("hello", undefined);
+  const sendPromise = client.deliveries.send("agent-exact", "hello", {
+    requestId: "delivery-send",
+  });
   const request = parseSentSessionMessage(ws.sent.at(-1));
-  expect(request).toMatchObject({ type: "deliveries.send.request", payload: "hello" });
-  expect("targetAgentId" in request).toBe(false);
+  expect(request).toMatchObject({
+    type: "deliveries.send.request",
+    targetAgentId: "agent-exact",
+    payload: "hello",
+  });
   ws.message(
     sessionMessage({
       type: "deliveries.send.response",
       payload: {
-        requestId: request.requestId,
+        requestId: "delivery-send",
         deliveryId: "legacy-string",
         delivery: {
           deliveryId: "legacy-string",
+          targetAgentId: "agent-exact",
           payload: "hello",
           createdAt: "2026-05-16T00:00:00.000Z",
           acknowledgedAt: null,

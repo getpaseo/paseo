@@ -3,6 +3,7 @@ import {
   DeliveriesAcknowledgeRequestSchema,
   DeliveriesGetRequestSchema,
   DeliveriesSendRequestSchema,
+  ServerInfoStatusPayloadSchema,
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
 } from "./messages.js";
@@ -89,6 +90,10 @@ describe("durable delivery protocol", () => {
       ok: false,
       reason: "nodes_exceeded",
     });
+    expect(inspectDeliveryPayload(JSON.parse('{"__proto__":"unsafe"}'))).toMatchObject({
+      ok: false,
+      reason: "dangerous_key",
+    });
     expect(
       inspectDeliveryPayload("x".repeat(MAX_DELIVERY_PAYLOAD_BYTES), {
         maxBytes: MAX_DELIVERY_PAYLOAD_BYTES - 1,
@@ -113,22 +118,42 @@ describe("durable delivery protocol", () => {
 
   test("advertises a distinct client capability", () => {
     expect(CLIENT_CAPS.durableDeliveries).toBe("durable_deliveries");
+    expect(CLIENT_CAPS.deliveryPayloadTombstones).toBe("delivery_payload_tombstones");
+  });
+
+  test("accepts old server_info peers while recognizing the new capability", () => {
+    const oldPeer = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "old-daemon",
+      features: { durableDeliveries: true },
+    });
+    const newPeer = ServerInfoStatusPayloadSchema.parse({
+      status: "server_info",
+      serverId: "new-daemon",
+      features: {
+        durableDeliveries: true,
+        deliveryPayloadTombstones: true,
+      },
+    });
+
+    expect(oldPeer.features?.deliveryPayloadTombstones).toBeUndefined();
+    expect(newPeer.features?.deliveryPayloadTombstones).toBe(true);
   });
 
   test("keeps delivery responses below the WebSocket transport maximum", () => {
     expect(MAX_DELIVERY_RESPONSE_BYTES).toBe(MAX_WEBSOCKET_MESSAGE_BYTES - 1);
-    const oversizedRequestId = "x".repeat(MAX_DELIVERY_REQUEST_ID_BYTES + 1);
+    const legacyRequestId = "x".repeat(MAX_DELIVERY_REQUEST_ID_BYTES + 1);
     expect(
       DeliveriesGetRequestSchema.safeParse({
         type: "deliveries.get.request",
-        requestId: oversizedRequestId,
+        requestId: legacyRequestId,
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
       SessionOutboundMessageSchema.safeParse({
         type: "deliveries.get.response",
         payload: {
-          requestId: "request-one",
+          requestId: legacyRequestId,
           delivery: {
             ...pendingDelivery,
             sequence: 1,

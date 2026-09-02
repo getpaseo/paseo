@@ -32,6 +32,10 @@ export const CLIENT_CAPS = {
   // owner-scoped durable delivery ledger. Remove the request gate once the
   // supported client floor understands the deliveries RPCs.
   durableDeliveries: "durable_deliveries",
+  // COMPAT(deliveryPayloadTombstones): added in v0.7.3. The daemon may compact
+  // acknowledged delivery payloads only for records admitted by clients that
+  // advertise this capability. Older clients require payloads on the wire.
+  deliveryPayloadTombstones: "delivery_payload_tombstones",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];

@@ -740,6 +740,7 @@ test("advertises client capabilities in hello", async () => {
       compact_provider_snapshots: true,
       custom_mode_icons: true,
       durable_deliveries: true,
+      delivery_payload_tombstones: true,
       project_updates: true,
       provider_subagents: true,
       reasoning_merge_enum: true,

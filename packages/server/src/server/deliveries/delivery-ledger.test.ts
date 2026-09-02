@@ -38,6 +38,7 @@ test("persists pending deliveries and recovers them after a new ledger instance"
   const { home, ledger } = await createLedger();
   const sent = await ledger.send("owner", {
     deliveryId: "delivery-one",
+    targetAgentId: "agent-test",
     payload: { event: "finished", value: 3 },
   });
 
@@ -80,14 +81,32 @@ test("loads legacy pull-only records and supplies native defaults in memory", as
 
   await expect(new DeliveryLedger(home).get("owner")).resolves.toMatchObject({
     deliveries: [
-      { deliveryId: "legacy-a", messageId: "legacy-a", sequence: 1, status: "recorded" },
-      { deliveryId: "legacy-z", messageId: "legacy-z", sequence: 2, status: "recorded" },
+      {
+        deliveryId: "legacy-a",
+        messageId: "legacy-a",
+        sequence: 1,
+        status: "accepted",
+        deliveryMode: "legacy_pull",
+      },
+      {
+        deliveryId: "legacy-z",
+        messageId: "legacy-z",
+        sequence: 2,
+        status: "accepted",
+        deliveryMode: "legacy_pull",
+      },
     ],
   });
   await expect(
     new DeliveryLedger(home).get("owner", { cursor: "legacy-a" }),
   ).resolves.toMatchObject({
     deliveries: [{ deliveryId: "legacy-z", sequence: 2 }],
+  });
+  const consumer = new DeliveryLedger(home);
+  await expect(consumer.acknowledge("owner", "legacy-a")).resolves.toMatchObject({
+    deliveryId: "legacy-a",
+    deliveryMode: "legacy_pull",
+    status: "acknowledged",
   });
   const migrated = JSON.parse(await readFile(deliveryLedgerFilePath(home, "owner"), "utf8")) as {
     version: number;
@@ -98,7 +117,11 @@ test("loads legacy pull-only records and supplies native defaults in memory", as
 
 test("acknowledgement is durable and idempotent", async () => {
   const { home, ledger } = await createLedger();
-  await ledger.send("owner", { deliveryId: "delivery-one", payload: "hello" });
+  await ledger.send("owner", {
+    deliveryId: "delivery-one",
+    targetAgentId: "agent-test",
+    payload: "hello",
+  });
   await ledger.markDispatching("owner", "delivery-one");
   await ledger.markAccepted("owner", "delivery-one");
 
@@ -121,7 +144,7 @@ test("acknowledgement only transitions accepted deliveries", async () => {
     ["failed-delivery", "failed"],
     ["ambiguous-delivery", "ambiguous"],
   ] as const) {
-    await ledger.send("owner", { deliveryId, payload: deliveryId });
+    await ledger.send("owner", { deliveryId, targetAgentId: "agent-test", payload: deliveryId });
     if (status !== "recorded") {
       if (status === "failed" || status === "ambiguous") {
         await ledger.markDispatching("owner", deliveryId);
@@ -138,7 +161,11 @@ test("acknowledgement only transitions accepted deliveries", async () => {
     });
   }
 
-  await ledger.send("owner", { deliveryId: "accepted-delivery", payload: "accepted" });
+  await ledger.send("owner", {
+    deliveryId: "accepted-delivery",
+    targetAgentId: "agent-test",
+    payload: "accepted",
+  });
   await ledger.markDispatching("owner", "accepted-delivery");
   await ledger.markAccepted("owner", "accepted-delivery");
   const acknowledged = await ledger.acknowledge("owner", "accepted-delivery");
@@ -147,7 +174,11 @@ test("acknowledgement only transitions accepted deliveries", async () => {
 
 test("an acknowledgement racing dispatch cannot skip native dispatch", async () => {
   const { ledger } = await createLedger();
-  await ledger.send("owner", { deliveryId: "racing-delivery", payload: "hello" });
+  await ledger.send("owner", {
+    deliveryId: "racing-delivery",
+    targetAgentId: "agent-test",
+    payload: "hello",
+  });
 
   const [acknowledgement, dispatching] = await Promise.allSettled([
     ledger.acknowledge("owner", "racing-delivery"),
@@ -167,7 +198,7 @@ test("uses durable owner sequences for same-time concurrent sends and cursors", 
   const sameTime = new DeliveryLedger(home, { now: () => now });
   const results = await Promise.all(
     ["delivery-a", "delivery-b", "delivery-c"].map((deliveryId) =>
-      sameTime.send("owner", { deliveryId, payload: deliveryId }),
+      sameTime.send("owner", { deliveryId, targetAgentId: "agent-test", payload: deliveryId }),
     ),
   );
 
@@ -176,7 +207,7 @@ test("uses durable owner sequences for same-time concurrent sends and cursors", 
   expect(page.deliveries.map((delivery) => delivery.deliveryId)).toEqual(
     results.slice(0, 2).map((result) => result.delivery.deliveryId),
   );
-  expect(page.nextCursor).toBe("2");
+  expect(page.nextCursor).toBe("seq:2");
   await expect(
     sameTime.get("owner", { cursor: page.nextCursor ?? undefined }),
   ).resolves.toMatchObject({
@@ -184,16 +215,41 @@ test("uses durable owner sequences for same-time concurrent sends and cursors", 
   });
 });
 
+test("resolves an exact numeric delivery ID before legacy numeric cursor migration", async () => {
+  const { ledger } = await createLedger();
+  await ledger.send("owner", { deliveryId: "2", targetAgentId: "agent-test", payload: "first" });
+  await ledger.send("owner", {
+    deliveryId: "after-numeric-id",
+    targetAgentId: "agent-test",
+    payload: "second",
+  });
+
+  await expect(ledger.get("owner", { cursor: "2" })).resolves.toMatchObject({
+    deliveries: [{ deliveryId: "after-numeric-id", sequence: 2 }],
+  });
+  await expect(ledger.get("owner", { cursor: "seq:1" })).resolves.toMatchObject({
+    deliveries: [{ deliveryId: "after-numeric-id", sequence: 2 }],
+  });
+});
+
 test("acknowledged deliveries no longer consume pending quotas", async () => {
   const { home } = await createLedger();
   const ledger = new DeliveryLedger(home, { maxDeliveries: 1, maxBytes: 128 * 1024 });
-  await ledger.send("owner", { deliveryId: "first", payload: "first" });
+  await ledger.send("owner", {
+    deliveryId: "first",
+    targetAgentId: "agent-test",
+    payload: "first",
+  });
   await ledger.markDispatching("owner", "first");
   await ledger.markAccepted("owner", "first");
   await ledger.acknowledge("owner", "first");
 
   await expect(
-    ledger.send("owner", { deliveryId: "second", payload: "second" }),
+    ledger.send("owner", {
+      deliveryId: "second",
+      targetAgentId: "agent-test",
+      payload: "second",
+    }),
   ).resolves.toMatchObject({ created: true });
 });
 
@@ -201,7 +257,11 @@ test("serializes concurrent mutations and makes same-id retries idempotent", asy
   const { ledger } = await createLedger();
   const results = await Promise.all(
     Array.from({ length: 8 }, () =>
-      ledger.send("owner", { deliveryId: "delivery-one", payload: { ok: true } }),
+      ledger.send("owner", {
+        deliveryId: "delivery-one",
+        targetAgentId: "agent-test",
+        payload: { ok: true },
+      }),
     ),
   );
 
@@ -210,14 +270,26 @@ test("serializes concurrent mutations and makes same-id retries idempotent", asy
   );
   expect(results.filter((result) => result.created)).toHaveLength(1);
   await expect(
-    ledger.send("owner", { deliveryId: "delivery-one", payload: { ok: false } }),
+    ledger.send("owner", {
+      deliveryId: "delivery-one",
+      targetAgentId: "agent-test",
+      payload: { ok: false },
+    }),
   ).rejects.toMatchObject<Partial<DeliveryLedgerError>>({ code: "delivery_id_conflict" });
 });
 
 test("does not share records between principals", async () => {
   const { ledger } = await createLedger();
-  await ledger.send("owner", { deliveryId: "owner-delivery", payload: "owner" });
-  await ledger.send("plugin:calendar", { deliveryId: "plugin-delivery", payload: "plugin" });
+  await ledger.send("owner", {
+    deliveryId: "owner-delivery",
+    targetAgentId: "agent-test",
+    payload: "owner",
+  });
+  await ledger.send("plugin:calendar", {
+    deliveryId: "plugin-delivery",
+    targetAgentId: "agent-test",
+    payload: "plugin",
+  });
 
   await expect(ledger.get("owner")).resolves.toMatchObject({
     deliveries: [expect.objectContaining({ deliveryId: "owner-delivery" })],
@@ -232,7 +304,7 @@ test("does not share records between principals", async () => {
 
 test("writes an atomic owner-specific ledger file", async () => {
   const { home, ledger } = await createLedger();
-  await ledger.send("plugin:calendar", { payload: 1 });
+  await ledger.send("plugin:calendar", { targetAgentId: "agent-test", payload: 1 });
   const filePath = deliveryLedgerFilePath(home, "plugin:calendar");
   const persisted = JSON.parse(await readFile(filePath, "utf8")) as {
     version: number;
@@ -254,7 +326,11 @@ test("rejects acknowledgement of an unknown delivery", async () => {
 test("copies payloads at the persistence boundary", async () => {
   const { ledger } = await createLedger();
   const payload = { nested: { value: "before" } };
-  await ledger.send("owner", { deliveryId: "delivery-copy", payload });
+  await ledger.send("owner", {
+    deliveryId: "delivery-copy",
+    targetAgentId: "agent-test",
+    payload,
+  });
   payload.nested.value = "after";
 
   await expect(ledger.get("owner", { deliveryId: "delivery-copy" })).resolves.toMatchObject({
@@ -280,7 +356,7 @@ test("persists target and message identity and rejects conflicting retries", asy
   ).rejects.toMatchObject<Partial<DeliveryLedgerError>>({ code: "delivery_id_conflict" });
   await expect(
     ledger.send("owner", { deliveryId: input.deliveryId, payload: input.payload }),
-  ).rejects.toMatchObject<Partial<DeliveryLedgerError>>({ code: "delivery_id_conflict" });
+  ).rejects.toMatchObject<Partial<DeliveryLedgerError>>({ code: "delivery_target_required" });
   expect(created.delivery).toMatchObject({
     targetAgentId: "agent-exact",
     messageId: "message-stable",
@@ -290,7 +366,11 @@ test("persists target and message identity and rejects conflicting retries", asy
 
 test("enforces delivery state transitions and keeps terminal retries idempotent", async () => {
   const { ledger } = await createLedger();
-  await ledger.send("owner", { deliveryId: "delivery-state", payload: "hello" });
+  await ledger.send("owner", {
+    deliveryId: "delivery-state",
+    targetAgentId: "agent-test",
+    payload: "hello",
+  });
 
   const dispatching = await ledger.markDispatching("owner", "delivery-state");
   expect(dispatching).toMatchObject({ status: "dispatching", dispatchingAt: expect.any(String) });
@@ -338,7 +418,7 @@ test("reconciles dispatching records as ambiguous after a ledger restart", async
 test("paginates in creation order while skipping acknowledged rows", async () => {
   const { ledger } = await createLedger();
   for (const deliveryId of ["delivery-a", "delivery-b", "delivery-c"]) {
-    await ledger.send("owner", { deliveryId, payload: deliveryId });
+    await ledger.send("owner", { deliveryId, targetAgentId: "agent-test", payload: deliveryId });
   }
   await ledger.markDispatching("owner", "delivery-b");
   await ledger.markAccepted("owner", "delivery-b");
@@ -346,7 +426,7 @@ test("paginates in creation order while skipping acknowledged rows", async () =>
 
   const first = await ledger.get("owner", { limit: 1 });
   expect(first.deliveries.map(({ deliveryId }) => deliveryId)).toEqual(["delivery-a"]);
-  expect(first.nextCursor).toBe("1");
+  expect(first.nextCursor).toBe("seq:1");
   await expect(
     ledger.get("owner", { cursor: first.nextCursor ?? undefined, limit: 1 }),
   ).resolves.toMatchObject({
@@ -368,24 +448,182 @@ test("paginates in creation order while skipping acknowledged rows", async () =>
 test("enforces record, byte, payload, and owner validation limits", async () => {
   const { home } = await createLedger();
   const limited = new DeliveryLedger(home, { maxDeliveries: 1, maxPayloadBytes: 8 });
-  await limited.send("owner", { deliveryId: "delivery-one", payload: "ok" });
+  await limited.send("owner", {
+    deliveryId: "delivery-one",
+    targetAgentId: "agent-test",
+    payload: "ok",
+  });
   await expect(
-    limited.send("owner", { deliveryId: "delivery-two", payload: "ok" }),
+    limited.send("owner", {
+      deliveryId: "delivery-two",
+      targetAgentId: "agent-test",
+      payload: "ok",
+    }),
   ).rejects.toMatchObject({
     code: "delivery_quota_exceeded",
   });
   await expect(
-    limited.send("owner", { deliveryId: "delivery-large", payload: "too-large" }),
+    limited.send("owner", {
+      deliveryId: "delivery-large",
+      targetAgentId: "agent-test",
+      payload: "too-large",
+    }),
   ).rejects.toMatchObject({ code: "delivery_payload_too_large" });
   await expect(
-    limited.send("owner", { deliveryId: "delivery-invalid", payload: undefined as never }),
+    limited.send("owner", {
+      deliveryId: "delivery-invalid",
+      targetAgentId: "agent-test",
+      payload: undefined as never,
+    }),
   ).rejects.toMatchObject({ code: "delivery_payload_invalid" });
   expect(() => deliveryLedgerFilePath(home, " ../escape")).toThrow(DeliveryLedgerError);
 });
 
+test("quarantines loaded pending records without payload or with a mismatched fingerprint", async () => {
+  const { home } = await createLedger();
+  const filePath = deliveryLedgerFilePath(home, "owner");
+  const diagnostics: string[] = [];
+  await writeFile(
+    filePath,
+    JSON.stringify({
+      version: 2,
+      ownerId: "owner",
+      nextSequence: 2,
+      deliveries: [
+        {
+          deliveryId: "missing-payload",
+          sequence: 1,
+          targetAgentId: "agent-test",
+          messageId: "missing-payload",
+          status: "accepted",
+          payloadFingerprint: "a".repeat(64),
+          createdAt: "2026-09-01T00:00:00.000Z",
+          acknowledgedAt: null,
+        },
+      ],
+    }),
+  );
+  const ledger = new DeliveryLedger(home, {
+    onDiagnostic: (diagnostic) => diagnostics.push(diagnostic.quarantinePath),
+  });
+
+  await expect(ledger.get("owner")).resolves.toMatchObject({ deliveries: [] });
+  expect(diagnostics).toHaveLength(1);
+  expect(await readdir(home)).toContain(path.basename(diagnostics[0] ?? ""));
+});
+
+test("quarantines a loaded record whose payload fingerprint was changed", async () => {
+  const { home } = await createLedger();
+  const filePath = deliveryLedgerFilePath(home, "owner");
+  await writeFile(
+    filePath,
+    JSON.stringify({
+      version: 2,
+      ownerId: "owner",
+      nextSequence: 2,
+      deliveries: [
+        {
+          deliveryId: "mismatched-fingerprint",
+          sequence: 1,
+          targetAgentId: "agent-test",
+          status: "recorded",
+          payload: "actual",
+          payloadFingerprint: "0".repeat(64),
+          createdAt: "2026-09-01T00:00:00.000Z",
+          acknowledgedAt: null,
+        },
+      ],
+    }),
+  );
+  const diagnostics: string[] = [];
+  const ledger = new DeliveryLedger(home, {
+    onDiagnostic: (diagnostic) => diagnostics.push(diagnostic.quarantinePath),
+  });
+
+  await expect(ledger.get("owner")).resolves.toMatchObject({ deliveries: [] });
+  expect(diagnostics).toHaveLength(1);
+});
+
+test("quarantines a loaded pending record without a target", async () => {
+  const { home } = await createLedger();
+  const filePath = deliveryLedgerFilePath(home, "owner");
+  await writeFile(
+    filePath,
+    JSON.stringify({
+      version: 2,
+      ownerId: "owner",
+      nextSequence: 2,
+      deliveries: [
+        {
+          deliveryId: "missing-target",
+          sequence: 1,
+          status: "recorded",
+          payload: "payload",
+          createdAt: "2026-09-01T00:00:00.000Z",
+          acknowledgedAt: null,
+        },
+      ],
+    }),
+  );
+  const diagnostics: string[] = [];
+  const ledger = new DeliveryLedger(home, {
+    onDiagnostic: (diagnostic) => diagnostics.push(diagnostic.quarantinePath),
+  });
+
+  await expect(ledger.get("owner")).resolves.toMatchObject({ deliveries: [] });
+  expect(diagnostics).toHaveLength(1);
+});
+
+test.each(["dangerous payload keys", "excessive payload depth"])(
+  "quarantines loaded records with %s",
+  async (caseName) => {
+    const { home } = await createLedger();
+    const filePath = deliveryLedgerFilePath(home, "owner");
+    const payload =
+      caseName === "dangerous payload keys"
+        ? JSON.parse('{"__proto__":"unsafe"}')
+        : (() => {
+            let nested: unknown = true;
+            for (let index = 0; index <= 32; index += 1) nested = { nested };
+            return nested;
+          })();
+    await writeFile(
+      filePath,
+      JSON.stringify({
+        version: 2,
+        ownerId: "owner",
+        nextSequence: 2,
+        deliveries: [
+          {
+            deliveryId: "invalid-payload",
+            sequence: 1,
+            targetAgentId: "agent-test",
+            status: "recorded",
+            payload,
+            createdAt: "2026-09-01T00:00:00.000Z",
+            acknowledgedAt: null,
+          },
+        ],
+      }),
+    );
+    const diagnostics: string[] = [];
+    const ledger = new DeliveryLedger(home, {
+      onDiagnostic: (diagnostic) => diagnostics.push(diagnostic.quarantinePath),
+    });
+
+    await expect(ledger.get("owner")).resolves.toMatchObject({ deliveries: [] });
+    expect(diagnostics).toHaveLength(1);
+    expect(await readdir(home)).toContain(path.basename(diagnostics[0] ?? ""));
+  },
+);
+
 test("confines root and ledger loads and repairs permissions", async () => {
   const { home, ledger } = await createLedger();
-  await ledger.send("owner", { deliveryId: "secure-delivery", payload: "secure" });
+  await ledger.send("owner", {
+    deliveryId: "secure-delivery",
+    targetAgentId: "agent-test",
+    payload: "secure",
+  });
   const filePath = deliveryLedgerFilePath(home, "owner");
   await chmod(home, 0o755);
   await chmod(filePath, 0o644);
@@ -427,13 +665,41 @@ test("quarantines malformed ledgers and removeOwner purges every copy", async ()
   expect(diagnostics).toHaveLength(1);
   expect(await readdir(home)).toContain(path.basename(diagnostics[0] ?? ""));
   await expect(
-    ledger.send("owner", { deliveryId: "fresh-delivery", payload: "fresh" }),
+    ledger.send("owner", {
+      deliveryId: "fresh-delivery",
+      targetAgentId: "agent-test",
+      payload: "fresh",
+    }),
   ).resolves.toMatchObject({ created: true });
 
   await ledger.removeOwner("owner");
   expect(await readdir(home)).not.toEqual(
     expect.arrayContaining([path.basename(filePath), path.basename(diagnostics[0] ?? "")]),
   );
+  expect(ledger.isOwnerClosing("owner")).toBe(true);
+  await expect(
+    ledger.send("owner", {
+      deliveryId: "late-delivery",
+      targetAgentId: "agent-test",
+      payload: "late",
+    }),
+  ).rejects.toMatchObject({ code: "delivery_owner_closing" });
+});
+
+test("flush tolerates a rejected historical load and removeOwner clears it", async () => {
+  const { home, ledger } = await createLedger();
+  const filePath = deliveryLedgerFilePath(home, "owner");
+  const realFile = path.join(home, "real-owner.json");
+  await writeFile(realFile, "{malformed", { mode: 0o600 });
+  await symlink(realFile, filePath);
+
+  await expect(ledger.get("owner")).rejects.toMatchObject({
+    code: "delivery_ledger_unavailable",
+  });
+  await expect(ledger.flush()).resolves.toBeUndefined();
+  await expect(ledger.removeOwner("owner")).resolves.toBeUndefined();
+  await expect(ledger.flush()).resolves.toBeUndefined();
+  expect(ledger.isOwnerClosing("owner")).toBe(true);
 });
 
 test("GC compacts acknowledged payloads but retains fingerprints and unacknowledged rows", async () => {
@@ -447,14 +713,26 @@ test("GC compacts acknowledged payloads but retains fingerprints and unacknowled
     tombstoneRetentionMs: 1_000,
   });
   for (const deliveryId of ["gc-a", "gc-b", "gc-c"]) {
-    await configured.send("owner", { deliveryId, payload: { deliveryId } });
+    await configured.send("owner", {
+      deliveryId,
+      targetAgentId: "agent-test",
+      payload: { deliveryId },
+      payloadTombstoneEligible: true,
+    });
     await configured.markDispatching("owner", deliveryId);
     await configured.markAccepted("owner", deliveryId);
     await configured.acknowledge("owner", deliveryId);
   }
-  await configured.send("owner", { deliveryId: "gc-pending", payload: "keep" });
+  await configured.send("owner", {
+    deliveryId: "gc-pending",
+    targetAgentId: "agent-test",
+    payload: "keep",
+  });
 
-  const compacted = await configured.get("owner", { includeAcknowledged: true });
+  const compacted = await configured.get("owner", {
+    includeAcknowledged: true,
+    allowPayloadTombstones: true,
+  });
   expect(compacted.deliveries).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ deliveryId: "gc-a", payloadFingerprint: expect.any(String) }),
@@ -466,12 +744,19 @@ test("GC compacts acknowledged payloads but retains fingerprints and unacknowled
   expect(compacted.deliveries.find(({ deliveryId }) => deliveryId === "gc-a")).not.toHaveProperty(
     "payload",
   );
-  const beforeGc = await configured.get("owner", { includeAcknowledged: true, limit: 3 });
-  expect(beforeGc.nextCursor).toBe("3");
+  const beforeGc = await configured.get("owner", {
+    includeAcknowledged: true,
+    allowPayloadTombstones: true,
+    limit: 3,
+  });
+  expect(beforeGc.nextCursor).toBe("seq:3");
 
   now = new Date("2026-09-02T00:00:02.000Z");
   await configured.gc("owner");
-  const afterRetention = await configured.get("owner", { includeAcknowledged: true });
+  const afterRetention = await configured.get("owner", {
+    includeAcknowledged: true,
+    allowPayloadTombstones: true,
+  });
   expect(afterRetention.deliveries.map(({ deliveryId }) => deliveryId)).toEqual(["gc-pending"]);
   await expect(
     configured.get("owner", {
@@ -481,19 +766,79 @@ test("GC compacts acknowledged payloads but retains fingerprints and unacknowled
   ).resolves.toMatchObject({ deliveries: [{ deliveryId: "gc-pending", sequence: 4 }] });
 });
 
+test("only capable clients admit payload tombstones and older clients get truthful rows", async () => {
+  const { home } = await createLedger();
+  const configured = new DeliveryLedger(home, {
+    maxAcknowledgedPayloads: 0,
+    maxAcknowledgedPayloadBytes: 0,
+    acknowledgedPayloadMaxAgeMs: 100_000,
+    tombstoneRetentionMs: 100_000,
+  });
+  await configured.send("owner", {
+    deliveryId: "old-client-delivery",
+    targetAgentId: "agent-test",
+    payload: "kept",
+  });
+  await configured.markDispatching("owner", "old-client-delivery");
+  await configured.markAccepted("owner", "old-client-delivery");
+  await configured.acknowledge("owner", "old-client-delivery");
+  await configured.gc("owner", true);
+
+  await configured.send("owner", {
+    deliveryId: "capable-client-delivery",
+    targetAgentId: "agent-test",
+    payload: "compacted",
+    payloadTombstoneEligible: true,
+  });
+  await configured.markDispatching("owner", "capable-client-delivery");
+  await configured.markAccepted("owner", "capable-client-delivery");
+  await configured.acknowledge("owner", "capable-client-delivery", {
+    allowPayloadTombstones: true,
+  });
+
+  await expect(configured.get("owner", { includeAcknowledged: true })).resolves.toMatchObject({
+    deliveries: [{ deliveryId: "old-client-delivery", payload: "kept" }],
+  });
+  await expect(
+    configured.get("owner", { includeAcknowledged: true, allowPayloadTombstones: true }),
+  ).resolves.toMatchObject({
+    deliveries: [
+      { deliveryId: "old-client-delivery", payload: "kept" },
+      { deliveryId: "capable-client-delivery", payloadFingerprint: expect.any(String) },
+    ],
+  });
+  await expect(
+    configured.get("owner", {
+      deliveryId: "capable-client-delivery",
+      includeAcknowledged: true,
+    }),
+  ).resolves.toMatchObject({ delivery: null });
+  await expect(configured.acknowledge("owner", "capable-client-delivery")).rejects.toMatchObject({
+    code: "delivery_payload_unavailable",
+  });
+});
+
 test("pages by exact encoded response budget and rejects an item that cannot fit", async () => {
   const { ledger } = await createLedger();
-  await ledger.send("owner", { deliveryId: "budget-a", payload: "a".repeat(2_000) });
-  await ledger.send("owner", { deliveryId: "budget-b", payload: "b".repeat(2_000) });
+  await ledger.send("owner", {
+    deliveryId: "budget-a",
+    targetAgentId: "agent-test",
+    payload: "a".repeat(2_000),
+  });
+  await ledger.send("owner", {
+    deliveryId: "budget-b",
+    targetAgentId: "agent-test",
+    payload: "b".repeat(2_000),
+  });
   const page = await ledger.get("owner", {
     responseRequestId: "budget-request",
-    maxEncodedBytes: 2_500,
+    maxEncodedBytes: 3_500,
   });
   const encoded = JSON.stringify({
     type: "session",
     message: { type: "deliveries.get.response", payload: { requestId: "budget-request", ...page } },
   });
-  expect(Buffer.byteLength(encoded, "utf8")).toBeLessThanOrEqual(2_500);
+  expect(Buffer.byteLength(encoded, "utf8")).toBeLessThanOrEqual(3_500);
   expect(page.deliveries).toHaveLength(1);
   await expect(
     ledger.get("owner", { responseRequestId: "budget-request", maxEncodedBytes: 100 }),
@@ -502,9 +847,14 @@ test("pages by exact encoded response budget and rejects an item that cannot fit
 
 test("purges one principal without affecting another", async () => {
   const { home, ledger } = await createLedger();
-  await ledger.send("owner", { deliveryId: "owner-delivery", payload: "owner" });
+  await ledger.send("owner", {
+    deliveryId: "owner-delivery",
+    targetAgentId: "agent-test",
+    payload: "owner",
+  });
   await ledger.send("plugin:one:installation", {
     deliveryId: "plugin-delivery",
+    targetAgentId: "agent-test",
     payload: "plugin",
   });
   await ledger.removeOwner("plugin:one:installation");
@@ -558,5 +908,7 @@ test("fences new dispatches while an owner is being removed", async () => {
   await dispatch;
   await expect(coordinator.waitForOwner("owner", 1)).resolves.toBe(true);
   coordinator.finishOwner("owner");
-  await expect(coordinator.run("owner:other", async () => "after", "owner")).resolves.toBe("after");
+  await expect(coordinator.run("owner:other", async () => "after", "owner")).rejects.toMatchObject({
+    code: "delivery_owner_closing",
+  });
 });

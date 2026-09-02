@@ -161,14 +161,13 @@ Durable deliveries persist JSON payloads in the daemon until the owning principa
 
 | Method                                   | Result                   | Behavior                                                                                                                 |
 | ---------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `send(payload, options?)`                | `PaseoDelivery`          | Persists before resolving. Set `deliveryId` to make retries idempotent.                                                  |
 | `send(targetAgentId, payload, options?)` | `PaseoDelivery`          | Persists, then sends to that exact native agent through the daemon's normal prompt path.                                 |
 | `get(options?)`                          | `PaseoDeliveryGetResult` | Returns pending deliveries by default. Use `includeAcknowledged`, `deliveryId`, `cursor`, and `limit` to filter or page. |
 | `acknowledge(deliveryId, options?)`      | `PaseoDelivery`          | Records an acknowledgement; repeating the call is safe.                                                                  |
 
 `payload` may be any bounded JSON value (64 KiB maximum; nested values and strings are also bounded). Targeted sends use `messageId` when supplied, or `deliveryId` as the stable provider-facing identity. A successful targeted send has status `accepted`; a known pre-dispatch failure has status `failed`; a provider or restart outcome that cannot be proven has status `ambiguous`. Ambiguous records are not retried automatically. Acknowledgement moves any terminal delivery to `acknowledged`.
 
-Delivery IDs are scoped to the authenticated principal. Plugin runtimes receive the scoped `PaseoPluginApi`, which does not expose `deliveries`; plugin-owned ledger state is isolated by installation and purged when the plugin socket closes. Pull delivery requires the daemon's `durableDeliveries` feature; targeted delivery additionally requires `durableDeliveryTargeting`. An older host rejects an unsupported call without sending an RPC.
+Delivery IDs are scoped to the authenticated principal. New sends require the exact target agent ID. Cursors returned by new hosts are `seq:<n>`; older delivery-ID cursors remain accepted. Plugin runtimes receive the scoped `PaseoPluginApi`, which does not expose `deliveries`; plugin-owned ledger state is isolated by installation and purged when the plugin socket closes. A version-1 pull record without a target is migrated to an accepted `legacy_pull` record so the public consumer can acknowledge it. Targeted delivery requires `durableDeliveryTargeting`. Acknowledged payload compaction requires `deliveryPayloadTombstones`; older clients never receive a compacted payloadless row. An older host rejects an unsupported call without sending an RPC.
 
 ## Errors and cleanup
 

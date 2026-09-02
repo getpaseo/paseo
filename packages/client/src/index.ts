@@ -25,7 +25,7 @@ import type {
   WorkspaceDescriptorPayload,
   WorkspaceCreateRequest,
 } from "@getpaseo/protocol/messages";
-import { DaemonClient, isTargetedDeliveryCall } from "./daemon-client.js";
+import { DaemonClient } from "./daemon-client.js";
 import type {
   FetchAgentsEntry,
   FetchAgentsOptions,
@@ -422,9 +422,7 @@ export type PaseoDeliveryGetResult = GetDeliveriesResult;
 export type PaseoDeliverySendOptions = Omit<SendDeliveryOptions, "timeout">;
 
 export interface PaseoDeliveryActions {
-  /** Persists a JSON payload before resolving. Supply an id to make retries idempotent. */
-  send(payload: PaseoDeliveryPayload, options?: PaseoDeliverySendOptions): Promise<PaseoDelivery>;
-  /** Dispatches the payload to this exact native agent id. */
+  /** Persists and dispatches the payload to this exact native agent id. */
   send(
     targetAgentId: string,
     payload: PaseoDeliveryPayload,
@@ -550,28 +548,8 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
       patch: (patch, requestId) => daemonClient.patchDaemonConfig(patch, requestId),
     },
     deliveries: {
-      send: function (
-        payloadOrTargetAgentId: PaseoDeliveryPayload | string,
-        payloadOrOptions?: PaseoDeliveryPayload | PaseoDeliverySendOptions,
-        maybeOptions?: PaseoDeliverySendOptions,
-      ) {
-        const targeted = isTargetedDeliveryCall(
-          payloadOrTargetAgentId,
-          payloadOrOptions,
-          maybeOptions,
-          arguments.length,
-        );
-        return targeted
-          ? daemonClient.sendDelivery(
-              payloadOrTargetAgentId as string,
-              payloadOrOptions as PaseoDeliveryPayload,
-              maybeOptions,
-            )
-          : daemonClient.sendDelivery(
-              payloadOrTargetAgentId as PaseoDeliveryPayload,
-              payloadOrOptions as PaseoDeliverySendOptions | undefined,
-            );
-      },
+      send: (targetAgentId, payload, options) =>
+        daemonClient.sendDelivery(targetAgentId, payload, options),
       get: (options) => daemonClient.getDeliveries(options),
       acknowledge: (deliveryId, options) => daemonClient.acknowledgeDelivery(deliveryId, options),
     },

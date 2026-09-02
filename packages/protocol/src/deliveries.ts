@@ -9,6 +9,7 @@ export const MAX_DELIVERY_PAYLOAD_DEPTH = 32;
 export const MAX_DELIVERY_PAYLOAD_NODES = 10_000;
 export const MAX_DELIVERY_PAGE_SIZE = 100;
 export const MAX_DELIVERY_ID_BYTES = 256;
+/** New SDK-generated request IDs are bounded; the wire remains legacy-compatible. */
 export const MAX_DELIVERY_REQUEST_ID_BYTES = 256;
 
 export interface DeliveryPayloadLimits {
@@ -33,7 +34,8 @@ export interface DeliveryPayloadValidationResult {
     | "payload_too_large"
     | "string_too_large"
     | "depth_exceeded"
-    | "nodes_exceeded";
+    | "nodes_exceeded"
+    | "dangerous_key";
   bytes?: number;
 }
 
@@ -88,6 +90,9 @@ function inspectDeliveryNode(
     return { ok: false, reason: "invalid_json" };
   }
   for (const [key, child] of Object.entries(current).toReversed()) {
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      return { ok: false, reason: "dangerous_key" };
+    }
     if (utf8ByteLength(key) > maxStringBytes) {
       return { ok: false, reason: "string_too_large" };
     }
@@ -200,6 +205,9 @@ export type DeliveryStatus = z.infer<typeof DeliveryStatusSchema>;
 // A descriptive alias for callers that model this as a state machine.
 export type DeliveryState = DeliveryStatus;
 
+export const DeliveryModeSchema = z.enum(["targeted", "legacy_pull"]);
+export type DeliveryMode = z.infer<typeof DeliveryModeSchema>;
+
 export const DeliveryRecordSchema = z
   .object({
     deliveryId: DeliveryIdSchema,
@@ -213,12 +221,18 @@ export const DeliveryRecordSchema = z
     messageId: DeliveryMessageIdSchema.optional(),
     // COMPAT(durableDeliveryState): old records predate native dispatch.
     status: DeliveryStatusSchema.optional(),
+    // COMPAT(legacyPullDelivery): version-1 pull records are explicitly
+    // acknowledged pull state after migration; new records are targeted.
+    deliveryMode: DeliveryModeSchema.optional(),
     // Acknowledged records may be compacted to a tombstone after retention.
     payload: DeliveryPayloadSchema.optional(),
     payloadFingerprint: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
+    // Only clients advertising deliveryPayloadTombstones may admit records
+    // whose acknowledged payload can later be compacted.
+    payloadTombstoneEligible: z.boolean().optional(),
     createdAt: z.string(),
     dispatchingAt: z.string().nullable().optional(),
     acceptedAt: z.string().nullable().optional(),
@@ -238,11 +252,13 @@ const DeliveryRecordWireSchema = z
     targetAgentId: DeliveryTargetAgentIdSchema.optional(),
     messageId: DeliveryMessageIdSchema.optional(),
     status: DeliveryStatusSchema.optional(),
+    deliveryMode: DeliveryModeSchema.optional(),
     payload: DeliveryPayloadWireSchema.optional(),
     payloadFingerprint: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
+    payloadTombstoneEligible: z.boolean().optional(),
     createdAt: z.string(),
     dispatchingAt: z.string().nullable().optional(),
     acceptedAt: z.string().nullable().optional(),
@@ -255,7 +271,9 @@ const DeliveryRecordWireSchema = z
 
 export const DeliveriesSendRequestSchema = z.object({
   type: z.literal("deliveries.send.request"),
-  requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
+  // Keep this unbounded at the schema layer: older clients generated longer
+  // request IDs that were valid as long as the complete WS frame was bounded.
+  requestId: z.string().min(1),
   deliveryId: DeliveryIdSchema.optional(),
   // COMPAT(durableDeliveryTarget): old pull-only clients may omit this field.
   targetAgentId: DeliveryTargetAgentIdSchema.optional(),
@@ -267,7 +285,7 @@ export type DeliveriesSendRequest = z.infer<typeof DeliveriesSendRequestSchema>;
 
 export const DeliveriesGetRequestSchema = z.object({
   type: z.literal("deliveries.get.request"),
-  requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
+  requestId: z.string().min(1),
   deliveryId: DeliveryIdSchema.optional(),
   includeAcknowledged: z.boolean().optional(),
   cursor: DeliveryCursorSchema.optional(),
@@ -278,7 +296,7 @@ export type DeliveriesGetRequest = z.infer<typeof DeliveriesGetRequestSchema>;
 
 export const DeliveriesAcknowledgeRequestSchema = z.object({
   type: z.literal("deliveries.acknowledge.request"),
-  requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
+  requestId: z.string().min(1),
   deliveryId: DeliveryIdSchema,
 });
 
@@ -287,7 +305,7 @@ export type DeliveriesAcknowledgeRequest = z.infer<typeof DeliveriesAcknowledgeR
 export const DeliveriesSendResponseSchema = z.object({
   type: z.literal("deliveries.send.response"),
   payload: z.object({
-    requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
+    requestId: z.string().min(1),
     deliveryId: DeliveryIdSchema,
     delivery: DeliveryRecordWireSchema,
     created: z.boolean(),
@@ -299,7 +317,7 @@ export type DeliveriesSendResponse = z.infer<typeof DeliveriesSendResponseSchema
 export const DeliveriesGetResponseSchema = z.object({
   type: z.literal("deliveries.get.response"),
   payload: z.object({
-    requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
+    requestId: z.string().min(1),
     delivery: DeliveryRecordWireSchema.nullable(),
     deliveries: z.array(DeliveryRecordWireSchema),
     nextCursor: DeliveryCursorSchema.nullable(),
@@ -311,7 +329,7 @@ export type DeliveriesGetResponse = z.infer<typeof DeliveriesGetResponseSchema>;
 export const DeliveriesAcknowledgeResponseSchema = z.object({
   type: z.literal("deliveries.acknowledge.response"),
   payload: z.object({
-    requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
+    requestId: z.string().min(1),
     deliveryId: DeliveryIdSchema,
     delivery: DeliveryRecordWireSchema,
   }),

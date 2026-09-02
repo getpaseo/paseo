@@ -547,8 +547,10 @@ describe("relay external socket reconnect behavior", () => {
 
     firstSocket.emit("close", 1000, "plugin stopped");
     await firstAttachment.closed;
+    const firstPrincipal = sessionMock.instances[0]?.args.principalId;
     const replacement = new MockSocket();
     await expect(server.attachPluginSocket("closing", replacement)).resolves.toBeDefined();
+    expect(sessionMock.instances[1]?.args.principalId).not.toBe(firstPrincipal);
     replacement.emit("close", 1000, "replacement stopped");
     await server.close();
   });
@@ -1049,6 +1051,7 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
     expect(serverInfo.features?.durableDeliveries).toBe(true);
     expect(serverInfo.features?.durableDeliveryTargeting).toBe(true);
+    expect(serverInfo.features?.deliveryPayloadTombstones).toBe(true);
     expect(serverInfo.permissions).toEqual(DAEMON_PERMISSIONS);
     await server.close();
   });
