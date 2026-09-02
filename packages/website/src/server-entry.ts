@@ -33,6 +33,32 @@ function docSlugFromMarkdownPath(pathname: string): string | null {
   return match ? match[1] : null;
 }
 
+/**
+ * SSR reads the request user agent to pick the download call to action (see
+ * `~/platform`), so two visitors on the same URL get different markup. Nothing
+ * caches these responses today — the zone cache sits behind the Worker and
+ * Workers Cache is off — but an absent `cache-control` is not `no-store`: a
+ * shared cache may assign heuristic freshness (RFC 9111 §4.2.2), and enabling
+ * Workers Cache would store a headerless 200 for two hours under a key that
+ * ignores `user-agent`. Either way one Android visitor could pin the Play Store
+ * button for every Mac visitor after them.
+ *
+ * `private` is what actually stops that. `Vary` records the contract so a
+ * compliant cache stays correct if the policy is ever loosened. Static assets
+ * never reach this Worker, so their long-lived `_headers` rules are untouched.
+ */
+function withoutSharedCaching(response: Response): Response {
+  const result = new Response(response.body, response);
+  result.headers.set("cache-control", "private, no-store");
+  result.headers.set("vary", "user-agent");
+  return result;
+}
+
+function variesByUserAgent(pathname: string, response: Response): boolean {
+  if (pathname.startsWith("/_serverFn/")) return true;
+  return response.headers.get("content-type")?.includes("text/html") ?? false;
+}
+
 export default {
   async fetch(request: Request, env: WebsiteEnv, context: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -73,6 +99,7 @@ export default {
       return markdownResponse(doc.content);
     }
 
-    return startEntry.fetch(request);
+    const response = await startEntry.fetch(request);
+    return variesByUserAgent(url.pathname, response) ? withoutSharedCaching(response) : response;
   },
 };
