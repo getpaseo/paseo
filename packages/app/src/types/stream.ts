@@ -489,6 +489,7 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
       status: "completed",
       trigger: retained.trigger ?? existing.trigger,
       preTokens: retained.preTokens ?? existing.preTokens,
+      ...(retained.error ? { error: retained.error } : {}),
     };
     return next;
   }
@@ -775,6 +776,7 @@ export interface CompactionItem {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  error?: string;
 }
 
 export interface PluginTimelineStreamItem {
@@ -1404,6 +1406,7 @@ function reduceTimelineCompaction(
         status: "completed",
         trigger: item.trigger ?? existing.trigger,
         preTokens: item.preTokens ?? existing.preTokens,
+        ...(item.error ? { error: item.error } : {}),
       };
       return [...state.slice(0, loadingIdx), updated, ...state.slice(loadingIdx + 1)];
     }
@@ -1419,6 +1422,7 @@ function reduceTimelineCompaction(
     status: item.status,
     trigger: item.trigger,
     preTokens: item.preTokens,
+    ...(item.error ? { error: item.error } : {}),
   };
   return [...state, compaction];
 }
@@ -1521,6 +1525,30 @@ function reduceTimelineEvent(
   }
 }
 
+function terminalizeCompactionsForTurn(
+  state: StreamItem[],
+  event: Extract<
+    AgentStreamEventPayload,
+    { type: "turn_completed" | "turn_failed" | "turn_canceled" }
+  >,
+): StreamItem[] {
+  if (!event.turnId) return state;
+  const error = event.type === "turn_failed" ? event.error : undefined;
+  let changed = false;
+  const next = state.map((item) => {
+    if (item.kind !== "compaction" || item.status !== "loading" || item.turnId !== event.turnId) {
+      return item;
+    }
+    changed = true;
+    return {
+      ...item,
+      status: "completed" as const,
+      ...(error ? { error } : {}),
+    };
+  });
+  return changed ? next : state;
+}
+
 /**
  * Reduce a single AgentManager stream event into the UI timeline
  */
@@ -1548,9 +1576,11 @@ export function reduceStreamUpdate(
       );
     case "thread_started":
     case "turn_started":
+      return finalizeActiveThoughts(state);
     case "turn_completed":
     case "turn_failed":
     case "turn_canceled":
+      return finalizeActiveThoughts(terminalizeCompactionsForTurn(state, event));
     case "permission_requested":
     case "permission_resolved":
     case "attention_required":

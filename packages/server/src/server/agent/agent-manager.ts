@@ -3841,6 +3841,9 @@ export class AgentManager {
         eventTurnId,
         options?.fromHistory === true,
       );
+      if (isForegroundEvent && terminalDisposition === "closed_current") {
+        this.terminalizePendingCompactions(agent, event, eventTurnId);
+      }
     }
 
     const flags: StreamEventFlags = { shouldDispatchEvent: true, shouldNotifyWaiters: true };
@@ -4319,6 +4322,40 @@ export class AgentManager {
     }
 
     return event;
+  }
+
+  private terminalizePendingCompactions(
+    agent: ActiveManagedAgent,
+    terminalEvent: AgentStreamEvent,
+    turnId: string | undefined,
+  ): void {
+    if (!turnId) return;
+
+    const pending: Extract<AgentTimelineItem, { type: "compaction" }>[] = [];
+    for (const row of this.timelineStore.getRows(agent.id)) {
+      if (row.turnId !== turnId || row.item.type !== "compaction") continue;
+      if (row.item.status === "loading") {
+        pending.push(row.item);
+      } else {
+        pending.shift();
+      }
+    }
+
+    const error = terminalEvent.type === "turn_failed" ? terminalEvent.error : undefined;
+    for (const item of pending) {
+      this.recordAndDispatchTimelineItem(
+        agent.id,
+        {
+          type: "compaction",
+          status: "completed",
+          ...(item.trigger ? { trigger: item.trigger } : {}),
+          ...(item.preTokens !== undefined ? { preTokens: item.preTokens } : {}),
+          ...(error ? { error } : {}),
+        },
+        terminalEvent.provider,
+        turnId,
+      );
+    }
   }
 
   private recordSubmittedPrompt(

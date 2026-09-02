@@ -4,14 +4,17 @@ export interface CompactionMarkerLabelInput {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  error?: string;
 }
 
 export function getCompactionMarkerLabel({
   status,
   trigger,
   preTokens,
+  error,
 }: CompactionMarkerLabelInput): string {
   if (status === "loading") return i18n.t("message.compaction.loading");
+  if (error) return `${i18n.t("common.errors.error")}: ${error}`;
   if (trigger === "auto") return i18n.t("message.compaction.auto");
   if (trigger === "manual") return i18n.t("message.compaction.manual");
   if (preTokens) {

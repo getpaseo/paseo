@@ -1179,6 +1179,41 @@ describe("stream reducer canonical tool calls", () => {
     );
   });
 
+  it("closes a compaction for a failed turn when the provider omits its completion", () => {
+    const startedAt = new Date("2025-01-01T10:55:00Z");
+    const failedAt = new Date("2025-01-01T10:55:01Z");
+    let state = reduceStreamUpdate(
+      [],
+      {
+        type: "timeline",
+        provider: "claude",
+        turnId: "compaction-failure-turn",
+        item: { type: "compaction", status: "loading", trigger: "manual" },
+      },
+      startedAt,
+    );
+
+    state = reduceStreamUpdate(
+      state,
+      {
+        type: "turn_failed",
+        provider: "claude",
+        turnId: "compaction-failure-turn",
+        error: "You've hit your session limit",
+      },
+      failedAt,
+    );
+
+    expect(state).toContainEqual(
+      expect.objectContaining({
+        kind: "compaction",
+        status: "completed",
+        trigger: "manual",
+        error: "You've hit your session limit",
+      }),
+    );
+  });
+
   it("renders Claude TodoWrite as todo_list and suppresses tool call badge", () => {
     const state = hydrateStreamState([
       {

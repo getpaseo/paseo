@@ -337,6 +337,7 @@ export interface CompactionTimelineItem {
   status: "loading" | "completed";
   trigger?: "auto" | "manual";
   preTokens?: number;
+  error?: string;
 }
 
 export interface AgentTaskItem {

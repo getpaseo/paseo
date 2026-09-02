@@ -140,6 +140,20 @@ describe("wire schema compatibility", () => {
     });
   });
 
+  test("compaction error is optional on the wire", () => {
+    expect(
+      AgentTimelineItemPayloadSchema.parse({
+        type: "compaction",
+        status: "completed",
+        error: "You've hit your session limit",
+      }),
+    ).toEqual({
+      type: "compaction",
+      status: "completed",
+      error: "You've hit your session limit",
+    });
+  });
+
   test("task progress fields are optional on the wire", () => {
     expect(
       AgentTimelineItemPayloadSchema.parse({

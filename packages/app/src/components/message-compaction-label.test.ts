@@ -6,6 +6,12 @@ import { getCompactionMarkerLabel } from "./message-compaction-label";
 describe("getCompactionMarkerLabel", () => {
   it("renders loading, automatic, manual, tokenized, and fallback labels", () => {
     expect(getCompactionMarkerLabel({ status: "loading" })).toBe("Compacting...");
+    expect(
+      getCompactionMarkerLabel({
+        status: "completed",
+        error: "You've hit your session limit",
+      }),
+    ).toBe("Error: You've hit your session limit");
     expect(getCompactionMarkerLabel({ status: "completed", trigger: "auto" })).toBe(
       "Context automatically compacted",
     );

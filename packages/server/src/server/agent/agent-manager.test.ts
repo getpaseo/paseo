@@ -8091,6 +8091,65 @@ test("turn_failed emits a system error assistant timeline message and keeps erro
   expect(systemErrors[0]?.text).toContain("invalid model id");
 });
 
+test.each(["codex", "claude", "opencode"] as const)(
+  "terminalizes a pending compaction when a %s turn fails",
+  async (provider) => {
+    const workdir = mkdtempSync(join(tmpdir(), "agent-manager-compaction-terminal-"));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+
+    class CompactionFailureSession extends TestAgentSession {
+      override async startTurn(): Promise<{ turnId: string }> {
+        const turnId = "compaction-failure-turn";
+        setTimeout(() => {
+          this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+          this.pushEvent({
+            type: "timeline",
+            provider: this.provider,
+            turnId,
+            item: { type: "compaction", status: "loading", trigger: "manual" },
+          });
+          this.pushEvent({
+            type: "turn_failed",
+            provider: this.provider,
+            turnId,
+            error: "You've hit your session limit",
+          });
+        }, 0);
+        return { turnId };
+      }
+    }
+
+    class CompactionFailureClient extends TestAgentClient {
+      override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+        return new CompactionFailureSession(config);
+      }
+    }
+
+    const client = new CompactionFailureClient(provider);
+    const manager = new AgentManager({
+      clients: { [provider]: client },
+      registry: storage,
+      logger,
+    });
+    const agent = await manager.createAgent({ provider, cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await expect(manager.runAgent(agent.id, "compact")).rejects.toThrow(
+      "You've hit your session limit",
+    );
+
+    expect(manager.getTimeline(agent.id)).toContainEqual(
+      expect.objectContaining({
+        type: "compaction",
+        status: "completed",
+        trigger: "manual",
+        error: "You've hit your session limit",
+      }),
+    );
+  },
+);
+
 test("turn_failed surfaces provider code and diagnostic in system error message", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-turn-failed-detail-"));
   const storagePath = join(workdir, "agents");
