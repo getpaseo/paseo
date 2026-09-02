@@ -22,7 +22,13 @@ export const Route = createFileRoute("/hub")({
       "Run Paseo Hub yourself and start agents on your own machines from GitHub, Slack, and Discord.",
       "/hub",
     ),
-  loader: async () => ({ hosted: await getHostedOffer() }),
+  loader: async () => {
+    try {
+      return { hosted: await getHostedOffer() };
+    } catch {
+      return { hosted: null };
+    }
+  },
   component: Hub,
 });
 
@@ -74,7 +80,28 @@ const SELF_HOSTED_FEATURES: readonly PlanFeature[] = [
     tooltip: null,
   },
 ];
-function Pricing({ hosted }: { hosted: HubHostedOffer }) {
+function Pricing({ hosted }: { hosted: HubHostedOffer | null }) {
+  if (hosted === null) {
+    return (
+      <section className="space-y-6" aria-labelledby="pricing-heading">
+        <div className="space-y-2">
+          <h2 id="pricing-heading" className="text-xl font-medium">
+            Choose how to run Hub
+          </h2>
+          <p className="max-w-2xl leading-relaxed text-white/70">
+            The plan comparison is temporarily unavailable.
+          </p>
+        </div>
+        <a
+          href="/docs/hub/quickstart"
+          className="inline-block rounded-md border border-white/15 px-4 py-2 text-sm font-medium text-white/80 transition-colors hover:border-white/25 hover:text-white"
+        >
+          Self-host Hub
+        </a>
+      </section>
+    );
+  }
+
   return (
     <section className="space-y-6" aria-labelledby="pricing-heading">
       <div className="space-y-2">
