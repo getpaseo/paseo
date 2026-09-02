@@ -69,7 +69,6 @@ describe("buildAgentStreamRenderModel", () => {
 
     expect(model.turnTiming.byAssistantId.has("hidden-a")).toBe(false);
     expect(model.turnTiming.byAssistantId.get("visible-a")).toEqual({
-      startedAt: tail[2]?.timestamp,
       completedAt: tail[3]?.timestamp,
       durationMs: 1000,
     });
@@ -176,7 +175,6 @@ describe("buildAgentStreamRenderModel", () => {
 
     expect(model.turnTiming.runningStartedAt).toBe(null);
     expect(model.turnTiming.byAssistantId.get("live-a")).toEqual({
-      startedAt: tail[0]?.timestamp,
       completedAt: head[0]?.timestamp,
       durationMs: 3000,
     });
@@ -196,7 +194,6 @@ describe("buildAgentStreamRenderModel", () => {
 
     expect(model.segments.historyMounted.map((item) => item.id)).toEqual(["a1", "u1"]);
     expect(model.turnTiming.byAssistantId.get("a1")).toEqual({
-      startedAt: tail[0]?.timestamp,
       completedAt: tail[1]?.timestamp,
       durationMs: 3000,
     });

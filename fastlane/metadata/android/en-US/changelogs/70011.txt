@@ -1,0 +1,4 @@
+Added
+- Added Claude Fable 5.1 with a 1M context window
+
+Full notes: https://paseo.sh/changelog
