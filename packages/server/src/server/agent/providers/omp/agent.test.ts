@@ -351,6 +351,25 @@ describe("OMP agent client and session", () => {
     expect(omp.completedTurnCount()).toBe(1);
   });
 
+  test("does not complete a turn when a custom message arrives before its user message", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    await omp.requireStartTurn("hello OMP");
+
+    const runtime = omp.runtime();
+    runtime.beginTurn();
+    runtime.acceptCustomMessage("startup notice");
+
+    expect(omp.completedTurnCount()).toBe(0);
+
+    runtime.acceptPrompt("hello OMP", "user-1");
+    runtime.streamAssistantText("model turn completed");
+    runtime.finishTurn();
+    await waitForImmediate();
+
+    expect(omp.completedTurnCount()).toBe(1);
+  });
+
   test("omits live custom messages when display is false", async () => {
     const omp = new OmpHarness();
     await omp.start();
