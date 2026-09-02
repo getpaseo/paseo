@@ -4,14 +4,39 @@
  * Pure and synchronous: no React, no native imports, no wall-clock reads.
  */
 
+import type { AgentPermissionAction, AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type { Agent } from "@/stores/session-store";
 import type { TodoEntry } from "@/types/stream";
 import type { FleetAgentInput, FleetPendingPermission } from "./fleet-snapshot";
 
 const SHORT_AGENT_ID_LENGTH = 8;
 
+/**
+ * Primary permission shortcut, per the fixed fleet-mode contract: first primary+allow provider
+ * action, else first allow action, else a kind-based fallback when the provider defines none.
+ * Never a deny action.
+ */
+function selectPrimaryPermissionAction(
+  request: AgentPermissionRequest,
+): { id: string; label: string } | undefined {
+  const actions = request.actions;
+  if (actions !== undefined && actions.length > 0) {
+    const allowActions = actions.filter(
+      (action): action is AgentPermissionAction => action.behavior === "allow",
+    );
+    const primary = allowActions.find((action) => action.variant === "primary") ?? allowActions[0];
+    return primary !== undefined ? { id: primary.id, label: primary.label } : undefined;
+  }
+  if (request.kind === "question") {
+    return undefined;
+  }
+  return request.kind === "plan"
+    ? { id: "accept", label: "Implement" }
+    : { id: "accept", label: "Accept" };
+}
+
 function pendingPermissionInput(agent: Agent): FleetPendingPermission | undefined {
-  const request = agent.pendingPermissions[0];
+  const request = agent.pendingPermissions.at(-1);
   if (request === undefined) {
     return undefined;
   }
@@ -19,9 +44,11 @@ function pendingPermissionInput(agent: Agent): FleetPendingPermission | undefine
     request.description ??
     (request.input !== undefined ? JSON.stringify(request.input) : undefined);
   return {
+    requestId: request.id,
     toolName: request.title ?? request.name,
     detail: detailSource !== undefined ? (detailSource.split("\n")[0] ?? "") : undefined,
     sinceMs: (agent.attentionTimestamp ?? agent.lastActivityAt).getTime(),
+    primaryAction: selectPrimaryPermissionAction(request),
   };
 }
 
@@ -67,6 +94,7 @@ function toFleetAgentInput(agent: Agent, tasks: readonly TodoEntry[] | undefined
   const progress = tasks !== undefined ? taskProgress(tasks) : undefined;
   return {
     agentId: agent.id,
+    serverId: agent.serverId,
     title: agent.title ?? `Agent ${agent.id.slice(0, SHORT_AGENT_ID_LENGTH)}`,
     running: agent.status === "running",
     error: agent.status === "error",

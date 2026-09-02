@@ -188,6 +188,40 @@ describe("useLiveActivity", () => {
     expect(presenterMock.end).toHaveBeenCalledTimes(1);
     expect(presenterMock.end.mock.calls[0]?.[0]?.finishedTitle).toBe("Agent under test");
     expect(presenterMock.end.mock.calls[0]?.[0]?.durationMs).toBeGreaterThanOrEqual(120_000);
+    expect(presenterMock.end.mock.calls[0]?.[0]?.serverId).toBe(SERVER_ID);
+    expect(presenterMock.end.mock.calls[0]?.[0]?.agentId).toBe("agent-1");
+  });
+
+  it("debounces an update when the pending permission's requestId changes while the hero stays needs_you", () => {
+    renderHook(() => useLiveActivity({ serverId: SERVER_ID }));
+
+    act(() => {
+      setAgents([
+        makeAgent({
+          status: "idle",
+          pendingPermissions: [{ id: "perm-1", provider: "codex", name: "bash", kind: "tool" }],
+        }),
+      ]);
+    });
+    expect(presenterMock.start).toHaveBeenCalledTimes(1);
+    expect(presenterMock.start.mock.calls[0]?.[0]?.hero?.permissionRequestId).toBe("perm-1");
+
+    act(() => {
+      setAgents([
+        makeAgent({
+          status: "idle",
+          pendingPermissions: [{ id: "perm-2", provider: "codex", name: "bash", kind: "tool" }],
+        }),
+      ]);
+    });
+    expect(presenterMock.update).not.toHaveBeenCalled();
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    expect(presenterMock.update).toHaveBeenCalledTimes(1);
+    expect(presenterMock.update.mock.calls[0]?.[0]?.hero?.permissionRequestId).toBe("perm-2");
   });
 
   it("cancels the grace timer when the fleet becomes active again before it fires", () => {

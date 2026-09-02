@@ -30,6 +30,9 @@ interface MaterialFleetState {
   phase: string | undefined;
   todoDone: number | undefined;
   todoTotal: number | undefined;
+  permissionRequestId: string | undefined;
+  permissionPrimaryActionId: string | undefined;
+  permissionPrimaryActionLabel: string | undefined;
 }
 
 function materialState(snapshot: FleetSnapshot): MaterialFleetState {
@@ -41,6 +44,9 @@ function materialState(snapshot: FleetSnapshot): MaterialFleetState {
     phase: snapshot.hero?.phase,
     todoDone: snapshot.hero?.todoDone,
     todoTotal: snapshot.hero?.todoTotal,
+    permissionRequestId: snapshot.hero?.permissionRequestId,
+    permissionPrimaryActionId: snapshot.hero?.permissionPrimaryAction?.id,
+    permissionPrimaryActionLabel: snapshot.hero?.permissionPrimaryAction?.label,
   };
 }
 
@@ -52,13 +58,17 @@ function materialStateChanged(a: MaterialFleetState, b: MaterialFleetState): boo
     a.runningCount !== b.runningCount ||
     a.phase !== b.phase ||
     a.todoDone !== b.todoDone ||
-    a.todoTotal !== b.todoTotal
+    a.todoTotal !== b.todoTotal ||
+    a.permissionRequestId !== b.permissionRequestId ||
+    a.permissionPrimaryActionId !== b.permissionPrimaryActionId ||
+    a.permissionPrimaryActionLabel !== b.permissionPrimaryActionLabel
   );
 }
 
 interface ActivityLifecycle {
   activityStartMs: number | null;
   lastHeroTitle: string;
+  lastHeroAgentId: string;
   lastMaterial: MaterialFleetState | null;
   debounceTimer: ReturnType<typeof setTimeout> | null;
   graceTimer: ReturnType<typeof setTimeout> | null;
@@ -71,6 +81,7 @@ function createActivityLifecycle(): ActivityLifecycle {
   return {
     activityStartMs: null,
     lastHeroTitle: "",
+    lastHeroAgentId: "",
     lastMaterial: null,
     debounceTimer: null,
     graceTimer: null,
@@ -139,7 +150,7 @@ function scheduleDebouncedUpdate(lifecycle: ActivityLifecycle, snapshot: FleetSn
   }, UPDATE_DEBOUNCE_MS);
 }
 
-function endActivity(lifecycle: ActivityLifecycle): void {
+function endActivity(lifecycle: ActivityLifecycle, serverId: string): void {
   lifecycle.presenterEpoch += 1;
   clearPendingUpdate(lifecycle);
   clearGraceTimer(lifecycle);
@@ -147,6 +158,8 @@ function endActivity(lifecycle: ActivityLifecycle): void {
     return;
   }
   const receipt = {
+    serverId,
+    agentId: lifecycle.lastHeroAgentId,
     durationMs: Date.now() - lifecycle.activityStartMs,
     finishedTitle: lifecycle.lastHeroTitle,
   };
@@ -167,9 +180,14 @@ function endActivity(lifecycle: ActivityLifecycle): void {
   })();
 }
 
-function reconcileActivity(lifecycle: ActivityLifecycle, snapshot: FleetSnapshot): void {
+function reconcileActivity(
+  lifecycle: ActivityLifecycle,
+  snapshot: FleetSnapshot,
+  serverId: string,
+): void {
   if (snapshot.hero !== null) {
     lifecycle.lastHeroTitle = snapshot.hero.title;
+    lifecycle.lastHeroAgentId = snapshot.hero.agentId;
   }
 
   if (!snapshot.active) {
@@ -177,7 +195,7 @@ function reconcileActivity(lifecycle: ActivityLifecycle, snapshot: FleetSnapshot
       clearPendingUpdate(lifecycle);
       lifecycle.graceTimer = setTimeout(() => {
         lifecycle.graceTimer = null;
-        endActivity(lifecycle);
+        endActivity(lifecycle, serverId);
       }, GRACE_PERIOD_MS);
     }
     return;
@@ -229,18 +247,18 @@ export function useLiveActivityController({ serverId }: UseLiveActivityOptions):
       return;
     }
     if (!isConnected) {
-      endActivity(lifecycleRef.current);
+      endActivity(lifecycleRef.current, serverId);
       prevHeroAgentIdRef.current = null;
       return;
     }
-    reconcileActivity(lifecycleRef.current, snapshot);
-  }, [isConnected, snapshot]);
+    reconcileActivity(lifecycleRef.current, snapshot, serverId);
+  }, [isConnected, serverId, snapshot]);
 
   useEffect(() => {
     const lifecycle = lifecycleRef.current;
     return () => {
-      endActivity(lifecycle);
+      endActivity(lifecycle, serverId);
       prevHeroAgentIdRef.current = null;
     };
-  }, []);
+  }, [serverId]);
 }

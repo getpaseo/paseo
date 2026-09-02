@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest";
 import { deriveFleetAgentInputs } from "./fleet-agent-input";
 import { selectFleetSnapshot, type FleetAgentInput } from "./fleet-snapshot";
 
+const SERVER_ID = "server-1";
+
 function agent(
   overrides: Partial<FleetAgentInput> & Pick<FleetAgentInput, "agentId">,
 ): FleetAgentInput {
   return {
+    serverId: SERVER_ID,
     title: overrides.agentId,
     running: false,
     error: false,
@@ -32,6 +35,7 @@ describe("selectFleetSnapshot", () => {
       active: true,
       hero: {
         agentId: "a1",
+        serverId: SERVER_ID,
         title: "a1",
         state: "running",
         permissionToolName: undefined,
@@ -52,7 +56,10 @@ describe("selectFleetSnapshot", () => {
       agent({ agentId: "runner", running: true, runningSinceMs: 500 }),
       agent({ agentId: "waiter", needsAttentionSinceMs: 400 }),
       agent({ agentId: "erroring", error: true }),
-      agent({ agentId: "blocked", pendingPermission: { toolName: "bash", sinceMs: 900 } }),
+      agent({
+        agentId: "blocked",
+        pendingPermission: { requestId: "req-blocked", toolName: "bash", sinceMs: 900 },
+      }),
     ];
     expect(selectFleetSnapshot(agents, null).hero?.agentId).toBe("blocked");
   });
@@ -159,7 +166,10 @@ describe("selectFleetSnapshot", () => {
   it("swaps the hero when a candidate reaches a strictly higher priority class", () => {
     const agents = [
       agent({ agentId: "hero", running: true, runningSinceMs: 900 }),
-      agent({ agentId: "blocked", pendingPermission: { toolName: "bash", sinceMs: 100 } }),
+      agent({
+        agentId: "blocked",
+        pendingPermission: { requestId: "req-blocked", toolName: "bash", sinceMs: 100 },
+      }),
     ];
     expect(selectFleetSnapshot(agents, "hero").hero?.agentId).toBe("blocked");
   });
@@ -174,7 +184,10 @@ describe("selectFleetSnapshot", () => {
       agent({ agentId: "runner", running: true, runningSinceMs: 500 }),
       agent({ agentId: "runningError", running: true, error: true }),
       agent({ agentId: "waiter", needsAttentionSinceMs: 400 }),
-      agent({ agentId: "blocked", pendingPermission: { toolName: "bash", sinceMs: 900 } }),
+      agent({
+        agentId: "blocked",
+        pendingPermission: { requestId: "req-blocked", toolName: "bash", sinceMs: 900 },
+      }),
     ];
     const snapshot = selectFleetSnapshot(agents, null);
     expect(snapshot.needsYouCount).toBe(3);
@@ -186,7 +199,12 @@ describe("selectFleetSnapshot", () => {
     const agents = [
       agent({
         agentId: "blocked",
-        pendingPermission: { toolName: "bash", detail: `${longLine}\nsecond line`, sinceMs: 100 },
+        pendingPermission: {
+          requestId: "req-blocked",
+          toolName: "bash",
+          detail: `${longLine}\nsecond line`,
+          sinceMs: 100,
+        },
       }),
     ];
     const snapshot = selectFleetSnapshot(agents, null);

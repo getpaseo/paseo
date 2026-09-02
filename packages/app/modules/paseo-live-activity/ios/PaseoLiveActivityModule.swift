@@ -14,6 +14,11 @@ internal struct PaseoFleetStateRecord: Record {
   @Field var permissionDetail: String?
   @Field var needsYouCount: Int = 0
   @Field var runningCount: Int = 0
+  @Field var heroDeepLink: String = ""
+  @Field var primaryActionLabel: String?
+  @Field var primaryActionDeepLink: String?
+  @Field var secondaryActionLabel: String?
+  @Field var secondaryActionDeepLink: String?
 }
 
 /// Lets Expo convert the JS string union into the shared enum, and reject
@@ -33,7 +38,12 @@ extension PaseoFleetStateRecord {
       permissionToolName: permissionToolName,
       permissionDetail: permissionDetail,
       needsYouCount: needsYouCount,
-      runningCount: runningCount
+      runningCount: runningCount,
+      heroDeepLink: heroDeepLink,
+      primaryActionLabel: primaryActionLabel,
+      primaryActionDeepLink: primaryActionDeepLink,
+      secondaryActionLabel: secondaryActionLabel,
+      secondaryActionDeepLink: secondaryActionDeepLink
     )
   }
 }

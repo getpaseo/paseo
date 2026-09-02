@@ -44,6 +44,18 @@ public struct PaseoFleetAttributes: ActivityAttributes {
     public var permissionDetail: String?
     public var needsYouCount: Int
     public var runningCount: Int
+    /// Whole-surface tap destination: the exact hero agent, plus the pending
+    /// request when there is one. Empty or unparseable means the surface has no
+    /// destination, and the widget renders no tap target rather than guessing.
+    public var heroDeepLink: String
+    /// Label/URL pairs for the expanded Dynamic Island controls. Flat fields
+    /// because the Expo bridge carries no nested records. A pair is only
+    /// rendered when both halves are present and the URL is a valid `paseo://`
+    /// link.
+    public var primaryActionLabel: String?
+    public var primaryActionDeepLink: String?
+    public var secondaryActionLabel: String?
+    public var secondaryActionDeepLink: String?
 
     public init(
       heroTitle: String,
@@ -55,7 +67,12 @@ public struct PaseoFleetAttributes: ActivityAttributes {
       permissionToolName: String? = nil,
       permissionDetail: String? = nil,
       needsYouCount: Int,
-      runningCount: Int
+      runningCount: Int,
+      heroDeepLink: String,
+      primaryActionLabel: String? = nil,
+      primaryActionDeepLink: String? = nil,
+      secondaryActionLabel: String? = nil,
+      secondaryActionDeepLink: String? = nil
     ) {
       self.heroTitle = heroTitle
       self.heroState = heroState
@@ -67,6 +84,11 @@ public struct PaseoFleetAttributes: ActivityAttributes {
       self.permissionDetail = permissionDetail
       self.needsYouCount = needsYouCount
       self.runningCount = runningCount
+      self.heroDeepLink = heroDeepLink
+      self.primaryActionLabel = primaryActionLabel
+      self.primaryActionDeepLink = primaryActionDeepLink
+      self.secondaryActionLabel = secondaryActionLabel
+      self.secondaryActionDeepLink = secondaryActionDeepLink
     }
 
     /// `sinceMs` as a `Date`, for timer ranges.

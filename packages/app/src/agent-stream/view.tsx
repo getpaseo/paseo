@@ -40,6 +40,10 @@ import {
   type InlinePathTarget,
 } from "@/components/message";
 import { PlanCard } from "@/components/plan-card";
+import {
+  useLiveActivityFocusStore,
+  useLiveActivityPermissionFocus,
+} from "@/live-activity/live-activity-focus";
 import type { StreamItem } from "@/types/stream";
 import type { PendingMessageSubmission } from "@/composer/submission/model";
 import type { TurnPresentation } from "@/timeline/turn-liveness";
@@ -1312,6 +1316,7 @@ interface PermissionActionButtonProps {
   isRespondingAction: boolean;
   isResponding: boolean;
   isPrimary: boolean;
+  isFocused: boolean;
   Icon: typeof ThemedCheckIcon;
   testID: string;
   onPress: (action: AgentPermissionAction) => void;
@@ -1322,6 +1327,7 @@ function PermissionActionButton({
   isRespondingAction,
   isResponding,
   isPrimary,
+  isFocused,
   Icon,
   testID,
   onPress,
@@ -1331,11 +1337,18 @@ function PermissionActionButton({
     ? [permissionStyles.optionText, permissionStyles.optionTextPrimary]
     : permissionStyles.optionText;
   const colorMapping = isPrimary ? primaryColorMapping : mutedColorMapping;
+  const buttonStyle = useCallback(
+    (state: PressableStateCallbackType & { hovered?: boolean }) => [
+      ...pressableStyle(state),
+      isFocused ? permissionStyles.optionButtonFocused : null,
+    ],
+    [isFocused],
+  );
   return (
     <Pressable
       accessibilityRole="button"
       testID={testID}
-      style={pressableStyle}
+      style={buttonStyle}
       onPress={handlePress}
       disabled={isResponding}
     >
@@ -1351,6 +1364,13 @@ function PermissionActionButton({
   );
 }
 
+function withLiveActivityFocusAccent(node: ReactNode, isFocused: boolean): ReactNode {
+  if (!isFocused) {
+    return node;
+  }
+  return <View style={permissionStyles.focusedCard}>{node}</View>;
+}
+
 function PermissionRequestCard({
   permission,
   client,
@@ -1360,6 +1380,11 @@ function PermissionRequestCard({
 }) {
   const { t } = useTranslation();
   const isMobile = useIsCompactFormFactor();
+  const { isFocused, focusedActionId } = useLiveActivityPermissionFocus(
+    permission.agentId,
+    permission.request.id,
+  );
+  const clearLiveActivityFocus = useLiveActivityFocusStore((state) => state.clearFocus);
 
   const { request } = permission;
   const isPlanRequest = request.kind === "plan";
@@ -1447,8 +1472,16 @@ function PermissionRequestCard({
     resetPermissionMutation();
     setRespondingActionId(null);
   }, [permission.request.id, resetPermissionMutation]);
+  useEffect(() => {
+    const agentId = permission.agentId;
+    const requestId = permission.request.id;
+    return () => {
+      clearLiveActivityFocus({ agentId, requestId });
+    };
+  }, [clearLiveActivityFocus, permission.agentId, permission.request.id]);
   const handleResponse = useCallback(
     (response: AgentPermissionResponse) => {
+      clearLiveActivityFocus({ agentId: permission.agentId, requestId: permission.request.id });
       respondToPermission({
         agentId: permission.agentId,
         requestId: permission.request.id,
@@ -1457,7 +1490,7 @@ function PermissionRequestCard({
         console.error("[PermissionRequestCard] Failed to respond to permission:", error);
       });
     },
-    [permission.agentId, permission.request.id, respondToPermission],
+    [clearLiveActivityFocus, permission.agentId, permission.request.id, respondToPermission],
   );
   const handleActionPress = useCallback(
     (action: AgentPermissionAction) => {
@@ -1487,12 +1520,13 @@ function PermissionRequestCard({
   );
 
   if (request.kind === "question") {
-    return (
+    return withLiveActivityFocusAccent(
       <QuestionFormCard
         permission={permission}
         onRespond={handleResponse}
         isResponding={isResponding}
-      />
+      />,
+      isFocused,
     );
   }
 
@@ -1520,6 +1554,7 @@ function PermissionRequestCard({
               isRespondingAction={isRespondingAction}
               isResponding={isResponding}
               isPrimary={isPrimary}
+              isFocused={focusedActionId === action.id}
               Icon={Icon}
               testID={testID}
               onPress={handleActionPress}
@@ -1531,7 +1566,7 @@ function PermissionRequestCard({
   );
 
   if (isPlanRequest && planMarkdown) {
-    return (
+    return withLiveActivityFocusAccent(
       <PlanCard
         title={title}
         description={description}
@@ -1539,11 +1574,12 @@ function PermissionRequestCard({
         footer={footer}
         testID="permission-plan-card"
         disableOuterSpacing
-      />
+      />,
+      isFocused,
     );
   }
 
-  return (
+  return withLiveActivityFocusAccent(
     <View style={permissionStyles.container}>
       <Text style={permissionStyles.title}>{title}</Text>
 
@@ -1563,7 +1599,8 @@ function PermissionRequestCard({
       ) : null}
 
       {footer}
-    </View>
+    </View>,
+    isFocused,
   );
 }
 
@@ -1652,6 +1689,11 @@ const stylesheet = StyleSheet.create((theme) => ({
 }));
 
 const permissionStyles = StyleSheet.create((theme) => ({
+  focusedCard: {
+    borderRadius: theme.spacing[2] + theme.borderWidth[2],
+    borderWidth: theme.borderWidth[2],
+    borderColor: theme.colors.accent,
+  },
   container: {
     marginVertical: theme.spacing[3],
     padding: theme.spacing[3],
@@ -1701,6 +1743,10 @@ const permissionStyles = StyleSheet.create((theme) => ({
     borderWidth: theme.borderWidth[1],
     backgroundColor: theme.colors.surface1,
     borderColor: theme.colors.borderAccent,
+  },
+  optionButtonFocused: {
+    borderColor: theme.colors.accent,
+    borderWidth: theme.borderWidth[2],
   },
   optionButtonHovered: {
     backgroundColor: theme.colors.surface2,

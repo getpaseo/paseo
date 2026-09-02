@@ -20,6 +20,12 @@ export interface LiveActivityContentState {
   permissionDetail?: string;
   needsYouCount: number;
   runningCount: number;
+  /** opens the exact hero agent; used for widgetURL on Lock Screen/banner/compact/minimal */
+  heroDeepLink: string;
+  primaryActionLabel?: string;
+  primaryActionDeepLink?: string;
+  secondaryActionLabel?: string;
+  secondaryActionDeepLink?: string;
 }
 
 export interface PaseoLiveActivityModule {

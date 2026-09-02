@@ -7,12 +7,17 @@ export type FleetAgentState = "running" | "needs_you" | "error";
 
 export interface FleetHero {
   agentId: string;
+  serverId: string;
   title: string;
   state: FleetAgentState;
   /** set when needs_you is due to a pending permission request */
   permissionToolName?: string;
   /** first line of the permission command/input, truncated to 80 chars */
   permissionDetail?: string;
+  /** id of the pending permission request driving needs_you, when applicable */
+  permissionRequestId?: string;
+  /** provider action link-worthy as the primary Live Activity action, per selection rules */
+  permissionPrimaryAction?: { id: string; label: string };
   /** one-line current phase, e.g. tool name; omit rather than fabricate */
   phase?: string;
   todoDone?: number;
@@ -32,13 +37,17 @@ export interface FleetSnapshot {
 }
 
 export interface FleetPendingPermission {
+  requestId: string;
   toolName: string;
   detail?: string;
   sinceMs: number;
+  /** provider-selected primary action, per selection rules; absent means no primary shortcut */
+  primaryAction?: { id: string; label: string };
 }
 
 export interface FleetAgentInput {
   agentId: string;
+  serverId: string;
   title: string;
   running: boolean;
   error: boolean;
@@ -139,10 +148,13 @@ function heroSinceMs(input: FleetAgentInput): number {
 function buildHero(input: FleetAgentInput): FleetHero {
   return {
     agentId: input.agentId,
+    serverId: input.serverId,
     title: input.title,
     state: heroState(input),
     permissionToolName: input.pendingPermission?.toolName,
     permissionDetail: truncatePermissionDetail(input.pendingPermission?.detail),
+    permissionRequestId: input.pendingPermission?.requestId,
+    permissionPrimaryAction: input.pendingPermission?.primaryAction,
     phase: input.phase,
     todoDone: input.todoDone,
     todoTotal: input.todoTotal,

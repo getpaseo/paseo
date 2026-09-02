@@ -6,6 +6,8 @@
 import type { FleetSnapshot } from "./fleet-snapshot";
 
 export interface FleetReceipt {
+  serverId: string;
+  agentId: string;
   durationMs: number;
   finishedTitle: string;
 }

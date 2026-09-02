@@ -116,9 +116,11 @@ describe("deriveFleetAgentInputs", () => {
     });
     const [input] = derive([agent]);
     expect(input?.pendingPermission).toEqual({
+      requestId: "p1",
       toolName: "Run bash",
       detail: "ls -la",
       sinceMs: attentionTimestamp.getTime(),
+      primaryAction: { id: "accept", label: "Accept" },
     });
   });
 
@@ -234,5 +236,111 @@ describe("deriveFleetAgentInputs", () => {
     const [titledInput, untitledInput] = derive([titled, untitled]);
     expect(titledInput?.title).toBe("Named agent");
     expect(untitledInput?.title).toBe("Agent agent-ab");
+  });
+
+  it("includes the agent's serverId on the derived input", () => {
+    const agent = makeAgent({ serverId: "server-xyz" });
+    const [input] = derive([agent]);
+    expect(input?.serverId).toBe("server-xyz");
+  });
+
+  it("uses the latest pending permission request", () => {
+    const agent = makeAgent({
+      pendingPermissions: [
+        { id: "p1", provider: "codex", name: "old", kind: "tool" },
+        { id: "p2", provider: "codex", name: "new", kind: "tool" },
+      ],
+    });
+    const [input] = derive([agent]);
+    expect(input?.pendingPermission?.requestId).toBe("p2");
+    expect(input?.pendingPermission?.toolName).toBe("new");
+  });
+
+  it("selects the first primary+allow provider action for a permission's primaryAction", () => {
+    const agent = makeAgent({
+      pendingPermissions: [
+        {
+          id: "p1",
+          provider: "codex",
+          name: "bash",
+          kind: "tool",
+          actions: [
+            { id: "reject", label: "Reject", behavior: "deny", variant: "danger" },
+            { id: "allow-secondary", label: "Allow once", behavior: "allow" },
+            { id: "implement", label: "Implement", behavior: "allow", variant: "primary" },
+          ],
+        },
+      ],
+    });
+    const [input] = derive([agent]);
+    expect(input?.pendingPermission?.primaryAction).toEqual({
+      id: "implement",
+      label: "Implement",
+    });
+  });
+
+  it("falls back to the first allow action when no action is variant primary", () => {
+    const agent = makeAgent({
+      pendingPermissions: [
+        {
+          id: "p1",
+          provider: "codex",
+          name: "bash",
+          kind: "tool",
+          actions: [
+            { id: "reject", label: "Reject", behavior: "deny" },
+            { id: "allow-first", label: "Allow once", behavior: "allow" },
+            { id: "allow-second", label: "Allow always", behavior: "allow" },
+          ],
+        },
+      ],
+    });
+    const [input] = derive([agent]);
+    expect(input?.pendingPermission?.primaryAction).toEqual({
+      id: "allow-first",
+      label: "Allow once",
+    });
+  });
+
+  it("never selects a deny action as the primary shortcut", () => {
+    const agent = makeAgent({
+      pendingPermissions: [
+        {
+          id: "p1",
+          provider: "codex",
+          name: "bash",
+          kind: "tool",
+          actions: [{ id: "reject", label: "Reject", behavior: "deny", variant: "primary" }],
+        },
+      ],
+    });
+    const [input] = derive([agent]);
+    expect(input?.pendingPermission?.primaryAction).toBeUndefined();
+  });
+
+  it("omits a primary action for a question request with no provider actions", () => {
+    const agent = makeAgent({
+      pendingPermissions: [
+        { id: "p1", provider: "codex", name: "AskUserQuestion", kind: "question" },
+      ],
+    });
+    const [input] = derive([agent]);
+    expect(input?.pendingPermission?.primaryAction).toBeUndefined();
+  });
+
+  it("defaults to Implement for a plan request with no provider actions", () => {
+    const agent = makeAgent({
+      pendingPermissions: [{ id: "p1", provider: "codex", name: "ExitPlanMode", kind: "plan" }],
+    });
+    const [input] = derive([agent]);
+    expect(input?.pendingPermission?.primaryAction).toEqual({ id: "accept", label: "Implement" });
+  });
+
+  it("defaults to Accept for a tool request with no provider actions", () => {
+    const agent = makeAgent({
+      pendingPermissions: [{ id: "p1", provider: "codex", name: "bash", kind: "tool" }],
+    });
+    const [input] = derive([agent]);
+    expect(input?.pendingPermission?.primaryAction).toEqual({ id: "accept", label: "Accept" });
   });
 });

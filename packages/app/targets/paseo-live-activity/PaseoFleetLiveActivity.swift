@@ -14,8 +14,34 @@ private enum PaseoColor {
   static let error = Color(red: 255 / 255, green: 69 / 255, blue: 58 / 255)
 }
 
-/// Tapping anywhere in the activity opens the app. Per-agent routing is v2.
-private let paseoDeepLink = URL(string: "paseo://")
+/// The app's registered URL scheme. Anything else in a content-state link is a
+/// bug upstream, and honoring it would send the tap to Safari or another app.
+private let paseoURLScheme = "paseo"
+
+/// Parses a content-state link, rejecting empty strings, unparseable URLs, and
+/// foreign schemes. Callers omit the control instead of substituting a target.
+private func paseoLink(_ raw: String?) -> URL? {
+  guard let raw, !raw.isEmpty, let url = URL(string: raw) else { return nil }
+  guard url.scheme?.lowercased() == paseoURLScheme else { return nil }
+  return url
+}
+
+/// A label plus a destination that is known to be openable. Failing the
+/// initializer is how an incomplete or invalid action disappears.
+private struct PaseoFleetAction {
+  let label: String
+  let url: URL
+
+  init?(label: String?, deepLink: String?) {
+    guard
+      let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines),
+      !trimmed.isEmpty,
+      let url = paseoLink(deepLink)
+    else { return nil }
+    self.label = trimmed
+    self.url = url
+  }
+}
 
 extension PaseoFleetHeroState {
   fileprivate var tint: Color {
@@ -81,6 +107,24 @@ extension PaseoFleetAttributes.ContentState {
   /// The strip is noise when there is only one agent to talk about.
   fileprivate var showsFleetStrip: Bool {
     needsYouCount + runningCount > 1
+  }
+
+  /// Destination for the whole-surface tap on the Lock Screen, compact, and
+  /// minimal presentations.
+  fileprivate var heroURL: URL? {
+    paseoLink(heroDeepLink)
+  }
+
+  fileprivate var primaryAction: PaseoFleetAction? {
+    PaseoFleetAction(label: primaryActionLabel, deepLink: primaryActionDeepLink)
+  }
+
+  fileprivate var secondaryAction: PaseoFleetAction? {
+    PaseoFleetAction(label: secondaryActionLabel, deepLink: secondaryActionDeepLink)
+  }
+
+  fileprivate var hasActions: Bool {
+    primaryAction != nil || secondaryAction != nil
   }
 }
 
@@ -154,6 +198,59 @@ private struct FleetStrip: View {
   }
 }
 
+/// Capsule shell for an expanded-Dynamic-Island action.
+///
+/// The expanded presentation is always drawn on the black island, so the
+/// contrast pair is fixed: black text on the state tint for the primary, white
+/// text on a translucent white fill for the secondary.
+private struct ActionCapsule: View {
+  let label: String
+  let fill: Color
+  let foreground: Color
+
+  var body: some View {
+    Text(label)
+      .font(.caption2.weight(.semibold))
+      .lineLimit(1)
+      .minimumScaleFactor(0.85)
+      .foregroundStyle(foreground)
+      .padding(.horizontal, 12)
+      .padding(.vertical, 5)
+      .background(fill, in: Capsule())
+  }
+}
+
+/// Up to two real `Link`s. Apple allows `Link` in the expanded presentation
+/// only, which is why nothing here is reused by the Lock Screen or the compact
+/// presentations: those get a whole-surface `widgetURL` instead.
+@available(iOS 16.2, *)
+private struct ActionRow: View {
+  let state: PaseoFleetAttributes.ContentState
+
+  var body: some View {
+    HStack(spacing: 8) {
+      if let primary = state.primaryAction {
+        Link(destination: primary.url) {
+          ActionCapsule(
+            label: primary.label,
+            fill: state.heroState.tint,
+            foreground: .black
+          )
+        }
+      }
+      if let secondary = state.secondaryAction {
+        Link(destination: secondary.url) {
+          ActionCapsule(
+            label: secondary.label,
+            fill: Color.white.opacity(0.18),
+            foreground: .white
+          )
+        }
+      }
+    }
+  }
+}
+
 @available(iOS 16.2, *)
 private struct LockScreenBanner: View {
   let state: PaseoFleetAttributes.ContentState
@@ -221,7 +318,7 @@ struct PaseoFleetLiveActivity: Widget {
       LockScreenBanner(state: context.state)
         .activityBackgroundTint(Color.black.opacity(0.4))
         .activitySystemActionForegroundColor(.white)
-        .widgetURL(paseoDeepLink)
+        .widgetURL(context.state.heroURL)
     } dynamicIsland: { context in
       let state = context.state
 
@@ -270,6 +367,10 @@ struct PaseoFleetLiveActivity: Widget {
             if let progress = state.todoProgress {
               TodoBar(state: state, progress: progress)
             }
+            if state.hasActions {
+              ActionRow(state: state)
+                .padding(.top, 2)
+            }
           }
           .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -294,7 +395,7 @@ struct PaseoFleetLiveActivity: Widget {
           .fill(state.heroState.tint)
           .frame(width: 8, height: 8)
       }
-      .widgetURL(paseoDeepLink)
+      .widgetURL(state.heroURL)
       .keylineTint(state.heroState.tint)
     }
   }
