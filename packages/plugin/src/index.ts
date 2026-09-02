@@ -22,6 +22,7 @@ export type {
   PluginCommandCenterItemContribution,
   PluginClientContext,
   PluginClientContribution,
+  PluginClientSlashCommandContribution,
   PluginClientOpenPanelOptions,
   PluginComposerPillContribution,
   PluginComposerPillProps,

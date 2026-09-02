@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
+import type { AgentTimelineItem, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import {
   createUserMessage,
   hydrateStreamState,
@@ -22,17 +23,23 @@ import {
 // Test helpers
 // ---------------------------------------------------------------------------
 
+type TimelineResponseEntry = ProcessTimelineResponseInput["payload"]["entries"][number];
+
 function makeTimelineEntry(
   seq: number,
   text: string,
-  type: string = "assistant_message",
+  type: "assistant_message" | "user_message" | "reasoning" = "assistant_message",
   seqEnd = seq,
-) {
+): TimelineResponseEntry {
+  let item: AgentTimelineItem;
+  if (type === "assistant_message") item = { type, text };
+  else if (type === "user_message") item = { type, text };
+  else item = { type, text };
   return {
     seqStart: seq,
     seqEnd,
     provider: "claude",
-    item: { type, text },
+    item,
     timestamp: new Date(1000 + seq).toISOString(),
   };
 }
@@ -41,8 +48,8 @@ function makeToolCallTimelineEntry(
   seq: number,
   callId: string,
   status: "running" | "completed",
-  detail: Record<string, unknown>,
-) {
+  detail: ToolCallDetail,
+): TimelineResponseEntry {
   return {
     seqStart: seq,
     seqEnd: seq,
@@ -54,6 +61,23 @@ function makeToolCallTimelineEntry(
       status,
       detail,
       error: null,
+    },
+    timestamp: new Date(1000 + seq).toISOString(),
+  };
+}
+
+function makePluginTimelineEntry(seq: number, status: string): TimelineResponseEntry {
+  return {
+    seqStart: seq,
+    seqEnd: seq,
+    provider: "claude",
+    item: {
+      type: "plugin" as const,
+      id: "review-1",
+      pluginId: "review",
+      kind: "review",
+      version: 1,
+      data: { status },
     },
     timestamp: new Date(1000 + seq).toISOString(),
   };
@@ -3231,6 +3255,43 @@ describe("processTimelineResponse", () => {
         detailType: "read",
       },
     ]);
+  });
+
+  it("keeps the newest plugin row across the older-page prepend boundary", () => {
+    const currentTail = hydrateStreamState(
+      [
+        {
+          event: {
+            type: "timeline",
+            provider: "claude",
+            item: makePluginTimelineEntry(3, "complete").item,
+          },
+          timestamp: new Date(3000),
+        },
+      ],
+      { source: "canonical" },
+    );
+
+    const result = processTimelineResponse({
+      ...baseTimelineInput,
+      currentTail,
+      currentCursor: { epoch: "epoch-1", startSeq: 3, endSeq: 5 },
+      payload: {
+        ...baseTimelineInput.payload,
+        direction: "before",
+        epoch: "epoch-1",
+        startCursor: { seq: 1 },
+        endCursor: { seq: 2 },
+        entries: [makePluginTimelineEntry(1, "running")],
+      },
+    });
+
+    expect(result.tail).toHaveLength(1);
+    expect(result.tail[0]).toMatchObject({
+      kind: "plugin",
+      id: "review/review-1",
+      data: { status: "complete" },
+    });
   });
 
   it("removes a reconciled submitted prompt before coalescing a tool call at the pagination seam", () => {

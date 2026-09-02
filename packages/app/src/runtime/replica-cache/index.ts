@@ -125,6 +125,7 @@ const StoredTimelineItemSchema = z.discriminatedUnion("kind", [
     ...TimelineItemBaseShape,
     kind: z.literal("plugin"),
     pluginId: z.string(),
+    pluginItemId: z.string(),
     itemKind: z.string(),
     version: z.number().int().positive(),
     data: PluginTimelineDataSchema,
@@ -449,6 +450,7 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
         ...base,
         kind: item.kind,
         pluginId: item.pluginId,
+        pluginItemId: item.pluginItemId,
         itemKind: item.itemKind,
         version: item.version,
         data: item.data,
@@ -457,6 +459,26 @@ function serializeTimelineItem(item: StreamItem): StoredTimelineItem | null {
 }
 
 function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
+  if (item.kind === "plugin") {
+    return {
+      id: item.id,
+      ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
+      ...(item.turnId ? { turnId: item.turnId } : {}),
+      timestamp: new Date(item.timestamp),
+      kind: item.kind,
+      pluginId: item.pluginId,
+      pluginItemId: item.pluginItemId,
+      itemKind: item.itemKind,
+      version: item.version,
+      data: item.data,
+    };
+  }
+  return deserializeBuiltinTimelineItem(item);
+}
+
+function deserializeBuiltinTimelineItem(
+  item: Exclude<StoredTimelineItem, { kind: "plugin" }>,
+): StreamItem {
   const base = {
     id: item.id,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
@@ -528,15 +550,6 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
         },
       };
     }
-    case "plugin":
-      return {
-        ...base,
-        kind: item.kind,
-        pluginId: item.pluginId,
-        itemKind: item.itemKind,
-        version: item.version,
-        data: item.data,
-      };
   }
 }
 

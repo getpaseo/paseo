@@ -377,12 +377,17 @@ function runGitCommandWithProvenance(
       try {
         // `core.quotepath=false` makes git emit raw UTF-8 paths instead of
         // octal-escaping non-ASCII bytes (e.g. `测试文件.txt` vs `"\346\265\213..."`).
-        child = spawnProcess("git", ["-c", "core.quotepath=false", ...args], {
-          cwd: options.cwd,
-          envOverlay,
-          shell: false,
-          stdio: ["ignore", "pipe", "pipe"],
-        });
+        // `core.fsmonitor=false` prevents repository config from launching a command.
+        child = spawnProcess(
+          "git",
+          ["-c", "core.quotepath=false", "-c", "core.fsmonitor=false", ...args],
+          {
+            cwd: options.cwd,
+            envOverlay,
+            shell: false,
+            stdio: ["ignore", "pipe", "pipe"],
+          },
+        );
         spawnGitCommandTrace(commandTrace, child.pid);
       } catch (error) {
         rejectSpawnFailure(error);

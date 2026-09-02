@@ -3,6 +3,7 @@ import type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
   PluginClientContribution,
+  PluginClientSlashCommandContribution,
   PluginCleanup,
   PluginComposerPillContribution,
   PluginSidebarContribution,
@@ -25,6 +26,7 @@ export interface EvaluatedPlugin {
   sidebarItems: PluginSidebarContribution[];
   workspacePanels: EvaluatedPluginWorkspacePanelContribution[];
   commandCenterItems: PluginCommandCenterItemContribution[];
+  clientSlashCommands?: PluginClientSlashCommandContribution[];
   clientSide: PluginClientContribution | null;
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
@@ -41,6 +43,7 @@ export interface InstalledPlugin extends EvaluatedPlugin {
 export type {
   PluginAttachmentSourceContribution,
   PluginCommandCenterItemContribution,
+  PluginClientSlashCommandContribution,
   PluginComposerPillContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
