@@ -5,8 +5,6 @@ import { createPluginClientStateSource } from "../client-state/source";
 import { createPluginNavigation } from "../navigation";
 import { useInstalledPlugins } from "../registry";
 import { createPluginSurfaceRuntime } from "../surface-runtime";
-import { CLIENT_SLASH_COMMANDS } from "@/client-slash-commands";
-import { mergeSlashCommandSources } from "./model";
 
 export interface PluginClientSlashCommand {
   pluginId: string;
@@ -75,15 +73,6 @@ export function usePluginClientSlashCommands(input: {
           ];
         });
       });
-    return mergeSlashCommandSources({
-      builtIn: CLIENT_SLASH_COMMANDS,
-      plugins: commands,
-      provider: [],
-      onPluginCollision(command, winner) {
-        console.warn(
-          `[Plugins] Client slash command /${command.name} from ${command.pluginId} ignored; ${winner} command wins`,
-        );
-      },
-    }).flatMap((entry) => (entry.source === "plugin" ? [entry.command] : []));
+    return commands;
   }, [client, input.agentId, input.serverId, input.workspaceId, installed]);
 }

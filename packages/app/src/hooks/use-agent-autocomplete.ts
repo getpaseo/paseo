@@ -218,14 +218,20 @@ function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
       command,
     }));
     const rootCommands: AvailableCommand[] = mergeSlashCommandSources({
-      builtIn: input.isDraftContext ? [] : CLIENT_SLASH_COMMANDS,
+      builtIn: CLIENT_SLASH_COMMANDS,
       plugins: input.pluginCommands,
       provider: input.commands,
-      onPluginCollision() {},
-    }).map((entry): AvailableCommand => {
-      if (entry.source === "built-in") return { source: "client", command: entry.command };
-      return entry;
-    });
+      onPluginCollision(command, winner) {
+        console.warn(
+          `[Plugins] Client slash command /${command.name} from ${command.pluginId} ignored; ${winner} command wins`,
+        );
+      },
+    })
+      .filter((entry) => !input.isDraftContext || entry.source !== "built-in")
+      .map((entry): AvailableCommand => {
+        if (entry.source === "built-in") return { source: "client", command: entry.command };
+        return entry;
+      });
     const availableCommands: AvailableCommand[] =
       input.activeSlashCommand?.position === "inline"
         ? filterInlineSkillCommandEntries(providerCommands)
