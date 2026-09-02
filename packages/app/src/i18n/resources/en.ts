@@ -284,6 +284,7 @@ export const en = {
       zoomIn: "Zoom in",
       zoomOut: "Zoom out",
       resetZoom: "Reset view",
+      fullscreen: "Fullscreen",
       viewSource: "View source",
       viewDiagram: "View diagram",
     },
@@ -356,6 +357,12 @@ export const en = {
   },
   importSession: {
     title: "Import session",
+    chooseHostTitle: "Import from host",
+    searchPlaceholder: "Search sessions...",
+    scope: {
+      host: "Sessions on {{host}}",
+      workspace: "This workspace",
+    },
     filters: {
       all: "All",
     },
@@ -364,12 +371,13 @@ export const en = {
       updateHost: "Update the host to import sessions.",
       noProviders: "No importable providers are enabled.",
       loading: "Loading recent sessions...",
-      failedAll: "Could not load recent sessions.",
-      failedProviders: "Could not load sessions for {{providers}}.",
+      failedProvider: "Could not load {{provider}} sessions",
       failedImport: "Could not import selected session.",
     },
     actions: {
       refresh: "Refresh sessions",
+      showAll: "Show all",
+      loadMore: "Load more",
     },
     preview: {
       untitledSession: "Untitled session",
@@ -377,6 +385,7 @@ export const en = {
     },
     empty: {
       noRecent: "No recent sessions to import.",
+      noMatches: "No sessions match your search.",
       alreadyImported: "All recent sessions are already imported.",
       noProviderSessions: "No {{provider}} sessions found.",
     },
@@ -1091,7 +1100,6 @@ export const en = {
       addProject: "Add project",
       newWorkspace: "New workspace",
       hosts: "Hosts",
-      home: "Home",
       settings: "Settings",
       closeSidebar: "Close sidebar",
     },
@@ -1423,7 +1431,7 @@ export const en = {
       },
       importSession: {
         title: "Import session",
-        description: "Bring in recent external CLI sessions",
+        description: "Open a Claude Code, Codex or other session you started in a terminal",
       },
       setupProviders: {
         title: "Setup providers",

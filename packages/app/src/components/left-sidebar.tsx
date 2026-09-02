@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { FolderPlus, GitBranch, Home, Server, Settings, X } from "lucide-react-native";
+import { FolderPlus, GitBranch, Import, Server, Settings, X } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -30,6 +30,7 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { HEADER_INNER_HEIGHT, useIsCompactFormFactor } from "@/constants/layout";
 import { useOpenAddProject } from "@/hooks/use-open-add-project";
+import { useImportSession } from "@/hooks/use-import-session";
 import { useShortcutKeys } from "@/hooks/use-shortcut-keys";
 import {
   type SidebarProjectEntry,
@@ -46,11 +47,7 @@ import { usePanelStore } from "@/stores/panel-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
-import {
-  buildOpenProjectRoute,
-  buildSettingsAddHostRoute,
-  buildSettingsRoute,
-} from "@/utils/host-routes";
+import { buildSettingsAddHostRoute, buildSettingsRoute } from "@/utils/host-routes";
 import { openHostOverview } from "@/navigation/settings-navigation";
 import { SidebarAgentListSkeleton } from "./sidebar-agent-list-skeleton";
 import { SidebarCalloutSlot } from "./sidebar-callout-slot";
@@ -78,7 +75,7 @@ interface SidebarSharedProps {
   toggleProjectCollapsed: (projectViewKey: string) => void;
   handleRefresh: () => void;
   handleOpenProject: () => void;
-  handleHome: () => void;
+  handleImportSession: () => void;
   handleSettings: () => void;
   labels: SidebarLabels;
   handleAddHost: () => void;
@@ -88,7 +85,7 @@ interface SidebarSharedProps {
 interface SidebarLabels {
   addProject: string;
   hosts: string;
-  home: string;
+  importSession: string;
   settings: string;
   searchHosts: string;
   closeSidebar: string;
@@ -145,6 +142,7 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
   }, [isRevalidating, isManualRefresh]);
 
   const openProjectPicker = useOpenAddProject();
+  const { open: openImportSession, sheet: importSessionSheet } = useImportSession();
 
   const handleOpenProjectMobile = useCallback(() => {
     showMobileAgent();
@@ -185,20 +183,16 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
     openHostOverview(serverId);
   }, []);
 
-  const handleHomeMobile = useCallback(() => {
+  const handleImportSessionMobile = useCallback(() => {
     showMobileAgent();
-    router.push(buildOpenProjectRoute());
-  }, [showMobileAgent]);
-
-  const handleHomeDesktop = useCallback(() => {
-    router.push(buildOpenProjectRoute());
-  }, []);
+    openImportSession();
+  }, [openImportSession, showMobileAgent]);
 
   const labels = useMemo(
     (): SidebarLabels => ({
       addProject: t("sidebar.actions.addProject"),
       hosts: t("sidebar.actions.hosts"),
-      home: t("sidebar.actions.home"),
+      importSession: t("importSession.title"),
       settings: t("sidebar.actions.settings"),
       searchHosts: t("sidebar.host.searchPlaceholder"),
       closeSidebar: t("sidebar.actions.closeSidebar"),
@@ -228,36 +222,42 @@ export const LeftSidebar = memo(function LeftSidebar({ active }: { active: boole
 
   if (isCompactLayout) {
     return (
-      <RetainedPanelActivity active={active}>
-        <MobileSidebar
-          {...sharedProps}
-          active={active}
-          insetsTop={insets.top}
-          insetsBottom={insets.bottom}
-          closeSidebar={showMobileAgent}
-          handleOpenProject={handleOpenProjectMobile}
-          handleHome={handleHomeMobile}
-          handleSettings={handleSettingsMobile}
-          handleAddHost={handleAddHostMobile}
-          handleOpenHostSettings={handleOpenHostSettingsMobile}
-        />
-      </RetainedPanelActivity>
+      <>
+        <RetainedPanelActivity active={active}>
+          <MobileSidebar
+            {...sharedProps}
+            active={active}
+            insetsTop={insets.top}
+            insetsBottom={insets.bottom}
+            closeSidebar={showMobileAgent}
+            handleOpenProject={handleOpenProjectMobile}
+            handleImportSession={handleImportSessionMobile}
+            handleSettings={handleSettingsMobile}
+            handleAddHost={handleAddHostMobile}
+            handleOpenHostSettings={handleOpenHostSettingsMobile}
+          />
+        </RetainedPanelActivity>
+        {importSessionSheet}
+      </>
     );
   }
 
   return (
-    <RetainedPanelActivity active={active}>
-      <DesktopSidebar
-        {...sharedProps}
-        insetsTop={insets.top}
-        active={active}
-        handleOpenProject={handleOpenProjectDesktop}
-        handleHome={handleHomeDesktop}
-        handleSettings={handleSettingsDesktop}
-        handleAddHost={handleAddHostDesktop}
-        handleOpenHostSettings={handleOpenHostSettingsDesktop}
-      />
-    </RetainedPanelActivity>
+    <>
+      <RetainedPanelActivity active={active}>
+        <DesktopSidebar
+          {...sharedProps}
+          insetsTop={insets.top}
+          active={active}
+          handleOpenProject={handleOpenProjectDesktop}
+          handleImportSession={openImportSession}
+          handleSettings={handleSettingsDesktop}
+          handleAddHost={handleAddHostDesktop}
+          handleOpenHostSettings={handleOpenHostSettingsDesktop}
+        />
+      </RetainedPanelActivity>
+      {importSessionSheet}
+    </>
   );
 });
 
@@ -444,7 +444,7 @@ function IconTooltipContent({
 function SidebarFooter({
   theme,
   handleOpenProject,
-  handleHome,
+  handleImportSession,
   handleSettings,
   labels,
   handleAddHost,
@@ -452,12 +452,12 @@ function SidebarFooter({
 }: {
   theme: SidebarTheme;
   handleOpenProject: () => void;
-  handleHome: () => void;
+  handleImportSession: () => void;
   handleSettings: () => void;
   labels: {
     addProject: string;
     hosts: string;
-    home: string;
+    importSession: string;
     settings: string;
     searchHosts: string;
   };
@@ -483,10 +483,10 @@ function SidebarFooter({
           onOpenHostSettings={handleOpenHostSettings}
         />
         <FooterIconButton
-          onPress={handleHome}
-          testID="sidebar-home"
-          label={labels.home}
-          icon={Home}
+          onPress={handleImportSession}
+          testID="sidebar-import-session"
+          label={labels.importSession}
+          icon={Import}
           theme={theme}
         />
         <SidebarHelpMenu />
@@ -522,7 +522,7 @@ function MobileSidebar({
   toggleProjectCollapsed,
   handleRefresh,
   handleOpenProject,
-  handleHome,
+  handleImportSession,
   handleSettings,
   labels,
   handleAddHost,
@@ -595,6 +595,7 @@ function MobileSidebar({
             onRefresh={handleRefresh}
             onWorkspacePress={handleWorkspacePress}
             onAddProject={handleOpenProject}
+            onImportSession={handleImportSession}
             parentGestureRef={closeGestureRef}
             dragGestureHostActive={active}
             listHeaderComponent={workspacesSectionHeaderElement}
@@ -604,7 +605,7 @@ function MobileSidebar({
         <SidebarFooter
           theme={theme}
           handleOpenProject={handleOpenProject}
-          handleHome={handleHome}
+          handleImportSession={handleImportSession}
           handleSettings={handleSettings}
           labels={labels}
           handleAddHost={handleAddHost}
@@ -633,7 +634,7 @@ function DesktopSidebar({
   toggleProjectCollapsed,
   handleRefresh,
   handleOpenProject,
-  handleHome,
+  handleImportSession,
   handleSettings,
   labels,
   handleAddHost,
@@ -771,6 +772,7 @@ function DesktopSidebar({
             isRefreshing={isManualRefresh && isRevalidating}
             onRefresh={handleRefresh}
             onAddProject={handleOpenProject}
+            onImportSession={handleImportSession}
             listHeaderComponent={workspacesSectionHeaderElement}
           />
         )}
@@ -780,7 +782,7 @@ function DesktopSidebar({
         <SidebarFooter
           theme={theme}
           handleOpenProject={handleOpenProject}
-          handleHome={handleHome}
+          handleImportSession={handleImportSession}
           handleSettings={handleSettings}
           labels={labels}
           handleAddHost={handleAddHost}

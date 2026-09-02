@@ -83,6 +83,7 @@ export async function expectCommandCenterToRemainAtTheTop(page: Page): Promise<v
 export async function expectPrimaryCommandCenterActions(panel: Locator): Promise<void> {
   const expectedActions = [
     { title: "New workspace", shortcut: "⌘N" },
+    { title: "Import session" },
     { title: "History" },
     { title: "Schedules" },
     { title: "Settings", shortcut: "⌘," },
@@ -105,6 +106,9 @@ export async function expectPrimaryCommandCenterActions(panel: Locator): Promise
   await input.fill("home");
   await expect(panel.getByRole("button").filter({ hasText: "Home" })).toBeVisible();
   await expect(panel.getByRole("button").filter({ hasText: "Add project" })).toHaveCount(0);
+  await input.fill("import");
+  await expect(panel.getByRole("button").filter({ hasText: "Import session" })).toBeVisible();
+  await expect(panel.getByRole("button").filter({ hasText: "Home" })).toHaveCount(0);
   await input.fill("");
 }
 

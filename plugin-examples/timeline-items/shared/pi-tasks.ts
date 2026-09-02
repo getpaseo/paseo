@@ -53,7 +53,7 @@ function replacement(tasks: PiTask[]) {
 }
 
 export const transformPiTodoToolCall: ToolCallTransformer = ({ item }) => {
-  if (item.name !== "todo" || item.status !== "completed" || item.detail.type !== "unknown") {
+  if (item.name !== "todo" || item.detail.type !== "unknown") {
     return;
   }
 

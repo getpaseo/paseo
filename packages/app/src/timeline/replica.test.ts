@@ -115,6 +115,64 @@ describe("viewed timeline persistence", () => {
     owner.dispose();
   });
 
+  it("reconciles an overlapping projected message against its cached cursor", async () => {
+    useSessionStore.getState().initializeSession(SERVER_ID, null);
+    const partial = "```mermaid\nflowchart LR\n  Start --> Mid";
+    const complete = `${partial}dle\n  Middle --> Done\n\`\`\``;
+    const owner = createOwner({
+      readTimeline: async () => ({
+        agentId: AGENT_ID,
+        items: [item("cached", partial, 4)],
+        range: { epoch: "epoch-1", startSeq: 1, endSeq: 4 },
+        hasOlder: false,
+      }),
+      commitTimeline: () => undefined,
+    });
+
+    owner.replaceVisibleAgentIds("test", [AGENT_ID]);
+    await expect
+      .poll(() =>
+        selectAgentTimelineState(useSessionStore.getState().sessions[SERVER_ID], AGENT_ID),
+      )
+      .toMatchObject({ status: "painted" });
+
+    owner.applyTimelineResponse({
+      requestId: "page-after-cache",
+      agentId: AGENT_ID,
+      agent: null,
+      direction: "after",
+      projection: "projected",
+      reset: false,
+      epoch: "epoch-1",
+      window: { minSeq: 1, maxSeq: 5, nextSeq: 6 },
+      startCursor: { epoch: "epoch-1", seq: 5 },
+      endCursor: { epoch: "epoch-1", seq: 5 },
+      entries: [
+        {
+          provider: "mock",
+          item: { type: "assistant_message", text: complete },
+          timestamp: "2026-08-26T10:00:00.000Z",
+          seqStart: 2,
+          seqEnd: 5,
+          sourceSeqRanges: [{ startSeq: 2, endSeq: 5 }],
+          collapsed: ["assistant_merge"],
+        },
+      ],
+      error: null,
+      hasNewer: false,
+      hasOlder: false,
+      staleCursor: false,
+      gap: false,
+    });
+
+    const session = useSessionStore.getState().sessions[SERVER_ID];
+    expect([
+      ...(session?.agentStreamTail.get(AGENT_ID) ?? []),
+      ...(session?.agentStreamHead.get(AGENT_ID) ?? []),
+    ]).toMatchObject([{ kind: "assistant_message", text: complete }]);
+    owner.dispose();
+  });
+
   it("does not let a late cache read overwrite newer network state", async () => {
     useSessionStore.getState().initializeSession(SERVER_ID, null);
     let release!: (value: CachedTimeline) => void;

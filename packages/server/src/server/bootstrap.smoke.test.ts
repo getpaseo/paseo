@@ -675,7 +675,7 @@ describe("paseo daemon bootstrap", () => {
         JSON.stringify({ id: "startup-rollback" }),
       );
       await writeFile(
-        path.join(pluginDirectory, "index.tsx"),
+        path.join(pluginDirectory, "index.server.ts"),
         `import { writeFileSync } from "node:fs";
 export default function contribute(plugin: unknown) {
   void plugin;

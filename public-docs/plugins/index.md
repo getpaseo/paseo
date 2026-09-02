@@ -9,24 +9,22 @@ category: Plugins
 # Plugin quickstart
 
 > **Experimental:** The plugin API is still evolving, so expect breaking changes and updates to
-> your plugins as Paseo evolves.
+> your plugins as Paseo evolves. See the [plugin roadmap](https://github.com/getpaseo/paseo/labels/plugins)
+> for planned contribution surfaces.
 
-See the [plugin roadmap](https://github.com/getpaseo/paseo/labels/plugins) for planned contribution
-surfaces and their current status.
+A plugin is a TypeScript project installed into one Paseo daemon. It can add
+[surfaces and sidebar items](/docs/plugins/reference#surfaces-and-sidebar-items),
+[workspace panels](/docs/plugins/reference#workspace-panels),
+[Command Center items](/docs/plugins/reference#command-center-items),
+[slash commands](/docs/plugins/reference#slash-commands),
+[composer pills](/docs/plugins/reference#composer-pills),
+[timeline items](/docs/plugins/reference#timeline-items),
+[themes](/docs/plugins/reference#contribute-a-theme),
+[attachment sources](/docs/plugins/reference#add-a-composer-attachment-source), and
+[daemon-side RPCs](/docs/plugins/reference#add-plugin-specific-backend-behavior). Client
+contributions run on every Paseo client connected to that daemon, including mobile.
 
-Paseo plugins add native workspace panels, composer pills, Command Center items, global surfaces, app themes, daemon behavior, and composer attachment sources. They run on every Paseo client connected to the host, including mobile.
-
-> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Server code and Git preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With `--host`, commands run on the remote daemon host.
-
-On the target host, open **Settings → Plugins** and turn on **Enable plugins**. This is the global switch for every configured plugin on that daemon.
-
-You can also change the root `pluginsEnabled` field in the daemon's `config.json`, then apply it without restarting:
-
-```bash
-paseo reload --json
-```
-
-Enabling starts configured plugins; disabling tears them down. Automation must inspect the current value first and obtain your explicit permission before changing a disabled or omitted value to `true`.
+This guide scaffolds a plugin, runs it, and adds a workspace panel to it.
 
 ## Create a plugin
 
@@ -38,14 +36,99 @@ cd /absolute/path/to/workspace-plugin
 npm install
 ```
 
-`init` creates a strict TypeScript project. It does not run the package manager. `npm install`
-installs development dependencies for local typechecking and tests. Paseo supplies the plugin SDK,
-React, React Native, TanStack Query, and Zod at runtime; plugins do not need a `build` hook for these
-modules. `index.ts` registers contributions; client UI lives in `*.client.tsx` files.
+`init` writes a strict TypeScript project and does not run the package manager. `npm install` adds
+development dependencies for typechecking and tests only; Paseo supplies the plugin SDK, React,
+React Native, TanStack Query, and Zod at runtime.
 
-Plugins run on desktop, browser, iOS, and Android. Paseo ships several themes. Color every `Text` from `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`. Hardcoded black text fails in dark themes.
+The scaffold is a working plugin: a sidebar surface with a button that asks the daemon for a
+greeting through an RPC.
 
-Replace `main.client.tsx` with:
+```text
+workspace-plugin/
+  paseo-plugin.json      # { "id": "workspace-plugin" }
+  index.client.tsx       # runs in the Paseo app
+  index.server.ts        # runs in a daemon subprocess
+  client/greeting.tsx    # the surface component
+  client/web.ts          # the only file allowed to touch browser APIs
+  server/greeting.ts     # the RPC handler
+  shared/greeting.ts     # the RPC contract, imported by both
+  package.json
+  tsconfig.json
+```
+
+Each entry default-exports one function that registers contributions and returns a cleanup
+function. `index.client.tsx` registers the surface and the sidebar item that opens it:
+
+```tsx
+import type { PluginClientContext } from "@getpaseo/plugin";
+import { GreetingSurface } from "./client/greeting";
+
+export default function contribute(client: PluginClientContext) {
+  client.addSurface("greeting", GreetingSurface);
+  client.addSidebarItem({
+    id: "greeting",
+    title: "Greeting",
+    icon: "MessageCircle",
+    surface: "greeting",
+  });
+  return () => {};
+}
+```
+
+`index.server.ts` registers the handler for the contract in `shared/greeting.ts`:
+
+```ts
+import type { PluginServerContext } from "@getpaseo/plugin";
+import { createGreeting } from "./server/greeting";
+import { greetingRpc } from "./shared/greeting";
+
+export default function contribute(server: PluginServerContext) {
+  server.handle(greetingRpc, createGreeting);
+  return () => {};
+}
+```
+
+The directory is the boundary. Code under `client/` compiles only into the app bundle, code under
+`server/` only into the daemon bundle, and `shared/` into both. Importing across that line, adding
+a code file at the root, or importing a `node:` module from client code is a compile error. A
+plugin with no daemon-side work can omit `index.server.ts`; a plugin with no UI can omit
+`index.client.tsx`.
+
+Client code runs on phones as well as in browsers. The project typechecks without the DOM library,
+so `document` and `window` are errors outside `client/web.ts`, which shows how to gate a browser
+API behind `Platform.OS` with a native fallback. See
+[Cross-platform rules](/docs/plugins/reference#cross-platform-rules) before writing UI.
+
+## Install and try it
+
+Plugins are trusted, unsandboxed code: server code and Git preparation commands run with the daemon
+user's access on the daemon machine, and client code runs inside the Paseo app. Installing a plugin
+means you trust that codebase, its dependencies, and its future updates.
+
+Turn on **Enable plugins** under **Settings → Plugins** on the daemon you are installing into. It is
+the global switch for every plugin on that daemon. It is also the root `pluginsEnabled` field in the
+daemon's `config.json`; after editing the file, apply it with `paseo reload --json`. An automated
+tool must read the current value and get your explicit permission before turning it on.
+
+Then typecheck and install:
+
+```bash
+npm run typecheck
+paseo plugin install /absolute/path/to/workspace-plugin
+paseo plugin ls
+```
+
+`paseo plugin ls` should report the plugin as `running`. Open Paseo, choose **Greeting** in the
+sidebar, and press **Create greeting**. The message comes back from the daemon subprocess through
+the RPC.
+
+If the sidebar item is missing, check that **Enable plugins** is on, the plugin is `running`, and
+the client is viewing the host you installed into. `paseo plugin logs workspace-plugin` shows the
+daemon-side output, including load errors.
+
+## Add a workspace panel
+
+A workspace panel opens as a tab next to agents, terminals, and files. Create `client/overview.tsx`:
 
 ```tsx
 import { type PluginWorkspacePanelProps, useWorkspace } from "@getpaseo/plugin";
@@ -82,60 +165,67 @@ export function WorkspaceOverview({ theme, layout, workspaceId }: PluginWorkspac
 }
 ```
 
-Replace `index.ts` with:
+`useWorkspace` reads the fields the panel renders from the app's cached state, without an RPC and
+without re-rendering when unrelated fields change. Every `Text` takes its color from
+`theme.colors`, and `layout.compact` drives spacing, so the panel works in every Paseo theme and on
+phones. See [Theme and layout](/docs/plugins/reference#theme-and-layout) for the token list.
 
-```ts
-import type { PluginContext } from "@getpaseo/plugin";
-import { WorkspaceOverview } from "./main.client";
+Register the panel and a Command Center item that opens it by adding to `index.client.tsx`:
 
-export default function contribute(plugin: PluginContext) {
-  plugin.addWorkspacePanel({
-    id: "overview",
-    title: "Workspace overview",
-    icon: "PanelsTopLeft",
-    context: "workspace",
-    locations: ["workspace", "explorer"],
-    Component: WorkspaceOverview,
-  });
-  plugin.addCommandCenterItem({
-    id: "open-overview",
-    title: "Open workspace overview",
-    icon: "PanelsTopLeft",
-    context: "workspace",
-    onSelect({ openPanel }) {
-      openPanel("overview");
-    },
-  });
-  return () => {};
-}
+```tsx
+import { WorkspaceOverview } from "./client/overview";
+
+// Inside contribute(client), after the existing registrations:
+client.addWorkspacePanel({
+  id: "overview",
+  title: "Workspace overview",
+  icon: "PanelsTopLeft",
+  context: "workspace",
+  locations: ["workspace", "explorer"],
+  Component: WorkspaceOverview,
+});
+client.addCommandCenterItem({
+  id: "open-overview",
+  title: "Open workspace overview",
+  icon: "PanelsTopLeft",
+  context: "workspace",
+  onSelect({ openPanel }) {
+    openPanel("overview");
+  },
+});
 ```
 
-The icon is a [Lucide](https://lucide.dev/icons/) icon name. `*.client.tsx` files can use React Native runtime APIs; Paseo excludes them from the daemon bundle. Panel props contain stable IDs; `useWorkspace` selects the cached fields the component needs without fetching through RPC or re-rendering for unrelated workspace changes. See [Theme and layout](/docs/plugins/reference#theme-and-layout) for the required tokens.
+`icon` is a [Lucide](https://lucide.dev/icons/) icon name.
 
-## Check and install it
+## Edit and reload
+
+Source changes take effect only when you reload the plugin:
 
 ```bash
 npm run typecheck
-paseo plugin install /absolute/path/to/workspace-plugin
-paseo plugin ls
+paseo plugin reload workspace-plugin
 ```
 
-Open a workspace, press **⌘K** on macOS or **Ctrl+K** on Windows and Linux, and choose **Open workspace overview**. It opens as a normal workspace tab. If the item does not appear, confirm that **Enable plugins** is on, the plugin status is `running` in `paseo plugin ls`, and the client is viewing the host where you installed it.
+A reload stops the old plugin, runs its cleanup, compiles the current source, and starts it again.
+A failed reload stays failed and reports its error in `paseo plugin ls`; fix the source and reload
+again.
 
-To install a plugin published through GitHub or another Git host:
+Open a workspace, press **⌘K** on macOS or **Ctrl+K** on Windows and Linux, and choose **Open
+workspace overview**. The panel opens as a workspace tab.
+
+## Install a published plugin
+
+Plugins published in a Git repository install by shorthand or URL:
 
 ```bash
 paseo plugin add owner/repository
 paseo plugin add https://gitlab.com/group/repository.git
-paseo plugin add https://git.example.com/owner/repository.git
 paseo plugin add owner/monorepo:plugins/workspace
 paseo plugin add owner/repository --ref main
 ```
 
-Append `:relative/path` to the source when the plugin lives below the repository root.
-
-An omitted `--ref` tracks the default branch. Explicit branches track updates; tags and commits are
-pinned. Check and apply updates with:
+Append `:relative/path` when the plugin lives below the repository root. Without `--ref`, the
+default branch is tracked; a branch tracks updates, while a tag or commit stays pinned.
 
 ```bash
 paseo plugin status
@@ -143,60 +233,36 @@ paseo plugin update workspace-plugin
 paseo plugin update --all
 ```
 
-Most plugins should omit `build`. Paseo compiles TypeScript and TSX and supplies its runtime modules.
-Declare preparation only when the staged checkout must install another dependency, generate source,
-or perform another required build step:
+Paseo compiles TypeScript itself, so most plugins need no build step. A repository that must
+install a dependency Paseo does not provide, or generate files, declares
+[`build` commands](/docs/plugins/reference#cli-reference) in its manifest.
 
-```json
-{
-  "id": "workspace-plugin",
-  "build": [
-    ["npm", "ci"],
-    ["npm", "run", "build"]
-  ]
-}
-```
+## Read backend logs
 
-Each `build` entry is a non-empty argv array, executed directly without a shell from the staged
-plugin directory. Paseo never chooses a package manager or infers commands from lockfiles. On
-install and update it resolves the exact commit, runs these commands, then validates, compiles, and
-activates the candidate. A failed command discards the candidate and keeps the installed/running
-version. The daemon log records the exact argv and output; `--host` runs them on the remote daemon
-host.
-
-## Edit and reload
-
-Source changes are explicit:
-
-```bash
-npm run typecheck
-paseo plugin reload workspace-plugin
-```
-
-A reload stops the old plugin, runs its cleanup, compiles the current source, and starts it again. A failed reload stays failed and reports its load error; fix the source and reload again.
-
-## Debug backend output
-
-Use normal Node logging in daemon-side handlers and cleanup:
+Daemon-side handlers and cleanup can use normal Node logging:
 
 ```ts
 console.log("Refreshing issues");
 console.error("Issue refresh failed", error);
 ```
 
-Read recent stdout and stderr from **Settings → Plugins → Logs** or the CLI:
+Read the recent output from **Settings → Plugins → Logs** or the CLI:
 
 ```bash
 paseo plugin logs workspace-plugin
 paseo plugin logs workspace-plugin --json
 ```
 
-The log tail includes `[paseo]` loading, ready, stopping, and stopped entries, plus compilation and
-load failures. It survives reloads and crashes. Inspect it when a plugin fails to start or an RPC
-rejects. See [Debug backend output](/docs/plugins/reference#debug-backend-output) for retention and
-security behavior.
+The tail includes `[paseo]` loading, ready, stopping, and stopped entries, plus compilation and load
+failures, and it survives reloads and crashes. Client-side output stays in the app. See
+[Debug backend output](/docs/plugins/reference#debug-backend-output) for retention and what not to
+log.
 
 ## Next
 
-- [Plugin reference](/docs/plugins/reference), add daemon behavior, use the Paseo SDK, contribute themes and attachments, and manage lifecycle.
-- [TypeScript SDK](/docs/sdk), the workspace, agent, provider, and config API exposed inside plugins.
+- [Plugin reference](/docs/plugins/reference): every contribution type, its fields, the runtime
+  modules, hosts, and the CLI.
+- [Migrate a plugin to runtime entries](/docs/plugins/migration): move a plugin written against the
+  single `index.ts` entry, step by step.
+- [TypeScript SDK](/docs/sdk): the workspace, agent, provider, and config API available as `paseo`
+  in client and server code.

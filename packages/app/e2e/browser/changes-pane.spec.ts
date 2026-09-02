@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { type Locator, type Page } from "@playwright/test";
 import { buildHostWorkspaceRoute, buildSettingsSectionRoute } from "../../src/utils/host-routes";
@@ -312,11 +312,27 @@ test("an empty Changes comparison links to the populated comparison", async ({ p
   await page.getByTestId("changes-diff-mode-uncommitted").click();
 
   await expect(tree.getByText("No uncommitted changes", { exact: true })).toBeVisible();
+  await expect(panel.getByText("No uncommitted changes", { exact: true })).toBeVisible();
   const seeCommitted = tree.getByRole("button", { name: "See committed changes" });
   await expect(seeCommitted).toBeVisible();
   await seeCommitted.click();
   await expect(mode).toContainText("Committed");
   await expect(panel.getByTestId("diff-file-0")).toHaveAccessibleName("committed-only.ts, +1, -0");
+});
+
+test("Changes comparison controls the working diff and tree selection focuses its file", async ({
+  page,
+}) => {
+  const workspace = await createWorkspaceWithScrollableComparisons();
+  await openWorkspaceChangesSurface(page, workspace);
+
+  await selectChangesComparison(page, "Committed");
+  await expectWorkingComparisonFiles(page, "committed");
+  await selectChangedFileAndExpectFocused(page, "committed/50-target.ts");
+
+  await selectChangesComparison(page, "Uncommitted");
+  await expectWorkingComparisonFiles(page, "uncommitted");
+  await selectChangedFileAndExpectFocused(page, "uncommitted/50-target.ts");
 });
 
 test("changes file actions open below the right-click without a reserved kebab", async ({
@@ -1466,6 +1482,46 @@ async function createWorkspaceWithCommittedDiff(): Promise<DirtyWorkspace> {
   return { id: created.workspace.id, repoPath: repo.path };
 }
 
+async function createWorkspaceWithScrollableComparisons(): Promise<DirtyWorkspace> {
+  const repo = await createTempGitRepo("changes-comparison-focus-", {
+    files: [{ path: "tracked.ts", content: "export const tracked = true;\n" }],
+  });
+  const client = await connectSeedClient();
+  cleanupTasks.push({
+    run: async () => {
+      await client.close().catch(() => undefined);
+      await repo.cleanup().catch(() => undefined);
+    },
+  });
+
+  const longFile = Array.from(
+    { length: 120 },
+    (_, index) => `export const line${index} = ${index};`,
+  ).join("\n");
+  execFileSync("git", ["checkout", "-b", "feature"], { cwd: repo.path });
+  await writeComparisonFiles(repo.path, "committed", longFile);
+  execFileSync("git", ["add", "committed"], { cwd: repo.path });
+  execFileSync("git", ["commit", "-m", "Add committed comparison files"], { cwd: repo.path });
+  await writeComparisonFiles(repo.path, "uncommitted", longFile);
+
+  const created = await client.createWorkspace({ source: { kind: "directory", path: repo.path } });
+  if (!created.workspace) throw new Error(created.error ?? "Failed to create comparison workspace");
+  return { id: created.workspace.id, repoPath: repo.path };
+}
+
+async function writeComparisonFiles(
+  repoPath: string,
+  directory: "committed" | "uncommitted",
+  longFile: string,
+): Promise<void> {
+  await mkdir(path.join(repoPath, directory), { recursive: true });
+  await Promise.all([
+    writeFile(path.join(repoPath, directory, "00-before.ts"), `${longFile}\n`),
+    writeFile(path.join(repoPath, directory, "50-target.ts"), "export const target = true;\n"),
+    writeFile(path.join(repoPath, directory, "99-after.ts"), `${longFile}\n`),
+  ]);
+}
+
 async function createWorkspaceWithExactSelectionDiff(content: string): Promise<DirtyWorkspace> {
   const repo = await createTempGitRepo("changes-canvas-selection-", {
     files: [{ path: "src/selection.ts", content: "" }],
@@ -1581,6 +1637,54 @@ async function openChangesInVisibleExplorer(page: Page): Promise<void> {
   await expect(page.getByTestId("working-diff-panel").filter({ visible: true })).toBeVisible({
     timeout: 30_000,
   });
+}
+
+async function selectChangesComparison(
+  page: Page,
+  comparison: "Committed" | "Uncommitted",
+): Promise<void> {
+  const tree = page.getByTestId("changes-tree-panel").filter({ visible: true });
+  await tree.getByTestId("changes-diff-status-trigger").click();
+  await page.getByTestId(`changes-diff-mode-${comparison.toLowerCase()}`).click();
+  await expect(tree.getByTestId("changes-diff-status-trigger")).toContainText(comparison);
+}
+
+async function expectWorkingComparisonFiles(
+  page: Page,
+  comparison: "committed" | "uncommitted",
+): Promise<void> {
+  const tree = changesTree(page);
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  const paths = ["00-before.ts", "50-target.ts", "99-after.ts"];
+  await expect(tree.locator('[data-testid^="diff-tree-file-"][data-testid$="-name"]')).toHaveText(
+    paths,
+  );
+  for (const fileName of paths) {
+    await expect(diffHeaderForPath(panel, `${comparison}/${fileName}`)).toBeAttached();
+  }
+}
+
+async function selectChangedFileAndExpectFocused(page: Page, filePath: string): Promise<void> {
+  const tree = changesTree(page);
+  const panel = page.getByTestId("working-diff-panel").filter({ visible: true });
+  const scroller = panel.getByTestId("git-diff-scroll");
+  await scroller.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: false }));
+  });
+
+  await tree.getByText(path.basename(filePath), { exact: true }).click();
+  const header = diffHeaderForPath(panel, filePath);
+  await expect(header).toBeVisible();
+  await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+
+  const [scrollBounds, headerBounds] = await Promise.all([
+    scroller.boundingBox(),
+    header.boundingBox(),
+  ]);
+  if (!scrollBounds || !headerBounds)
+    throw new Error("Focused diff header geometry is unavailable");
+  expect(headerBounds.y - scrollBounds.y).toBeCloseTo(0, 0);
 }
 
 async function expectExpandedMountedTabDiff(page: Page): Promise<void> {
