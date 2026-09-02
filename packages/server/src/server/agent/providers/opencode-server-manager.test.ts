@@ -152,6 +152,41 @@ describe("OpenCodeServerManager generations", () => {
     await oldAcquisition.release();
   });
 
+  test("does not spawn a catalog generation after shutdown begins", async () => {
+    let allocateCalls = 0;
+    let releaseRefreshPort!: () => void;
+    const refreshPortReleased = new Promise<void>((resolve) => {
+      releaseRefreshPort = resolve;
+    });
+    let refreshPortRequested!: () => void;
+    const refreshPortStarted = new Promise<void>((resolve) => {
+      refreshPortRequested = resolve;
+    });
+    const { manager, runtime } = createTestManager([4236, 4237], {
+      portAllocator: async () => {
+        const port = await runtime.allocatePort();
+        allocateCalls += 1;
+        if (allocateCalls === 2) {
+          refreshPortRequested();
+          await refreshPortReleased;
+        }
+        return port;
+      },
+    });
+
+    const initial = await manager.acquireCurrent();
+    const refresh = manager.refreshPluginCatalog(8);
+    await refreshPortStarted;
+    const shutdown = manager.shutdown();
+    releaseRefreshPort();
+
+    await Promise.all([refresh, shutdown]);
+    await initial.release();
+
+    expect(runtime.spawnCalls.map(({ args }) => args.at(-1))).toEqual(["4236"]);
+    expect(runtime.terminatedPorts).toEqual([4236]);
+  });
+
   test("concurrent new-server acquisitions share one fresh generation", async () => {
     const { manager, runtime } = createTestManager([4251, 4252, 4253]);
 
@@ -451,6 +486,7 @@ function createTestManager(
     baseEnv?: Record<string, string>;
     opencodeHomeDir?: string;
     logger?: Logger;
+    portAllocator?: OpenCodePortAllocator;
   } = {},
 ): {
   manager: OpenCodeServerManager;
@@ -465,7 +501,7 @@ function createTestManager(
       logger: options.logger ?? createTestLogger(),
       baseEnv: options.baseEnv,
       managedProcesses: runtime.managedProcesses,
-      portAllocator: runtime.allocatePort,
+      portAllocator: options.portAllocator ?? runtime.allocatePort,
       resolveCommandPrefix: runtime.resolveCommandPrefix,
       ...(opencodeHomeDir ? { resolveHomeDir: () => opencodeHomeDir } : {}),
       spawnServerProcess: runtime.spawnServerProcess,

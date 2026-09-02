@@ -165,6 +165,7 @@ export function assertSupportedJsonSchema(
 
     const supportedKeys = new Set([
       "type",
+      "format",
       "$schema",
       "title",
       "description",
@@ -229,6 +230,9 @@ export function assertSupportedJsonSchema(
       if (types.filter((entry) => entry !== "null").length > 1) {
         throw new Error(`${label} uses an unsupported type union at ${path}; use anyOf or oneOf`);
       }
+      if (Array.isArray(type) && types.every((entry) => entry === "null")) {
+        throw new Error(`${label} uses an unsupported nullable-only type array at ${path}`);
+      }
       if (requireObject && !types.includes("object")) {
         throw new Error(`${label} input schema must have an object root`);
       }
@@ -244,6 +248,14 @@ export function assertSupportedJsonSchema(
     }
     if (requireObject && type !== "object") {
       throw new Error(`${label} input schema must have an object root`);
+    }
+    if (value.format !== undefined) {
+      if (value.format !== "uri") {
+        throw new Error(`${label} uses unsupported format '${String(value.format)}' at ${path}`);
+      }
+      if (concreteType !== "string") {
+        throw new Error(`${label} format 'uri' requires a string schema at ${path}`);
+      }
     }
     if (
       type === undefined &&
@@ -367,6 +379,7 @@ export function assertSupportedJsonSchema(
     if (composition) {
       const baseConstraintKeys = [
         "type",
+        "format",
         "properties",
         "required",
         "additionalProperties",

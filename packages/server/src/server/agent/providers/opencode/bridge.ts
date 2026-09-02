@@ -60,6 +60,8 @@ export class OpenCodeBridge {
   private readonly catalogSubscribers = new Set<(version: number) => void | Promise<void>>();
   private catalogRefreshPromise: Promise<void> | null = null;
   private catalogRefreshRequested = false;
+  private closePromise: Promise<void> | null = null;
+  private closing = false;
 
   constructor(options: OpenCodeBridgeOptions) {
     this.paseoHome = options.paseoHome;
@@ -68,7 +70,9 @@ export class OpenCodeBridge {
 
   async start(): Promise<void> {
     if (this.server) return;
+    if (this.closing) throw new Error("OpenCode bridge is closed");
     this.pluginUrl = await this.materializePlugin();
+    if (this.closing) throw new Error("OpenCode bridge is closed");
     const server = createServer((request, response) => {
       void this.route(request, response);
     });
@@ -84,11 +88,16 @@ export class OpenCodeBridge {
       await closeServer(server);
       throw new Error("OpenCode bridge did not expose a TCP address");
     }
+    if (this.closing) {
+      await closeServer(server);
+      throw new Error("OpenCode bridge is closed");
+    }
     this.server = server;
     this.baseUrl = `http://127.0.0.1:${address.port}`;
   }
 
   setManifestCatalog(catalog: PaseoToolCatalog | null): void {
+    if (this.closing) return;
     this.manifestCatalog = catalog;
     this.manifestVersion += 1;
     this.catalogRefreshRequested = true;
@@ -146,11 +155,21 @@ export class OpenCodeBridge {
   }
 
   async close(): Promise<void> {
-    const server = this.server;
-    this.server = null;
-    this.baseUrl = null;
-    this.sessions.clear();
-    if (server) await closeServer(server);
+    if (this.closePromise) return this.closePromise;
+    this.closing = true;
+    this.catalogRefreshRequested = false;
+    const close = (async () => {
+      // Subscribers rotate provider-owned OpenCode servers. Wait for that
+      // lifecycle work before taking the bridge endpoint away from them.
+      await this.waitForManifestCatalogRefresh();
+      const server = this.server;
+      this.server = null;
+      this.baseUrl = null;
+      this.sessions.clear();
+      if (server) await closeServer(server);
+    })();
+    this.closePromise = close;
+    return close;
   }
 
   private async materializePlugin(): Promise<string> {
@@ -234,7 +253,7 @@ export class OpenCodeBridge {
   }
 
   private startCatalogRefresh(): void {
-    if (this.catalogRefreshPromise) return;
+    if (this.closing || this.catalogRefreshPromise) return;
     this.catalogRefreshPromise = (async () => {
       // Let synchronous catalog updates settle so one refresh loads the latest
       // manifest version rather than rotating once per plugin notification.
@@ -257,7 +276,7 @@ export class OpenCodeBridge {
       }
     })().finally(() => {
       this.catalogRefreshPromise = null;
-      if (this.catalogRefreshRequested) this.startCatalogRefresh();
+      if (!this.closing && this.catalogRefreshRequested) this.startCatalogRefresh();
     });
   }
 

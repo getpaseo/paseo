@@ -9,8 +9,6 @@ import { fromJSONSchema } from "zod";
 
 import {
   PLUGIN_TOOL_MAX_CATALOG_BYTES,
-  PLUGIN_TOOL_MAX_SCHEMA_BYTES,
-  assertSafeJson,
   assertSupportedJsonSchema,
   assertUtf8ByteLimit,
 } from "../plugins/plugin-tool.js";
@@ -25,14 +23,11 @@ type McpToolContext = RequestHandlerExtra<ServerRequest, ServerNotification>;
 function toMcpInputSchema(tool: PaseoToolDefinition) {
   if (tool.inputSchema) return tool.inputSchema;
   if (!tool.inputSchemaJson) return undefined;
-  assertSafeJson(
-    tool.inputSchemaJson,
-    `Paseo tool ${tool.name} input schema`,
-    PLUGIN_TOOL_MAX_SCHEMA_BYTES,
-  );
-  assertSupportedJsonSchema(tool.inputSchemaJson, `Paseo tool ${tool.name} input schema`, {
-    requireObject: true,
-  });
+  if (tool.source === "plugin") {
+    assertSupportedJsonSchema(tool.inputSchemaJson, `Paseo tool ${tool.name} input schema`, {
+      requireObject: true,
+    });
+  }
   return fromJSONSchema(tool.inputSchemaJson as Parameters<typeof fromJSONSchema>[0]);
 }
 

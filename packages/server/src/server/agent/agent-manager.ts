@@ -1817,7 +1817,7 @@ export class AgentManager {
       if (this.isFencedSessionIdentityCurrent(captured)) {
         this.cancelRunningProviderSubagents(agentId);
       }
-      await this.closeReloadedSession(captured.session, agentId);
+      await this.closeReloadedSession(captured, agentId);
       if (!preparationComplete) this.revokeMcpCapabilityToken(mcpCapabilityToken);
     }
 
@@ -1869,19 +1869,35 @@ export class AgentManager {
     }
   }
 
-  private async closeReloadedSession(session: AgentSession, agentId: string): Promise<boolean> {
-    const existingClose = this.sessionClosePromises.get(session);
+  private async closeReloadedSession(
+    captured: CapturedSessionIdentity,
+    agentId: string,
+  ): Promise<boolean> {
+    const existingClose = this.sessionClosePromises.get(captured.session);
     if (existingClose) {
-      return await existingClose;
+      const closed = await existingClose;
+      if (!closed) this.quarantineFencedReloadSession(captured);
+      return closed;
     }
     const close = this.closeSessionBounded(
-      session,
+      captured.session,
       agentId,
       "refresh",
       this.rescueTimeouts.reloadSessionCloseMs,
     );
-    this.sessionClosePromises.set(session, close);
-    return await close;
+    this.sessionClosePromises.set(captured.session, close);
+    const closed = await close;
+    if (!closed) this.quarantineFencedReloadSession(captured);
+    return closed;
+  }
+
+  private quarantineFencedReloadSession(captured: CapturedSessionIdentity): void {
+    if (!this.isFencedSessionIdentityCurrent(captured)) return;
+    this.quarantinedAgentIds.add(captured.agent.id);
+    this.agentStreamCoalescer.discard(captured.agent.id);
+    if (this.runs.getRun(captured.agent.id)?.generation === captured.generation) {
+      this.runs.clearAgentRun(captured.agent.id);
+    }
   }
 
   private async closeSessionBounded(

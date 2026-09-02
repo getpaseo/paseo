@@ -11,6 +11,8 @@ export interface PaseoToolResult {
   isError?: boolean;
 }
 
+export type PaseoToolSource = "builtin" | "plugin";
+
 export interface PaseoToolConfig {
   title?: string;
   description?: string;
@@ -19,6 +21,7 @@ export interface PaseoToolConfig {
   /** Pre-serialized schema for server-owned child-process tools. */
   inputSchemaJson?: Record<string, unknown>;
   outputSchemaJson?: Record<string, unknown>;
+  source?: PaseoToolSource;
 }
 
 export interface PaseoToolDefinition extends PaseoToolConfig {

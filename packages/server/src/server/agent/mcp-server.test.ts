@@ -838,7 +838,10 @@ describe("browser MCP tools", () => {
           description: "Look up a record.",
           inputSchemaJson: {
             type: "object",
-            properties: { query: { type: "string", minLength: 1 } },
+            properties: {
+              query: { type: "string", minLength: 1 },
+              url: { type: "string", format: "uri" },
+            },
             required: ["query"],
             additionalProperties: false,
           },
@@ -864,7 +867,7 @@ describe("browser MCP tools", () => {
       });
       const pluginResult = await client.callTool({
         name: "acme.lookup",
-        arguments: { query: "Paseo" },
+        arguments: { query: "Paseo", url: "https://paseo.sh" },
       });
 
       expect(broker.calls).toEqual([
@@ -897,7 +900,10 @@ describe("browser MCP tools", () => {
       expect(listedTools.tools.find((tool) => tool.name === "acme.lookup")?.inputSchema).toEqual({
         $schema: "http://json-schema.org/draft-07/schema#",
         type: "object",
-        properties: { query: { type: "string", minLength: 1 } },
+        properties: {
+          query: { type: "string", minLength: 1 },
+          url: { type: "string", format: "uri" },
+        },
         required: ["query"],
         additionalProperties: false,
       });

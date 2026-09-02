@@ -64,6 +64,23 @@ describe("plugin tool policy", () => {
         "unique.input",
       ),
     ).toThrow(/uniqueItems/);
+    expect(() => assertSupportedJsonSchema({ type: ["null"] }, "nullable-only.input")).toThrow(
+      /nullable-only/,
+    );
+  });
+
+  it("accepts URI formats emitted by Zod and rejects other formats", () => {
+    const schema = serializePluginToolSchema(z.object({ url: z.string().url() }), "uri.input", {
+      requireObject: true,
+    });
+    expect(schema).toMatchObject({ properties: { url: { type: "string", format: "uri" } } });
+    expect(() =>
+      assertSupportedJsonSchema(
+        { type: "object", properties: { url: { type: "string", format: "email" } } },
+        "email.input",
+        { requireObject: true },
+      ),
+    ).toThrow(/unsupported format/);
   });
 
   it("bounds tool metadata and rejects dangerous controls", () => {

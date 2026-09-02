@@ -67,14 +67,16 @@ export function serializePaseoToolInputParameters(
   tool: PaseoToolDefinition,
 ): Record<string, unknown> {
   if (tool.inputSchemaJson) {
-    assertSafeJson(
-      tool.inputSchemaJson,
-      `Paseo tool ${tool.name} input schema`,
-      PLUGIN_TOOL_MAX_SCHEMA_BYTES,
-    );
-    assertSupportedJsonSchema(tool.inputSchemaJson, `Paseo tool ${tool.name} input schema`, {
-      requireObject: true,
-    });
+    if (tool.source === "plugin") {
+      assertSafeJson(
+        tool.inputSchemaJson,
+        `Paseo tool ${tool.name} input schema`,
+        PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+      );
+      assertSupportedJsonSchema(tool.inputSchemaJson, `Paseo tool ${tool.name} input schema`, {
+        requireObject: true,
+      });
+    }
     return tool.inputSchemaJson;
   }
   if (tool.inputSchema === undefined) {
@@ -91,9 +93,15 @@ export function serializePaseoToolInputParameters(
   if (!jsonSchema || typeof jsonSchema !== "object" || Array.isArray(jsonSchema)) {
     throw new Error(`Paseo tool ${tool.name} must provide a supported object input schema`);
   }
-  assertSafeJson(jsonSchema, `Paseo tool ${tool.name} input schema`, PLUGIN_TOOL_MAX_SCHEMA_BYTES);
-  assertSupportedJsonSchema(jsonSchema, `Paseo tool ${tool.name} input schema`, {
-    requireObject: true,
-  });
+  if (tool.source === "plugin") {
+    assertSafeJson(
+      jsonSchema,
+      `Paseo tool ${tool.name} input schema`,
+      PLUGIN_TOOL_MAX_SCHEMA_BYTES,
+    );
+    assertSupportedJsonSchema(jsonSchema, `Paseo tool ${tool.name} input schema`, {
+      requireObject: true,
+    });
+  }
   return jsonSchema as Record<string, unknown>;
 }

@@ -173,6 +173,7 @@ export class PluginService {
         title: tool.title,
         description: tool.description,
         inputSchemaJson: tool.inputSchema,
+        source: "plugin",
         handler: (input: unknown, context: PaseoToolExecutionContext) =>
           callerAgentId
             ? this.invokeModelTool(tool, callerAgentId, input, context)

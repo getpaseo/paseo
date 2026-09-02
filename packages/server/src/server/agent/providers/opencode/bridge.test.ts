@@ -20,17 +20,20 @@ afterEach(async () => {
   );
 });
 
-function createCatalog(): PaseoToolCatalog {
+function createCatalog(
+  inputSchemaJson: Record<string, unknown> = {
+    type: "object",
+    properties: { value: { type: "string", minLength: 1 } },
+    required: ["value"],
+    additionalProperties: false,
+  },
+  toolName = "echo_context",
+): PaseoToolCatalog {
   const tool = {
-    name: "echo_context",
+    name: toolName,
     title: "Echo context",
     description: "Returns the supplied value.",
-    inputSchemaJson: {
-      type: "object",
-      properties: { value: { type: "string", minLength: 1 } },
-      required: ["value"],
-      additionalProperties: false,
-    },
+    inputSchemaJson,
     async handler(input: unknown) {
       const parsed = z.object({ value: z.string() }).parse(input);
       return { content: [{ type: "text", text: parsed.value }] };
@@ -39,12 +42,12 @@ function createCatalog(): PaseoToolCatalog {
   const tools = new Map([[tool.name, tool]]);
   return {
     tools,
-    getTool(name) {
-      return tools.get(name);
+    getTool(requestedName) {
+      return tools.get(requestedName);
     },
-    async executeTool(name, input, context) {
-      const definition = tools.get(name);
-      if (!definition) throw new Error(`Unknown tool: ${name}`);
+    async executeTool(requestedName, input, context) {
+      const definition = tools.get(requestedName);
+      if (!definition) throw new Error(`Unknown tool: ${requestedName}`);
       return await definition.handler(input, context ?? {});
     },
   };
@@ -78,6 +81,38 @@ describe("OpenCodeBridge", () => {
     await bridge.waitForManifestCatalogRefresh();
 
     expect(refreshes).toEqual([2]);
+  });
+
+  test("waits for a catalog refresh before closing and makes close idempotent", async () => {
+    const bridge = new OpenCodeBridge({
+      paseoHome: "/tmp/paseo-opencode-bridge-close",
+      logger: createTestLogger(),
+    });
+    let releaseRefresh!: () => void;
+    const refreshReleased = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    let refreshStarted!: () => void;
+    const refreshEntered = new Promise<void>((resolve) => {
+      refreshStarted = resolve;
+    });
+    bridge.subscribeManifestCatalog(async () => {
+      refreshStarted();
+      await refreshReleased;
+    });
+
+    bridge.setManifestCatalog(null);
+    await refreshEntered;
+    const close = bridge.close();
+    const closedEarly = await Promise.race([
+      close.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 10)),
+    ]);
+    expect(closedEarly).toBe(false);
+
+    releaseRefresh();
+    await close;
+    await bridge.close();
   });
 
   test("loads packaged bundle bytes without invoking source compilation", async () => {
@@ -257,6 +292,36 @@ describe("OpenCodeBridge", () => {
       expect(config.plugin[0]).toBe("user-plugin");
       expect(config.plugin).toHaveLength(2);
       expect(config.plugin[1]?.[0]).toMatch(/paseo-[a-f0-9]{64}\.mjs$/);
+    } finally {
+      await bridge.close();
+    }
+  });
+
+  test("registers URI-formatted plugin schemas in the OpenCode adapter", async () => {
+    const paseoHome = await mkdtemp(path.join(tmpdir(), "paseo-opencode-bridge-uri-"));
+    temporaryDirectories.push(paseoHome);
+    const bridge = new OpenCodeBridge({ paseoHome, logger: createTestLogger() });
+    await bridge.start();
+    bridge.setManifestCatalog(
+      createCatalog(
+        {
+          type: "object",
+          properties: { url: { type: "string", format: "uri" } },
+          required: ["url"],
+        },
+        "open_url",
+      ),
+    );
+
+    try {
+      const plugin = readPluginOptions(bridge.decorateServerEnv({}));
+      const pluginModule = await import(plugin.pluginUrl);
+      const hooks = await pluginModule.default(
+        { client: { session: { get: async () => ({ data: {} }) } } },
+        { baseUrl: plugin.baseUrl, token: plugin.token },
+      );
+
+      expect(hooks.tool.paseo_open_url).toBeDefined();
     } finally {
       await bridge.close();
     }

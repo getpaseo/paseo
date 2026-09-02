@@ -160,6 +160,25 @@ describe("OMP host tools", () => {
     ]);
   });
 
+  test("passes URI schema formats through to the native host", () => {
+    const parameters = {
+      type: "object",
+      properties: { url: { type: "string", format: "uri" } },
+      required: ["url"],
+    };
+    const catalog = createCatalog([
+      {
+        name: "acme.open",
+        description: "Open a URL.",
+        source: "plugin",
+        inputSchemaJson: parameters,
+        handler: async () => ({ content: [] }),
+      },
+    ]);
+
+    expect(serializeOmpHostTools(catalog)[0]?.parameters).toEqual(parameters);
+  });
+
   test("marks every caller-scoped Paseo tool essential for direct invocation", () => {
     const catalog = createCatalog([
       {

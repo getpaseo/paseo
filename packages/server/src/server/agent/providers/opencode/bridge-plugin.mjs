@@ -139,10 +139,19 @@ function jsonSchemaToZod(schema) {
   const types = Array.isArray(schema.type) ? schema.type : [schema.type];
   const nullable = types.includes("null");
   const type = types.find((item) => item !== "null");
+  if (Array.isArray(schema.type) && type === undefined) {
+    throw new Error("Paseo OpenCode tool schema has a nullable-only type array");
+  }
   let result;
   switch (type) {
     case "string":
       result = z.string();
+      if (schema.format !== undefined) {
+        if (schema.format !== "uri") {
+          throw new Error("Paseo OpenCode tool schema has an unsupported format");
+        }
+        result = result.url();
+      }
       break;
     case "integer":
       result = z.number().int();

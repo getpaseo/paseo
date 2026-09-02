@@ -4021,29 +4021,34 @@ test("setAgentMode persists the selected mode across session reload", async () =
   expect(reloaded.currentModeId).toBe("full-access");
 });
 
-test("reloadAgentSession completes when the previous session close hangs", async () => {
+test("reloadAgentSession creates a fresh session when the previous close times out", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-close-timeout-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
 
-  class HangingCloseSession extends TestAgentSession {
+  class LateCloseSession extends TestAgentSession {
     closeCalled = false;
+    readonly releaseClose = deferred<void>();
+    readonly closeFinished = deferred<void>();
 
     override async close(): Promise<void> {
       this.closeCalled = true;
-      await new Promise(() => {});
+      await this.releaseClose.promise;
+      this.closeFinished.resolve();
     }
   }
 
   class HangingCloseClient extends TestAgentClient {
-    readonly firstSession = new HangingCloseSession({
+    readonly firstSession = new LateCloseSession({
       provider: "codex",
       cwd: workdir,
     });
+    createSessionCalls = 0;
     resumeSessionCalls = 0;
 
-    override async createSession(): Promise<AgentSession> {
-      return this.firstSession;
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      return this.createSessionCalls === 1 ? this.firstSession : new TestAgentSession(config);
     }
 
     override async resumeSession(
@@ -4068,6 +4073,7 @@ test("reloadAgentSession completes when the previous session close hangs", async
     rescueTimeouts: { reloadSessionCloseMs: 10 },
     idFactory: () => "00000000-0000-4000-8000-000000000302",
   });
+  let agentId: string | null = null;
 
   try {
     const snapshot = await manager.createAgent(
@@ -4078,13 +4084,20 @@ test("reloadAgentSession completes when the previous session close hangs", async
       undefined,
       { workspaceId: undefined },
     );
+    agentId = snapshot.id;
 
     const reloaded = await manager.reloadAgentSession(snapshot.id);
 
     expect(reloaded.id).toBe(snapshot.id);
     expect(client.firstSession.closeCalled).toBe(true);
-    expect(client.resumeSessionCalls).toBe(1);
+    expect(client.createSessionCalls).toBe(2);
+    expect(client.resumeSessionCalls).toBe(0);
+
+    client.firstSession.releaseClose.resolve();
+    await client.firstSession.closeFinished;
+    expect(reloaded.persistence?.sessionId).not.toBe(client.firstSession.id);
   } finally {
+    if (agentId) await manager.closeAgent(agentId).catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }
 });

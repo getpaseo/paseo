@@ -586,7 +586,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     if (tools.has(name)) {
       throw new Error(`Duplicate Paseo tool name: ${name}`);
     }
-    if (config.inputSchemaJson) {
+    if (config.source === "plugin" && config.inputSchemaJson) {
       assertSafeJson(
         config.inputSchemaJson,
         `Paseo tool ${name} input schema`,
@@ -596,7 +596,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         requireObject: true,
       });
     }
-    if (config.outputSchemaJson) {
+    if (config.source === "plugin" && config.outputSchemaJson) {
       assertSafeJson(
         config.outputSchemaJson,
         `Paseo tool ${name} output schema`,
@@ -612,6 +612,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       outputSchema: config.outputSchema,
       inputSchemaJson: config.inputSchemaJson,
       outputSchemaJson: config.outputSchemaJson,
+      source: config.source ?? "builtin",
       handler: handler as PaseoToolDefinition["handler"],
     });
   };
@@ -3191,6 +3192,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         description: tool.description,
         inputSchemaJson: tool.inputSchemaJson,
         outputSchemaJson: tool.outputSchemaJson,
+        source: "plugin",
       },
       tool.handler,
     );
