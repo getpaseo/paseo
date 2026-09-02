@@ -91,7 +91,7 @@ async function cycleNewWorkspaceMode(page: Page, presses: number): Promise<void>
   await expect(composer).toBeVisible({ timeout: 30_000 });
   await composer.click();
   for (let i = 0; i < presses; i++) {
-    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.press("ControlOrMeta+Shift+M");
   }
 }
 
