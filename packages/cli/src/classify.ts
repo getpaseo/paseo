@@ -4,7 +4,10 @@ import path from "node:path";
 
 export type CliInvocation =
   | { kind: "cli"; argv: string[] }
-  | { kind: "open-project"; resolvedPath: string };
+  | { kind: "open-project"; resolvedPath: string }
+  | { kind: "create-project"; resolvedPath: string };
+
+export const createProjectFlag = "--create";
 
 export function isPathLikeArg(arg: string): boolean {
   return (
@@ -41,6 +44,21 @@ export function isExistingDirectory(input: { pathArg: string; cwd: string }): bo
   return statSync(resolvedPath).isDirectory();
 }
 
+export function resolveCreatableDirectory(input: { pathArg: string; cwd: string }): string | null {
+  const resolvedPath = path.resolve(input.cwd, expandUserPath(input.pathArg));
+
+  if (resolvedPath === path.parse(resolvedPath).root) {
+    return null;
+  }
+
+  try {
+    statSync(resolvedPath);
+    return null;
+  } catch {
+    return resolvedPath;
+  }
+}
+
 export function classifyInvocation(input: {
   argv: string[];
   knownCommands: ReadonlySet<string>;
@@ -49,6 +67,10 @@ export function classifyInvocation(input: {
   const [firstArg] = input.argv;
   if (!firstArg) {
     return { kind: "cli", argv: input.argv };
+  }
+
+  if (firstArg === createProjectFlag) {
+    return classifyCreateProjectInvocation(input);
   }
 
   if (firstArg.startsWith("-")) {
@@ -64,6 +86,27 @@ export function classifyInvocation(input: {
       kind: "open-project",
       resolvedPath: path.resolve(input.cwd, expandUserPath(firstArg)),
     };
+  }
+
+  return { kind: "cli", argv: input.argv };
+}
+
+function classifyCreateProjectInvocation(input: { argv: string[]; cwd: string }): CliInvocation {
+  const [, targetArg] = input.argv;
+  if (!targetArg || targetArg.startsWith("-")) {
+    return { kind: "cli", argv: input.argv };
+  }
+
+  if (isExistingDirectory({ pathArg: targetArg, cwd: input.cwd })) {
+    return {
+      kind: "open-project",
+      resolvedPath: path.resolve(input.cwd, expandUserPath(targetArg)),
+    };
+  }
+
+  const creatablePath = resolveCreatableDirectory({ pathArg: targetArg, cwd: input.cwd });
+  if (creatablePath) {
+    return { kind: "create-project", resolvedPath: creatablePath };
   }
 
   return { kind: "cli", argv: input.argv };

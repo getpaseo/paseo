@@ -11,7 +11,7 @@ export function createCliParseArgv(input: {
   argv: string[];
   cwd: string;
   nodeArgv?: [string, string];
-}): string[] | { kind: "open-project"; resolvedPath: string } {
+}): string[] | { kind: "open-project" | "create-project"; resolvedPath: string } {
   const program = createCli();
   const knownCommands = new Set(program.commands.map((command) => command.name()));
   const invocation = classifyInvocation({
@@ -20,7 +20,7 @@ export function createCliParseArgv(input: {
     cwd: input.cwd,
   });
 
-  if (invocation.kind === "open-project") {
+  if (invocation.kind !== "cli") {
     return invocation;
   }
 
@@ -43,7 +43,9 @@ export async function runCli(argv: string[], options: RunCliOptions = {}): Promi
   });
 
   if (!Array.isArray(parseArgv)) {
-    await openDesktopWithProject(parseArgv.resolvedPath);
+    await openDesktopWithProject(parseArgv.resolvedPath, {
+      createIfMissing: parseArgv.kind === "create-project",
+    });
     return typeof process.exitCode === "number" ? process.exitCode : 0;
   }
 

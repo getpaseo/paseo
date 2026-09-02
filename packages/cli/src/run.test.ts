@@ -72,4 +72,45 @@ describe("runCli", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("classifies --create with a missing directory as a create-project invocation", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-cli-run-create-"));
+    const missingDir = path.join(root, "fresh", "project");
+
+    try {
+      expect(
+        createCliParseArgv({
+          argv: ["--create", missingDir],
+          cwd: root,
+          nodeArgv: ["node", "paseo"],
+        }),
+      ).toEqual({
+        kind: "create-project",
+        resolvedPath: missingDir,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("classifies --create with an existing directory as an open-project invocation", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-cli-run-create-open-"));
+    const project = path.join(root, "existing");
+    mkdirSync(project);
+
+    try {
+      expect(
+        createCliParseArgv({
+          argv: ["--create", project],
+          cwd: root,
+          nodeArgv: ["node", "paseo"],
+        }),
+      ).toEqual({
+        kind: "open-project",
+        resolvedPath: project,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

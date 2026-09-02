@@ -1,8 +1,13 @@
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { classifyInvocation, isExistingDirectory, isPathLikeArg } from "./classify.js";
+import {
+  classifyInvocation,
+  isExistingDirectory,
+  isPathLikeArg,
+  resolveCreatableDirectory,
+} from "./classify.js";
 
 const knownCommands = new Set(["ls", "run", "status"]);
 
@@ -164,6 +169,132 @@ describe("classifyInvocation", () => {
   });
 });
 
+describe("classifyInvocation --create", () => {
+  it("classifies --create with a missing absolute path as create-project", () => {
+    const parentDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-create-"));
+    const missingDir = path.join(parentDir, "newproject");
+
+    expect(
+      classifyInvocation({
+        argv: ["--create", missingDir],
+        knownCommands,
+        cwd: parentDir,
+      }),
+    ).toEqual({
+      kind: "create-project",
+      resolvedPath: missingDir,
+    });
+  });
+
+  it("classifies --create with a missing nested relative path as create-project", () => {
+    const parentDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-create-nested-"));
+    const missingDir = path.join(parentDir, "deep", "nested", "project");
+
+    expect(
+      classifyInvocation({
+        argv: ["--create", path.relative(parentDir, missingDir)],
+        knownCommands,
+        cwd: parentDir,
+      }),
+    ).toEqual({
+      kind: "create-project",
+      resolvedPath: missingDir,
+    });
+  });
+
+  it("classifies --create with an existing directory as open-project", () => {
+    const parentDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-create-existing-"));
+    const projectDir = path.join(parentDir, "existing");
+    mkdirSync(projectDir);
+
+    expect(
+      classifyInvocation({
+        argv: ["--create", projectDir],
+        knownCommands,
+        cwd: parentDir,
+      }),
+    ).toEqual({
+      kind: "open-project",
+      resolvedPath: projectDir,
+    });
+  });
+
+  it("expands ~ in --create targets", () => {
+    const homeRelative = "~/paseo-classify-create-home-target";
+
+    expect(
+      classifyInvocation({
+        argv: ["--create", homeRelative],
+        knownCommands,
+        cwd: process.cwd(),
+      }),
+    ).toEqual({
+      kind: "create-project",
+      resolvedPath: path.join(homedir(), "paseo-classify-create-home-target"),
+    });
+  });
+
+  it("falls back to CLI mode when --create has no target", () => {
+    expect(
+      classifyInvocation({
+        argv: ["--create"],
+        knownCommands,
+        cwd: process.cwd(),
+      }),
+    ).toEqual({ kind: "cli", argv: ["--create"] });
+  });
+
+  it("falls back to CLI mode when the --create target is another flag", () => {
+    expect(
+      classifyInvocation({
+        argv: ["--create", "--json"],
+        knownCommands,
+        cwd: process.cwd(),
+      }),
+    ).toEqual({ kind: "cli", argv: ["--create", "--json"] });
+  });
+
+  it("falls back to CLI mode when the --create target already exists as a file", () => {
+    const parentDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-create-file-"));
+    const filePath = path.join(parentDir, "file.txt");
+    writeFileSync(filePath, "");
+
+    expect(
+      classifyInvocation({
+        argv: ["--create", filePath],
+        knownCommands,
+        cwd: parentDir,
+      }),
+    ).toEqual({ kind: "cli", argv: ["--create", filePath] });
+  });
+
+  it("treats an existing root target as an idempotent open-project", () => {
+    expect(
+      classifyInvocation({
+        argv: ["--create", "/"],
+        knownCommands,
+        cwd: process.cwd(),
+      }),
+    ).toEqual({ kind: "open-project", resolvedPath: "/" });
+  });
+
+  it("keeps --create ahead of known command matching", () => {
+    const parentDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-create-cmd-"));
+    const missingDir = path.join(parentDir, "status");
+
+    expect(
+      classifyInvocation({
+        argv: ["--create", "status"],
+        knownCommands,
+        cwd: parentDir,
+      }),
+    ).toEqual({
+      kind: "create-project",
+      resolvedPath: missingDir,
+    });
+  });
+});
+
 describe("path helpers", () => {
   it("detects path-like prefixes", () => {
     expect(isPathLikeArg(".")).toBe(true);
@@ -184,5 +315,20 @@ describe("path helpers", () => {
 
     expect(isExistingDirectory({ pathArg: "project", cwd: parentDir })).toBe(true);
     expect(isExistingDirectory({ pathArg: "missing", cwd: parentDir })).toBe(false);
+  });
+
+  it("resolves creatable directories and rejects existing entries and roots", () => {
+    const parentDir = mkdtempSync(path.join(tmpdir(), "paseo-classify-creatable-"));
+    const existingDir = path.join(parentDir, "existing");
+    mkdirSync(existingDir);
+    const existingFile = path.join(parentDir, "file.txt");
+    writeFileSync(existingFile, "");
+
+    expect(resolveCreatableDirectory({ pathArg: "brand-new", cwd: parentDir })).toBe(
+      path.join(parentDir, "brand-new"),
+    );
+    expect(resolveCreatableDirectory({ pathArg: "existing", cwd: parentDir })).toBeNull();
+    expect(resolveCreatableDirectory({ pathArg: "file.txt", cwd: parentDir })).toBeNull();
+    expect(resolveCreatableDirectory({ pathArg: "/", cwd: parentDir })).toBeNull();
   });
 });
