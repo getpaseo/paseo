@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { deriveStreamTurnTiming, type StreamTurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
+import type { TimelineItemTransform } from "@/plugins/timeline/model";
+import { projectPluginTimelineItems } from "@/plugins/timeline/projection";
 import { findMountedWindowStart, getMountedRecentStreamItems } from "./history-window";
 import { getWebPartialVirtualizationThreshold } from "./web-virtualization";
 import { orderHeadForStreamRenderStrategy, orderTailForStreamRenderStrategy } from "./strategy";
@@ -39,6 +41,7 @@ export interface BuildAgentStreamRenderModelInput {
   platform: "web" | "native";
   isMobileBreakpoint: boolean;
   historyStart?: number;
+  transformTimelineItem?: TimelineItemTransform;
 }
 
 const EMPTY_STREAM_ITEMS: StreamItem[] = [];
@@ -163,7 +166,9 @@ export function buildAgentStreamRenderModel(
     isMobileBreakpoint: input.isMobileBreakpoint,
   });
   const orderingCacheKey = `${input.platform}:${input.isMobileBreakpoint}`;
-  const renderedTail = input.historyStart ? input.tail.slice(input.historyStart) : input.tail;
+  const projectedTail = projectPluginTimelineItems(input.tail, input.transformTimelineItem);
+  const projectedHead = projectPluginTimelineItems(input.head, input.transformTimelineItem);
+  const renderedTail = input.historyStart ? projectedTail.slice(input.historyStart) : projectedTail;
   const orderedTail = getOrderedItems({
     cache: orderedTailCache,
     source: renderedTail,
@@ -176,7 +181,7 @@ export function buildAgentStreamRenderModel(
   });
   const orderedHead = getOrderedItems({
     cache: orderedHeadCache,
-    source: input.head,
+    source: projectedHead,
     cacheKey: orderingCacheKey,
     order: (items) =>
       orderHeadForStreamRenderStrategy({
@@ -193,7 +198,7 @@ export function buildAgentStreamRenderModel(
     isTurnActive: input.isTurnActive,
     activeTurnStartedAt: input.activeTurnStartedAt,
     tail: renderedTail,
-    head: input.head,
+    head: projectedHead,
   });
 
   return {

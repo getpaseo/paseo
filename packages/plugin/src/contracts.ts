@@ -192,6 +192,7 @@ export type PluginTimelineData =
 
 export interface PluginTimelineItem {
   type: "plugin";
+  id?: string;
   kind: string;
   version: number;
   data: PluginTimelineData;
@@ -211,6 +212,7 @@ export type PluginTimelineTransformerContribution<
       };
       transform(input: {
         item: Extract<AgentTimelineItem, { type: ItemType }>;
+        phase: "streaming" | "complete";
       }): PluginTimelineTransformResult | undefined;
     }
   : never;

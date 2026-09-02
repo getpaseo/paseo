@@ -12,7 +12,6 @@ import {
 } from "@/hooks/use-agent-initialization";
 import type { StreamItem } from "@/types/stream";
 import { deriveAgentStreamTurnLiveness } from "@/timeline/session-stream-reducers";
-import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { requestTimelineReplacement } from "@/timeline/timeline-replacement";
 import {
   type TimelineDeliveryMode,
@@ -58,15 +57,6 @@ import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
 import { useProviderSubagentStore } from "@/subagents/provider-store";
 import { revalidateSessionAfterResume } from "@/contexts/session-resume-revalidation";
-
-function consumeForcedTimelineTailReplacement(
-  payload: TimelineResponsePayload,
-  replacements: Set<string>,
-): TimelineResponsePayload {
-  if (payload.direction !== "tail") return payload;
-  if (!replacements.delete(payload.agentId)) return payload;
-  return { ...payload, reset: true };
-}
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";
@@ -261,7 +251,6 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
   const _sessionStateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const attentionNotifiedRef = useRef<Map<string, number>>(new Map());
   const appStateRef = useRef(AppState.currentState);
-  const forcedTimelineTailReplacements = useRef(new Set<string>());
   const viewedTimelineSyncRef = useRef<ViewedTimelineOwner | null>(null);
   const audioOutputBuffersRef = useRef<Map<string, BufferedAudioChunk[]>>(new Map());
   const activeAudioGroupsRef = useRef<Set<string>>(new Set());
@@ -436,11 +425,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     [serverId, upsertWorkspaceSetupProgress],
   );
 
-  const applyTimelineResponse = useCallback((receivedPayload: TimelineResponsePayload) => {
-    const payload = consumeForcedTimelineTailReplacement(
-      receivedPayload,
-      forcedTimelineTailReplacements.current,
-    );
+  const applyTimelineResponse = useCallback((payload: TimelineResponsePayload) => {
     const owner = viewedTimelineSyncRef.current;
     if (!owner) throw new Error("Viewed timeline owner is unavailable");
     owner.applyTimelineResponse(payload);
@@ -494,16 +479,7 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
         }
       },
       fetchLatestTail: async (agentId) => {
-        forcedTimelineTailReplacements.current.add(agentId);
-        try {
-          return await getHostRuntimeStore().fetchAgentTimeline(
-            serverId,
-            agentId,
-            planTimelineTailFetch(),
-          );
-        } finally {
-          forcedTimelineTailReplacements.current.delete(agentId);
-        }
+        return requestTimelineReplacement(client, agentId);
       },
       reportError: (error) => {
         console.warn("[Session] viewed timeline synchronization failed", { serverId, error });

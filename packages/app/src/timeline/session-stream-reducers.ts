@@ -2,7 +2,6 @@ import type { AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import { selectAgentTimelineState, useSessionStore } from "@/stores/session-store";
 import type { AssistantMessageItem, StreamItem, TodoEntry } from "@/types/stream";
 import type { TurnLivenessTransition } from "@/timeline/turn-liveness";
-import type { TimelineItemTransform } from "@/plugins/timeline";
 import {
   applyStreamEvent,
   flushHeadToTail,
@@ -43,9 +42,10 @@ export type TimelineReducerSideEffect =
   | { type: "catch_up"; cursor: { epoch: string; endSeq: number } }
   | { type: "flush_pending_updates" };
 
-export type AgentStreamReducerSideEffect =
-  | { type: "catch_up"; cursor: { epoch: string; endSeq: number } }
-  | { type: "reproject" };
+export interface AgentStreamReducerSideEffect {
+  type: "catch_up";
+  cursor: { epoch: string; endSeq: number };
+}
 
 // ---------------------------------------------------------------------------
 // processTimelineResponse
@@ -156,7 +156,6 @@ export interface ProcessTimelineResponseInput {
   hasActiveInitDeferred: boolean;
   initRequestDirection: InitRequestDirection;
   sendingClientMessageIds: readonly string[];
-  transformTimelineItem?: TimelineItemTransform;
 }
 
 export interface ProcessTimelineResponseOutput {
@@ -391,7 +390,6 @@ function mergeTimelineWindow(args: {
     timestamp: Date;
     timelineCursor: { epoch: string; seq: number };
   }>;
-  transformTimelineItem?: TimelineItemTransform;
 }): TimelinePathResult {
   const { timelineUnits, payload, currentTail, currentHead, currentCursor, toHydratedEvents } =
     args;
@@ -433,7 +431,6 @@ function mergeTimelineWindow(args: {
     {
       source: "canonical",
       reservedItemIds,
-      transformTimelineItem: args.transformTimelineItem,
     },
   );
   const reconciled = reconcilePromptWindowItems({
@@ -512,7 +509,6 @@ function applyTimelineReplacePath(args: {
   toHydratedEvents: (
     units: TimelineUnit[],
   ) => Array<{ event: AgentStreamEventPayload; timestamp: Date }>;
-  transformTimelineItem?: TimelineItemTransform;
 }): TimelinePathResult {
   const {
     timelineUnits,
@@ -526,7 +522,6 @@ function applyTimelineReplacePath(args: {
   } = args;
   const hydratedTail = hydrateStreamState(toHydratedEvents(timelineUnits), {
     source: "canonical",
-    transformTimelineItem: args.transformTimelineItem,
   });
   const { tail, head, acknowledgedClientMessageIds } = replaceWithCanonicalStream({
     canonical: hydratedTail,
@@ -945,7 +940,6 @@ function applyCanonicalForwardUnit(params: {
   head: StreamItem[];
   unit: TimelineUnit;
   epoch: string;
-  transformTimelineItem?: TimelineItemTransform;
 }): { tail: StreamItem[]; head: StreamItem[]; acknowledgedClientMessageIds: string[] } {
   const { event, timestamp, seqEnd } = params.unit;
   const timelineCursor = { epoch: params.epoch, seq: seqEnd };
@@ -957,7 +951,6 @@ function applyCanonicalForwardUnit(params: {
       timestamp,
       source: "canonical",
       timelineCursor,
-      transformTimelineItem: params.transformTimelineItem,
     });
     return {
       tail: applied.tail,
@@ -970,7 +963,6 @@ function applyCanonicalForwardUnit(params: {
       tail: reduceStreamUpdate(params.tail, event, timestamp, {
         source: "canonical",
         timelineCursor,
-        transformTimelineItem: params.transformTimelineItem,
       }),
       head: params.head,
       acknowledgedClientMessageIds: [],
@@ -1001,7 +993,6 @@ function applyCanonicalForwardUnit(params: {
       head: reduceStreamUpdate([], event, timestamp, {
         source: "canonical",
         timelineCursor,
-        transformTimelineItem: params.transformTimelineItem,
       }),
       acknowledgedClientMessageIds: [],
     };
@@ -1014,7 +1005,6 @@ function applyCanonicalForwardUnit(params: {
     timestamp,
     source: "canonical",
     timelineCursor,
-    transformTimelineItem: params.transformTimelineItem,
   });
   return {
     tail: applied.tail,
@@ -1029,7 +1019,6 @@ function applyAcceptedForwardTimelineUnits(params: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentEndSeq: number | undefined;
-  transformTimelineItem?: TimelineItemTransform;
 }): { tail: StreamItem[]; head: StreamItem[]; acknowledgedClientMessageIds: string[] } {
   const reconciled = reconcileOverlappingProjectedStreamItems({
     tail: params.currentTail,
@@ -1048,7 +1037,6 @@ function applyAcceptedForwardTimelineUnits(params: {
       head,
       unit,
       epoch: params.epoch,
-      transformTimelineItem: params.transformTimelineItem,
     });
     tail = applied.tail;
     head = applied.head;
@@ -1134,7 +1122,6 @@ function applyAcceptedTimelinePage(input: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentCursor: TimelineCursor | undefined;
-  transformTimelineItem?: TimelineItemTransform;
 }): {
   tail: StreamItem[];
   head: StreamItem[];
@@ -1151,7 +1138,6 @@ function applyAcceptedTimelinePage(input: {
       currentTail,
       currentHead,
       currentEndSeq: currentCursor?.endSeq,
-      transformTimelineItem: input.transformTimelineItem,
     });
   }
   const olderTail = hydrateStreamState(
@@ -1169,7 +1155,6 @@ function applyAcceptedTimelinePage(input: {
             : [item.id],
         ),
       ),
-      transformTimelineItem: input.transformTimelineItem,
     },
   );
   return {
@@ -1191,7 +1176,6 @@ function applyTimelineIncrementalPath(args: {
   currentTail: StreamItem[];
   currentHead: StreamItem[];
   currentCursor: TimelineCursor | undefined;
-  transformTimelineItem?: TimelineItemTransform;
 }): TimelinePathResult {
   const { timelineUnits, payload, currentTail, currentHead, currentCursor } = args;
   let nextCursor: TimelineCursor | null | undefined = currentCursor;
@@ -1229,7 +1213,6 @@ function applyTimelineIncrementalPath(args: {
     currentTail,
     currentHead,
     currentCursor,
-    transformTimelineItem: args.transformTimelineItem,
   });
 
   if (cursor && (!currentCursor || !timelineCursorEquals(currentCursor, cursor))) {
@@ -1264,7 +1247,6 @@ export function processTimelineResponse(
     hasActiveInitDeferred,
     initRequestDirection,
     sendingClientMessageIds,
-    transformTimelineItem,
   } = input;
 
   // ------------------------------------------------------------------
@@ -1365,7 +1347,6 @@ export function processTimelineResponse(
       currentHead,
       currentCursor,
       toHydratedEvents,
-      transformTimelineItem,
     });
   } else if (replace || resumeTailPolicy.kind === "replace") {
     const isResumeReplacement = resumeTailPolicy.kind === "replace";
@@ -1386,7 +1367,6 @@ export function processTimelineResponse(
         reset: payload.reset,
       }),
       toHydratedEvents,
-      transformTimelineItem,
     });
   } else {
     const incrementalUnits =
@@ -1399,7 +1379,6 @@ export function processTimelineResponse(
       currentTail,
       currentHead,
       currentCursor,
-      transformTimelineItem,
     });
   }
 
@@ -1461,7 +1440,6 @@ export interface ProcessAgentStreamEventInput {
   currentCursor: TimelineCursor | undefined;
   hasAuthoritativeBaseline?: boolean;
   timestamp: Date;
-  transformTimelineItem?: TimelineItemTransform;
 }
 
 export interface ProcessAgentStreamEventOutput {
@@ -1498,7 +1476,6 @@ export interface ProcessAgentStreamEventsInput {
   currentCursor: TimelineCursor | undefined;
   hasAuthoritativeBaseline?: boolean;
   isDetached?: boolean;
-  transformTimelineItem?: TimelineItemTransform;
 }
 
 export type AgentStreamReducerSnapshot = Omit<ProcessAgentStreamEventsInput, "events">;
@@ -1608,7 +1585,6 @@ export function processAgentStreamEvent(
     currentCursor,
     timestamp,
     hasAuthoritativeBaseline = true,
-    transformTimelineItem,
   } = input;
 
   const sequencing = processTimelineSequencingGate({
@@ -1622,11 +1598,6 @@ export function processAgentStreamEvent(
     event.type === "timeline" && seq !== undefined && epoch !== undefined
       ? { epoch, seq }
       : undefined;
-  const pluginProjection =
-    sequencing.shouldApplyStreamEvent && event.type === "timeline"
-      ? transformTimelineItem?.(event.item)
-      : undefined;
-
   // ------------------------------------------------------------------
   // Apply stream event to tail/head
   // ------------------------------------------------------------------
@@ -1688,10 +1659,7 @@ export function processAgentStreamEvent(
     ...(sequencing.shouldApplyStreamEvent && event.type === "timeline" && event.item.type === "todo"
       ? { taskSnapshot: event.item.items }
       : {}),
-    sideEffects:
-      pluginProjection === undefined
-        ? sequencing.sideEffects
-        : [...sequencing.sideEffects, { type: "reproject" }],
+    sideEffects: sequencing.sideEffects,
   };
 }
 
@@ -1730,7 +1698,6 @@ export function processAgentStreamEvents(
       currentCursor: cursor,
       hasAuthoritativeBaseline: input.hasAuthoritativeBaseline,
       timestamp: reducerEvent.timestamp,
-      transformTimelineItem: input.transformTimelineItem,
     });
 
     tail = result.tail;
@@ -1760,9 +1727,7 @@ export function processAgentStreamEvents(
     cursorChanged,
     acknowledgedClientMessageIds: [...acknowledgedClientMessageIds],
     ...(taskSnapshot !== undefined ? { taskSnapshot } : {}),
-    sideEffects: sideEffects.some((effect) => effect.type === "reproject")
-      ? [...sideEffects.filter((effect) => effect.type !== "reproject"), { type: "reproject" }]
-      : sideEffects,
+    sideEffects,
   };
 }
 
@@ -1877,9 +1842,7 @@ export interface CreateSessionAgentStreamReducerQueueInput {
     state: (prev: Map<string, TimelineCursor>) => Map<string, TimelineCursor>,
   ) => void;
   recoverTimelineGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
-  reprojectTimeline: (agentId: string) => void;
   onCommitted?: (agentId: string) => void;
-  transformTimelineItem?: TimelineItemTransform;
 }
 
 interface ScheduledReducerFlush {
@@ -1933,14 +1896,8 @@ function cancelAgentStreamReducerFlush(id: number) {
 export function createSessionAgentStreamReducerQueue(
   input: CreateSessionAgentStreamReducerQueueInput,
 ): AgentStreamReducerQueue {
-  const {
-    serverId,
-    setAgentStreamState,
-    setAgentTimelineCursor,
-    recoverTimelineGap,
-    reprojectTimeline,
-    onCommitted,
-  } = input;
+  const { serverId, setAgentStreamState, setAgentTimelineCursor, recoverTimelineGap, onCommitted } =
+    input;
 
   return createAgentStreamReducerQueue({
     getSnapshot: (agentId) => {
@@ -1952,7 +1909,6 @@ export function createSessionAgentStreamReducerQueue(
         currentCursor: timeline.status === "synced" ? (timeline.range ?? undefined) : undefined,
         hasAuthoritativeBaseline: timeline.status === "synced",
         isDetached: timeline.status === "synced" && timeline.newer === "available",
-        transformTimelineItem: input.transformTimelineItem,
       };
     },
     commit: (agentId, result, events) => {
@@ -2006,8 +1962,6 @@ export function createSessionAgentStreamReducerQueue(
       for (const effect of sideEffects) {
         if (effect.type === "catch_up") {
           recoverTimelineGap(agentId, effect.cursor);
-        } else if (effect.type === "reproject") {
-          reprojectTimeline(agentId);
         }
       }
     },

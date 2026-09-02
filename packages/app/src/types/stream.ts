@@ -1,13 +1,9 @@
-import type {
-  AgentProvider,
-  AgentTimelineItem,
-  ToolCallDetail,
-} from "@getpaseo/protocol/agent-types";
+import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-types";
 import type { AgentAttachment, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
-import type { InstalledPluginTimelineItem, TimelineItemTransform } from "@/plugins/timeline";
+import type { InstalledPluginTimelineItem } from "@/plugins/timeline";
 
 /**
  * Simple hash function for deterministic ID generation
@@ -818,8 +814,6 @@ interface StreamUpdateOptions {
   source?: StreamUpdateSource;
   reservedItemIds?: ReadonlySet<string>;
   timelineCursor?: TimelinePosition;
-  transformTimelineItem?: TimelineItemTransform;
-  transformedTimelineItems?: InstalledPluginTimelineItem[] | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1430,33 +1424,8 @@ function reduceTimelineEvent(
   source: StreamUpdateSource,
   reservedItemIds?: ReadonlySet<string>,
   timelineCursor?: TimelinePosition,
-  transformTimelineItem?: TimelineItemTransform,
-  transformedTimelineItems?: InstalledPluginTimelineItem[] | null,
 ): StreamItem[] {
   const item = event.item;
-  const transformed =
-    transformedTimelineItems === undefined
-      ? transformTimelineItem?.(item as AgentTimelineItem)
-      : (transformedTimelineItems ?? undefined);
-  if (transformed !== undefined) {
-    const projected = state.slice();
-    for (const pluginItem of transformed) {
-      const identity = `${pluginItem.pluginId}/${pluginItem.kind}/${pluginItem.version}/${JSON.stringify(pluginItem.data)}`;
-      const streamItem: PluginTimelineStreamItem = {
-        kind: "plugin",
-        id: createUniqueTimelineId(projected, "plugin", identity, timestamp),
-        ...(timelineCursor ? { timelineCursor } : {}),
-        ...(event.turnId ? { turnId: event.turnId } : {}),
-        timestamp,
-        pluginId: pluginItem.pluginId,
-        itemKind: pluginItem.kind,
-        version: pluginItem.version,
-        data: pluginItem.data,
-      };
-      projected.push(streamItem);
-    }
-    return finalizeActiveThoughts(projected);
-  }
   switch (item.type) {
     case "user_message":
       return finalizeActiveThoughts(
@@ -1541,8 +1510,6 @@ export function reduceStreamUpdate(
           source,
           options?.reservedItemIds,
           options?.timelineCursor,
-          options?.transformTimelineItem,
-          options?.transformedTimelineItems,
         ),
         event,
       );
@@ -1614,7 +1581,7 @@ export function hydrateStreamState(
     timestamp: Date;
     timelineCursor?: TimelinePosition;
   }>,
-  options?: Pick<StreamUpdateOptions, "source" | "reservedItemIds" | "transformTimelineItem">,
+  options?: Pick<StreamUpdateOptions, "source" | "reservedItemIds">,
 ): StreamItem[] {
   const hydrated = events.reduce<StreamItem[]>((state, { event, timestamp, timelineCursor }) => {
     return reduceStreamUpdate(state, event, timestamp, { ...options, timelineCursor });
@@ -1654,14 +1621,10 @@ function applyCompletionToTail(
 /**
  * Determine what kind of StreamItem an event would produce
  */
-function getEventItemKind(
-  event: AgentStreamEventPayload,
-  transformedTimelineItems?: InstalledPluginTimelineItem[],
-): StreamItem["kind"] | null {
+function getEventItemKind(event: AgentStreamEventPayload): StreamItem["kind"] | null {
   if (event.type !== "timeline") {
     return null;
   }
-  if (transformedTimelineItems !== undefined) return "plugin";
   switch (event.item.type) {
     case "user_message":
       return "user_message";
@@ -1968,14 +1931,6 @@ function applyCanonicalUserMessageEvent(params: {
  * - Non-streamable items flush head to tail first, then go to tail
  * - Turn completion events flush head to tail
  */
-function transformEventTimelineItems(
-  event: AgentStreamEventPayload,
-  transformTimelineItem: TimelineItemTransform | undefined,
-): InstalledPluginTimelineItem[] | undefined {
-  if (event.type !== "timeline") return undefined;
-  return transformTimelineItem?.(event.item);
-}
-
 export function applyStreamEvent(params: {
   tail: StreamItem[];
   head: StreamItem[];
@@ -1984,21 +1939,16 @@ export function applyStreamEvent(params: {
   source?: StreamUpdateSource;
   timelineCursor?: TimelinePosition;
   unmatchedUserMessageInsert?: "tail" | "head";
-  transformTimelineItem?: TimelineItemTransform;
 }): ApplyStreamEventResult {
   const { tail, head, event, timestamp } = params;
-  const transformedTimelineItems = transformEventTimelineItems(event, params.transformTimelineItem);
-  const canonicalUserResult =
-    transformedTimelineItems === undefined
-      ? applyCanonicalUserMessageEvent({
-          tail,
-          head,
-          event,
-          timestamp,
-          timelineCursor: params.timelineCursor,
-          unmatchedInsert: params.unmatchedUserMessageInsert,
-        })
-      : null;
+  const canonicalUserResult = applyCanonicalUserMessageEvent({
+    tail,
+    head,
+    event,
+    timestamp,
+    timelineCursor: params.timelineCursor,
+    unmatchedInsert: params.unmatchedUserMessageInsert,
+  });
   if (canonicalUserResult) return canonicalUserResult;
   const source = params.source ?? "live";
   let nextTail = tail;
@@ -2029,7 +1979,7 @@ export function applyStreamEvent(params: {
     return { tail: nextTail, head: nextHead, changedTail, changedHead };
   }
 
-  const incomingKind = getEventItemKind(event, transformedTimelineItems);
+  const incomingKind = getEventItemKind(event);
 
   // Check if we need to flush head before processing this event
   if (
@@ -2071,8 +2021,6 @@ export function applyStreamEvent(params: {
       source,
       reservedItemIds,
       timelineCursor: params.timelineCursor,
-      transformTimelineItem: params.transformTimelineItem,
-      transformedTimelineItems: transformedTimelineItems ?? null,
     });
     if (reduced !== nextHead) {
       nextHead = reduced;
@@ -2095,8 +2043,6 @@ export function applyStreamEvent(params: {
   const reduced = reduceStreamUpdate(nextTail, event, timestamp, {
     source,
     timelineCursor: params.timelineCursor,
-    transformTimelineItem: params.transformTimelineItem,
-    transformedTimelineItems: transformedTimelineItems ?? null,
   });
   if (reduced !== nextTail) {
     nextTail = reduced;
