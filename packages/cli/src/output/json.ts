@@ -6,6 +6,19 @@
 
 import type { AnyCommandResult, OutputOptions } from "./types.js";
 
+const C1_CONTROL_CHARACTER_PATTERN = new RegExp("[\\u007f-\\u009f]", "g");
+
+function stringifyJson(value: unknown, indentation?: number): string {
+  const json = JSON.stringify(value, null, indentation);
+  if (json === undefined) {
+    return "";
+  }
+  return json.replace(C1_CONTROL_CHARACTER_PATTERN, (character) => {
+    const code = character.charCodeAt(0).toString(16).padStart(4, "0");
+    return `\\u${code}`;
+  });
+}
+
 /** Render command result as JSON */
 export function renderJson<T>(result: AnyCommandResult<T>, _options: OutputOptions): string {
   const { schema } = result;
@@ -18,24 +31,24 @@ export function renderJson<T>(result: AnyCommandResult<T>, _options: OutputOptio
       // to a single structured object
       const serialized = result.data.map((item) => schema.serialize!(item));
       if (serialized.length > 0) {
-        const first = JSON.stringify(serialized[0]);
-        const allSame = serialized.every((s) => JSON.stringify(s) === first);
+        const first = stringifyJson(serialized[0]);
+        const allSame = serialized.every((item) => stringifyJson(item) === first);
         if (allSame) {
-          return JSON.stringify(serialized[0], null, 2);
+          return stringifyJson(serialized[0], 2);
         }
       }
-      return JSON.stringify(serialized, null, 2);
+      return stringifyJson(serialized, 2);
     } else {
       const serialized = schema.serialize(result.data);
-      return JSON.stringify(serialized, null, 2);
+      return stringifyJson(serialized, 2);
     }
   }
 
-  return JSON.stringify(result.data, null, 2);
+  return stringifyJson(result.data, 2);
 }
 
 /** Render a single item as JSON line (for NDJSON streaming) */
 export function renderJsonLine<T>(item: T, serialize?: (data: T) => unknown): string {
   const output = serialize ? serialize(item) : item;
-  return JSON.stringify(output);
+  return stringifyJson(output);
 }

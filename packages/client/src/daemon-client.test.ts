@@ -234,6 +234,47 @@ test("traces WebSocket frames, message types, and JSON parse duration", async ()
   ]);
 });
 
+test("creates a workspace label through a namespaced correlated request", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "workspace_label_create_unit_test",
+    transportFactory: () => mock.transport,
+    reconnect: { enabled: false },
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen();
+  await connectPromise;
+
+  const resultPromise = client.createWorkspaceLabel({
+    name: "Needs review",
+    color: "sky",
+    requestId: "request-create",
+  });
+  expect(parseSentFrame(mock.sent.at(-1))).toEqual({
+    type: "workspace.label.create.request",
+    requestId: "request-create",
+    name: "Needs review",
+    color: "sky",
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "workspace.label.create.response",
+      payload: {
+        requestId: "request-create",
+        label: { name: "Needs review", color: "sky" },
+      },
+    }),
+  );
+  await expect(resultPromise).resolves.toEqual({
+    requestId: "request-create",
+    label: { name: "Needs review", color: "sky" },
+  });
+});
+
 test("does not infer browser automation capabilities from Electron runtime", async () => {
   vi.stubGlobal("navigator", {
     userAgent:

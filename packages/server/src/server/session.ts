@@ -2514,6 +2514,8 @@ export class Session {
     switch (msg.type) {
       case "workspace.label.list.request":
         return this.handleWorkspaceLabelList(msg);
+      case "workspace.label.create.request":
+        return this.handleWorkspaceLabelCreate(msg);
       case "workspace.label.assignment.set.request":
         return this.handleWorkspaceLabelAssignment(msg);
       case "workspace.label.update.request":
@@ -5801,6 +5803,20 @@ export class Session {
       const result = await this.requireWorkspaceLabels().setAssignment(request);
       this.emit({
         type: "workspace.label.assignment.set.response",
+        payload: { requestId: request.requestId, ...result },
+      });
+    } catch (error) {
+      this.emitWorkspaceLabelError(request, error);
+    }
+  }
+
+  private async handleWorkspaceLabelCreate(
+    request: Extract<SessionInboundMessage, { type: "workspace.label.create.request" }>,
+  ): Promise<void> {
+    try {
+      const result = await this.requireWorkspaceLabels().create(request);
+      this.emit({
+        type: "workspace.label.create.response",
         payload: { requestId: request.requestId, ...result },
       });
     } catch (error) {

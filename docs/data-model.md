@@ -468,8 +468,9 @@ Array of workspace records. A workspace is a specific working directory within a
 The catalog is shared by every workspace on one host. A definition contains a display name and one
 of the ten identity colour names (`WORKSPACE_LABEL_COLORS` in
 `packages/protocol/src/workspace-labels.ts`); trimmed, collapsed, case-insensitive name identity is
-unique within that file. Definitions have no portable ID or principal owner and remain after their
-last assignment. Editing a label takes a new name, a new colour, or both in one commit, so the two
+unique within that file. Definitions have no portable ID or principal owner and may be created before
+they are assigned to a workspace; they remain after their last assignment. Editing a label takes a
+new name, a new colour, or both in one commit, so the two
 fields cannot land half-applied. Workspaces store label names, so a rename and a delete rewrite
 workspace assignments through one serialized compound commit while a recolour is catalog-only; a
 rename onto a name the host already has is refused rather than merged. A prepared

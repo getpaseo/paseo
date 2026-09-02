@@ -91,4 +91,32 @@ describe("canonical CLI surface", () => {
       plugin?.commands.find((command) => command.name() === "install")?.helpInformation(),
     ).toContain("--id <id>");
   });
+
+  it("offers workspace labels and workspace pinning", () => {
+    const cli = createCli();
+    const label = cli.commands.find((command) => command.name() === "label");
+    const workspace = cli.commands.find((command) => command.name() === "workspace");
+
+    expect(label?.commands.map((command) => command.name())).toEqual(["ls", "create", "delete"]);
+    expect(
+      label?.commands.find((command) => command.name() === "create")?.helpInformation(),
+    ).toContain("--color <color>");
+    expect(workspace?.commands.map((command) => command.name())).toEqual([
+      "create",
+      "ls",
+      "rename",
+      "archive",
+      "pin",
+      "unpin",
+      "label",
+    ]);
+    expect(
+      workspace?.commands.find((command) => command.name() === "pin")?.helpInformation(),
+    ).toContain("<workspace-id>");
+    expect(
+      workspace?.commands.find((command) => command.name() === "unpin")?.helpInformation(),
+    ).toContain("<workspace-id>");
+    const workspaceLabel = workspace?.commands.find((command) => command.name() === "label");
+    expect(workspaceLabel?.commands.map((command) => command.name())).toEqual(["add", "remove"]);
+  });
 });

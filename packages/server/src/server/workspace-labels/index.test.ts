@@ -84,6 +84,62 @@ describe("workspace labels", () => {
     initial.unsubscribe();
   });
 
+  test("creates a normalized unassigned catalog definition and publishes one change", async () => {
+    const updates: unknown[] = [];
+    const workspaceUpdates: unknown[] = [];
+    const beforeWorkspace = await registry.get("wks_one");
+    const unsubscribeWorkspaceUpdates = registry.subscribeToMutations((mutation) => {
+      workspaceUpdates.push(mutation);
+    });
+    const subscription = await labels.subscribe({ onChange: (change) => updates.push(change) });
+
+    expect(await labels.create({ name: "  Needs   review ", color: "sky" })).toEqual({
+      label: { name: "Needs review", color: "sky" },
+    });
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      kind: "upsert",
+      label: { name: "Needs review", color: "sky" },
+      generation: expect.any(String),
+      seq: 1,
+    });
+    expect(await registry.get("wks_one")).toEqual(beforeWorkspace);
+    expect(workspaceUpdates).toEqual([]);
+
+    const reloadedRegistry = new FileBackedWorkspaceRegistry(
+      join(paseoHome, "projects", "workspaces.json"),
+      createTestLogger(),
+    );
+    expect((await reloadedRegistry.get("wks_one"))?.labels).toBeUndefined();
+    const reloadedLabels = createWorkspaceLabelService({
+      paseoHome,
+      workspaceRegistry: reloadedRegistry,
+    });
+    const persisted = await reloadedLabels.subscribe({ onChange: () => undefined });
+    expect(persisted.snapshot.labels).toEqual([{ name: "Needs review", color: "sky" }]);
+    persisted.unsubscribe();
+    unsubscribeWorkspaceUpdates();
+    subscription.unsubscribe();
+  });
+
+  test("rejects case-insensitive duplicate creation without state or publication", async () => {
+    const updates: unknown[] = [];
+    const subscription = await labels.subscribe({ onChange: (change) => updates.push(change) });
+    await labels.create({ name: "Blocked", color: "red" });
+    const beforeWorkspace = await registry.get("wks_one");
+    updates.length = 0;
+
+    await expect(labels.create({ name: "  blocked ", color: "blue" })).rejects.toMatchObject({
+      code: "label_name_taken",
+    });
+    expect(updates).toEqual([]);
+    expect(await registry.get("wks_one")).toEqual(beforeWorkspace);
+    const snapshot = await labels.subscribe({ onChange: () => undefined });
+    expect(snapshot.snapshot.labels).toEqual([{ name: "Blocked", color: "red" }]);
+    snapshot.unsubscribe();
+    subscription.unsubscribe();
+  });
+
   test("catches up one catalog change and falls back to a coherent snapshot", async () => {
     const initial = await labels.subscribe({ onChange: () => undefined });
     await labels.setAssignment({
@@ -210,7 +266,10 @@ describe("workspace labels", () => {
       label: { name: "Waiting", color: "amber" },
       affectedWorkspaceCount: 0,
     });
-    expect(await labels.delete("waiting")).toEqual({ affectedWorkspaceCount: 1 });
+    expect(await labels.delete("waiting")).toEqual({
+      affectedWorkspaceCount: 1,
+      deletedName: "Waiting",
+    });
     expect((await registry.get("wks_one"))?.labels).toBeUndefined();
   });
 
@@ -275,7 +334,10 @@ describe("workspace labels", () => {
     await registry.archive("wks_one", "2026-08-14T01:00:00.000Z");
 
     expect(await labels.countAffectedWorkspaces("blocked")).toBe(1);
-    expect(await labels.delete("Blocked")).toEqual({ affectedWorkspaceCount: 1 });
+    expect(await labels.delete("Blocked")).toEqual({
+      affectedWorkspaceCount: 1,
+      deletedName: "Blocked",
+    });
     expect((await registry.get("wks_one"))?.labels).toBeUndefined();
   });
 

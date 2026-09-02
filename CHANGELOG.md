@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added CLI commands for workspace label catalog and assignment management, and workspace pinning
 - Added active-turn steering for pi agents so new messages reach the running turn without interrupting it ([#3752](https://github.com/getpaseo/paseo/pull/3752) by [@mcowger](https://github.com/mcowger))
 - Added declared build commands and monorepo source paths for Git-hosted plugins ([#4158](https://github.com/getpaseo/paseo/pull/4158))
 

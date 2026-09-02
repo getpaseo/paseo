@@ -17,6 +17,10 @@ interface AssignmentCommit {
   catalogChanged: boolean;
 }
 
+interface CreateCommit {
+  label: WorkspaceLabelDefinition;
+}
+
 interface UpdateCommit {
   label: WorkspaceLabelDefinition;
   affectedWorkspaceCount: number;
@@ -121,6 +125,32 @@ export class WorkspaceLabelService {
     });
   }
 
+  async create(input: {
+    name: string;
+    color: WorkspaceLabelDefinition["color"];
+  }): Promise<{ label: WorkspaceLabelDefinition }> {
+    return this.exclusive(async () => {
+      const name = requireName(input.name);
+      const committed = await this.catalog.commit<CreateCommit>((catalog) => {
+        const key = workspaceLabelKey(name);
+        if (catalog.some((label) => workspaceLabelKey(label.name) === key)) {
+          throw new WorkspaceLabelError(
+            "label_name_taken",
+            "A label with that name already exists",
+          );
+        }
+        const label = { name, color: input.color };
+        return {
+          labels: [...catalog, label],
+          workspaceUpdates: [],
+          result: { label },
+        };
+      });
+      this.sequence.publish({ kind: "upsert", label: committed.label });
+      return committed;
+    });
+  }
+
   /**
    * Edit a label: a new name, a new colour, or both, in one catalog commit.
    *
@@ -195,7 +225,9 @@ export class WorkspaceLabelService {
     });
   }
 
-  async delete(nameInput: string): Promise<{ affectedWorkspaceCount: number }> {
+  async delete(
+    nameInput: string,
+  ): Promise<{ affectedWorkspaceCount: number; deletedName: string | null }> {
     return this.exclusive(async () => {
       const key = workspaceLabelKey(requireName(nameInput));
       const committed = await this.catalog.commit<DeleteCommit>((catalog, workspaces) => {
@@ -220,7 +252,10 @@ export class WorkspaceLabelService {
       if (committed.deletedName) {
         this.sequence.publish({ kind: "remove", name: committed.deletedName });
       }
-      return { affectedWorkspaceCount: committed.affectedWorkspaceCount };
+      return {
+        affectedWorkspaceCount: committed.affectedWorkspaceCount,
+        deletedName: committed.deletedName,
+      };
     });
   }
 
