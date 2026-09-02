@@ -1,5 +1,6 @@
 import { Command, Option } from "commander";
 import { createAgentCommand } from "./commands/agent/index.js";
+import { createBrowserCommand } from "./commands/browser/index.js";
 import { createDaemonCommand } from "./commands/daemon/index.js";
 import { createPermitCommand } from "./commands/permit/index.js";
 import { createProviderCommand } from "./commands/provider/index.js";
@@ -176,6 +177,9 @@ export function createCli(): Command {
 
   // Terminal commands
   program.addCommand(createTerminalCommand());
+
+  // Browser automation commands
+  program.addCommand(createBrowserCommand());
 
   // Workspace script commands
   program.addCommand(createScriptCommand());

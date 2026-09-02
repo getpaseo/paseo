@@ -8,7 +8,7 @@ category: Orchestration
 
 # Orchestration skills
 
-Paseo ships orchestration skills that teach coding agents how to use Paseo tools and the CLI to spawn, coordinate, and manage other agents. Skills package common workflows as slash commands, so agents know how to orchestrate without you writing the briefing and safety rails each time.
+Paseo ships skills that teach coding agents how to use Paseo tools and the CLI. They package orchestration and browser workflows so agents have the command surface and safety rails without adding every tool to every session.
 
 Start with [Orchestration](/docs/orchestration) if you want the mental model, or [Common workflows](/docs/orchestration-workflows) for prompts you can use without installing skills.
 
@@ -62,4 +62,15 @@ The advisor gives a judgment. You decide what to do. The advisor prompt is analy
 ```
 /paseo-advisor did I miss anything in this migration plan?
 /paseo-advisor --provider claude/opus what is the UX risk in this flow?
+```
+
+## `/paseo-browser`, Browser Automation
+
+Drives real Paseo browser tabs through the `paseo browser` CLI. Use it when an agent needs to inspect a page, interact with elements, upload files, capture screenshots, or read browser logs without loading the browser MCP tool catalog into the session.
+
+The skill teaches workspace scoping, the snapshot-and-ref interaction loop, stale-ref recovery, structured output, and the full browser command surface.
+
+```
+/paseo-browser open example.com, capture a snapshot, and report the page title
+/paseo-browser fill the sign-up form and save a screenshot before submitting
 ```

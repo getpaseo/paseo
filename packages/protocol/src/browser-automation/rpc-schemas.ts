@@ -47,6 +47,16 @@ export const BROWSER_AUTOMATION_COMMAND_NAMES = [
 
 export const BrowserAutomationCommandNameSchema = z.enum(BROWSER_AUTOMATION_COMMAND_NAMES);
 
+export type BrowserToolName = `browser_${BrowserAutomationCommandName}`;
+
+export const BROWSER_TOOL_NAMES = BROWSER_AUTOMATION_COMMAND_NAMES.map(
+  (name) => `browser_${name}` as BrowserToolName,
+);
+
+export const BrowserToolNameSchema = z.enum(
+  BROWSER_TOOL_NAMES as [BrowserToolName, ...BrowserToolName[]],
+);
+
 export const BrowserAutomationBrowserIdSchema = z
   .string({ error: () => BROWSER_AUTOMATION_BROWSER_ID_MESSAGE })
   .min(1, BROWSER_AUTOMATION_BROWSER_ID_MESSAGE)
