@@ -28,17 +28,17 @@ import {
   collectProviderErrorRows,
   computeEmptyState,
   type DirectoryProject,
+  formatDirectoryLabel,
   getPromptPreview,
   getSessionTitle,
-  groupEntriesByDirectory,
   hasMoreSessions,
+  resolveDirectoryLabel,
   nextPageLimit,
   PER_PROVIDER_LIMIT,
   type ProviderErrorRow,
   resolveImportTarget,
   resolveProvidersToFetch,
   requiresImportSessionsHostUpgrade,
-  type SessionGroup,
   sumFilteredAlreadyImportedCount,
 } from "@/components/import-session-sheet-view-model";
 
@@ -293,11 +293,14 @@ function ImportSessionSheetRow({
   entry,
   disabled,
   importing,
+  folder,
   onImportSession,
 }: {
   entry: FetchRecentProviderSessionEntry;
   disabled: boolean;
   importing: boolean;
+  /** The row's directory, shown only when rows can come from more than one. */
+  folder: string | null;
   onImportSession: (entry: FetchRecentProviderSessionEntry) => void;
 }) {
   const { theme } = useUnistyles();
@@ -346,6 +349,15 @@ function ImportSessionSheetRow({
         <Text style={styles.rowPreview} numberOfLines={2}>
           {promptPreview}
         </Text>
+        {folder ? (
+          <Text
+            style={styles.rowFolder}
+            numberOfLines={1}
+            testID={`import-session-row-folder-${entry.providerId}-${entry.providerHandleId}`}
+          >
+            {folder}
+          </Text>
+        ) : null}
       </View>
     </Pressable>
   );
@@ -355,11 +367,13 @@ function SessionRows({
   entries,
   disabled,
   importingSessionKey,
+  resolveFolder,
   onImportSession,
 }: {
   entries: ReadonlyArray<FetchRecentProviderSessionEntry>;
   disabled: boolean;
   importingSessionKey: string | null;
+  resolveFolder: (entry: FetchRecentProviderSessionEntry) => string | null;
   onImportSession: (entry: FetchRecentProviderSessionEntry) => void;
 }) {
   return (
@@ -370,47 +384,11 @@ function SessionRows({
           entry={entry}
           disabled={disabled}
           importing={importingSessionKey === `${entry.providerId}:${entry.providerHandleId}`}
+          folder={resolveFolder(entry)}
           onImportSession={onImportSession}
         />
       ))}
     </View>
-  );
-}
-
-function SessionGroups({
-  groups,
-  disabled,
-  importingSessionKey,
-  onImportSession,
-}: {
-  groups: ReadonlyArray<SessionGroup>;
-  disabled: boolean;
-  importingSessionKey: string | null;
-  onImportSession: (entry: FetchRecentProviderSessionEntry) => void;
-}) {
-  return (
-    <>
-      {groups.map((group) => (
-        <View key={group.directory} style={styles.group}>
-          <Text
-            style={styles.groupHeading}
-            numberOfLines={1}
-            testID={`import-session-group-${group.directory}`}
-          >
-            {group.label.name}
-            {group.label.detail ? (
-              <Text style={styles.groupHeadingDetail}>{` · ${group.label.detail}`}</Text>
-            ) : null}
-          </Text>
-          <SessionRows
-            entries={group.entries}
-            disabled={disabled}
-            importingSessionKey={importingSessionKey}
-            onImportSession={onImportSession}
-          />
-        </View>
-      ))}
-    </>
   );
 }
 
@@ -526,11 +504,14 @@ export function ImportSessionSheet({
     [hostProjects],
   );
 
-  // Grouping only earns its keep when rows can come from more than one directory.
-  const isGrouped = scopeCwd === null;
-  const sessionGroups = useMemo(
-    () => (isGrouped ? groupEntriesByDirectory(visibleEntries, directoryProjects) : []),
-    [isGrouped, visibleEntries, directoryProjects],
+  // A scoped sheet only lists one directory, so naming it on every row is noise.
+  const showRowFolders = scopeCwd === null;
+  const resolveFolder = useCallback(
+    (entry: FetchRecentProviderSessionEntry) =>
+      showRowFolders
+        ? formatDirectoryLabel(resolveDirectoryLabel(entry.cwd, directoryProjects))
+        : null,
+    [showRowFolders, directoryProjects],
   );
 
   const filterComboboxOptions = useMemo<ComboboxOption[]>(
@@ -729,21 +710,6 @@ export function ImportSessionSheet({
   });
   const showFilter = filterProviders.length > 1;
   const showLoadMore = hasMoreSessions(queries, pageLimit);
-  const sessionList = isGrouped ? (
-    <SessionGroups
-      groups={sessionGroups}
-      disabled={importMutation.isPending}
-      importingSessionKey={importingSessionKey}
-      onImportSession={handleImportSession}
-    />
-  ) : (
-    <SessionRows
-      entries={visibleEntries}
-      disabled={importMutation.isPending}
-      importingSessionKey={importingSessionKey}
-      onImportSession={handleImportSession}
-    />
-  );
 
   return (
     <AdaptiveModalSheet
@@ -802,7 +768,15 @@ export function ImportSessionSheet({
       {providerErrorRows.length > 0 ? (
         <ProviderErrorBanner rows={providerErrorRows} onRetry={handleRetryProvider} />
       ) : null}
-      {visibleEntries.length > 0 ? sessionList : null}
+      {visibleEntries.length > 0 ? (
+        <SessionRows
+          entries={visibleEntries}
+          disabled={importMutation.isPending}
+          importingSessionKey={importingSessionKey}
+          resolveFolder={resolveFolder}
+          onImportSession={handleImportSession}
+        />
+      ) : null}
       {showLoadMore ? (
         <View style={styles.footer}>
           <Button
@@ -865,21 +839,6 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.fontSize.base,
     fontWeight: theme.fontWeight.medium,
   },
-  group: {
-    paddingBottom: theme.spacing[2],
-  },
-  groupHeading: {
-    marginTop: theme.spacing[2],
-    marginBottom: theme.spacing[2],
-    color: theme.colors.foreground,
-    fontSize: theme.fontSize.base,
-    fontWeight: theme.fontWeight.medium,
-  },
-  // Worktrees of one project share a name; the path under the root is what
-  // separates them, and it is context rather than the heading itself.
-  groupHeadingDetail: {
-    color: theme.colors.foregroundMuted,
-  },
   list: {
     gap: theme.spacing[1],
   },
@@ -933,6 +892,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.base,
     lineHeight: 20,
+  },
+  rowFolder: {
+    color: theme.colors.foregroundMuted,
+    fontSize: theme.fontSize.sm,
   },
   statusRow: {
     flexDirection: "row",

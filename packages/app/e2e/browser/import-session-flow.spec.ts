@@ -138,19 +138,20 @@ test("captures the compact import-session journey", async ({ page }, testInfo) =
     await capture(page, testInfo, "01-mobile-sidebar-footer.png");
   });
 
-  await test.step("the host-wide sheet is grouped and fits its provider filter", async () => {
+  await test.step("the host-wide sheet is newest first and fits its provider filter", async () => {
     await page.getByTestId("sidebar-import-session").click();
     await expectImportSheet(page);
     await expect(page.getByTestId("import-session-scope")).toContainText("Sessions on");
-    await expect(page.getByTestId(`import-session-group-${scenario.projectRoot}`)).toContainText(
-      scenario.projectName,
+    expect((await listRowTestIds(page)).slice(0, 3)).toEqual([
+      rowTestId(scenario.importSessionId),
+      rowTestId("fixture-worktree"),
+      rowTestId("fixture-unrelated"),
+    ]);
+    await expect(rowFolder(page, scenario.importSessionId)).toHaveText(scenario.projectName);
+    await expect(rowFolder(page, "fixture-worktree")).toHaveText(
+      `${scenario.projectName} · worktrees/review-fix`,
     );
-    await expect(
-      page.getByTestId(`import-session-group-${scenario.worktreeDirectory}`),
-    ).toContainText(`${scenario.projectName} · worktrees/review-fix`);
-    await expect(
-      page.getByTestId(`import-session-group-${scenario.unrelatedDirectory}`),
-    ).toContainText(scenario.unrelatedDirectory);
+    await expect(rowFolder(page, "fixture-unrelated")).toHaveText(scenario.unrelatedDirectory);
     await expect(page.getByTestId("import-session-provider-errors")).toContainText(
       "Could not load Broken ACP sessions",
     );
@@ -160,10 +161,8 @@ test("captures the compact import-session journey", async ({ page }, testInfo) =
     const filterBounds = await providerFilter.boundingBox();
     expect(filterBounds?.x ?? 390).toBeGreaterThanOrEqual(0);
     expect((filterBounds?.x ?? 390) + (filterBounds?.width ?? 1)).toBeLessThanOrEqual(390);
-    await page
-      .getByTestId(`import-session-group-${scenario.worktreeDirectory}`)
-      .scrollIntoViewIfNeeded();
-    await capture(page, testInfo, "02-mobile-sheet-grouped.png");
+    await page.getByTestId(rowTestId("fixture-unrelated")).scrollIntoViewIfNeeded();
+    await capture(page, testInfo, "02-mobile-sheet-unscoped.png");
   });
 
   await test.step("search narrows across the fixture corpus", async () => {
@@ -222,9 +221,7 @@ test("captures the compact import-session journey", async ({ page }, testInfo) =
     await capture(page, testInfo, "09-mobile-workspace-scoped.png");
     await page.getByTestId("import-session-show-all").click();
     await expect(page.getByTestId("import-session-scope")).toContainText("Sessions on");
-    await expect(
-      page.getByTestId(`import-session-group-${scenario.unrelatedDirectory}`),
-    ).toBeVisible();
+    await expect(rowFolder(page, "fixture-unrelated")).toHaveText(scenario.unrelatedDirectory);
     await capture(page, testInfo, "10-mobile-workspace-show-all.png");
   });
 });
@@ -233,17 +230,22 @@ test("captures the desktop import sheet and command-center entry", async ({ page
   await useViewport(page, { width: 1280, height: 800 });
   await openWorkspace(page);
 
-  await test.step("desktop shows the grouped host-wide sheet", async () => {
+  await test.step("desktop shows the flat host-wide sheet", async () => {
     await expect(page.getByTestId("sidebar-import-session")).toBeVisible();
     await page.getByTestId("sidebar-import-session").click();
     await expectImportSheet(page);
-    await expect(
-      page.getByTestId(`import-session-group-${scenario.worktreeDirectory}`),
-    ).toContainText(`${scenario.projectName} · worktrees/review-fix`);
-    await page
-      .getByTestId(`import-session-group-${scenario.worktreeDirectory}`)
-      .scrollIntoViewIfNeeded();
-    await capture(page, testInfo, "11-desktop-sheet-grouped.png");
+    // The compact test may already have imported the newest fixture row, so this
+    // asserts recency as an ordering between two rows nothing imports.
+    const rowIds = await listRowTestIds(page);
+    expect(rowIds.indexOf(rowTestId("fixture-worktree"))).toBeGreaterThanOrEqual(0);
+    expect(rowIds.indexOf(rowTestId("fixture-worktree"))).toBeLessThan(
+      rowIds.indexOf(rowTestId("fixture-unrelated")),
+    );
+    await expect(rowFolder(page, "fixture-worktree")).toHaveText(
+      `${scenario.projectName} · worktrees/review-fix`,
+    );
+    await page.getByTestId(rowTestId("fixture-unrelated")).scrollIntoViewIfNeeded();
+    await capture(page, testInfo, "11-desktop-sheet-unscoped.png");
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("import-session-sheet")).toHaveCount(0);
   });
@@ -256,6 +258,21 @@ test("captures the desktop import sheet and command-center entry", async ({ page
     await capture(page, testInfo, "12-desktop-command-center-import.png");
   });
 });
+
+function rowTestId(providerHandleId: string): string {
+  return `import-session-session-claude-${providerHandleId}`;
+}
+
+function rowFolder(page: Page, providerHandleId: string) {
+  return page.getByTestId(`import-session-row-folder-claude-${providerHandleId}`);
+}
+
+/** The rendered row order, which the flat list keys to recency. */
+async function listRowTestIds(page: Page): Promise<Array<string | null>> {
+  return await page
+    .locator('[data-testid^="import-session-session-claude-"]')
+    .evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-testid")));
+}
 
 async function useViewport(page: Page, viewport: { width: number; height: number }): Promise<void> {
   await page.setViewportSize(viewport);

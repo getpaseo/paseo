@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import React, { type ReactNode } from "react";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   DaemonClient,
@@ -835,7 +835,7 @@ describe("ImportSessionSheet", () => {
     expect(fetchRecentProviderSessions).not.toHaveBeenCalled();
   });
 
-  it("omits cwd from fetch and groups rows by folder when cwd is unset", async () => {
+  it("omits cwd from fetch and names each row's folder when cwd is unset", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
       entries: [
@@ -870,7 +870,9 @@ describe("ImportSessionSheet", () => {
       expect.objectContaining({ cwd: expect.anything() }),
     );
     await screen.findByText("/home/me/work/other-project");
-    screen.getByTestId("import-session-group-/home/me/work/other-project");
+    expect(
+      screen.getByTestId("import-session-row-folder-claude-provider-thread-1").textContent,
+    ).toBe("/home/me/work/other-project");
   });
 
   it("uses the session's cwd when importing in cwd-less mode and fires onImported", async () => {
@@ -942,7 +944,7 @@ describe("ImportSessionSheet", () => {
     screen.getByTestId("import-session-show-all");
   });
 
-  it("groups unscoped rows by folder, naming folders the app knows after their project", async () => {
+  it("lists unscoped rows newest first and names each row's folder", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
       entries: [
@@ -990,18 +992,50 @@ describe("ImportSessionSheet", () => {
       },
     );
 
-    await screen.findByTestId("import-session-group-/home/me/paseo");
-    const groups = screen.getAllByTestId(/^import-session-group-/);
-    expect(groups.map((group) => group.textContent)).toEqual([
-      "paseo",
-      "/tmp/scratch",
-      "paseo · .dev/worktrees/zebra",
+    await screen.findByTestId("import-session-session-claude-newest");
+    expect(
+      screen
+        .getAllByTestId(/^import-session-session-/)
+        .map((row) => row.getAttribute("data-testid")),
+    ).toEqual([
+      "import-session-session-claude-newest",
+      "import-session-session-claude-elsewhere",
+      "import-session-session-claude-older",
+      "import-session-session-claude-worktree",
     ]);
     expect(
-      within(groups[0]!.parentElement!)
-        .getAllByRole("button")
-        .map((row) => row.getAttribute("data-testid")),
-    ).toEqual(["import-session-session-claude-newest", "import-session-session-claude-older"]);
+      screen.getAllByTestId(/^import-session-row-folder-/).map((folder) => folder.textContent),
+    ).toEqual(["paseo", "/tmp/scratch", "paseo", "paseo · .dev/worktrees/zebra"]);
+  });
+
+  it("leaves the folder off every row when the sheet is scoped to one workspace", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerHandleId: "scoped",
+          cwd: "/repo/paseo",
+          title: "Scoped session",
+        }),
+      ],
+    }));
+    const importAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        workspaceId: "ws-current",
+        projects: [{ iconWorkingDir: "/repo/paseo", projectName: "paseo" }],
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+      },
+    );
+
+    await screen.findByText("Scoped session");
+    expect(screen.queryAllByTestId(/^import-session-row-folder-/)).toHaveLength(0);
   });
 
   it("sends the debounced search query to every provider", async () => {

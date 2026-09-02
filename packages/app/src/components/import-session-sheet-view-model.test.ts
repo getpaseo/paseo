@@ -6,9 +6,9 @@ import {
   buildProviderLabelMap,
   collectProviderErrorRows,
   computeEmptyState,
+  formatDirectoryLabel,
   getPromptPreview,
   getSessionTitle,
-  groupEntriesByDirectory,
   hasMoreSessions,
   nextPageLimit,
   PER_PROVIDER_LIMIT,
@@ -34,10 +34,6 @@ function entry(
     lastActivityAt: "2026-04-30T10:00:00.000Z",
     ...overrides,
   };
-}
-
-function toHandleId(session: FetchRecentProviderSessionEntry): string {
-  return session.providerHandleId;
 }
 
 function settled(
@@ -297,55 +293,15 @@ describe("resolveDirectoryLabel", () => {
   });
 });
 
-describe("groupEntriesByDirectory", () => {
-  it("groups by directory, newest group first, newest row first inside", () => {
-    const groups = groupEntriesByDirectory(
-      [
-        entry({ providerHandleId: "a", cwd: "/home/me/paseo" }),
-        entry({ providerHandleId: "b", cwd: "/tmp/scratch" }),
-        entry({ providerHandleId: "c", cwd: "/home/me/paseo" }),
-      ],
-      [{ rootPath: "/home/me/paseo", name: "paseo" }],
-    );
-    expect(groups.map((group) => group.label)).toEqual([
-      { name: "paseo" },
-      { name: "/tmp/scratch" },
-    ]);
-    expect(groups.flatMap((group) => group.entries).map(toHandleId)).toEqual(["a", "c", "b"]);
-    expect(groups.map((group) => group.entries.length)).toEqual([2, 1]);
+describe("formatDirectoryLabel", () => {
+  it("shows the project name alone at its root", () => {
+    expect(formatDirectoryLabel({ name: "paseo" })).toBe("paseo");
   });
 
-  it("gives each worktree of one project its own distinguishable group", () => {
-    const groups = groupEntriesByDirectory(
-      [
-        entry({ providerHandleId: "main", cwd: "/home/me/paseo" }),
-        entry({ providerHandleId: "zebra", cwd: "/home/me/paseo/.dev/worktrees/zebra" }),
-        entry({ providerHandleId: "otter", cwd: "/home/me/paseo/.dev/worktrees/otter" }),
-      ],
-      [{ rootPath: "/home/me/paseo", name: "paseo" }],
+  it("appends the path under the root so worktrees of one project read apart", () => {
+    expect(formatDirectoryLabel({ name: "paseo", detail: ".dev/worktrees/zebra" })).toBe(
+      "paseo · .dev/worktrees/zebra",
     );
-    expect(groups.map((group) => group.label)).toEqual([
-      { name: "paseo" },
-      { name: "paseo", detail: ".dev/worktrees/zebra" },
-      { name: "paseo", detail: ".dev/worktrees/otter" },
-    ]);
-  });
-
-  it("keeps one directory in one group however it is spelled", () => {
-    const groups = groupEntriesByDirectory(
-      [
-        entry({ providerHandleId: "a", cwd: "/home/me/paseo" }),
-        entry({ providerHandleId: "b", cwd: "/home/me/paseo/" }),
-      ],
-      [],
-    );
-    expect(groups).toHaveLength(1);
-    expect(groups[0]?.directory).toBe("/home/me/paseo");
-    expect(groups[0]?.entries.map(toHandleId)).toEqual(["a", "b"]);
-  });
-
-  it("returns no groups for no entries", () => {
-    expect(groupEntriesByDirectory([], [])).toEqual([]);
   });
 });
 

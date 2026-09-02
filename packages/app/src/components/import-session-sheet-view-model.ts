@@ -156,12 +156,6 @@ export interface DirectoryLabel {
   detail?: string;
 }
 
-export interface SessionGroup {
-  directory: string;
-  label: DirectoryLabel;
-  entries: FetchRecentProviderSessionEntry[];
-}
-
 function withoutTrailingSlash(path: string): string {
   return path.length > 1 ? path.replace(/\/+$/, "") : path;
 }
@@ -189,31 +183,9 @@ export function resolveDirectoryLabel(
   return relative ? { name: bestName, detail: relative } : { name: bestName };
 }
 
-/**
- * Entries arrive newest first, so the order groups are first seen in is already
- * newest-group-first, and each group keeps the incoming order inside it.
- */
-export function groupEntriesByDirectory(
-  entries: ReadonlyArray<FetchRecentProviderSessionEntry>,
-  projects: ReadonlyArray<DirectoryProject>,
-): SessionGroup[] {
-  const byDirectory = new Map<string, SessionGroup>();
-  for (const entry of entries) {
-    // Trailing slashes are cosmetic; splitting on them would show one directory
-    // as two groups.
-    const directory = withoutTrailingSlash(entry.cwd);
-    const group = byDirectory.get(directory);
-    if (group) {
-      group.entries.push(entry);
-      continue;
-    }
-    byDirectory.set(directory, {
-      directory,
-      label: resolveDirectoryLabel(directory, projects),
-      entries: [entry],
-    });
-  }
-  return [...byDirectory.values()];
+/** The one-line form a row shows under its prompt preview. */
+export function formatDirectoryLabel(label: DirectoryLabel): string {
+  return label.detail ? `${label.name} · ${label.detail}` : label.name;
 }
 
 export interface ImportTarget {
