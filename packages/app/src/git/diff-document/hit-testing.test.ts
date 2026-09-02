@@ -138,6 +138,19 @@ describe("diff hit testing", () => {
       "new-one\nnew-two",
     );
   });
+
+  it("defaults split hunk-header select-all to the new pane", () => {
+    const model = buildModel("unused", { files: [splitFile()], layout: "split" });
+    const header = model.rows
+      .filter((row) => row.kind === "line")
+      .flatMap((row) => row.cells)
+      .find((cell) => cell?.type === "header");
+    expect(header).toBeDefined();
+
+    expect(selectedSourceText(model, selectAllSource(model, position(model, header!, 0))!)).toBe(
+      "new-one\nnew-two",
+    );
+  });
 });
 
 function buildModel(changedContent: string, overrides: Partial<BuildDiffDocumentModelInput> = {}) {

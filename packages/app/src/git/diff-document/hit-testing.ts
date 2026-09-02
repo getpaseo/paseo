@@ -124,7 +124,15 @@ export function selectAllSource(
 ): DiffSelection | null {
   let first: DiffCharacterPosition | null = null;
   let last: DiffCharacterPosition | null = null;
-  const splitCellIndex = model.layout === "split" ? (preferredPosition?.cellIndex ?? 1) : null;
+  const preferredRow = preferredPosition ? model.rows[preferredPosition.rowIndex] : null;
+  const preferredCell =
+    preferredPosition && preferredRow?.kind === "line"
+      ? preferredRow.cells[preferredPosition.cellIndex]
+      : null;
+  let splitCellIndex: number | null = null;
+  if (model.layout === "split") {
+    splitCellIndex = preferredCell?.type === "header" ? 1 : (preferredPosition?.cellIndex ?? 1);
+  }
   for (const row of model.rows) {
     if (row.kind !== "line") continue;
     row.cells.forEach((cell, cellIndex) => {
