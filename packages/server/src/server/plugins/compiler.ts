@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import type { Plugin } from "esbuild";
@@ -84,8 +84,34 @@ function directoryTarget(filePath: string, pluginDirectory: string): PluginModul
   return "invalid";
 }
 
+function containsPath(directory: string, filePath: string): boolean {
+  const relative = path.relative(directory, filePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function dependencyName(specifier: string): string {
+  const segments = specifier.split("/");
+  return specifier.startsWith("@") ? segments.slice(0, 2).join("/") : segments[0];
+}
+
+function findDependencyRoot(resolvedPath: string, specifier: string): string | null {
+  const expectedName = dependencyName(specifier);
+  let directory = path.dirname(resolvedPath);
+  for (;;) {
+    const manifestPath = path.join(directory, "package.json");
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { name?: unknown };
+      if (manifest.name === expectedName) return directory;
+    }
+    const parent = path.dirname(directory);
+    if (parent === directory) return null;
+    directory = parent;
+  }
+}
+
 function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory: string): Plugin {
   const boundaryResolution = {};
+  const linkedDependencyRoots = new Set<string>();
   return {
     name: `paseo-plugin-${target}-runtime-boundary`,
     setup(buildContext) {
@@ -110,6 +136,15 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
         const resolvedPath = resolution.path;
         const importedTarget = directoryTarget(resolvedPath, pluginDirectory);
         if (importedTarget === "invalid") {
+          if ([...linkedDependencyRoots].some((root) => containsPath(root, resolvedPath)))
+            return null;
+          if (!args.path.startsWith(".") && !path.isAbsolute(args.path)) {
+            const dependencyRoot = findDependencyRoot(resolvedPath, args.path);
+            if (dependencyRoot) {
+              linkedDependencyRoots.add(dependencyRoot);
+              return null;
+            }
+          }
           return {
             errors: [
               {

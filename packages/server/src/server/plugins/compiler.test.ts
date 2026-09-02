@@ -403,6 +403,35 @@ export default function contribute() { void handler; return () => undefined; }`,
     );
   });
 
+  it("allows linked dependencies to resolve within their own package root", async () => {
+    const entries = await createSplitPlugin();
+    const linkedPackage = await mkdtemp(path.join(tmpdir(), "paseo-plugin-linked-dependency-"));
+    temporaryDirectories.push(linkedPackage);
+    await mkdir(path.join(entries.directory, "node_modules"));
+    await Promise.all([
+      writeFile(
+        path.join(linkedPackage, "package.json"),
+        JSON.stringify({ name: "fixture-dependency", main: "index.js" }),
+      ),
+      writeFile(path.join(linkedPackage, "index.js"), `module.exports = require("./value");`),
+      writeFile(path.join(linkedPackage, "value.js"), `module.exports = "linked dependency";`),
+      symlink(
+        linkedPackage,
+        path.join(entries.directory, "node_modules", "fixture-dependency"),
+        process.platform === "win32" ? "junction" : "dir",
+      ),
+      writeFile(
+        entries.server,
+        `import value from "fixture-dependency";
+export default function contribute() { void value; return () => undefined; }`,
+      ),
+    ]);
+
+    const { serverBundle } = await compilePlugin(entries);
+
+    expect(serverBundle).toContain("linked dependency");
+  });
+
   it("builds a single runtime when the other entry is absent", async () => {
     const entries = await createSplitPlugin();
     const { clientBundle, serverBundle } = await compilePlugin({
