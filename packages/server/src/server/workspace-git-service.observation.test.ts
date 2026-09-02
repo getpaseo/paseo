@@ -893,11 +893,14 @@ describe("WorkspaceGitService checkout observation", () => {
       expect(getCheckoutSnapshotFacts).toHaveBeenCalledTimes(1);
     });
 
-    watcher.records
-      .find((record) => record.directory === GIT_DIR)
-      ?.callback(null, [
-        { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
-      ]);
+    await vi.waitFor(() => {
+      expect(getWatcherRecordsForDirectory(watcher, GIT_DIR)).toHaveLength(1);
+    });
+    const [repoWatcher] = getWatcherRecordsForDirectory(watcher, GIT_DIR);
+    if (!repoWatcher) throw new Error("Repository watcher was not registered");
+    repoWatcher.callback(null, [
+      { path: path.join(GIT_DIR, "refs", "remotes", "origin", "main"), type: "update" },
+    ]);
     releaseFetch.resolve();
     await vi.waitFor(() => {
       expect(service.getMetrics().fetchInFlightCount).toBe(0);

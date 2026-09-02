@@ -289,6 +289,7 @@ export const ja: TranslationResources = {
       zoomIn: "拡大",
       zoomOut: "縮小",
       resetZoom: "表示をリセット",
+      fullscreen: "全画面表示",
       viewSource: "ソースを表示",
       viewDiagram: "図を表示",
     },
@@ -360,7 +361,13 @@ export const ja: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "セッションをインポート",
+    searchPlaceholder: "セッションを検索...",
+    scope: {
+      host: "{{host}} のセッション",
+      workspace: "このワークスペース",
+    },
     filters: {
       all: "すべて",
     },
@@ -369,12 +376,13 @@ export const ja: TranslationResources = {
       updateHost: "セッションをインポートするにはホストを更新してください。",
       noProviders: "インポート可能なプロバイダーが有効になっていません。",
       loading: "最近のセッションを読み込み中...",
-      failedAll: "最近のセッションを読み込めませんでした。",
-      failedProviders: "{{providers}}のセッションを読み込めませんでした。",
+      failedProvider: "{{provider}} のセッションを読み込めませんでした",
       failedImport: "選択したセッションをインポートできませんでした。",
     },
     actions: {
       refresh: "セッションを更新",
+      showAll: "すべて表示",
+      loadMore: "さらに読み込む",
     },
     preview: {
       untitledSession: "無題のセッション",
@@ -382,6 +390,7 @@ export const ja: TranslationResources = {
     },
     empty: {
       noRecent: "インポートする最近のセッションがありません。",
+      noMatches: "検索に一致するセッションがありません。",
       alreadyImported: "最近のセッションはすでにすべてインポートされています。",
       noProviderSessions: "{{provider}}のセッションが見つかりません。",
     },
@@ -1103,7 +1112,6 @@ export const ja: TranslationResources = {
       addProject: "プロジェクトを追加",
       newWorkspace: "新しいワークスペース",
       hosts: "ホスト",
-      home: "ホーム",
       settings: "設定",
       closeSidebar: "サイドバーを閉じる",
     },

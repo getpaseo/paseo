@@ -286,7 +286,12 @@ import type {
   ToolCallDetail,
   ToolCallTimelineItem,
   AgentUsage,
+  JsonValue,
 } from "./agent-types.js";
+
+// WebSocket payloads have already crossed JSON serialization. Keeping this as
+// unknown avoids zod-aot's recursive z.json() object-codegen regression.
+const JsonWireValueSchema = z.unknown() as z.ZodType<JsonValue>;
 
 export const AgentStatusSchema = z.enum(AGENT_LIFECYCLE_STATUSES);
 
@@ -732,6 +737,14 @@ export const AgentTimelineItemPayloadSchema: z.ZodType<AgentTimelineItem, unknow
     status: z.enum(["loading", "completed"]),
     trigger: z.enum(["auto", "manual"]).optional(),
     preTokens: z.number().optional(),
+  }),
+  z.object({
+    type: z.literal("plugin"),
+    id: z.string(),
+    pluginId: PluginIdSchema,
+    kind: z.string(),
+    version: z.number(),
+    data: JsonWireValueSchema,
   }),
 ]);
 
@@ -1358,6 +1371,7 @@ export const FetchRecentProviderSessionsRequestMessageSchema = z.object({
   providers: z.array(z.string()).optional(),
   since: z.string().optional(),
   limit: z.number().int().positive().max(200).optional(),
+  query: z.string().optional(),
 });
 
 export const FetchAgentRequestMessageSchema = z.object({
@@ -1496,6 +1510,19 @@ export const PluginRpcInvokeRequestSchema = z.object({
   pluginId: PluginIdSchema,
   method: z.string().min(1),
   input: z.unknown(),
+});
+
+export const AgentTimelineAppendRequestSchema = z.object({
+  type: z.literal("agent.timeline.append.request"),
+  requestId: z.string(),
+  agentId: z.string(),
+  item: z.object({
+    type: z.literal("plugin"),
+    id: z.string(),
+    kind: z.string(),
+    version: z.number().int().positive(),
+    data: JsonWireValueSchema,
+  }),
 });
 
 export const AgentSkillOperationSchema = z.discriminatedUnion("kind", [
@@ -3054,6 +3081,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableRequestSchema,
   PluginRemoveRequestSchema,
   PluginRpcInvokeRequestSchema,
+  AgentTimelineAppendRequestSchema,
   AgentSkillsGetStatusRequestSchema,
   AgentSkillsReconcileRequestSchema,
   AgentSkillsUninstallRequestSchema,
@@ -3412,6 +3440,7 @@ export const ServerInfoStatusPayloadSchema = z
         // A daemon that predates this flag keeps `addTheme` in the server bundle it compiles,
         // so a theme plugin cannot start there at all.
         pluginThemes: z.boolean().optional(),
+        pluginTimelineItems: z.boolean().optional(),
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -3476,6 +3505,8 @@ export const ServerInfoStatusPayloadSchema = z
         providerRemoval: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
+        // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
+        importSessionSearch: z.boolean().optional(),
         // COMPAT(forgeProviders): added in v0.2.0-beta.1. Drop the gate after
         // 2027-01-17 once the supported daemon floor is >= v0.2.0.
         // Daemon advertises pluggable non-GitHub forge support (the forge registry);
@@ -3952,6 +3983,14 @@ export const FetchRecentProviderSessionsResponseMessageSchema = z.object({
     requestId: z.string(),
     entries: z.array(RecentProviderSessionDescriptorPayloadSchema),
     filteredAlreadyImportedCount: z.number().int().nonnegative().optional(),
+    providerErrors: z
+      .array(
+        z.object({
+          provider: z.string(),
+          message: z.string(),
+        }),
+      )
+      .optional(),
   }),
 });
 
@@ -4353,7 +4392,7 @@ export const AgentTimelineEntryPayloadSchema = z.object({
   seqStart: z.number().int().nonnegative(),
   seqEnd: z.number().int().nonnegative(),
   sourceSeqRanges: z.array(AgentTimelineSeqRangeSchema),
-  collapsed: z.array(z.enum(["assistant_merge", "reasoning_merge", "tool_lifecycle"])),
+  collapsed: z.array(z.enum(["assistant_merge", "reasoning_merge", "tool_lifecycle", "identity"])),
 });
 
 export const FetchAgentTimelineResponseMessageSchema = z.object({
@@ -6306,6 +6345,15 @@ export const PluginRpcInvokeResponseSchema = z.object({
   }),
 });
 
+export const AgentTimelineAppendResponseSchema = z.object({
+  type: z.literal("agent.timeline.append.response"),
+  payload: z.object({
+    requestId: z.string(),
+    seq: z.number().int().nonnegative(),
+    epoch: z.string(),
+  }),
+});
+
 function agentSkillsStatusResponse<const Type extends string>(type: Type) {
   return z.object({
     type: z.literal(type),
@@ -6355,6 +6403,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableResponseSchema,
   PluginRemoveResponseSchema,
   PluginRpcInvokeResponseSchema,
+  AgentTimelineAppendResponseSchema,
   AgentSkillsGetStatusResponseSchema,
   AgentSkillsReconcileResponseSchema,
   AgentSkillsUninstallResponseSchema,

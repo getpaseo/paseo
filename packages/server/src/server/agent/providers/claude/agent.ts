@@ -1611,7 +1611,8 @@ export class ClaudeAgentClient implements AgentClient {
       return [];
     }
     const limit = options?.limit ?? 20;
-    const candidates = await collectRecentClaudeSessions(sessionsRoot, limit * 3, {
+    const scanLimit = Math.min(options?.scanLimit ?? limit * 3, 500);
+    const candidates = await collectRecentClaudeSessions(sessionsRoot, scanLimit, {
       rootIsProjectDir: Boolean(options?.cwd),
     });
     const parsed = await Promise.all(
@@ -6115,13 +6116,26 @@ async function collectRecentClaudeSessions(
 interface ClaudeSessionDescriptorAccumulator {
   sessionId: string | null;
   cwd: string | null;
-  title: string | null;
+  customTitle: string | null;
+  aiTitle: string | null;
+  firstPromptTitle: string | null;
   firstPromptPreview: string | null;
   lastPromptPreview: string | null;
 }
 
-function isFinishedAccumulator(acc: ClaudeSessionDescriptorAccumulator): boolean {
-  return Boolean(acc.sessionId && acc.cwd && acc.title);
+const CLAUDE_IMPORT_DESCRIPTOR_RECORD_PATTERN = /"type"\s*:\s*"(?:user|custom-title|ai-title)"/;
+const CLAUDE_SESSION_ID_KEY_PATTERN = /"sessionId"\s*:/;
+const CLAUDE_CWD_KEY_PATTERN = /"cwd"\s*:/;
+
+function shouldParseClaudeSessionDescriptorLine(
+  line: string,
+  acc: ClaudeSessionDescriptorAccumulator,
+): boolean {
+  return (
+    CLAUDE_IMPORT_DESCRIPTOR_RECORD_PATTERN.test(line) ||
+    (!acc.sessionId && CLAUDE_SESSION_ID_KEY_PATTERN.test(line)) ||
+    (!acc.cwd && CLAUDE_CWD_KEY_PATTERN.test(line))
+  );
 }
 
 function applyClaudeSessionEntryToAccumulator(
@@ -6144,12 +6158,18 @@ function applyClaudeSessionEntryToAccumulator(
   if (!acc.cwd && typeof entry.cwd === "string") {
     acc.cwd = entry.cwd;
   }
+  if (entry.type === "custom-title" && typeof entry.customTitle === "string") {
+    acc.customTitle = normalizeClaudeSessionTitle(entry.customTitle);
+    return;
+  }
+  if (entry.type === "ai-title" && typeof entry.aiTitle === "string") {
+    acc.aiTitle = normalizeClaudeSessionTitle(entry.aiTitle);
+    return;
+  }
   if (entry.type === "user" && entry.message) {
     const text = extractClaudeUserText(entry.message);
     if (text) {
-      if (!acc.title) {
-        acc.title = text;
-      }
+      acc.firstPromptTitle ??= text;
       const preview = normalizeImportablePromptPreview(text);
       acc.firstPromptPreview ??= preview;
       acc.lastPromptPreview = preview;
@@ -6172,14 +6192,15 @@ async function parseClaudeSessionDescriptor(
   const acc: ClaudeSessionDescriptorAccumulator = {
     sessionId: null,
     cwd: null,
-    title: null,
+    customTitle: null,
+    aiTitle: null,
+    firstPromptTitle: null,
     firstPromptPreview: null,
     lastPromptPreview: null,
   };
 
-  for (const rawLine of content.split(/\r?\n/)) {
-    const line = rawLine.trim();
-    if (!line) continue;
+  for (const line of content.split(/\r?\n/)) {
+    if (!line || !shouldParseClaudeSessionDescriptorLine(line, acc)) continue;
     let entry: unknown;
     try {
       entry = JSON.parse(line);
@@ -6187,12 +6208,9 @@ async function parseClaudeSessionDescriptor(
       continue;
     }
     applyClaudeSessionEntryToAccumulator(entry, acc);
-    if (isFinishedAccumulator(acc)) {
-      break;
-    }
   }
 
-  const { sessionId, cwd, title } = acc;
+  const { sessionId, cwd } = acc;
 
   if (!sessionId || !cwd) {
     return null;
@@ -6201,11 +6219,20 @@ async function parseClaudeSessionDescriptor(
   return {
     providerHandleId: sessionId,
     cwd,
-    title: (title ?? "").trim() || `Claude session ${sessionId.slice(0, 8)}`,
+    title:
+      acc.customTitle ??
+      acc.aiTitle ??
+      normalizeClaudeSessionTitle(acc.firstPromptTitle) ??
+      `Claude session ${sessionId.slice(0, 8)}`,
     firstPromptPreview: acc.firstPromptPreview,
     lastPromptPreview: acc.lastPromptPreview,
     lastActivityAt: mtime,
   };
+}
+
+function normalizeClaudeSessionTitle(title: string | null): string | null {
+  const normalized = title?.trim();
+  return normalized ? normalized : null;
 }
 
 function normalizeImportablePromptPreview(text: string): string | null {

@@ -56,13 +56,15 @@ import { AGENT_PAGES } from "~/data/agent-pages";
 import {
   appStoreUrl,
   playStoreUrl,
-  getDownloadOptions,
-  useDetectedPlatform,
+  getDesktopDownload,
+  MOBILE_STORES,
   AppleIcon,
   PlayStoreIcon,
   TerminalIcon,
 } from "~/downloads";
-import { useRelease } from "~/routes/__root";
+import type { DesktopPlatform, MobilePlatform } from "~/platform";
+import { isMobilePlatform } from "~/platform";
+import { useRelease, useVisitorPlatform } from "~/routes/__root";
 import { HeroMockup } from "~/components/hero-mockup";
 import {
   ClaudeCodeIcon,
@@ -315,7 +317,7 @@ function SectionTitle({
           </span>
         )}
       </div>
-      <p className="text-base text-muted-foreground max-w-lg">{description}</p>
+      <p className="text-base text-pretty text-muted-foreground max-w-lg">{description}</p>
       {links ? (
         <div className="flex flex-wrap gap-x-4 gap-y-1 pt-1 text-xs">
           {links.map((link) => (
@@ -414,13 +416,15 @@ function SocialProofCard({ tweet, inert }: { tweet: SocialProofTweet; inert?: bo
   );
 }
 
+const PROVIDER_ICON_CLASS = "h-5 w-5 sm:h-7 sm:w-7";
+
 function MultiProviderSection() {
   const providers = [
-    { name: "Claude Code", icon: <ClaudeIcon size={28} /> },
-    { name: "Codex", icon: <CodexIcon className="w-7 h-7" /> },
-    { name: "OpenCode", icon: <OpenCodeIcon className="w-7 h-7" /> },
-    { name: "Pi", icon: <PiIcon className="w-7 h-7" /> },
-    { name: "Cursor", icon: <CursorIcon className="w-7 h-7" /> },
+    { name: "Claude Code", icon: <ClaudeIcon className={PROVIDER_ICON_CLASS} /> },
+    { name: "Codex", icon: <CodexIcon className={PROVIDER_ICON_CLASS} /> },
+    { name: "OpenCode", icon: <OpenCodeIcon className={PROVIDER_ICON_CLASS} /> },
+    { name: "Pi", icon: <PiIcon className={PROVIDER_ICON_CLASS} /> },
+    { name: "Cursor", icon: <CursorIcon className={PROVIDER_ICON_CLASS} /> },
   ];
 
   return (
@@ -428,21 +432,21 @@ function MultiProviderSection() {
       title="Works with your tools"
       description="Bring your subscriptions, skills and configuration"
     >
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-4">
         {providers.map((p) => (
           <div
             key={p.name}
-            className="flex items-center justify-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-5 py-4"
+            className="flex items-center justify-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] px-3 py-3 sm:gap-3 sm:px-5 sm:py-4"
           >
-            <span className="text-white/80">{p.icon}</span>
-            <span className="font-medium">{p.name}</span>
+            <span className="shrink-0 text-white/80">{p.icon}</span>
+            <span className="truncate text-sm font-medium sm:text-base">{p.name}</span>
           </div>
         ))}
         <a
           href="/agents"
-          className="flex items-center justify-center gap-3 rounded-xl border border-dashed border-white/10 bg-white/[0.01] px-5 py-4 text-white/50 hover:text-white/80 hover:border-white/20 hover:bg-white/[0.03] transition-colors"
+          className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-white/10 bg-white/[0.01] px-3 py-3 text-white/50 hover:text-white/80 hover:border-white/20 hover:bg-white/[0.03] transition-colors sm:gap-3 sm:px-5 sm:py-4"
         >
-          <span className="font-medium">+{ADDITIONAL_AGENT_COUNT} more</span>
+          <span className="text-sm font-medium sm:text-base">+{ADDITIONAL_AGENT_COUNT} more</span>
         </a>
       </div>
     </FeatureSection>
@@ -842,31 +846,24 @@ function ExtensibleCard({
 }
 
 function GetStarted() {
+  const platform = useVisitorPlatform();
   return (
     <div className="pt-10">
-      <div className="flex flex-row flex-wrap justify-center gap-3">
-        <DownloadButton />
-        <a
-          href={appStoreUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center justify-center rounded-lg border border-white/12 px-3 py-2 text-white hover:bg-white/10 transition-colors"
-          aria-label="App Store"
-        >
-          <AppleIcon className="h-5 w-5" />
-        </a>
-        <a
-          href={playStoreUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center justify-center rounded-lg border border-white/12 px-3 py-2 text-white hover:bg-white/10 transition-colors"
-          aria-label="Google Play"
-        >
-          <PlayStoreIcon className="h-5 w-5" />
-        </a>
-        <ServerInstallButton />
+      {/* The primary call to action owns its own row on phones so the small icon
+          buttons never wrap and orphan one of themselves onto a line alone. It
+          still hugs its label rather than stretching across the row. */}
+      <div className="mx-auto flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+        {isMobilePlatform(platform) ? (
+          <StoreButton platform={platform} />
+        ) : (
+          <DesktopDownloadButton platform={platform} />
+        )}
+        <div className="flex items-center justify-center gap-3">
+          {isMobilePlatform(platform) ? <DesktopAppLink /> : <StoreIconLinks />}
+          <ServerInstallButton />
+        </div>
       </div>
-      <div className="flex items-center justify-center gap-2 pt-6">
+      <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 pt-6">
         <span className="text-xs text-muted-foreground">Supports</span>
         <div className="flex items-center gap-1">
           <AgentBadge name="Claude Code" icon={CLAUDE_CODE_BADGE_ICON} />
@@ -877,7 +874,7 @@ function GetStarted() {
         </div>
         <a
           href="/agents"
-          className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+          className="whitespace-nowrap text-xs text-muted-foreground hover:text-foreground transition-colors"
         >
           +{ADDITIONAL_AGENT_COUNT} more
         </a>
@@ -886,27 +883,74 @@ function GetStarted() {
   );
 }
 
-function DownloadButton() {
-  const release = useRelease();
-  const detectedPlatform = useDetectedPlatform();
-  const primary = getDownloadOptions(release).find((o) => o.platform === detectedPlatform)!;
-  const PrimaryIcon = primary.icon;
+const PRIMARY_CTA_CLASS =
+  "inline-flex items-center justify-center gap-2 rounded-lg bg-foreground px-4 py-2.5 text-sm font-medium text-background hover:bg-foreground/90 transition-colors";
+const SECONDARY_CTA_CLASS =
+  "inline-flex items-center justify-center gap-2 rounded-lg border border-white/12 px-3 py-2.5 text-sm text-white hover:bg-white/10 transition-colors";
 
+function DesktopDownloadButton({ platform }: { platform: DesktopPlatform }) {
+  const download = getDesktopDownload(useRelease(), platform);
+  const Icon = download.icon;
   return (
-    <a
-      href={primary.href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background hover:bg-foreground/90 transition-colors"
-    >
-      <PrimaryIcon className="h-4 w-4" />
-      Download for {primary.label}
+    <a href={download.href} target="_blank" rel="noopener noreferrer" className={PRIMARY_CTA_CLASS}>
+      <Icon className="h-4 w-4" />
+      Download for {download.label}
     </a>
   );
 }
 
+function StoreButton({ platform }: { platform: MobilePlatform }) {
+  const store = MOBILE_STORES[platform];
+  const Icon = store.icon;
+  return (
+    <a href={store.href} target="_blank" rel="noopener noreferrer" className={PRIMARY_CTA_CLASS}>
+      <Icon className="h-4 w-4" />
+      Get the {store.label} app
+    </a>
+  );
+}
+
+// On a phone the desktop build is the secondary path, so it points at /download
+// instead of handing the visitor a .dmg they cannot open.
+function DesktopAppLink() {
+  return (
+    <a href="/download" className={SECONDARY_CTA_CLASS}>
+      <Monitor className="h-4 w-4" strokeWidth={1.5} />
+      Desktop app
+    </a>
+  );
+}
+
+function StoreIconLinks() {
+  return (
+    <>
+      <a
+        href={appStoreUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={SECONDARY_CTA_CLASS}
+        aria-label="App Store"
+      >
+        <AppleIcon className="h-5 w-5" />
+      </a>
+      <a
+        href={playStoreUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={SECONDARY_CTA_CLASS}
+        aria-label="Google Play"
+      >
+        <PlayStoreIcon className="h-5 w-5" />
+      </a>
+    </>
+  );
+}
+
 const SERVER_INSTALL_TRIGGER = (
-  <span className="inline-flex items-center justify-center rounded-lg border border-white/12 px-3 py-2 text-white hover:bg-white/10 transition-colors">
+  <span
+    className="inline-flex items-center justify-center rounded-lg border border-white/12 px-3 py-2.5 text-white hover:bg-white/10 transition-colors"
+    aria-label="Install the daemon on a remote machine"
+  >
     <TerminalIcon className="h-5 w-5" />
   </span>
 );
@@ -989,11 +1033,10 @@ function PhoneShowcase() {
         >
           <path d="M12 5v14M5 12l7 7 7-7" />
         </svg>
-        <p className="text-lg text-white/80 text-center">
-          When you want to step away from your desk,
-          <br className="md:hidden" /> you can.
+        <p className="max-w-md text-balance text-center text-lg text-white/80">
+          When you want to step away from your desk, you can.
         </p>
-        <p className="text-sm text-white/50 text-center">
+        <p className="max-w-sm text-balance text-center text-sm text-white/50">
           The native mobile app has full feature parity with desktop.
         </p>
       </motion.div>

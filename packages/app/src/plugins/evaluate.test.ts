@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { evaluatePluginClientBundle } from "./evaluate";
+import { runPluginClientBundle, type PluginClientRuntime } from "./evaluate";
+
+const runtime = {
+  paseo: {},
+  async rpc() {},
+  openSurface() {},
+  openPanel() {},
+  addComposerPill() {
+    return () => undefined;
+  },
+} as unknown as PluginClientRuntime;
+
+function evaluatePluginClientBundle(id: string, source: string) {
+  return runPluginClientBundle(id, source, runtime);
+}
 
 function bundle(body: string): string {
   return `(function() {
@@ -10,6 +24,73 @@ function bundle(body: string): string {
 }
 
 describe("evaluatePluginClientBundle", () => {
+  it("returns idempotent removers for every client registration", () => {
+    let pillCount = 0;
+    const plugin = runPluginClientBundle(
+      "removals",
+      bundle(`
+        function Component() { return null; }
+        const schema = { safeParse(value) { return { success: true, data: value }; } };
+        globalThis.__pluginRemovals = [
+          plugin.addSurface("main", Component),
+          plugin.addSidebarItem({ id: "main", title: "Main", icon: "Blocks", surface: "main" }),
+          plugin.addWorkspacePanel({ id: "panel", title: "Panel", icon: "Blocks", context: "workspace", Component }),
+          plugin.addCommandCenterItem({ id: "command", title: "Command", icon: "Blocks", context: "global", onSelect() {} }),
+          plugin.addSlashCommand({ name: "review", description: "Review", argumentHint: "", context: "workspace", onSubmit() {} }),
+          plugin.addComposerPill({ id: "pill", title: "Pill", workspaceId: "workspace", agentId: "agent", Component, onPress() {} }),
+          plugin.addAttachmentSource({ id: "issues", title: "Issues", icon: "Blocks", pickerTitle: "Attach issue", searchPlaceholder: "Search", search: { name: "issues.search", input: {}, output: {} } }),
+          plugin.addTheme({ id: "night", name: "Night", appearance: "dark", colors: { background: "#000", foreground: "#fff", raised: "#111", control: "#222", border: "#333", mutedForeground: "#aaa", ring: "#555" } }),
+          plugin.addTimelineTransformer({ id: "transformer", query: { itemType: "tool_call" }, transform() { return { items: [] }; } }),
+          plugin.addTimelineRenderer({ kind: "card", version: 1, schema, Component }),
+        ];
+      `),
+      {
+        ...runtime,
+        addComposerPill() {
+          pillCount += 1;
+          return () => {
+            pillCount -= 1;
+          };
+        },
+      },
+    );
+    const removals = Reflect.get(globalThis, "__pluginRemovals") as Array<() => void>;
+
+    expect(
+      [
+        plugin.surfaces,
+        plugin.sidebarItems,
+        plugin.workspacePanels,
+        plugin.commandCenterItems,
+        plugin.clientSlashCommands,
+        plugin.attachmentSources,
+        plugin.themes,
+        plugin.timelineTransformers,
+        plugin.timelineRenderers,
+      ].every((items) => items.length === 1),
+    ).toBe(true);
+    expect(pillCount).toBe(1);
+    for (const remove of removals) {
+      remove();
+      remove();
+    }
+    expect(
+      [
+        plugin.surfaces,
+        plugin.sidebarItems,
+        plugin.workspacePanels,
+        plugin.commandCenterItems,
+        plugin.clientSlashCommands,
+        plugin.attachmentSources,
+        plugin.themes,
+        plugin.timelineTransformers,
+        plugin.timelineRenderers,
+      ].every((items) => items.length === 0),
+    ).toBe(true);
+    expect(pillCount).toBe(0);
+    Reflect.deleteProperty(globalThis, "__pluginRemovals");
+  });
+
   it("collects timeline transformers and renderers", () => {
     const plugin = evaluatePluginClientBundle(
       "reports",
@@ -212,26 +293,16 @@ describe("evaluatePluginClientBundle", () => {
     ).toThrow("Duplicate Command Center item: review");
   });
 
-  it("collects one explicit client-side entrypoint", () => {
+  it("runs the client entry with the full runtime context", () => {
     const plugin = evaluatePluginClientBundle(
       "review",
       bundle(`
-        function contributeClient() { return function() {}; }
-        plugin.addClientSide(contributeClient);
+        if (!plugin.paseo || !plugin.rpc || !plugin.openSurface || !plugin.openPanel || !plugin.addComposerPill) {
+          throw new Error("missing client runtime");
+        }
       `),
     );
-    expect(plugin.clientSide).toBeTypeOf("function");
-
-    expect(() =>
-      evaluatePluginClientBundle(
-        "review",
-        bundle(`
-          function contributeClient() { return function() {}; }
-          plugin.addClientSide(contributeClient);
-          plugin.addClientSide(contributeClient);
-        `),
-      ),
-    ).toThrow("Plugin has more than one client-side entrypoint");
+    expect(plugin.id).toBe("review");
   });
 
   it("rejects duplicate attachment source ids", () => {
@@ -397,11 +468,11 @@ describe("evaluatePluginClientBundle", () => {
     expect(plugin.surfaces.map((surface) => surface.id)).toEqual(["main"]);
   });
 
-  it("resolves @getpaseo/plugin/server for shared RPC contracts", () => {
+  it("resolves shared RPC helpers from @getpaseo/plugin", () => {
     const plugin = evaluatePluginClientBundle(
       "example",
       `(function(require) {
-        const { defineRpc, defineAttachmentSource } = require("@getpaseo/plugin/server");
+        const { defineRpc, defineAttachmentSource } = require("@getpaseo/plugin");
         const search = defineRpc({ name: "issues.search", input: {}, output: {} });
         const module = { exports: {} };
         module.exports.default = function(plugin) {

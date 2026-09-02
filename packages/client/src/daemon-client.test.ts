@@ -4499,6 +4499,7 @@ test("fetches scoped recent provider sessions", async () => {
     providers: ["my-claude"],
     since: "2026-04-30T00:00:00.000Z",
     limit: 25,
+    query: "invoice",
   });
 
   expect(mock.sent).toHaveLength(1);
@@ -4511,6 +4512,7 @@ test("fetches scoped recent provider sessions", async () => {
       providers?: string[];
       since?: string;
       limit?: number;
+      query?: string;
     };
   };
   expect(request.message).toMatchObject({
@@ -4519,6 +4521,7 @@ test("fetches scoped recent provider sessions", async () => {
     providers: ["my-claude"],
     since: "2026-04-30T00:00:00.000Z",
     limit: 25,
+    query: "invoice",
   });
 
   mock.triggerMessage(

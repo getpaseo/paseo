@@ -9897,7 +9897,7 @@ test.each([
 
     expect(includedClient.calls).toBe(1);
     expect(skippedClient.calls).toBe(0);
-    expect(result.map((d) => d.provider)).toEqual([includedProvider]);
+    expect(result.sessions.map((d) => d.provider)).toEqual([includedProvider]);
   },
 );
 
@@ -9917,7 +9917,7 @@ test("listImportableSessions includes derived providers that list persisted agen
 
   expect(claudeClient.calls).toBe(1);
   expect(ompClient.calls).toBe(1);
-  expect(result.map((d) => d.provider).sort()).toEqual(["claude", "omp"]);
+  expect(result.sessions.map((d) => d.provider).sort()).toEqual(["claude", "omp"]);
 });
 
 test("listImportableSessions narrows to the providerFilter when supplied", async () => {
@@ -9938,7 +9938,7 @@ test("listImportableSessions narrows to the providerFilter when supplied", async
 
   expect(claudeClient.calls).toBe(1);
   expect(codexClient.calls).toBe(0);
-  expect(result.map((d) => d.provider)).toEqual(["claude"]);
+  expect(result.sessions.map((d) => d.provider)).toEqual(["claude"]);
 });
 
 test("listImportableSessions skips providers that lack supportsSessionListing even when row listing is defined", async () => {
@@ -9965,7 +9965,121 @@ test("listImportableSessions skips providers that lack supportsSessionListing ev
 
   expect(listableClient.calls).toBe(1);
   expect(nonListableClient.calls).toBe(0);
-  expect(result.map((d) => d.provider)).toEqual(["claude"]);
+  expect(result.sessions.map((d) => d.provider)).toEqual(["claude"]);
+});
+
+test("listImportableSessions returns healthy rows alongside thrown and timed-out provider errors", async () => {
+  vi.useFakeTimers();
+  try {
+    const healthyClient = new RecordingPersistedAgentsClient("claude");
+    const failingClient = new RecordingPersistedAgentsClient("codex");
+    failingClient.listImportableSessions = async () => {
+      throw new Error("codex listing failed");
+    };
+    const hangingClient = new RecordingPersistedAgentsClient("pi");
+    hangingClient.listImportableSessions = async () => await new Promise(() => undefined);
+    const manager = new AgentManager({
+      clients: { claude: healthyClient, codex: failingClient, pi: hangingClient },
+      providerDefinitions: {
+        claude: { enabled: true, derivedFromProviderId: null },
+        codex: { enabled: true, derivedFromProviderId: null },
+        pi: { enabled: true, derivedFromProviderId: null },
+      },
+      logger,
+    });
+
+    const resultPromise = manager.listImportableSessions();
+    await vi.advanceTimersByTimeAsync(8_000);
+
+    await expect(resultPromise).resolves.toEqual({
+      sessions: [
+        {
+          provider: "claude",
+          providerHandleId: "claude-session",
+          cwd: "/tmp/recent",
+          title: null,
+          lastActivityAt: new Date("2026-01-01T00:00:00Z"),
+          firstPromptPreview: null,
+          lastPromptPreview: null,
+        },
+      ],
+      providerErrors: [
+        { provider: "codex", message: "codex listing failed" },
+        {
+          provider: "pi",
+          message: "Timed out listing importable sessions for provider 'pi' after 8000ms",
+        },
+      ],
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("listImportableSessions searches every provider result before global ranking", async () => {
+  const client = new RecordingPersistedAgentsClient("claude");
+  client.listImportableSessions = async () => [
+    ...Array.from({ length: 25 }, (_, index) => ({
+      providerHandleId: `non-match-${index}`,
+      cwd: "/tmp/other",
+      title: "Other work",
+      firstPromptPreview: null,
+      lastPromptPreview: null,
+      lastActivityAt: new Date(`2026-04-${String(index + 2).padStart(2, "0")}T00:00:00.000Z`),
+    })),
+    {
+      providerHandleId: "title-match",
+      cwd: "/tmp/archive",
+      title: "Invoice cleanup",
+      firstPromptPreview: null,
+      lastPromptPreview: null,
+      lastActivityAt: new Date("2026-04-01T04:00:00.000Z"),
+    },
+    {
+      providerHandleId: "first-prompt-match",
+      cwd: "/tmp/archive",
+      title: "Unrelated",
+      firstPromptPreview: "Investigate invoice totals",
+      lastPromptPreview: null,
+      lastActivityAt: new Date("2026-04-01T03:00:00.000Z"),
+    },
+    {
+      providerHandleId: "last-prompt-match",
+      cwd: "/tmp/archive",
+      title: "Unrelated",
+      firstPromptPreview: null,
+      lastPromptPreview: "Finish invoice export",
+      lastActivityAt: new Date("2026-04-01T02:00:00.000Z"),
+    },
+    {
+      providerHandleId: "cwd-match",
+      cwd: "/tmp/invoice-service",
+      title: "Unrelated",
+      firstPromptPreview: null,
+      lastPromptPreview: null,
+      lastActivityAt: new Date("2026-04-01T01:00:00.000Z"),
+    },
+  ];
+  const manager = new AgentManager({
+    clients: { claude: client },
+    providerDefinitions: {
+      claude: { enabled: true, derivedFromProviderId: null },
+    },
+    logger,
+  });
+
+  const result = await manager.listImportableSessions({
+    query: "INVOICE",
+    limit: 10,
+    scanLimit: 500,
+  });
+
+  expect(result.sessions.map((session) => session.providerHandleId)).toEqual([
+    "title-match",
+    "first-prompt-match",
+    "last-prompt-match",
+    "cwd-match",
+  ]);
 });
 
 test("user_message events wrapping a paseo-system envelope are not added to the timeline", async () => {

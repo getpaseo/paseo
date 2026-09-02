@@ -49,6 +49,7 @@ import type {
 } from "./workspace-git-service.js";
 import type { GitCommandRuntimeMetricsSnapshot } from "../utils/git-command-runtime-metrics.js";
 import { snapshotGitCommandRuntimeMetrics } from "../utils/run-git-command.js";
+import { createPluginClientId, isPluginClientId } from "./plugins/plugin-session-identity.js";
 import type { WorkspaceAutoName } from "./workspace-auto-name.js";
 import { deriveProjectSlug } from "./workspace-git-metadata.js";
 import {
@@ -1521,10 +1522,10 @@ export class VoiceAssistantWebSocketServer {
     }
 
     const pluginId = this.pluginSocketIds.get(ws);
-    const expectedPluginClientId = pluginId ? `plugin:${pluginId}` : null;
+    const expectedPluginClientId = pluginId ? createPluginClientId(pluginId) : null;
     if (
       (expectedPluginClientId !== null && clientId !== expectedPluginClientId) ||
-      (expectedPluginClientId === null && clientId.startsWith("plugin:"))
+      (expectedPluginClientId === null && isPluginClientId(clientId))
     ) {
       this.clearPendingConnection(ws);
       pending.connectionLogger.warn({ clientId }, "Rejected reserved plugin clientId");
@@ -1672,6 +1673,7 @@ export class VoiceAssistantWebSocketServer {
         pluginLogs: true,
         // COMPAT(pluginThemes): added in v0.5.0, remove gate after 2027-08-20.
         pluginThemes: true,
+        pluginTimelineItems: true,
         // COMPAT(skillManagement): added in v0.4.0, remove gate after 2027-08-16.
         skillManagement: true,
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
@@ -1736,6 +1738,8 @@ export class VoiceAssistantWebSocketServer {
         providerRemoval: true,
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: true,
+        // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
+        importSessionSearch: true,
         // COMPAT(forgeProviders): added in v0.2.0-beta.1. Drop the gate after
         // 2027-01-17 once the supported daemon floor is >= v0.2.0.
         forgeProviders: true,

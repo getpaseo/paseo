@@ -10,9 +10,8 @@ import { readPluginManifest } from "./manifest.js";
 import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
 import { PluginSessionSocket } from "./session-socket.js";
 
-const ENTRY_FILENAME = "index.ts";
-// COMPAT(plugin-index-tsx): added in v0.4, remove after 2027-02-17
-const LEGACY_ENTRY_FILENAME = "index.tsx";
+const CLIENT_ENTRY_FILENAMES = ["index.client.ts", "index.client.tsx"] as const;
+const SERVER_ENTRY_FILENAMES = ["index.server.ts", "index.server.tsx"] as const;
 const REQUEST_TIMEOUT_MS = 30_000;
 const MAX_LOG_ENTRIES = 500;
 const MAX_LOG_BYTES = 256 * 1024;
@@ -44,11 +43,11 @@ interface LoadedPlugin {
   id: string;
   clientBundle: string;
   methods: ReadonlySet<string>;
-  child: PluginChild;
-  outputCapture: PluginOutputCapture;
+  child: PluginChild | null;
+  outputCapture: PluginOutputCapture | null;
   pending: Map<string, PendingInvocation>;
-  sessionSocket: PluginSessionSocket;
-  sessionClosed: Promise<void>;
+  sessionSocket: PluginSessionSocket | null;
+  sessionClosed: Promise<void> | null;
 }
 
 interface PluginRuntimeDependencies {
@@ -187,13 +186,33 @@ function send(child: PluginChild, message: PluginProcessRequest): Promise<void> 
   });
 }
 
-async function resolveEntryPath(directory: string): Promise<string> {
-  for (const filename of [ENTRY_FILENAME, LEGACY_ENTRY_FILENAME]) {
+async function findEntry(directory: string, filenames: readonly string[]): Promise<string | null> {
+  for (const filename of filenames) {
     const filePath = path.join(directory, filename);
     const info = await stat(filePath).catch(() => null);
     if (info?.isFile()) return filePath;
   }
-  throw new Error(`Plugin entry point is missing: ${path.join(directory, ENTRY_FILENAME)}`);
+  return null;
+}
+
+async function resolveEntryPaths(directory: string): Promise<{
+  client: string | null;
+  server: string | null;
+}> {
+  const [client, server] = await Promise.all([
+    findEntry(directory, CLIENT_ENTRY_FILENAMES),
+    findEntry(directory, SERVER_ENTRY_FILENAMES),
+  ]);
+  if (client || server) return { client, server };
+  const legacyEntry = await findEntry(directory, ["index.ts", "index.tsx"]);
+  if (legacyEntry) {
+    throw new Error(
+      "Plugin entry split is required: migrate index.ts to index.client.tsx and/or index.server.ts. See https://paseo.sh/docs/plugins/migration",
+    );
+  }
+  throw new Error(
+    `Plugin entry points are missing: expected ${CLIENT_ENTRY_FILENAMES.join(" or ")} and/or ${SERVER_ENTRY_FILENAMES.join(" or ")} in ${directory}`,
+  );
 }
 
 export class PluginRuntime {
@@ -247,8 +266,8 @@ export class PluginRuntime {
   async validatePlugin(configuredPath: string): Promise<void> {
     const directory = path.resolve(configuredPath);
     await readPluginManifest(directory);
-    const entryPath = await resolveEntryPath(directory);
-    await compilePlugin(entryPath);
+    const entryPaths = await resolveEntryPaths(directory);
+    await compilePlugin(entryPaths);
   }
 
   async stopPluginById(pluginId: string): Promise<boolean> {
@@ -286,6 +305,8 @@ export class PluginRuntime {
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
     if (!loaded.methods.has(method))
       throw new Error(`Plugin ${pluginId} does not contribute RPC ${method}`);
+    const child = loaded.child;
+    if (!child) throw new Error(`Plugin ${pluginId} has no server entry`);
     const requestId = randomUUID();
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -293,7 +314,7 @@ export class PluginRuntime {
         reject(new Error(`Plugin RPC timed out: ${pluginId}.${method}`));
       }, REQUEST_TIMEOUT_MS);
       loaded.pending.set(requestId, { resolve, reject, timeout });
-      void send(loaded.child, { type: "invoke", requestId, method, input }).catch((error) => {
+      void send(child, { type: "invoke", requestId, method, input }).catch((error) => {
         clearTimeout(timeout);
         loaded.pending.delete(requestId);
         reject(error);
@@ -316,8 +337,21 @@ export class PluginRuntime {
   ): Promise<LoadedPlugin> {
     const directory = path.resolve(configuredPath);
     await readPluginManifest(directory);
-    const entryPath = await resolveEntryPath(directory);
-    const bundles = await compilePlugin(entryPath);
+    const entryPaths = await resolveEntryPaths(directory);
+    const bundles = await compilePlugin(entryPaths);
+    const serverBundle = bundles.serverBundle;
+    if (!serverBundle) {
+      return {
+        id: pluginId,
+        clientBundle: bundles.clientBundle ?? "",
+        methods: new Set(),
+        child: null,
+        outputCapture: null,
+        pending: new Map(),
+        sessionSocket: null,
+        sessionClosed: null,
+      };
+    }
     const sessionHost = this.sessionHost;
     if (!sessionHost) throw new Error("Plugin Paseo session host is not attached");
     const child = this.spawnChild();
@@ -375,7 +409,7 @@ export class PluginRuntime {
           type: "initialize",
           pluginId,
           appVersion: this.daemonVersion,
-          bundle: bundles.serverBundle,
+          bundle: serverBundle,
         }).catch(fail);
       });
     } catch (error) {
@@ -386,7 +420,7 @@ export class PluginRuntime {
     }
     loaded = {
       id: pluginId,
-      clientBundle: bundles.clientBundle,
+      clientBundle: bundles.clientBundle ?? "",
       methods: new Set(methods),
       child,
       outputCapture,
@@ -409,7 +443,7 @@ export class PluginRuntime {
   }
 
   private async handleChildClose(loaded: LoadedPlugin): Promise<void> {
-    loaded.sessionSocket.peerClosed();
+    loaded.sessionSocket?.peerClosed();
     const wasPublished = this.plugins.get(loaded.id) === loaded;
     if (wasPublished) {
       this.plugins.delete(loaded.id);
@@ -421,23 +455,28 @@ export class PluginRuntime {
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
     this.appendLog(loaded.id, "stdout", "[paseo] Stopping plugin");
-    if (loaded.child.killed) {
-      loaded.sessionSocket.peerClosed();
-      await loaded.sessionClosed;
+    const { child, sessionSocket, sessionClosed } = loaded;
+    if (!child || !sessionSocket || !sessionClosed) {
+      this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
+      return;
+    }
+    if (child.killed) {
+      sessionSocket.peerClosed();
+      await sessionClosed;
       this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
       return;
     }
     const closed = new Promise<void>((resolve) =>
-      loaded.child.on("close", () => {
+      child.on("close", () => {
         resolve();
       }),
     );
-    if (loaded.child.connected) {
-      await send(loaded.child, { type: "shutdown" }).catch(() => undefined);
+    if (child.connected) {
+      await send(child, { type: "shutdown" }).catch(() => undefined);
     }
     await closed;
-    loaded.sessionSocket.peerClosed();
-    await loaded.sessionClosed;
+    sessionSocket.peerClosed();
+    await sessionClosed;
     this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
   }
 

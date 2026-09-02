@@ -23,7 +23,7 @@ function installed(): InstalledPlugin {
       },
     ],
     commandCenterItems: [],
-    clientSide: null,
+    clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],

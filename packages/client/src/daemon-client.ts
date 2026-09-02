@@ -2096,6 +2096,7 @@ export class DaemonClient {
       ...(options?.providers ? { providers: options.providers } : {}),
       ...(options?.since ? { since: options.since } : {}),
       ...(options?.limit ? { limit: options.limit } : {}),
+      ...(options?.query !== undefined ? { query: options.query } : {}),
     });
     return this.sendRequest({
       requestId: resolvedRequestId,
@@ -2891,6 +2892,19 @@ export class DaemonClient {
     }
 
     return payload;
+  }
+
+  async appendAgentTimelineItem(
+    agentId: string,
+    item: Omit<import("@getpaseo/protocol/agent-types").PluginTimelineItem, "pluginId">,
+  ): Promise<{ seq: number; epoch: string }> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "agent.timeline.append.request", requestId, agentId, item },
+      responseType: "agent.timeline.append.response",
+    });
+    return { seq: payload.seq, epoch: payload.epoch };
   }
 
   async listAgentTimelinePrompts(

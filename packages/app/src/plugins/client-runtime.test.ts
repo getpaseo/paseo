@@ -1,16 +1,16 @@
 import { QueryClient } from "@tanstack/react-query";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { PluginClientContext, PluginComposerPillProps } from "@getpaseo/plugin";
+import type { PluginComposerPillProps } from "@getpaseo/plugin";
 import { afterEach, describe, expect, it } from "vitest";
-import type { InstalledPlugin } from "../types";
-import { startPluginClientSide } from "./lifecycle";
-import { pluginComposerPillStore } from "./store";
+import type { InstalledPlugin } from "./types";
+import { createPluginClientRuntime } from "./client-runtime";
+import { pluginComposerPillStore } from "./composer-pills/store";
 
 function Pill(_props: PluginComposerPillProps) {
   return null;
 }
 
-function installation(clientSide: NonNullable<InstalledPlugin["clientSide"]>): InstalledPlugin {
+function installation(): InstalledPlugin {
   return {
     id: "review",
     serverId: "host-a",
@@ -21,7 +21,7 @@ function installation(clientSide: NonNullable<InstalledPlugin["clientSide"]>): I
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
-    clientSide,
+    clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
@@ -39,19 +39,10 @@ afterEach(() => {
 });
 
 describe("plugin client-side lifecycle", () => {
-  it("lets client code add and remove a targeted composer pill at runtime", async () => {
-    const captured: { client?: PluginClientContext } = {};
-    let cleanupCount = 0;
-    const plugin = installation((context) => {
-      captured.client = context;
-      return () => {
-        cleanupCount += 1;
-      };
-    });
+  it("lets the client runtime add and remove a targeted composer pill", () => {
+    const plugin = installation();
     installations.push(plugin);
-    const stop = startPluginClientSide(plugin, daemonClient);
-    const client = captured.client;
-    if (!client) throw new Error("Client lifecycle did not start");
+    const client = createPluginClientRuntime(plugin, daemonClient);
 
     expect(pluginComposerPillStore.getSnapshot()).toEqual([]);
     const remove = client.addComposerPill({
@@ -73,23 +64,10 @@ describe("plugin client-side lifecycle", () => {
 
     remove();
     expect(pluginComposerPillStore.getSnapshot()).toEqual([]);
-
-    client.addComposerPill({
-      id: "review-ready",
-      title: "Open review",
-      workspaceId: "workspace-a",
-      agentId: "agent-a",
-      Component: Pill,
-      onPress() {},
-    });
-    await stop();
-
-    expect(pluginComposerPillStore.getSnapshot()).toEqual([]);
-    expect(cleanupCount).toBe(1);
   });
 
   it("rejects duplicate pills only within the same plugin target", () => {
-    const plugin = installation(() => () => undefined);
+    const plugin = installation();
     installations.push(plugin);
     const contribution = {
       id: "review-ready",

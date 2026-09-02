@@ -26,10 +26,7 @@ import {
   processTimelineResponse,
 } from "./session-stream-reducers";
 import { isTimelineResumeSnapshotAuthoritative } from "./timeline-sync-plan";
-import { createInstalledTimelineTransform, type TimelineItemTransform } from "@/plugins/timeline";
 import { replaceWithCanonicalStream } from "@/types/stream";
-
-const PLUGIN_TIMELINE_REPROJECTION_DELAY_MS = 50;
 
 export interface TimelineReplicaStorage {
   readTimeline(serverId: string, agentId: string): Promise<CachedTimeline | undefined>;
@@ -93,11 +90,12 @@ async function prepareCachedTimeline(input: {
 export interface TimelineReplica {
   prepare(agentId: string): Promise<void>;
   readCursor(agentId: string): { epoch: string; endSeq: number } | undefined;
+  readRange(agentId: string): AgentTimelineCursorState | undefined;
   timelineUpdated(agentId: string): void;
 }
 
 class TimelineReplicaOwner implements TimelineReplica {
-  private readonly cachedCursors = new Map<string, { epoch: string; endSeq: number }>();
+  private readonly cachedRanges = new Map<string, AgentTimelineCursorState>();
   private readonly preparations = new Map<string, Promise<void>>();
 
   constructor(
@@ -127,22 +125,24 @@ class TimelineReplicaOwner implements TimelineReplica {
     });
     if (!stored) return;
     if (stored.range) {
-      this.cachedCursors.set(agentId, {
-        epoch: stored.range.epoch,
-        endSeq: stored.range.endSeq,
-      });
+      this.cachedRanges.set(agentId, stored.range);
     }
   }
 
   readCursor(agentId: string): { epoch: string; endSeq: number } | undefined {
-    return this.cachedCursors.get(agentId);
+    const range = this.cachedRanges.get(agentId);
+    return range ? { epoch: range.epoch, endSeq: range.endSeq } : undefined;
+  }
+
+  readRange(agentId: string): AgentTimelineCursorState | undefined {
+    return this.cachedRanges.get(agentId);
   }
 
   timelineUpdated(agentId: string): void {
     const session = useSessionStore.getState().sessions[this.serverId];
     const timeline = selectAgentTimelineState(session, agentId);
     if (timeline.status !== "synced") return;
-    this.cachedCursors.delete(agentId);
+    this.cachedRanges.delete(agentId);
     this.storage.commitTimeline(this.serverId, agentId, {
       agentId,
       items: [...timeline.items, ...(session?.agentStreamHead.get(agentId) ?? [])],
@@ -169,6 +169,15 @@ export type TimelineResponsePayload = Extract<
   SessionOutboundMessage,
   { type: "fetch_agent_timeline_response" }
 >["payload"];
+
+export function consumeForcedTimelineTailReplacement(
+  payload: TimelineResponsePayload,
+  replacements: Set<string>,
+): TimelineResponsePayload {
+  if (payload.direction !== "tail") return payload;
+  if (!replacements.delete(payload.agentId)) return payload;
+  return { ...payload, reset: true };
+}
 
 function clearAgentInitializingFlag(serverId: string, agentId: string): void {
   useSessionStore.getState().setInitializingAgents(serverId, (previous) => {
@@ -249,9 +258,9 @@ function finalizeProcessedTimeline(input: {
 function applyAuthoritativeTimelineResponse(input: {
   serverId: string;
   payload: TimelineResponsePayload;
+  cachedCursor?: AgentTimelineCursorState;
   recoverGap: (agentId: string, cursor: { epoch: string; endSeq: number }) => void;
   drainQueuedAgentMessage: (agentId: string) => void;
-  transformTimelineItem?: TimelineItemTransform;
 }): boolean {
   const { serverId, payload } = input;
   const agentId = payload.agentId;
@@ -259,7 +268,8 @@ function applyAuthoritativeTimelineResponse(input: {
   const session = useSessionStore.getState().sessions[serverId];
   const timeline = selectAgentTimelineState(session, agentId);
   const activeInitDeferred = getInitDeferred(initKey);
-  const currentCursor = timeline.status === "synced" ? (timeline.range ?? undefined) : undefined;
+  const currentCursor =
+    timeline.status === "synced" ? (timeline.range ?? undefined) : input.cachedCursor;
   const result = processTimelineResponse({
     payload,
     currentTail: timeline.status === "cold" ? [] : timeline.items,
@@ -269,7 +279,6 @@ function applyAuthoritativeTimelineResponse(input: {
     hasActiveInitDeferred: Boolean(activeInitDeferred),
     initRequestDirection: activeInitDeferred?.requestDirection ?? "tail",
     sendingClientMessageIds: getSendingClientMessageIds(session?.messageSubmissions.get(agentId)),
-    transformTimelineItem: input.transformTimelineItem,
   });
 
   if (result.error) {
@@ -320,7 +329,6 @@ export interface ViewedTimelineUiBridge {
   getAgentTimelineStatus(agentId: string): ViewedTimelineStatus;
   getAgentTimelineError(agentId: string): string | null;
   retryVisibleAgentTimeline(agentId: string): void;
-  reprojectVisibleTimelines(): void;
 }
 
 export interface ViewedTimelineSync extends ViewedTimelineUiBridge {
@@ -349,33 +357,6 @@ export function createViewedTimelineOwner(input: {
   drainQueuedAgentMessage: (agentId: string) => void;
   ports: ViewedTimelineOwnerPorts;
 }): ViewedTimelineOwner {
-  const transformTimelineItem = createInstalledTimelineTransform(input.serverId);
-  const reprojections = new Set<string>();
-  const pendingReprojections = new Set<string>();
-  const scheduledReprojections = new Map<string, () => void>();
-  const startTimelineReprojection = (agentId: string) => {
-    scheduledReprojections.delete(agentId);
-    if (reprojections.has(agentId)) {
-      pendingReprojections.add(agentId);
-      return;
-    }
-    reprojections.add(agentId);
-    void input.ports
-      .fetchLatestTail(agentId)
-      .catch(input.ports.reportError)
-      .finally(() => {
-        reprojections.delete(agentId);
-        if (pendingReprojections.delete(agentId)) reprojectTimeline(agentId);
-      });
-  };
-  const reprojectTimeline = (agentId: string) => {
-    scheduledReprojections.get(agentId)?.();
-    const cancel = input.ports.schedule(
-      () => startTimelineReprojection(agentId),
-      PLUGIN_TIMELINE_REPROJECTION_DELAY_MS,
-    );
-    scheduledReprojections.set(agentId, cancel);
-  };
   const sync = createViewedTimelineSync({
     ...input.ports,
     prepare: (agentId) => input.replica.prepare(agentId),
@@ -387,9 +368,7 @@ export function createViewedTimelineOwner(input: {
     setAgentStreamState: (...args) => useSessionStore.getState().setAgentStreamState(...args),
     setAgentTimelineCursor: (...args) => useSessionStore.getState().setAgentTimelineCursor(...args),
     recoverTimelineGap: (agentId, cursor) => sync.recoverGap(agentId, cursor),
-    reprojectTimeline,
     onCommitted: (agentId) => input.replica.timelineUpdated(agentId),
-    transformTimelineItem,
   });
   return {
     ...sync,
@@ -397,9 +376,9 @@ export function createViewedTimelineOwner(input: {
       const accepted = applyAuthoritativeTimelineResponse({
         serverId: input.serverId,
         payload,
+        cachedCursor: input.replica.readRange(payload.agentId),
         recoverGap: (agentId, cursor) => sync.recoverGap(agentId, cursor),
         drainQueuedAgentMessage: input.drainQueuedAgentMessage,
-        transformTimelineItem,
       });
       if (accepted) input.replica.timelineUpdated(payload.agentId);
     },
@@ -410,8 +389,6 @@ export function createViewedTimelineOwner(input: {
       streamQueue.flushAgent(agentId);
     },
     dispose() {
-      for (const cancel of scheduledReprojections.values()) cancel();
-      scheduledReprojections.clear();
       streamQueue.dispose({ flush: true });
       sync.dispose();
     },
@@ -947,11 +924,5 @@ export function createViewedTimelineSync(ports: ViewedTimelineSyncPorts): Viewed
       listeners.clear();
     },
     retryVisibleAgentTimeline,
-    reprojectVisibleTimelines() {
-      if (!active || !connected) return;
-      for (const agentId of visibleAgentIds()) {
-        void ports.fetchLatestTail(agentId).catch(ports.reportError);
-      }
-    },
   };
 }
