@@ -1091,6 +1091,7 @@ export const zhCN: TranslationResources = {
     },
     sections: {
       sessions: "历史",
+      search: "搜索",
       schedules: "计划",
     },
     worktreeSetup: {
@@ -2071,6 +2072,12 @@ export const zhCN: TranslationResources = {
       chatOutline: {
         title: "聊天大纲",
         description: "显示用于在提示词之间跳转的大纲",
+      },
+      sidebar: {
+        title: "侧边栏",
+        description: "选择侧边栏顶部显示的项目及其顺序",
+        moveUp: "上移",
+        moveDown: "下移",
       },
       fonts: {
         title: "字体",

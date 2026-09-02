@@ -822,7 +822,7 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   await originalDeck.getByRole("button", { name: "Cancel element selector" }).click();
 
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
-  await page.getByRole("button", { name: "Open command center" }).click();
+  await page.getByTestId("sidebar-search").click();
   await page.getByTestId("command-center-input").fill("Split pane right");
   await page.getByText("Split pane right", { exact: true }).click();
   assert(

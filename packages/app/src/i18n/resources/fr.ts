@@ -1133,6 +1133,7 @@ export const fr: TranslationResources = {
     },
     sections: {
       sessions: "Historique",
+      search: "Rechercher",
       schedules: "Planifications",
     },
     worktreeSetup: {
@@ -2149,6 +2150,12 @@ export const fr: TranslationResources = {
       chatOutline: {
         title: "Plan de la discussion",
         description: "Afficher un plan pour passer d’une requête à l’autre",
+      },
+      sidebar: {
+        title: "Barre latérale",
+        description: "Choisissez les éléments affichés en haut de la barre latérale et leur ordre",
+        moveUp: "Déplacer vers le haut",
+        moveDown: "Déplacer vers le bas",
       },
       fonts: {
         title: "Polices",

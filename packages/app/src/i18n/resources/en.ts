@@ -1108,6 +1108,7 @@ export const en = {
     },
     sections: {
       sessions: "History",
+      search: "Search",
       schedules: "Schedules",
     },
     worktreeSetup: {
@@ -2194,6 +2195,12 @@ export const en = {
       chatOutline: {
         title: "Chat outline",
         description: "Show an outline for jumping between prompts",
+      },
+      sidebar: {
+        title: "Sidebar",
+        description: "Choose which items appear at the top of the sidebar and in what order",
+        moveUp: "Move up",
+        moveDown: "Move down",
       },
       fonts: {
         title: "Fonts",

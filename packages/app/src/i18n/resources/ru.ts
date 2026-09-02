@@ -1115,6 +1115,7 @@ export const ru: TranslationResources = {
     },
     sections: {
       sessions: "История",
+      search: "Поиск",
       schedules: "Расписания",
     },
     worktreeSetup: {
@@ -2131,6 +2132,13 @@ export const ru: TranslationResources = {
       chatOutline: {
         title: "Оглавление чата",
         description: "Показывать оглавление для перехода между запросами",
+      },
+      sidebar: {
+        title: "Боковая панель",
+        description:
+          "Выберите, какие элементы отображаются вверху боковой панели и в каком порядке",
+        moveUp: "Переместить вверх",
+        moveDown: "Переместить вниз",
       },
       fonts: {
         title: "Шрифты",

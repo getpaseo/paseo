@@ -12,10 +12,7 @@ import { buildAgentRoute } from "../support/helpers/mock-agent";
 import { connectNewWorkspaceDaemonClient } from "../support/helpers/new-workspace";
 import { seedWorkspace } from "../support/helpers/seed-client";
 import { getServerId } from "../support/helpers/server-id";
-import {
-  closeMobileAgentSidebar,
-  expectMobileAgentSidebarHidden,
-} from "../support/helpers/sidebar";
+import { expectMobileAgentSidebarHidden } from "../support/helpers/sidebar";
 import {
   switchWorkspaceViaSidebar,
   waitForWorkspaceInSidebar,
@@ -159,7 +156,7 @@ async function runCommand(page: Page, title: string): Promise<void> {
 
 async function openCompactSidebar(page: Page): Promise<void> {
   await page.getByRole("button", { name: "Open menu", exact: true }).click();
-  await expect(page.getByTestId("sidebar-command-center-search")).toBeVisible();
+  await expect(page.getByTestId("sidebar-search")).toBeVisible();
 }
 
 async function capture(page: Page, testInfo: TestInfo, name: string): Promise<void> {
@@ -331,8 +328,9 @@ test.describe("plugin workspace panels and Command Center", () => {
         await page.waitForURL(isSettledWorkspaceUrl, { timeout: 60_000 });
         await expect(page.getByRole("button", { name: "Open composer review" })).toHaveCount(0);
         await openCompactSidebar(page);
+        // The sidebar's Search row dismisses the compact sidebar on its way to the
+        // command center, so nothing has to close it after the command runs.
         await runCommand(page, "Open plugin agent");
-        await closeMobileAgentSidebar(page);
         await expectMobileAgentSidebarHidden(page);
         await expect(page.getByText(`Agent bridge ${agent.id}`)).toBeVisible();
         await expect(

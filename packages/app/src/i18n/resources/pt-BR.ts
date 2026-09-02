@@ -1124,6 +1124,7 @@ export const ptBR: TranslationResources = {
     },
     sections: {
       sessions: "Histórico",
+      search: "Buscar",
       schedules: "Agendamentos",
     },
     worktreeSetup: {
@@ -2129,6 +2130,12 @@ export const ptBR: TranslationResources = {
       chatOutline: {
         title: "Estrutura do chat",
         description: "Mostrar uma estrutura para navegar entre prompts",
+      },
+      sidebar: {
+        title: "Barra lateral",
+        description: "Escolha quais itens aparecem no topo da barra lateral e em que ordem",
+        moveUp: "Mover para cima",
+        moveDown: "Mover para baixo",
       },
       fonts: {
         title: "Fontes",

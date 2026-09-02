@@ -197,6 +197,46 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(false);
   });
 
+  it("defaults sidebar navigation items to an empty preference list", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarNavItems).toEqual([]);
+  });
+
+  it("loads stored sidebar navigation items in order", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          sidebarNavItems: [
+            { key: "history", visible: false },
+            { key: "new-workspace", visible: true },
+          ],
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarNavItems).toEqual([
+      { key: "history", visible: false },
+      { key: "new-workspace", visible: true },
+    ]);
+  });
+
+  it("falls back to the default sidebar navigation items when the stored list is malformed", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarNavItems: [{ key: 3 }] }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarNavItems).toEqual([]);
+  });
+
   it("collapses legacy diff destinations into the former Explorer choice", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
