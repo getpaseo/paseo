@@ -30,10 +30,16 @@ export async function expectDiagramRemainsRenderedWhileStreaming(
   completion: Promise<void>,
 ): Promise<void> {
   const diagram = page.getByRole("img", { name: DIAGRAM_NAME }).last();
-  const completed = completion.then(() => true);
+  let turnCompleted = false;
+  const completed = completion.then(() => {
+    turnCompleted = true;
+    return true;
+  });
   for (;;) {
     expect(await diagram.isVisible()).toBe(true);
+    if (turnCompleted) return completion;
     const box = await diagram.boundingBox();
+    if (turnCompleted) return completion;
     expect(box, "the inline diagram should have measurable layout").not.toBeNull();
     expect(
       box?.height,
