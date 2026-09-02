@@ -505,10 +505,21 @@ jobs:
           existing_assets="$(gh release view "$release_lookup" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')"
           for manifest_name in "${expected_manifests[@]}"; do
             if grep -Fxq "$manifest_name" <<< "$existing_assets"; then
-              gh release download "$release_lookup" \
-                --repo "${{ github.repository }}" \
-                --pattern "$manifest_name" \
-                --dir "$manifests_dir"
+              case "$manifest_name" in
+                "${RELEASE_CHANNEL}-mac.yml") platform_result="${{ needs.publish-macos.result }}" ;;
+                "${RELEASE_CHANNEL}-linux.yml") platform_result="${{ needs.publish-linux.result }}" ;;
+                "${RELEASE_CHANNEL}.yml") platform_result="${{ needs.publish-windows.result }}" ;;
+              esac
+              if [[ "$platform_result" =~ ^(success|skipped)$ ]]; then
+                gh release download "$release_lookup" \
+                  --repo "${{ github.repository }}" \
+                  --pattern "$manifest_name" \
+                  --dir "$manifests_dir"
+              else
+                gh release delete-asset "$release_lookup" "$manifest_name" \
+                  --repo "${{ github.repository }}" \
+                  --yes
+              fi
             fi
           done
 
