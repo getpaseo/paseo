@@ -69,11 +69,11 @@ test("recovers durable deliveries across reconnect and daemon restart", async ()
     await expect(client.getDeliveries()).resolves.toMatchObject({
       deliveries: [expect.objectContaining({ deliveryId: "delivery-e2e" })],
     });
-    const acknowledged = await client.acknowledgeDelivery("delivery-e2e");
-    expect(acknowledged.acknowledgedAt).toEqual(expect.any(String));
-    await expect(client.getDeliveries()).resolves.toMatchObject({ deliveries: [] });
-    await expect(client.getDeliveries({ includeAcknowledged: true })).resolves.toMatchObject({
-      deliveries: [expect.objectContaining({ deliveryId: "delivery-e2e" })],
+    await expect(client.acknowledgeDelivery("delivery-e2e")).rejects.toMatchObject({
+      code: "delivery_transition_invalid",
+    });
+    await expect(client.getDeliveries()).resolves.toMatchObject({
+      deliveries: [expect.objectContaining({ deliveryId: "delivery-e2e", status: "recorded" })],
     });
   } finally {
     await client?.close().catch(() => undefined);

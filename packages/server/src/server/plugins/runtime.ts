@@ -130,6 +130,8 @@ class PluginOutputCapture {
 }
 
 export interface PluginPaseoSessionHost {
+  /** Fence durable delivery dispatch before the plugin process is stopped. */
+  beginPluginShutdown?(pluginId: string): void;
   attachPluginSocket(
     pluginId: string,
     socket: PluginSessionSocket,
@@ -254,6 +256,7 @@ export class PluginRuntime {
   async stopPluginById(pluginId: string): Promise<boolean> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) return false;
+    this.sessionHost?.beginPluginShutdown?.(pluginId);
     this.plugins.delete(pluginId);
     this.rejectPending(loaded, `Plugin stopped: ${pluginId}`);
     await this.stopPlugin(loaded);
@@ -303,6 +306,7 @@ export class PluginRuntime {
 
   async stopAll(): Promise<void> {
     const loaded = [...this.plugins.values()];
+    for (const plugin of loaded) this.sessionHost?.beginPluginShutdown?.(plugin.id);
     this.plugins.clear();
     for (const plugin of loaded) {
       this.rejectPending(plugin, `Plugin stopped: ${plugin.id}`);

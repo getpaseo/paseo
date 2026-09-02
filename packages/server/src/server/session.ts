@@ -258,6 +258,7 @@ import {
   DeliveryIdSchema,
   DeliveryMessageIdSchema,
   DeliveryTargetAgentIdSchema,
+  MAX_DELIVERY_RESPONSE_BYTES,
   type DeliveryRecord,
 } from "@getpaseo/protocol/deliveries";
 import {
@@ -2095,9 +2096,10 @@ export class Session {
               delivery = await this.deliveryDispatchCoordinator.run(
                 JSON.stringify([this.principalId, delivery.deliveryId]),
                 () => this.dispatchStoredDelivery(delivery),
+                this.principalId,
               );
             }
-            this.emitForSource(
+            this.emitDeliveryResponse(
               {
                 type: "deliveries.send.response",
                 payload: {
@@ -2121,9 +2123,11 @@ export class Session {
             : {}),
           ...(request.cursor !== undefined ? { cursor: request.cursor } : {}),
           ...(request.limit !== undefined ? { limit: request.limit } : {}),
+          responseRequestId: request.requestId,
+          maxEncodedBytes: MAX_DELIVERY_RESPONSE_BYTES,
         };
         return this.deliveryLedger.get(this.principalId, options).then((result) => {
-          this.emitForSource(
+          this.emitDeliveryResponse(
             {
               type: "deliveries.get.response",
               payload: {
@@ -2143,7 +2147,7 @@ export class Session {
         return this.deliveryLedger
           .acknowledge(this.principalId, DeliveryIdSchema.parse(request.deliveryId))
           .then((delivery) => {
-            this.emitForSource(
+            this.emitDeliveryResponse(
               {
                 type: "deliveries.acknowledge.response",
                 payload: {
@@ -2182,6 +2186,12 @@ export class Session {
     );
     if (dispatching.status !== "dispatching") return dispatching;
     try {
+      if (current.payload === undefined) {
+        throw new DeliveryLedgerError(
+          "delivery_payload_invalid",
+          `Delivery ${current.deliveryId} has no dispatchable payload`,
+        );
+      }
       const outcome = await this.deliveryAgentDispatcher({
         targetAgentId: current.targetAgentId,
         messageId: current.messageId ?? current.deliveryId,
@@ -7840,6 +7850,38 @@ export class Session {
       return;
     }
     this.emit(msg);
+  }
+
+  private emitDeliveryResponse(msg: SessionOutboundMessage, source?: object): void {
+    let encodedBytes = Number.POSITIVE_INFINITY;
+    try {
+      encodedBytes = Buffer.byteLength(JSON.stringify({ type: "session", message: msg }), "utf8");
+    } catch {
+      // The normal error path below is bounded and serializable.
+    }
+    if (encodedBytes <= MAX_DELIVERY_RESPONSE_BYTES) {
+      this.emitForSource(msg, source);
+      return;
+    }
+
+    const payload =
+      "payload" in msg && msg.payload && typeof msg.payload === "object" ? msg.payload : null;
+    const requestId =
+      payload && "requestId" in payload && typeof payload.requestId === "string"
+        ? payload.requestId
+        : "delivery-request";
+    this.emitForSource(
+      {
+        type: "rpc_error",
+        payload: {
+          requestId,
+          requestType: msg.type,
+          error: "Delivery response exceeds the WebSocket message limit",
+          code: "delivery_response_too_large",
+        },
+      },
+      source,
+    );
   }
 
   /**

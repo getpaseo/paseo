@@ -102,12 +102,13 @@ vi.mock("./push/index.js", () => ({
 }));
 
 import { z } from "zod";
-import { VoiceAssistantWebSocketServer } from "./websocket-server";
+import { MAX_WEBSOCKET_MESSAGE_BYTES, VoiceAssistantWebSocketServer } from "./websocket-server";
 import { DAEMON_PERMISSIONS, parseServerInfoStatusPayload } from "./messages.js";
 import type { SpeechReadinessSnapshot } from "./speech/speech-runtime.js";
 
 interface WebSocketServerInternals {
   attachSocket(ws: unknown, req: unknown): Promise<void>;
+  sendToClient(ws: unknown, message: unknown): void;
 }
 
 const TEST_DAEMON_VERSION = "1.2.3-test";
@@ -530,6 +531,40 @@ describe("relay external socket reconnect behavior", () => {
     secondSocket.emit("close", 1000, "plugin stopped");
     await secondAttachment.closed;
     expect(sessionMock.instances[1]?.cleanup).toHaveBeenCalledOnce();
+    await server.close();
+  });
+
+  test("blocks replacement plugin sockets until the closing owner is purged", async () => {
+    const server = createServer();
+    const firstSocket = new MockSocket();
+    const firstAttachment = await server.attachPluginSocket("closing", firstSocket);
+    firstSocket.emit("message", JSON.stringify(createHelloMessage("plugin:closing")));
+
+    server.beginPluginShutdown("closing");
+    await expect(server.attachPluginSocket("closing", new MockSocket())).rejects.toThrow(
+      "being uninstalled",
+    );
+
+    firstSocket.emit("close", 1000, "plugin stopped");
+    await firstAttachment.closed;
+    const replacement = new MockSocket();
+    await expect(server.attachPluginSocket("closing", replacement)).resolves.toBeDefined();
+    replacement.emit("close", 1000, "replacement stopped");
+    await server.close();
+  });
+
+  test("does not enqueue an oversized outbound WebSocket frame", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({ server, socket, clientId: "outbound-limit" });
+    const sentBefore = socket.sent.length;
+
+    asInternals<WebSocketServerInternals>(server).sendToClient(socket, {
+      type: "session",
+      message: { type: "status", payload: { status: "x".repeat(MAX_WEBSOCKET_MESSAGE_BYTES) } },
+    });
+
+    expect(socket.sent).toHaveLength(sentBefore);
     await server.close();
   });
 

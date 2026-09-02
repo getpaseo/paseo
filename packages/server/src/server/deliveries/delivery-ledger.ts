@@ -1,9 +1,11 @@
+import { constants as fsConstants } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import equal from "fast-deep-equal";
 import {
   assertDeliveryPayload,
+  DeliveryCursorSchema,
   DeliveryIdSchema,
   DeliveryMessageIdSchema,
   DeliveryPayloadValidationError,
@@ -12,24 +14,39 @@ import {
   DeliveryTargetAgentIdSchema,
   MAX_DELIVERY_PAGE_SIZE,
   MAX_DELIVERY_PAYLOAD_BYTES,
+  MAX_DELIVERY_RESPONSE_BYTES,
+  MAX_WEBSOCKET_MESSAGE_BYTES,
   type DeliveryPayload,
   type DeliveryRecord,
   type DeliveryStatus,
 } from "@getpaseo/protocol/deliveries";
-import { writeFileAtomic } from "../atomic-file.js";
 
-const LEDGER_VERSION = 1;
+const LEDGER_VERSION = 2;
+const LEGACY_LEDGER_VERSION = 1;
 const DEFAULT_PAGE_SIZE = MAX_DELIVERY_PAGE_SIZE;
 const DEFAULT_MAX_RECORDS_PER_OWNER = 10_000;
 const DEFAULT_MAX_BYTES_PER_OWNER = 16 * 1024 * 1024;
+const DEFAULT_MAX_LEDGER_BYTES = 64 * 1024 * 1024;
+const DEFAULT_ACKNOWLEDGED_PAYLOAD_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const DEFAULT_MAX_ACKNOWLEDGED_PAYLOADS = 1_000;
+const DEFAULT_MAX_ACKNOWLEDGED_PAYLOAD_BYTES = 4 * 1024 * 1024;
+const DEFAULT_TOMBSTONE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 const MAX_OWNER_ID_BYTES = 256;
 const MAX_ERROR_BYTES = 16 * 1024;
+const READ_CHUNK_BYTES = 64 * 1024;
+const TRANSIENT_RETRY_COUNT = 3;
+const O_NOFOLLOW = (fsConstants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+const O_DIRECTORY = (fsConstants as { O_DIRECTORY?: number }).O_DIRECTORY ?? 0;
 
 export interface DeliveryLedgerGetOptions {
   deliveryId?: string;
   includeAcknowledged?: boolean;
+  /** New cursors are sequence strings. Legacy delivery-id cursors remain readable. */
   cursor?: string;
   limit?: number;
+  /** Used by the session layer to budget the complete encoded WS envelope. */
+  responseRequestId?: string;
+  maxEncodedBytes?: number;
 }
 
 export interface DeliveryLedgerSendInput {
@@ -50,11 +67,25 @@ export interface DeliveryLedgerGetResult {
   nextCursor: string | null;
 }
 
+export interface DeliveryLedgerDiagnostic {
+  kind: "quarantined";
+  ownerId: string;
+  filePath: string;
+  quarantinePath: string;
+  reason: string;
+}
+
 export interface DeliveryLedgerOptions {
   now?: () => Date;
   maxRecordsPerOwner?: number;
   maxBytesPerOwner?: number;
   maxPayloadBytes?: number;
+  maxLedgerBytes?: number;
+  acknowledgedPayloadMaxAgeMs?: number;
+  maxAcknowledgedPayloads?: number;
+  maxAcknowledgedPayloadBytes?: number;
+  tombstoneRetentionMs?: number;
+  onDiagnostic?: (diagnostic: DeliveryLedgerDiagnostic) => void;
   // Short aliases make the quota seam convenient for focused tests and small
   // embedders without changing the durable format.
   maxDeliveries?: number;
@@ -69,7 +100,9 @@ type DeliveryLedgerErrorCode =
   | "delivery_cursor_invalid"
   | "delivery_transition_invalid"
   | "delivery_payload_invalid"
-  | "delivery_payload_too_large";
+  | "delivery_payload_too_large"
+  | "delivery_owner_closing"
+  | "delivery_response_too_large";
 
 export class DeliveryLedgerError extends Error {
   constructor(
@@ -82,17 +115,39 @@ export class DeliveryLedgerError extends Error {
   }
 }
 
+type LedgerRecord = DeliveryRecord & {
+  sequence: number;
+  payloadFingerprint: string;
+  status: DeliveryStatus;
+};
+
 interface OwnerState {
-  records: Map<string, DeliveryRecord>;
+  records: Map<string, LedgerRecord>;
+  nextSequence: number;
   loaded: boolean;
   loadPromise: Promise<void> | null;
   mutationTail: Promise<void>;
+  closing: boolean;
 }
 
 interface PersistedDeliveryLedger {
   version: typeof LEDGER_VERSION;
   ownerId: string;
+  nextSequence: number;
   deliveries: DeliveryRecord[];
+}
+
+interface ParsedLedgerEnvelope {
+  version: number;
+  ownerId: string;
+  nextSequence?: number;
+  deliveries: unknown[];
+}
+
+interface LoadedLedgerContents {
+  records: Map<string, LedgerRecord>;
+  nextSequence: number;
+  needsPersist: boolean;
 }
 
 function ownerFileName(ownerId: string): string {
@@ -127,15 +182,17 @@ export function deliveryLedgerFilePath(baseDir: string, ownerId: string): string
   return path.join(baseDir, ownerFileName(validateOwnerId(ownerId)));
 }
 
-function clonePayload(payload: DeliveryPayload): DeliveryPayload {
-  return JSON.parse(JSON.stringify(payload)) as DeliveryPayload;
+function clonePayload(payload: DeliveryPayload | undefined): DeliveryPayload | undefined {
+  return payload === undefined
+    ? undefined
+    : (JSON.parse(JSON.stringify(payload)) as DeliveryPayload);
 }
 
 function cloneDelivery(record: DeliveryRecord): DeliveryRecord {
-  return {
-    ...record,
-    payload: clonePayload(record.payload),
-  };
+  const cloned = { ...record } as DeliveryRecord;
+  if (record.payload === undefined) delete cloned.payload;
+  else cloned.payload = clonePayload(record.payload);
+  return cloned;
 }
 
 function statusOf(record: DeliveryRecord): DeliveryStatus {
@@ -143,17 +200,102 @@ function statusOf(record: DeliveryRecord): DeliveryStatus {
   return record.status ?? "recorded";
 }
 
-function normalizeLoadedRecord(value: unknown): DeliveryRecord {
+function stableSerialize(value: DeliveryPayload): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableSerialize).join(",")}]`;
+  return `{${Object.keys(value)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableSerialize(value[key] as DeliveryPayload)}`)
+    .join(",")}}`;
+}
+
+function payloadFingerprint(payload: DeliveryPayload): string {
+  return createHash("sha256").update(stableSerialize(payload), "utf8").digest("hex");
+}
+
+function normalizeLoadedRecord(value: unknown, sequence: number | undefined): LedgerRecord {
   const parsed = DeliveryRecordSchema.parse(value);
   const status = statusOf(parsed);
   if (status === "acknowledged" && parsed.acknowledgedAt === null) {
     throw new Error(`Acknowledged delivery ${parsed.deliveryId} has no acknowledgement timestamp`);
   }
-  return DeliveryRecordSchema.parse({
-    ...parsed,
+  if (parsed.payload === undefined && !parsed.payloadFingerprint) {
+    throw new Error(`Tombstone ${parsed.deliveryId} has no payload fingerprint`);
+  }
+  const normalized = DeliveryRecordSchema.parse({
+    deliveryId: parsed.deliveryId,
+    ...(parsed.targetAgentId === undefined ? {} : { targetAgentId: parsed.targetAgentId }),
+    sequence: parsed.sequence ?? sequence,
     messageId: parsed.messageId ?? parsed.deliveryId,
     status,
+    ...(parsed.payload === undefined ? {} : { payload: parsed.payload }),
+    payloadFingerprint:
+      parsed.payloadFingerprint ??
+      (parsed.payload === undefined ? undefined : payloadFingerprint(parsed.payload)),
+    createdAt: parsed.createdAt,
+    dispatchingAt: parsed.dispatchingAt ?? null,
+    acceptedAt: parsed.acceptedAt ?? null,
+    failedAt: parsed.failedAt ?? null,
+    ambiguousAt: parsed.ambiguousAt ?? null,
+    error: parsed.error ?? null,
+    acknowledgedAt: parsed.acknowledgedAt,
   });
+  if (
+    typeof normalized.sequence !== "number" ||
+    !Number.isSafeInteger(normalized.sequence) ||
+    normalized.sequence < 1 ||
+    typeof normalized.payloadFingerprint !== "string"
+  ) {
+    throw new Error(`Delivery ${normalized.deliveryId} has invalid durable identity`);
+  }
+  return normalized as LedgerRecord;
+}
+
+function hasDurableSequence(value: unknown): boolean {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as { sequence?: unknown }).sequence === "number"
+  );
+}
+
+function compareLegacyDeliveries(left: unknown, right: unknown): number {
+  const leftRecord = DeliveryRecordSchema.parse(left);
+  const rightRecord = DeliveryRecordSchema.parse(right);
+  const byCreatedAt = leftRecord.createdAt.localeCompare(rightRecord.createdAt);
+  return byCreatedAt !== 0
+    ? byCreatedAt
+    : leftRecord.deliveryId.localeCompare(rightRecord.deliveryId);
+}
+
+function normalizeLedgerRecords(
+  values: unknown[],
+  migrateSequence: boolean,
+): Map<string, LedgerRecord> {
+  const records = new Map<string, LedgerRecord>();
+  const sequences = new Set<number>();
+  for (const [index, value] of values.entries()) {
+    const record = normalizeLoadedRecord(value, migrateSequence ? index + 1 : undefined);
+    if (records.has(record.deliveryId)) throw new Error(`Duplicate delivery ${record.deliveryId}`);
+    if (sequences.has(record.sequence)) {
+      throw new Error(`Duplicate delivery sequence ${record.sequence}`);
+    }
+    records.set(record.deliveryId, record);
+    sequences.add(record.sequence);
+  }
+  return records;
+}
+
+function resolveNextSequence(parsed: ParsedLedgerEnvelope, maximumSequence: number): number {
+  const persistedNextSequence = parsed.version === LEDGER_VERSION ? parsed.nextSequence : undefined;
+  const nextSequence =
+    typeof persistedNextSequence === "number" &&
+    Number.isSafeInteger(persistedNextSequence) &&
+    persistedNextSequence > maximumSequence
+      ? persistedNextSequence
+      : maximumSequence + 1;
+  if (!Number.isSafeInteger(nextSequence)) throw new Error("Delivery sequence exhausted");
+  return nextSequence;
 }
 
 function serializedByteLength(value: unknown): number {
@@ -168,10 +310,16 @@ function errorText(error: unknown): string {
 }
 
 function deliveryIdentityMatches(
-  existing: DeliveryRecord,
-  input: { targetAgentId?: string; messageId?: string; payload: DeliveryPayload },
+  existing: LedgerRecord,
+  input: {
+    targetAgentId?: string;
+    messageId?: string;
+    payload: DeliveryPayload;
+    fingerprint: string;
+  },
 ): boolean {
-  if (!equal(existing.payload, input.payload)) return false;
+  if (existing.payload !== undefined && !equal(existing.payload, input.payload)) return false;
+  if (existing.payloadFingerprint !== input.fingerprint) return false;
   if (existing.targetAgentId !== input.targetAgentId) return false;
   if (
     input.messageId !== undefined &&
@@ -182,19 +330,64 @@ function deliveryIdentityMatches(
   return true;
 }
 
-/**
- * Prevents concurrent callers from independently invoking the native agent
- * path for one durable delivery. The server shares one instance across its
- * sessions, so reconnects in the same daemon also remain single-flight.
- */
+function isTransientFsError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "EAGAIN" || code === "EINTR" || code === "EMFILE" || code === "ENFILE";
+}
+
+async function withTransientRetry<T>(operation: () => Promise<T>): Promise<T> {
+  let attempt = 0;
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      attempt += 1;
+      if (!isTransientFsError(error) || attempt >= TRANSIENT_RETRY_COUNT) throw error;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+}
+
+function sameFile(
+  left: { dev: number; ino: number },
+  right: { dev: number; ino: number },
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+/** Serialize native delivery attempts and fence an owner during teardown. */
 export class DeliveryDispatchCoordinator {
   private readonly inFlight = new Map<string, Promise<unknown>>();
+  private readonly owners = new Map<string, Set<Promise<unknown>>>();
+  private readonly closingOwners = new Set<string>();
 
-  run<TResult>(key: string, operation: () => Promise<TResult>): Promise<TResult> {
+  run<TResult>(key: string, operation: () => Promise<TResult>, ownerId?: string): Promise<TResult> {
     const existing = this.inFlight.get(key);
     if (existing) return existing as Promise<TResult>;
+    if (ownerId && this.closingOwners.has(ownerId)) {
+      return Promise.reject(
+        new DeliveryLedgerError("delivery_owner_closing", `Delivery owner ${ownerId} is closing`),
+      );
+    }
     const current = Promise.resolve().then(operation);
     this.inFlight.set(key, current);
+    if (ownerId) {
+      const ownerOperations = this.owners.get(ownerId) ?? new Set<Promise<unknown>>();
+      ownerOperations.add(current);
+      this.owners.set(ownerId, ownerOperations);
+      void current.then(
+        () => {
+          ownerOperations.delete(current);
+          if (ownerOperations.size === 0) this.owners.delete(ownerId);
+          return undefined;
+        },
+        () => {
+          ownerOperations.delete(current);
+          if (ownerOperations.size === 0) this.owners.delete(ownerId);
+          return undefined;
+        },
+      );
+    }
     void current.then(
       () => {
         if (this.inFlight.get(key) === current) this.inFlight.delete(key);
@@ -207,23 +400,50 @@ export class DeliveryDispatchCoordinator {
     );
     return current;
   }
+
+  beginOwnerClosing(ownerId: string): void {
+    this.closingOwners.add(ownerId);
+  }
+
+  isOwnerClosing(ownerId: string): boolean {
+    return this.closingOwners.has(ownerId);
+  }
+
+  async waitForOwner(ownerId: string, timeoutMs: number): Promise<boolean> {
+    const pending = [...(this.owners.get(ownerId) ?? [])];
+    if (pending.length === 0) return true;
+    return Promise.race([
+      Promise.allSettled(pending).then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+    ]);
+  }
+
+  async waitForOwnerSettled(ownerId: string): Promise<void> {
+    while (true) {
+      const pending = [...(this.owners.get(ownerId) ?? [])];
+      if (pending.length === 0) return;
+      await Promise.allSettled(pending);
+    }
+  }
+
+  finishOwner(ownerId: string): void {
+    this.closingOwners.delete(ownerId);
+  }
 }
 
-/**
- * Durable, principal-scoped delivery records.
- *
- * The ledger is deliberately a state machine rather than an in-memory queue.
- * Every transition is acknowledged only after its owner file has been
- * atomically replaced. A dispatching record found during a later process start
- * is reconciled to `ambiguous`; the daemon never retries it because the native
- * agent may already have received the message.
- */
+/** Durable principal-scoped delivery records and their lifecycle state. */
 export class DeliveryLedger {
   private readonly owners = new Map<string, OwnerState>();
   private readonly now: () => Date;
   private readonly maxRecordsPerOwner: number;
   private readonly maxBytesPerOwner: number;
   private readonly maxPayloadBytes: number;
+  private readonly maxLedgerBytes: number;
+  private readonly acknowledgedPayloadMaxAgeMs: number;
+  private readonly maxAcknowledgedPayloads: number;
+  private readonly maxAcknowledgedPayloadBytes: number;
+  private readonly tombstoneRetentionMs: number;
+  private readonly onDiagnostic: ((diagnostic: DeliveryLedgerDiagnostic) => void) | null;
 
   constructor(
     private readonly baseDir: string,
@@ -242,10 +462,47 @@ export class DeliveryLedger {
       options.maxPayloadBytes ?? MAX_DELIVERY_PAYLOAD_BYTES,
       "maxPayloadBytes",
     );
+    this.maxLedgerBytes = positiveInteger(
+      options.maxLedgerBytes ?? DEFAULT_MAX_LEDGER_BYTES,
+      "maxLedgerBytes",
+    );
+    this.acknowledgedPayloadMaxAgeMs = nonNegativeInteger(
+      options.acknowledgedPayloadMaxAgeMs ?? DEFAULT_ACKNOWLEDGED_PAYLOAD_MAX_AGE_MS,
+      "acknowledgedPayloadMaxAgeMs",
+    );
+    this.maxAcknowledgedPayloads = nonNegativeInteger(
+      options.maxAcknowledgedPayloads ?? DEFAULT_MAX_ACKNOWLEDGED_PAYLOADS,
+      "maxAcknowledgedPayloads",
+    );
+    this.maxAcknowledgedPayloadBytes = nonNegativeInteger(
+      options.maxAcknowledgedPayloadBytes ?? DEFAULT_MAX_ACKNOWLEDGED_PAYLOAD_BYTES,
+      "maxAcknowledgedPayloadBytes",
+    );
+    this.tombstoneRetentionMs = nonNegativeInteger(
+      options.tombstoneRetentionMs ?? DEFAULT_TOMBSTONE_RETENTION_MS,
+      "tombstoneRetentionMs",
+    );
+    this.onDiagnostic = options.onDiagnostic ?? null;
   }
 
   async initialize(ownerId = "owner"): Promise<void> {
-    await this.ensureLoaded(this.ownerState(ownerId), ownerId);
+    await this.ensureLoaded(this.ownerState(ownerId), validateOwnerId(ownerId));
+  }
+
+  beginOwnerClosing(ownerId: string): void {
+    this.ownerState(ownerId).closing = true;
+  }
+
+  isOwnerClosing(ownerId: string): boolean {
+    return this.ownerState(ownerId).closing;
+  }
+
+  async waitForOwnerIdle(ownerId: string): Promise<void> {
+    const state = this.ownerState(ownerId);
+    await Promise.allSettled([
+      state.mutationTail,
+      ...(state.loadPromise ? [state.loadPromise] : []),
+    ]);
   }
 
   async send(ownerId: string, input: DeliveryLedgerSendInput): Promise<DeliveryLedgerSendResult> {
@@ -268,12 +525,21 @@ export class DeliveryLedger {
       }
       throw error;
     }
-    const payload = clonePayload(input.payload);
+    const payload = clonePayload(input.payload) as DeliveryPayload;
+    const fingerprint = payloadFingerprint(payload);
 
     return this.enqueue(normalizedOwnerId, async (state) => {
+      this.assertOwnerOpen(state, normalizedOwnerId);
+      const compacted = this.compactAcknowledged(state.records);
+      if (compacted.changed) {
+        await this.persist(normalizedOwnerId, compacted.records, state.nextSequence);
+        state.records = compacted.records;
+      }
       const existing = state.records.get(deliveryId);
       if (existing) {
-        if (!deliveryIdentityMatches(existing, { targetAgentId, messageId, payload })) {
+        if (
+          !deliveryIdentityMatches(existing, { targetAgentId, messageId, payload, fingerprint })
+        ) {
           throw new DeliveryLedgerError(
             "delivery_id_conflict",
             `Delivery ${deliveryId} already exists with a different target, message id, or payload`,
@@ -284,10 +550,12 @@ export class DeliveryLedger {
 
       const record = DeliveryRecordSchema.parse({
         deliveryId,
+        sequence: state.nextSequence,
         ...(targetAgentId === undefined ? {} : { targetAgentId }),
         messageId,
         status: "recorded",
         payload,
+        payloadFingerprint: fingerprint,
         createdAt: this.now().toISOString(),
         dispatchingAt: null,
         acceptedAt: null,
@@ -295,12 +563,14 @@ export class DeliveryLedger {
         ambiguousAt: null,
         error: null,
         acknowledgedAt: null,
-      });
+      }) as LedgerRecord;
       const nextRecords = new Map(state.records);
       nextRecords.set(deliveryId, record);
       this.assertWithinQuota(nextRecords);
-      await this.persist(normalizedOwnerId, nextRecords);
+      const nextSequence = state.nextSequence + 1;
+      await this.persist(normalizedOwnerId, nextRecords, nextSequence);
       state.records = nextRecords;
+      state.nextSequence = nextSequence;
       return { delivery: cloneDelivery(record), created: true };
     });
   }
@@ -310,52 +580,79 @@ export class DeliveryLedger {
     options: DeliveryLedgerGetOptions = {},
   ): Promise<DeliveryLedgerGetResult> {
     const normalizedOwnerId = validateOwnerId(ownerId);
+    await this.gc(normalizedOwnerId);
     const state = this.ownerState(normalizedOwnerId);
     await state.mutationTail;
     await this.ensureLoaded(state, normalizedOwnerId);
+    const requestId = options.responseRequestId ?? "delivery-request";
+    const maxEncodedBytes = options.maxEncodedBytes ?? MAX_DELIVERY_RESPONSE_BYTES;
 
     if (options.deliveryId !== undefined) {
       const deliveryId = DeliveryIdSchema.parse(options.deliveryId);
       const delivery = state.records.get(deliveryId);
-      return {
+      const result = {
         delivery: delivery ? cloneDelivery(delivery) : null,
         deliveries: delivery ? [cloneDelivery(delivery)] : [],
         nextCursor: null,
-      };
+      } satisfies DeliveryLedgerGetResult;
+      this.assertGetResponseWithinBudget(requestId, result, maxEncodedBytes);
+      return result;
     }
 
     const includeAcknowledged = options.includeAcknowledged === true;
     const limit = this.parseLimit(options.limit);
     const records = this.sortedRecords(state.records);
-    const cursor = options.cursor !== undefined ? DeliveryIdSchema.parse(options.cursor) : null;
-    const cursorIndex =
-      cursor === null ? -1 : records.findIndex((record) => record.deliveryId === cursor);
-    if (cursor !== null && cursorIndex < 0) {
+    const cursor = options.cursor !== undefined ? DeliveryCursorSchema.parse(options.cursor) : null;
+    const cursorResult = this.findCursor(records, cursor, state.nextSequence);
+    if (!cursorResult.valid) {
       throw new DeliveryLedgerError(
         "delivery_cursor_invalid",
         `Delivery cursor ${cursor} is not present in the ledger`,
       );
     }
 
-    const start = cursorIndex + 1;
-    const eligible: Array<{ record: DeliveryRecord; index: number }> = [];
-    for (let index = start; index < records.length && eligible.length < limit; index += 1) {
+    const eligible: Array<{ record: LedgerRecord; index: number }> = [];
+    for (
+      let index = cursorResult.index + 1;
+      index < records.length && eligible.length < limit;
+      index += 1
+    ) {
       const record = records[index];
-      if (!record) continue;
-      if (!includeAcknowledged && statusOf(record) === "acknowledged") continue;
+      if (!record || (!includeAcknowledged && statusOf(record) === "acknowledged")) continue;
+      const candidate = eligible.concat({ record, index });
+      const hasMoreAfterCandidate = records
+        .slice(index + 1)
+        .some((item) => includeAcknowledged || statusOf(item) !== "acknowledged");
+      const candidateResult: DeliveryLedgerGetResult = {
+        delivery: null,
+        deliveries: candidate.map(({ record: item }) => cloneDelivery(item)),
+        nextCursor: hasMoreAfterCandidate ? String(record.sequence) : null,
+      };
+      if (!this.getResponseFits(requestId, candidateResult, maxEncodedBytes)) {
+        if (eligible.length === 0) {
+          throw new DeliveryLedgerError(
+            "delivery_response_too_large",
+            `Delivery ${record.deliveryId} cannot fit within the ${maxEncodedBytes}-byte response budget`,
+          );
+        }
+        break;
+      }
       eligible.push({ record, index });
     }
+
     const last = eligible.at(-1);
     const hasMore = last
       ? records
           .slice(last.index + 1)
           .some((record) => includeAcknowledged || statusOf(record) !== "acknowledged")
       : false;
-    return {
+    const result: DeliveryLedgerGetResult = {
       delivery: null,
       deliveries: eligible.map(({ record }) => cloneDelivery(record)),
-      nextCursor: hasMore ? (last?.record.deliveryId ?? null) : null,
+      nextCursor: hasMore ? String(last?.record.sequence) : null,
     };
+    this.assertGetResponseWithinBudget(requestId, result, maxEncodedBytes);
+    return result;
   }
 
   async acknowledge(ownerId: string, deliveryId: string): Promise<DeliveryRecord> {
@@ -378,7 +675,6 @@ export class DeliveryLedger {
     return this.transition(ownerId, deliveryId, "ambiguous", error);
   }
 
-  /** Public state-machine seam for recovery and focused tests. */
   async transition(
     ownerId: string,
     deliveryId: string,
@@ -388,57 +684,120 @@ export class DeliveryLedger {
     const normalizedOwnerId = validateOwnerId(ownerId);
     const nextStatus = DeliveryStatusSchema.parse(status);
     const normalizedId = DeliveryIdSchema.parse(deliveryId);
-    return this.enqueue(normalizedOwnerId, async (state) => {
-      const existing = state.records.get(normalizedId);
-      if (!existing) {
-        throw new DeliveryLedgerError(
-          "delivery_not_found",
-          `Delivery ${normalizedId} was not found`,
-        );
-      }
-      const currentStatus = statusOf(existing);
-      if (currentStatus === "acknowledged") return cloneDelivery(existing);
-      if (currentStatus === nextStatus) return cloneDelivery(existing);
-      if (!isAllowedTransition(currentStatus, nextStatus)) {
-        throw new DeliveryLedgerError(
-          "delivery_transition_invalid",
-          `Cannot transition delivery ${normalizedId} from ${currentStatus} to ${nextStatus}`,
-        );
-      }
+    return this.enqueue(normalizedOwnerId, (state) =>
+      this.applyTransition(state, normalizedOwnerId, normalizedId, nextStatus, error),
+    );
+  }
 
-      const timestamp = this.now().toISOString();
-      const nextRecord = DeliveryRecordSchema.parse({
-        ...existing,
-        status: nextStatus,
-        ...(nextStatus === "dispatching"
-          ? { dispatchingAt: existing.dispatchingAt ?? timestamp }
-          : {}),
-        ...(nextStatus === "accepted"
-          ? { acceptedAt: existing.acceptedAt ?? timestamp, error: null }
-          : {}),
-        ...(nextStatus === "failed"
-          ? {
-              failedAt: existing.failedAt ?? timestamp,
-              error: errorText(error ?? "Delivery failed"),
-            }
-          : {}),
-        ...(nextStatus === "ambiguous"
-          ? {
-              ambiguousAt: existing.ambiguousAt ?? timestamp,
-              error: errorText(
-                error ?? "Delivery outcome is ambiguous; it will not be retried automatically",
-              ),
-            }
-          : {}),
-        ...(nextStatus === "acknowledged"
-          ? { acknowledgedAt: existing.acknowledgedAt ?? timestamp }
-          : {}),
-      });
-      const nextRecords = new Map(state.records);
-      nextRecords.set(normalizedId, nextRecord);
-      await this.persist(normalizedOwnerId, nextRecords);
-      state.records = nextRecords;
-      return cloneDelivery(nextRecord);
+  private async applyTransition(
+    state: OwnerState,
+    ownerId: string,
+    deliveryId: string,
+    nextStatus: DeliveryStatus,
+    error?: string,
+  ): Promise<DeliveryRecord> {
+    const existing = this.validateTransition(state, ownerId, deliveryId, nextStatus);
+    const currentStatus = statusOf(existing);
+    if (currentStatus === nextStatus || currentStatus === "acknowledged") {
+      return cloneDelivery(existing);
+    }
+    const nextRecord = this.buildTransitionRecord(existing, nextStatus, error);
+    const nextRecords = new Map(state.records);
+    nextRecords.set(deliveryId, nextRecord);
+    const compacted = this.compactAcknowledged(nextRecords);
+    this.assertWithinQuota(compacted.records);
+    await this.persist(ownerId, compacted.records, state.nextSequence);
+    state.records = compacted.records;
+    return cloneDelivery(nextRecord);
+  }
+
+  private validateTransition(
+    state: OwnerState,
+    ownerId: string,
+    deliveryId: string,
+    nextStatus: DeliveryStatus,
+  ): LedgerRecord {
+    if (state.closing && (nextStatus === "dispatching" || nextStatus === "acknowledged")) {
+      throw new DeliveryLedgerError(
+        "delivery_owner_closing",
+        `Delivery owner ${ownerId} is closing`,
+      );
+    }
+    const existing = state.records.get(deliveryId);
+    if (!existing) {
+      throw new DeliveryLedgerError("delivery_not_found", `Delivery ${deliveryId} was not found`);
+    }
+    const currentStatus = statusOf(existing);
+    if (currentStatus === "acknowledged") {
+      if (nextStatus === "acknowledged") return existing;
+      throw new DeliveryLedgerError(
+        "delivery_transition_invalid",
+        `Cannot transition acknowledged delivery ${deliveryId} to ${nextStatus}`,
+      );
+    }
+    if (nextStatus === "acknowledged" && currentStatus !== "accepted") {
+      throw new DeliveryLedgerError(
+        "delivery_transition_invalid",
+        `Cannot acknowledge delivery ${deliveryId} from ${currentStatus}`,
+      );
+    }
+    if (currentStatus !== nextStatus && !isAllowedTransition(currentStatus, nextStatus)) {
+      throw new DeliveryLedgerError(
+        "delivery_transition_invalid",
+        `Cannot transition delivery ${deliveryId} from ${currentStatus} to ${nextStatus}`,
+      );
+    }
+    return existing;
+  }
+
+  private buildTransitionRecord(
+    existing: LedgerRecord,
+    nextStatus: DeliveryStatus,
+    error?: string,
+  ): LedgerRecord {
+    const timestamp = this.now().toISOString();
+    let changes: Partial<DeliveryRecord> = {};
+    switch (nextStatus) {
+      case "dispatching":
+        changes = { dispatchingAt: existing.dispatchingAt ?? timestamp };
+        break;
+      case "accepted":
+        changes = { acceptedAt: existing.acceptedAt ?? timestamp, error: null };
+        break;
+      case "failed":
+        changes = {
+          failedAt: existing.failedAt ?? timestamp,
+          error: errorText(error ?? "Delivery failed"),
+        };
+        break;
+      case "ambiguous":
+        changes = {
+          ambiguousAt: existing.ambiguousAt ?? timestamp,
+          error: errorText(
+            error ?? "Delivery outcome is ambiguous; it will not be retried automatically",
+          ),
+        };
+        break;
+      case "acknowledged":
+        changes = { acknowledgedAt: existing.acknowledgedAt ?? timestamp };
+        break;
+      case "recorded":
+        break;
+    }
+    return DeliveryRecordSchema.parse({
+      ...existing,
+      ...changes,
+      status: nextStatus,
+    }) as LedgerRecord;
+  }
+
+  async gc(ownerId: string): Promise<void> {
+    const normalizedOwnerId = validateOwnerId(ownerId);
+    await this.enqueue(normalizedOwnerId, async (state) => {
+      const compacted = this.compactAcknowledged(state.records);
+      if (!compacted.changed) return;
+      await this.persist(normalizedOwnerId, compacted.records, state.nextSequence);
+      state.records = compacted.records;
     });
   }
 
@@ -459,37 +818,41 @@ export class DeliveryLedger {
             error:
               record.error ??
               "Daemon restarted while delivery was dispatching; the outcome is ambiguous and was not retried",
-          }),
+          }) as LedgerRecord,
         );
         changed = true;
       }
-      if (changed) {
-        await this.persist(normalizedOwnerId, nextRecords);
-        state.records = nextRecords;
+      const compacted = this.compactAcknowledged(nextRecords);
+      if (changed || compacted.changed) {
+        await this.persist(normalizedOwnerId, compacted.records, state.nextSequence);
+        state.records = compacted.records;
       }
     });
   }
 
-  /** Remove all state for an installation-scoped principal. */
+  /** Remove all state for an installation-scoped principal, even if loading failed. */
   async removeOwner(ownerId: string): Promise<void> {
     const normalizedOwnerId = validateOwnerId(ownerId);
-    await this.enqueue(normalizedOwnerId, async (state) => {
-      try {
-        await fs.unlink(deliveryLedgerFilePath(this.baseDir, normalizedOwnerId));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-          throw new DeliveryLedgerError(
-            "delivery_ledger_unavailable",
-            `Failed to remove the delivery ledger for ${normalizedOwnerId}`,
-            { cause: error },
-          );
-        }
-      }
-      state.records = new Map();
-    });
+    const state = this.ownerState(normalizedOwnerId);
+    state.closing = true;
+    const next = state.mutationTail
+      .catch(() => undefined)
+      .then(async () => {
+        await state.loadPromise?.catch(() => undefined);
+        await this.purgeOwnerFiles(normalizedOwnerId);
+        state.records = new Map();
+        state.nextSequence = 1;
+        state.loaded = true;
+        state.closing = false;
+        return undefined;
+      });
+    state.mutationTail = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    await next;
   }
 
-  // Alias used by lifecycle owners that call this operation a purge.
   async purgeOwner(ownerId: string): Promise<void> {
     await this.removeOwner(ownerId);
   }
@@ -509,86 +872,102 @@ export class DeliveryLedger {
     if (!state) {
       state = {
         records: new Map(),
+        nextSequence: 1,
         loaded: false,
         loadPromise: null,
         mutationTail: Promise.resolve(),
+        closing: false,
       };
       this.owners.set(normalizedOwnerId, state);
     }
     return state;
   }
 
+  private assertOwnerOpen(state: OwnerState, ownerId: string): void {
+    if (state.closing) {
+      throw new DeliveryLedgerError(
+        "delivery_owner_closing",
+        `Delivery owner ${ownerId} is closing`,
+      );
+    }
+  }
+
   private async ensureLoaded(state: OwnerState, ownerId: string): Promise<void> {
     if (state.loaded) return;
-    if (!state.loadPromise) {
-      state.loadPromise = this.load(state, ownerId);
-    }
+    if (!state.loadPromise) state.loadPromise = this.load(state, ownerId);
     await state.loadPromise;
   }
 
   private async load(state: OwnerState, ownerId: string): Promise<void> {
+    await this.ensureSecureRoot();
     const filePath = deliveryLedgerFilePath(this.baseDir, ownerId);
-    let raw: string;
-    try {
-      raw = await fs.readFile(filePath, "utf8");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        state.loaded = true;
-        return;
-      }
-      throw new DeliveryLedgerError(
-        "delivery_ledger_unavailable",
-        `Failed to read the delivery ledger for ${ownerId}`,
-        { cause: error },
-      );
+    const raw = await this.readLedgerFile(filePath, ownerId);
+    if (raw === null) {
+      state.loaded = true;
+      return;
     }
 
     try {
-      if (Buffer.byteLength(raw, "utf8") > this.maxBytesPerOwner) {
-        throw new DeliveryLedgerError(
-          "delivery_quota_exceeded",
-          `Delivery ledger for ${ownerId} exceeds its ${this.maxBytesPerOwner}-byte quota`,
-        );
-      }
-      const parsed = JSON.parse(raw) as Partial<PersistedDeliveryLedger>;
-      if (
-        parsed.version !== LEDGER_VERSION ||
-        parsed.ownerId !== ownerId ||
-        !Array.isArray(parsed.deliveries)
-      ) {
-        throw new Error("Unsupported delivery ledger format");
-      }
-      const records = new Map<string, DeliveryRecord>();
-      for (const value of parsed.deliveries) {
-        const record = normalizeLoadedRecord(value);
-        if (records.has(record.deliveryId)) {
-          throw new Error(`Duplicate delivery ${record.deliveryId}`);
-        }
-        records.set(record.deliveryId, record);
-      }
-      this.assertWithinQuota(records);
-
-      // A new ledger instance is a process-restart boundary. Do this once on
-      // load, not on every get, so a live dispatch is not marked ambiguous by
-      // another session in the same daemon.
-      const reconciled = this.reconcileRecords(records);
-      state.records = reconciled.records;
-      if (reconciled.changed) {
-        await this.persist(ownerId, reconciled.records);
-      }
+      const loaded = this.parseLedgerContents(raw, ownerId);
+      state.records = loaded.records;
+      state.nextSequence = loaded.nextSequence;
+      if (loaded.needsPersist) await this.persist(ownerId, state.records, loaded.nextSequence);
       state.loaded = true;
     } catch (error) {
       if (error instanceof DeliveryLedgerError) throw error;
-      throw new DeliveryLedgerError(
-        "delivery_ledger_unavailable",
-        `Failed to parse the delivery ledger for ${ownerId}`,
-        { cause: error },
-      );
+      const quarantinePath = await this.quarantine(filePath, ownerId, error);
+      state.records = new Map();
+      state.nextSequence = 1;
+      state.loaded = true;
+      this.onDiagnostic?.({
+        kind: "quarantined",
+        ownerId,
+        filePath,
+        quarantinePath,
+        reason: errorText(error),
+      });
     }
   }
 
-  private reconcileRecords(records: Map<string, DeliveryRecord>): {
-    records: Map<string, DeliveryRecord>;
+  private parseLedgerContents(raw: string, ownerId: string): LoadedLedgerContents {
+    const parsed = this.parseLedgerEnvelope(raw, ownerId);
+    const needsSequenceMigration =
+      parsed.version === LEGACY_LEDGER_VERSION ||
+      parsed.deliveries.some((value) => !hasDurableSequence(value));
+    const ordered = needsSequenceMigration
+      ? [...parsed.deliveries].sort(compareLegacyDeliveries)
+      : parsed.deliveries;
+    const records = normalizeLedgerRecords(ordered, needsSequenceMigration);
+    const maximumSequence = Math.max(0, ...[...records.values()].map((record) => record.sequence));
+    const nextSequence = resolveNextSequence(parsed, maximumSequence);
+    this.assertWithinQuota(records);
+    const reconciled = this.reconcileRecords(records);
+    const compacted = this.compactAcknowledged(reconciled.records);
+    return {
+      records: compacted.records,
+      nextSequence,
+      needsPersist:
+        parsed.version !== LEDGER_VERSION ||
+        needsSequenceMigration ||
+        reconciled.changed ||
+        compacted.changed,
+    };
+  }
+
+  private parseLedgerEnvelope(raw: string, ownerId: string): ParsedLedgerEnvelope {
+    const parsed = JSON.parse(raw) as Partial<ParsedLedgerEnvelope>;
+    if (
+      (parsed.version !== LEDGER_VERSION && parsed.version !== LEGACY_LEDGER_VERSION) ||
+      parsed.ownerId !== ownerId ||
+      !Array.isArray(parsed.deliveries)
+    ) {
+      throw new Error("Unsupported delivery ledger format");
+    }
+    return parsed as ParsedLedgerEnvelope;
+  }
+
+  private reconcileRecords(records: Map<string, LedgerRecord>): {
+    records: Map<string, LedgerRecord>;
     changed: boolean;
   } {
     const nextRecords = new Map(records);
@@ -604,35 +983,116 @@ export class DeliveryLedger {
           error:
             record.error ??
             "Daemon restarted while delivery was dispatching; the outcome is ambiguous and was not retried",
-        }),
+        }) as LedgerRecord,
       );
       changed = true;
     }
     return { records: nextRecords, changed };
   }
 
-  private async persist(ownerId: string, records: Map<string, DeliveryRecord>): Promise<void> {
+  private compactAcknowledged(records: Map<string, LedgerRecord>): {
+    records: Map<string, LedgerRecord>;
+    changed: boolean;
+  } {
+    const nowMs = this.now().getTime();
+    const nextRecords = new Map(records);
+    let changed = false;
+    for (const [deliveryId, record] of records) {
+      if (statusOf(record) !== "acknowledged" || !record.acknowledgedAt) continue;
+      const acknowledgedMs = Date.parse(record.acknowledgedAt);
+      if (Number.isFinite(acknowledgedMs) && nowMs - acknowledgedMs >= this.tombstoneRetentionMs) {
+        nextRecords.delete(deliveryId);
+        changed = true;
+      }
+    }
+
+    const acknowledgedWithPayload = [...nextRecords.values()]
+      .filter((record) => statusOf(record) === "acknowledged" && record.payload !== undefined)
+      .sort((left, right) => left.sequence - right.sequence);
+    let payloadCount = acknowledgedWithPayload.length;
+    let payloadBytes = acknowledgedWithPayload.reduce(
+      (total, record) => total + serializedByteLength(record.payload),
+      0,
+    );
+    for (const record of acknowledgedWithPayload) {
+      const acknowledgedMs = record.acknowledgedAt ? Date.parse(record.acknowledgedAt) : Number.NaN;
+      const aged = Number.isFinite(acknowledgedMs)
+        ? nowMs - acknowledgedMs >= this.acknowledgedPayloadMaxAgeMs
+        : false;
+      if (
+        !aged &&
+        payloadCount <= this.maxAcknowledgedPayloads &&
+        payloadBytes <= this.maxAcknowledgedPayloadBytes
+      ) {
+        continue;
+      }
+      const tombstone = DeliveryRecordSchema.parse({
+        ...record,
+        payload: undefined,
+        payloadFingerprint: record.payloadFingerprint,
+      }) as LedgerRecord;
+      nextRecords.set(record.deliveryId, tombstone);
+      payloadCount -= 1;
+      payloadBytes -= serializedByteLength(record.payload);
+      changed = true;
+    }
+    return { records: nextRecords, changed };
+  }
+
+  private async persist(
+    ownerId: string,
+    records: Map<string, LedgerRecord>,
+    nextSequence: number,
+  ): Promise<void> {
     this.assertWithinQuota(records);
     const value: PersistedDeliveryLedger = {
       version: LEDGER_VERSION,
       ownerId,
+      nextSequence,
       deliveries: [...records.values()].map(cloneDelivery),
     };
-    let serialized: string;
+    const serialized = JSON.stringify(value, null, 2);
+    if (Buffer.byteLength(serialized, "utf8") > this.maxLedgerBytes) {
+      throw new DeliveryLedgerError(
+        "delivery_quota_exceeded",
+        `Delivery ledger for ${ownerId} exceeds its ${this.maxLedgerBytes}-byte storage limit`,
+      );
+    }
     try {
-      serialized = JSON.stringify(value, null, 2);
-      if (Buffer.byteLength(serialized, "utf8") > this.maxBytesPerOwner) {
-        throw new DeliveryLedgerError(
-          "delivery_quota_exceeded",
-          `Delivery ledger for ${ownerId} exceeds its ${this.maxBytesPerOwner}-byte quota`,
-        );
+      await this.ensureSecureRoot();
+      const filePath = deliveryLedgerFilePath(this.baseDir, ownerId);
+      await this.assertWritableLedgerPath(filePath, ownerId);
+      const tempPath = path.join(
+        this.baseDir,
+        `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
+      );
+      let renamed = false;
+      try {
+        let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+        try {
+          handle = await withTransientRetry(() =>
+            fs.open(
+              tempPath,
+              fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL | O_NOFOLLOW,
+              0o600,
+            ),
+          );
+          await withTransientRetry(() => handle!.writeFile(serialized, "utf8"));
+          await withTransientRetry(() => handle!.chmod(0o600));
+          await withTransientRetry(() => handle!.sync());
+        } finally {
+          await handle?.close().catch(() => undefined);
+        }
+        await withTransientRetry(() => fs.rename(tempPath, filePath));
+        renamed = true;
+        await this.assertSecureLedgerFile(filePath, ownerId);
+      } finally {
+        if (!renamed) {
+          await withTransientRetry(() => fs.unlink(tempPath)).catch((error: unknown) => {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          });
+        }
       }
-      await fs.mkdir(this.baseDir, { recursive: true, mode: 0o700 });
-      await fs.chmod(this.baseDir, 0o700);
-      await writeFileAtomic(deliveryLedgerFilePath(this.baseDir, ownerId), serialized, {
-        mode: 0o600,
-      });
-      await fs.chmod(deliveryLedgerFilePath(this.baseDir, ownerId), 0o600);
     } catch (error) {
       if (error instanceof DeliveryLedgerError) throw error;
       throw new DeliveryLedgerError(
@@ -643,19 +1103,19 @@ export class DeliveryLedger {
     }
   }
 
-  private assertWithinQuota(records: Map<string, DeliveryRecord>): void {
-    if (records.size > this.maxRecordsPerOwner) {
+  private assertWithinQuota(records: Map<string, LedgerRecord>): void {
+    const pending = [...records.values()].filter((record) => statusOf(record) !== "acknowledged");
+    if (pending.length > this.maxRecordsPerOwner) {
       throw new DeliveryLedgerError(
         "delivery_quota_exceeded",
         `Delivery principal exceeds its ${this.maxRecordsPerOwner}-record quota`,
       );
     }
-    let bytes = 0;
-    for (const record of records.values()) bytes += serializedByteLength(record);
+    const bytes = pending.reduce((total, record) => total + serializedByteLength(record), 0);
     if (bytes > this.maxBytesPerOwner) {
       throw new DeliveryLedgerError(
         "delivery_quota_exceeded",
-        `Delivery principal exceeds its ${this.maxBytesPerOwner}-byte quota`,
+        `Delivery principal exceeds its ${this.maxBytesPerOwner}-byte pending quota`,
       );
     }
   }
@@ -671,11 +1131,242 @@ export class DeliveryLedger {
     return resolved;
   }
 
-  private sortedRecords(records: Map<string, DeliveryRecord>): DeliveryRecord[] {
-    return [...records.values()].sort((left, right) => {
-      const byCreatedAt = left.createdAt.localeCompare(right.createdAt);
-      return byCreatedAt !== 0 ? byCreatedAt : left.deliveryId.localeCompare(right.deliveryId);
-    });
+  private sortedRecords(records: Map<string, LedgerRecord>): LedgerRecord[] {
+    return [...records.values()].sort((left, right) => left.sequence - right.sequence);
+  }
+
+  private findCursor(
+    records: LedgerRecord[],
+    cursor: string | null,
+    nextSequence: number,
+  ): { valid: boolean; index: number } {
+    if (cursor === null) return { valid: true, index: -1 };
+    if (/^[1-9]\d*$/.test(cursor)) {
+      const sequence = Number(cursor);
+      if (!Number.isSafeInteger(sequence) || sequence >= nextSequence) {
+        return { valid: false, index: -1 };
+      }
+      const exactIndex = records.findIndex((record) => record.sequence === sequence);
+      if (exactIndex >= 0) return { valid: true, index: exactIndex };
+      const nextIndex = records.findIndex((record) => record.sequence > sequence);
+      return { valid: true, index: nextIndex < 0 ? records.length - 1 : nextIndex - 1 };
+    }
+    // COMPAT(durableDeliveryCursor): translate an old delivery-id cursor once;
+    // all emitted cursors are owner sequences.
+    const index = records.findIndex((record) => record.deliveryId === cursor);
+    return { valid: index >= 0, index };
+  }
+
+  private getResponseFits(
+    requestId: string,
+    result: DeliveryLedgerGetResult,
+    maxEncodedBytes: number,
+  ): boolean {
+    const message = {
+      type: "session",
+      message: { type: "deliveries.get.response", payload: { requestId, ...result } },
+    };
+    const serialized = JSON.stringify(message);
+    return (
+      Buffer.byteLength(serialized, "utf8") <=
+      Math.min(maxEncodedBytes, MAX_WEBSOCKET_MESSAGE_BYTES - 1)
+    );
+  }
+
+  private assertGetResponseWithinBudget(
+    requestId: string,
+    result: DeliveryLedgerGetResult,
+    maxEncodedBytes: number,
+  ): void {
+    if (!this.getResponseFits(requestId, result, maxEncodedBytes)) {
+      throw new DeliveryLedgerError(
+        "delivery_response_too_large",
+        `Delivery response exceeds its ${maxEncodedBytes}-byte budget`,
+      );
+    }
+  }
+
+  private async ensureSecureRoot(): Promise<void> {
+    let info: Awaited<ReturnType<typeof fs.lstat>>;
+    try {
+      info = await withTransientRetry(() => fs.lstat(this.baseDir));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new DeliveryLedgerError(
+          "delivery_ledger_unavailable",
+          `Cannot inspect delivery root ${this.baseDir}`,
+          { cause: error },
+        );
+      }
+      try {
+        await withTransientRetry(() => fs.mkdir(this.baseDir, { recursive: true, mode: 0o700 }));
+      } catch (mkdirError) {
+        if ((mkdirError as NodeJS.ErrnoException).code !== "EEXIST") {
+          throw new DeliveryLedgerError(
+            "delivery_ledger_unavailable",
+            `Cannot create delivery root ${this.baseDir}`,
+            { cause: mkdirError },
+          );
+        }
+      }
+      info = await withTransientRetry(() => fs.lstat(this.baseDir));
+    }
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new DeliveryLedgerError(
+        "delivery_ledger_unavailable",
+        `Delivery root is not a directory: ${this.baseDir}`,
+      );
+    }
+    let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+    try {
+      handle = await withTransientRetry(() =>
+        fs.open(this.baseDir, fsConstants.O_RDONLY | O_DIRECTORY | O_NOFOLLOW),
+      );
+      const opened = await withTransientRetry(() => handle!.stat());
+      if (!opened.isDirectory() || !sameFile(info, opened)) {
+        throw new Error("Delivery root changed while opening");
+      }
+      await withTransientRetry(() => handle!.chmod(0o700));
+      const secured = await withTransientRetry(() => handle!.stat());
+      if (!secured.isDirectory() || (secured.mode & 0o7777) !== 0o700) {
+        throw new Error("Delivery root mode could not be enforced");
+      }
+    } catch (error) {
+      if (error instanceof DeliveryLedgerError) throw error;
+      throw new DeliveryLedgerError(
+        "delivery_ledger_unavailable",
+        `Cannot secure delivery root ${this.baseDir}`,
+        { cause: error },
+      );
+    } finally {
+      await handle?.close().catch(() => undefined);
+    }
+  }
+
+  private async readLedgerFile(filePath: string, ownerId: string): Promise<string | null> {
+    let info: Awaited<ReturnType<typeof fs.lstat>>;
+    try {
+      info = await withTransientRetry(() => fs.lstat(filePath));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw new DeliveryLedgerError(
+        "delivery_ledger_unavailable",
+        `Cannot inspect delivery ledger for ${ownerId}`,
+        { cause: error },
+      );
+    }
+    if (info.isSymbolicLink() || !info.isFile()) {
+      throw new DeliveryLedgerError(
+        "delivery_ledger_unavailable",
+        `Delivery ledger is not a regular file for ${ownerId}`,
+      );
+    }
+    let handle: Awaited<ReturnType<typeof fs.open>> | null = null;
+    try {
+      handle = await withTransientRetry(() => fs.open(filePath, fsConstants.O_RDONLY | O_NOFOLLOW));
+      const opened = await withTransientRetry(() => handle!.stat());
+      if (!opened.isFile() || !sameFile(info, opened)) {
+        throw new Error("Delivery ledger changed while opening");
+      }
+      await withTransientRetry(() => handle!.chmod(0o600));
+      const secured = await withTransientRetry(() => handle!.stat());
+      if (!secured.isFile() || (secured.mode & 0o7777) !== 0o600) {
+        throw new Error("Delivery ledger mode could not be enforced");
+      }
+      if (secured.size > this.maxLedgerBytes) {
+        throw new DeliveryLedgerError(
+          "delivery_quota_exceeded",
+          `Delivery ledger for ${ownerId} exceeds its ${this.maxLedgerBytes}-byte storage limit`,
+        );
+      }
+      const chunks: Buffer[] = [];
+      let total = 0;
+      while (total <= this.maxLedgerBytes) {
+        const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, this.maxLedgerBytes + 1 - total));
+        const result = await withTransientRetry(() => handle!.read(chunk, 0, chunk.length, null));
+        if (result.bytesRead === 0) break;
+        chunks.push(chunk.subarray(0, result.bytesRead));
+        total += result.bytesRead;
+        if (total > this.maxLedgerBytes) {
+          throw new DeliveryLedgerError(
+            "delivery_quota_exceeded",
+            `Delivery ledger for ${ownerId} exceeds its ${this.maxLedgerBytes}-byte storage limit`,
+          );
+        }
+      }
+      return Buffer.concat(chunks, total).toString("utf8");
+    } catch (error) {
+      if (error instanceof DeliveryLedgerError) throw error;
+      throw new DeliveryLedgerError(
+        "delivery_ledger_unavailable",
+        `Failed to read the delivery ledger for ${ownerId}`,
+        { cause: error },
+      );
+    } finally {
+      await handle?.close().catch(() => undefined);
+    }
+  }
+
+  private async assertWritableLedgerPath(filePath: string, ownerId: string): Promise<void> {
+    try {
+      const info = await withTransientRetry(() => fs.lstat(filePath));
+      if (info.isSymbolicLink() || !info.isFile()) {
+        throw new DeliveryLedgerError(
+          "delivery_ledger_unavailable",
+          `Delivery ledger is not a regular file for ${ownerId}`,
+        );
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      if (error instanceof DeliveryLedgerError) throw error;
+      throw new DeliveryLedgerError(
+        "delivery_ledger_unavailable",
+        `Cannot inspect delivery ledger for ${ownerId}`,
+        { cause: error },
+      );
+    }
+  }
+
+  private async assertSecureLedgerFile(filePath: string, ownerId: string): Promise<void> {
+    const info = await withTransientRetry(() => fs.lstat(filePath));
+    if (info.isSymbolicLink() || !info.isFile() || (info.mode & 0o7777) !== 0o600) {
+      throw new DeliveryLedgerError(
+        "delivery_ledger_unavailable",
+        `Delivery ledger mode could not be enforced for ${ownerId}`,
+      );
+    }
+  }
+
+  private async quarantine(filePath: string, ownerId: string, error: unknown): Promise<string> {
+    const quarantinePath = `${filePath}.quarantine-${Date.now()}-${randomUUID()}`;
+    try {
+      await withTransientRetry(() => fs.rename(filePath, quarantinePath));
+      await withTransientRetry(() => fs.chmod(quarantinePath, 0o600));
+      return quarantinePath;
+    } catch (renameError) {
+      throw new DeliveryLedgerError(
+        "delivery_ledger_unavailable",
+        `Failed to quarantine malformed delivery ledger for ${ownerId}: ${errorText(error)}`,
+        { cause: renameError },
+      );
+    }
+  }
+
+  private async purgeOwnerFiles(ownerId: string): Promise<void> {
+    await this.ensureSecureRoot();
+    const filePath = deliveryLedgerFilePath(this.baseDir, ownerId);
+    const prefix = `${path.basename(filePath)}.quarantine-`;
+    const entries = await withTransientRetry(() => fs.readdir(this.baseDir));
+    const targets = entries
+      .filter((entry) => entry === path.basename(filePath) || entry.startsWith(prefix))
+      .map((entry) => path.join(this.baseDir, entry));
+    await Promise.all(
+      targets.map(async (target) => {
+        await withTransientRetry(() => fs.unlink(target)).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        });
+      }),
+    );
   }
 
   private enqueue<TResult>(
@@ -704,13 +1395,17 @@ function positiveInteger(value: number, name: string): number {
   return value;
 }
 
+function nonNegativeInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative safe integer`);
+  }
+  return value;
+}
+
 function isAllowedTransition(from: DeliveryStatus, to: DeliveryStatus): boolean {
-  if (from === "recorded") return to === "dispatching" || to === "acknowledged";
-  if (from === "dispatching") {
-    return to === "accepted" || to === "failed" || to === "ambiguous" || to === "acknowledged";
-  }
-  if (from === "accepted" || from === "failed" || from === "ambiguous") {
+  if (from === "recorded") return to === "dispatching";
+  if (from === "dispatching") return to === "accepted" || to === "failed" || to === "ambiguous";
+  if (from === "accepted" || from === "failed" || from === "ambiguous")
     return to === "acknowledged";
-  }
   return false;
 }

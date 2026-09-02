@@ -168,6 +168,26 @@ describe("PluginRuntime", () => {
     ]);
   });
 
+  it("fences the plugin delivery owner before stopping its process", async () => {
+    const directory = await createPlugin(
+      "delivery-fence",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("delivery-fence", []);
+    const beginPluginShutdown = vi.fn();
+    const host = createTrackedSessionHost().host;
+    const runtime = createTestRuntime({
+      spawnChild: () => child,
+      sessionHost: { ...host, beginPluginShutdown },
+    });
+
+    await runtime.startPlugin("delivery-fence", directory);
+    await runtime.stopPluginById("delivery-fence");
+
+    expect(beginPluginShutdown).toHaveBeenCalledOnce();
+    expect(beginPluginShutdown).toHaveBeenCalledWith("delivery-fence");
+  });
+
   it("frames stdout and stderr, normalizes CRLF, and flushes final fragments once", async () => {
     const directory = await createPlugin(
       "output",

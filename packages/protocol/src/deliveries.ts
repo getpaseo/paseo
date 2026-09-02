@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export { MAX_DELIVERY_RESPONSE_BYTES, MAX_WEBSOCKET_MESSAGE_BYTES } from "./transport-limits.js";
+
 /** Keep delivery frames small enough that one queued item cannot monopolize a socket. */
 export const MAX_DELIVERY_PAYLOAD_BYTES = 64 * 1024;
 export const MAX_DELIVERY_STRING_BYTES = 16 * 1024;
@@ -7,6 +9,7 @@ export const MAX_DELIVERY_PAYLOAD_DEPTH = 32;
 export const MAX_DELIVERY_PAYLOAD_NODES = 10_000;
 export const MAX_DELIVERY_PAGE_SIZE = 100;
 export const MAX_DELIVERY_ID_BYTES = 256;
+export const MAX_DELIVERY_REQUEST_ID_BYTES = 256;
 
 export interface DeliveryPayloadLimits {
   maxBytes?: number;
@@ -181,6 +184,9 @@ const DeliveryPayloadWireSchema = z.unknown() as z.ZodType<DeliveryPayload>;
 export const DeliveryIdSchema = z.string().trim().min(1).max(MAX_DELIVERY_ID_BYTES);
 export const DeliveryTargetAgentIdSchema = z.string().trim().min(1).max(MAX_DELIVERY_ID_BYTES);
 export const DeliveryMessageIdSchema = z.string().trim().min(1).max(MAX_DELIVERY_ID_BYTES);
+// COMPAT(durableDeliveryCursor): old clients may send a delivery id here;
+// new responses always contain the durable owner sequence.
+export const DeliveryCursorSchema = z.string().trim().min(1).max(MAX_DELIVERY_ID_BYTES);
 
 export const DeliveryStatusSchema = z.enum([
   "recorded",
@@ -197,6 +203,9 @@ export type DeliveryState = DeliveryStatus;
 export const DeliveryRecordSchema = z
   .object({
     deliveryId: DeliveryIdSchema,
+    // COMPAT(durableDeliverySequence): old records are assigned a sequence
+    // deterministically while loading.
+    sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     // COMPAT(durableDeliveryTarget): optional for records written by the
     // initial principal-scoped pull ledger.
     targetAgentId: DeliveryTargetAgentIdSchema.optional(),
@@ -204,7 +213,12 @@ export const DeliveryRecordSchema = z
     messageId: DeliveryMessageIdSchema.optional(),
     // COMPAT(durableDeliveryState): old records predate native dispatch.
     status: DeliveryStatusSchema.optional(),
-    payload: DeliveryPayloadSchema,
+    // Acknowledged records may be compacted to a tombstone after retention.
+    payload: DeliveryPayloadSchema.optional(),
+    payloadFingerprint: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     createdAt: z.string(),
     dispatchingAt: z.string().nullable().optional(),
     acceptedAt: z.string().nullable().optional(),
@@ -220,10 +234,15 @@ export type DeliveryRecord = z.infer<typeof DeliveryRecordSchema>;
 const DeliveryRecordWireSchema = z
   .object({
     deliveryId: DeliveryIdSchema,
+    sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
     targetAgentId: DeliveryTargetAgentIdSchema.optional(),
     messageId: DeliveryMessageIdSchema.optional(),
     status: DeliveryStatusSchema.optional(),
-    payload: DeliveryPayloadWireSchema,
+    payload: DeliveryPayloadWireSchema.optional(),
+    payloadFingerprint: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     createdAt: z.string(),
     dispatchingAt: z.string().nullable().optional(),
     acceptedAt: z.string().nullable().optional(),
@@ -236,7 +255,7 @@ const DeliveryRecordWireSchema = z
 
 export const DeliveriesSendRequestSchema = z.object({
   type: z.literal("deliveries.send.request"),
-  requestId: z.string(),
+  requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
   deliveryId: DeliveryIdSchema.optional(),
   // COMPAT(durableDeliveryTarget): old pull-only clients may omit this field.
   targetAgentId: DeliveryTargetAgentIdSchema.optional(),
@@ -248,10 +267,10 @@ export type DeliveriesSendRequest = z.infer<typeof DeliveriesSendRequestSchema>;
 
 export const DeliveriesGetRequestSchema = z.object({
   type: z.literal("deliveries.get.request"),
-  requestId: z.string(),
+  requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
   deliveryId: DeliveryIdSchema.optional(),
   includeAcknowledged: z.boolean().optional(),
-  cursor: DeliveryIdSchema.optional(),
+  cursor: DeliveryCursorSchema.optional(),
   limit: z.number().int().positive().max(MAX_DELIVERY_PAGE_SIZE).optional(),
 });
 
@@ -259,7 +278,7 @@ export type DeliveriesGetRequest = z.infer<typeof DeliveriesGetRequestSchema>;
 
 export const DeliveriesAcknowledgeRequestSchema = z.object({
   type: z.literal("deliveries.acknowledge.request"),
-  requestId: z.string(),
+  requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
   deliveryId: DeliveryIdSchema,
 });
 
@@ -268,7 +287,7 @@ export type DeliveriesAcknowledgeRequest = z.infer<typeof DeliveriesAcknowledgeR
 export const DeliveriesSendResponseSchema = z.object({
   type: z.literal("deliveries.send.response"),
   payload: z.object({
-    requestId: z.string(),
+    requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
     deliveryId: DeliveryIdSchema,
     delivery: DeliveryRecordWireSchema,
     created: z.boolean(),
@@ -280,10 +299,10 @@ export type DeliveriesSendResponse = z.infer<typeof DeliveriesSendResponseSchema
 export const DeliveriesGetResponseSchema = z.object({
   type: z.literal("deliveries.get.response"),
   payload: z.object({
-    requestId: z.string(),
+    requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
     delivery: DeliveryRecordWireSchema.nullable(),
     deliveries: z.array(DeliveryRecordWireSchema),
-    nextCursor: DeliveryIdSchema.nullable(),
+    nextCursor: DeliveryCursorSchema.nullable(),
   }),
 });
 
@@ -292,7 +311,7 @@ export type DeliveriesGetResponse = z.infer<typeof DeliveriesGetResponseSchema>;
 export const DeliveriesAcknowledgeResponseSchema = z.object({
   type: z.literal("deliveries.acknowledge.response"),
   payload: z.object({
-    requestId: z.string(),
+    requestId: z.string().min(1).max(MAX_DELIVERY_REQUEST_ID_BYTES),
     deliveryId: DeliveryIdSchema,
     delivery: DeliveryRecordWireSchema,
   }),

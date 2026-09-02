@@ -90,6 +90,7 @@ import {
   normalizeClientRestartRpcReason,
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
+import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/transport-limits";
 import type { BrowserAutomationExecuteResponse } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   BrowserAutomationHostCapabilitySchema,
@@ -112,8 +113,9 @@ import {
 } from "./websocket/physical-socket.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
-export const MAX_WEBSOCKET_MESSAGE_BYTES = 1024 * 1024;
+export { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/transport-limits";
 const WS_CLOSE_MESSAGE_TOO_BIG = 1009;
+const PLUGIN_DELIVERY_SHUTDOWN_TIMEOUT_MS = 5_000;
 
 export interface ExternalSocketMetadata {
   transport: "relay" | "hub";
@@ -546,6 +548,8 @@ export class VoiceAssistantWebSocketServer {
   private readonly externalSessionsByKey: Map<string, ReconnectableSessionConnection> = new Map();
   private readonly pluginSocketIds = new WeakMap<WebSocketLike, string>();
   private readonly pluginSocketCleanup = new WeakMap<WebSocketLike, () => void>();
+  private readonly pluginDeliveryOwners = new Map<string, Set<string>>();
+  private readonly pluginClosingIds = new Set<string>();
   private readonly serverId: string;
   private readonly daemonVersion: string;
   private readonly daemonRuntimeConfig: DaemonRuntimeConfig | undefined;
@@ -688,7 +692,16 @@ export class VoiceAssistantWebSocketServer {
     this.workspaceAutoName = workspaceAutoName;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
-    this.deliveryLedger = deliveryLedger ?? new DeliveryLedger(join(paseoHome, "deliveries"));
+    this.deliveryLedger =
+      deliveryLedger ??
+      new DeliveryLedger(join(paseoHome, "deliveries"), {
+        onDiagnostic: (diagnostic) => {
+          this.logger.error(
+            { deliveryLedger: diagnostic },
+            "Quarantined malformed delivery ledger",
+          );
+        },
+      });
     this.deliveryDispatchCoordinator = new DeliveryDispatchCoordinator();
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
     this.daemonConfigStore = daemonConfigStore;
@@ -990,6 +1003,9 @@ export class VoiceAssistantWebSocketServer {
     if (this.connectionLifecycle === "stopping") {
       throw new Error(`Cannot attach plugin session while shutting down: ${pluginId}`);
     }
+    if (this.pluginClosingIds.has(pluginId)) {
+      throw new Error(`Cannot attach plugin session while it is being uninstalled: ${pluginId}`);
+    }
     let resolveSocketClosed: () => void = () => undefined;
     const socketClosed = new Promise<void>((finish) => {
       resolveSocketClosed = finish;
@@ -998,14 +1014,10 @@ export class VoiceAssistantWebSocketServer {
     // the same plugin id must never inherit an old installation's delivery
     // ledger, even if teardown races with the next install.
     const principalId = `plugin:${pluginId}:${randomUUID()}`;
-    const closed = socketClosed.then(async () => {
-      try {
-        await this.deliveryLedger.removeOwner(principalId);
-      } catch (error) {
-        this.logger.warn({ err: error, principalId }, "Failed to purge plugin delivery ledger");
-      }
-      return undefined;
-    });
+    const owners = this.pluginDeliveryOwners.get(pluginId) ?? new Set<string>();
+    owners.add(principalId);
+    this.pluginDeliveryOwners.set(pluginId, owners);
+    const closed = socketClosed.then(() => this.cleanupPluginDeliveryOwner(pluginId, principalId));
     this.pluginSocketIds.set(ws, pluginId);
     this.pluginSocketCleanup.set(ws, resolveSocketClosed);
     try {
@@ -1021,6 +1033,20 @@ export class VoiceAssistantWebSocketServer {
       throw error;
     }
     return { closed };
+  }
+
+  /** Fence plugin delivery before PluginRuntime terminates its process. */
+  public beginPluginShutdown(pluginId: string): void {
+    this.pluginClosingIds.add(pluginId);
+    const principals = this.pluginDeliveryOwners.get(pluginId);
+    if (!principals || principals.size === 0) {
+      this.pluginClosingIds.delete(pluginId);
+      return;
+    }
+    for (const principalId of principals) {
+      this.deliveryDispatchCoordinator.beginOwnerClosing(principalId);
+      this.deliveryLedger.beginOwnerClosing(principalId);
+    }
   }
 
   public updatePrincipalPermissions(
@@ -1154,6 +1180,13 @@ export class VoiceAssistantWebSocketServer {
     }
 
     const payloadBytes = outboundFrameByteLength(payload);
+    if (payloadBytes > MAX_WEBSOCKET_MESSAGE_BYTES) {
+      this.logger.warn(
+        { bytes: payloadBytes, maxBytes: MAX_WEBSOCKET_MESSAGE_BYTES, messageType: message.type },
+        "Rejected oversized outbound WebSocket message",
+      );
+      return;
+    }
     for (const ws of writableSockets) {
       this.sendFrameToClient(ws, payload, payloadBytes, () => {
         this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
@@ -1975,6 +2008,76 @@ export class VoiceAssistantWebSocketServer {
     if (!resolve) return;
     this.pluginSocketCleanup.delete(ws);
     resolve();
+  }
+
+  private async cleanupPluginDeliveryOwner(pluginId: string, principalId: string): Promise<void> {
+    this.deliveryDispatchCoordinator.beginOwnerClosing(principalId);
+    this.deliveryLedger.beginOwnerClosing(principalId);
+    const settled = await this.waitForPluginDeliveryIdle(principalId);
+    if (!settled) {
+      this.logger.warn(
+        { pluginId, principalId, timeoutMs: PLUGIN_DELIVERY_SHUTDOWN_TIMEOUT_MS },
+        "Plugin delivery shutdown timed out; retaining tombstoned ledger",
+      );
+      void this.finishPluginDeliveryOwnerWhenIdle(pluginId, principalId);
+      return;
+    }
+    await this.finishPluginDeliveryOwner(pluginId, principalId);
+  }
+
+  private async finishPluginDeliveryOwnerWhenIdle(
+    pluginId: string,
+    principalId: string,
+  ): Promise<void> {
+    await Promise.all([
+      this.deliveryDispatchCoordinator.waitForOwnerSettled(principalId),
+      this.deliveryLedger.waitForOwnerIdle(principalId),
+    ]);
+    await this.finishPluginDeliveryOwner(pluginId, principalId);
+  }
+
+  private async finishPluginDeliveryOwner(pluginId: string, principalId: string): Promise<void> {
+    try {
+      await this.deliveryLedger.reconcile(principalId).catch((error) => {
+        this.logger.warn(
+          { err: error, pluginId, principalId },
+          "Failed to reconcile plugin delivery before purge",
+        );
+      });
+      await this.deliveryLedger.removeOwner(principalId);
+      this.deliveryDispatchCoordinator.finishOwner(principalId);
+      const principals = this.pluginDeliveryOwners.get(pluginId);
+      principals?.delete(principalId);
+      if (principals?.size === 0) {
+        this.pluginDeliveryOwners.delete(pluginId);
+        this.pluginClosingIds.delete(pluginId);
+      }
+    } catch (error) {
+      // Leave the owner and plugin id tombstoned. A later cleanup retry can
+      // purge it, while a replacement cannot access the old ledger.
+      this.logger.warn(
+        { err: error, pluginId, principalId },
+        "Failed to purge plugin delivery ledger; retaining tombstone",
+      );
+    }
+  }
+
+  private async waitForPluginDeliveryIdle(principalId: string): Promise<boolean> {
+    const settled = Promise.all([
+      this.deliveryDispatchCoordinator.waitForOwnerSettled(principalId),
+      this.deliveryLedger.waitForOwnerIdle(principalId),
+    ]);
+    let timeout!: ReturnType<typeof setTimeout>;
+    const timedOut = new Promise<boolean>((resolve) => {
+      timeout = setTimeout(() => resolve(false), PLUGIN_DELIVERY_SHUTDOWN_TIMEOUT_MS);
+    });
+    return Promise.race([
+      settled.then(
+        () => true,
+        () => false,
+      ),
+      timedOut,
+    ]).finally(() => clearTimeout(timeout));
   }
 
   private async cleanupConnection(

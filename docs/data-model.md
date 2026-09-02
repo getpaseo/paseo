@@ -40,7 +40,11 @@ Store APIs own persistence atomicity and should not make services coordinate raw
 
 ## Durable delivery ledger
 
-Durable deliveries live under `$PASEO_HOME/deliveries/`, with one mode-0600 JSON file per authenticated principal. The filename is a SHA-256 digest of the principal, so principal characters never become path syntax. Writes replace the file atomically. Records keep their target agent, stable message identity, and dispatch state; a `dispatching` record loaded by a later daemon is marked `ambiguous` and is never retried automatically.
+Durable deliveries live under `$PASEO_HOME/deliveries/`, whose directory is mode 0700, with one mode-0600 JSON file per authenticated principal. The filename is a SHA-256 digest of the principal, so principal characters never become path syntax. Loads and writes reject symlinked roots/files, open with no-follow semantics, verify the opened descriptor, and read within the ledger byte bound. Writes replace the file atomically. A malformed ledger is renamed to a quarantine file and the principal starts with a fresh ledger; the daemon emits an operator diagnostic. Owner removal purges both the active file and its quarantine files even when loading the active file failed.
+
+Ledger version 2 assigns each delivery a durable, per-owner sequence when the serialized owner mutation runs. New cursors use that sequence; old delivery-ID cursors remain readable during migration. A `dispatching` record loaded by a later daemon is marked `ambiguous` and is never retried automatically. Acknowledgement is valid only after `accepted`, and repeated acknowledgement of a retained acknowledged record is idempotent.
+
+Pending record and byte quotas exclude acknowledged records. Acknowledged payloads are compacted by age, count, or bytes while their delivery ID and payload fingerprint remain as an idempotency tombstone until tombstone retention expires. Unacknowledged records are never removed by this GC.
 
 ---
 
@@ -67,7 +71,7 @@ $PASEO_HOME/
 ├── runtime/
 │   └── managed-processes/
 │       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
-├── deliveries/
+├── deliveries/                             # mode 0700
 │   └── {sha256-principal}.json           # Principal-scoped durable delivery ledger (mode 0600)
 ├── plugins/
 │   ├── sources.json                      # Git origin, ref, commit, and managed checkout ownership

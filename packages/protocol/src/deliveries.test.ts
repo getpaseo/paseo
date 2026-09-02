@@ -9,7 +9,10 @@ import {
 import {
   DeliveryPayloadSchema,
   inspectDeliveryPayload,
+  MAX_DELIVERY_REQUEST_ID_BYTES,
   MAX_DELIVERY_PAYLOAD_BYTES,
+  MAX_DELIVERY_RESPONSE_BYTES,
+  MAX_WEBSOCKET_MESSAGE_BYTES,
 } from "./deliveries.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 
@@ -110,5 +113,31 @@ describe("durable delivery protocol", () => {
 
   test("advertises a distinct client capability", () => {
     expect(CLIENT_CAPS.durableDeliveries).toBe("durable_deliveries");
+  });
+
+  test("keeps delivery responses below the WebSocket transport maximum", () => {
+    expect(MAX_DELIVERY_RESPONSE_BYTES).toBe(MAX_WEBSOCKET_MESSAGE_BYTES - 1);
+    const oversizedRequestId = "x".repeat(MAX_DELIVERY_REQUEST_ID_BYTES + 1);
+    expect(
+      DeliveriesGetRequestSchema.safeParse({
+        type: "deliveries.get.request",
+        requestId: oversizedRequestId,
+      }).success,
+    ).toBe(false);
+    expect(
+      SessionOutboundMessageSchema.safeParse({
+        type: "deliveries.get.response",
+        payload: {
+          requestId: "request-one",
+          delivery: {
+            ...pendingDelivery,
+            sequence: 1,
+            payloadFingerprint: "a".repeat(64),
+          },
+          deliveries: [],
+          nextCursor: null,
+        },
+      }).success,
+    ).toBe(true);
   });
 });

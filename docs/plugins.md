@@ -178,10 +178,13 @@ installation. A server handler owns an IPC-backed daemon session for the life of
 Use plugin RPC for plugin-specific backend behavior that is not a normal Paseo operation.
 
 Each subprocess gets an exclusively owned session with a fresh `plugin:<id>:<installation>`
-principal. The principal is reserved from normal clients, never resumes another session, and its
-delivery ledger is purged when the socket closes. During daemon startup, plugin sessions may connect
-while application WebSockets remain paused; the daemon accepts clients only after configured plugins
-have settled and the initial catalog is complete.
+principal. The principal is reserved from normal clients and never resumes another session. On
+uninstall, reload, disable, or shutdown, Paseo closes the owner to new delivery dispatches, waits for
+in-flight dispatch and ledger mutations, reconciles the outcome, then purges its ledger. If that wait
+times out, the ledger remains tombstoned and the same plugin ID cannot attach a replacement until
+cleanup finishes. A replacement never inherits the old installation's ledger. During daemon startup,
+plugin sessions may connect while application WebSockets remain paused; the daemon accepts clients
+only after configured plugins have settled and the initial catalog is complete.
 
 When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
