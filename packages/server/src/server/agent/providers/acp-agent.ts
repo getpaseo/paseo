@@ -276,6 +276,7 @@ export function buildACPClientCapabilities(
 // sign-in URL in the browser) when probing an ACP agent for models/modes.
 // NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
+const MAX_PRE_REGISTRATION_SESSION_UPDATES = 100;
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
@@ -1438,6 +1439,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private connection: ClientSideConnection | null = null;
   private agentCapabilities: ACPAgentCapabilities | null = null;
   private sessionId: string | null = null;
+  private pendingPreRegistrationUpdates: SessionNotification[] = [];
   private currentMode: string | null = null;
   private availableModes: AgentMode[];
   private currentModel: string | null = null;
@@ -1512,6 +1514,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         }),
       );
       this.sessionId = response.sessionId;
+      this.flushPreRegistrationUpdates();
       this.bootstrapThreadEventPending = true;
       this.applySessionState(response);
       await this.applyConfiguredOverrides();
@@ -2284,6 +2287,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       "provider.acp.raw_event",
     );
     if (params.sessionId !== this.sessionId) {
+      // Agents may push session-scoped notifications (for example
+      // `available_commands_update`) immediately after the session/new
+      // response, before the response continuation has assigned sessionId.
+      // Buffer them instead of dropping; they are replayed by
+      // flushPreRegistrationUpdates() once the session id is known.
+      if (
+        this.sessionId === null &&
+        this.pendingPreRegistrationUpdates.length < MAX_PRE_REGISTRATION_SESSION_UPDATES
+      ) {
+        this.pendingPreRegistrationUpdates.push(params);
+      }
       return;
     }
 
@@ -2300,6 +2314,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       "provider.acp.parsed_event",
     );
     this.deliverTranslatedEvents(events);
+  }
+
+  /**
+   * Replay session notifications that arrived before the session id was
+   * assigned (see sessionUpdate). Notifications addressed to a different
+   * session id are discarded here rather than delivered.
+   */
+  private flushPreRegistrationUpdates(): void {
+    const pending = this.pendingPreRegistrationUpdates;
+    this.pendingPreRegistrationUpdates = [];
+    for (const params of pending) {
+      if (params.sessionId !== this.sessionId) {
+        continue;
+      }
+      const events = this.translateSessionUpdate(params.update);
+      this.deliverTranslatedEvents(events);
+    }
   }
 
   private deliverTranslatedEvents(events: AgentStreamEvent[]): void {

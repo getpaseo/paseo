@@ -2419,6 +2419,140 @@ describe("ACPAgentSession slash commands", () => {
   });
 });
 
+describe("ACPAgentSession pre-registration session updates", () => {
+  /**
+   * ACP agents may emit session-scoped notifications (for example
+   * `available_commands_update`) immediately after the `session/new` response,
+   * before the client's response continuation has assigned `sessionId`. These
+   * tests pin the buffering behavior that keeps those notifications from being
+   * dropped.
+   */
+  function makeNewSession(newSession: ReturnType<typeof vi.fn>) {
+    class TestSession extends ACPAgentSession {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child: createProbeChildStub(),
+          connection: {
+            newSession,
+            prompt: vi.fn(),
+          } as unknown as ClientSideConnection,
+          initialize: { agentCapabilities: {} },
+        } as SpawnedACPProcess;
+      }
+    }
+
+    return new TestSession(
+      { provider: "hermes", cwd: "/tmp/paseo-acp-test" },
+      {
+        provider: "hermes",
+        logger: createTestLogger(),
+        defaultCommand: ["hermes", "acp"],
+        defaultModes: [],
+        capabilities: {
+          supportsStreaming: true,
+          supportsSessionPersistence: true,
+          supportsDynamicModes: true,
+          supportsMcpServers: true,
+          supportsReasoningStream: true,
+          supportsToolInvocations: true,
+        },
+      },
+    );
+  }
+
+  test("applies available_commands_update sent with the session/new response", async () => {
+    let session!: ACPAgentSession;
+    const newSession = vi.fn().mockImplementation(async () => {
+      // Simulates an agent that pushes its slash-command batch immediately
+      // after the session/new response, before the client continuation runs.
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [
+            { name: "what-did-you-learn", description: "Run an evidence-based retrospective" },
+          ],
+        } as SessionUpdate,
+      });
+      return {
+        sessionId: "session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      };
+    });
+    session = makeNewSession(newSession);
+
+    await session.initializeNewSession();
+
+    expect(await session.listCommands()).toEqual([
+      {
+        name: "what-did-you-learn",
+        description: "Run an evidence-based retrospective",
+        argumentHint: "",
+        kind: "command",
+      },
+    ]);
+  });
+
+  test("replays buffered updates in arrival order after registration", async () => {
+    let session!: ACPAgentSession;
+    const newSession = vi.fn().mockImplementation(async () => {
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [{ name: "first", description: "first batch" }],
+        } as SessionUpdate,
+      });
+      await session.sessionUpdate({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [{ name: "second", description: "second batch" }],
+        } as SessionUpdate,
+      });
+      return {
+        sessionId: "session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      };
+    });
+    session = makeNewSession(newSession);
+
+    await session.initializeNewSession();
+
+    expect(await session.listCommands()).toEqual([
+      { name: "second", description: "second batch", argumentHint: "", kind: "command" },
+    ]);
+  });
+
+  test("ignores buffered updates addressed to a different session id", async () => {
+    let session!: ACPAgentSession;
+    const newSession = vi.fn().mockImplementation(async () => {
+      await session.sessionUpdate({
+        sessionId: "other-session",
+        update: {
+          sessionUpdate: "available_commands_update",
+          availableCommands: [{ name: "stray", description: "not for this session" }],
+        } as SessionUpdate,
+      });
+      return {
+        sessionId: "session-1",
+        modes: null,
+        models: null,
+        configOptions: [],
+      };
+    });
+    session = makeNewSession(newSession);
+
+    await session.initializeNewSession();
+
+    expect(await session.listCommands()).toEqual([]);
+  });
+});
+
 describe("ACPAgentSession", () => {
   test("drops MCP servers from ACP requests when the provider does not support MCP", () => {
     const session = new ACPAgentSession(
