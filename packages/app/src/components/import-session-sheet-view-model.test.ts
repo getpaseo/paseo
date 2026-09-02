@@ -4,10 +4,16 @@ import {
   aggregateSessionEntries,
   ALL_FILTER_VALUE,
   buildProviderLabelMap,
-  collectErroredProviderLabels,
+  collectProviderErrorRows,
   computeEmptyState,
   getPromptPreview,
   getSessionTitle,
+  groupEntriesByDirectory,
+  hasMoreSessions,
+  nextPageLimit,
+  PER_PROVIDER_LIMIT,
+  resolveDirectoryLabel,
+  resolveImportTarget,
   resolveProvidersToFetch,
   requiresImportSessionsHostUpgrade,
   type SessionsQueryResult,
@@ -28,6 +34,10 @@ function entry(
     lastActivityAt: "2026-04-30T10:00:00.000Z",
     ...overrides,
   };
+}
+
+function toHandleId(session: FetchRecentProviderSessionEntry): string {
+  return session.providerHandleId;
 }
 
 function settled(
@@ -167,27 +177,216 @@ describe("sumFilteredAlreadyImportedCount", () => {
   });
 });
 
-describe("collectErroredProviderLabels", () => {
-  it("returns no labels when no providers are being fetched", () => {
-    expect(collectErroredProviderLabels(null, [], new Map())).toEqual([]);
+describe("collectProviderErrorRows", () => {
+  it("returns no rows when no providers are being fetched", () => {
+    expect(collectProviderErrorRows(null, [], new Map())).toEqual([]);
   });
 
-  it("returns labels for each errored provider, falling back to provider id", () => {
-    const labels = collectErroredProviderLabels(
+  it("returns a row for each provider whose request failed", () => {
+    const rows = collectProviderErrorRows(
       ["claude", "codex"],
       [settled(undefined, { isError: true }), settled({ entries: [] })],
       new Map([["claude", "Claude Code"]]),
     );
-    expect(labels).toEqual(["Claude Code"]);
+    expect(rows).toEqual([{ provider: "claude", label: "Claude Code" }]);
+  });
+
+  it("returns a row for a provider the daemon reported as failed in a good response", () => {
+    const rows = collectProviderErrorRows(
+      ["codex"],
+      [
+        settled({
+          entries: [],
+          providerErrors: [{ provider: "codex", message: "timed out" }],
+        }),
+      ],
+      new Map([["codex", "Codex"]]),
+    );
+    expect(rows).toEqual([{ provider: "codex", label: "Codex" }]);
   });
 
   it("uses provider id when the label map has no entry", () => {
-    const labels = collectErroredProviderLabels(
+    const rows = collectProviderErrorRows(
       ["codex"],
       [settled(undefined, { isError: true })],
       new Map(),
     );
-    expect(labels).toEqual(["codex"]);
+    expect(rows).toEqual([{ provider: "codex", label: "codex" }]);
+  });
+});
+
+describe("nextPageLimit", () => {
+  it("grows the per-provider limit one step at a time", () => {
+    expect(nextPageLimit(PER_PROVIDER_LIMIT)).toBe(45);
+    expect(nextPageLimit(45)).toBe(90);
+    expect(nextPageLimit(90)).toBe(200);
+  });
+
+  it("stops at the protocol ceiling", () => {
+    expect(nextPageLimit(200)).toBe(200);
+  });
+});
+
+describe("hasMoreSessions", () => {
+  it("reports more when a provider filled the requested page", () => {
+    expect(hasMoreSessions([settled({ entries: [entry(), entry()] })], 2)).toBe(true);
+  });
+
+  it("reports no more once every provider returned a short page", () => {
+    expect(hasMoreSessions([settled({ entries: [entry()] })], 2)).toBe(false);
+  });
+
+  it("reports no more at the last page size, however full the page is", () => {
+    expect(hasMoreSessions([settled({ entries: [entry(), entry()] })], 200)).toBe(false);
+  });
+
+  it("keeps reporting more while the next page replaces placeholder rows", () => {
+    expect(
+      hasMoreSessions([settled({ entries: [entry()] }, { isPlaceholderData: true })], 45),
+    ).toBe(true);
+  });
+});
+
+describe("resolveDirectoryLabel", () => {
+  const projects = [
+    { rootPath: "/home/me/paseo", name: "paseo" },
+    { rootPath: "/home/me/paseo/packages/app", name: "paseo app" },
+  ];
+
+  it("names the project root after the project alone", () => {
+    expect(resolveDirectoryLabel("/home/me/paseo", projects)).toEqual({ name: "paseo" });
+  });
+
+  it("qualifies a worktree under the project with its path below the root", () => {
+    expect(
+      resolveDirectoryLabel("/home/me/paseo/.dev/worktrees/abc/zebra", [projects[0]!]),
+    ).toEqual({ name: "paseo", detail: ".dev/worktrees/abc/zebra" });
+  });
+
+  it("tells two worktrees of the same project apart", () => {
+    const zebra = resolveDirectoryLabel("/home/me/paseo/.dev/worktrees/abc/zebra", [projects[0]!]);
+    const otter = resolveDirectoryLabel("/home/me/paseo/.dev/worktrees/def/otter", [projects[0]!]);
+    expect(zebra).not.toEqual(otter);
+    expect([zebra.detail, otter.detail]).toEqual([
+      ".dev/worktrees/abc/zebra",
+      ".dev/worktrees/def/otter",
+    ]);
+  });
+
+  it("picks the most specific project root containing the directory", () => {
+    expect(resolveDirectoryLabel("/home/me/paseo/packages/app/src", projects)).toEqual({
+      name: "paseo app",
+      detail: "src",
+    });
+  });
+
+  it("ignores trailing slashes on both sides", () => {
+    expect(
+      resolveDirectoryLabel("/home/me/paseo/", [{ rootPath: "/home/me/paseo/", name: "p" }]),
+    ).toEqual({ name: "p" });
+  });
+
+  it("does not match a project root that is only a string prefix", () => {
+    expect(resolveDirectoryLabel("/home/me/paseo-fork", projects)).toEqual({
+      name: "/home/me/paseo-fork",
+    });
+  });
+
+  it("falls back to the path when no project owns the directory", () => {
+    expect(resolveDirectoryLabel("/tmp/scratch", projects)).toEqual({ name: "/tmp/scratch" });
+  });
+});
+
+describe("groupEntriesByDirectory", () => {
+  it("groups by directory, newest group first, newest row first inside", () => {
+    const groups = groupEntriesByDirectory(
+      [
+        entry({ providerHandleId: "a", cwd: "/home/me/paseo" }),
+        entry({ providerHandleId: "b", cwd: "/tmp/scratch" }),
+        entry({ providerHandleId: "c", cwd: "/home/me/paseo" }),
+      ],
+      [{ rootPath: "/home/me/paseo", name: "paseo" }],
+    );
+    expect(groups.map((group) => group.label)).toEqual([
+      { name: "paseo" },
+      { name: "/tmp/scratch" },
+    ]);
+    expect(groups.flatMap((group) => group.entries).map(toHandleId)).toEqual(["a", "c", "b"]);
+    expect(groups.map((group) => group.entries.length)).toEqual([2, 1]);
+  });
+
+  it("gives each worktree of one project its own distinguishable group", () => {
+    const groups = groupEntriesByDirectory(
+      [
+        entry({ providerHandleId: "main", cwd: "/home/me/paseo" }),
+        entry({ providerHandleId: "zebra", cwd: "/home/me/paseo/.dev/worktrees/zebra" }),
+        entry({ providerHandleId: "otter", cwd: "/home/me/paseo/.dev/worktrees/otter" }),
+      ],
+      [{ rootPath: "/home/me/paseo", name: "paseo" }],
+    );
+    expect(groups.map((group) => group.label)).toEqual([
+      { name: "paseo" },
+      { name: "paseo", detail: ".dev/worktrees/zebra" },
+      { name: "paseo", detail: ".dev/worktrees/otter" },
+    ]);
+  });
+
+  it("keeps one directory in one group however it is spelled", () => {
+    const groups = groupEntriesByDirectory(
+      [
+        entry({ providerHandleId: "a", cwd: "/home/me/paseo" }),
+        entry({ providerHandleId: "b", cwd: "/home/me/paseo/" }),
+      ],
+      [],
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.directory).toBe("/home/me/paseo");
+    expect(groups[0]?.entries.map(toHandleId)).toEqual(["a", "b"]);
+  });
+
+  it("returns no groups for no entries", () => {
+    expect(groupEntriesByDirectory([], [])).toEqual([]);
+  });
+});
+
+describe("resolveImportTarget", () => {
+  it("trusts a scoped listing, whose rows the daemon already matched realpath-aware", () => {
+    expect(
+      resolveImportTarget({
+        entryCwd: "/private/repo/paseo",
+        workspaceCwd: "/repo/paseo",
+        workspaceId: "ws-1",
+        isScopedListing: true,
+      }),
+    ).toEqual({ workspaceId: "ws-1", crossWorkspace: false });
+  });
+
+  it("keeps the current workspace for a Show-all row in that workspace's directory", () => {
+    expect(
+      resolveImportTarget({
+        entryCwd: "/repo/paseo/",
+        workspaceCwd: "/repo/paseo",
+        workspaceId: "ws-1",
+        isScopedListing: false,
+      }),
+    ).toEqual({ workspaceId: "ws-1", crossWorkspace: false });
+  });
+
+  it("drops the workspace for a Show-all row from another directory, which the daemon rejects", () => {
+    expect(
+      resolveImportTarget({
+        entryCwd: "/repo/other",
+        workspaceCwd: "/repo/paseo",
+        workspaceId: "ws-1",
+        isScopedListing: false,
+      }),
+    ).toEqual({ crossWorkspace: true });
+  });
+
+  it("treats a sheet with no workspace as cross-workspace", () => {
+    expect(resolveImportTarget({ entryCwd: "/repo/paseo", isScopedListing: false })).toEqual({
+      crossWorkspace: true,
+    });
   });
 });
 
@@ -236,6 +435,7 @@ describe("computeEmptyState", () => {
     isQueryingProviders: true,
     allQueriesSettled: true,
     selectedProvider: ALL_FILTER_VALUE,
+    hasQuery: false,
     aggregatedCount: 0,
     visibleCount: 0,
     totalAlreadyImportedCount: 0,
@@ -272,6 +472,15 @@ describe("computeEmptyState", () => {
       showEmptyState: true,
       emptyStateTitle: "No recent sessions to import.",
     });
+  });
+
+  it("says nothing matched when a query narrowed the list to nothing", () => {
+    const result = computeEmptyState({
+      ...baseInputs,
+      hasQuery: true,
+      totalAlreadyImportedCount: 4,
+    });
+    expect(result.emptyStateTitle).toBe("No sessions match your search.");
   });
 
   it("shows the already-imported message when imported entries were filtered out", () => {

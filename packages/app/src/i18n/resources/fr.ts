@@ -363,6 +363,11 @@ export const fr: TranslationResources = {
   importSession: {
     chooseHostTitle: en.importSession.chooseHostTitle,
     title: "Session d'importation",
+    searchPlaceholder: "Rechercher des sessions...",
+    scope: {
+      host: "Sessions sur {{host}}",
+      workspace: "Sessions dans cet espace de travail",
+    },
     filters: {
       all: "Tous",
     },
@@ -371,12 +376,13 @@ export const fr: TranslationResources = {
       updateHost: "Mettez à jour l'hôte pour importer des sessions.",
       noProviders: "Aucun fournisseur importable n'est activé.",
       loading: "Chargement des sessions récentes...",
-      failedAll: "Impossible de charger les sessions récentes.",
-      failedProviders: "Impossible de charger les sessions pour{{providers}}.",
+      failedProvider: "Impossible de charger les sessions {{provider}}",
       failedImport: "Impossible d'importer la session sélectionnée.",
     },
     actions: {
       refresh: "Sessions de rafraîchissement",
+      showAll: "Afficher toutes les sessions",
+      loadMore: "Charger plus",
     },
     preview: {
       untitledSession: "Séance sans titre",
@@ -384,6 +390,7 @@ export const fr: TranslationResources = {
     },
     empty: {
       noRecent: "Aucune session récente à importer.",
+      noMatches: "Aucune session ne correspond à votre recherche.",
       alreadyImported: "Toutes les sessions récentes sont déjà importées.",
       noProviderSessions: "Aucune session{{provider}}trouvée.",
     },

@@ -361,6 +361,11 @@ export const ru: TranslationResources = {
   importSession: {
     chooseHostTitle: en.importSession.chooseHostTitle,
     title: "Импортировать сессию",
+    searchPlaceholder: "Поиск сессий...",
+    scope: {
+      host: "Сессии на {{host}}",
+      workspace: "Сессии в этом рабочем пространстве",
+    },
     filters: {
       all: "Все",
     },
@@ -369,12 +374,13 @@ export const ru: TranslationResources = {
       updateHost: "Обновите хост, чтобы импортировать сессии.",
       noProviders: "Нет включённых провайдеров с поддержкой импорта.",
       loading: "Загрузка недавних сессий...",
-      failedAll: "Не удалось загрузить недавние сессии.",
-      failedProviders: "Не удалось загрузить сессии следующих провайдеров: {{providers}}.",
+      failedProvider: "Не удалось загрузить сессии провайдера {{provider}}",
       failedImport: "Не удалось импортировать выбранную сессию.",
     },
     actions: {
       refresh: "Обновить список сессий",
+      showAll: "Показать все сессии",
+      loadMore: "Загрузить ещё",
     },
     preview: {
       untitledSession: "Сессия без названия",
@@ -382,6 +388,7 @@ export const ru: TranslationResources = {
     },
     empty: {
       noRecent: "Нет недавних сессий для импорта.",
+      noMatches: "Нет сессий, соответствующих запросу.",
       alreadyImported: "Все недавние сессии уже импортированы.",
       noProviderSessions: "Сессии провайдера {{provider}} не найдены.",
     },

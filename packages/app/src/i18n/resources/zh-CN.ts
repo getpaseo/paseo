@@ -359,6 +359,11 @@ export const zhCN: TranslationResources = {
   importSession: {
     chooseHostTitle: en.importSession.chooseHostTitle,
     title: "导入会话",
+    searchPlaceholder: "搜索会话...",
+    scope: {
+      host: "{{host}} 上的会话",
+      workspace: "此 workspace 中的会话",
+    },
     filters: {
       all: "全部",
     },
@@ -367,12 +372,13 @@ export const zhCN: TranslationResources = {
       updateHost: "更新 Host 以导入会话。",
       noProviders: "没有已启用的可导入 Provider。",
       loading: "正在加载最近会话...",
-      failedAll: "无法加载最近会话。",
-      failedProviders: "无法加载 {{providers}} 的会话。",
+      failedProvider: "无法加载 {{provider}} 的会话",
       failedImport: "无法导入所选会话。",
     },
     actions: {
       refresh: "刷新会话",
+      showAll: "显示所有会话",
+      loadMore: "加载更多",
     },
     preview: {
       untitledSession: "未命名会话",
@@ -380,6 +386,7 @@ export const zhCN: TranslationResources = {
     },
     empty: {
       noRecent: "没有可导入的最近会话。",
+      noMatches: "没有与搜索匹配的会话。",
       alreadyImported: "所有最近会话都已导入。",
       noProviderSessions: "没有找到 {{provider}} 会话。",
     },

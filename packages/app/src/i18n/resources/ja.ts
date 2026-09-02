@@ -362,6 +362,11 @@ export const ja: TranslationResources = {
   importSession: {
     chooseHostTitle: en.importSession.chooseHostTitle,
     title: "セッションをインポート",
+    searchPlaceholder: "セッションを検索...",
+    scope: {
+      host: "{{host}} のセッション",
+      workspace: "このワークスペースのセッション",
+    },
     filters: {
       all: "すべて",
     },
@@ -370,12 +375,13 @@ export const ja: TranslationResources = {
       updateHost: "セッションをインポートするにはホストを更新してください。",
       noProviders: "インポート可能なプロバイダーが有効になっていません。",
       loading: "最近のセッションを読み込み中...",
-      failedAll: "最近のセッションを読み込めませんでした。",
-      failedProviders: "{{providers}}のセッションを読み込めませんでした。",
+      failedProvider: "{{provider}} のセッションを読み込めませんでした",
       failedImport: "選択したセッションをインポートできませんでした。",
     },
     actions: {
       refresh: "セッションを更新",
+      showAll: "すべてのセッションを表示",
+      loadMore: "さらに読み込む",
     },
     preview: {
       untitledSession: "無題のセッション",
@@ -383,6 +389,7 @@ export const ja: TranslationResources = {
     },
     empty: {
       noRecent: "インポートする最近のセッションがありません。",
+      noMatches: "検索に一致するセッションがありません。",
       alreadyImported: "最近のセッションはすでにすべてインポートされています。",
       noProviderSessions: "{{provider}}のセッションが見つかりません。",
     },

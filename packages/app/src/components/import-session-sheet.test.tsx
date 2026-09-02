@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import React, { type ReactNode } from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   DaemonClient,
@@ -14,12 +14,12 @@ import { ImportSessionSheet } from "@/components/import-session-sheet";
 
 const { theme } = vi.hoisted(() => ({
   theme: {
-    spacing: { 1: 4, 1.5: 6, 2: 8, 3: 12, 4: 16, 6: 24 },
+    spacing: { 1: 4, 1.5: 6, 2: 8, 2.5: 10, 3: 12, 4: 16, 6: 24, 8: 32 },
     borderWidth: { 1: 1 },
     borderRadius: { md: 6, lg: 8, full: 9999 },
     fontSize: { xs: 11, sm: 13, base: 15 },
     fontWeight: { normal: "400", medium: "500", semibold: "600" },
-    iconSize: { sm: 14, md: 16 },
+    iconSize: { sm: 14, md: 16, lg: 24 },
     opacity: { 50: 0.5 },
     colors: {
       foreground: "#fff",
@@ -30,6 +30,8 @@ const { theme } = vi.hoisted(() => ({
       surface3: "#333",
       border: "#444",
       borderAccent: "#555",
+      interactionHighlight: "rgba(255,255,255,0.08)",
+      palette: { red: { 300: "#f87171" } },
     },
   },
 }));
@@ -75,6 +77,8 @@ vi.mock("lucide-react-native", () => {
     Inbox: icon("Inbox"),
     Layers: icon("Layers"),
     RotateCw: icon("RotateCw"),
+    Search: icon("Search"),
+    X: icon("X"),
   };
 });
 
@@ -117,6 +121,22 @@ vi.mock("@/components/ui/combobox", () => ({
   ComboboxItem: ({ label }: { label: string }) => React.createElement("span", null, label),
 }));
 
+interface SheetSearchProps {
+  onChange: (value: string) => void;
+  placeholder?: string;
+  testID?: string;
+}
+
+function SheetSearchInput({ search }: { search: SheetSearchProps }) {
+  const handleChange = React.useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => search.onChange(event.target.value),
+    [search],
+  );
+  return (
+    <input data-testid={search.testID} placeholder={search.placeholder} onChange={handleChange} />
+  );
+}
+
 vi.mock("@/components/adaptive-modal-sheet", () => ({
   AdaptiveModalSheet: ({
     visible,
@@ -125,14 +145,21 @@ vi.mock("@/components/adaptive-modal-sheet", () => ({
     testID,
   }: {
     visible: boolean;
-    header?: { title: string; actions?: ReactNode };
+    header?: {
+      title: string;
+      subtitle?: ReactNode;
+      actions?: ReactNode;
+      search?: { onChange: (value: string) => void; placeholder?: string; testID?: string };
+    };
     children: ReactNode;
     testID?: string;
   }) =>
     visible ? (
       <section data-testid={testID}>
         <h1>{header?.title}</h1>
+        {header?.subtitle}
         {header?.actions}
+        {header?.search ? <SheetSearchInput search={header.search} /> : null}
         {children}
       </section>
     ) : null,
@@ -163,26 +190,62 @@ vi.mock("@/hooks/use-providers-snapshot", () => ({
   }),
 }));
 
+const mockHostFeatures = vi.hoisted(() => ({
+  current: { importSessionSearch: true, importSessionWorkspaceTarget: true } as Record<
+    string,
+    boolean
+  >,
+}));
+
+vi.mock("@/runtime/host-features", () => ({
+  useHostFeature: (_serverId: string | null, feature: string) =>
+    mockHostFeatures.current[feature] === true,
+}));
+
+vi.mock("@/runtime/host-runtime", () => ({
+  useHosts: () => [{ serverId: "server-1", label: "workbench" }],
+}));
+
+const mockHostProjects = vi.hoisted(() => ({
+  current: [] as Array<{ iconWorkingDir: string; projectName: string }>,
+}));
+
+vi.mock("@/projects/host-projects", () => ({
+  useHostProjects: () => mockHostProjects.current,
+}));
+
 interface RenderOptions {
   visible?: boolean;
   onClose?: () => void;
   onImportedAgent?: (agentId: string) => void;
   onImported?: (agent: Awaited<ReturnType<DaemonClient["importAgent"]>>) => void;
   cwd?: string | null;
+  workspaceId?: string;
+  supportsSearch?: boolean;
+  projects?: Array<{ iconWorkingDir: string; projectName: string }>;
   snapshot?: {
     entries?: ProviderSnapshotEntry[];
     supportsSnapshot?: boolean;
   };
 }
 
-function renderSheet(
-  client: Pick<DaemonClient, "fetchRecentProviderSessions" | "importAgent">,
-  options?: RenderOptions,
-) {
+function applyHostMocks(options?: RenderOptions) {
   mockSnapshot.current = {
     entries: options?.snapshot?.entries,
     supportsSnapshot: options?.snapshot?.supportsSnapshot ?? false,
   };
+  mockHostFeatures.current = {
+    importSessionSearch: options?.supportsSearch ?? true,
+    importSessionWorkspaceTarget: true,
+  };
+  mockHostProjects.current = options?.projects ?? [];
+}
+
+function renderSheet(
+  client: Pick<DaemonClient, "fetchRecentProviderSessions" | "importAgent">,
+  options?: RenderOptions,
+) {
+  applyHostMocks(options);
 
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -200,6 +263,7 @@ function renderSheet(
         client={client}
         serverId="server-1"
         cwd={cwd}
+        workspaceId={options?.workspaceId}
         onClose={options?.onClose ?? vi.fn()}
         onImportedAgent={options?.onImportedAgent ?? vi.fn()}
         onImported={options?.onImported}
@@ -243,6 +307,16 @@ function createImportedAgentSnapshot(id: string): Awaited<ReturnType<DaemonClien
     title: null,
     labels: {},
   };
+}
+
+function createPageOfEntries(count: number): FetchRecentProviderSessionEntry[] {
+  return Array.from({ length: count }, (_unused, index) =>
+    createProviderSessionEntry({
+      providerId: "claude",
+      providerHandleId: `thread-${index}`,
+      title: `Session ${index}`,
+    }),
+  );
 }
 
 function createProviderSessionEntry(
@@ -377,7 +451,8 @@ describe("ImportSessionSheet", () => {
       },
     );
 
-    await screen.findByText("Could not load recent sessions.");
+    await screen.findByText("Could not load Claude Code sessions");
+    screen.getByTestId("import-session-retry-claude");
   });
 
   it("loads recent provider sessions for the workspace and renders descriptor-owned labels", async () => {
@@ -500,6 +575,7 @@ describe("ImportSessionSheet", () => {
       {
         onClose,
         onImportedAgent,
+        workspaceId: "ws-current",
         snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
       },
     );
@@ -511,6 +587,7 @@ describe("ImportSessionSheet", () => {
         providerId: "claude",
         providerHandleId: "provider-thread-1",
         cwd: "/repo/paseo-realpath",
+        workspaceId: "ws-current",
       });
     });
     expect(onImportedAgent).toHaveBeenCalledWith("agent-imported");
@@ -649,7 +726,7 @@ describe("ImportSessionSheet", () => {
     );
 
     await screen.findByText("Session codex");
-    await screen.findByText("Could not load sessions for Claude Code.");
+    await screen.findByText("Could not load Claude Code sessions");
   });
 
   it("filters the merged list when a provider badge is selected and restores it on All", async () => {
@@ -758,7 +835,7 @@ describe("ImportSessionSheet", () => {
     expect(fetchRecentProviderSessions).not.toHaveBeenCalled();
   });
 
-  it("omits cwd from fetch and renders the session cwd on each row when cwd is unset", async () => {
+  it("omits cwd from fetch and groups rows by folder when cwd is unset", async () => {
     const fetchRecentProviderSessions = vi.fn(async () => ({
       requestId: "recent-provider-sessions",
       entries: [
@@ -793,6 +870,7 @@ describe("ImportSessionSheet", () => {
       expect.objectContaining({ cwd: expect.anything() }),
     );
     await screen.findByText("/home/me/work/other-project");
+    screen.getByTestId("import-session-group-/home/me/work/other-project");
   });
 
   it("uses the session's cwd when importing in cwd-less mode and fires onImported", async () => {
@@ -836,8 +914,310 @@ describe("ImportSessionSheet", () => {
     });
     expect(onImported).toHaveBeenCalledTimes(1);
     expect(onImported).toHaveBeenCalledWith(expect.objectContaining({ id: "agent-imported" }));
-    expect(onImportedAgent).toHaveBeenCalledWith("agent-imported");
+    expect(onImportedAgent).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the scope after the host when unscoped and after the workspace when scoped", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [],
+    }));
+    const importAgent = vi.fn();
+    const client = createRecentSessionsClient(fetchRecentProviderSessions, importAgent);
+
+    renderSheet(client, {
+      cwd: null,
+      snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+    });
+    await screen.findByText("Sessions on workbench");
+    expect(screen.queryByTestId("import-session-show-all")).toBeNull();
+    cleanup();
+
+    renderSheet(client, {
+      workspaceId: "ws-current",
+      snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+    });
+    await screen.findByText("Sessions in this workspace");
+    screen.getByTestId("import-session-show-all");
+  });
+
+  it("groups unscoped rows by folder, naming folders the app knows after their project", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerHandleId: "newest",
+          cwd: "/home/me/paseo",
+          title: "Newest in paseo",
+          lastActivityAt: "2026-04-30T12:00:00.000Z",
+        }),
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerHandleId: "elsewhere",
+          cwd: "/tmp/scratch",
+          title: "Scratch session",
+          lastActivityAt: "2026-04-30T11:00:00.000Z",
+        }),
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerHandleId: "older",
+          cwd: "/home/me/paseo",
+          title: "Older in paseo",
+          lastActivityAt: "2026-04-30T10:00:00.000Z",
+        }),
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerHandleId: "worktree",
+          cwd: "/home/me/paseo/.dev/worktrees/zebra",
+          title: "Worktree session",
+          lastActivityAt: "2026-04-30T09:00:00.000Z",
+        }),
+      ],
+    }));
+    const importAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        cwd: null,
+        projects: [{ iconWorkingDir: "/home/me/paseo", projectName: "paseo" }],
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+      },
+    );
+
+    await screen.findByTestId("import-session-group-/home/me/paseo");
+    const groups = screen.getAllByTestId(/^import-session-group-/);
+    expect(groups.map((group) => group.textContent)).toEqual([
+      "paseo",
+      "/tmp/scratch",
+      "paseo · .dev/worktrees/zebra",
+    ]);
+    expect(
+      within(groups[0]!.parentElement!)
+        .getAllByRole("button")
+        .map((row) => row.getAttribute("data-testid")),
+    ).toEqual(["import-session-session-claude-newest", "import-session-session-claude-older"]);
+  });
+
+  it("sends the debounced search query to every provider", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [],
+    }));
+    const importAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        cwd: null,
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+      },
+    );
+
+    await waitFor(() => {
+      expect(fetchRecentProviderSessions).toHaveBeenCalled();
+    });
+
+    fireEvent.change(screen.getByTestId("import-session-search"), {
+      target: { value: "invoice" },
+    });
+
+    await waitFor(() => {
+      expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
+        providers: ["claude"],
+        limit: 15,
+        query: "invoice",
+      });
+    });
+  });
+
+  it("hides the search field when the host cannot search sessions", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [],
+    }));
+    const importAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        cwd: null,
+        supportsSearch: false,
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+      },
+    );
+
+    await waitFor(() => {
+      expect(fetchRecentProviderSessions).toHaveBeenCalled();
+    });
+    expect(screen.queryByTestId("import-session-search")).toBeNull();
+  });
+
+  it("asks for a larger page when Load more is pressed, and stops offering it on a short page", async () => {
+    const fetchRecentProviderSessions = vi.fn(async (options: { limit?: number } | undefined) => ({
+      requestId: "recent-provider-sessions",
+      entries: createPageOfEntries(options?.limit === 15 ? 15 : 20),
+    }));
+    const importAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        cwd: null,
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+      },
+    );
+
+    fireEvent.click(await screen.findByTestId("import-session-load-more"));
+
+    await waitFor(() => {
+      expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
+        providers: ["claude"],
+        limit: 45,
+      });
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("import-session-load-more")).toBeNull();
+    });
+  });
+
+  it("stops the refresh spinner and retries only the failed provider", async () => {
+    const fetchRecentProviderSessions = vi.fn(
+      async (options: { providers?: string[] } | undefined) => {
+        const provider = options?.providers?.[0];
+        if (provider === "claude") {
+          throw new Error("claude offline");
+        }
+        return {
+          requestId: `recent-${provider}`,
+          entries: [
+            createProviderSessionEntry({
+              providerId: provider ?? "codex",
+              providerHandleId: `${provider}-thread`,
+              title: `Session ${provider}`,
+            }),
+          ],
+        };
+      },
+    );
+    const importAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        snapshot: {
+          supportsSnapshot: true,
+          entries: [createSnapshotEntry("claude"), createSnapshotEntry("codex")],
+        },
+      },
+    );
+
+    await screen.findByText("Session codex");
+    await screen.findByText("Could not load Claude Code sessions");
+    await waitFor(() => {
+      expect(screen.queryByTestId("import-session-loading-spinner")).toBeNull();
+    });
+
+    fetchRecentProviderSessions.mockClear();
+    fireEvent.click(screen.getByTestId("import-session-retry-claude"));
+
+    await waitFor(() => {
+      expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
+        cwd: "/repo/paseo",
+        providers: ["claude"],
+        limit: 15,
+      });
+    });
+    expect(fetchRecentProviderSessions).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows an error row for a provider the daemon reported as failed", async () => {
+    const fetchRecentProviderSessions = vi.fn(async () => ({
+      requestId: "recent-provider-sessions",
+      entries: [createProviderSessionEntry({ providerId: "codex", providerLabel: "Codex" })],
+      providerErrors: [{ provider: "codex", message: "timed out" }],
+    }));
+    const importAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("codex")] },
+      },
+    );
+
+    await screen.findByText("Could not load Codex sessions");
+  });
+
+  it("imports a foreign-directory row without the current workspace once Show all is on", async () => {
+    const fetchRecentProviderSessions = vi.fn(async (options: { cwd?: string } | undefined) => ({
+      requestId: "recent-provider-sessions",
+      entries: [
+        createProviderSessionEntry({
+          providerId: "claude",
+          providerHandleId: options?.cwd ? "scoped-thread" : "foreign-thread",
+          cwd: options?.cwd ?? "/home/me/work/other-project",
+          title: options?.cwd ? "Scoped session" : "Foreign session",
+        }),
+      ],
+    }));
+    const importAgent = vi.fn(async () => createImportedAgentSnapshot("agent-imported"));
+    const onImported = vi.fn();
+    const onImportedAgent = vi.fn();
+
+    renderSheet(
+      { fetchRecentProviderSessions, importAgent } as Pick<
+        DaemonClient,
+        "fetchRecentProviderSessions" | "importAgent"
+      >,
+      {
+        workspaceId: "ws-current",
+        onImported,
+        onImportedAgent,
+        snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
+      },
+    );
+
+    await screen.findByText("Scoped session");
+    fireEvent.click(screen.getByTestId("import-session-show-all"));
+
+    await screen.findByText("Foreign session");
+    expect(fetchRecentProviderSessions).toHaveBeenCalledWith({
+      providers: ["claude"],
+      limit: 15,
+    });
+
+    fireEvent.click(screen.getByTestId("import-session-session-claude-foreign-thread"));
+
+    await waitFor(() => {
+      expect(importAgent).toHaveBeenCalledWith({
+        providerId: "claude",
+        providerHandleId: "foreign-thread",
+        cwd: "/home/me/work/other-project",
+      });
+    });
+    expect(onImported).toHaveBeenCalledWith(expect.objectContaining({ id: "agent-imported" }));
+    expect(onImportedAgent).not.toHaveBeenCalled();
   });
 
   it("refetches sessions when the refresh button is clicked", async () => {

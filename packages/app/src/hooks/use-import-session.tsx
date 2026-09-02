@@ -23,18 +23,41 @@ interface ImportedAgentTarget {
   cwd: string;
 }
 
+/**
+ * Sends the user to an agent that belongs to a workspace other than the one they
+ * are looking at. The imported session's own directory decides the destination,
+ * so the project has to exist before the route can resolve.
+ */
+export function useNavigateToImportedAgent(
+  serverId: string | null | undefined,
+): (agent: ImportedAgentTarget) => Promise<void> {
+  const router = useRouter();
+  const normalizedServerId = serverId?.trim() || null;
+  const openProject = useOpenProject(normalizedServerId);
+
+  return useCallback(
+    async (agent: ImportedAgentTarget) => {
+      if (!normalizedServerId) return;
+      const project = await openProject(agent.cwd);
+      if (project.ok) {
+        router.push(buildHostAgentDetailRoute(normalizedServerId, agent.id) as Href);
+      }
+    },
+    [normalizedServerId, openProject, router],
+  );
+}
+
 export function useImportSession({
   serverId,
   cwd,
   workspaceId,
 }: UseImportSessionOptions = {}): UseImportSessionResult {
   const { t } = useTranslation();
-  const router = useRouter();
   const chooseHost = useHostChooser();
   const [importServerId, setImportServerId] = useState<string | null>(null);
   const [isSheetOpen, setIsSheetOpen] = useState(false);
   const client = useHostRuntimeClient(importServerId ?? "");
-  const openProject = useOpenProject(importServerId);
+  const navigateToImportedAgent = useNavigateToImportedAgent(importServerId);
 
   const openForHost = useCallback((chosenServerId: string) => {
     setImportServerId(chosenServerId);
@@ -53,17 +76,6 @@ export function useImportSession({
   }, [chooseHost, openForHost, serverId, t]);
 
   const close = useCallback(() => setIsSheetOpen(false), []);
-
-  const navigateToImportedAgent = useCallback(
-    async (agent: ImportedAgentTarget) => {
-      if (!importServerId) return;
-      const project = await openProject(agent.cwd);
-      if (project.ok) {
-        router.push(buildHostAgentDetailRoute(importServerId, agent.id) as Href);
-      }
-    },
-    [importServerId, openProject, router],
-  );
 
   return {
     open,

@@ -357,6 +357,11 @@ export const en = {
   importSession: {
     title: "Import session",
     chooseHostTitle: "Import from host",
+    searchPlaceholder: "Search sessions...",
+    scope: {
+      host: "Sessions on {{host}}",
+      workspace: "Sessions in this workspace",
+    },
     filters: {
       all: "All",
     },
@@ -365,12 +370,13 @@ export const en = {
       updateHost: "Update the host to import sessions.",
       noProviders: "No importable providers are enabled.",
       loading: "Loading recent sessions...",
-      failedAll: "Could not load recent sessions.",
-      failedProviders: "Could not load sessions for {{providers}}.",
+      failedProvider: "Could not load {{provider}} sessions",
       failedImport: "Could not import selected session.",
     },
     actions: {
       refresh: "Refresh sessions",
+      showAll: "Show all sessions",
+      loadMore: "Load more",
     },
     preview: {
       untitledSession: "Untitled session",
@@ -378,6 +384,7 @@ export const en = {
     },
     empty: {
       noRecent: "No recent sessions to import.",
+      noMatches: "No sessions match your search.",
       alreadyImported: "All recent sessions are already imported.",
       noProviderSessions: "No {{provider}} sessions found.",
     },
