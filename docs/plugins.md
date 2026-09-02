@@ -308,7 +308,9 @@ await paseo.agents.ref(agentId).timeline.append({
 The daemon stamps the runtime `pluginId`; plugin code never supplies it. Reusing the same `id`
 replaces the previous row from that plugin on live clients and fresh timeline fetches. The row stays
 in canonical history and renders an unavailable placeholder when its renderer is not installed.
-The daemon advertises this RPC through `server_info.features.pluginTimelineItems`.
+Serialized `data` must be at most 64 KiB; the daemon rejects a larger append instead of storing a
+payload that cannot be rendered intact. The daemon advertises this RPC through
+`server_info.features.pluginTimelineItems`.
 
 ## Contribute client slash commands
 

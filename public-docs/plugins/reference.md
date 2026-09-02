@@ -349,18 +349,19 @@ async function publishReview(agentId: string, { paseo }: PluginHandlerContext) {
 }
 ```
 
-| Field     | Type            | Required | Behavior                                                       |
-| --------- | --------------- | -------- | -------------------------------------------------------------- |
-| `type`    | `"plugin"`      | Yes      | Selects the plugin timeline variant.                           |
-| `id`      | `string`        | Yes      | Stable plugin-local identity. Reusing it replaces the old row. |
-| `kind`    | `string`        | Yes      | Selects the registered renderer.                               |
-| `version` | `number`        | Yes      | Selects the renderer contract version.                         |
-| `data`    | JSON-compatible | Yes      | Renderer payload validated by its Zod schema in the app.       |
+| Field     | Type             | Required | Behavior                                                       |
+| --------- | ---------------- | -------- | -------------------------------------------------------------- |
+| `type`    | `"plugin"`       | Yes      | Selects the plugin timeline variant.                           |
+| `id`      | `string`         | Yes      | Stable plugin-local identity. Reusing it replaces the old row. |
+| `kind`    | `string`         | Yes      | Selects the registered renderer.                               |
+| `version` | positive integer | Yes      | Selects the renderer contract version.                         |
+| `data`    | JSON-compatible  | Yes      | Renderer payload, at most 64 KiB after JSON serialization.     |
 
 The daemon stamps `pluginId` from the calling plugin session and rejects this RPC from non-plugin
 sessions. The row appears live, survives timeline refetches, and keeps only the latest value for the
 same plugin and `id`. If its renderer is missing, Paseo shows the existing unavailable row. Daemons
-that support this operation advertise `server_info.features.pluginTimelineItems`.
+reject `data` over the limit rather than truncating it. Daemons that support this operation
+advertise `server_info.features.pluginTimelineItems`.
 
 ## Theme and layout
 
