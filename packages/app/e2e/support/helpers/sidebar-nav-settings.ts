@@ -39,6 +39,7 @@ function itemLabel(key: SidebarNavKey): string {
 }
 
 async function rowTop(locator: Locator): Promise<number> {
+  await locator.waitFor({ state: "visible" });
   const box = await locator.boundingBox();
   if (!box) {
     throw new Error("Expected a laid-out sidebar row to measure");
