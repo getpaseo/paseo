@@ -10,10 +10,12 @@ export const zhCN: TranslationResources = {
       cancel: "取消",
       close: "关闭",
       copy: "复制",
+      copyLine: "复制行",
       dismiss: "关闭",
       retry: "重试",
       search: "搜索",
       select: "选择",
+      selectAll: "全选",
     },
     placeholders: {
       search: "搜索...",
@@ -33,6 +35,7 @@ export const zhCN: TranslationResources = {
     errors: {
       error: "错误",
       unableToSave: "无法保存",
+      unableToCopy: "无法复制",
       nameRequired: "名称必填",
       daemonUnavailable: "Daemon 不可用",
       daemonClientUnavailable: "Daemon client 不可用",

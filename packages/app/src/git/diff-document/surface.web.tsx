@@ -2,7 +2,16 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useTranslation } from "react-i18next";
 import type { ViewStyle } from "react-native";
 import { DomOverlayScrollbar } from "@/components/ui/overlay-scrollbar/dom-overlay-scrollbar";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { useToast } from "@/contexts/toast-context";
 import { InlineReviewAddButton, InlineReviewThread } from "@/review";
+import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 import { DocumentFileHeader } from "./document-file-header";
 import {
@@ -11,7 +20,12 @@ import {
   diffMaterializationWindow,
   resolveVisibleFileSections,
 } from "./header-layout";
-import { hitTestDiffDocument, selectedSourceText } from "./hit-testing";
+import {
+  hitTestDiffDocument,
+  selectAllSource,
+  selectCellSource,
+  selectedSourceText,
+} from "./hit-testing";
 import { retainHorizontalOffsetMapForPaths } from "./horizontal-offsets";
 import { HorizontalScroll } from "./horizontal-scroll.web";
 import { buildDiffDocumentModel, FILE_HEADER_HEIGHT, resolveRelayoutScrollTop } from "./model";
@@ -33,6 +47,7 @@ const RESIZE_SETTLE_DELAY_MS = 120;
 
 export function DiffSurface(props: DiffSurfaceProps) {
   const { t } = useTranslation();
+  const toast = useToast();
   const workspaceCache = useDiffDocumentWorkspaceCache();
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -75,6 +90,8 @@ export function DiffSurface(props: DiffSurfaceProps) {
   const [interactionFiles, setInteractionFiles] = useState<
     ReturnType<typeof buildDiffDocumentModel>["files"]
   >([]);
+  const [hasSelection, setHasSelection] = useState(false);
+  const [contextHit, setContextHit] = useState<Extract<DiffHit, { kind: "cell" }> | null>(null);
   const [hoveredAffordance, setHoveredAffordance] = useState<{
     hit: Extract<DiffHit, { kind: "cell" }>;
     left: number;
@@ -488,13 +505,13 @@ export function DiffSurface(props: DiffSurfaceProps) {
     },
     [schedulePaint],
   );
-  const pointHit = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+  const pointHitAt = useCallback((clientX: number, clientY: number) => {
     const currentModel = modelRef.current;
     const root = rootRef.current;
     if (!currentModel || !root) return null;
     const bounds = root.getBoundingClientRect();
-    const x = event.clientX - bounds.left;
-    const documentY = event.clientY - bounds.top + scrollTopRef.current;
+    const x = clientX - bounds.left;
+    const documentY = clientY - bounds.top + scrollTopRef.current;
     const file = currentModel.files.find(
       (entry) => entry.top <= documentY && documentY < entry.bottom,
     );
@@ -505,6 +522,23 @@ export function DiffSurface(props: DiffSurfaceProps) {
       horizontalOffset: file ? (horizontalOffsetsRef.current.get(file.path) ?? 0) : 0,
     });
   }, []);
+  const pointHit = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => pointHitAt(event.clientX, event.clientY),
+    [pointHitAt],
+  );
+  const setSelection = useCallback(
+    (selection: DiffSelection | null) => {
+      selectionRef.current = selection;
+      const currentModel = modelRef.current;
+      setHasSelection(
+        Boolean(
+          selection && currentModel && selectedSourceText(currentModel, selection).length > 0,
+        ),
+      );
+      schedulePaint();
+    },
+    [schedulePaint],
+  );
   const pointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
@@ -518,8 +552,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
         return;
       const dismissSelectionOnClick = selectionRef.current !== null;
       if (dismissSelectionOnClick) {
-        selectionRef.current = null;
-        schedulePaint();
+        setSelection(null);
       }
       const hit = pointHit(event);
       if (hit?.kind !== "cell") return;
@@ -530,12 +563,11 @@ export function DiffSurface(props: DiffSurfaceProps) {
         moved: false,
         dismissSelectionOnClick,
       };
-      selectionRef.current = { anchor: hit.position, focus: hit.position };
+      setSelection({ anchor: hit.position, focus: hit.position });
       event.currentTarget.focus();
       event.currentTarget.setPointerCapture(event.pointerId);
-      schedulePaint();
     },
-    [pointHit, schedulePaint],
+    [pointHit, setSelection],
   );
   const updateActiveHeader = useCallback(
     (target: EventTarget | null) => {
@@ -589,10 +621,9 @@ export function DiffSurface(props: DiffSurfaceProps) {
         setHoveredAffordance(null);
       }
       if (!drag || hit?.kind !== "cell") return;
-      selectionRef.current = { anchor: drag.anchor, focus: hit.position };
-      schedulePaint();
+      setSelection({ anchor: drag.anchor, focus: hit.position });
     },
-    [pointHit, schedulePaint, updateActiveHeader, viewport.width],
+    [pointHit, setSelection, updateActiveHeader, viewport.width],
   );
   const pointerUp = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -612,8 +643,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
           })
         : false;
       if (drag && !moved && drag.dismissSelectionOnClick) {
-        selectionRef.current = null;
-        schedulePaint();
+        setSelection(null);
         return;
       }
       if (
@@ -624,12 +654,11 @@ export function DiffSurface(props: DiffSurfaceProps) {
         hit.target &&
         reviewActions
       ) {
-        selectionRef.current = null;
+        setSelection(null);
         reviewActions.onStartComment(hit.target);
-        schedulePaint();
       }
     },
-    [pointHit, reviewActions, schedulePaint],
+    [pointHit, reviewActions, setSelection],
   );
   const cancelPointer = useCallback(() => {
     dragRef.current = null;
@@ -642,6 +671,57 @@ export function DiffSurface(props: DiffSurfaceProps) {
       event.preventDefault();
     },
     [model],
+  );
+  const prepareContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      const hit = pointHitAt(event.clientX, event.clientY);
+      setContextHit(hit?.kind === "cell" ? hit : null);
+    },
+    [pointHitAt],
+  );
+  const writeSourceText = useCallback(
+    (text: string) => {
+      void copyToClipboard(text)
+        .then(() => toast.copied(t("common.states.copied")))
+        .catch(() => toast.error(t("common.errors.unableToCopy")));
+    },
+    [t, toast],
+  );
+  const copySelectedSource = useCallback(() => {
+    const currentModel = modelRef.current;
+    const selection = selectionRef.current;
+    if (currentModel && selection) writeSourceText(selectedSourceText(currentModel, selection));
+  }, [writeSourceText]);
+  const copyContextLine = useCallback(() => {
+    const currentModel = modelRef.current;
+    if (!currentModel || !contextHit) return;
+    const selection = selectCellSource(currentModel, contextHit.position);
+    writeSourceText(selectedSourceText(currentModel, selection));
+  }, [contextHit, writeSourceText]);
+  const selectAll = useCallback(() => {
+    const currentModel = modelRef.current;
+    if (currentModel) setSelection(selectAllSource(currentModel));
+  }, [setSelection]);
+  const keyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest('input, textarea, [contenteditable="true"]')
+      ) {
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+        event.preventDefault();
+        selectAll();
+        return;
+      }
+      if (event.key === "Escape" && selectionRef.current) {
+        event.preventDefault();
+        setSelection(null);
+      }
+    },
+    [selectAll, setSelection],
   );
   const rootStyle = useMemo<React.CSSProperties>(
     () => ({ ...ROOT_STYLE, background: props.palette.surface }),
@@ -672,7 +752,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
     [desiredTypography, loadedTypography],
   );
 
-  return (
+  const surface = (
     <div data-testid="git-diff-canvas-root" ref={rootRef} style={rootStyle}>
       <div
         ref={scrollRef}
@@ -685,7 +765,9 @@ export function DiffSurface(props: DiffSurfaceProps) {
         onPointerCancel={cancelPointer}
         onLostPointerCapture={cancelPointer}
         onPointerLeave={pointerLeave}
+        onContextMenu={prepareContextMenu}
         onCopy={copy}
+        onKeyDown={keyDown}
         style={SCROLL_STYLE}
       >
         <div style={contentStyle} onMouseDown={preventDocumentMouseSelection}>
@@ -751,6 +833,34 @@ export function DiffSurface(props: DiffSurfaceProps) {
         <InlineReviewAddButton onPress={addHoveredComment} style={affordanceStyle} />
       ) : null}
     </div>
+  );
+
+  return (
+    <ContextMenu>
+      <ContextMenuTrigger contextOnly style={CONTEXT_TRIGGER_STYLE}>
+        {surface}
+      </ContextMenuTrigger>
+      <ContextMenuContent align="start" minWidth={180} testID="diff-source-context-menu">
+        <ContextMenuItem
+          disabled={!hasSelection}
+          onSelect={copySelectedSource}
+          testID="diff-source-copy-selection"
+        >
+          {t("common.actions.copy")}
+        </ContextMenuItem>
+        <ContextMenuItem
+          disabled={!contextHit}
+          onSelect={copyContextLine}
+          testID="diff-source-copy-line"
+        >
+          {t("common.actions.copyLine")}
+        </ContextMenuItem>
+        <ContextMenuSeparator />
+        <ContextMenuItem onSelect={selectAll} testID="diff-source-select-all">
+          {t("common.actions.selectAll")}
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -882,6 +992,7 @@ const ROOT_STYLE: React.CSSProperties = {
   minHeight: 0,
   overflow: "hidden",
 };
+const CONTEXT_TRIGGER_STYLE: ViewStyle = { flex: 1, minHeight: 0 };
 const SCROLL_STYLE: React.CSSProperties = {
   position: "absolute",
   inset: 0,

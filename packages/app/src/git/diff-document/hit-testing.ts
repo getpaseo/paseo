@@ -105,6 +105,46 @@ export function selectedSourceText(model: DiffDocumentModel, selection: DiffSele
     .join("\n");
 }
 
+export function selectCellSource(
+  model: DiffDocumentModel,
+  position: DiffCharacterPosition,
+): DiffSelection {
+  const row = model.rows[position.rowIndex];
+  const cell = row?.kind === "line" ? row.cells[position.cellIndex] : null;
+  const end = cell?.content.length ?? position.sourceOffset;
+  return {
+    anchor: { ...position, sourceOffset: 0 },
+    focus: { ...position, sourceOffset: end },
+  };
+}
+
+export function selectAllSource(model: DiffDocumentModel): DiffSelection | null {
+  let first: DiffCharacterPosition | null = null;
+  let last: DiffCharacterPosition | null = null;
+  for (const row of model.rows) {
+    if (row.kind !== "line") continue;
+    row.cells.forEach((cell, cellIndex) => {
+      if (!cell) return;
+      const side = cell.reviewTarget?.side ?? (cellIndex === 0 ? "old" : "new");
+      first ??= {
+        fileIndex: row.fileIndex,
+        rowIndex: row.index,
+        cellIndex,
+        side,
+        sourceOffset: 0,
+      };
+      last = {
+        fileIndex: row.fileIndex,
+        rowIndex: row.index,
+        cellIndex,
+        side,
+        sourceOffset: cell.content.length,
+      };
+    });
+  }
+  return first && last ? { anchor: first, focus: last } : null;
+}
+
 function comparePosition(left: DiffCharacterPosition, right: DiffCharacterPosition): number {
   return (
     left.rowIndex - right.rowIndex ||

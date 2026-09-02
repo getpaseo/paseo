@@ -10,10 +10,12 @@ export const ru: TranslationResources = {
       cancel: "Отмена",
       close: "Закрыть",
       copy: "Копировать",
+      copyLine: "Копировать строку",
       dismiss: "Отклонить",
       retry: "Повторить",
       search: "Поиск",
       select: "Выбрать",
+      selectAll: "Выбрать все",
     },
     placeholders: {
       search: "Поиск...",
@@ -33,6 +35,7 @@ export const ru: TranslationResources = {
     errors: {
       error: "Ошибка",
       unableToSave: "Не удалось сохранить",
+      unableToCopy: "Не удалось скопировать",
       nameRequired: "Требуется имя",
       daemonUnavailable: "Daemon недоступен",
       daemonClientUnavailable: "Daemon клиента недоступен",

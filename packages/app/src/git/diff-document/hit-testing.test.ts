@@ -4,6 +4,8 @@ import {
   characterOffsetAtPoint,
   hitTestDiffDocument,
   orderedSelection,
+  selectAllSource,
+  selectCellSource,
   selectedSourceText,
 } from "./hit-testing";
 import { buildDiffDocumentModel } from "./model";
@@ -103,6 +105,21 @@ describe("diff hit testing", () => {
         horizontalOffset: 0,
       }),
     ).toBeNull();
+  });
+
+  it("selects one source line for context-menu copy", () => {
+    const model = buildModel("copy this", { wrapLines: false });
+    const cell = changedCell(model);
+
+    expect(selectedSourceText(model, selectCellSource(model, position(model, cell, 4)))).toBe(
+      "copy this",
+    );
+  });
+
+  it("selects all diff source in document order", () => {
+    const model = buildModel("first", { wrapLines: false });
+
+    expect(selectedSourceText(model, selectAllSource(model)!)).toBe("@@ -1,0 +1,2 @@\nfirst\ntail");
   });
 });
 
