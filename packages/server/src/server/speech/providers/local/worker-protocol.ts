@@ -85,6 +85,8 @@ export type LocalSpeechWorkerResponse =
     };
 
 export type LocalSpeechWorkerEvent =
+  | { type: "tts.start"; requestId: string; format: string }
+  | { type: "tts.chunk"; requestId: string; audio: LocalSpeechWorkerBytes }
   | {
       type: "session.committed";
       sessionId: string;
@@ -116,7 +118,6 @@ export interface LocalSpeechCreateSessionResult {
 }
 
 export interface LocalSpeechTtsResult {
-  audio: LocalSpeechWorkerBytes;
   format: string;
 }
 

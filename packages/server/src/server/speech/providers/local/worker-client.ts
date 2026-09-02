@@ -1,7 +1,7 @@
 import { fork } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { Readable } from "node:stream";
+import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 import type pino from "pino";
 
@@ -17,7 +17,6 @@ import type {
   LocalSpeechCreateSessionResult,
   LocalSpeechSessionKind,
   LocalSpeechTranscriptionResult,
-  LocalSpeechTtsResult,
   LocalSpeechWorkerConfig,
   LocalSpeechWorkerRequest,
   LocalSpeechWorkerResponse,
@@ -56,6 +55,8 @@ interface PendingRequest {
   type: LocalSpeechWorkerRequest["type"];
   summary: Record<string, unknown>;
   startedAt: number;
+  /** Set after tts.start arrives; subsequent tts.chunk messages push to this stream. */
+  passThrough?: PassThrough;
 }
 
 interface LocalSpeechWorkerClientOptions {
@@ -199,16 +200,12 @@ export class LocalSpeechWorkerClient {
     this.forkWorker = options.forkWorker ?? forkLocalSpeechWorker;
   }
 
-  async synthesizeSpeech(text: string): Promise<SpeechStreamResult> {
-    const result = await this.sendRequest<LocalSpeechTtsResult>({
+  synthesizeSpeech(text: string): Promise<SpeechStreamResult> {
+    return this.sendRequest<SpeechStreamResult>({
       type: "tts.synthesize",
       config: this.config,
       text,
     });
-    return {
-      stream: Readable.from([workerBytesToBuffer(result.audio)]),
-      format: result.format,
-    };
   }
 
   transcribeVoice(audio: Buffer, format: string): Promise<LocalSpeechTranscriptionResult> {
@@ -320,10 +317,16 @@ export class LocalSpeechWorkerClient {
 
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
+        const pending = this.pendingRequests.get(requestId);
         this.pendingRequests.delete(requestId);
         this.inFlightRequests = Math.max(0, this.inFlightRequests - 1);
         this.scheduleIdleShutdownIfReady();
-        reject(new Error(`Local speech worker request timed out: ${input.type}`));
+        const timeoutError = new Error(`Local speech worker request timed out: ${input.type}`);
+        if (pending?.passThrough) {
+          pending.passThrough.destroy(timeoutError);
+        } else {
+          reject(timeoutError);
+        }
       }, this.requestTimeoutMs);
       this.pendingRequests.set(requestId, {
         resolve: (value) => resolve(value as T),
@@ -406,10 +409,36 @@ export class LocalSpeechWorkerClient {
       this.inFlightRequests = Math.max(0, this.inFlightRequests - 1);
       this.scheduleIdleShutdownIfReady();
       if (message.ok) {
-        pending.resolve(message.result);
+        if (pending.passThrough) {
+          // Promise was already resolved at tts.start; just close the stream.
+          pending.passThrough.end();
+        } else {
+          pending.resolve(message.result);
+        }
       } else {
-        pending.reject(new Error(message.error));
+        if (pending.passThrough) {
+          pending.passThrough.destroy(new Error(message.error));
+        } else {
+          pending.reject(new Error(message.error));
+        }
       }
+      return;
+    }
+
+    if (message.type === "tts.start") {
+      const pending = this.pendingRequests.get(message.requestId);
+      if (!pending) {
+        return;
+      }
+      const passThrough = new PassThrough();
+      pending.passThrough = passThrough;
+      pending.resolve({ stream: passThrough, format: message.format } satisfies SpeechStreamResult);
+      return;
+    }
+
+    if (message.type === "tts.chunk") {
+      const pending = this.pendingRequests.get(message.requestId);
+      pending?.passThrough?.push(workerBytesToBuffer(message.audio));
       return;
     }
 
@@ -542,7 +571,11 @@ export class LocalSpeechWorkerClient {
   private rejectAllPending(error: Error): void {
     for (const [requestId, pending] of this.pendingRequests) {
       clearTimeout(pending.timeout);
-      pending.reject(error);
+      if (pending.passThrough) {
+        pending.passThrough.destroy(error);
+      } else {
+        pending.reject(error);
+      }
       this.pendingRequests.delete(requestId);
     }
   }
