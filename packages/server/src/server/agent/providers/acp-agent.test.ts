@@ -86,7 +86,10 @@ describe("buildACPClientCapabilities", () => {
 
 interface ACPSessionInternals {
   sessionId: string | null;
-  connection: { prompt: (...args: unknown[]) => Promise<PromptResponse> };
+  connection: {
+    prompt: (...args: unknown[]) => Promise<PromptResponse>;
+    cancel?: (...args: unknown[]) => Promise<void>;
+  };
   activeForegroundTurnId: string | null;
   configOptions: SessionConfigOption[];
   translateSessionUpdate(update: SessionUpdate): AgentStreamEvent[];
@@ -2794,6 +2797,228 @@ describe("ACPAgentSession", () => {
       turnId,
     });
     expect(asInternals<ACPSessionInternals>(session).activeForegroundTurnId).toBeNull();
+  });
+
+  test("interrupt cancels an unanswered permission turn so a new prompt can start", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let resolveInterruptedPrompt!: (response: PromptResponse) => void;
+    let resolveReplacementPrompt!: (response: PromptResponse) => void;
+    const prompt = vi
+      .fn<(...args: unknown[]) => Promise<PromptResponse>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolveInterruptedPrompt = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolveReplacementPrompt = resolve;
+          }),
+      );
+    const cancel = vi.fn(async () => undefined);
+
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt, cancel };
+    session.subscribe((event) => events.push(event));
+
+    const { turnId: interruptedTurnId } = await session.startTurn("first prompt");
+    const permission = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "question-1",
+        title: "Choose an option",
+        kind: "other",
+        status: "pending",
+      },
+      options: [{ optionId: "option-1", name: "Option 1", kind: "allow_once" }],
+    });
+
+    await session.interrupt();
+
+    await expect(permission).resolves.toEqual({ outcome: { outcome: "cancelled" } });
+    expect(cancel).toHaveBeenCalledWith({ sessionId: "session-1" });
+    expect(events).toContainEqual({
+      type: "turn_canceled",
+      provider: "claude-acp",
+      reason: "Interrupted",
+      turnId: interruptedTurnId,
+    });
+
+    const { turnId: replacementTurnId } = await session.startTurn("replacement prompt");
+    resolveInterruptedPrompt({ stopReason: "end_turn" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(internals.activeForegroundTurnId).toBe(replacementTurnId);
+    expect(events.filter((event) => event.type === "turn_canceled")).toHaveLength(1);
+
+    resolveReplacementPrompt({ stopReason: "end_turn" });
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({
+        type: "turn_completed",
+        provider: "claude-acp",
+        usage: undefined,
+        turnId: replacementTurnId,
+      });
+    });
+  });
+
+  test("concurrent interrupts share one cancel request for the active turn", async () => {
+    const session = createSession();
+    let resolveCancel!: () => void;
+    const cancel = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt, cancel };
+
+    await session.startTurn("first prompt");
+    const firstInterrupt = session.interrupt();
+    const secondInterrupt = session.interrupt();
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    resolveCancel();
+    await Promise.all([firstInterrupt, secondInterrupt]);
+
+    await expect(session.startTurn("replacement prompt")).resolves.toEqual({
+      turnId: expect.any(String),
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  test("permission denial and interrupt share one cancel request for the active turn", async () => {
+    const session = createSession();
+    let resolveCancel!: () => void;
+    const cancel = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt, cancel };
+
+    await session.startTurn("first prompt");
+    const permissionResult = session.requestPermission({
+      sessionId: "session-1",
+      toolCall: {
+        toolCallId: "tool-1",
+        title: "Run command",
+        kind: "execute",
+        status: "pending",
+      },
+      options: [{ optionId: "deny", name: "Deny", kind: "reject_once" }],
+    });
+    const pendingPermissions = session.getPendingPermissions();
+    expect(pendingPermissions).toHaveLength(1);
+
+    const deny = session.respondToPermission(pendingPermissions[0]!.id, {
+      behavior: "deny",
+      interrupt: true,
+    });
+    const interrupt = session.interrupt();
+
+    expect(cancel).toHaveBeenCalledTimes(1);
+    resolveCancel();
+    await Promise.all([deny, interrupt]);
+    await expect(permissionResult).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "deny" },
+    });
+
+    await expect(session.startTurn("replacement prompt")).resolves.toEqual({
+      turnId: expect.any(String),
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+  });
+
+  test("interrupted tool snapshots are not canceled again by a later turn", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    const prompt = vi.fn(() => new Promise<PromptResponse>(() => {}));
+    const cancel = vi.fn(async () => undefined);
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt, cancel };
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("first prompt");
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call",
+        toolCallId: "tool-1",
+        title: "Run command",
+        kind: "execute",
+        status: "in_progress",
+      } as SessionUpdate,
+    });
+    await session.interrupt();
+    await session.sessionUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tool-1",
+        status: "completed",
+      } as SessionUpdate,
+    });
+
+    await session.startTurn("replacement prompt");
+    await session.interrupt();
+
+    const toolStatuses = events.flatMap((event) =>
+      event.type === "timeline" && event.item.type === "tool_call" && event.item.callId === "tool-1"
+        ? [event.item.status]
+        : [],
+    );
+    expect(toolStatuses).toEqual(["running", "canceled"]);
+  });
+
+  test("a late failure from an interrupted prompt does not terminate its replacement", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    let rejectInterruptedPrompt!: (error: Error) => void;
+    let resolveReplacementPrompt!: (response: PromptResponse) => void;
+    const prompt = vi
+      .fn<(...args: unknown[]) => Promise<PromptResponse>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<PromptResponse>((_resolve, reject) => {
+            rejectInterruptedPrompt = reject;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<PromptResponse>((resolve) => {
+            resolveReplacementPrompt = resolve;
+          }),
+      );
+    const internals = asInternals<ACPSessionInternals>(session);
+    internals.sessionId = "session-1";
+    internals.connection = { prompt, cancel: vi.fn(async () => undefined) };
+    session.subscribe((event) => events.push(event));
+
+    await session.startTurn("first prompt");
+    await session.interrupt();
+    const { turnId: replacementTurnId } = await session.startTurn("replacement prompt");
+
+    rejectInterruptedPrompt(new Error("late cancellation failure"));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(internals.activeForegroundTurnId).toBe(replacementTurnId);
+    expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(0);
+
+    resolveReplacementPrompt({ stopReason: "end_turn" });
+    await vi.waitFor(() => expect(internals.activeForegroundTurnId).toBeNull());
   });
 
   test("startTurn emits the submitted user message even when ACP does not echo it", async () => {
