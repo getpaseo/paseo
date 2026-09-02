@@ -554,7 +554,7 @@ describe("script-status-projection", () => {
     }
   });
 
-  it("createScriptStatusEmitter overlays health onto the projected workspace script list", async () => {
+  it("projects health and requests a workspace snapshot update", async () => {
     const workspaceId = "workspace-emitter";
     const workspace = createWorkspaceRepo({
       paseoConfig: {
@@ -583,6 +583,7 @@ describe("script-status-projection", () => {
     });
 
     const session = { emit: vi.fn() };
+    const emitWorkspaceSnapshot = vi.fn(async () => {});
     const emitUpdate = createScriptStatusEmitter({
       sessions: () => [session],
       serviceProxy: routeStore,
@@ -592,6 +593,7 @@ describe("script-status-projection", () => {
         requestedWorkspaceId === "workspace-emitter"
           ? { workspaceDirectory: workspace.repoDir }
           : null,
+      emitWorkspaceSnapshot,
       logger: createTestLogger(),
     });
 
@@ -604,39 +606,40 @@ describe("script-status-projection", () => {
           health: "healthy",
         },
       ]);
-      await Promise.resolve();
-
-      expect(session.emit).toHaveBeenCalledWith({
-        type: "script_status_update",
-        payload: {
-          workspaceId,
-          scripts: [
-            {
-              scriptName: "api",
-              type: "service",
-              hostname: "api--repo.localhost",
-              port: 3001,
-              localProxyUrl: "http://api--repo.localhost:6767",
-              publicProxyUrl: null,
-              proxyUrl: "http://api--repo.localhost:6767",
-              lifecycle: "running",
-              health: "healthy",
-              exitCode: null,
-              terminalId: "term-api",
-            },
-            {
-              scriptName: "typecheck",
-              type: "script",
-              hostname: "typecheck",
-              port: null,
-              proxyUrl: null,
-              lifecycle: "stopped",
-              health: null,
-              exitCode: null,
-              terminalId: null,
-            },
-          ],
-        },
+      await vi.waitFor(() => {
+        expect(session.emit).toHaveBeenCalledWith({
+          type: "script_status_update",
+          payload: {
+            workspaceId,
+            scripts: [
+              {
+                scriptName: "api",
+                type: "service",
+                hostname: "api--repo.localhost",
+                port: 3001,
+                localProxyUrl: "http://api--repo.localhost:6767",
+                publicProxyUrl: null,
+                proxyUrl: "http://api--repo.localhost:6767",
+                lifecycle: "running",
+                health: "healthy",
+                exitCode: null,
+                terminalId: "term-api",
+              },
+              {
+                scriptName: "typecheck",
+                type: "script",
+                hostname: "typecheck",
+                port: null,
+                proxyUrl: null,
+                lifecycle: "stopped",
+                health: null,
+                exitCode: null,
+                terminalId: null,
+              },
+            ],
+          },
+        });
+        expect(emitWorkspaceSnapshot).toHaveBeenCalledWith(workspaceId);
       });
     } finally {
       workspace.cleanup();
