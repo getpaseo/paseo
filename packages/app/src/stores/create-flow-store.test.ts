@@ -3,7 +3,7 @@ import { isActiveCreateFlowForDraft, useCreateFlowStore } from "./create-flow-st
 
 describe("create-flow-store", () => {
   beforeEach(() => {
-    useCreateFlowStore.setState({ pendingByDraftId: {} });
+    useCreateFlowStore.setState({ pendingByDraftId: {}, createInFlightByWorkspace: {} });
   });
 
   it("tracks lifecycle transitions explicitly", () => {
@@ -123,5 +123,50 @@ describe("create-flow-store", () => {
         draftId: "draft-1",
       }),
     ).toBe(false);
+  });
+
+  it("deduplicates in-flight creates per workspace", () => {
+    const store = useCreateFlowStore.getState();
+
+    expect(
+      store.tryBeginCreate({ serverId: "server-1", workspaceId: "wks-1", clientMessageId: "msg-1" }),
+    ).toBe(true);
+    expect(
+      store.tryBeginCreate({ serverId: "server-1", workspaceId: "wks-1", clientMessageId: "msg-2" }),
+    ).toBe(false);
+    expect(
+      store.tryBeginCreate({ serverId: "server-2", workspaceId: "wks-1", clientMessageId: "msg-3" }),
+    ).toBe(true);
+    expect(
+      store.tryBeginCreate({ serverId: "server-1", workspaceId: "wks-2", clientMessageId: "msg-4" }),
+    ).toBe(true);
+
+    useCreateFlowStore.getState().endCreate({ serverId: "server-1", workspaceId: "wks-1" });
+    expect(
+      useCreateFlowStore.getState().tryBeginCreate({
+        serverId: "server-1",
+        workspaceId: "wks-1",
+        clientMessageId: "msg-5",
+      }),
+    ).toBe(true);
+  });
+
+  it("does not guard creates without a workspace id", () => {
+    const store = useCreateFlowStore.getState();
+
+    expect(
+      store.tryBeginCreate({ serverId: "server-1", workspaceId: null, clientMessageId: "msg-1" }),
+    ).toBe(true);
+    expect(
+      store.tryBeginCreate({
+        serverId: "server-1",
+        workspaceId: undefined,
+        clientMessageId: "msg-2",
+      }),
+    ).toBe(true);
+
+    useCreateFlowStore.getState().endCreate({ serverId: "server-1", workspaceId: null });
+    useCreateFlowStore.getState().endCreate({ serverId: "server-1", workspaceId: undefined });
+    expect(useCreateFlowStore.getState().createInFlightByWorkspace).toEqual({});
   });
 });

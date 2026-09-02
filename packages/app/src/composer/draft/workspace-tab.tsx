@@ -474,6 +474,7 @@ export function WorkspaceDraftAgentTab({
   } = useDraftAgentCreateFlow<Agent, AgentSnapshotPayload>({
     draftId,
     getPendingServerId: () => serverId,
+    getPendingWorkspaceId: () => workspaceFields?.id ?? null,
     initialAttempt: initialCreateAttempt,
     allowEmptyText: allowsEmptyAutoSubmit,
     validateBeforeSubmit: ({ text, attachments }) => {

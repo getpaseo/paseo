@@ -10,7 +10,7 @@ import { useDraftAgentCreateFlow, type DraftCreateAttempt } from "./create-flow"
 
 describe("useDraftAgentCreateFlow", () => {
   beforeEach(() => {
-    useCreateFlowStore.setState({ pendingByDraftId: {} });
+    useCreateFlowStore.setState({ pendingByDraftId: {}, createInFlightByWorkspace: {} });
   });
 
   it("renders a prepared new-workspace submission before continuing it", async () => {
@@ -145,5 +145,115 @@ describe("useDraftAgentCreateFlow", () => {
       cwd: "/repo",
     });
     expect(onCreateSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows only one create in flight per workspace", async () => {
+    // Mirrors a double-submit or two draft tabs consuming the same pending
+    // submission: both attempts target the same workspace, so only the first
+    // may proceed.
+    useCreateFlowStore.setState({
+      pendingByDraftId: {
+        "draft-a": {
+          draftId: "draft-a",
+          serverId: "server-1",
+          workspaceId: "wks-1",
+          agentId: null,
+          clientMessageId: "msg-a",
+          text: "hi",
+          timestamp: Date.now(),
+          lifecycle: "active",
+        },
+        "draft-b": {
+          draftId: "draft-b",
+          serverId: "server-1",
+          workspaceId: "wks-1",
+          agentId: null,
+          clientMessageId: "msg-b",
+          text: "hi",
+          timestamp: Date.now(),
+          lifecycle: "active",
+        },
+      },
+    });
+
+    const createRequestA = vi.fn(async () => ({ agentId: "agent-1", result: { id: "agent-1" } }));
+    const createRequestB = vi.fn(async () => ({ agentId: "agent-2", result: { id: "agent-2" } }));
+    const attemptA: DraftCreateAttempt = {
+      clientMessageId: "msg-a",
+      text: "hi",
+      timestamp: new Date("2026-05-25T00:00:00.000Z"),
+    };
+    const attemptB: DraftCreateAttempt = {
+      clientMessageId: "msg-b",
+      text: "hi",
+      timestamp: new Date("2026-05-25T00:00:00.000Z"),
+    };
+
+    const { result: hookA } = renderHook(() =>
+      useDraftAgentCreateFlow({
+        draftId: "draft-a",
+        getPendingServerId: () => "server-1",
+        initialAttempt: attemptA,
+        buildDraftAgent: (currentAttempt) => ({ currentAttempt }),
+        createRequest: createRequestA,
+        onCreateSuccess: vi.fn(),
+      }),
+    );
+    const { result: hookB } = renderHook(() =>
+      useDraftAgentCreateFlow({
+        draftId: "draft-b",
+        getPendingServerId: () => "server-1",
+        initialAttempt: attemptB,
+        buildDraftAgent: (currentAttempt) => ({ currentAttempt }),
+        createRequest: createRequestB,
+        onCreateSuccess: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      await Promise.allSettled([
+        hookA.current.continueCreateFromAttempt({ attempt: attemptA, cwd: "/repo" }),
+        hookB.current.continueCreateFromAttempt({ attempt: attemptB, cwd: "/repo" }),
+      ]);
+    });
+
+    expect(createRequestA).toHaveBeenCalledTimes(1);
+    expect(createRequestB).not.toHaveBeenCalled();
+  });
+
+  it("deduplicates handleCreateFromInput submissions for the same workspace", async () => {
+    const createRequestA = vi.fn(async () => ({ agentId: "agent-1", result: { id: "agent-1" } }));
+    const createRequestB = vi.fn(async () => ({ agentId: "agent-2", result: { id: "agent-2" } }));
+
+    const { result: hookA } = renderHook(() =>
+      useDraftAgentCreateFlow({
+        draftId: "draft-a",
+        getPendingServerId: () => "server-1",
+        getPendingWorkspaceId: () => "wks-1",
+        buildDraftAgent: (currentAttempt) => ({ currentAttempt }),
+        createRequest: createRequestA,
+        onCreateSuccess: vi.fn(),
+      }),
+    );
+    const { result: hookB } = renderHook(() =>
+      useDraftAgentCreateFlow({
+        draftId: "draft-b",
+        getPendingServerId: () => "server-1",
+        getPendingWorkspaceId: () => "wks-1",
+        buildDraftAgent: (currentAttempt) => ({ currentAttempt }),
+        createRequest: createRequestB,
+        onCreateSuccess: vi.fn(),
+      }),
+    );
+
+    await act(async () => {
+      await Promise.allSettled([
+        hookA.current.handleCreateFromInput({ text: "hi", attachments: [], cwd: "/repo" }),
+        hookB.current.handleCreateFromInput({ text: "hi", attachments: [], cwd: "/repo" }),
+      ]);
+    });
+
+    expect(createRequestA).toHaveBeenCalledTimes(1);
+    expect(createRequestB).not.toHaveBeenCalled();
   });
 });
