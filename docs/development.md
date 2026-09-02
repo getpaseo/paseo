@@ -556,12 +556,11 @@ npm run cli -- daemon status         # Check daemon status
 npm run cli -- clone owner/repo --dir ~/workspace # Clone GitHub repo and register project
 ```
 
-Use the global `--host` option to point the CLI at a different daemon. The
-existing command-local position remains supported:
+Use the global `--host` option to point the CLI at a different daemon:
 
 ```bash
 npm run cli -- --host localhost:7777 ls -a
-npm run cli -- ls -a --host ssh://user@host
+npm run cli -- --host ssh://user@host ls -a
 ```
 
 Set `PASEO_HOST` to use the same target across invocations. An explicit

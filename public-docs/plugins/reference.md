@@ -901,7 +901,7 @@ CLI:
 ```bash
 paseo plugin logs my-plugin
 paseo plugin logs my-plugin --json
-paseo plugin logs my-plugin --host <url>
+paseo --host <url> plugin logs my-plugin
 ```
 
 The command returns a snapshot rather than following live output. Refresh the settings view or run
@@ -1025,11 +1025,11 @@ paseo plugin enable my-plugin
 paseo plugin remove my-plugin
 ```
 
-Pass `--host <url>` to management commands when the target is not the CLI's default daemon. `remove`
+Put `--host <url>` before a management command when the target is not the CLI's default daemon. `remove`
 never deletes a directory source; it deletes the managed checkout for a Git source. The install-time
 `--id` is the runtime ID and allows the same directory or repository to be installed more than once.
 
-> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Server code and Git preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With `--host`, commands run on the remote daemon host.
+> **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Server code and Git preparation commands run unsandboxed with the daemon user's access on the daemon host; client contributions run inside Paseo. Dependencies and future updates are part of that decision. With the global `--host` option, commands run on the remote daemon host.
 
 An existing directory wins over `owner/repository` GitHub shorthand. Append `:relative/path` when
 the plugin lives below the repository root. Omit `--ref` to track the default branch. Explicit
@@ -1054,7 +1054,7 @@ from the staged plugin directory after resolving the exact commit and manifest. 
 package manager or commands from lockfiles. Install and update both run `build` before validation,
 compilation, activation, or replacement. A failing command reports its output, discards the
 candidate, and leaves the installed/running version intact. The daemon log records each command and
-output; with `--host`, execution is on that daemon host.
+output; with the global `--host` option, execution is on that daemon host.
 
 Run `npm run typecheck` before install or reload. Never edit the daemon config directly.
 
