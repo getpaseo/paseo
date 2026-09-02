@@ -115,4 +115,42 @@ describe("establishOmpProtocol", () => {
     harness.emitReady(V2_READY);
     await expect(negotiation).rejects.toThrow("OMP did not accept RPC protocol v2");
   });
+
+  it("parses activeTurnSteering from a v1-only ready frame", async () => {
+    const harness = transportHarness();
+    const negotiation = establishOmpProtocol(harness.transport, pino({ level: "silent" }));
+    harness.emitReady({ type: "ready", features: { activeTurnSteering: 1 } });
+    await expect(negotiation).resolves.toEqual({ features: { activeTurnSteering: true } });
+    expect(harness.requests).toEqual([]);
+  });
+
+  it("parses activeTurnSteering independently of v2 negotiation", async () => {
+    const harness = transportHarness();
+    const negotiation = establishOmpProtocol(harness.transport, pino({ level: "silent" }));
+    harness.emitReady({ ...V2_READY, features: { activeTurnSteering: 1 } });
+    await expect(negotiation).resolves.toEqual({ features: { activeTurnSteering: true } });
+    expect(harness.requests).toEqual([
+      {
+        command: { type: "negotiate_protocol", protocolVersion: 2 },
+        timeoutMs: 30_000,
+      },
+    ]);
+  });
+
+  it("treats missing or malformed steering features as unavailable", async () => {
+    const readyFrames: Record<string, unknown>[] = [
+      { type: "ready" },
+      { type: "ready", features: "steering" },
+      { type: "ready", features: [1] },
+      { type: "ready", features: { activeTurnSteering: true } },
+      { type: "ready", features: { activeTurnSteering: "1" } },
+      { type: "ready", features: { activeTurnSteering: 2 } },
+    ];
+    for (const ready of readyFrames) {
+      const harness = transportHarness();
+      const negotiation = establishOmpProtocol(harness.transport, pino({ level: "silent" }));
+      harness.emitReady(ready);
+      await expect(negotiation).resolves.toEqual({ features: { activeTurnSteering: false } });
+    }
+  });
 });

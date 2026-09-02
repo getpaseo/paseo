@@ -541,6 +541,14 @@ export const OmpRpcCommandSchema = z.discriminatedUnion("type", [
   z.object({ ...OmpCommandBase, type: z.literal("get_branch_messages") }),
   z.object({
     ...OmpCommandBase,
+    type: z.literal("steer"),
+    message: z.string(),
+    images: z.array(OmpImageContentSchema).optional(),
+    activeTurnOnly: z.literal(true),
+  }),
+  z.object({ ...OmpCommandBase, type: z.literal("clear_queue"), forInterrupt: z.literal(true) }),
+  z.object({
+    ...OmpCommandBase,
     type: z.literal("handoff"),
     customInstructions: z.string().optional(),
   }),
@@ -550,6 +558,7 @@ export const OmpPromptAckSchema = z
   .object({ agentInvoked: z.boolean().optional() })
   .passthrough()
   .optional();
+export const OmpSteerResultSchema = z.object({ accepted: z.boolean() }).passthrough();
 export const OmpMessagesResultSchema = z
   .object({ messages: z.array(OmpAgentMessageSchema).optional() })
   .passthrough();

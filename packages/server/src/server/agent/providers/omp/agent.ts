@@ -34,6 +34,8 @@ import {
   type ListImportableSessionsOptions,
   type ProviderCatalog,
   type ProviderRefreshContext,
+  type SteerActiveTurnOptions,
+  type SteerResult,
   type ToolCallDetail,
 } from "../../agent-sdk-types.js";
 import type { PaseoToolCatalog } from "../../tools/types.js";
@@ -475,6 +477,13 @@ function isOmpRequestAbortError(error: unknown): boolean {
   return /\brequest was aborted\b|\babort(ed)?\b/i.test(toDiagnosticErrorMessage(error));
 }
 
+interface OmpExpectedUserEcho {
+  /** Exact echo text for steers; null for the foreground prompt, whose text
+   * OMP may rewrite via slash/template expansion before echoing. */
+  text: string | null;
+  clientMessageId: string | null;
+}
+
 function resolveThinkingOptionId(
   cachedThinkingOptionId: string | null,
   sessionThinkingLevel: OmpThinkingLevel | undefined,
@@ -877,6 +886,11 @@ export class OmpAgentSession implements AgentSession {
   private closed = false;
   private live: boolean;
   private readonly emittedUserMessageIds = new Set<string>();
+  // Ordered expectations for user message_end echoes: the foreground prompt
+  // first, then each provisionally admitted steer. Claimed and consumed in
+  // FIFO order; unmatched or external user rows carry no Paseo client ID.
+  private readonly expectedUserEchoes: OmpExpectedUserEcho[] = [];
+  private readonly claimedUserEchoes = new Set<OmpExpectedUserEcho>();
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -965,6 +979,13 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.activePromptRequestId = null;
+    this.clearExpectedUserEchoes();
+    // Register the foreground echo expectation before starting the native
+    // prompt request so its echo can never match a steer registered later.
+    this.expectedUserEchoes.push({
+      text: null,
+      clientMessageId: options?.clientMessageId ?? null,
+    });
     this.clearNoTurnBuffers();
     this.activeNoTurnPromptText = payload.text;
     this.usagePoller.startTurn();
@@ -1000,6 +1021,7 @@ export class OmpAgentSession implements AgentSession {
         this.activeAssistantMessageId = null;
         this.activeTurnTerminalAssistantMessage = null;
         this.clearNoTurnBuffers();
+        this.clearExpectedUserEchoes();
         if (isOmpRequestAbortError(error)) {
           this.emit({
             type: "turn_canceled",
@@ -1019,6 +1041,107 @@ export class OmpAgentSession implements AgentSession {
     })();
 
     return { turnId };
+  }
+
+  async steerActiveTurn(
+    prompt: AgentPromptInput,
+    options: SteerActiveTurnOptions,
+  ): Promise<SteerResult> {
+    if (this.closed || this.activeTurnId !== options.expectedTurnId) {
+      return { status: "unavailable" };
+    }
+    // Old OMP binaries do not advertise `features.activeTurnSteering` on their
+    // ready frame; ordinary steering reports unavailable without sending a
+    // steer so the manager keeps the interrupt-and-replace fallback.
+    if (!this.runtimeSession.capabilities.activeTurnSteering) {
+      return { status: "unavailable" };
+    }
+    const payload = convertPromptInput(prompt, { model: this.state.model });
+    if (this.parseSlashCommandInput(payload.text)) {
+      return { status: "unavailable" };
+    }
+    // Register the correlation before awaiting: OMP can echo the steered user
+    // message_end before its RPC response arrives, and that echo must not
+    // inherit an earlier submission's client message ID.
+    const submission: OmpExpectedUserEcho = {
+      text: payload.text,
+      clientMessageId: options.clientMessageId ?? null,
+    };
+    this.expectedUserEchoes.push(submission);
+    // A transport error leaves the steer's fate ambiguous: the error surfaces
+    // to the caller and the provisional correlation stays registered until
+    // terminal cleanup, in case OMP did read the steer.
+    const { accepted } = await this.runtimeSession.steerActiveTurn(payload.text, payload.images);
+    if (!accepted) {
+      // OMP authoritatively rejected this steer; remove exactly this entry so
+      // an identical-text steer registered later keeps its own correlation.
+      this.removeExpectedUserEcho(submission);
+      return { status: "unavailable" };
+    }
+    if (this.closed || this.activeTurnId !== options.expectedTurnId) {
+      // OMP accepted the steer but the target turn moved on locally, so its
+      // fate is ambiguous. Reporting unavailable here would make the manager
+      // interrupt-and-replace and deliver the message twice.
+      throw new Error("OMP accepted a steer for a turn that is no longer active");
+    }
+    if (options.clearPendingPermissions) {
+      await this.clearPendingPermissionsForSteer();
+    }
+    return { status: "accepted" };
+  }
+
+  private async clearPendingPermissionsForSteer(): Promise<void> {
+    const requestIds = [...this.pendingExtensionUiRequests.keys()];
+    for (const requestId of requestIds) {
+      if (!this.pendingExtensionUiRequests.has(requestId)) continue;
+      await this.respondToPermission(requestId, {
+        behavior: "deny",
+        message: "The user answered with a message instead of approving. Their message follows.",
+      });
+    }
+  }
+
+  // Claimed entries are reserved by echoes whose native-ID lookup is still in
+  // flight; a claim is committed (removed) on emission or released on a
+  // duplicate re-emission so the expectation survives for the genuine echo.
+  private claimExpectedUserEcho(text: string): OmpExpectedUserEcho | null {
+    const candidate = this.expectedUserEchoes.find((entry) => !this.claimedUserEchoes.has(entry));
+    if (!candidate) {
+      return null;
+    }
+    // A foreground expectation has no text: OMP may expand slash or template
+    // prompts before echoing the user entry, so the turn's first provider echo
+    // consumes it regardless of text. Steer expectations require exact text.
+    if (candidate.text !== null && candidate.text !== text) {
+      return null;
+    }
+    this.claimedUserEchoes.add(candidate);
+    return candidate;
+  }
+
+  private commitExpectedUserEcho(claim: OmpExpectedUserEcho | null): void {
+    if (claim) {
+      this.removeExpectedUserEcho(claim);
+    }
+  }
+
+  private releaseExpectedUserEcho(claim: OmpExpectedUserEcho | null): void {
+    if (claim) {
+      this.claimedUserEchoes.delete(claim);
+    }
+  }
+
+  private removeExpectedUserEcho(entry: OmpExpectedUserEcho): void {
+    this.claimedUserEchoes.delete(entry);
+    const index = this.expectedUserEchoes.indexOf(entry);
+    if (index >= 0) {
+      this.expectedUserEchoes.splice(index, 1);
+    }
+  }
+
+  private clearExpectedUserEchoes(): void {
+    this.expectedUserEchoes.length = 0;
+    this.claimedUserEchoes.clear();
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -1122,6 +1245,13 @@ export class OmpAgentSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     const turnId = this.activeTurnId;
+    if (this.runtimeSession.capabilities.activeTurnSteering) {
+      // OMP delivers queued steers into whatever turn reads them next, so the
+      // queue must be confirmed empty before abort. If clearing fails the
+      // interrupt fails without aborting: aborting anyway could let a queued
+      // steer resume the turn the user just stopped.
+      await this.runtimeSession.clearQueueForInterrupt();
+    }
     await this.runtimeSession.abort();
     if (turnId && this.activeTurnId === turnId) {
       this.terminalizeActiveWork();
@@ -1177,6 +1307,7 @@ export class OmpAgentSession implements AgentSession {
   private clearOmpTurnState(): void {
     clearOmpHostToolState(this.runtimeSession);
     this.subagentCardTracker.clear();
+    this.clearExpectedUserEchoes();
   }
 
   private terminalizeActiveWork(): void {
@@ -1231,6 +1362,10 @@ export class OmpAgentSession implements AgentSession {
       }
       return {
         run: async () => {
+          // Explicit commands intentionally keep the legacy fire-and-forget
+          // steer/follow_up frames: they work on every OMP binary, skip
+          // active-turn admission, and carry no echo correlation. Ordinary
+          // steering goes through steerActiveTurn instead.
           if (commandName === "steer") {
             this.runtimeSession.steer(message);
           } else {
@@ -1790,6 +1925,7 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
     this.activeTurnTerminalAssistantMessage = null;
+    this.clearExpectedUserEchoes();
     this.clearNoTurnBuffers();
     this.emit({
       type: "turn_failed",
@@ -2043,7 +2179,13 @@ export class OmpAgentSession implements AgentSession {
     }
     const nativeMessage = event.message as OmpAgentMessage & { id?: unknown; entryId?: unknown };
     const messageId = readNativeMessageId(nativeMessage);
-    const clientMessageId = this.activeClientMessageId;
+    if (messageId && this.emittedUserMessageIds.has(messageId)) {
+      // A re-emitted frame for an already-surfaced entry must not consume a
+      // pending steer correlation.
+      return;
+    }
+    const claim = this.claimExpectedUserEcho(text);
+    const clientMessageId = claim?.clientMessageId ?? null;
     const emitUserMessage = (resolvedMessageId?: string): void => {
       if (resolvedMessageId) {
         // OMP re-emits user message_end frames for entries it has already
@@ -2067,19 +2209,39 @@ export class OmpAgentSession implements AgentSession {
       });
     };
     if (messageId) {
+      this.commitExpectedUserEcho(claim);
       emitUserMessage(messageId);
       return;
     }
+    // Real OMP user message_end frames carry no id/entryId; the native ID is
+    // resolved from the branch messages. The claim is only committed once the
+    // resolution proves this frame is not a re-emission of a surfaced entry.
     void this.runtimeSession
       .getBranchMessages()
-      .then((messages) =>
-        emitUserMessage(messages.toReversed().find((message) => message.text === text)?.entryId),
-      )
+      .then((messages) => {
+        const matches = messages.filter((message) => message.text === text);
+        const unemitted = matches.filter(
+          (message) => !this.emittedUserMessageIds.has(message.entryId),
+        );
+        if (matches.length > 0 && unemitted.length === 0) {
+          // Every native entry with this text was already surfaced: OMP
+          // re-emitted a known frame. Drop it and keep the expectation for the
+          // genuine echo.
+          this.releaseExpectedUserEcho(claim);
+          return undefined;
+        }
+        // Latest unemitted match: each emission excludes its entry from the
+        // next resolution, so identical echoes take distinct native entries.
+        this.commitExpectedUserEcho(claim);
+        emitUserMessage(unemitted.at(-1)?.entryId);
+        return undefined;
+      })
       .catch((error: unknown) => {
         this.logger.debug(
           { err: error, sessionFile: this.state.sessionFile },
           "OMP native user message ID lookup failed",
         );
+        this.commitExpectedUserEcho(claim);
         emitUserMessage();
       });
   }
@@ -2132,6 +2294,7 @@ export class OmpAgentSession implements AgentSession {
     this.activeTurnTerminalAssistantMessage = null;
     this.activeTurnStarted = false;
     this.activeTurnHasUserMessage = false;
+    this.clearExpectedUserEchoes();
     this.clearNoTurnBuffers();
     const errorMessage = latestOmpErrorMessage(messages);
     if (typeof errorMessage === "string" && errorMessage.length > 0) {

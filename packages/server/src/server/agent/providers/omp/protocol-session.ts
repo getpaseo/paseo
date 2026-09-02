@@ -18,21 +18,43 @@ export interface OmpProtocolTimeouts {
   requestTimeoutMs?: number;
 }
 
+export interface OmpProtocolFeatures {
+  activeTurnSteering: boolean;
+}
+
+export interface OmpProtocolHandshake {
+  features: OmpProtocolFeatures;
+}
+
+// Feature flags ride on the ready frame itself, so they are independent of
+// whether the v2 frame transport is negotiated afterwards. A missing or
+// malformed flag means the capability is unavailable.
+function parseReadyFeatures(ready: Record<string, unknown>): OmpProtocolFeatures {
+  const features = ready.features;
+  const flags =
+    typeof features === "object" && features !== null && !Array.isArray(features)
+      ? (features as Record<string, unknown>)
+      : undefined;
+  return { activeTurnSteering: flags?.activeTurnSteering === 1 };
+}
+
 export async function establishOmpProtocol(
   transport: OmpProtocolTransport,
   logger: Logger,
   timeouts: OmpProtocolTimeouts = {},
-): Promise<void> {
+): Promise<OmpProtocolHandshake> {
   const readyTimeoutMs = timeouts.readyTimeoutMs ?? OMP_READY_TIMEOUT_MS;
   const requestTimeoutMs = timeouts.requestTimeoutMs ?? JSONL_RPC_DEFAULT_TIMEOUT_MS;
   const ready = await waitForReady(transport, readyTimeoutMs);
-  if (!supportsJsonlRpcProtocolV2(ready)) return;
+  const handshake: OmpProtocolHandshake = { features: parseReadyFeatures(ready) };
+  if (!supportsJsonlRpcProtocolV2(ready)) return handshake;
   const response = (await transport.request(
     { type: "negotiate_protocol", protocolVersion: 2 },
     requestTimeoutMs,
   )) as { protocolVersion?: unknown } | undefined;
   if (response?.protocolVersion !== 2) throw new Error("OMP did not accept RPC protocol v2");
   logger.debug({}, "Negotiated OMP RPC protocol v2 (chunked frame transport)");
+  return handshake;
 }
 
 function waitForReady(
