@@ -420,6 +420,44 @@ describe("loadAppSettingsFromStorage", () => {
   });
 });
 
+describe("saveAppSettings", () => {
+  it("applies consecutive functional updates to the latest cached settings", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS);
+
+    await Promise.all([
+      saveAppSettings({
+        queryClient,
+        updates: (current) => ({
+          sidebarNavItems: [...current.sidebarNavItems, { key: "history", visible: false }],
+        }),
+        deps,
+      }),
+      saveAppSettings({
+        queryClient,
+        updates: (current) => ({
+          sidebarNavItems: [...current.sidebarNavItems, { key: "search", visible: true }],
+        }),
+        deps,
+      }),
+    ]);
+
+    expect(queryClient.getQueryData(APP_SETTINGS_QUERY_KEY)).toMatchObject({
+      sidebarNavItems: [
+        { key: "history", visible: false },
+        { key: "search", visible: true },
+      ],
+    });
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toMatchObject({
+      sidebarNavItems: [
+        { key: "history", visible: false },
+        { key: "search", visible: true },
+      ],
+    });
+  });
+});
+
 describe("loadSettingsFromStorage", () => {
   it("defaults built-in daemon management to enabled when storage is empty", async () => {
     const deps = makeDeps();

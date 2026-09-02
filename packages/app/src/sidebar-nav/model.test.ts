@@ -132,12 +132,36 @@ describe("setSidebarNavItemVisible", () => {
     const next = setSidebarNavItemVisible({ items, key: "history", visible: false, previous });
 
     expect(next).toEqual([
+      { key: notesKey, visible: false },
       { key: "history", visible: false },
       { key: "new-workspace", visible: true },
       { key: "search", visible: true },
       { key: "schedules", visible: true },
-      { key: notesKey, visible: false },
     ]);
+  });
+
+  it("keeps an unavailable plugin in its configured position", () => {
+    const previous: SidebarNavPreference[] = [
+      { key: "new-workspace", visible: true },
+      { key: notesKey, visible: false },
+      { key: "history", visible: true },
+      { key: "search", visible: true },
+      { key: "schedules", visible: true },
+    ];
+    const items = resolveSidebarNavItems({ pluginGroups: [], preferences: previous });
+
+    const next = setSidebarNavItemVisible({ items, key: "history", visible: false, previous });
+
+    expect(next).toEqual([
+      { key: "new-workspace", visible: true },
+      { key: notesKey, visible: false },
+      { key: "history", visible: false },
+      { key: "search", visible: true },
+      { key: "schedules", visible: true },
+    ]);
+    expect(summarize(resolveSidebarNavItems({ pluginGroups: [notes], preferences: next }))).toEqual(
+      next,
+    );
   });
 
   it("returns the normalized list unchanged for an unknown key", () => {

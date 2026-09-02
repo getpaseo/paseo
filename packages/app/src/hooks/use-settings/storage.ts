@@ -94,6 +94,10 @@ export interface AppSettings {
   pullRequestOpenLocation: PullRequestOpenLocation;
 }
 
+export type AppSettingsUpdate =
+  | Partial<AppSettings>
+  | ((current: AppSettings) => Partial<AppSettings>);
+
 export interface OpenInSidePanePreferences {
   explorerFiles: boolean;
   diffs: boolean;
@@ -324,14 +328,15 @@ export interface SettingsDeps {
 
 export async function saveAppSettings(input: {
   queryClient: QueryClient;
-  updates: Partial<AppSettings>;
+  updates: AppSettingsUpdate;
   deps: SettingsDeps;
 }): Promise<void> {
   const storedCurrent =
     input.queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
     (await loadAppSettingsFromStorage(input.deps));
   const current = normalizeAppSettings(storedCurrent);
-  const next = { ...current, ...input.updates };
+  const updates = typeof input.updates === "function" ? input.updates(current) : input.updates;
+  const next = { ...current, ...updates };
   input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
   await writeAppSettings(
     input.deps.storage,

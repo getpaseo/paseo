@@ -29,6 +29,15 @@ function settingsRow(page: Page, key: SidebarNavKey): Locator {
   return page.getByTestId(`sidebar-nav-item-${key}`);
 }
 
+function itemLabel(key: SidebarNavKey): string {
+  return {
+    "new-workspace": "New workspace",
+    history: "History",
+    search: "Search",
+    schedules: "Schedules",
+  }[key];
+}
+
 async function rowTop(locator: Locator): Promise<number> {
   const box = await locator.boundingBox();
   if (!box) {
@@ -60,7 +69,7 @@ export async function leaveSettings(page: Page): Promise<void> {
 }
 
 export async function moveSidebarNavItemUp(page: Page, key: SidebarNavKey): Promise<void> {
-  await page.getByTestId(`sidebar-nav-move-up-${key}`).click();
+  await settingsRow(page, key).getByRole("button", { name: "Move up", exact: true }).click();
 }
 
 export async function setSidebarNavItemVisible(
@@ -68,7 +77,10 @@ export async function setSidebarNavItemVisible(
   key: SidebarNavKey,
   visible: boolean,
 ): Promise<void> {
-  const toggle = page.getByTestId(`sidebar-nav-toggle-${key}`);
+  const toggle = settingsRow(page, key).getByRole("switch", {
+    name: itemLabel(key),
+    exact: true,
+  });
   await toggle.click();
   await expect(toggle).toHaveAttribute("aria-checked", String(visible));
 }
@@ -80,7 +92,7 @@ export async function expectSidebarNavSettingsRow(
   const row = settingsRow(page, expected.key);
   await expect(row).toBeVisible();
   await expect(row.getByText(expected.label, { exact: true })).toBeVisible();
-  const toggle = page.getByTestId(`sidebar-nav-toggle-${expected.key}`);
+  const toggle = row.getByRole("switch", { name: expected.label, exact: true });
   await expect(toggle).toHaveAccessibleName(expected.label);
   await expect(toggle).toHaveAttribute("aria-checked", String(expected.visible));
 }

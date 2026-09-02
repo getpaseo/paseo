@@ -108,13 +108,25 @@ function toPreferences(
   items: readonly SidebarNavItem[],
   previous: readonly SidebarNavPreference[],
 ): SidebarNavPreference[] {
-  const preferences = items.map(({ key, visible }) => ({ key, visible }));
-  const seen = new Set(preferences.map((preference) => preference.key));
+  const remaining = items.map(({ key, visible }) => ({ key, visible }));
+  const availableKeys = new Set(remaining.map((preference) => preference.key));
+  const preferences: SidebarNavPreference[] = [];
+  const seenPrevious = new Set<string>();
+
   for (const preference of previous) {
-    if (seen.has(preference.key)) continue;
-    seen.add(preference.key);
+    if (seenPrevious.has(preference.key)) continue;
+    seenPrevious.add(preference.key);
+
+    if (availableKeys.has(preference.key)) {
+      const next = remaining.shift();
+      if (next) preferences.push(next);
+      continue;
+    }
+
     preferences.push({ key: preference.key, visible: preference.visible });
   }
+
+  preferences.push(...remaining);
   return preferences;
 }
 
