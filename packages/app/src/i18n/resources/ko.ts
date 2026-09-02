@@ -1079,6 +1079,7 @@ export const ko: TranslationResources = {
     },
     pinned: {
       title: "고정됨",
+      reorder: "드래그하여 순서 변경",
     },
     host: {
       noHost: "호스트 없음",

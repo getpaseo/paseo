@@ -1084,6 +1084,7 @@ export const ja: TranslationResources = {
     },
     pinned: {
       title: "固定済み",
+      reorder: "ドラッグして並べ替え",
     },
     host: {
       noHost: "ホストなし",
