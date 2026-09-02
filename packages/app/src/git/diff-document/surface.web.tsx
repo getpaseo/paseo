@@ -938,7 +938,7 @@ function WebFileHeaderSection({
     [file.bottom, file.top],
   );
   return (
-    <div style={style}>
+    <div style={style} onContextMenu={stopContextMenuPropagation}>
       <div
         data-diff-header="true"
         data-diff-header-path={file.path}
@@ -982,7 +982,7 @@ function WebReviewThread({
     [height, left, top, width],
   );
   return (
-    <div style={style} data-diff-review="true" onContextMenu={preserveNativeContextMenu}>
+    <div style={style} data-diff-review="true" onContextMenu={stopContextMenuPropagation}>
       <InlineReviewThread
         reviewTarget={target}
         reviewActions={actions}
@@ -994,7 +994,7 @@ function WebReviewThread({
   );
 }
 
-function preserveNativeContextMenu(event: React.MouseEvent): void {
+function stopContextMenuPropagation(event: React.MouseEvent): void {
   event.stopPropagation();
 }
 
