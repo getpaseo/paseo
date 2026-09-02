@@ -2,7 +2,7 @@ import { spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
+import { getOrCreateServerId, loadConfig, resolvePaseoHome, spawnProcess } from "@getpaseo/server";
 import treeKill from "tree-kill";
 import { tryConnectToDaemon } from "../../utils/client.js";
 
@@ -694,6 +694,21 @@ async function requestLifecycleShutdown(
   }
 
   try {
+    const expectedServerId = getOrCreateServerId(state.home);
+    const connectedServerId = client.getLastServerInfoMessage()?.serverId.trim() ?? null;
+    if (!connectedServerId) {
+      return {
+        requested: false,
+        reason: "connected daemon did not provide an identity, refusing lifecycle shutdown",
+      };
+    }
+    if (connectedServerId !== expectedServerId) {
+      return {
+        requested: false,
+        reason: `daemon at ${host} belongs to a different Paseo home, refusing lifecycle shutdown`,
+      };
+    }
+
     await client.shutdownServer({ timeout: Math.min(remainingTimeoutMs(), 5000) });
     return { requested: true };
   } catch (error) {

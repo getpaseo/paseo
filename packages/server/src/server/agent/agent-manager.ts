@@ -129,6 +129,15 @@ export type AgentRunCancellationResult =
   | { status: "settled" }
   | { status: "refused" };
 
+export interface ReloadAgentSessionOptions {
+  rehydrateFromDisk?: boolean;
+  /**
+   * User-requested reloads interrupt an active turn. Technical teardown can
+   * instead close the runtime without sending a provider user-cancel signal.
+   */
+  activeRunPolicy?: "interrupt" | "close";
+}
+
 interface PreparedSessionConfig {
   storedConfig: AgentSessionConfig;
   launchConfig: AgentSessionConfig;
@@ -1337,7 +1346,7 @@ export class AgentManager {
   reloadAgentSession(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options?: ReloadAgentSessionOptions,
   ): Promise<ManagedAgent> {
     return this.trackAgentRegistrationOperation(
       this.reloadAgentSessionInternal(agentId, overrides, options),
@@ -1347,11 +1356,12 @@ export class AgentManager {
   private async reloadAgentSessionInternal(
     agentId: string,
     overrides?: Partial<AgentSessionConfig>,
-    options?: { rehydrateFromDisk?: boolean },
+    options?: ReloadAgentSessionOptions,
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
     let existing = this.requireSessionAgent(agentId);
-    if (this.hasInFlightRun(agentId)) {
+    const hasInFlightRun = this.hasInFlightRun(agentId);
+    if (hasInFlightRun && options?.activeRunPolicy !== "close") {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
     }
@@ -1372,6 +1382,29 @@ export class AgentManager {
     const launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
+    const closeBeforeResume = hasInFlightRun && options?.activeRunPolicy === "close";
+    const closeExisting = async (): Promise<void> => {
+      this.cancelRunningProviderSubagents(agentId);
+      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+      if (closeBeforeResume) {
+        // Persist the restored voice config even if provider resume fails after
+        // technical disposal. A later lazy resume will then start voice-off.
+        closedExisting.config = storedConfig;
+      }
+      try {
+        await this.persistSnapshot(closedExisting);
+      } finally {
+        await this.closeReloadedSession(existing.session, agentId);
+      }
+    };
+
+    if (closeBeforeResume) {
+      // A technical owner teardown must not become a provider-visible user
+      // interrupt. Retire the active runtime via AgentSession.close() before
+      // resuming its replacement; ACP close does not send session/cancel.
+      await closeExisting();
+    }
+
     const session = handle
       ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
       : await client.createSession(providerLaunchConfig, launchContext);
@@ -1381,12 +1414,8 @@ export class AgentManager {
     try {
       this.assertAcceptingAgentRegistrations();
 
-      this.cancelRunningProviderSubagents(agentId);
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
-      try {
-        await this.persistSnapshot(closedExisting);
-      } finally {
-        await this.closeReloadedSession(existing.session, agentId);
+      if (!closeBeforeResume) {
+        await closeExisting();
       }
 
       if (rehydrateFromDisk) {

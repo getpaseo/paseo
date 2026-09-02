@@ -3,7 +3,8 @@ import pino from "pino";
 import { describe, expect, test, vi } from "vitest";
 
 import { VoiceSession, type VoiceSessionHost } from "./voice-session.js";
-import type { ManagedAgent } from "../../agent/agent-manager.js";
+import type { ManagedAgent, ReloadAgentSessionOptions } from "../../agent/agent-manager.js";
+import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
 import type { SessionOutboundMessage } from "../../messages.js";
 import type {
   SpeechToTextProvider,
@@ -57,24 +58,34 @@ class FakeVoiceSttSession extends EventEmitter implements StreamingTranscription
 interface FakeVoiceHost extends VoiceSessionHost {
   readonly emitted: SessionOutboundMessage[];
   readonly spokenInput: Array<{ agentId: string; text: string }>;
+  readonly reloads: Array<{
+    agentId: string;
+    overrides: Partial<AgentSessionConfig>;
+    options?: ReloadAgentSessionOptions;
+  }>;
 }
 
 function createFakeHost(): FakeVoiceHost {
   const emitted: SessionOutboundMessage[] = [];
   const spokenInput: Array<{ agentId: string; text: string }> = [];
+  const reloads: FakeVoiceHost["reloads"] = [];
   return {
     emitted,
     spokenInput,
+    reloads,
     emit: (msg) => {
       emitted.push(msg);
     },
     loadAgent: async (agentId) =>
       ({ id: agentId, config: { systemPrompt: undefined } }) as unknown as ManagedAgent,
-    reloadAgentSession: async (agentId) => ({ id: agentId }) as unknown as ManagedAgent,
+    reloadAgentSession: async (agentId, overrides, options) => {
+      reloads.push({ agentId, overrides, options });
+      return { id: agentId } as unknown as ManagedAgent;
+    },
     sendSpokenInput: async (agentId, text) => {
       spokenInput.push({ agentId, text });
     },
-    interruptAgentIfRunning: async () => {},
+    interruptAgentIfRunning: vi.fn(async () => {}),
     hasActiveAgentRun: () => false,
   };
 }
@@ -110,6 +121,30 @@ async function settle(): Promise<void> {
 }
 
 describe("VoiceSession streaming transcription", () => {
+  test("technical cleanup restores voice config without user-interrupt semantics", async () => {
+    const { voiceSession, host } = createVoiceSession();
+
+    await voiceSession.handleSetVoiceMode(true, VOICE_AGENT_ID);
+    expect(host.reloads).toHaveLength(1);
+    expect(host.reloads[0]?.options).toBeUndefined();
+    expect(host.reloads[0]?.overrides.systemPrompt).toContain("Paseo voice mode is now on.");
+
+    await voiceSession.cleanup();
+
+    expect(host.reloads).toHaveLength(2);
+    expect(host.reloads[1]).toMatchObject({
+      agentId: VOICE_AGENT_ID,
+      options: { activeRunPolicy: "close" },
+    });
+    expect(host.reloads[1]?.overrides.systemPrompt).toContain("Paseo voice mode is now off.");
+    expect(host.interruptAgentIfRunning).not.toHaveBeenCalled();
+
+    // Cleanup cleared the voice owner state, so a repeated teardown cannot
+    // trigger another runtime close/reload.
+    await voiceSession.cleanup();
+    expect(host.reloads).toHaveLength(2);
+  });
+
   test("surfaces a refused voice-mode agent interruption", async () => {
     const { voiceSession, host } = createVoiceSession();
     host.interruptAgentIfRunning = vi.fn(async () => {

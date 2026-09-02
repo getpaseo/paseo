@@ -1074,8 +1074,8 @@ export class Session {
             agentStorage: this.agentStorage,
             logger: this.sessionLogger,
           }),
-        reloadAgentSession: (agentId, overrides) =>
-          this.agentManager.reloadAgentSession(agentId, overrides),
+        reloadAgentSession: (agentId, overrides, reloadOptions) =>
+          this.agentManager.reloadAgentSession(agentId, overrides, reloadOptions),
         sendSpokenInput: async (agentId, text) => {
           await this.handleSendAgentMessage(
             agentId,

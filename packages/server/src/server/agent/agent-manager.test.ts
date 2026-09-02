@@ -1194,6 +1194,8 @@ class McpCapableTestAgentClient extends TestAgentClient {
 
 class ControlledInterruptSession extends TestAgentSession {
   interruptCalled = false;
+  interruptCallCount = 0;
+  closeCallCount = 0;
 
   constructor(
     config: AgentSessionConfig,
@@ -1212,7 +1214,12 @@ class ControlledInterruptSession extends TestAgentSession {
 
   override async interrupt(): Promise<void> {
     this.interruptCalled = true;
+    this.interruptCallCount += 1;
     await this.interruptBehavior(this);
+  }
+
+  override async close(): Promise<void> {
+    this.closeCallCount += 1;
   }
 }
 
@@ -1266,7 +1273,9 @@ async function createControlledInterruptFixture(options: {
       await manager.waitForAgentRunStart(agent.id);
     },
     async cleanup() {
-      await manager.closeAgent(agent.id);
+      if (manager.getAgent(agent.id)?.lifecycle !== "closed") {
+        await manager.closeAgent(agent.id);
+      }
       rmSync(workdir, { recursive: true, force: true });
     },
   };
@@ -2309,6 +2318,116 @@ test("reloadAgentSession completes when the previous session close hangs", async
     expect(client.resumeSessionCalls).toBe(1);
   } finally {
     rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("technical reload closes an active run without invoking provider interrupt", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "technical-reload-close",
+    agentId: "00000000-0000-4000-8000-000000000316",
+    turnId: "active-read-shell-turn",
+    interrupt: async (session) => {
+      session.pushEvent({
+        type: "turn_canceled",
+        provider: session.provider,
+        reason: "Canceled due to user interrupt",
+        turnId: "active-read-shell-turn",
+      });
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+    fixture.session.pushEvent({
+      type: "timeline",
+      provider: fixture.session.provider,
+      turnId: "active-read-shell-turn",
+      item: {
+        type: "tool_call",
+        callId: "shell-background",
+        name: "Shell",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "shell",
+          command: "sleep 90",
+          output: "Command running in background with ID: shell-background",
+        },
+      },
+    });
+    fixture.session.pushEvent({
+      type: "timeline",
+      provider: fixture.session.provider,
+      turnId: "active-read-shell-turn",
+      item: {
+        type: "tool_call",
+        callId: "get-output",
+        name: "Read shell",
+        status: "running",
+        error: null,
+        detail: {
+          type: "unknown",
+          input: { shell_id: "shell-background", timeout: 120_000 },
+          output: null,
+        },
+      },
+    });
+    await vi.waitFor(() => {
+      expect(fixture.manager.getTimeline(fixture.agentId)).toContainEqual(
+        expect.objectContaining({
+          type: "tool_call",
+          callId: "get-output",
+          status: "running",
+        }),
+      );
+    });
+
+    const reloaded = await fixture.manager.reloadAgentSession(
+      fixture.agentId,
+      { systemPrompt: "Paseo voice mode is now off." },
+      { activeRunPolicy: "close" },
+    );
+
+    expect(fixture.session.interruptCallCount).toBe(0);
+    expect(fixture.session.closeCallCount).toBe(1);
+    expect(fixture.manager.hasInFlightRun(fixture.agentId)).toBe(false);
+    expect(reloaded).toMatchObject({
+      lifecycle: "idle",
+      config: { systemPrompt: "Paseo voice mode is now off." },
+    });
+    expect(JSON.stringify(fixture.manager.getTimeline(fixture.agentId))).not.toContain(
+      "Canceled due to user interrupt",
+    );
+  } finally {
+    await fixture.cleanup();
+  }
+});
+
+test("explicit user cancellation still invokes provider interrupt exactly once", async () => {
+  const fixture = await createControlledInterruptFixture({
+    name: "explicit-user-interrupt",
+    agentId: "00000000-0000-4000-8000-000000000317",
+    turnId: "explicit-user-interrupt-turn",
+    interrupt: async (session) => {
+      session.pushEvent({
+        type: "turn_canceled",
+        provider: session.provider,
+        reason: "Interrupted",
+        turnId: "explicit-user-interrupt-turn",
+      });
+    },
+  });
+
+  try {
+    await fixture.startForegroundRun();
+
+    await expect(fixture.manager.cancelAgentRun(fixture.agentId)).resolves.toEqual({
+      status: "settled",
+    });
+    expect(fixture.session.interruptCallCount).toBe(1);
+    expect(fixture.session.closeCallCount).toBe(0);
+  } finally {
+    await fixture.cleanup();
   }
 });
 

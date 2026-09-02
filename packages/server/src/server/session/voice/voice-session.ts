@@ -16,7 +16,7 @@ import {
 import { createVoiceTurnController, type VoiceTurnController } from "./voice-turn-controller.js";
 import { buildVoiceModeSystemPrompt, stripVoiceModeSystemPrompt } from "../../voice-config.js";
 import type { VoiceCallerContext, VoiceSpeakHandler } from "../../voice-types.js";
-import type { ManagedAgent } from "../../agent/agent-manager.js";
+import type { ManagedAgent, ReloadAgentSessionOptions } from "../../agent/agent-manager.js";
 import type { AgentSessionConfig } from "../../agent/agent-sdk-types.js";
 import type { LocalSpeechModelId } from "../../speech/providers/local/models.js";
 import { toResolver, type Resolvable } from "../../speech/provider-resolver.js";
@@ -125,6 +125,7 @@ export interface VoiceSessionHost {
   reloadAgentSession(
     agentId: string,
     overrides: Partial<AgentSessionConfig>,
+    options?: ReloadAgentSessionOptions,
   ): Promise<ManagedAgent>;
   sendSpokenInput(agentId: string, text: string): Promise<void>;
   interruptAgentIfRunning(agentId: string): Promise<void>;
@@ -507,7 +508,10 @@ export class VoiceSession {
     }
   }
 
-  private async disableVoiceModeForActiveAgent(restoreAgentConfig: boolean): Promise<void> {
+  private async disableVoiceModeForActiveAgent(
+    restoreAgentConfig: boolean,
+    options?: { technicalCleanup?: boolean },
+  ): Promise<void> {
     await this.stopVoiceTurnController();
 
     const agentId = this.voiceModeAgentId;
@@ -522,9 +526,13 @@ export class VoiceSession {
     if (restoreAgentConfig && this.voiceModeBaseConfig) {
       const baseConfig = this.voiceModeBaseConfig;
       try {
-        await this.host.reloadAgentSession(agentId, {
-          systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, false),
-        });
+        await this.host.reloadAgentSession(
+          agentId,
+          {
+            systemPrompt: buildVoiceModeSystemPrompt(baseConfig.systemPrompt, false),
+          },
+          options?.technicalCleanup ? { activeRunPolicy: "close" } : undefined,
+        );
       } catch (error) {
         this.sessionLogger.warn(
           { err: error, agentId },
@@ -1303,7 +1311,7 @@ export class VoiceSession {
     this.sttManager.cleanup();
     this.dictationStreamManager.cleanupAll();
 
-    await this.disableVoiceModeForActiveAgent(true);
+    await this.disableVoiceModeForActiveAgent(true, { technicalCleanup: true });
     this.isVoiceMode = false;
   }
 }
