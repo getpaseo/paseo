@@ -7,6 +7,11 @@ import { AgentProviderSchema } from "./provider-manifest.js";
 import { TOOL_CALL_ICON_NAMES } from "./agent-types.js";
 import { WORKSPACE_LABEL_COLORS } from "./workspace-labels.js";
 import {
+  ProviderAccountProfileSchema,
+  ProviderAccountProviderSchema,
+  ProviderAccountLoginSchema,
+} from "./provider-accounts.js";
+import {
   ChatCreateRequestSchema,
   ChatListRequestSchema,
   ChatInspectRequestSchema,
@@ -167,6 +172,7 @@ export const AgentProfileSchema = z
     /** An identity colour name shared with host badges. Unknown values draw unthemed. */
     color: z.string().optional(),
     provider: z.string(),
+    accountProfileId: z.string().nullable().optional(),
     model: z.string().optional(),
     modeId: z.string().optional(),
     thinkingOptionId: z.string().optional(),
@@ -470,6 +476,7 @@ const ToolPolicySchema = z
 const AgentSessionConfigSchema = z.object({
   provider: AgentProviderSchema,
   cwd: z.string(),
+  accountProfileId: z.string().nullable().optional(),
   modeId: z.string().optional(),
   model: z.string().optional(),
   thinkingOptionId: z.string().optional(),
@@ -830,6 +837,7 @@ const AgentActiveTurnPayloadSchema = z.object({
 export const AgentSnapshotPayloadSchema = z.object({
   id: z.string(),
   provider: AgentProviderSchema,
+  accountProfileId: z.string().nullable().optional(),
   cwd: z.string(),
   workspaceId: z.string().optional(),
   model: z.string().nullable(),
@@ -865,6 +873,7 @@ export const AgentListItemPayloadSchema = z.object({
   shortId: z.string(),
   title: z.string().nullable(),
   provider: AgentProviderSchema,
+  accountProfileId: z.string().nullable().optional(),
   model: z.string().nullable(),
   thinkingOptionId: z.string().nullable().optional(),
   effectiveThinkingOptionId: z.string().nullable().optional(),
@@ -1043,6 +1052,61 @@ export const WorkspaceLabelDeleteInspectRequestSchema = z.object({
   type: z.literal("workspace.label.delete.inspect.request"),
   requestId: z.string(),
   name: z.string(),
+});
+
+const ProviderAccountDefaultsSchema = z.partialRecord(
+  ProviderAccountProviderSchema,
+  z.string().nullable(),
+);
+
+export const ProviderAccountListRequestSchema = z.object({
+  type: z.literal("provider.account.list.request"),
+  requestId: z.string(),
+});
+
+export const ProviderAccountCreateRequestSchema = z.object({
+  type: z.literal("provider.account.create.request"),
+  requestId: z.string(),
+  provider: ProviderAccountProviderSchema,
+  name: z.string(),
+});
+
+export const ProviderAccountRenameRequestSchema = z.object({
+  type: z.literal("provider.account.rename.request"),
+  requestId: z.string(),
+  accountProfileId: z.string(),
+  name: z.string(),
+});
+
+export const ProviderAccountDefaultSetRequestSchema = z.object({
+  type: z.literal("provider.account.default.set.request"),
+  requestId: z.string(),
+  provider: ProviderAccountProviderSchema,
+  accountProfileId: z.string().nullable(),
+});
+
+export const ProviderAccountRemoveRequestSchema = z.object({
+  type: z.literal("provider.account.remove.request"),
+  requestId: z.string(),
+  accountProfileId: z.string(),
+});
+
+export const ProviderAccountLoginStartRequestSchema = z.object({
+  type: z.literal("provider.account.login.start.request"),
+  requestId: z.string(),
+  accountProfileId: z.string(),
+});
+
+export const ProviderAccountLoginStatusRequestSchema = z.object({
+  type: z.literal("provider.account.login.status.request"),
+  requestId: z.string(),
+  accountProfileId: z.string(),
+});
+
+export const ProviderAccountLoginCancelRequestSchema = z.object({
+  type: z.literal("provider.account.login.cancel.request"),
+  requestId: z.string(),
+  accountProfileId: z.string(),
 });
 
 export const WorkspaceRecoveryInspectRequestSchema = z.object({
@@ -1704,6 +1768,7 @@ export const ProviderDiagnosticRequestMessageSchema = z.object({
 export const ProviderUsageListRequestMessageSchema = z.object({
   type: z.literal("provider.usage.list.request"),
   requestId: z.string(),
+  forceRefresh: z.boolean().optional(),
 });
 
 export const ResumeAgentRequestMessageSchema = z.object({
@@ -3022,6 +3087,14 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceLabelUpdateRequestSchema,
   WorkspaceLabelDeleteRequestSchema,
   WorkspaceLabelDeleteInspectRequestSchema,
+  ProviderAccountListRequestSchema,
+  ProviderAccountCreateRequestSchema,
+  ProviderAccountRenameRequestSchema,
+  ProviderAccountDefaultSetRequestSchema,
+  ProviderAccountRemoveRequestSchema,
+  ProviderAccountLoginStartRequestSchema,
+  ProviderAccountLoginStatusRequestSchema,
+  ProviderAccountLoginCancelRequestSchema,
   WorkspaceRecoveryInspectRequestSchema,
   WorkspaceRecoveryRestoreRequestSchema,
   SetVoiceModeMessageSchema,
@@ -3433,6 +3506,8 @@ export const ServerInfoStatusPayloadSchema = z
         workspaceFileEditing: z.boolean().optional(),
         // COMPAT(providerUsageList): added in v0.1.98, drop the gate when daemon floor >= v0.1.98.
         providerUsageList: z.boolean().optional(),
+        // COMPAT(providerAccountProfiles): added after v0.5.1.
+        providerAccountProfiles: z.boolean().optional(),
         // COMPAT(agentDetach): added in v0.1.98, remove gate after 2026-12-19 once daemon floor >= v0.1.98.
         agentDetach: z.boolean().optional(),
         // COMPAT(agentThinkingUpdate): added in v0.2.4, remove gate after 2027-01-28.
@@ -4076,6 +4151,59 @@ export const WorkspaceLabelDeleteInspectResponseSchema = z.object({
     requestId: z.string(),
     affectedWorkspaceCount: z.number().int().nonnegative(),
   }),
+});
+
+const ProviderAccountStatePayloadSchema = z.object({
+  requestId: z.string(),
+  accounts: z.array(ProviderAccountProfileSchema),
+  defaults: ProviderAccountDefaultsSchema,
+});
+
+export const ProviderAccountListResponseSchema = z.object({
+  type: z.literal("provider.account.list.response"),
+  payload: ProviderAccountStatePayloadSchema,
+});
+
+export const ProviderAccountCreateResponseSchema = z.object({
+  type: z.literal("provider.account.create.response"),
+  payload: ProviderAccountStatePayloadSchema,
+});
+
+export const ProviderAccountRenameResponseSchema = z.object({
+  type: z.literal("provider.account.rename.response"),
+  payload: ProviderAccountStatePayloadSchema,
+});
+
+export const ProviderAccountDefaultSetResponseSchema = z.object({
+  type: z.literal("provider.account.default.set.response"),
+  payload: ProviderAccountStatePayloadSchema,
+});
+
+export const ProviderAccountRemoveResponseSchema = z.object({
+  type: z.literal("provider.account.remove.response"),
+  payload: ProviderAccountStatePayloadSchema,
+});
+
+const ProviderAccountLoginPayloadSchema = z.object({
+  requestId: z.string(),
+  login: ProviderAccountLoginSchema,
+  accounts: z.array(ProviderAccountProfileSchema),
+  defaults: ProviderAccountDefaultsSchema,
+});
+
+export const ProviderAccountLoginStartResponseSchema = z.object({
+  type: z.literal("provider.account.login.start.response"),
+  payload: ProviderAccountLoginPayloadSchema,
+});
+
+export const ProviderAccountLoginStatusResponseSchema = z.object({
+  type: z.literal("provider.account.login.status.response"),
+  payload: ProviderAccountLoginPayloadSchema,
+});
+
+export const ProviderAccountLoginCancelResponseSchema = z.object({
+  type: z.literal("provider.account.login.cancel.response"),
+  payload: ProviderAccountLoginPayloadSchema,
 });
 
 export const ProjectUpdateMessageSchema = z.object({
@@ -5842,6 +5970,8 @@ export const ProviderUsageDetailSchema = z.object({
 export const ProviderUsageSchema = z.object({
   providerId: z.string(),
   displayName: z.string(),
+  accountProfileId: z.string().nullable().optional(),
+  accountName: z.string().optional(),
   status: ProviderUsageStatusSchema,
   planLabel: z.string().nullable(),
   sourceLabel: z.string().nullable().optional(),
@@ -6346,6 +6476,14 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceLabelUpdateResponseSchema,
   WorkspaceLabelDeleteResponseSchema,
   WorkspaceLabelDeleteInspectResponseSchema,
+  ProviderAccountListResponseSchema,
+  ProviderAccountCreateResponseSchema,
+  ProviderAccountRenameResponseSchema,
+  ProviderAccountDefaultSetResponseSchema,
+  ProviderAccountRemoveResponseSchema,
+  ProviderAccountLoginStartResponseSchema,
+  ProviderAccountLoginStatusResponseSchema,
+  ProviderAccountLoginCancelResponseSchema,
   ProjectUpdateMessageSchema,
   ProjectListResponseMessageSchema,
   ScriptStatusUpdateMessageSchema,

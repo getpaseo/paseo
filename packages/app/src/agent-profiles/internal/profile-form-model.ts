@@ -83,6 +83,7 @@ export interface AgentProfileFormState {
   color: string;
   notes: string;
   provider: string;
+  accountProfileId: string | null | undefined;
   modelId: string;
   modeId: string;
   thinkingOptionId: string;
@@ -125,6 +126,7 @@ export interface AgentProfileFormModel {
   setAppearance: (value: { icon: string; color: string }) => void;
   setNotes: (value: string) => void;
   setProvider: (providerId: string, display: AgentProfileFormDisplay) => void;
+  setAccountProfileId: (accountProfileId: string | null | undefined) => void;
   setModel: (modelId: string, display: AgentProfileFormDisplay | null) => void;
   setMode: (modeId: string, display: AgentProfileFormDisplay | null) => void;
   setThinking: (thinkingOptionId: string, display: AgentProfileFormDisplay | null) => void;
@@ -347,6 +349,7 @@ function buildSubmitValue(state: AgentProfileFormState): AgentProfileValue | nul
     ...(state.icon ? { icon: state.icon } : {}),
     ...(state.color ? { color: state.color } : {}),
     provider: state.provider,
+    ...(state.accountProfileId === undefined ? {} : { accountProfileId: state.accountProfileId }),
     ...(state.modelId ? { model: state.modelId } : {}),
     ...(state.modeId ? { modeId: state.modeId } : {}),
     ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
@@ -389,6 +392,7 @@ function buildInitialState(snapshot: AgentProfileFormSnapshot): AgentProfileForm
     color: profile.color ?? "",
     notes: profile.notes ?? "",
     provider,
+    accountProfileId: profile.accountProfileId,
     modelId,
     modeId: profile.modeId ?? "",
     thinkingOptionId: profile.thinkingOptionId ?? "",
@@ -566,6 +570,7 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
           ...current,
           provider: providerId,
           providerDisplay: display,
+          accountProfileId: undefined,
           modelId: "",
           modelDisplay: null,
           modeId: "",
@@ -575,6 +580,8 @@ export function openAgentProfileForm(snapshot: AgentProfileFormSnapshot): AgentP
           featureValues: {},
         };
       }),
+    setAccountProfileId: (accountProfileId) =>
+      publish((current) => ({ ...current, accountProfileId })),
     setModel: (modelId, display) =>
       publish((current) => {
         if (current.modelId === modelId) {

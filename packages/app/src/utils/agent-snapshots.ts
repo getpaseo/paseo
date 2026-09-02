@@ -47,6 +47,7 @@ export function projectAgentSnapshot(agent: Agent): AgentSnapshotPayload {
   return {
     id: agent.id,
     provider: agent.provider,
+    ...(agent.accountProfileId === undefined ? {} : { accountProfileId: agent.accountProfileId }),
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
     model: agent.model,
@@ -94,6 +95,7 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     serverId,
     id: snapshot.id,
     provider: snapshot.provider,
+    accountProfileId: snapshot.accountProfileId,
     status: snapshot.status,
     activeTurn,
     createdAt,

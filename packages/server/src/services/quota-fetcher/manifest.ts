@@ -2,6 +2,7 @@ import type {
   ProviderUsageFetcher,
   ProviderUsageFetcherFactoryOptions,
   ProviderUsageFetcherManifestEntry,
+  ProviderUsageAccountScope,
 } from "./provider.js";
 import { ClaudeQuotaProvider } from "./providers/claude.js";
 import { CodexQuotaProvider } from "./providers/codex.js";
@@ -59,4 +60,29 @@ export function createProviderUsageFetchers(
   options: ProviderUsageFetcherFactoryOptions,
 ): ProviderUsageFetcher[] {
   return PROVIDER_USAGE_FETCHERS.map((entry) => entry.create(options));
+}
+
+export function createProviderAccountUsageFetcher(
+  scope: ProviderUsageAccountScope,
+  options: ProviderUsageFetcherFactoryOptions,
+): ProviderUsageFetcher {
+  const base =
+    scope.provider === "codex"
+      ? new CodexQuotaProvider({
+          logger: options.logger,
+          fetch: options.fetch,
+          codexHome: scope.runtimeHome,
+        })
+      : new ClaudeQuotaProvider({
+          logger: options.logger,
+          fetch: options.fetch,
+          claudeHome: scope.runtimeHome,
+        });
+  return {
+    providerId: base.providerId,
+    displayName: base.displayName,
+    accountProfileId: scope.accountProfileId,
+    accountName: scope.accountName,
+    fetchUsage: () => base.fetchUsage(),
+  };
 }

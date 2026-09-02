@@ -20,6 +20,7 @@ describe("materializeAgentProfile", () => {
     expect(
       materializeAgentProfile(
         profile({
+          accountProfileId: "pac_0123456789abcdef",
           model: "claude-opus-5",
           modeId: "plan",
           thinkingOptionId: "think-hard",
@@ -28,6 +29,7 @@ describe("materializeAgentProfile", () => {
       ),
     ).toEqual({
       provider: "claude",
+      accountProfileId: "pac_0123456789abcdef",
       modelId: "claude-opus-5",
       modeId: "plan",
       thinkingOptionId: "think-hard",
@@ -38,6 +40,7 @@ describe("materializeAgentProfile", () => {
   it("treats omitted and blank fields the same", () => {
     expect(materializeAgentProfile(profile({ model: "   ", modeId: "" }))).toEqual({
       provider: "claude",
+      accountProfileId: undefined,
       modelId: "",
       modeId: "",
       thinkingOptionId: "",
@@ -49,6 +52,12 @@ describe("materializeAgentProfile", () => {
     expect(materializeAgentProfile(profile({ model: " claude-opus-5 " })).modelId).toBe(
       "claude-opus-5",
     );
+  });
+
+  it("preserves an explicit system account selection", () => {
+    expect(
+      materializeAgentProfile(profile({ accountProfileId: null })).accountProfileId,
+    ).toBeNull();
   });
 });
 

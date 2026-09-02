@@ -58,6 +58,7 @@ import {
 import { ProvidersSection } from "@/screens/settings/providers-section";
 import { ProviderUsageSettingsSection } from "@/provider-usage/settings-section";
 import { useProviderUsage } from "@/provider-usage/use-provider-usage";
+import { ProviderAccountsSettingsSection } from "@/provider-accounts";
 import { HostAppearanceSection } from "@/screens/settings/host-appearance-section";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { useSessionStore } from "@/stores/session-store";
@@ -323,6 +324,7 @@ export function HostProvidersPage({ serverId }: { serverId: string }) {
 
   return (
     <View>
+      <ProviderAccountsSettingsSection serverId={serverId} />
       <ProvidersSection serverId={serverId} />
     </View>
   );

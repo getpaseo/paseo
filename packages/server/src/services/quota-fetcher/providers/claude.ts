@@ -351,7 +351,9 @@ export class ClaudeQuotaProvider implements ProviderUsageFetcher {
     this.logger = options.logger.child({ module: "claude-quota-provider" });
     this.claudeHome =
       options.claudeHome || process.env["CLAUDE_HOME"] || join(homedir(), ".claude");
-    this.readKeychainCredentials = options.claudeKeychainReader ?? readClaudeKeychainCredentials;
+    this.readKeychainCredentials =
+      options.claudeKeychainReader ??
+      (options.claudeHome === undefined ? readClaudeKeychainCredentials : async () => null);
     this.platform = options.platform ?? process.platform;
     this.fetchApi = options.fetch ?? fetch;
   }

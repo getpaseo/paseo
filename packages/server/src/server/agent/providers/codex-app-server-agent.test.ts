@@ -2432,6 +2432,27 @@ describe("Codex app-server provider", () => {
     expect(env.PASEO_TEST_FLAG).toBe(launchContext.env?.PASEO_TEST_FLAG);
   });
 
+  test("applies the pinned account home after runtime and launch auth settings", () => {
+    const env = buildCodexAppServerEnv(
+      {
+        env: {
+          OPENAI_API_KEY: "runtime-key",
+          OPENAI_BASE_URL: "https://runtime.test",
+        },
+      },
+      { OPENAI_API_KEY: "launch-key" },
+      {
+        CODEX_HOME: "/private/codex-work",
+        OPENAI_API_KEY: undefined,
+        OPENAI_BASE_URL: undefined,
+      },
+    );
+
+    expect(env.CODEX_HOME).toBe("/private/codex-work");
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+    expect(env.OPENAI_BASE_URL).toBeUndefined();
+  });
+
   test("projects request_user_input into a question permission and running timeline tool call", () => {
     const session = createSession();
     const events: AgentStreamEvent[] = [];

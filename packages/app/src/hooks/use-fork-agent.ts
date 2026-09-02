@@ -21,6 +21,7 @@ import { useWorkspaceDraftSubmissionStore } from "@/stores/workspace-draft-submi
 import { toErrorMessage } from "@/utils/error-messages";
 import { buildNewWorkspaceRoute } from "@/utils/host-routes";
 import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tabs/model";
+import { buildForkDraftSetup, type ForkAgentSetupOverrides } from "@/hooks/fork-agent-setup";
 
 /**
  * The subset of an agent record that a fork needs in order to seed the new
@@ -31,6 +32,7 @@ import type { WorkspaceDraftTabSetup, WorkspaceTabTarget } from "@/workspace-tab
 export type ForkAgentSource = Pick<
   AgentScreenAgent,
   | "provider"
+  | "accountProfileId"
   | "cwd"
   | "currentModeId"
   | "model"
@@ -57,6 +59,7 @@ export interface ForkAgentRequest {
   workspaceId?: string;
   target: AssistantForkTarget;
   boundary?: ForkAgentBoundary;
+  setupOverrides?: ForkAgentSetupOverrides;
 }
 
 export interface UseForkAgentInput {
@@ -90,26 +93,6 @@ function buildChatHistoryAttachment(input: {
   };
 }
 
-function buildForkDraftSetup(agent: ForkAgentSource): WorkspaceDraftTabSetup | undefined {
-  if (!agent.provider) {
-    return undefined;
-  }
-
-  const featureValues: Record<string, unknown> = {};
-  for (const feature of agent.features ?? []) {
-    featureValues[feature.id] = feature.value;
-  }
-
-  return {
-    provider: agent.provider,
-    cwd: agent.cwd,
-    modeId: agent.currentModeId ?? agent.runtimeInfo?.modeId ?? null,
-    model: agent.model ?? agent.runtimeInfo?.model ?? null,
-    thinkingOptionId: agent.thinkingOptionId ?? agent.runtimeInfo?.thinkingOptionId ?? null,
-    featureValues,
-  };
-}
-
 function buildForkDraftTabTarget(
   setup: WorkspaceDraftTabSetup | undefined,
   draftId: string,
@@ -132,67 +115,69 @@ export function useForkAgent(
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const supportsAgentForkContext = useHostFeature(serverId, "agentForkContext") && !readOnly;
 
-  return useStableEvent(async ({ agentId, agent, workspaceId, target, boundary }) => {
-    try {
-      if (!supportsAgentForkContext) {
-        toast?.error(t("message.actions.forkUnavailable"));
-        return;
-      }
-      if (!client) {
-        throw new Error(t("workspace.terminal.hostDisconnected"));
-      }
-      const draftSetup = buildForkDraftSetup(agent);
-      const prepareForkDraft = async () => {
-        const draftId = generateDraftId();
-        const payload = await client.buildAgentForkContext(agentId, boundary);
-        const attachment = buildChatHistoryAttachment({
-          draftId,
-          serverId,
-          agentId,
-          payload,
-          missingAttachmentMessage: t("message.actions.forkFailed"),
-        });
-        useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
-          scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
-          attachments: [attachment],
-        });
-        return draftId;
-      };
-
-      if (target === "tab") {
-        if (!workspaceId) {
-          throw new Error(t("message.actions.forkMissingWorkspace"));
+  return useStableEvent(
+    async ({ agentId, agent, workspaceId, target, boundary, setupOverrides }) => {
+      try {
+        if (!supportsAgentForkContext) {
+          toast?.error(t("message.actions.forkUnavailable"));
+          return;
         }
-        const draftId = await prepareForkDraft();
-        navigateToWorkspace({
-          serverId,
-          workspaceId,
-          target: buildForkDraftTabTarget(draftSetup, draftId),
-        });
-        return;
-      }
+        if (!client) {
+          throw new Error(t("workspace.terminal.hostDisconnected"));
+        }
+        const draftSetup = buildForkDraftSetup(agent, setupOverrides);
+        const prepareForkDraft = async () => {
+          const draftId = generateDraftId();
+          const payload = await client.buildAgentForkContext(agentId, boundary);
+          const attachment = buildChatHistoryAttachment({
+            draftId,
+            serverId,
+            agentId,
+            payload,
+            missingAttachmentMessage: t("message.actions.forkFailed"),
+          });
+          useWorkspaceAttachmentsStore.getState().setWorkspaceAttachments({
+            scopeKey: buildDraftWorkspaceAttachmentScopeKey(draftId),
+            attachments: [attachment],
+          });
+          return draftId;
+        };
 
-      const draftId = await prepareForkDraft();
-      const sourceDirectory =
-        agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
-      if (draftSetup) {
-        useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
-          draftId,
-          setup: draftSetup,
-          sourceDirectory,
-        });
+        if (target === "tab") {
+          if (!workspaceId) {
+            throw new Error(t("message.actions.forkMissingWorkspace"));
+          }
+          const draftId = await prepareForkDraft();
+          navigateToWorkspace({
+            serverId,
+            workspaceId,
+            target: buildForkDraftTabTarget(draftSetup, draftId),
+          });
+          return;
+        }
+
+        const draftId = await prepareForkDraft();
+        const sourceDirectory =
+          agent.projectPlacement?.checkout?.cwd?.trim() || agent.cwd.trim() || undefined;
+        if (draftSetup) {
+          useWorkspaceDraftSubmissionStore.getState().setDraftSetup({
+            draftId,
+            setup: draftSetup,
+            sourceDirectory,
+          });
+        }
+        router.push(
+          buildNewWorkspaceRoute({
+            serverId,
+            sourceDirectory,
+            displayName: agent.projectPlacement?.projectName,
+            projectId: agent.projectPlacement?.projectKey,
+            draftId,
+          }),
+        );
+      } catch (error) {
+        toast?.error(toErrorMessage(error) || t("message.actions.forkFailed"));
       }
-      router.push(
-        buildNewWorkspaceRoute({
-          serverId,
-          sourceDirectory,
-          displayName: agent.projectPlacement?.projectName,
-          projectId: agent.projectPlacement?.projectKey,
-          draftId,
-        }),
-      );
-    } catch (error) {
-      toast?.error(toErrorMessage(error) || t("message.actions.forkFailed"));
-    }
-  });
+    },
+  );
 }

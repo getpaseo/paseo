@@ -39,6 +39,8 @@ export function addRunOptions(cmd: Command): Command {
       )
       .option("--thinking <id>", "Thinking option ID to use for this run")
       .option("--mode <mode>", "Provider-specific mode (e.g., plan, default, bypass)")
+      .option("--account <profile-id>", "Provider account profile ID to pin to this agent")
+      .option("--system-account", "Use the host system account instead of its default profile")
       .option("--new-workspace <local|worktree>", "Create a separate local or worktree workspace")
       .addOption(new Option("--worktree <name>", "Legacy workspace isolation alias").hideHelp())
       .option(
@@ -115,6 +117,8 @@ export interface AgentRunOptions extends CommandOptions {
   model?: string;
   thinking?: string;
   mode?: string;
+  account?: string;
+  systemAccount?: boolean;
   newWorkspace?: string;
   worktree?: string;
   worktreeMode?: string;
@@ -384,6 +388,13 @@ function validateRunOptions(prompt: string, options: AgentRunOptions, outputSche
 
   validateRunWorkspaceOptions(options);
 
+  if (options.account !== undefined && options.systemAccount) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--account and --system-account cannot be combined",
+    } satisfies CommandError;
+  }
+
   if (outputSchema && runsInBackground(options)) {
     throw {
       code: "INVALID_OPTIONS",
@@ -391,6 +402,21 @@ function validateRunOptions(prompt: string, options: AgentRunOptions, outputSche
       details: "Structured output requires waiting for the agent to finish",
     } satisfies CommandError;
   }
+}
+
+export function resolveRunAccountProfileId(
+  options: Pick<AgentRunOptions, "account" | "systemAccount">,
+): string | null | undefined {
+  if (options.systemAccount) return null;
+  if (options.account === undefined) return undefined;
+  const accountProfileId = options.account.trim();
+  if (!accountProfileId) {
+    throw {
+      code: "INVALID_OPTIONS",
+      message: "--account cannot be empty",
+    } satisfies CommandError;
+  }
+  return accountProfileId;
 }
 
 function runsInBackground(options: Pick<AgentRunOptions, "background" | "detach">): boolean {
@@ -601,6 +627,7 @@ export async function runRunCommand(
     // Resolve working directory
     const cwd = options.cwd ?? process.cwd();
     const thinkingOptionId = options.thinking?.trim();
+    const accountProfileId = resolveRunAccountProfileId(options);
     if (options.thinking !== undefined && !thinkingOptionId) {
       const error: CommandError = {
         code: "INVALID_THINKING_OPTION",
@@ -629,6 +656,7 @@ export async function runRunCommand(
         if (!structuredAgent) {
           structuredAgent = await client.createAgent({
             provider: resolvedProviderModel.provider,
+            ...(accountProfileId === undefined ? {} : { accountProfileId }),
             cwd: runCwd,
             workspaceId,
             callerAgentId,
@@ -700,6 +728,7 @@ export async function runRunCommand(
     // Create the agent
     const agent = await client.createAgent({
       provider: resolvedProviderModel.provider,
+      ...(accountProfileId === undefined ? {} : { accountProfileId }),
       cwd: runCwd,
       workspaceId,
       callerAgentId,

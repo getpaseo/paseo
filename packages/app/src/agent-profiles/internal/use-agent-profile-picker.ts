@@ -15,6 +15,8 @@ import {
 } from "./materialize-profile";
 import { buildAgentProfileTags } from "./profile-summary";
 import { useAgentProfiles } from "./use-agent-profiles";
+import { requiresProfileContinuation } from "./profile-continuation";
+import { resolveProviderAccountLabel, useProviderAccounts } from "@/provider-accounts";
 
 /** The draft composer owns profile application as one state transition. */
 export interface DraftAgentProfileControls {
@@ -22,7 +24,14 @@ export interface DraftAgentProfileControls {
 }
 
 export type AgentProfileApplyTarget =
-  | { kind: "agent"; agentId: string; availableModeIds: readonly string[] | null }
+  | {
+      kind: "agent";
+      agentId: string;
+      provider: string;
+      accountProfileId: string | null | undefined;
+      availableModeIds: readonly string[] | null;
+      continueWithProfile?: (profile: MaterializedAgentProfile) => void;
+    }
   | { kind: "draft"; controls: DraftAgentProfileControls };
 
 /** Everything the model picker renders for one profile. It never sees the profile itself. */
@@ -68,6 +77,7 @@ export function useAgentProfilePicker(
   const { serverId, availableProviders, target } = input;
   const { t } = useTranslation();
   const { profiles, isSupported } = useAgentProfiles(serverId);
+  const providerAccounts = useProviderAccounts(serverId);
   // Profiles are host config, so their labels read from the host-wide catalog
   // rather than a workspace's. That is also the key the settings section uses,
   // so every composer on a host shares one query instead of adding its own.
@@ -101,11 +111,19 @@ export function useAgentProfilePicker(
         icon: profile.icon ?? "",
         color: profile.color ?? "",
         name: profile.name,
-        summary: buildAgentProfileTags({ profile, entries, formatFeatureCount })
+        summary: buildAgentProfileTags({
+          profile,
+          entries,
+          formatFeatureCount,
+          accountLabel: resolveProviderAccountLabel(
+            profile.accountProfileId,
+            providerAccounts.accounts,
+          ),
+        })
           .map((tag) => tag.label)
           .join(" · "),
       })),
-    [applicableProfiles, entries, formatFeatureCount],
+    [applicableProfiles, entries, formatFeatureCount, providerAccounts.accounts],
   );
 
   const persistSelection = useCallback(
@@ -138,6 +156,13 @@ export function useAgentProfilePicker(
 
       if (target.kind === "draft") {
         target.controls.applyProfile(resolved);
+        return;
+      }
+
+      const changesProcess = requiresProfileContinuation(resolved, target);
+      if (changesProcess && target.continueWithProfile) {
+        persistSelection(resolved);
+        target.continueWithProfile(resolved);
         return;
       }
 

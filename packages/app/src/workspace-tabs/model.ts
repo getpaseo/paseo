@@ -4,6 +4,7 @@ import type { WorkspaceFileTabTarget } from "@/workspace/file-open";
 
 export interface WorkspaceDraftTabSetup {
   provider: AgentProvider;
+  accountProfileId?: string | null;
   cwd: string;
   modeId: string | null;
   model: string | null;

@@ -23,12 +23,14 @@ export function buildAgentProfileTags(input: {
   profile: AgentProfile;
   entries: readonly ProviderSnapshotEntry[] | undefined;
   formatFeatureCount: (count: number) => string;
+  accountLabel?: string | null;
 }): AgentProfileTag[] {
   const entries = input.entries ?? [];
   const entry = findEntry(entries, input.profile.provider);
   const tags: AgentProfileTag[] = [
     { id: "provider", label: entry?.label ?? input.profile.provider },
   ];
+  if (input.accountLabel) tags.push({ id: "account", label: input.accountLabel });
 
   const modelId = input.profile.model?.trim();
   if (modelId) {

@@ -111,6 +111,7 @@ export function toAgentPayload(
   const payload: AgentSnapshotPayload = {
     id: agent.id,
     provider: agent.provider,
+    accountProfileId: agent.config.accountProfileId,
     cwd: agent.cwd,
     ...(agent.workspaceId ? { workspaceId: agent.workspaceId } : {}),
     model: agent.config.model ?? null,
@@ -220,6 +221,7 @@ export function buildStoredAgentPayload(
   return {
     id: record.id,
     provider: record.provider,
+    accountProfileId: record.config?.accountProfileId,
     cwd: record.cwd,
     ...(record.workspaceId ? { workspaceId: record.workspaceId } : {}),
     model: record.config?.model ?? null,
@@ -254,6 +256,7 @@ export function toAgentListItemPayload(agent: AgentSnapshotPayload): AgentListIt
     shortId: agent.id.slice(0, 7),
     title: agent.title,
     provider: agent.provider,
+    accountProfileId: agent.accountProfileId,
     model: agent.runtimeInfo?.model ?? agent.model,
     thinkingOptionId: agent.thinkingOptionId,
     effectiveThinkingOptionId: agent.effectiveThinkingOptionId,
@@ -306,6 +309,9 @@ export function resolveStoredAgentPayloadUpdatedAt(record: StoredAgentRecord): s
 
 function buildSerializableConfig(config: AgentSessionConfig): SerializableAgentConfig | null {
   const serializable: SerializableAgentConfig = {};
+  if (Object.prototype.hasOwnProperty.call(config, "accountProfileId")) {
+    serializable.accountProfileId = config.accountProfileId ?? null;
+  }
   if (config.modeId) {
     serializable.modeId = config.modeId;
   }

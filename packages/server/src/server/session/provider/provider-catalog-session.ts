@@ -484,7 +484,9 @@ export class ProviderCatalogSession {
     msg: Extract<SessionInboundMessage, { type: "provider.usage.list.request" }>,
   ): Promise<void> {
     try {
-      const usage = await this.providerUsageService.listUsage();
+      const usage = await this.providerUsageService.listUsage({
+        forceRefresh: msg.forceRefresh,
+      });
       this.host.emit({
         type: "provider.usage.list.response",
         payload: {

@@ -713,6 +713,7 @@ function toFormState(state: ScheduleFormState): FormState {
   return {
     serverId: state.selectedServerId,
     provider: state.selectedProvider,
+    accountProfileId: undefined,
     modeId: state.selectedMode,
     model: state.selectedModel,
     thinkingOptionId: state.selectedThinkingOptionId,

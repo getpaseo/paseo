@@ -447,6 +447,23 @@ describe("openAgentProfileForm", () => {
     expect(model.getState().canSubmit).toBe(true);
   });
 
+  it("persists a managed or system account and clears it when provider changes", () => {
+    const model = openWithCatalog({ mode: "create" });
+    model.setName("Client work");
+    selectClaude(model);
+    model.setAccountProfileId("pac_0123456789abcdef");
+    expect(model.getState().submitValue?.accountProfileId).toBe("pac_0123456789abcdef");
+
+    model.setAccountProfileId(null);
+    expect(model.getState().submitValue?.accountProfileId).toBeNull();
+
+    const codex = model.getState().providerOptions.find((option) => option.value === "codex");
+    if (!codex) throw new Error("missing codex option");
+    model.setProvider("codex", codex);
+    expect(model.getState().accountProfileId).toBeUndefined();
+    expect(model.getState().submitValue).not.toHaveProperty("accountProfileId");
+  });
+
   it("stops publishing after close", () => {
     const model = openWithCatalog({ mode: "create" });
     let notifications = 0;

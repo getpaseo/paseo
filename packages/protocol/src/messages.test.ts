@@ -174,11 +174,13 @@ describe("provider usage list message contract", () => {
     const parsed = SessionInboundMessageSchema.parse({
       type: "provider.usage.list.request",
       requestId: "usage-1",
+      forceRefresh: true,
     });
 
     expect(parsed).toEqual({
       type: "provider.usage.list.request",
       requestId: "usage-1",
+      forceRefresh: true,
     });
   });
 
@@ -192,6 +194,8 @@ describe("provider usage list message contract", () => {
           {
             providerId: "glm",
             displayName: "GLM coding plan",
+            accountProfileId: "pac_0123456789abcdef",
+            accountName: "Work",
             status: "available",
             planLabel: "GLM coding plan",
             fetchedAt: "2026-06-19T00:00:00.000Z",
@@ -225,6 +229,7 @@ describe("provider usage list message contract", () => {
       throw new Error("Expected provider.usage.list.response");
     }
     expect(parsed.payload.providers[0]?.providerId).toBe("glm");
+    expect(parsed.payload.providers[0]?.accountName).toBe("Work");
     expect(parsed.payload.providers[0]?.windows[0]?.label).toBe("Biweekly");
   });
 

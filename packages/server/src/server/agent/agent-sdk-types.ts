@@ -576,6 +576,8 @@ export interface ImportedProviderSession {
 export interface AgentSessionConfig {
   provider: AgentProvider;
   cwd: string;
+  /** Provider account profile pinned to this session. Null means the provider's system account. */
+  accountProfileId?: string | null;
   /**
    * Provider-agnostic system/developer instruction string.
    * Mapped by each provider to its native instruction field.
@@ -604,6 +606,8 @@ export interface AgentSessionConfig {
 export interface AgentLaunchContext {
   agentId?: string;
   env?: Record<string, string>;
+  /** Provider-account environment applied after ordinary launch/runtime settings. */
+  providerAccountEnv?: Record<string, string | undefined>;
   /**
    * Runtime-only internal Paseo tools. This must never be persisted into
    * AgentSessionConfig; providers may adapt it to their native tool surface.

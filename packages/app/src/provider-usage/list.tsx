@@ -9,7 +9,7 @@ export function ProviderUsageList({ providers }: { providers: ProviderUsage[] })
   return (
     <View style={settingsStyles.card}>
       {providers.map((usage, index) => (
-        <Fragment key={usage.providerId}>
+        <Fragment key={`${usage.providerId}:${usage.accountProfileId ?? "system"}`}>
           {index > 0 ? <View style={styles.divider} /> : null}
           <ProviderUsageCard usage={usage} />
         </Fragment>

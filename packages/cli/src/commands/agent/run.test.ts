@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   resolveExistingRunWorkspace,
+  resolveRunAccountProfileId,
   resolveRunCallerAgentId,
   runRunCommand,
   type AgentRunOptions,
@@ -13,6 +14,16 @@ describe("managed agent caller context", () => {
 
   it("omits blank caller ids", () => {
     expect(resolveRunCallerAgentId({ PASEO_AGENT_ID: "   " })).toBeUndefined();
+  });
+});
+
+describe("run account selection", () => {
+  it("distinguishes the host default, system account, and a managed profile", () => {
+    expect(resolveRunAccountProfileId({})).toBeUndefined();
+    expect(resolveRunAccountProfileId({ systemAccount: true })).toBeNull();
+    expect(resolveRunAccountProfileId({ account: "  pac_0123456789abcdef  " })).toBe(
+      "pac_0123456789abcdef",
+    );
   });
 });
 
@@ -103,6 +114,13 @@ describe("runRunCommand option validation", () => {
     await expectInvalidOptions(
       { newWorkspace: "worktree", worktreeMode: "container" },
       /Unsupported worktree mode/,
+    );
+  });
+
+  it("rejects conflicting provider account flags", async () => {
+    await expectInvalidOptions(
+      { account: "pac_0123456789abcdef", systemAccount: true },
+      /--account and --system-account cannot be combined/,
     );
   });
 });

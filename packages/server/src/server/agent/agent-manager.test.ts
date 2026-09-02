@@ -2516,6 +2516,135 @@ test("createAgent passes daemon launch env through the provider launch context",
   });
 });
 
+test("createAgent pins the default provider account and reload keeps that account", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-account-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const accountId = "pac_0123456789abcdef";
+  let selectedAccountId: string | null = accountId;
+  const resolvedAccountIds: Array<string | null | undefined> = [];
+  const providerAccounts = {
+    resolveDefaultAccountId: () => selectedAccountId,
+    resolveLaunch(input: { provider: string; accountProfileId: string | null | undefined }) {
+      resolvedAccountIds.push(input.accountProfileId);
+      return input.accountProfileId
+        ? {
+            account: {
+              id: input.accountProfileId,
+              provider: "codex" as const,
+              name: "Work",
+              identity: null,
+              createdAt: "2026-08-23T00:00:00.000Z",
+              updatedAt: "2026-08-23T00:00:00.000Z",
+              lastAuthenticatedAt: null,
+            },
+            envOverlay: {
+              CODEX_HOME: `/private/${input.accountProfileId}`,
+              OPENAI_API_KEY: undefined,
+            },
+          }
+        : { account: null, envOverlay: {} };
+    },
+  };
+  class CaptureClient extends TestAgentClient {
+    readonly configs: AgentSessionConfig[] = [];
+    readonly launchContexts: Array<AgentLaunchContext | undefined> = [];
+
+    override async createSession(
+      config: AgentSessionConfig,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      this.configs.push(config);
+      this.launchContexts.push(launchContext);
+      return new TestAgentSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+      launchContext?: AgentLaunchContext,
+    ): Promise<AgentSession> {
+      const resumed = {
+        ...config,
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      } satisfies AgentSessionConfig;
+      this.configs.push(resumed);
+      this.launchContexts.push(launchContext);
+      return new TestAgentSession(resumed);
+    }
+  }
+  const client = new CaptureClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    providerAccounts,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000105",
+  });
+  let createdId: string | null = null;
+
+  try {
+    const created = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    createdId = created.id;
+    expect(created.config.accountProfileId).toBe(accountId);
+    expect(client.configs[0]?.accountProfileId).toBe(accountId);
+    expect(client.launchContexts[0]?.providerAccountEnv).toEqual({
+      CODEX_HOME: `/private/${accountId}`,
+      OPENAI_API_KEY: undefined,
+    });
+
+    selectedAccountId = null;
+    const reloaded = await manager.reloadAgentSession(created.id);
+    expect(reloaded.config.accountProfileId).toBe(accountId);
+    expect(client.configs[1]?.accountProfileId).toBe(accountId);
+    expect(client.launchContexts[1]?.providerAccountEnv?.CODEX_HOME).toBe(`/private/${accountId}`);
+    expect(resolvedAccountIds).toEqual([accountId, accountId, accountId, accountId]);
+  } finally {
+    if (createdId) await manager.closeAgent(createdId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("an explicit system account bypasses a configured provider default", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-system-account-"));
+  let defaultReads = 0;
+  const providerAccounts = {
+    resolveDefaultAccountId() {
+      defaultReads += 1;
+      return "pac_0123456789abcdef";
+    },
+    resolveLaunch(input: { accountProfileId: string | null | undefined }) {
+      return input.accountProfileId
+        ? { account: null, envOverlay: { CODEX_HOME: "/wrong-home" } }
+        : { account: null, envOverlay: {} };
+    },
+  };
+  const client = new TestAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    providerAccounts,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000106",
+  });
+  let createdId: string | null = null;
+
+  try {
+    const created = await manager.createAgent(
+      { provider: "codex", cwd: workdir, accountProfileId: null },
+      undefined,
+      { workspaceId: undefined },
+    );
+    createdId = created.id;
+    expect(created.config.accountProfileId).toBeNull();
+    expect(defaultReads).toBe(0);
+  } finally {
+    if (createdId) await manager.closeAgent(createdId);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("createAgent passes persistSession to provider create options", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");

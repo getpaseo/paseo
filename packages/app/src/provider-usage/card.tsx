@@ -69,6 +69,7 @@ export function ProviderUsageCard({
         <Text style={styles.name} numberOfLines={1}>
           {usage.displayName}
         </Text>
+        {usage.accountName ? <StatusBadge label={usage.accountName} variant="muted" /> : null}
         {usage.planLabel ? <StatusBadge label={usage.planLabel} variant="muted" /> : null}
         <View style={styles.headerSpacer} />
         {status ? (

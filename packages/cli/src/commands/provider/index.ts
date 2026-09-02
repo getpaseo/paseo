@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { runLsCommand } from "./ls.js";
 import { runModelsCommand } from "./models.js";
 import { runDiagnosticCommand } from "./diagnostic.js";
+import { runProviderAccountsCommand } from "./accounts.js";
 import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
 
@@ -11,6 +12,10 @@ export function createProviderCommand(): Command {
   addJsonAndDaemonHostOptions(
     provider.command("ls").description("List available providers and status"),
   ).action(withOutput(runLsCommand));
+
+  addJsonAndDaemonHostOptions(
+    provider.command("accounts").description("List provider account profile IDs and status"),
+  ).action(withOutput(runProviderAccountsCommand));
 
   addJsonAndDaemonHostOptions(
     provider

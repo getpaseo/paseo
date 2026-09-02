@@ -11,6 +11,7 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import { confirmDialog } from "@/utils/confirm-dialog";
+import { resolveProviderAccountLabel, useProviderAccounts } from "@/provider-accounts";
 import { useAgentProfiles } from "../internal/use-agent-profiles";
 import { generateAgentProfileId } from "../internal/profile-id";
 import type { AgentProfileValue } from "../internal/profile-form-model";
@@ -31,6 +32,7 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
   const isConnected = useHostRuntimeIsConnected(serverId);
   const { profiles, isSupported, saveProfiles } = useAgentProfiles(serverId);
   const { entries } = useProvidersSnapshot(serverId, { cwd: null });
+  const providerAccounts = useProviderAccounts(serverId);
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
 
   const handleAddOpen = useCallback(() => setEditTarget({ mode: "create" }), []);
@@ -168,6 +170,10 @@ export function AgentProfilesSection({ serverId }: { serverId: string }): ReactE
                 key={profile.id}
                 profile={profile}
                 entries={entries}
+                accountLabel={resolveProviderAccountLabel(
+                  profile.accountProfileId,
+                  providerAccounts.accounts,
+                )}
                 isFirst={index === 0}
                 isLast={index === profiles.length - 1}
                 onEdit={handleEditOpen}

@@ -28,6 +28,7 @@ const removeIcon = <ThemedTrash2 size={ICON_SIZE.sm} uniProps={destructiveColorM
 export interface AgentProfileRowProps {
   profile: AgentProfile;
   entries: readonly ProviderSnapshotEntry[] | undefined;
+  accountLabel?: string | null;
   isFirst: boolean;
   isLast: boolean;
   onEdit: (id: string) => void;
@@ -39,6 +40,7 @@ export interface AgentProfileRowProps {
 export function AgentProfileRow({
   profile,
   entries,
+  accountLabel,
   isFirst,
   isLast,
   onEdit,
@@ -61,8 +63,8 @@ export function AgentProfileRow({
     [t],
   );
   const tags = useMemo(
-    () => buildAgentProfileTags({ profile, entries, formatFeatureCount }),
-    [entries, formatFeatureCount, profile],
+    () => buildAgentProfileTags({ profile, entries, formatFeatureCount, accountLabel }),
+    [accountLabel, entries, formatFeatureCount, profile],
   );
   const summary = useMemo(() => tags.map((tag) => tag.label).join(" · "), [tags]);
 

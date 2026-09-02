@@ -484,6 +484,8 @@ export interface ToolPolicy {
 export interface AgentSessionConfig {
   provider: AgentProvider;
   cwd: string;
+  /** Undefined follows the host default; null explicitly uses the system account. */
+  accountProfileId?: string | null;
   /**
    * Provider-agnostic system/developer instruction string.
    * Mapped by each provider to its native instruction field.

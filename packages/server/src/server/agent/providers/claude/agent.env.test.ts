@@ -95,6 +95,54 @@ describe("Claude SDK env", () => {
     }
   });
 
+  test("applies the pinned account config dir after inherited auth settings", async () => {
+    let capturedEnv: Record<string, string | undefined> | undefined;
+    const queryFactory = vi.fn(({ options }: ClaudeQueryInput) => {
+      capturedEnv = options.env;
+      return createQueryMock([
+        {
+          type: "system",
+          subtype: "init",
+          session_id: "managed-account-env-session",
+          permissionMode: "default",
+          model: "opus",
+        },
+        { type: "result", subtype: "success", usage: {}, total_cost_usd: 0 },
+      ]);
+    });
+    const client = new ClaudeAgentClient({
+      logger: createTestLogger(),
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+      runtimeSettings: {
+        env: {
+          ANTHROPIC_API_KEY: "runtime-key",
+          CLAUDE_CODE_OAUTH_TOKEN: "runtime-token",
+        },
+      },
+    });
+    const session = await client.createSession(
+      { provider: "claude", cwd: process.cwd() },
+      {
+        env: { ANTHROPIC_API_KEY: "launch-key" },
+        providerAccountEnv: {
+          CLAUDE_CONFIG_DIR: "/private/claude-work",
+          ANTHROPIC_API_KEY: undefined,
+          CLAUDE_CODE_OAUTH_TOKEN: undefined,
+        },
+      },
+    );
+
+    try {
+      await session.run("account env check");
+      expect(capturedEnv?.CLAUDE_CONFIG_DIR).toBe("/private/claude-work");
+      expect(capturedEnv?.ANTHROPIC_API_KEY).toBeUndefined();
+      expect(capturedEnv?.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined();
+    } finally {
+      await session.close();
+    }
+  });
+
   test("forwards launch-context env through Claude resume env", async () => {
     let capturedEnv: Record<string, string | undefined> | undefined;
     const launchContext: AgentLaunchContext = {

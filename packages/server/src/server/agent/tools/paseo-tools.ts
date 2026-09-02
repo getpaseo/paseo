@@ -174,6 +174,17 @@ interface ProviderSummary {
   error?: string;
 }
 
+function mergeRequestedProviderAccount(
+  config: Partial<AgentSessionConfig> | undefined,
+  settings: { accountProfileId?: string | null } | undefined,
+): Partial<AgentSessionConfig> {
+  const merged = { ...config };
+  if (Object.hasOwn(settings ?? {}, "accountProfileId")) {
+    merged.accountProfileId = settings?.accountProfileId;
+  }
+  return merged;
+}
+
 const WorkspaceAutomationSummarySchema = z.object({
   workspaceId: z.string(),
   projectId: z.string(),
@@ -638,12 +649,19 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
 
   const resolveInheritedProviderConfig = (
     selectedProvider: string,
-  ): Pick<AgentSessionConfig, "providerOptions"> | undefined => {
+  ): Pick<AgentSessionConfig, "providerOptions" | "accountProfileId"> | undefined => {
     const callerAgent = resolveCallerAgent();
-    if (callerAgent?.provider !== selectedProvider || !callerAgent.config?.providerOptions) {
+    if (callerAgent?.provider !== selectedProvider) {
       return undefined;
     }
-    return { providerOptions: callerAgent.config.providerOptions };
+    const config: Pick<AgentSessionConfig, "providerOptions" | "accountProfileId"> = {};
+    if (callerAgent.config?.providerOptions) {
+      config.providerOptions = callerAgent.config.providerOptions;
+    }
+    if (callerAgent.config?.accountProfileId !== undefined) {
+      config.accountProfileId = callerAgent.config.accountProfileId;
+    }
+    return Object.keys(config).length > 0 ? config : undefined;
   };
 
   const resolveScopedCwd = (requestedCwd?: string, opts?: { required?: boolean }): string => {
@@ -844,6 +862,13 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     );
   const CreateAgentSettingsInputSchema = z
     .object({
+      accountProfileId: z
+        .string()
+        .nullable()
+        .optional()
+        .describe(
+          "Provider account profile ID. Pass null for the host system account; omit to inherit the parent/default account.",
+        ),
       modeId: z.string().optional().describe("Session mode to configure before the first run."),
       thinkingOptionId: z.string().optional().describe("Thinking option ID."),
       features: z
@@ -1431,6 +1456,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       }
       const selectedProvider = resolveRequiredProviderModel(parsedArgs.provider).provider;
       const inheritedConfig = resolveInheritedProviderConfig(selectedProvider);
+      const createConfig = mergeRequestedProviderAccount(inheritedConfig, parsedArgs.settings);
       const {
         snapshot,
         background: createdInBackground,
@@ -1454,7 +1480,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
           provider: parsedArgs.provider,
           title: parsedArgs.title,
           initialPrompt: parsedArgs.initialPrompt,
-          config: inheritedConfig,
+          config: createConfig,
           cwd: resolvedArgs.cwd,
           workspaceId: resolvedArgs.workspaceId,
           thinking: parsedArgs.settings?.thinkingOptionId,
@@ -2931,7 +2957,8 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
         "List agent profiles: named provider/model/mode bundles a human configured for specific " +
         "kinds of work. Read each profile's `notes` to pick the one that fits the task you're " +
         "delegating, then copy its `provider`, `model`, `modeId`, `thinkingOptionId`, and " +
-        "`featureValues` into create_agent (there is no `profile` parameter). Returns an empty " +
+        "`featureValues` into create_agent; copy `accountProfileId` too when present (there is no " +
+        "`profile` parameter). Returns an empty " +
         "list if none are configured.",
       inputSchema: {},
       outputSchema: {

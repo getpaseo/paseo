@@ -19,4 +19,24 @@ describe("workspace-draft-agent-config", () => {
       thinkingOptionId: "high",
     });
   });
+
+  it("preserves managed and explicit system account selections", () => {
+    expect(
+      buildWorkspaceDraftAgentConfig({
+        provider: "codex",
+        cwd: "/tmp/project",
+        accountProfileId: "pac_0123456789abcdef",
+      }).accountProfileId,
+    ).toBe("pac_0123456789abcdef");
+    expect(
+      buildWorkspaceDraftAgentConfig({
+        provider: "codex",
+        cwd: "/tmp/project",
+        accountProfileId: null,
+      }).accountProfileId,
+    ).toBeNull();
+    expect(
+      buildWorkspaceDraftAgentConfig({ provider: "codex", cwd: "/tmp/project" }),
+    ).not.toHaveProperty("accountProfileId");
+  });
 });

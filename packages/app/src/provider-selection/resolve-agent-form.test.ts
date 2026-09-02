@@ -92,6 +92,7 @@ function makeState(
     form: {
       serverId: null,
       provider: null,
+      accountProfileId: undefined,
       modeId: "",
       model: "",
       thinkingOptionId: "",
@@ -584,6 +585,7 @@ describe("resolveFormState", () => {
       {
         serverId: false,
         provider: true,
+        accountProfileId: false,
         modeId: true,
         model: true,
         thinkingOptionId: true,
@@ -1164,6 +1166,46 @@ describe("resolveAgentForm", () => {
 
       expect(next.form.thinkingOptionId).toBe("low");
       expect(next.userModified.thinkingOptionId).toBe(true);
+    });
+  });
+
+  describe("provider account selection", () => {
+    it("stores an explicit system account selection", () => {
+      const next = resolveAgentForm(makeState(), {
+        type: "SET_ACCOUNT_PROFILE_ID_FROM_USER",
+        accountProfileId: null,
+      });
+      expect(next.form.accountProfileId).toBeNull();
+      expect(next.userModified.accountProfileId).toBe(true);
+    });
+
+    it("clears a provider-scoped account when switching providers", () => {
+      const next = resolveAgentForm(
+        makeState({ provider: "codex", accountProfileId: "pac_0123456789abcdef" }),
+        {
+          type: "SET_PROVIDER_AND_MODEL_FROM_USER",
+          provider: "claude",
+          modelId: "claude-opus-4",
+          providerDef: TEST_CLAUDE_DEFINITION,
+          providerModels: [{ provider: "claude", id: "claude-opus-4", label: "Claude Opus 4" }],
+          providerPrefs: undefined,
+        },
+      );
+      expect(next.form.accountProfileId).toBeUndefined();
+    });
+
+    it("applies an account pinned by an agent profile", () => {
+      const next = resolveAgentForm(makeState(), {
+        type: "APPLY_PROFILE_FROM_USER",
+        provider: "codex",
+        accountProfileId: "pac_0123456789abcdef",
+        modelId: "gpt-5.3-codex",
+        modeId: "full-access",
+        thinkingOptionId: "high",
+        providerDef: TEST_CODEX_DEFINITION,
+        providerModels: CODEX_MODELS,
+      });
+      expect(next.form.accountProfileId).toBe("pac_0123456789abcdef");
     });
   });
 

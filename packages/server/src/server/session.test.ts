@@ -26,6 +26,9 @@ import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
+import { ProviderAccountService } from "./provider-accounts/service.js";
+import { ProviderAccountStore } from "./provider-accounts/store.js";
+import { ProviderAccountAuthManager } from "./provider-accounts/auth.js";
 import { createPersistedProjectRecord } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
@@ -325,6 +328,7 @@ interface SessionForTestOptions {
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  providerAccounts?: ProviderAccountService;
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -400,6 +404,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       list: vi.fn().mockResolvedValue([]),
     },
     workspaceLabelService: options.workspaceLabelService,
+    providerAccounts: options.providerAccounts,
     scheduleService: asScheduleService(),
     checkoutDiffManager: asCheckoutDiffManager(checkoutDiffManager),
     github: asGitHubService(github),
@@ -431,6 +436,166 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   };
   return new Session(sessionOptions);
 }
+
+test("manages provider account profiles through the session RPC boundary", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-provider-accounts-"));
+  const messages: SessionOutboundMessage[] = [];
+  const store = new ProviderAccountStore(join(root, "provider-accounts"), {
+    createId: () => "pac_0123456789abcdef",
+    now: () => new Date("2026-08-23T00:00:00.000Z"),
+  });
+  const session = createSessionForTest({
+    messages,
+    providerAccounts: new ProviderAccountService(store),
+  });
+
+  try {
+    await session.handleMessage({
+      type: "provider.account.create.request",
+      requestId: "create-account",
+      provider: "codex",
+      name: "Work",
+    });
+    await session.handleMessage({
+      type: "provider.account.default.set.request",
+      requestId: "default-account",
+      provider: "codex",
+      accountProfileId: "pac_0123456789abcdef",
+    });
+    await session.handleMessage({
+      type: "provider.account.rename.request",
+      requestId: "rename-account",
+      accountProfileId: "pac_0123456789abcdef",
+      name: "Client Work",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "provider.account.create.response",
+        payload: {
+          requestId: "create-account",
+          accounts: [expect.objectContaining({ id: "pac_0123456789abcdef", name: "Work" })],
+          defaults: {},
+        },
+      },
+      {
+        type: "provider.account.default.set.response",
+        payload: {
+          requestId: "default-account",
+          accounts: [expect.objectContaining({ id: "pac_0123456789abcdef", name: "Work" })],
+          defaults: { codex: "pac_0123456789abcdef" },
+        },
+      },
+      {
+        type: "provider.account.rename.response",
+        payload: {
+          requestId: "rename-account",
+          accounts: [expect.objectContaining({ id: "pac_0123456789abcdef", name: "Client Work" })],
+          defaults: { codex: "pac_0123456789abcdef" },
+        },
+      },
+    ]);
+  } finally {
+    await session.cleanup();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("starts, polls, and cancels provider account login through the session boundary", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-provider-account-login-"));
+  const messages: SessionOutboundMessage[] = [];
+  const store = new ProviderAccountStore(join(root, "provider-accounts"), {
+    createId: () => "pac_0123456789abcdef",
+    now: () => new Date("2026-08-24T00:00:00.000Z"),
+  });
+  const cancel = vi.fn(async () => undefined);
+  const never = new Promise<never>(() => undefined);
+  const authManager = new ProviderAccountAuthManager({
+    logger: pino({ level: "silent" }),
+    onAuthenticated: async () => undefined,
+    starters: {
+      codex: async () => ({
+        loginId: "login-1",
+        verificationUrl: "https://auth.openai.com/device",
+        userCode: "ABCD-EFGH",
+        completion: never,
+        cancel,
+      }),
+    },
+  });
+  const service = new ProviderAccountService(store, { authManager });
+  await service.create({ provider: "codex", name: "Work" });
+  const session = createSessionForTest({ messages, providerAccounts: service });
+
+  try {
+    await session.handleMessage({
+      type: "provider.account.login.start.request",
+      requestId: "login-start",
+      accountProfileId: "pac_0123456789abcdef",
+    });
+    await session.handleMessage({
+      type: "provider.account.login.status.request",
+      requestId: "login-status",
+      accountProfileId: "pac_0123456789abcdef",
+    });
+    await session.handleMessage({
+      type: "provider.account.login.cancel.request",
+      requestId: "login-cancel",
+      accountProfileId: "pac_0123456789abcdef",
+    });
+
+    expect(messages.map((message) => message.type)).toEqual([
+      "provider.account.login.start.response",
+      "provider.account.login.status.response",
+      "provider.account.login.cancel.response",
+    ]);
+    expect(messages[0]).toMatchObject({
+      payload: { login: { status: "waiting", userCode: "ABCD-EFGH" } },
+    });
+    expect(messages[2]).toMatchObject({ payload: { login: { status: "canceled" } } });
+    expect(cancel).toHaveBeenCalledOnce();
+  } finally {
+    await session.cleanup();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reports an actionable RPC error when an account is pinned to an active agent", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-provider-account-in-use-"));
+  const messages: SessionOutboundMessage[] = [];
+  const store = new ProviderAccountStore(join(root, "provider-accounts"), {
+    createId: () => "pac_0123456789abcdef",
+    now: () => new Date("2026-08-23T00:00:00.000Z"),
+  });
+  const service = new ProviderAccountService(store, {
+    listActiveAgentIds: async () => ["agent-live"],
+  });
+  await service.create({ provider: "codex", name: "Work" });
+  const session = createSessionForTest({ messages, providerAccounts: service });
+
+  try {
+    await session.handleMessage({
+      type: "provider.account.remove.request",
+      requestId: "remove-account",
+      accountProfileId: "pac_0123456789abcdef",
+    });
+
+    expect(messages).toEqual([
+      {
+        type: "rpc_error",
+        payload: {
+          requestId: "remove-account",
+          requestType: "provider.account.remove.request",
+          code: "provider_account_in_use",
+          error: "Provider account is used by active agents: agent-live",
+        },
+      },
+    ]);
+  } finally {
+    await session.cleanup();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("routes host-scoped agent skills requests through the daemon owner", async () => {
   const messages: SessionOutboundMessage[] = [];

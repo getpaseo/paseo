@@ -44,6 +44,10 @@ import {
   useLiveAgentModeControl,
   type AgentModeControlValue,
 } from "@/composer/agent-controls/mode-control";
+import {
+  AgentAccountControl,
+  type AgentAccountControlValue,
+} from "@/composer/agent-controls/account-control";
 import { AdaptiveModalSheet, type SheetHeader } from "@/components/adaptive-modal-sheet";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
@@ -89,8 +93,11 @@ import {
   type AgentProfilePicker,
   type AgentProfileSeed,
   type DraftAgentProfileControls,
+  type MaterializedAgentProfile,
 } from "@/agent-profiles";
 import { buildSettingsHostSectionRoute } from "@/utils/host-routes";
+import { useForkAgent, type ForkAgentRequest } from "@/hooks/use-fork-agent";
+import { selectLiveAgentProviderModel } from "@/composer/agent-controls/continuation";
 
 interface AgentControlOption {
   id: string;
@@ -128,6 +135,7 @@ interface ControlledAgentControlsProps {
   onRetryModelProvider?: (provider: AgentProvider) => void;
   isRetryingModelProvider?: boolean;
   modeControl?: AgentModeControlValue | null;
+  accountControl?: AgentAccountControlValue | null;
   modelSelectorServerId?: string | null;
   isCompactLayout?: boolean;
 }
@@ -145,6 +153,8 @@ export interface DraftAgentControlsProps {
   modelSelectorProviders: ProviderSelectorProvider[];
   isAllModelsLoading: boolean;
   onSelectProviderAndModel: (provider: AgentProvider, modelId: string) => void;
+  selectedAccountProfileId: string | null | undefined;
+  onSelectAccountProfile: (accountProfileId: string | null | undefined) => void;
   thinkingOptions: NonNullable<AgentModelDefinition["thinkingOptions"]>;
   selectedThinkingOptionId: string;
   onSelectThinkingOption: (thinkingOptionId: string) => void;
@@ -390,6 +400,7 @@ function pickDesktopModel({
 
 type AgentControlsSlice = {
   provider: string;
+  accountProfileId: string | null | undefined;
   cwd: string | null;
   runtimeModelId: string | null;
   model: string | null | undefined;
@@ -409,6 +420,7 @@ function selectAgentControlsSlice(
   }
   return {
     provider: currentAgent.provider,
+    accountProfileId: currentAgent.accountProfileId,
     cwd: currentAgent.cwd,
     runtimeModelId: currentAgent.runtimeInfo?.model ?? null,
     model: currentAgent.model,
@@ -458,6 +470,67 @@ function buildAgentProviderModels(
   return map;
 }
 
+function continueLiveAgent(input: {
+  serverId: string;
+  agentId: string;
+  setupOverrides: ForkAgentRequest["setupOverrides"];
+  forkAgent: ReturnType<typeof useForkAgent>;
+}): void {
+  const source = useSessionStore.getState().sessions[input.serverId]?.agents?.get(input.agentId);
+  if (!source) return;
+  void input.forkAgent({
+    agentId: input.agentId,
+    agent: source,
+    workspaceId: source.workspaceId,
+    target: "tab",
+    setupOverrides: input.setupOverrides,
+  });
+}
+
+function useLiveAgentContinuationControls(input: {
+  serverId: string;
+  agentId: string;
+  agent: AgentControlsSlice;
+  hasClient: boolean;
+  toast: ReturnType<typeof useToast>;
+}): {
+  continueWithSetup: (setup: ForkAgentRequest["setupOverrides"]) => void;
+  accountControl: AgentAccountControlValue | null;
+} {
+  const forkAgent = useForkAgent({ serverId: input.serverId, toast: input.toast });
+  const continueWithSetup = useCallback(
+    (setupOverrides: ForkAgentRequest["setupOverrides"]) =>
+      continueLiveAgent({
+        serverId: input.serverId,
+        agentId: input.agentId,
+        setupOverrides,
+        forkAgent,
+      }),
+    [forkAgent, input.agentId, input.serverId],
+  );
+  const handleSelectAccountProfile = useCallback(
+    (accountProfileId: string | null | undefined) => {
+      if (accountProfileId === input.agent?.accountProfileId) return;
+      continueWithSetup({ accountProfileId });
+    },
+    [continueWithSetup, input.agent?.accountProfileId],
+  );
+  const accountControl = useMemo<AgentAccountControlValue | null>(
+    () =>
+      input.agent
+        ? {
+            serverId: input.serverId,
+            provider: input.agent.provider,
+            selectedAccountProfileId: input.agent.accountProfileId,
+            onSelectAccountProfile: handleSelectAccountProfile,
+            disabled: !input.hasClient,
+          }
+        : null,
+    [handleSelectAccountProfile, input.agent, input.hasClient, input.serverId],
+  );
+  return { continueWithSetup, accountControl };
+}
+
 function buildOpenChangeHandler(
   selector: AgentControlSelector,
   setOpenSelector: (next: AgentControlSelector | null) => void,
@@ -498,6 +571,7 @@ function ControlledAgentControls({
   onRetryModelProvider,
   isRetryingModelProvider = false,
   modeControl,
+  accountControl,
   modelSelectorServerId = null,
   isCompactLayout,
 }: ControlledAgentControlsProps) {
@@ -778,6 +852,7 @@ function ControlledAgentControls({
             handleNestedOpenChange={handleSheetOpenChange}
             renderThinkingOption={renderThinkingOption}
             modeControl={modeControl}
+            accountControl={accountControl}
             presentation={presentation}
             glyphSize={layoutContextValue.glyphSize}
             activeSheet={activeSheet}
@@ -818,6 +893,7 @@ function ControlledAgentControls({
             handleOpenChange={handleSheetOpenChange}
             renderThinkingOption={renderThinkingOption}
             modeControl={modeControl}
+            accountControl={accountControl}
             glyphSize={layoutContextValue.glyphSize}
             modelSelectorServerId={modelSelectorServerId}
             canSwitchProvider={Boolean(onSelectProviderAndModel)}
@@ -878,6 +954,7 @@ interface DesktopAgentControlsContentProps {
     onPress: () => void;
   }) => ReactElement;
   modeControl?: AgentModeControlValue | null;
+  accountControl?: AgentAccountControlValue | null;
   presentation: ComposerControlPresentation;
   glyphSize: number;
   activeSheet: ActiveSheet;
@@ -935,6 +1012,7 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
     handleNestedOpenChange,
     renderThinkingOption,
     modeControl,
+    accountControl,
     presentation,
     glyphSize,
     activeSheet,
@@ -1054,6 +1132,9 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
       ) : null}
 
       {modeControl ? <AgentModeControl {...modeControl} onClose={onDropdownClose} /> : null}
+      {accountControl ? (
+        <AgentAccountControl {...accountControl} onClose={onDropdownClose} />
+      ) : null}
 
       {presentation.aggregateFeatures && features?.length ? (
         <>
@@ -1141,6 +1222,7 @@ interface SheetAgentControlsContentProps {
     onPress: () => void;
   }) => ReactElement;
   modeControl?: AgentModeControlValue | null;
+  accountControl?: AgentAccountControlValue | null;
   glyphSize: number;
   modelSelectorServerId: string | null;
   canSwitchProvider: boolean;
@@ -1180,6 +1262,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
     handleOpenChange,
     renderThinkingOption,
     modeControl,
+    accountControl,
     glyphSize,
     modelSelectorServerId,
     canSwitchProvider,
@@ -1235,6 +1318,7 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
       ) : null}
 
       {modeControl ? <AgentModeControl {...modeControl} surface="sheet" /> : null}
+      {accountControl ? <AgentAccountControl {...accountControl} surface="sheet" /> : null}
 
       {(features ?? []).map((feature) => (
         <SheetFeatureItem
@@ -1546,6 +1630,13 @@ export const AgentControls = memo(function AgentControls({
   );
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
   const toast = useToast();
+  const { continueWithSetup, accountControl } = useLiveAgentContinuationControls({
+    serverId,
+    agentId,
+    agent,
+    hasClient: Boolean(client),
+    toast,
+  });
   const modeControl = useLiveAgentModeControl(serverId, agentId);
   const commandCenterModes = toCommandCenterModes(modeControl);
   const modeProviderDefinitions = getModeProviderDefinitions(modeControl);
@@ -1576,14 +1667,14 @@ export const AgentControls = memo(function AgentControls({
     [agent?.provider, models],
   );
   const agentModelSelectorProviders = useMemo(() => {
-    if (snapshotSelectedEntry) {
-      return buildSelectableProviderSelectorProviders([snapshotSelectedEntry]);
+    if (snapshotEntries) {
+      return buildSelectableProviderSelectorProviders(snapshotEntries);
     }
     return buildProviderSelectorProviders({
       providerDefinitions: agentProviderDefinitions,
       modelsByProvider: agentProviderModels,
     });
-  }, [agentProviderDefinitions, agentProviderModels, snapshotSelectedEntry]);
+  }, [agentProviderDefinitions, agentProviderModels, snapshotEntries]);
 
   const modelSelection = resolveAgentModelSelection({
     models,
@@ -1605,7 +1696,6 @@ export const AgentControls = memo(function AgentControls({
 
   const agentProvider = agent?.provider;
   const activeModelId = modelSelection.activeModelId;
-
   const handleSelectModel = useCallback(
     async (modelId: string) => {
       if (!client || !agentProvider) {
@@ -1628,20 +1718,50 @@ export const AgentControls = memo(function AgentControls({
     [agentId, agentProvider, client, toast, updatePreferences],
   );
   const handleSelectCommandCenterModel = useCallback(
-    (_provider: AgentProvider, modelId: string) => handleSelectModel(modelId),
-    [handleSelectModel],
+    (provider: AgentProvider, modelId: string) =>
+      selectLiveAgentProviderModel({
+        provider,
+        modelId,
+        currentProvider: agentProvider,
+        setCurrentModel: handleSelectModel,
+        continueWithSetup,
+      }),
+    [agentProvider, continueWithSetup, handleSelectModel],
   );
 
-  // A running agent is one provider's process, so only that provider's profiles
-  // can apply to it.
-  const profileProviders = useMemo(() => (agentProvider ? [agentProvider] : []), [agentProvider]);
+  // Same-process profile changes apply in place. Provider/account changes open a
+  // linked continuation draft with the current conversation attached.
+  const profileProviders = useMemo(
+    () => agentModelSelectorProviders.map((provider) => provider.id),
+    [agentModelSelectorProviders],
+  );
   const profileModeIds = useMemo(
     () => resolveSnapshotModeIds(snapshotSelectedEntry),
     [snapshotSelectedEntry],
   );
+  const continueWithProfile = useCallback(
+    (profile: MaterializedAgentProfile) => {
+      const changesProvider = profile.provider !== agentProvider;
+      continueWithSetup({
+        provider: profile.provider as AgentProvider,
+        accountProfileId: profile.accountProfileId,
+        model: profile.modelId || (changesProvider ? null : undefined),
+        modeId: profile.modeId || (changesProvider ? null : undefined),
+        thinkingOptionId: profile.thinkingOptionId || (changesProvider ? null : undefined),
+      });
+    },
+    [agentProvider, continueWithSetup],
+  );
   const profileTarget = useMemo<AgentProfileApplyTarget>(
-    () => ({ kind: "agent", agentId, availableModeIds: profileModeIds }),
-    [agentId, profileModeIds],
+    () => ({
+      kind: "agent",
+      agentId,
+      provider: agentProvider ?? "",
+      accountProfileId: agent?.accountProfileId,
+      availableModeIds: profileModeIds,
+      continueWithProfile,
+    }),
+    [agent?.accountProfileId, agentId, agentProvider, continueWithProfile, profileModeIds],
   );
   const agentProfiles = useAgentProfilePicker({
     serverId,
@@ -1768,7 +1888,6 @@ export const AgentControls = memo(function AgentControls({
     },
     [refreshSnapshot],
   );
-
   if (!agent) {
     return null;
   }
@@ -1783,6 +1902,7 @@ export const AgentControls = memo(function AgentControls({
         modelOptions={modelOptions}
         selectedModelId={modelSelection.activeModelId ?? undefined}
         onSelectModel={handleSelectModel}
+        onSelectProviderAndModel={handleSelectCommandCenterModel}
         agentProfiles={agentProfiles}
         onApplyAgentProfile={agentProfiles?.applyProfile}
         onEditAgentProfiles={handleEditAgentProfiles}
@@ -1800,6 +1920,7 @@ export const AgentControls = memo(function AgentControls({
         onDropdownClose={onDropdownClose}
         disabled={!client}
         modeControl={modeControl}
+        accountControl={accountControl}
         modelSelectorServerId={serverId}
         isCompactLayout={isCompactLayout}
       />
@@ -1820,6 +1941,8 @@ export function DraftAgentControls({
   modelSelectorProviders,
   isAllModelsLoading,
   onSelectProviderAndModel,
+  selectedAccountProfileId,
+  onSelectAccountProfile,
   thinkingOptions,
   selectedThinkingOptionId,
   onSelectThinkingOption,
@@ -1891,6 +2014,25 @@ export function DraftAgentControls({
         : null,
     [selectedProvider, providerDefinitions, modeOptions, selectedMode, onSelectMode, disabled],
   );
+  const accountControl = useMemo<AgentAccountControlValue | null>(
+    () =>
+      selectedProvider
+        ? {
+            serverId: modelSelectorServerId,
+            provider: selectedProvider,
+            selectedAccountProfileId,
+            onSelectAccountProfile,
+            disabled,
+          }
+        : null,
+    [
+      disabled,
+      modelSelectorServerId,
+      onSelectAccountProfile,
+      selectedAccountProfileId,
+      selectedProvider,
+    ],
+  );
 
   return (
     <>
@@ -1919,6 +2061,7 @@ export function DraftAgentControls({
         isRetryingModelProvider={isRetryingModelProvider}
         disabled={disabled}
         modeControl={modeControl}
+        accountControl={accountControl}
         modelSelectorServerId={modelSelectorServerId}
         isCompactLayout={isCompactLayout}
       />

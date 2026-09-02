@@ -20,6 +20,7 @@ export type ClaudeQueryFactory = (input: ClaudeQueryInput) => Query;
 export interface ClaudeQueryContext {
   runtimeSettings?: ProviderRuntimeSettings;
   launchEnv?: Record<string, string>;
+  providerAccountEnv?: Record<string, string | undefined>;
   queryFactory?: ClaudeQueryFactory;
   /** Called with the spawned child process so the caller can tree-kill it on close. */
   onChildProcess?: (child: ChildProcess) => void;
@@ -58,7 +59,7 @@ function applyRuntimeSettingsToClaudeOptions(
   options: ClaudeOptions,
   context: ClaudeQueryContext,
 ): ClaudeOptions {
-  const { runtimeSettings, launchEnv, onChildProcess } = context;
+  const { runtimeSettings, launchEnv, providerAccountEnv, onChildProcess } = context;
   return {
     ...options,
     spawnClaudeCodeProcess: (spawnOptions) => {
@@ -72,12 +73,12 @@ function applyRuntimeSettingsToClaudeOptions(
       const providerEnvSpec = createProviderEnvSpec({
         baseEnv: spawnOptions.env,
         runtimeSettings,
-        overlays: [launchEnv],
+        overlays: [launchEnv, providerAccountEnv],
       });
       const providerEnv = createProviderEnv({
         baseEnv: spawnOptions.env,
         runtimeSettings,
-        overlays: [launchEnv],
+        overlays: [launchEnv, providerAccountEnv],
       });
       const selfNodeCommand = isDefaultRuntime
         ? buildSelfNodeCommand(resolved.args, providerEnv)

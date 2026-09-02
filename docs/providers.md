@@ -2,6 +2,9 @@
 
 This guide walks through adding a new agent provider end-to-end. There are two integration patterns, and this doc covers both.
 
+For multiple first-party Codex or Claude subscription sign-ins, use
+[provider account profiles](provider-accounts.md) instead of cloning a provider definition.
+
 ## Provider-native session options
 
 `AgentSessionConfig.providerOptions` carries JSON-safe configuration for the selected provider. The
@@ -137,6 +140,11 @@ Boundary tests should assert observable behavior: cold reads may call provider a
 ## Provider Usage Fetchers
 
 Provider plan usage is fetch-on-demand, not a daemon push subscription. The app calls `provider.usage.list.request` through React Query when the usage tooltip or Host Usage settings screen is shown, and the daemon returns the normalized `ProviderUsage` list directly.
+
+Codex and Claude fetchers are also instantiated per managed provider account. Account-scoped
+results keep `providerId` stable for icon/rendering compatibility and add `accountProfileId` plus
+`accountName` for row identity. Keep the System row and managed rows adjacent; cache identity must
+include the current account registry so account creation and rename cannot return a stale list.
 
 To add plan usage for a provider, add `packages/server/src/services/quota-fetcher/providers/<provider>.ts` and register it in `packages/server/src/services/quota-fetcher/manifest.ts`. The provider file exports only its fetcher class; provider auth, endpoint constants, API schemas, and normalization helpers stay private in that file. A fetcher owns provider auth/API parsing and returns the generic shape:
 

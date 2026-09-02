@@ -14,6 +14,7 @@ import { findModelByReference } from "./model-catalog";
 export interface FormInitialValues {
   serverId?: string | null;
   provider?: AgentProvider;
+  accountProfileId?: string | null;
   modeId?: string | null;
   model?: string | null;
   thinkingOptionId?: string | null;
@@ -23,6 +24,7 @@ export interface FormInitialValues {
 export interface FormState {
   serverId: string | null;
   provider: AgentProvider | null;
+  accountProfileId: string | null | undefined;
   modeId: string;
   model: string;
   thinkingOptionId: string;
@@ -32,6 +34,7 @@ export interface FormState {
 export interface UserModifiedFields {
   serverId: boolean;
   provider: boolean;
+  accountProfileId: boolean;
   modeId: boolean;
   model: boolean;
   thinkingOptionId: boolean;
@@ -51,6 +54,7 @@ export interface AgentFormReducerState {
 export const INITIAL_USER_MODIFIED: UserModifiedFields = {
   serverId: false,
   provider: false,
+  accountProfileId: false,
   modeId: false,
   model: false,
   thinkingOptionId: false,
@@ -90,6 +94,7 @@ export type AgentFormAction =
   | {
       type: "APPLY_PROFILE_FROM_USER";
       provider: AgentProvider;
+      accountProfileId?: string | null;
       modelId: string;
       modeId: string;
       thinkingOptionId: string;
@@ -97,6 +102,7 @@ export type AgentFormAction =
       providerModels: AgentModelDefinition[] | null;
       providerPrefs?: ProviderPrefs | undefined;
     }
+  | { type: "SET_ACCOUNT_PROFILE_ID_FROM_USER"; accountProfileId: string | null | undefined }
   | { type: "SET_MODE_FROM_USER"; modeId: string }
   | {
       type: "SET_MODEL_FROM_USER";
@@ -242,6 +248,7 @@ export function hasFormStateChanged(prev: FormState, next: FormState): boolean {
   return (
     prev.serverId !== next.serverId ||
     prev.provider !== next.provider ||
+    prev.accountProfileId !== next.accountProfileId ||
     prev.modeId !== next.modeId ||
     prev.model !== next.model ||
     prev.thinkingOptionId !== next.thinkingOptionId ||
@@ -405,6 +412,10 @@ export function resolveFormState(
     preferences,
     allowedProviderMap,
   });
+
+  if (!userModified.accountProfileId) {
+    result.accountProfileId = initialValues?.accountProfileId;
+  }
 
   const providerDef = result.provider ? allowedProviderMap.get(result.provider) : undefined;
   const providerPrefs = result.provider
@@ -601,6 +612,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
     form: {
       ...state.form,
       provider: action.provider,
+      accountProfileId: action.accountProfileId,
       model: nextModelId,
       modeId: nextModeId,
       thinkingOptionId: nextThinkingOptionId,
@@ -608,6 +620,7 @@ function applyProfile(state: AgentFormReducerState, action: ApplyProfileAction) 
     userModified: {
       ...state.userModified,
       provider: true,
+      accountProfileId: true,
       model: true,
       modeId: true,
       thinkingOptionId: true,
@@ -631,16 +644,20 @@ export function resolveAgentForm(
       return completeResolution(state, action);
 
     case "SET_SERVER_ID":
-      return { ...state, form: { ...state.form, serverId: action.value } };
+      return {
+        ...state,
+        form: { ...state.form, serverId: action.value, accountProfileId: undefined },
+      };
 
     case "SET_SERVER_ID_FROM_USER":
       return {
         ...state,
-        form: { ...state.form, serverId: action.value },
-        userModified: { ...state.userModified, serverId: true },
+        form: { ...state.form, serverId: action.value, accountProfileId: undefined },
+        userModified: { ...state.userModified, serverId: true, accountProfileId: false },
       };
 
     case "SET_PROVIDER_AND_MODEL_FROM_USER": {
+      const providerChanged = state.form.provider !== action.provider;
       const normalizedModelId = resolveCanonicalModelId(action.providerModels, action.modelId);
       const nextModelId = normalizedModelId || resolveDefaultModelId(action.providerModels);
       const nextThinkingOptionId = pickNextThinkingOptionForTarget({
@@ -663,6 +680,7 @@ export function resolveAgentForm(
         form: {
           ...state.form,
           provider: action.provider,
+          accountProfileId: providerChanged ? undefined : state.form.accountProfileId,
           model: nextModelId,
           modeId: nextModeId,
           thinkingOptionId: nextThinkingOptionId,
@@ -670,6 +688,13 @@ export function resolveAgentForm(
         userModified: { ...state.userModified, provider: true, model: true },
       };
     }
+
+    case "SET_ACCOUNT_PROFILE_ID_FROM_USER":
+      return {
+        ...state,
+        form: { ...state.form, accountProfileId: action.accountProfileId },
+        userModified: { ...state.userModified, accountProfileId: true },
+      };
 
     case "APPLY_PROFILE_FROM_USER": {
       return applyProfile(state, action);
@@ -710,6 +735,7 @@ export function resolveAgentForm(
         form: {
           ...state.form,
           provider: null,
+          accountProfileId: undefined,
           model: "",
           modeId: "",
           thinkingOptionId: "",
@@ -717,6 +743,7 @@ export function resolveAgentForm(
         userModified: {
           ...state.userModified,
           provider: true,
+          accountProfileId: true,
           model: true,
           modeId: true,
           thinkingOptionId: true,

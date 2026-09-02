@@ -30,6 +30,8 @@ describe("resolveAgentControlsMode", () => {
         modelSelectorProviders: [],
         isAllModelsLoading: false,
         onSelectProviderAndModel: () => undefined,
+        selectedAccountProfileId: undefined,
+        onSelectAccountProfile: () => undefined,
         thinkingOptions: [],
         selectedThinkingOptionId: "",
         onSelectThinkingOption: () => undefined,

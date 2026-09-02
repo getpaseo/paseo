@@ -871,6 +871,7 @@ function buildWorkspaceDraftSetupFromComposer(input: {
 }): WorkspaceDraftTabSetup {
   return {
     provider: input.provider,
+    accountProfileId: input.composerState.selectedAccountProfileId,
     cwd: input.cwd,
     modeId: input.composerState.selectedMode || null,
     model: input.composerState.effectiveModelId || null,

@@ -56,6 +56,8 @@ export interface UseAgentFormStateResult {
   setSelectedServerId: (value: string | null) => void;
   setSelectedServerIdFromUser: (value: string | null) => void;
   selectedProvider: AgentProvider | null;
+  selectedAccountProfileId: string | null | undefined;
+  setAccountProfileIdFromUser: (accountProfileId: string | null | undefined) => void;
   selectedMode: string;
   setModeFromUser: (modeId: string) => void;
   selectedModel: string;
@@ -124,6 +126,7 @@ function buildResolutionIntentKey(initialValues: FormInitialValues | undefined):
   return [
     resolutionIntentKeyPart(initialValues.serverId),
     resolutionIntentKeyPart(initialValues.provider),
+    resolutionIntentKeyPart(initialValues.accountProfileId),
     resolutionIntentKeyPart(initialValues.modeId),
     resolutionIntentKeyPart(initialValues.model),
     resolutionIntentKeyPart(initialValues.thinkingOptionId),
@@ -246,6 +249,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       form: {
         serverId,
         provider: null,
+        accountProfileId: undefined,
         modeId: "",
         model: "",
         thinkingOptionId: "",
@@ -470,6 +474,7 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       const action = {
         type: "APPLY_PROFILE_FROM_USER" as const,
         provider,
+        accountProfileId: profile.accountProfileId,
         modelId: profile.modelId,
         modeId: profile.modeId,
         thinkingOptionId: profile.thinkingOptionId,
@@ -528,6 +533,10 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     },
     [formState.provider, updateCurrentPreferences],
   );
+
+  const setAccountProfileIdFromUser = useCallback((accountProfileId: string | null | undefined) => {
+    dispatch({ type: "SET_ACCOUNT_PROFILE_ID_FROM_USER", accountProfileId });
+  }, []);
 
   const setModelFromUser = useCallback(
     (modelId: string) => {
@@ -634,6 +643,8 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
       setSelectedServerId,
       setSelectedServerIdFromUser,
       selectedProvider: formState.provider,
+      selectedAccountProfileId: formState.accountProfileId,
+      setAccountProfileIdFromUser,
       selectedMode: formState.modeId,
       setModeFromUser,
       selectedModel: formState.model,
@@ -667,12 +678,14 @@ export function useAgentFormState(options: UseAgentFormStateOptions = {}): UseAg
     [
       formState.serverId,
       formState.provider,
+      formState.accountProfileId,
       formState.modeId,
       formState.model,
       formState.thinkingOptionId,
       formState.workingDir,
       setSelectedServerId,
       setSelectedServerIdFromUser,
+      setAccountProfileIdFromUser,
       setModeFromUser,
       setModelFromUser,
       setThinkingOptionFromUser,

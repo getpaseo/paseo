@@ -3188,10 +3188,11 @@ function toCodexTextInput(text: string): Extract<CodexAppServerUserInput, { type
 export function buildCodexAppServerEnv(
   runtimeSettings?: ProviderRuntimeSettings,
   launchEnv?: Record<string, string>,
+  providerAccountEnv?: Record<string, string | undefined>,
 ): NodeJS.ProcessEnv {
   return createProviderEnv({
     runtimeSettings,
-    overlays: [launchEnv],
+    overlays: [launchEnv, providerAccountEnv],
   });
 }
 
@@ -4669,6 +4670,7 @@ export class CodexAppServerAgentSession implements AgentSession {
       nativeHandle: this.currentThreadId,
       metadata: {
         provider: CODEX_PROVIDER,
+        accountProfileId: this.config.accountProfileId ?? null,
         cwd: this.config.cwd,
         title: this.config.title ?? null,
         threadId: this.currentThreadId,
@@ -6902,6 +6904,7 @@ export class CodexAppServerAgentClient implements AgentClient {
 
   private async spawnAppServer(
     launchEnv?: Record<string, string>,
+    providerAccountEnv?: Record<string, string | undefined>,
     options?: { goalsEnabled?: boolean; agentId?: string },
   ): Promise<ChildProcessWithoutNullStreams> {
     const launchPrefix = await resolveCodexLaunchPrefix(this.runtimeSettings);
@@ -6923,7 +6926,7 @@ export class CodexAppServerAgentClient implements AgentClient {
       stdio: ["pipe", "pipe", "pipe"],
       ...createProviderEnvSpec({
         runtimeSettings: this.runtimeSettings,
-        overlays: [launchEnv],
+        overlays: [launchEnv, providerAccountEnv],
       }),
     });
     assertChildWithPipes(child);
@@ -6950,7 +6953,10 @@ export class CodexAppServerAgentClient implements AgentClient {
       null,
       this.logger,
       () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
+        this.spawnAppServer(launchContext?.env, launchContext?.providerAccountEnv, {
+          goalsEnabled,
+          agentId: launchContext?.agentId,
+        }),
       this.sessionDeps(),
       options?.persistSession === false,
       goalsEnabled,
@@ -6981,7 +6987,10 @@ export class CodexAppServerAgentClient implements AgentClient {
       handle,
       this.logger,
       () =>
-        this.spawnAppServer(launchContext?.env, { goalsEnabled, agentId: launchContext?.agentId }),
+        this.spawnAppServer(launchContext?.env, launchContext?.providerAccountEnv, {
+          goalsEnabled,
+          agentId: launchContext?.agentId,
+        }),
       this.sessionDeps(),
       false,
       goalsEnabled,

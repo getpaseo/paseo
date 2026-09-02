@@ -81,9 +81,11 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   readonly displayName = "Codex";
 
   private readonly codexHome: string;
+  private readonly hasExplicitCodexHome: boolean;
   private readonly fetchApi: ProviderApiFetch;
 
   constructor(options: CodexQuotaProviderOptions) {
+    this.hasExplicitCodexHome = options.codexHome !== undefined;
     this.codexHome = options.codexHome || process.env["CODEX_HOME"] || join(homedir(), ".codex");
     this.fetchApi = options.fetch ?? fetch;
   }
@@ -170,11 +172,13 @@ export class CodexQuotaProvider implements ProviderUsageFetcher {
   }
 
   private async readCodexAuth(): Promise<CodexAuth | null> {
-    const candidates = [
-      ...(process.env["CODEX_HOME"] ? [join(process.env["CODEX_HOME"], "auth.json")] : []),
-      join(homedir(), ".config", "codex", "auth.json"),
-      join(this.codexHome, "auth.json"),
-    ];
+    const candidates = this.hasExplicitCodexHome
+      ? [join(this.codexHome, "auth.json")]
+      : [
+          ...(process.env["CODEX_HOME"] ? [join(process.env["CODEX_HOME"], "auth.json")] : []),
+          join(homedir(), ".config", "codex", "auth.json"),
+          join(this.codexHome, "auth.json"),
+        ];
     for (const path of candidates) {
       if (!existsSync(path)) continue;
       try {

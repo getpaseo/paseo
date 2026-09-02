@@ -1683,7 +1683,11 @@ describe("create_agent MCP tool", () => {
       title: "Config test",
       initialPrompt: "Do work",
       provider: "codex/gpt-5.4",
-      settings: { modeId: "auto", thinkingOptionId: "think-hard" },
+      settings: {
+        accountProfileId: "pac_0123456789abcdef",
+        modeId: "auto",
+        thinkingOptionId: "think-hard",
+      },
       labels: { source: "mcp" },
     });
 
@@ -1692,6 +1696,7 @@ describe("create_agent MCP tool", () => {
         cwd: existingCwd,
         title: "Config test",
         provider: "codex",
+        accountProfileId: "pac_0123456789abcdef",
         model: "gpt-5.4",
         thinkingOptionId: "think-hard",
       }),
@@ -3247,6 +3252,7 @@ describe("create_agent MCP tool", () => {
       provider: "codex",
       currentModeId: null,
       config: {
+        accountProfileId: "pac_0123456789abcdef",
         providerOptions: {
           sandbox_mode: "workspace-write",
           sandbox_workspace_write: { writable_roots: ["/tmp/shared"] },
@@ -3277,7 +3283,10 @@ describe("create_agent MCP tool", () => {
       initialPrompt: "Do work",
     });
     expect(spies.agentManager.createAgent).toHaveBeenLastCalledWith(
-      expect.objectContaining({ providerOptions: parentAgent.config.providerOptions }),
+      expect.objectContaining({
+        accountProfileId: "pac_0123456789abcdef",
+        providerOptions: parentAgent.config.providerOptions,
+      }),
       undefined,
       expect.any(Object),
     );
@@ -3290,7 +3299,10 @@ describe("create_agent MCP tool", () => {
       settings: { modeId: "default" },
     });
     expect(spies.agentManager.createAgent).toHaveBeenLastCalledWith(
-      expect.not.objectContaining({ providerOptions: expect.anything() }),
+      expect.not.objectContaining({
+        accountProfileId: expect.anything(),
+        providerOptions: expect.anything(),
+      }),
       undefined,
       expect.any(Object),
     );
@@ -4922,6 +4934,7 @@ describe("agent profile listing MCP tool", () => {
         id: "ui-profile",
         name: "UI work",
         provider: "claude",
+        accountProfileId: "pac_0123456789abcdef",
         model: "claude-test-model",
         modeId: "bypassPermissions",
         thinkingOptionId: "high",
@@ -5191,6 +5204,7 @@ describe("agent snapshot MCP serialization", () => {
           shortId: "agent-c",
           title: null,
           provider: "codex",
+          accountProfileId: null,
           model: "gpt-5.4",
           thinkingOptionId: "high",
           effectiveThinkingOptionId: "high",
@@ -5556,6 +5570,7 @@ describe("agent snapshot MCP serialization", () => {
       shortId: "stored-",
       title: "Stored agent",
       provider: "claude",
+      accountProfileId: null,
       model: "claude-sonnet-4-20250514",
       thinkingOptionId: null,
       effectiveThinkingOptionId: null,

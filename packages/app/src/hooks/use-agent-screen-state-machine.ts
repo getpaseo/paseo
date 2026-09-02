@@ -10,6 +10,7 @@ export interface AgentScreenAgent {
   serverId: string;
   id: string;
   provider?: AgentProvider;
+  accountProfileId?: string | null;
   status: "initializing" | "idle" | "running" | "error" | "closed";
   cwd: string;
   workspaceId?: string;

@@ -75,6 +75,7 @@ export interface Agent {
   serverId: string;
   id: string;
   provider: AgentProvider;
+  accountProfileId?: string | null;
   status: AgentLifecycleStatus;
   activeTurn: { turnId: string | null; startedAt: Date | null } | null;
   createdAt: Date;

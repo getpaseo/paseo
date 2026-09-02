@@ -58,14 +58,10 @@ export function useProviderUsage(
   });
 
   const refresh = useCallback(async () => {
-    if (!canFetch) return;
-    await queryClient.invalidateQueries({ queryKey });
-    await queryClient.fetchQuery({
-      queryKey,
-      queryFn,
-      staleTime: PROVIDER_USAGE_STALE_TIME_MS,
-    });
-  }, [canFetch, queryClient, queryFn, queryKey]);
+    if (!canFetch || !client) return;
+    const payload = await client.listProviderUsage({ forceRefresh: true });
+    queryClient.setQueryData(queryKey, payload);
+  }, [canFetch, client, queryClient, queryKey]);
 
   const view = useMemo<ProviderUsageView>(() => {
     if (!serverId || !client || !isConnected) {

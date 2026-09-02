@@ -259,6 +259,12 @@ requires_openai_auth = false
 
 You can create multiple entries that extend the same built-in provider. Each gets its own entry in the provider list with independent credentials, models, and environment.
 
+For multiple ordinary Codex or Claude subscription sign-ins, prefer
+[provider account profiles](provider-accounts.md). They retain one provider/model catalog, isolate
+the CLI-owned credential homes, expose per-account usage, and support linked continuation from a
+running thread. Keep custom provider entries for different endpoints, API keys, binaries, model
+catalogs, or other runtime behavior.
+
 "Profile" here means a provider alias, and it is not an **Agent profile** — that is a named bundle of provider, model, mode, thinking option and features, stored under `daemon.agentProfiles`. See [glossary.md](glossary.md) for all four senses of the word.
 
 Example: two different Anthropic accounts as separate profiles:
