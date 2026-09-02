@@ -1019,6 +1019,16 @@ test("autofocusing an inline review keeps the Changes tab focused", async ({ pag
     .toBe(focusedBackground);
 });
 
+test("inline reviews keep the browser text context menu", async ({ page }) => {
+  const workspace = await createWorkspaceWithMountedTabDiff();
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+
+  await startReviewOnFirstChangedLine(page);
+  await page.getByTestId("inline-review-editor-input").click({ button: "right" });
+  await expect(page.getByTestId("diff-source-context-menu")).toHaveCount(0);
+});
+
 test("split canvas creates a review on the changed side and keeps it in that column", async ({
   page,
 }) => {
@@ -1156,6 +1166,17 @@ test("canvas diff context menu copies selections and source lines", async ({ con
   await rightClickFirstChangedLine(page);
   await page.getByTestId("diff-source-copy-line").click();
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("ABCDEFGHIJ");
+});
+
+test("canvas diff clears a selection when collapsing an earlier file", async ({ page }) => {
+  const workspace = await createWorkspaceWithTwoSelectionDiffs();
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChanges(page, workspace);
+
+  await dragExactAddedText(page, { startOffset: 2, endOffset: 8 }, 1);
+  await page.getByTestId("diff-file-0-toggle").click();
+  await rightClickFirstChangedLine(page, 1);
+  await expect(page.getByTestId("diff-source-copy-selection")).toBeDisabled();
 });
 
 test("clicking the canvas dismisses a selection without opening a review", async ({ page }) => {
@@ -1555,6 +1576,29 @@ async function createWorkspaceWithExactSelectionDiff(content: string): Promise<D
   return { id: created.workspace.id, repoPath: repo.path };
 }
 
+async function createWorkspaceWithTwoSelectionDiffs(): Promise<DirtyWorkspace> {
+  const repo = await createTempGitRepo("changes-canvas-selection-shift-", {
+    files: [
+      { path: "src/first.ts", content: "" },
+      { path: "src/second.ts", content: "" },
+    ],
+  });
+  await Promise.all([
+    writeFile(path.join(repo.path, "src/first.ts"), "FIRST\n"),
+    writeFile(path.join(repo.path, "src/second.ts"), "ABCDEFGHIJ\n"),
+  ]);
+  const client = await connectSeedClient();
+  cleanupTasks.push({
+    run: async () => {
+      await client.close().catch(() => undefined);
+      await repo.cleanup().catch(() => undefined);
+    },
+  });
+  const created = await client.createWorkspace({ source: { kind: "directory", path: repo.path } });
+  if (!created.workspace) throw new Error(created.error ?? "Failed to create selection workspace");
+  return { id: created.workspace.id, repoPath: repo.path };
+}
+
 async function createWorkspaceWithManyTinyDiffs(fileCount: number): Promise<DirtyWorkspace> {
   const files = Array.from({ length: fileCount }, (_, index) => ({
     path: `src/file-${String(index).padStart(4, "0")}.ts`,
@@ -1769,8 +1813,8 @@ async function clickFirstChangedLine(page: Page): Promise<void> {
   await page.mouse.click(bodyBounds.x + 120, bodyBounds.y + lineHeight * 1.5);
 }
 
-async function rightClickFirstChangedLine(page: Page): Promise<void> {
-  const body = page.getByTestId("diff-file-0-body");
+async function rightClickFirstChangedLine(page: Page, fileIndex = 0): Promise<void> {
+  const body = page.getByTestId(`diff-file-${fileIndex}-body`);
   const canvas = page.getByTestId("git-diff-canvas");
   const [bodyBounds, fontSize] = await Promise.all([
     body.boundingBox(),
@@ -1823,8 +1867,9 @@ async function deleteInlineReview(page: Page): Promise<void> {
 async function dragExactAddedText(
   page: Page,
   offsets: { startOffset: number; endOffset: number },
+  fileIndex = 0,
 ): Promise<void> {
-  const body = page.getByTestId("diff-file-0-body");
+  const body = page.getByTestId(`diff-file-${fileIndex}-body`);
   const canvas = page.getByTestId("git-diff-canvas");
   const [bodyBounds, metrics] = await Promise.all([
     body.boundingBox(),

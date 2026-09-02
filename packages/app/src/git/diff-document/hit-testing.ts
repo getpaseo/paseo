@@ -118,13 +118,17 @@ export function selectCellSource(
   };
 }
 
-export function selectAllSource(model: DiffDocumentModel): DiffSelection | null {
+export function selectAllSource(
+  model: DiffDocumentModel,
+  preferredPosition?: DiffCharacterPosition,
+): DiffSelection | null {
   let first: DiffCharacterPosition | null = null;
   let last: DiffCharacterPosition | null = null;
+  const splitCellIndex = model.layout === "split" ? (preferredPosition?.cellIndex ?? 1) : null;
   for (const row of model.rows) {
     if (row.kind !== "line") continue;
     row.cells.forEach((cell, cellIndex) => {
-      if (!cell) return;
+      if (!cell || (splitCellIndex !== null && cellIndex !== splitCellIndex)) return;
       const side = cell.reviewTarget?.side ?? (cellIndex === 0 ? "old" : "new");
       first ??= {
         fileIndex: row.fileIndex,

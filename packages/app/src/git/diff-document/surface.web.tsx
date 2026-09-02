@@ -539,6 +539,10 @@ export function DiffSurface(props: DiffSurfaceProps) {
     },
     [schedulePaint],
   );
+  useEffect(() => {
+    dragRef.current = null;
+    setSelection(null);
+  }, [props.collapsedFilePaths, props.displayPreferences.layout, props.files, setSelection]);
   const pointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0) return;
@@ -700,8 +704,12 @@ export function DiffSurface(props: DiffSurfaceProps) {
   }, [contextHit, writeSourceText]);
   const selectAll = useCallback(() => {
     const currentModel = modelRef.current;
-    if (currentModel) setSelection(selectAllSource(currentModel));
-  }, [setSelection]);
+    if (currentModel) {
+      setSelection(
+        selectAllSource(currentModel, contextHit?.position ?? selectionRef.current?.focus),
+      );
+    }
+  }, [contextHit?.position, setSelection]);
   const keyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const target = event.target;
@@ -974,7 +982,7 @@ function WebReviewThread({
     [height, left, top, width],
   );
   return (
-    <div style={style} data-diff-review="true">
+    <div style={style} data-diff-review="true" onContextMenu={preserveNativeContextMenu}>
       <InlineReviewThread
         reviewTarget={target}
         reviewActions={actions}
@@ -984,6 +992,10 @@ function WebReviewThread({
       />
     </div>
   );
+}
+
+function preserveNativeContextMenu(event: React.MouseEvent): void {
+  event.stopPropagation();
 }
 
 const ROOT_STYLE: React.CSSProperties = {

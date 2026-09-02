@@ -121,6 +121,23 @@ describe("diff hit testing", () => {
 
     expect(selectedSourceText(model, selectAllSource(model)!)).toBe("@@ -1,0 +1,2 @@\nfirst\ntail");
   });
+
+  it("selects all source from one split side without interleaving panes", () => {
+    const model = buildModel("unused", { files: [splitFile()], layout: "split" });
+    const changedRow = model.rows.find(
+      (row) => row.kind === "line" && row.cells.length === 2 && row.cells.every(Boolean),
+    );
+    expect(changedRow?.kind).toBe("line");
+
+    const left = changedRow!.kind === "line" ? changedRow!.cells[0]! : null;
+    const right = changedRow!.kind === "line" ? changedRow!.cells[1]! : null;
+    expect(selectedSourceText(model, selectAllSource(model, position(model, left!, 0))!)).toBe(
+      "@@ -1,2 +1,2 @@\nold-one\nold-two",
+    );
+    expect(selectedSourceText(model, selectAllSource(model, position(model, right!, 0))!)).toBe(
+      "new-one\nnew-two",
+    );
+  });
 });
 
 function buildModel(changedContent: string, overrides: Partial<BuildDiffDocumentModelInput> = {}) {
