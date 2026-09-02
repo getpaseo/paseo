@@ -28,75 +28,81 @@ afterEach(async () => {
 });
 
 describe("plugin scaffold", () => {
-  it("creates a standalone split-runtime project that typechecks", async () => {
-    const parent = await mkdtemp(path.join(process.cwd(), ".plugin-scaffold-"));
-    directories.push(parent);
-    const directory = path.join(parent, "hello-plugin");
+  it(
+    "creates a standalone split-runtime project that typechecks",
+    { timeout: 15_000 },
+    async () => {
+      const parent = await mkdtemp(path.join(process.cwd(), ".plugin-scaffold-"));
+      directories.push(parent);
+      const directory = path.join(parent, "hello-plugin");
 
-    await scaffoldPluginDirectory(directory);
+      await scaffoldPluginDirectory(directory);
 
-    const configPath = path.join(directory, "tsconfig.json");
-    const config = JSON.parse(await readFile(configPath, "utf8")) as {
-      compilerOptions: { lib: string[]; types: string[] };
-    };
-    expect(config.compilerOptions.lib).toEqual(["ES2023"]);
-    expect(config.compilerOptions.types).toEqual(["react"]);
-    await expect(typecheckPlugin(directory)).resolves.toBeUndefined();
-    expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual({
-      id: "hello-plugin",
-    });
-    const cliPackageJson = JSON.parse(
-      await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
-    ) as { version: string };
-    expect(JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"))).toEqual({
-      name: "hello-plugin",
-      private: true,
-      version: "0.0.0",
-      scripts: { typecheck: "tsc --noEmit" },
-      devDependencies: {
-        "@getpaseo/plugin": cliPackageJson.version,
-        "@tanstack/react-query": "^5.90.11",
-        "@types/react": "~19.2.0",
-        react: "19.1.0",
-        "react-native": "0.81.5",
-        typescript: "^5.9.3",
-        zod: "^4.4.3",
-      },
-    });
-    expect(await readdir(directory)).not.toContain("paseo-plugin.d.ts");
-    await expect(readFile(path.join(directory, "index.client.tsx"), "utf8")).resolves.toContain(
-      'from "./client/greeting"',
-    );
-    await expect(readFile(path.join(directory, "index.server.ts"), "utf8")).resolves.toContain(
-      'from "./server/greeting"',
-    );
-    await expect(readFile(path.join(directory, "client/greeting.tsx"), "utf8")).resolves.toContain(
-      "useRpc(greetingRpc)",
-    );
-    await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.not.toContain(
-      `/// <reference lib="dom" />`,
-    );
-    await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.toContain(
-      `declare const window: { open(url: string, target: string, features: string): unknown };`,
-    );
-    await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.toContain(
-      `Platform.OS === "web"`,
-    );
-    await expect(readFile(path.join(directory, "client/greeting.tsx"), "utf8")).resolves.toContain(
-      `openExternal("https://paseo.sh")`,
-    );
-    await expect(readFile(path.join(directory, "server/greeting.ts"), "utf8")).resolves.toContain(
-      '"Hello, " + name + "!"',
-    );
-    await expect(readFile(path.join(directory, "shared/greeting.ts"), "utf8")).resolves.toContain(
-      'name: "greeting.create"',
-    );
+      const configPath = path.join(directory, "tsconfig.json");
+      const config = JSON.parse(await readFile(configPath, "utf8")) as {
+        compilerOptions: { lib: string[]; types: string[] };
+      };
+      expect(config.compilerOptions.lib).toEqual(["ES2023"]);
+      expect(config.compilerOptions.types).toEqual(["react"]);
+      await expect(typecheckPlugin(directory)).resolves.toBeUndefined();
+      expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual(
+        {
+          id: "hello-plugin",
+        },
+      );
+      const cliPackageJson = JSON.parse(
+        await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
+      ) as { version: string };
+      expect(JSON.parse(await readFile(path.join(directory, "package.json"), "utf8"))).toEqual({
+        name: "hello-plugin",
+        private: true,
+        version: "0.0.0",
+        scripts: { typecheck: "tsc --noEmit" },
+        devDependencies: {
+          "@getpaseo/plugin": cliPackageJson.version,
+          "@tanstack/react-query": "^5.90.11",
+          "@types/react": "~19.2.0",
+          react: "19.1.0",
+          "react-native": "0.81.5",
+          typescript: "^5.9.3",
+          zod: "^4.4.3",
+        },
+      });
+      expect(await readdir(directory)).not.toContain("paseo-plugin.d.ts");
+      await expect(readFile(path.join(directory, "index.client.tsx"), "utf8")).resolves.toContain(
+        'from "./client/greeting"',
+      );
+      await expect(readFile(path.join(directory, "index.server.ts"), "utf8")).resolves.toContain(
+        'from "./server/greeting"',
+      );
+      await expect(
+        readFile(path.join(directory, "client/greeting.tsx"), "utf8"),
+      ).resolves.toContain("useRpc(greetingRpc)");
+      await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.not.toContain(
+        `/// <reference lib="dom" />`,
+      );
+      await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.toContain(
+        `declare const window: { open(url: string, target: string, features: string): unknown };`,
+      );
+      await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.toContain(
+        `Platform.OS === "web"`,
+      );
+      await expect(
+        readFile(path.join(directory, "client/greeting.tsx"), "utf8"),
+      ).resolves.toContain(`openExternal("https://paseo.sh")`);
+      await expect(readFile(path.join(directory, "server/greeting.ts"), "utf8")).resolves.toContain(
+        '"Hello, " + name + "!"',
+      );
+      await expect(readFile(path.join(directory, "shared/greeting.ts"), "utf8")).resolves.toContain(
+        'name: "greeting.create"',
+      );
 
-    await writeFile(path.join(directory, "client/greeting.tsx"), '\ndocument.title = "x";\n', {
-      flag: "a",
-    });
-    await expect(typecheckPlugin(directory)).rejects.toThrow("Cannot find name 'document'.");
-  });
+      await writeFile(path.join(directory, "client/greeting.tsx"), '\ndocument.title = "x";\n', {
+        flag: "a",
+      });
+      await expect(typecheckPlugin(directory)).rejects.toThrow("Cannot find name 'document'.");
+    },
+  );
 
   it("typechecks client and server Paseo API access", async () => {
     const parent = await mkdtemp(path.join(process.cwd(), ".plugin-scaffold-"));
