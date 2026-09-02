@@ -172,7 +172,6 @@ export interface ProcessTimelineResponseOutput {
   error: string | null;
   sideEffects: TimelineReducerSideEffect[];
   acknowledgedClientMessageIds: string[];
-  resetHistoryWindow: boolean;
 }
 
 interface TimelineUnit {
@@ -381,20 +380,6 @@ function shouldPreserveReplacementContinuity(input: {
     return input.resumePolicy.preserveContinuity;
   }
   return input.currentEpoch === input.responseEpoch || !input.reset;
-}
-
-function shouldResetHistoryWindow(input: {
-  bootstrapReplace: boolean;
-  direction: TimelineDirection;
-  hasCurrentCursor: boolean;
-  resumeTailPolicy: ResumeTailPolicy;
-}): boolean {
-  if (input.bootstrapReplace) return true;
-  return (
-    input.direction === "tail" &&
-    input.hasCurrentCursor &&
-    input.resumeTailPolicy.kind !== "discard"
-  );
 }
 
 function mergeTimelineWindow(args: {
@@ -1294,7 +1279,6 @@ export function processTimelineResponse(
       error: payload.error,
       sideEffects: [],
       acknowledgedClientMessageIds: [],
-      resetHistoryWindow: false,
     };
   }
 
@@ -1441,12 +1425,6 @@ export function processTimelineResponse(
 
   const initResolution: "resolve" | "reject" | null = shouldResolveDeferredInit ? "resolve" : null;
   const commit = discard ? "discard" : "apply";
-  const resetHistoryWindow = shouldResetHistoryWindow({
-    bootstrapReplace: replace,
-    direction: payload.direction,
-    hasCurrentCursor: currentCursor !== undefined,
-    resumeTailPolicy,
-  });
 
   return {
     commit,
@@ -1460,7 +1438,6 @@ export function processTimelineResponse(
     error: null,
     sideEffects,
     acknowledgedClientMessageIds: timelineResult.acknowledgedClientMessageIds,
-    resetHistoryWindow,
   };
 }
 

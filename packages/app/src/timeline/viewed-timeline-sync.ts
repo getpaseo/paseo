@@ -199,7 +199,6 @@ function commitProcessedTimeline(input: {
           : payload.hasNewer,
       synchronized,
       acknowledgedClientMessageIds: result.acknowledgedClientMessageIds,
-      resetHistoryWindow: result.resetHistoryWindow,
     });
     return;
   }
