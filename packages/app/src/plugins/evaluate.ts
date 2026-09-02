@@ -353,8 +353,8 @@ export function runPluginClientBundle(
     if (name === "@getpaseo/plugin/react-native" || name === "@paseo/plugin/react-native") {
       return pluginReactNativeRuntime;
     }
-    if (name === "@getpaseo/plugin/server") {
-      return { defineAttachmentSource, defineRpc };
+    if (name === "@getpaseo/plugin/server" || name === "@paseo/plugin/server") {
+      return {};
     }
     if (name === "@tanstack/react-query") return ReactQuery;
     if (name === "zod") return Zod;

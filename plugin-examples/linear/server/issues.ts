@@ -1,11 +1,10 @@
-import type { PluginAttachmentSearchPayload } from "@getpaseo/plugin/server";
-import type { output as ZodOutput } from "zod";
+import type { PluginAttachmentSearchPayload, RpcInput } from "@getpaseo/plugin";
 import { searchIssuesRpc } from "../shared/issues";
 import { createLinearIssueSearch } from "./linear";
 
 export async function searchIssues({
   query,
-}: ZodOutput<typeof searchIssuesRpc.input>): Promise<PluginAttachmentSearchPayload> {
+}: RpcInput<typeof searchIssuesRpc>): Promise<PluginAttachmentSearchPayload> {
   const linear = createLinearIssueSearch({ apiKey: process.env.LINEAR_API_KEY ?? "" });
   return linear.search(query);
 }

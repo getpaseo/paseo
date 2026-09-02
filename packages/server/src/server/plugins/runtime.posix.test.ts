@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import path from "node:path";
@@ -537,13 +537,14 @@ export default function contribute(plugin: unknown) {
   it("loads separate entries, exposes the client bundle, and invokes the server RPC", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
     temporaryDirectories.push(directory);
+    await mkdir(path.join(directory, "shared"));
     await writeFile(path.join(directory, "paseo-plugin.json"), JSON.stringify({ id: "hello" }));
     await writeFile(
       path.join(directory, "index.client.tsx"),
       `import React from "react";
 import { Text } from "react-native";
 import { defineAttachmentSource } from "@getpaseo/plugin";
-import { greetRpc } from "./greet.shared";
+import { greetRpc } from "./shared/greet";
 
 const attachments = defineAttachmentSource({
   id: "issues",
@@ -572,7 +573,7 @@ export default function contribute(client: any) {
 }`,
     );
     await writeFile(
-      path.join(directory, "greet.shared.ts"),
+      path.join(directory, "shared", "greet.ts"),
       `import { z } from "zod";
 import { defineRpc } from "@getpaseo/plugin";
 export const greetRpc = defineRpc({
@@ -584,7 +585,7 @@ export const greetRpc = defineRpc({
     await writeFile(
       path.join(directory, "index.server.ts"),
       `import { platform } from "node:os";
-import { greetRpc } from "./greet.shared";
+import { greetRpc } from "./shared/greet";
 export default function contribute(server: any) {
   server.handle(greetRpc, async (input: { name: string }) => ({
     message: "Hello, " + input.name,
@@ -620,7 +621,7 @@ export default function contribute(server: any) {
     const directory = await createPlugin(
       "legacy-sdk",
       `import { z } from "zod";
-import { defineRpc } from "@paseo/plugin/server";
+import { defineRpc } from "@paseo/plugin";
 
 const pingRpc = defineRpc({
   name: "ping",
@@ -646,6 +647,11 @@ export default function contribute(plugin: any) {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
     temporaryDirectories.push(directory);
     await Promise.all([
+      mkdir(path.join(directory, "client")),
+      mkdir(path.join(directory, "server")),
+      mkdir(path.join(directory, "shared")),
+    ]);
+    await Promise.all([
       writeFile(
         path.join(directory, "paseo-plugin.json"),
         JSON.stringify({ id: "split-runtime" }),
@@ -654,7 +660,7 @@ export default function contribute(plugin: any) {
       writeFile(
         path.join(directory, "index.client.tsx"),
         `import type { PluginClientContext } from "@getpaseo/plugin";
-import { Surface } from "./surface.client";
+import { Surface } from "./client/surface";
 export default function contribute(client: PluginClientContext) {
   client.addSurface("main", Surface);
   return () => undefined;
@@ -664,8 +670,8 @@ export default function contribute(client: PluginClientContext) {
       writeFile(
         path.join(directory, "index.server.ts"),
         `import type { PluginServerContext } from "@getpaseo/plugin";
-import { inspectRpc } from "./inspect.shared";
-import { inspectHost } from "./inspect.server";
+import { inspectRpc } from "./shared/inspect";
+import { inspectHost } from "./server/inspect";
 export default function contribute(server: PluginServerContext) {
   server.handle(inspectRpc, inspectHost);
   return () => undefined;
@@ -673,7 +679,7 @@ export default function contribute(server: PluginServerContext) {
         "utf8",
       ),
       writeFile(
-        path.join(directory, "surface.client.tsx"),
+        path.join(directory, "client", "surface.tsx"),
         `import React from "react";
 import { StyleSheet, Text } from "react-native";
 
@@ -685,8 +691,8 @@ export function Surface() {
         "utf8",
       ),
       writeFile(
-        path.join(directory, "inspect.shared.ts"),
-        `import { defineRpc } from "@getpaseo/plugin/server";
+        path.join(directory, "shared", "inspect.ts"),
+        `import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
 export const inspectRpc = defineRpc({
@@ -697,10 +703,10 @@ export const inspectRpc = defineRpc({
         "utf8",
       ),
       writeFile(
-        path.join(directory, "inspect.server.ts"),
+        path.join(directory, "server", "inspect.ts"),
         `import { platform } from "node:os";
 import type { z } from "zod";
-import { inspectRpc } from "./inspect.shared";
+import { inspectRpc } from "../shared/inspect";
 
 export function inspectHost(_input: z.input<typeof inspectRpc.input>) {
   return { platform: platform() };
@@ -725,6 +731,10 @@ export function inspectHost(_input: z.input<typeof inspectRpc.input>) {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
     temporaryDirectories.push(directory);
     await Promise.all([
+      mkdir(path.join(directory, "client")),
+      mkdir(path.join(directory, "server")),
+    ]);
+    await Promise.all([
       writeFile(
         path.join(directory, "paseo-plugin.json"),
         JSON.stringify({ id: "cross-runtime-import" }),
@@ -733,7 +743,7 @@ export function inspectHost(_input: z.input<typeof inspectRpc.input>) {
       writeFile(
         path.join(directory, "index.client.tsx"),
         `import type { PluginClientContext } from "@getpaseo/plugin";
-import { Surface } from "./surface.client";
+import { Surface } from "./client/surface";
 
 export default function contribute(client: PluginClientContext) {
   client.addSurface("main", Surface);
@@ -742,13 +752,13 @@ export default function contribute(client: PluginClientContext) {
         "utf8",
       ),
       writeFile(
-        path.join(directory, "surface.client.tsx"),
-        `import { readSecret } from "./secret.server";
+        path.join(directory, "client", "surface.tsx"),
+        `import { readSecret } from "../server/secret";
 export function Surface() { return readSecret(); }`,
         "utf8",
       ),
       writeFile(
-        path.join(directory, "secret.server.ts"),
+        path.join(directory, "server", "secret.ts"),
         `export function readSecret() { return null; }`,
         "utf8",
       ),
@@ -765,6 +775,11 @@ export function Surface() { return readSecret(); }`,
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
     temporaryDirectories.push(directory);
     await Promise.all([
+      mkdir(path.join(directory, "client")),
+      mkdir(path.join(directory, "server")),
+      mkdir(path.join(directory, "shared")),
+    ]);
+    await Promise.all([
       writeFile(
         path.join(directory, "paseo-plugin.json"),
         JSON.stringify({ id: "cross-runtime-import" }),
@@ -773,8 +788,8 @@ export function Surface() { return readSecret(); }`,
       writeFile(
         path.join(directory, "index.server.ts"),
         `import type { PluginServerContext } from "@getpaseo/plugin";
-import { inspect } from "./inspect.server";
-import { inspectRpc } from "./inspect.shared";
+import { inspect } from "./server/inspect";
+import { inspectRpc } from "./shared/inspect";
 
 export default function contribute(server: PluginServerContext) {
   server.handle(inspectRpc, inspect);
@@ -783,7 +798,7 @@ export default function contribute(server: PluginServerContext) {
         "utf8",
       ),
       writeFile(
-        path.join(directory, "inspect.shared.ts"),
+        path.join(directory, "shared", "inspect.ts"),
         `import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 export const inspectRpc = defineRpc({
@@ -794,13 +809,13 @@ export const inspectRpc = defineRpc({
         "utf8",
       ),
       writeFile(
-        path.join(directory, "inspect.server.ts"),
-        `import { Surface } from "./surface.client";
+        path.join(directory, "server", "inspect.ts"),
+        `import { Surface } from "../client/surface";
 export function inspect() { void Surface; return {}; }`,
         "utf8",
       ),
       writeFile(
-        path.join(directory, "surface.client.tsx"),
+        path.join(directory, "client", "surface.tsx"),
         `export function Surface() { return null; }`,
         "utf8",
       ),

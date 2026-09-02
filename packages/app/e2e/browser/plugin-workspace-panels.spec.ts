@@ -118,7 +118,7 @@ export default function contribute(client) {
 }`;
 }
 
-const pluginSharedSource = `import { defineRpc } from "@getpaseo/plugin/server";
+const pluginSharedSource = `import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
 export const recordComposerOpen = defineRpc({
