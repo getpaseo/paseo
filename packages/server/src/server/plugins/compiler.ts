@@ -72,7 +72,6 @@ type PluginBuildTarget = "client" | "server";
 type PluginModuleLocation = PluginBuildTarget | "shared" | "invalid";
 
 function directoryTarget(filePath: string, pluginDirectory: string): PluginModuleLocation | null {
-  if (filePath.split(path.sep).includes("node_modules")) return null;
   const relative = path.relative(pluginDirectory, filePath);
   if (relative.startsWith("..") || path.isAbsolute(relative)) return "invalid";
   const segments = relative.split(path.sep);
@@ -89,7 +88,9 @@ function createRuntimeBoundaryPlugin(target: PluginBuildTarget, pluginDirectory:
     name: `paseo-plugin-${target}-runtime-boundary`,
     setup(buildContext) {
       buildContext.onResolve({ filter: /.*/ }, (args) => {
-        if (args.kind === "entry-point" || !args.path.startsWith(".")) return null;
+        if (args.kind === "entry-point") return null;
+        if (!args.path.startsWith(".") && !path.isAbsolute(args.path)) return null;
+        if (args.importer.split(path.sep).includes("node_modules")) return null;
         const resolvedPath = path.resolve(args.resolveDir, args.path);
         const importedTarget = directoryTarget(resolvedPath, pluginDirectory);
         if (importedTarget === "invalid") {

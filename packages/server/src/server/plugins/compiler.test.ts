@@ -229,6 +229,44 @@ export default function contribute() { void secret; return () => undefined; }`,
     );
   });
 
+  it("rejects absolute imports from outside the plugin root", async () => {
+    const entries = await createSplitPlugin();
+    const outsideDirectory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-outside-"));
+    temporaryDirectories.push(outsideDirectory);
+    const outside = path.join(outsideDirectory, "secret.ts");
+    await writeFile(outside, `export const secret = "outside";`);
+    await writeFile(
+      entries.client,
+      `import { secret } from ${JSON.stringify(outside)};
+export default function contribute() { void secret; return () => undefined; }`,
+    );
+
+    await expect(compilePlugin(entries)).rejects.toThrow(
+      `Plugin modules belong in client/, server/, or shared/: ${outside}`,
+    );
+  });
+
+  it("rejects plugin-authored relative imports that escape into node_modules", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "paseo-plugin-node-modules-parent-"));
+    temporaryDirectories.push(parent);
+    const pluginDirectory = path.join(parent, "plugin");
+    const server = path.join(pluginDirectory, "index.server.ts");
+    const outside = path.join(parent, "node_modules", "secret.ts");
+    await Promise.all([mkdir(pluginDirectory), mkdir(path.dirname(outside))]);
+    await Promise.all([
+      writeFile(outside, `export const secret = "outside";`),
+      writeFile(
+        server,
+        `import { secret } from "../node_modules/secret";
+export default function contribute() { void secret; return () => undefined; }`,
+      ),
+    ]);
+
+    await expect(compilePlugin({ client: null, server })).rejects.toThrow(
+      `Plugin modules belong in client/, server/, or shared/: ${path.join(parent, "node_modules", "secret")}`,
+    );
+  });
+
   it("keeps nested modules owned by their top-level runtime directory", async () => {
     const entries = await createSplitPlugin();
     const nestedClient = path.join(entries.directory, "client", "feature", "server");
