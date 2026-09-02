@@ -1,5 +1,6 @@
 import type { SidebarProjectEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { createProjectIconTarget, type ProjectIconTarget } from "@/projects/icon-target";
+import type { HostRuntimeConnectionStatus } from "@/runtime/host-runtime";
 
 export interface SidebarProjectHostTarget {
   serverId: string;
@@ -22,6 +23,7 @@ export interface SidebarProjectSectionRowModel {
 export type SidebarProjectRowModel = SidebarProjectSectionRowModel;
 
 const EMPTY_MULTIPLICITY_MAP: ReadonlyMap<string, boolean> = new Map();
+const EMPTY_STATUS_MAP: ReadonlyMap<string, HostRuntimeConnectionStatus> = new Map();
 function hostTarget(input: {
   serverId: string;
   projectId: string;
@@ -82,28 +84,51 @@ export function resolveSidebarProjectLocalPath(
 // directories add a second workspace. Mirrors the gate used by the global "New
 // workspace" affordances (use-global-new-workspace-action.ts and left-sidebar's
 // SidebarNewWorkspaceHeaderRow): `canCreateWorktree || supportsMultiplicity`.
-function resolveNewWorkspaceTarget(
-  project: SidebarProjectEntry,
+function canHostNewWorkspace(
+  host: SidebarProjectEntry["hosts"][number],
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>,
+): boolean {
+  return (
+    host.worktreeSupport !== "unsupported" ||
+    supportsMultiplicityByServerId.get(host.serverId) === true
+  );
+}
+
+interface NewWorkspaceTargetInput {
+  project: SidebarProjectEntry;
+  supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
+  preferredServerId: string | null | undefined;
+  hostConnectionStatusByServerId: ReadonlyMap<string, HostRuntimeConnectionStatus>;
+}
+
+function resolveNewWorkspaceTarget(
+  input: NewWorkspaceTargetInput,
 ): SidebarProjectHostTarget | null {
-  for (const host of project.hosts) {
-    if (
-      host.worktreeSupport === "unsupported" &&
-      !supportsMultiplicityByServerId.get(host.serverId)
-    ) {
-      continue;
-    }
+  const qualifyingHosts = input.project.hosts.filter((host) =>
+    canHostNewWorkspace(host, input.supportsMultiplicityByServerId),
+  );
+
+  // This row navigates with an explicit `?serverId=`, which the composer honours
+  // outright, so an offline remembered host would stick with nothing to correct it.
+  const preferredServerId = input.preferredServerId?.trim() ?? "";
+  if (
+    preferredServerId &&
+    input.hostConnectionStatusByServerId.get(preferredServerId) === "online"
+  ) {
+    const preferredHost = qualifyingHosts.find((host) => host.serverId === preferredServerId);
+    const preferredTarget = preferredHost ? hostTarget(preferredHost) : null;
+    if (preferredTarget) return preferredTarget;
+  }
+
+  for (const host of qualifyingHosts) {
     const target = hostTarget(host);
     if (target) return target;
   }
   return null;
 }
 
-function projectTrailingAction(
-  project: SidebarProjectEntry,
-  supportsMultiplicityByServerId: ReadonlyMap<string, boolean>,
-): SidebarProjectTrailingAction {
-  const target = resolveNewWorkspaceTarget(project, supportsMultiplicityByServerId);
+function projectTrailingAction(input: NewWorkspaceTargetInput): SidebarProjectTrailingAction {
+  const target = resolveNewWorkspaceTarget(input);
   return target ? { kind: "new_workspace", target } : { kind: "none" };
 }
 
@@ -111,13 +136,18 @@ export function buildSidebarProjectRowModel(input: {
   project: SidebarProjectEntry;
   collapsed: boolean;
   supportsMultiplicityByServerId?: ReadonlyMap<string, boolean>;
+  preferredServerId?: string | null;
+  hostConnectionStatusByServerId?: ReadonlyMap<string, HostRuntimeConnectionStatus>;
 }): SidebarProjectRowModel {
   return {
     kind: "project_section",
     chevron: input.collapsed ? "expand" : "collapse",
-    trailingAction: projectTrailingAction(
-      input.project,
-      input.supportsMultiplicityByServerId ?? EMPTY_MULTIPLICITY_MAP,
-    ),
+    trailingAction: projectTrailingAction({
+      project: input.project,
+      supportsMultiplicityByServerId:
+        input.supportsMultiplicityByServerId ?? EMPTY_MULTIPLICITY_MAP,
+      preferredServerId: input.preferredServerId,
+      hostConnectionStatusByServerId: input.hostConnectionStatusByServerId ?? EMPTY_STATUS_MAP,
+    }),
   };
 }

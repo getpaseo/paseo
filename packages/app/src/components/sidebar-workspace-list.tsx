@@ -48,6 +48,11 @@ import {
 } from "@/hooks/use-sidebar-workspace-pin";
 import { useSidebarCollapsedSectionsStore } from "@/stores/sidebar-collapsed-sections-store";
 import { useHostFeatureMap } from "@/runtime/host-features";
+import {
+  useHostRuntimeConnectionStatuses,
+  type HostRuntimeConnectionStatus,
+} from "@/runtime/host-runtime";
+import { useFormPreferences } from "@/hooks/use-form-preferences";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useProjectIcons } from "@/projects/icons";
 import {
@@ -1545,6 +1550,8 @@ function ProjectBlock({
   activeWorkspaceSelection,
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
+  preferredServerId,
+  hostConnectionStatusByServerId,
   supportsPinningByServerId,
   onToggleWorkspacePin,
 }: {
@@ -1570,6 +1577,8 @@ function ProjectBlock({
   activeWorkspaceSelection: ActiveWorkspaceSelection | null;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
+  preferredServerId: string | null;
+  hostConnectionStatusByServerId: ReadonlyMap<string, HostRuntimeConnectionStatus>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
 }) {
@@ -1585,8 +1594,16 @@ function ProjectBlock({
         project,
         collapsed,
         supportsMultiplicityByServerId,
+        preferredServerId,
+        hostConnectionStatusByServerId,
       }),
-    [collapsed, project, supportsMultiplicityByServerId],
+    [
+      collapsed,
+      project,
+      supportsMultiplicityByServerId,
+      preferredServerId,
+      hostConnectionStatusByServerId,
+    ],
   );
 
   // Collapsed rows hide their workspace rows, so the project row carries the most urgent
@@ -1818,6 +1835,8 @@ function areProjectBlockPropsEqual(previous: ProjectBlockProps, next: ProjectBlo
     previous.shortcutIndexByWorkspaceKey === next.shortcutIndexByWorkspaceKey &&
     previous.hostBadgeByServerId === next.hostBadgeByServerId &&
     previous.supportsMultiplicityByServerId === next.supportsMultiplicityByServerId &&
+    previous.preferredServerId === next.preferredServerId &&
+    previous.hostConnectionStatusByServerId === next.hostConnectionStatusByServerId &&
     previous.supportsPinningByServerId === next.supportsPinningByServerId &&
     previous.onToggleWorkspacePin === next.onToggleWorkspacePin &&
     previous.parentGestureRef === next.parentGestureRef &&
@@ -1896,6 +1915,9 @@ export function SidebarWorkspaceList({
   });
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");
+  const hostConnectionStatusByServerId = useHostRuntimeConnectionStatuses(serverIds);
+  const { preferences } = useFormPreferences();
+  const preferredServerId = preferences.serverId ?? null;
   const supportsPinningByServerId = useHostFeatureMap(serverIds, "workspacePinning");
   const onToggleWorkspacePin = useSidebarWorkspacePinController();
   const getPinnedWorkspaceOrder = useSidebarOrderStore((state) => state.getPinnedWorkspaceOrder);
@@ -1981,6 +2003,8 @@ export function SidebarWorkspaceList({
         pathname={pathname}
         hostBadgeByServerId={hostBadgeByServerId}
         supportsMultiplicityByServerId={supportsMultiplicityByServerId}
+        preferredServerId={preferredServerId}
+        hostConnectionStatusByServerId={hostConnectionStatusByServerId}
         supportsPinningByServerId={supportsPinningByServerId}
         onToggleWorkspacePin={onToggleWorkspacePin}
         onPinnedWorkspaceReorder={handlePinnedWorkspaceReorder}
@@ -2076,6 +2100,8 @@ function ProjectModeList({
   pathname,
   hostBadgeByServerId,
   supportsMultiplicityByServerId,
+  preferredServerId,
+  hostConnectionStatusByServerId,
   supportsPinningByServerId,
   onToggleWorkspacePin,
   onPinnedWorkspaceReorder,
@@ -2094,6 +2120,8 @@ function ProjectModeList({
   pathname: string;
   hostBadgeByServerId: ReadonlyMap<string, HostBadgeModel>;
   supportsMultiplicityByServerId: ReadonlyMap<string, boolean>;
+  preferredServerId: string | null;
+  hostConnectionStatusByServerId: ReadonlyMap<string, HostRuntimeConnectionStatus>;
   supportsPinningByServerId: ReadonlyMap<string, boolean>;
   onToggleWorkspacePin: ToggleSidebarWorkspacePin;
   onPinnedWorkspaceReorder: (workspaces: SidebarWorkspacePlacement[]) => void;
@@ -2294,6 +2322,8 @@ function ProjectModeList({
           activeWorkspaceSelection={activeWorkspaceSelection}
           hostBadgeByServerId={hostBadgeByServerId}
           supportsMultiplicityByServerId={supportsMultiplicityByServerId}
+          preferredServerId={preferredServerId}
+          hostConnectionStatusByServerId={hostConnectionStatusByServerId}
           supportsPinningByServerId={supportsPinningByServerId}
           onToggleWorkspacePin={onToggleWorkspacePin}
         />
@@ -2306,6 +2336,8 @@ function ProjectModeList({
       handleWorkspaceReorder,
       hostBadgeByServerId,
       supportsMultiplicityByServerId,
+      preferredServerId,
+      hostConnectionStatusByServerId,
       supportsPinningByServerId,
       onToggleWorkspacePin,
       onWorkspacePress,
