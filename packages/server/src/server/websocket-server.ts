@@ -1418,7 +1418,7 @@ export class VoiceAssistantWebSocketServer {
       emitWorkspaceUpdatesForExternalWorkspaceIds: async (workspaceIds) => {
         const workspaceIdList = Array.from(workspaceIds);
         await Promise.all(
-          this.listTrustedSessions().map((activeSession) =>
+          this.listSessions().map((activeSession) =>
             activeSession.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
           ),
         );
