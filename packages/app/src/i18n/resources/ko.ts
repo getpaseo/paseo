@@ -363,7 +363,7 @@ export const ko: TranslationResources = {
     searchPlaceholder: "세션 검색...",
     scope: {
       host: "{{host}}의 세션",
-      workspace: "이 워크스페이스의 세션",
+      workspace: "이 워크스페이스",
     },
     filters: {
       all: "전체",
@@ -378,7 +378,7 @@ export const ko: TranslationResources = {
     },
     actions: {
       refresh: "세션 새로고침",
-      showAll: "모든 세션 표시",
+      showAll: "전체 표시",
       loadMore: "더 보기",
     },
     preview: {

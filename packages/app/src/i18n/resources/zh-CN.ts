@@ -362,7 +362,7 @@ export const zhCN: TranslationResources = {
     searchPlaceholder: "搜索会话...",
     scope: {
       host: "{{host}} 上的会话",
-      workspace: "此 workspace 中的会话",
+      workspace: "此 workspace",
     },
     filters: {
       all: "全部",
@@ -377,7 +377,7 @@ export const zhCN: TranslationResources = {
     },
     actions: {
       refresh: "刷新会话",
-      showAll: "显示所有会话",
+      showAll: "显示全部",
       loadMore: "加载更多",
     },
     preview: {

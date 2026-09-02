@@ -2084,7 +2084,7 @@ function WorkspaceScreenContent({
     },
     [persistenceKey, selectWorkspaceTabInPane],
   );
-  // A "Show all sessions" import can land in another workspace entirely; that
+  // A "Show all" import can land in another workspace entirely; that
   // agent has no tab here, so it opens its own workspace instead.
   const navigateToImportedAgent = useNavigateToImportedAgent(normalizedServerId);
   const handleImportedAgent = useCallback(

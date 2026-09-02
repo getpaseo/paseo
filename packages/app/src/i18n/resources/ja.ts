@@ -365,7 +365,7 @@ export const ja: TranslationResources = {
     searchPlaceholder: "セッションを検索...",
     scope: {
       host: "{{host}} のセッション",
-      workspace: "このワークスペースのセッション",
+      workspace: "このワークスペース",
     },
     filters: {
       all: "すべて",
@@ -380,7 +380,7 @@ export const ja: TranslationResources = {
     },
     actions: {
       refresh: "セッションを更新",
-      showAll: "すべてのセッションを表示",
+      showAll: "すべて表示",
       loadMore: "さらに読み込む",
     },
     preview: {

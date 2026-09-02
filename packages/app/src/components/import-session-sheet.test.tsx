@@ -938,7 +938,7 @@ describe("ImportSessionSheet", () => {
       workspaceId: "ws-current",
       snapshot: { supportsSnapshot: true, entries: [createSnapshotEntry("claude")] },
     });
-    await screen.findByText("Sessions in this workspace");
+    await screen.findByText("This workspace");
     screen.getByTestId("import-session-show-all");
   });
 

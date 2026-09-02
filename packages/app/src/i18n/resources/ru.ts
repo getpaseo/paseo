@@ -364,7 +364,7 @@ export const ru: TranslationResources = {
     searchPlaceholder: "Поиск сессий...",
     scope: {
       host: "Сессии на {{host}}",
-      workspace: "Сессии в этом рабочем пространстве",
+      workspace: "Это рабочее пространство",
     },
     filters: {
       all: "Все",
@@ -379,7 +379,7 @@ export const ru: TranslationResources = {
     },
     actions: {
       refresh: "Обновить список сессий",
-      showAll: "Показать все сессии",
+      showAll: "Показать все",
       loadMore: "Загрузить ещё",
     },
     preview: {

@@ -215,7 +215,7 @@ test("captures the compact import-session journey", async ({ page }, testInfo) =
   await test.step("workspace actions start scoped and can widen to the host", async () => {
     await page.getByRole("button", { name: "Workspace actions" }).click();
     await page.getByTestId("workspace-header-import-agent").click();
-    await expect(page.getByTestId("import-session-scope")).toHaveText("Sessions in this workspace");
+    await expect(page.getByTestId("import-session-scope")).toHaveText("This workspace");
     await expect(page.getByTestId("import-session-scope")).toBeVisible();
     await expect(page.getByTestId("import-session-show-all")).toBeVisible();
     await expect(page.getByText("Workspace actions", { exact: true })).not.toBeVisible();

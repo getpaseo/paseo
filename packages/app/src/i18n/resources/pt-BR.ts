@@ -365,7 +365,7 @@ export const ptBR: TranslationResources = {
     searchPlaceholder: "Buscar sessões...",
     scope: {
       host: "Sessões em {{host}}",
-      workspace: "Sessões neste workspace",
+      workspace: "Este workspace",
     },
     filters: {
       all: "Tudo",
@@ -380,7 +380,7 @@ export const ptBR: TranslationResources = {
     },
     actions: {
       refresh: "Atualizar sessões",
-      showAll: "Mostrar todas as sessões",
+      showAll: "Mostrar tudo",
       loadMore: "Carregar mais",
     },
     preview: {

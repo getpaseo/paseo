@@ -360,7 +360,7 @@ export const en = {
     searchPlaceholder: "Search sessions...",
     scope: {
       host: "Sessions on {{host}}",
-      workspace: "Sessions in this workspace",
+      workspace: "This workspace",
     },
     filters: {
       all: "All",
@@ -375,7 +375,7 @@ export const en = {
     },
     actions: {
       refresh: "Refresh sessions",
-      showAll: "Show all sessions",
+      showAll: "Show all",
       loadMore: "Load more",
     },
     preview: {

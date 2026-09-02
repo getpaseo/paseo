@@ -366,7 +366,7 @@ export const fr: TranslationResources = {
     searchPlaceholder: "Rechercher des sessions...",
     scope: {
       host: "Sessions sur {{host}}",
-      workspace: "Sessions dans cet espace de travail",
+      workspace: "Cet espace de travail",
     },
     filters: {
       all: "Tous",
@@ -381,7 +381,7 @@ export const fr: TranslationResources = {
     },
     actions: {
       refresh: "Sessions de rafraîchissement",
-      showAll: "Afficher toutes les sessions",
+      showAll: "Tout afficher",
       loadMore: "Charger plus",
     },
     preview: {

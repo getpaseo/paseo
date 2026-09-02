@@ -362,7 +362,7 @@ export const ar: TranslationResources = {
     searchPlaceholder: "البحث في الجلسات...",
     scope: {
       host: "الجلسات على {{host}}",
-      workspace: "الجلسات في مساحة العمل هذه",
+      workspace: "مساحة العمل هذه",
     },
     filters: {
       all: "الجميع",
@@ -377,7 +377,7 @@ export const ar: TranslationResources = {
     },
     actions: {
       refresh: "تحديث الجلسات",
-      showAll: "عرض كل الجلسات",
+      showAll: "عرض الكل",
       loadMore: "تحميل المزيد",
     },
     preview: {
