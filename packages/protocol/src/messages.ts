@@ -1028,6 +1028,12 @@ export const WorkspaceLabelListRequestSchema = z.object({
   subscribe: z.object({ subscriptionId: z.string() }),
   sync: WorkspaceLabelSyncCursorSchema.optional(),
 });
+export const WorkspaceLabelCreateRequestSchema = z.object({
+  type: z.literal("workspace.label.create.request"),
+  requestId: z.string(),
+  name: z.string(),
+  color: WorkspaceLabelColorSchema,
+});
 export const WorkspaceLabelAssignmentSetRequestSchema = z.object({
   type: z.literal("workspace.label.assignment.set.request"),
   requestId: z.string(),
@@ -3045,6 +3051,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   WorkspaceTitleSetRequestSchema,
   WorkspacePinSetRequestSchema,
   WorkspaceLabelListRequestSchema,
+  WorkspaceLabelCreateRequestSchema,
   WorkspaceLabelAssignmentSetRequestSchema,
   WorkspaceLabelUpdateRequestSchema,
   WorkspaceLabelDeleteRequestSchema,
@@ -3391,6 +3398,8 @@ export const ServerInfoStatusPayloadSchema = z
         directorySync: z.boolean().optional(),
         // COMPAT(workspaceLabels): added in v0.5.0, remove after 2027-08-14.
         workspaceLabels: z.boolean().optional(),
+        // COMPAT(workspaceLabelCreate): added in v0.7.0, remove gate after 2027-08-28.
+        workspaceLabelCreate: z.boolean().optional(),
         // COMPAT(checkoutForgeSetAutoMerge): added in v0.2.0-beta.1. Remove the
         // feature gate and checkoutGithubSetAutoMerge fallback after 2027-01-17
         // once the supported daemon floor is >= v0.2.0.
@@ -4068,6 +4077,13 @@ export const WorkspaceLabelListResponseSchema = z.object({
     sync: WorkspaceLabelSyncMetadataSchema,
   }),
 });
+export const WorkspaceLabelCreateResponseSchema = z.object({
+  type: z.literal("workspace.label.create.response"),
+  payload: z.object({
+    requestId: z.string(),
+    label: WorkspaceLabelDefinitionSchema,
+  }),
+});
 export const WorkspaceLabelUpdateSchema = z.object({
   type: z.literal("workspace.label.update"),
   payload: z.discriminatedUnion("kind", [
@@ -4107,6 +4123,8 @@ export const WorkspaceLabelDeleteResponseSchema = z.object({
   payload: z.object({
     requestId: z.string(),
     affectedWorkspaceCount: z.number().int().nonnegative(),
+    // COMPAT(workspaceLabelDeleteName): added in v0.7.0, keep optional until daemon floor >= v0.7.0.
+    deletedName: z.string().nullable().optional(),
   }),
 });
 export const WorkspaceLabelDeleteInspectResponseSchema = z.object({
@@ -6390,6 +6408,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   AgentUpdateMessageSchema,
   WorkspaceUpdateMessageSchema,
   WorkspaceLabelListResponseSchema,
+  WorkspaceLabelCreateResponseSchema,
   WorkspaceLabelUpdateSchema,
   WorkspaceLabelAssignmentSetResponseSchema,
   WorkspaceLabelUpdateResponseSchema,

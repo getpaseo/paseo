@@ -14,6 +14,20 @@ describe("workspace label wire schemas", () => {
         features: {},
       }).features.workspaceLabels,
     ).toBeUndefined();
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "old-host",
+        features: {},
+      }).features.workspaceLabelCreate,
+    ).toBeUndefined();
+    expect(
+      ServerInfoStatusPayloadSchema.parse({
+        status: "server_info",
+        serverId: "new-host",
+        features: { workspaceLabelCreate: true },
+      }).features.workspaceLabelCreate,
+    ).toBe(true);
   });
 
   test("parses the explicit list subscription and sequenced response", () => {
@@ -54,6 +68,48 @@ describe("workspace label wire schemas", () => {
         },
       }),
     ).toMatchObject({ payload: { label: { name: "Needs review", color: "sky" } } });
+  });
+
+  test("parses catalog-only label creation request and response", () => {
+    expect(
+      SessionInboundMessageSchema.parse({
+        type: "workspace.label.create.request",
+        requestId: "req-create",
+        name: "Needs review",
+        color: "sky",
+      }),
+    ).toEqual({
+      type: "workspace.label.create.request",
+      requestId: "req-create",
+      name: "Needs review",
+      color: "sky",
+    });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.label.create.response",
+        payload: {
+          requestId: "req-create",
+          label: { name: "Needs review", color: "sky" },
+        },
+      }),
+    ).toEqual({
+      type: "workspace.label.create.response",
+      payload: {
+        requestId: "req-create",
+        label: { name: "Needs review", color: "sky" },
+      },
+    });
+  });
+
+  test("rejects a label creation request with an invalid color", () => {
+    expect(() =>
+      SessionInboundMessageSchema.parse({
+        type: "workspace.label.create.request",
+        requestId: "req-create",
+        name: "Needs review",
+        color: "purple",
+      }),
+    ).toThrow();
   });
 
   test("carries a name and a colour on one edit, and neither is required", () => {
@@ -100,6 +156,25 @@ describe("workspace label wire schemas", () => {
         name: "Urgent",
       }),
     ).toMatchObject({ type: "workspace.label.delete.inspect.request" });
+  });
+
+  test("optionally identifies the canonical deleted label for older daemon compatibility", () => {
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.label.delete.response",
+        payload: {
+          requestId: "req-delete",
+          affectedWorkspaceCount: 2,
+          deletedName: "Needs review",
+        },
+      }),
+    ).toMatchObject({ payload: { deletedName: "Needs review" } });
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "workspace.label.delete.response",
+        payload: { requestId: "req-old-delete", affectedWorkspaceCount: 0 },
+      }),
+    ).toMatchObject({ payload: { requestId: "req-old-delete" } });
   });
 
   test("requires the fields promised by each operation", () => {

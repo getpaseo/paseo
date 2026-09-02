@@ -1,5 +1,6 @@
 import { execSync } from "child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "fs";
+import { mkdtemp, rm } from "fs/promises";
 import { tmpdir } from "os";
 import { join, resolve as resolvePath } from "path";
 import pino from "pino";
@@ -25,8 +26,12 @@ import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
 import type { StoredAgentRecord } from "./agent/agent-storage.js";
 import type { AgentManagerEvent } from "./agent/agent-manager.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
-import { WorkspaceLabelError, type WorkspaceLabelService } from "./workspace-labels/index.js";
-import { createPersistedProjectRecord } from "./workspace-registry.js";
+import {
+  createWorkspaceLabelService,
+  WorkspaceLabelError,
+  type WorkspaceLabelService,
+} from "./workspace-labels/index.js";
+import { createPersistedProjectRecord, FileBackedWorkspaceRegistry } from "./workspace-registry.js";
 import { deriveProjectKey } from "./project-key.js";
 import type { SessionOptions } from "./session.js";
 import type { SessionInboundMessage, SessionOutboundMessage } from "./messages.js";
@@ -720,6 +725,60 @@ describe("workspace label editing", () => {
         },
       },
     ]);
+  });
+});
+
+describe("workspace label creation", () => {
+  test("dispatches catalog-only creation and maps duplicate errors", async () => {
+    const paseoHome = await mkdtemp(join(tmpdir(), "paseo-session-labels-"));
+    try {
+      const workspaceRegistry = new FileBackedWorkspaceRegistry(
+        join(paseoHome, "projects", "workspaces.json"),
+        pino({ level: "silent" }),
+      );
+      const workspaceLabelService = createWorkspaceLabelService({
+        paseoHome,
+        workspaceRegistry,
+      });
+      await workspaceLabelService.initialize();
+      const messages: SessionOutboundMessage[] = [];
+      const session = createSessionForTest({ messages, workspaceLabelService });
+
+      await session.handleMessage({
+        type: "workspace.label.create.request",
+        requestId: "request-create",
+        name: "  Needs   review ",
+        color: "sky",
+      });
+      await session.handleMessage({
+        type: "workspace.label.create.request",
+        requestId: "request-duplicate",
+        name: "needs REVIEW",
+        color: "red",
+      });
+
+      expect(messages).toEqual([
+        {
+          type: "workspace.label.create.response",
+          payload: {
+            requestId: "request-create",
+            label: { name: "Needs review", color: "sky" },
+          },
+        },
+        {
+          type: "rpc_error",
+          payload: {
+            requestId: "request-duplicate",
+            requestType: "workspace.label.create.request",
+            code: "label_name_taken",
+            error: "A label with that name already exists",
+          },
+        },
+      ]);
+      await session.cleanup();
+    } finally {
+      await rm(paseoHome, { recursive: true, force: true });
+    }
   });
 });
 

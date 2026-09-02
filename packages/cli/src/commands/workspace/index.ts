@@ -1,9 +1,11 @@
 import { Command } from "commander";
 import { withOutput } from "../../output/index.js";
 import { addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
+import { createWorkspaceLabelAssignmentCommand } from "../label/workspace.js";
 import { runArchiveCommand } from "./archive.js";
 import { runCreateCommand } from "./create.js";
 import { runLsCommand } from "./ls.js";
+import { runPinCommand, runUnpinCommand } from "./pin.js";
 import { runRenameCommand } from "./rename.js";
 
 export function createWorkspaceCommand(): Command {
@@ -51,6 +53,24 @@ export function createWorkspaceCommand(): Command {
       .description("Archive a workspace and everything it owns")
       .argument("<workspace-id>", "Workspace id"),
   ).action(withOutput(runArchiveCommand));
+
+  addJsonAndDaemonHostOptions(
+    workspace
+      .command("pin")
+      .description("Pin a workspace to the top of the workspace list")
+      .argument("<workspace-id>", "Workspace id")
+      .allowExcessArguments(false),
+  ).action(withOutput(runPinCommand));
+
+  addJsonAndDaemonHostOptions(
+    workspace
+      .command("unpin")
+      .description("Remove a workspace from the pinned workspace list")
+      .argument("<workspace-id>", "Workspace id")
+      .allowExcessArguments(false),
+  ).action(withOutput(runUnpinCommand));
+
+  workspace.addCommand(createWorkspaceLabelAssignmentCommand());
 
   return workspace;
 }

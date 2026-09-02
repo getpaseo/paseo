@@ -688,6 +688,10 @@ export type WorkspaceLabelListPayload = Extract<
   SessionOutboundMessage,
   { type: "workspace.label.list.response" }
 >["payload"];
+export type WorkspaceLabelCreatePayload = Extract<
+  SessionOutboundMessage,
+  { type: "workspace.label.create.response" }
+>["payload"];
 export type WorkspaceLabelAssignmentPayload = Extract<
   SessionOutboundMessage,
   { type: "workspace.label.assignment.set.response" }
@@ -2152,6 +2156,21 @@ export class DaemonClient {
         type: "workspace.label.list.request",
         subscribe: { subscriptionId: options.subscriptionId },
         ...(options.sync ? { sync: options.sync } : {}),
+      },
+    });
+  }
+
+  createWorkspaceLabel(options: {
+    name: string;
+    color: Extract<SessionInboundMessage, { type: "workspace.label.create.request" }>["color"];
+    requestId?: string;
+  }): Promise<WorkspaceLabelCreatePayload> {
+    return this.sendNamespacedCorrelatedSessionRequest<"workspace.label.create.response">({
+      requestId: options.requestId,
+      message: {
+        type: "workspace.label.create.request",
+        name: options.name,
+        color: options.color,
       },
     });
   }

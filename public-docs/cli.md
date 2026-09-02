@@ -116,17 +116,32 @@ paseo workspace create \
   --pr-number 2186
 ```
 
-Then list, use, rename, or archive it:
+Then list, use, rename, pin, unpin, or archive it:
 
 ```bash
 paseo workspace ls
 paseo run --workspace <workspace-id> "implement authentication"
 paseo workspace rename <workspace-id> "Auth rework"
 paseo workspace rename <workspace-id> --reset   # back to the branch or directory name
+paseo workspace pin <workspace-id>
+paseo workspace unpin <workspace-id>
 paseo workspace archive <workspace-id>
 ```
 
 Add `--forge <name>` to PR checkout when Paseo cannot infer the forge from the source checkout. See [Git worktrees](/docs/worktrees) for setup hooks and services.
+
+## Workspace labels
+
+Workspace labels are definitions in the daemon's host-local catalog. Create a label before assigning it to a workspace; `label create` leaves the new definition unassigned. Names are trimmed and internal whitespace is collapsed. The default color is `violet`. Deleting a label removes it from assigned workspaces; deleting an absent label succeeds with an affected count of `0`.
+
+```bash
+paseo label create "Needs review"
+paseo label create "Release" --color emerald
+paseo label ls
+paseo workspace label add <workspace-id> "Needs review"
+paseo workspace label remove <workspace-id> "Needs review"
+paseo label delete "Needs review"
+```
 
 ## Workspace scripts
 
