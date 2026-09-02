@@ -1,7 +1,7 @@
 import startEntry from "@tanstack/react-start/server-entry";
 import { getAndroidVersionCode } from "~/android-version";
 import { getCanonicalRedirect } from "~/canonical-url";
-import { getDoc } from "~/docs";
+import { getDoc, getLegacyDocsRedirect } from "~/docs";
 import { getLatestAndroidVersion } from "~/latest-release";
 import { buildLlmsTxt } from "~/llms";
 
@@ -77,6 +77,12 @@ export default {
     const altRedirectMatch = url.pathname.match(/^\/docs\/alternatives\/(.+?)\/?$/);
     if (altRedirectMatch) {
       url.pathname = `/alternatives/${altRedirectMatch[1]}`;
+      return Response.redirect(url.toString(), 301);
+    }
+
+    const legacyDocsRedirect = getLegacyDocsRedirect(url.pathname);
+    if (legacyDocsRedirect) {
+      url.pathname = legacyDocsRedirect;
       return Response.redirect(url.toString(), 301);
     }
 

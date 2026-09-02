@@ -158,7 +158,7 @@ Its controlled modal keeps presentation metadata on `<Modal title="â€¦" icon={â€
 `<Modal.Content>`.
 Plugin UI runs on desktop and mobile across multiple themes: color every `Text` from
 `theme.colors.foreground` or `theme.colors.foregroundMuted`, and size layout from `layout.compact`.
-See `public-docs/plugins/reference.md`.
+See `public-docs/plugins/v0.8/reference.md`.
 
 | Module                          | Use it for                                                                                |
 | ------------------------------- | ----------------------------------------------------------------------------------------- |
@@ -176,7 +176,7 @@ The scaffold omits `"DOM"` from `tsconfig.json` and does not use `/// <reference
 browser globals are not available across the plugin. Put sanctioned web-only APIs in
 `client/web.ts`, declare only the globals that module uses, gate each export with
 `Platform.OS === "web"`, and provide a native implementation or no-op. See the
-[public plugin reference](../public-docs/plugins/reference.md#works-on-mobile) for the complete
+[public plugin reference](../public-docs/plugins/v0.8/reference.md#works-on-mobile) for the complete
 pattern.
 
 ```ts
@@ -417,7 +417,7 @@ stable rather than arrival-ordered. The app resolves that id
 against the installed catalog on every change; an id nothing contributes falls back to the default
 preference instead of painting the reserved slot's placeholder colors.
 
-Existing plugin authors should follow the standalone [runtime-entry migration guide](../public-docs/plugins/migration.md).
+Existing plugin authors should follow the standalone [v0.8 runtime-entry migration guide](../public-docs/plugins/v0.8/migration.md).
 
 See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
 attachment-source example, `plugin-examples/timeline-items` for timeline projection, and

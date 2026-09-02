@@ -507,7 +507,7 @@ export default function contribute(plugin: unknown) {
       "Plugin entry split is required",
     );
     await expect(runtime.startPlugin("legacy", directory)).rejects.toThrow(
-      "https://paseo.sh/docs/plugins/migration",
+      "https://paseo.sh/docs/plugins/v0.8/migration",
     );
   });
 

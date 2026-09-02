@@ -2,11 +2,13 @@
 title: Migrate a plugin to runtime entries
 description: Mechanical migration from a mixed plugin entry to explicit client and server entries.
 nav: Migration
-order: 47
+order: 48
 category: Plugins
 ---
 
 # Migrate a plugin to runtime entries
+
+> **For the upcoming Paseo v0.8 release.** This migration is not required for Paseo v0.7.
 
 Give this page to a coding agent with the plugin directory as its working directory. Execute the
 steps in order. Do not keep a compatibility entry.

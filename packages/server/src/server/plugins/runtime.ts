@@ -207,7 +207,7 @@ async function resolveEntryPaths(directory: string): Promise<{
   const legacyEntry = await findEntry(directory, ["index.ts", "index.tsx"]);
   if (legacyEntry) {
     throw new Error(
-      "Plugin entry split is required: migrate index.ts to index.client.tsx and/or index.server.ts. See https://paseo.sh/docs/plugins/migration",
+      "Plugin entry split is required: migrate index.ts to index.client.tsx and/or index.server.ts. See https://paseo.sh/docs/plugins/v0.8/migration",
     );
   }
   throw new Error(
