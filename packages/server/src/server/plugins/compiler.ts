@@ -72,10 +72,10 @@ type PluginBuildTarget = "client" | "server";
 type PluginModuleLocation = PluginBuildTarget | "shared" | "invalid";
 
 function directoryTarget(filePath: string, pluginDirectory: string): PluginModuleLocation | null {
+  if (filePath.split(path.sep).includes("node_modules")) return null;
   const relative = path.relative(pluginDirectory, filePath);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  if (relative.startsWith("..") || path.isAbsolute(relative)) return "invalid";
   const segments = relative.split(path.sep);
-  if (segments.includes("node_modules")) return null;
   if (segments[0] === "client") return "client";
   if (segments[0] === "server") return "server";
   if (segments[0] === "shared") return "shared";

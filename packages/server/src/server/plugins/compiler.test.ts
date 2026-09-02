@@ -209,6 +209,26 @@ export default function contribute() { void value; return () => undefined; }`,
     );
   });
 
+  it("rejects relative imports that escape the plugin root", async () => {
+    const parent = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-parent-"));
+    temporaryDirectories.push(parent);
+    const pluginDirectory = path.join(parent, "plugin");
+    const server = path.join(pluginDirectory, "index.server.ts");
+    await mkdir(pluginDirectory);
+    await Promise.all([
+      writeFile(path.join(parent, "secret.ts"), `export const secret = "outside";`),
+      writeFile(
+        server,
+        `import { secret } from "../secret";
+export default function contribute() { void secret; return () => undefined; }`,
+      ),
+    ]);
+
+    await expect(compilePlugin({ client: null, server })).rejects.toThrow(
+      `Plugin modules belong in client/, server/, or shared/: ${path.join(parent, "secret")}`,
+    );
+  });
+
   it("keeps nested modules owned by their top-level runtime directory", async () => {
     const entries = await createSplitPlugin();
     const nestedClient = path.join(entries.directory, "client", "feature", "server");
