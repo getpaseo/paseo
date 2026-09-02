@@ -248,7 +248,10 @@ export default function contribute(plugin: PluginContext) {
 }
 ```
 
-Inputs and outputs are validated on both sides. Backend handlers receive the same `PaseoApi` as `{ paseo }`; their IPC-backed daemon session lives exactly as long as the subprocess. Backend code can use Node APIs and installed dependencies. Keep credentials, filesystem access, shell commands, and vendor API calls in the handler rather than the client surface.
+Inputs and outputs are validated on both sides. Backend handlers receive the scoped `PaseoPluginApi` as
+`{ paseo }`; it omits backend-owned durable deliveries. Their IPC-backed daemon session lives exactly
+as long as the subprocess. Backend code can use Node APIs and installed dependencies. Keep credentials,
+filesystem access, shell commands, and vendor API calls in the handler rather than the client surface.
 
 Use TanStack Query for async request state, caching, and mutations.
 

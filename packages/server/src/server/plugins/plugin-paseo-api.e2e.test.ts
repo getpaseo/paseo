@@ -37,10 +37,10 @@ const list = defineRpc({
   output: z.object({ agentIds: z.array(z.string()) }),
 });
 
-const delivery = defineRpc({
-  name: "delivery",
+const scope = defineRpc({
+  name: "scope",
   input: z.object({}),
-  output: z.object({ deliveryId: z.string(), pendingIds: z.array(z.string()) }),
+  output: z.object({ hasDeliveries: z.boolean() }),
 });
 
 export default function contribute(plugin: PluginContext) {
@@ -59,14 +59,7 @@ export default function contribute(plugin: PluginContext) {
     const result = await paseo.agents.list({ page: { limit: 100 } });
     return { agentIds: result.entries.map((entry) => entry.agent.id) };
   });
-  plugin.handle(delivery, async (_input, { paseo }) => {
-    const sent = await paseo.deliveries.send(
-      { event: "plugin.refresh", source: "paseo-api" },
-      { deliveryId: "plugin-delivery" },
-    );
-    const pending = await paseo.deliveries.get();
-    return { deliveryId: sent.deliveryId, pendingIds: pending.deliveries.map((item) => item.deliveryId) };
-  });
+  plugin.handle(scope, async (_input, { paseo }) => ({ hasDeliveries: "deliveries" in paseo }));
   return () => undefined;
 }`,
   );
@@ -102,11 +95,8 @@ export default function contribute(plugin: PluginContext) {
     expect(listed).toEqual({
       agentIds: expect.arrayContaining([Reflect.get(created, "agentId")]),
     });
-    const pluginDelivery = await client.invokePluginRpc("paseo-api", "delivery", {});
-    expect(pluginDelivery).toEqual({
-      deliveryId: "plugin-delivery",
-      pendingIds: ["plugin-delivery"],
-    });
+    const pluginScope = await client.invokePluginRpc("paseo-api", "scope", {});
+    expect(pluginScope).toEqual({ hasDeliveries: false });
     await expect(client.getDeliveries()).resolves.toMatchObject({ deliveries: [] });
     await client.removePlugin("paseo-api");
     const workspaces = await client.fetchWorkspaces();

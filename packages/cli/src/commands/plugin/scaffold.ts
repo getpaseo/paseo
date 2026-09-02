@@ -3,7 +3,7 @@ import path from "node:path";
 import { PluginIdSchema } from "@getpaseo/protocol/messages";
 
 const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
-  import type { PaseoApi } from "@getpaseo/client";
+  import type { PaseoPluginApi } from "@getpaseo/client";
   import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 
   export interface PluginRpcContract<
@@ -39,7 +39,7 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
   }
 
   export interface PluginHandlerContext {
-    paseo: PaseoApi;
+    paseo: PaseoPluginApi;
   }
 
   export function defineRpc<InputSchema extends ZodType, OutputSchema extends ZodType>(definition: {
@@ -98,7 +98,7 @@ declare module "@getpaseo/plugin/react-native" {
 
 declare module "@getpaseo/plugin" {
   import type { ComponentType } from "react";
-  import type { PaseoApi } from "@getpaseo/client";
+  import type { PaseoPluginApi } from "@getpaseo/client";
   import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
   import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
   import type {
@@ -282,7 +282,7 @@ declare module "@getpaseo/plugin" {
   }
 
   export interface PluginCommandCapabilities {
-    paseo: PaseoApi;
+    paseo: PaseoPluginApi;
     rpc<InputSchema extends ZodType, OutputSchema extends ZodType>(
       contract: PluginRpcContract<InputSchema, OutputSchema>,
       input: ZodInput<InputSchema>,
@@ -346,7 +346,7 @@ declare module "@getpaseo/plugin" {
     contract: PluginRpcContract<InputSchema, OutputSchema>,
   ): (input: ZodInput<InputSchema>) => Promise<ZodOutput<OutputSchema>>;
 
-  export function usePaseo(): PaseoApi;
+  export function usePaseo(): PaseoPluginApi;
 
   export function useWorkspace<Selection>(
     workspaceId: string,

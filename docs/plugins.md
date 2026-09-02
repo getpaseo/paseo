@@ -169,18 +169,19 @@ RPC contracts validate inputs and outputs in both the app and plugin subprocess.
 typed async function. Use the host-provided `@tanstack/react-query` for request state and caching;
 Paseo gives each plugin installation its own query client.
 
-`usePaseo()` and the handler's `{ paseo }` context expose the same `PaseoApi`: projects,
-workspaces, agents, providers, and daemon config. They do not expose connection lifecycle. A surface borrows the
-selected host's existing connection; switching the screen's host changes both `usePaseo()` and
+`usePaseo()` and the handler's `{ paseo }` context expose the scoped `PaseoPluginApi`: projects,
+workspaces, agents, providers, and daemon config. It omits backend-owned durable deliveries and
+connection lifecycle. A surface borrows the selected host's existing connection; switching the
+screen's host changes both `usePaseo()` and
 `useRpc()` to that host. An offline selected host fails there and never falls through to another
 installation. A server handler owns an IPC-backed daemon session for the life of its subprocess.
 Use plugin RPC for plugin-specific backend behavior that is not a normal Paseo operation.
 
-Each subprocess gets an exclusively owned `plugin:<id>` session. That identity is reserved from
-normal clients, never resumes another session, and is cleaned immediately on exit without reconnect
-grace. During daemon startup, plugin sessions may connect while application WebSockets remain
-paused; the daemon accepts clients only after configured plugins have settled and the initial
-catalog is complete.
+Each subprocess gets an exclusively owned session with a fresh `plugin:<id>:<installation>`
+principal. The principal is reserved from normal clients, never resumes another session, and its
+delivery ledger is purged when the socket closes. During daemon startup, plugin sessions may connect
+while application WebSockets remain paused; the daemon accepts clients only after configured plugins
+have settled and the initial catalog is complete.
 
 When the same plugin contribution exists on multiple hosts, Paseo shows it once in the sidebar and
 adds a host picker to the screen header. The selected host supplies the bundle, RPC transport, and
@@ -200,8 +201,8 @@ workspace only. Location controls hosting, not context. An agent panel target ke
 when moved between hosts. Explorer configuration can create workspace-context panels and remove
 existing agent-context instances, but it cannot create an agent panel without an agent-aware command.
 
-Command Center callbacks use the selected host's existing `PaseoApi` for normal Paseo operations.
-They use typed plugin RPC only for plugin-specific backend work. Surface and panel props expose
+Command Center callbacks use the selected host's existing `PaseoPluginApi` for normal Paseo
+operations. They use typed plugin RPC only for plugin-specific backend work. Surface and panel props expose
 optional client-owned agent and workspace navigation; its absence is the compatibility gate for
 older clients. Other navigation remains limited to registered global surfaces and workspace panels.
 Plugins do not receive Expo Router or workspace-layout store access.

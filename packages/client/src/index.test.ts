@@ -250,6 +250,82 @@ test("createPaseoClient exposes durable deliveries through the daemon client", a
   await client.close();
 });
 
+test("targeted durable delivery overloads preserve the exact agent id", async () => {
+  const { client, ws } = await connectClient({
+    durableDeliveries: true,
+    durableDeliveryTargeting: true,
+  });
+
+  const sendPromise = client.deliveries.send("agent-exact", { event: "refresh" });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "deliveries.send.request",
+    targetAgentId: "agent-exact",
+    payload: { event: "refresh" },
+  });
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  ws.message(
+    sessionMessage({
+      type: "deliveries.send.response",
+      payload: {
+        requestId: request.requestId,
+        deliveryId: "delivery-targeted",
+        delivery: {
+          deliveryId: "delivery-targeted",
+          targetAgentId: "agent-exact",
+          messageId: "delivery-targeted",
+          status: "accepted",
+          payload: { event: "refresh" },
+          createdAt: "2026-05-16T00:00:00.000Z",
+          acknowledgedAt: null,
+        },
+        created: true,
+      },
+    }),
+  );
+  await expect(sendPromise).resolves.toMatchObject({
+    targetAgentId: "agent-exact",
+    status: "accepted",
+  });
+  await client.close();
+});
+
+test("targeted delivery does not downgrade on an older durable host", async () => {
+  const { client, ws } = await connectClient({ durableDeliveries: true });
+
+  await expect(client.deliveries.send("agent-exact", { event: "refresh" })).rejects.toThrow(
+    "targeted durable deliveries",
+  );
+  expect(ws.sent).toHaveLength(1);
+  await client.close();
+});
+
+test("legacy string payloads remain pull deliveries with explicit undefined options", async () => {
+  const { client, ws } = await connectClient({ durableDeliveries: true });
+
+  const sendPromise = client.deliveries.send("hello", undefined);
+  const request = parseSentSessionMessage(ws.sent.at(-1));
+  expect(request).toMatchObject({ type: "deliveries.send.request", payload: "hello" });
+  expect("targetAgentId" in request).toBe(false);
+  ws.message(
+    sessionMessage({
+      type: "deliveries.send.response",
+      payload: {
+        requestId: request.requestId,
+        deliveryId: "legacy-string",
+        delivery: {
+          deliveryId: "legacy-string",
+          payload: "hello",
+          createdAt: "2026-05-16T00:00:00.000Z",
+          acknowledgedAt: null,
+        },
+        created: true,
+      },
+    }),
+  );
+  await expect(sendPromise).resolves.toMatchObject({ deliveryId: "legacy-string" });
+  await client.close();
+});
+
 test("durable deliveries require the daemon feature", async () => {
   const { client, ws } = await connectClient();
   await expect(client.deliveries.get()).rejects.toThrow(

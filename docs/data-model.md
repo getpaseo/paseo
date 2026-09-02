@@ -38,6 +38,10 @@ All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).
 
 Store APIs own persistence atomicity and should not make services coordinate raw reads and writes. A good store method maps cleanly to one SQL statement or one SQL transaction, even when the current implementation is JSON files. If a caller needs a queue, lock, read-merge-write loop, or uniqueness race workaround, that behavior belongs behind the store surface.
 
+## Durable delivery ledger
+
+Durable deliveries live under `$PASEO_HOME/deliveries/`, with one mode-0600 JSON file per authenticated principal. The filename is a SHA-256 digest of the principal, so principal characters never become path syntax. Writes replace the file atomically. Records keep their target agent, stable message identity, and dispatch state; a `dispatching` record loaded by a later daemon is marked `ambiguous` and is never retried automatically.
+
 ---
 
 ## Directory layout
@@ -63,6 +67,8 @@ $PASEO_HOME/
 ├── runtime/
 │   └── managed-processes/
 │       └── {recordId}.json              # Helper processes owned by Paseo; reconciled on daemon bootstrap
+├── deliveries/
+│   └── {sha256-principal}.json           # Principal-scoped durable delivery ledger (mode 0600)
 ├── plugins/
 │   ├── sources.json                      # Git origin, ref, commit, and managed checkout ownership
 │   └── {pluginId}/{version}/checkout/    # Source checkout for one installed Git commit

@@ -6,7 +6,11 @@ import {
   SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
 } from "./messages.js";
-import { DeliveryPayloadSchema } from "./deliveries.js";
+import {
+  DeliveryPayloadSchema,
+  inspectDeliveryPayload,
+  MAX_DELIVERY_PAYLOAD_BYTES,
+} from "./deliveries.js";
 import { CLIENT_CAPS } from "./client-capabilities.js";
 
 const pendingDelivery = {
@@ -41,6 +45,10 @@ describe("durable delivery protocol", () => {
   test("keeps get and acknowledgement payloads JSON-safe", () => {
     expect(DeliveryPayloadSchema.safeParse({ nested: ["value", { count: 1 }] }).success).toBe(true);
     expect(DeliveryPayloadSchema.safeParse({ bad: undefined }).success).toBe(false);
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    expect(DeliveryPayloadSchema.safeParse(cycle).success).toBe(false);
+    expect(DeliveryPayloadSchema.safeParse(Number.NaN).success).toBe(false);
     expect(
       DeliveriesGetRequestSchema.parse({
         type: "deliveries.get.request",
@@ -63,6 +71,41 @@ describe("durable delivery protocol", () => {
         payload: undefined,
       }).success,
     ).toBe(false);
+  });
+
+  test("bounds payload inspection without recursive traversal", () => {
+    expect(inspectDeliveryPayload("x", { maxStringBytes: 0 })).toMatchObject({
+      ok: false,
+      reason: "string_too_large",
+    });
+    expect(inspectDeliveryPayload({ nested: { value: true } }, { maxDepth: 1 })).toMatchObject({
+      ok: false,
+      reason: "depth_exceeded",
+    });
+    expect(inspectDeliveryPayload([null, null], { maxNodes: 2 })).toMatchObject({
+      ok: false,
+      reason: "nodes_exceeded",
+    });
+    expect(
+      inspectDeliveryPayload("x".repeat(MAX_DELIVERY_PAYLOAD_BYTES), {
+        maxBytes: MAX_DELIVERY_PAYLOAD_BYTES - 1,
+        maxStringBytes: MAX_DELIVERY_PAYLOAD_BYTES,
+      }),
+    ).toMatchObject({ ok: false, reason: "payload_too_large" });
+  });
+
+  test("accepts targeted delivery identity while retaining optional legacy fields", () => {
+    const request = DeliveriesSendRequestSchema.parse({
+      type: "deliveries.send.request",
+      requestId: "request-targeted",
+      targetAgentId: "agent-exact",
+      messageId: "message-stable",
+      payload: { hello: "world" },
+    });
+    expect(request).toMatchObject({
+      targetAgentId: "agent-exact",
+      messageId: "message-stable",
+    });
   });
 
   test("advertises a distinct client capability", () => {

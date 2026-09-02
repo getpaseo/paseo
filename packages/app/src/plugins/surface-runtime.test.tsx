@@ -1,5 +1,5 @@
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import type { PaseoApi } from "@getpaseo/client";
+import type { PaseoPluginApi } from "@getpaseo/client";
 import { PaseoApiProvider } from "@getpaseo/plugin/host";
 import { usePaseo } from "@getpaseo/plugin";
 import React from "react";
@@ -34,8 +34,8 @@ function clientWithWorkspace(id: string) {
   };
 }
 
-function borrowFromAppProvider(paseo: PaseoApi): PaseoApi {
-  let borrowed: PaseoApi | null = null;
+function borrowFromAppProvider(paseo: PaseoPluginApi): PaseoPluginApi {
+  let borrowed: PaseoPluginApi | null = null;
   function PluginSurface() {
     borrowed = usePaseo();
     return null;

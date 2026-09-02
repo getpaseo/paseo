@@ -369,6 +369,8 @@ interface SessionForTestOptions {
   principalId?: string;
   clientCapabilities?: Record<string, unknown>;
   deliveryLedger?: DeliveryLedger;
+  deliveryDispatchCoordinator?: SessionOptions["deliveryDispatchCoordinator"];
+  deliveryAgentDispatcher?: SessionOptions["deliveryAgentDispatcher"];
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -431,6 +433,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       ...options.agentStorage,
     }),
     deliveryLedger: options.deliveryLedger,
+    deliveryDispatchCoordinator: options.deliveryDispatchCoordinator,
+    deliveryAgentDispatcher: options.deliveryAgentDispatcher,
     projectRegistry: {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
@@ -551,6 +555,99 @@ test("durable deliveries are scoped to the authenticated principal and source", 
       deliveries: [{ deliveryId: "calendar-one", acknowledgedAt: expect.any(String) }],
     });
   } finally {
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("dispatches a targeted delivery through the injected native agent seam", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const dispatched = vi.fn(async () => ({ outcome: "accepted" as const }));
+  const home = mkdtempSync(join(tmpdir(), "paseo-targeted-delivery-"));
+  const ledger = new DeliveryLedger(home);
+  const session = createSessionForTest({
+    principalId: "plugin:calendar:installation",
+    paseoHome: home,
+    deliveryLedger: ledger,
+    deliveryAgentDispatcher: dispatched,
+    clientCapabilities: { [CLIENT_CAPS.durableDeliveries]: true },
+    messages,
+  });
+
+  try {
+    await session.handleMessage({
+      type: "deliveries.send.request",
+      requestId: "targeted-send",
+      deliveryId: "targeted-delivery",
+      targetAgentId: "agent-exact",
+      messageId: "message-stable",
+      payload: { event: "refresh" },
+    });
+
+    expect(dispatched).toHaveBeenCalledWith({
+      targetAgentId: "agent-exact",
+      messageId: "message-stable",
+      payload: { event: "refresh" },
+    });
+    expect(messages).toContainEqual({
+      type: "deliveries.send.response",
+      payload: {
+        requestId: "targeted-send",
+        deliveryId: "targeted-delivery",
+        delivery: expect.objectContaining({
+          targetAgentId: "agent-exact",
+          messageId: "message-stable",
+          status: "accepted",
+        }),
+        created: true,
+      },
+    });
+  } finally {
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("coalesces concurrent targeted sends into one native dispatch", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const home = mkdtempSync(join(tmpdir(), "paseo-concurrent-delivery-"));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const dispatched = vi.fn(async () => {
+    await gate;
+    return { outcome: "accepted" as const };
+  });
+  const session = createSessionForTest({
+    principalId: "owner",
+    paseoHome: home,
+    deliveryAgentDispatcher: dispatched,
+    clientCapabilities: { [CLIENT_CAPS.durableDeliveries]: true },
+    messages,
+  });
+
+  try {
+    const first = session.handleMessage({
+      type: "deliveries.send.request",
+      requestId: "concurrent-one",
+      deliveryId: "concurrent-delivery",
+      targetAgentId: "agent-exact",
+      payload: { event: "refresh" },
+    });
+    const second = session.handleMessage({
+      type: "deliveries.send.request",
+      requestId: "concurrent-two",
+      deliveryId: "concurrent-delivery",
+      targetAgentId: "agent-exact",
+      payload: { event: "refresh" },
+    });
+    await vi.waitFor(() => expect(dispatched).toHaveBeenCalledTimes(1));
+    release();
+    await Promise.all([first, second]);
+    expect(dispatched).toHaveBeenCalledTimes(1);
+  } finally {
+    release();
     await session.cleanup();
     rmSync(home, { recursive: true, force: true });
   }

@@ -1,17 +1,23 @@
-import type { PaseoApi } from "@getpaseo/client";
+import type { PaseoPluginApi } from "@getpaseo/client";
 import { createContext, useContext, type ReactNode } from "react";
 
-const PaseoApiContext = createContext<PaseoApi | null>(null);
+const PaseoApiContext = createContext<PaseoPluginApi | null>(null);
 
-export function usePaseoContextValue(): PaseoApi | null {
+export function usePaseoContextValue(): PaseoPluginApi | null {
   return useContext(PaseoApiContext);
 }
 
-export function PaseoApiProvider({ children, paseo }: { children: ReactNode; paseo: PaseoApi }) {
+export function PaseoApiProvider({
+  children,
+  paseo,
+}: {
+  children: ReactNode;
+  paseo: PaseoPluginApi;
+}) {
   return <PaseoApiContext.Provider value={paseo}>{children}</PaseoApiContext.Provider>;
 }
 
-export function usePaseo(): PaseoApi {
+export function usePaseo(): PaseoPluginApi {
   const paseo = usePaseoContextValue();
   if (!paseo) throw new Error("usePaseo must run inside a contributed plugin surface");
   return paseo;

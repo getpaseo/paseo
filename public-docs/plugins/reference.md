@@ -567,14 +567,16 @@ Every callback receives:
 | Field                     | Context             | Meaning                                                                                                         |
 | ------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- |
 | `context`                 | All                 | Matching discriminator.                                                                                         |
-| `paseo`                   | All                 | Selected host's existing `PaseoApi`.                                                                            |
+| `paseo`                   | All                 | Selected host's existing scoped `PaseoPluginApi` (no durable-delivery ledger access).                           |
 | `rpc(contract, input)`    | All                 | Typed call to this installation's daemon-side plugin handler.                                                   |
 | `openSurface(id)`         | All                 | Opens one of this plugin's registered global surfaces.                                                          |
 | `workspace`               | Workspace and agent | Synchronous workspace snapshot.                                                                                 |
 | `agent`                   | Agent               | Synchronous matching agent snapshot.                                                                            |
 | `openPanel(id, options?)` | Workspace and agent | Opens a registered panel in the callback's current context. Pass `{ location: "explorer" }` to target Explorer. |
 
-An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown surface and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. Use `rpc` for plugin-specific filesystem, credential, vendor, or daemon-local work.
+An agent callback may open either an agent panel or a workspace panel. A workspace callback may open only a workspace panel. Unknown surface and panel IDs fail visibly. Use `paseo` for normal workspace, agent, provider, and daemon-config operations. The scoped API
+does not expose backend-owned durable deliveries. Use `rpc` for plugin-specific filesystem,
+credential, vendor, or daemon-local work.
 
 ## Composer pills
 
@@ -759,7 +761,9 @@ export default function contribute(plugin: PluginContext) {
 
 Inputs and outputs are validated on both sides. RPC names start with a lowercase letter and contain lowercase letters, numbers, dots, hyphens, or underscores. `useRpc()` returns a typed async function. Use TanStack Query for request state, caching, and mutations.
 
-Backend handlers receive the same `PaseoApi` as `{ paseo }`. Their connection belongs to the subprocess and closes when the plugin stops. Backend code can use Node APIs and dependencies installed in the plugin directory.
+Backend handlers receive the scoped `PaseoPluginApi` as `{ paseo }`; it omits backend-owned
+durable deliveries. Their connection belongs to the subprocess and closes when the plugin stops.
+Backend code can use Node APIs and dependencies installed in the plugin directory.
 
 ## Debug backend output
 

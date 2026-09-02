@@ -99,7 +99,7 @@ import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
-import { DeliveryLedger } from "./deliveries/delivery-ledger.js";
+import { DeliveryDispatchCoordinator, DeliveryLedger } from "./deliveries/delivery-ledger.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
 import {
   APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
@@ -112,6 +112,8 @@ import {
 } from "./websocket/physical-socket.js";
 
 const WS_CLOSE_DAEMON_AUTH_FAILED = 4401;
+export const MAX_WEBSOCKET_MESSAGE_BYTES = 1024 * 1024;
+const WS_CLOSE_MESSAGE_TOO_BIG = 1009;
 
 export interface ExternalSocketMetadata {
   transport: "relay" | "hub";
@@ -483,6 +485,7 @@ interface SocketSessionOptions {
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
   deliveryLedger: DeliveryLedger;
+  deliveryDispatchCoordinator: DeliveryDispatchCoordinator;
 }
 
 interface ClosePhysicalSocketParams {
@@ -559,6 +562,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
   private readonly deliveryLedger: DeliveryLedger;
+  private readonly deliveryDispatchCoordinator: DeliveryDispatchCoordinator;
   private readonly worktreesRoot: string | undefined;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
@@ -685,6 +689,7 @@ export class VoiceAssistantWebSocketServer {
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
     this.deliveryLedger = deliveryLedger ?? new DeliveryLedger(join(paseoHome, "deliveries"));
+    this.deliveryDispatchCoordinator = new DeliveryDispatchCoordinator();
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl;
@@ -810,6 +815,7 @@ export class VoiceAssistantWebSocketServer {
     const wss = new WebSocketServer({
       server,
       path: "/ws",
+      maxPayload: MAX_WEBSOCKET_MESSAGE_BYTES,
       handleProtocols: (protocols) => selectWebSocketProtocol(protocols, password),
       verifyClient: ({ req }, callback) => {
         this.verifyWsUpgrade(
@@ -984,17 +990,29 @@ export class VoiceAssistantWebSocketServer {
     if (this.connectionLifecycle === "stopping") {
       throw new Error(`Cannot attach plugin session while shutting down: ${pluginId}`);
     }
-    let resolve: () => void = () => undefined;
-    const closed = new Promise<void>((finish) => {
-      resolve = finish;
+    let resolveSocketClosed: () => void = () => undefined;
+    const socketClosed = new Promise<void>((finish) => {
+      resolveSocketClosed = finish;
+    });
+    // Every process installation gets a fresh principal. A replacement with
+    // the same plugin id must never inherit an old installation's delivery
+    // ledger, even if teardown races with the next install.
+    const principalId = `plugin:${pluginId}:${randomUUID()}`;
+    const closed = socketClosed.then(async () => {
+      try {
+        await this.deliveryLedger.removeOwner(principalId);
+      } catch (error) {
+        this.logger.warn({ err: error, principalId }, "Failed to purge plugin delivery ledger");
+      }
+      return undefined;
     });
     this.pluginSocketIds.set(ws, pluginId);
-    this.pluginSocketCleanup.set(ws, resolve);
+    this.pluginSocketCleanup.set(ws, resolveSocketClosed);
     try {
       await this.attachSocket(ws, undefined, undefined, true, {
         // Plugin sessions retain the daemon's existing permissions, but their
         // durable deliveries belong to the plugin rather than the daemon owner.
-        principalId: `plugin:${pluginId}`,
+        principalId,
         permissions: OWNER_PERMISSIONS,
       });
     } catch (error) {
@@ -1376,6 +1394,7 @@ export class VoiceAssistantWebSocketServer {
       hubExecutionAgents: admission.hubExecutionAgents,
       hubRelationships: this.hubRelationships ?? undefined,
       deliveryLedger: this.deliveryLedger,
+      deliveryDispatchCoordinator: this.deliveryDispatchCoordinator,
     });
 
     const base: SessionConnectionBase = {
@@ -1780,6 +1799,9 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(durableDeliveries): added in v0.7.2, remove after clients
         // understand the owner-scoped delivery ledger.
         durableDeliveries: true,
+        // COMPAT(durableDeliveryTargeting): added in v0.7.2; old durable
+        // delivery hosts must not silently downgrade targeted sends to pulls.
+        durableDeliveryTargeting: true,
       },
     };
   }
@@ -2195,6 +2217,18 @@ export class VoiceAssistantWebSocketServer {
 
     try {
       const buffer = bufferFromWsData(data);
+      if (buffer.byteLength > MAX_WEBSOCKET_MESSAGE_BYTES) {
+        log.warn(
+          { bytes: buffer.byteLength, maxBytes: MAX_WEBSOCKET_MESSAGE_BYTES },
+          "Rejected oversized WebSocket message",
+        );
+        try {
+          ws.close(WS_CLOSE_MESSAGE_TOO_BIG, "Message too large");
+        } catch {
+          // ignore close errors
+        }
+        return;
+      }
       const binaryHandled = this.maybeHandleBinaryFrame({
         ws,
         buffer,

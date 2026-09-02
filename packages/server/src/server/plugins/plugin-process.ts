@@ -6,7 +6,7 @@ import {
   type PluginHandlerContext,
   type PluginRpcContract,
 } from "@getpaseo/plugin/server";
-import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
+import { createPaseoPluginApi, type PaseoPluginApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
 import { isPluginClientOnlySdkSpecifier, isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
@@ -21,7 +21,7 @@ interface RegisteredRpc {
 const handlers = new Map<string, RegisteredRpc>();
 let cleanup: (() => void | Promise<void>) | null = null;
 let daemonClient: DaemonClient | null = null;
-let paseo: PaseoApi | null = null;
+let paseo: PaseoPluginApi | null = null;
 let stopping = false;
 const nodeRequire = createRequire(import.meta.url);
 
@@ -112,7 +112,7 @@ async function initialize(message: Extract<PluginProcessRequest, { type: "initia
     reconnect: { enabled: false },
     transportFactory,
   });
-  paseo = createPaseoApi(daemonClient);
+  paseo = createPaseoPluginApi(daemonClient);
   await daemonClient.connect();
   evaluateBundle(message.bundle);
   send({ type: "ready", methods: [...handlers.keys()].sort() });

@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query";
-import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
+import { createPaseoPluginApi, type PaseoPluginApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   defineRpc,
@@ -126,7 +126,7 @@ function createRuntime(pluginId: string) {
     clientType: "cli",
   });
   return {
-    paseo: createPaseoApi(client),
+    paseo: createPaseoPluginApi(client),
     invoke: async (method: string, input: unknown) => {
       expect(pluginId).toBe("review");
       expect(method).toBe("review.inspect");
@@ -176,7 +176,7 @@ describe("plugin Command Center contributions", () => {
   it("supplies the direct API, typed RPC, snapshots, and narrow navigation", async () => {
     const opened: string[] = [];
     let rpcValue = 0;
-    let receivedPaseo: PaseoApi | null = null;
+    let receivedPaseo: PaseoPluginApi | null = null;
     const installed = plugin(async (context) => {
       expect(context.workspace).toBe(workspace);
       expect(context.agent).toBe(agent);

@@ -248,8 +248,22 @@ import { SessionAuthorization, type DaemonPermission } from "./authorization/ind
 import {
   DeliveryLedger,
   DeliveryLedgerError,
+  DeliveryDispatchCoordinator,
   type DeliveryLedgerGetOptions,
 } from "./deliveries/delivery-ledger.js";
+import {
+  DeliveriesAcknowledgeRequestSchema,
+  DeliveriesGetRequestSchema,
+  DeliveriesSendRequestSchema,
+  DeliveryIdSchema,
+  DeliveryMessageIdSchema,
+  DeliveryTargetAgentIdSchema,
+  type DeliveryRecord,
+} from "@getpaseo/protocol/deliveries";
+import {
+  createNativeDeliveryDispatcher,
+  type DeliveryAgentDispatcher,
+} from "./deliveries/delivery-dispatcher.js";
 
 function resolveWorkspaceSetupRuntime(
   runtime: WorkspaceSetupRuntime | undefined,
@@ -258,7 +272,21 @@ function resolveWorkspaceSetupRuntime(
 }
 
 function resolvePrincipalId(principalId: string | undefined): string {
-  return principalId ?? "owner";
+  if (principalId === undefined) return "anonymous";
+  if (typeof principalId !== "string") {
+    throw new Error("Session requires a valid authenticated principal");
+  }
+  const normalized = principalId.trim();
+  if (normalized.length === 0 || normalized !== principalId || normalized.length > 256) {
+    throw new Error("Session requires a valid authenticated principal");
+  }
+  for (const character of normalized) {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) {
+      throw new Error("Session requires a valid authenticated principal");
+    }
+  }
+  return normalized;
 }
 
 function resolveDeliveryLedger(
@@ -266,6 +294,28 @@ function resolveDeliveryLedger(
   paseoHome: string,
 ): DeliveryLedger {
   return ledger ?? new DeliveryLedger(resolve(paseoHome, "deliveries"));
+}
+
+function resolveDeliveryDispatchCoordinator(
+  coordinator: DeliveryDispatchCoordinator | undefined,
+): DeliveryDispatchCoordinator {
+  return coordinator ?? new DeliveryDispatchCoordinator();
+}
+
+function resolveDeliveryAgentDispatcher(
+  dispatcher: DeliveryAgentDispatcher | undefined,
+  agentManager: AgentManager,
+  agentStorage: AgentStorage,
+  logger: pino.Logger,
+): DeliveryAgentDispatcher {
+  return (
+    dispatcher ??
+    createNativeDeliveryDispatcher({
+      agentManager,
+      agentStorage,
+      logger,
+    })
+  );
 }
 
 import { WorktreeRequestError, toWorktreeWireError } from "./worktree-errors.js";
@@ -472,6 +522,8 @@ export interface SessionOptions {
   agentManager: AgentManager;
   agentStorage: AgentStorage;
   deliveryLedger?: DeliveryLedger;
+  deliveryDispatchCoordinator?: DeliveryDispatchCoordinator;
+  deliveryAgentDispatcher?: DeliveryAgentDispatcher;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
@@ -682,6 +734,8 @@ export class Session {
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;
   private readonly deliveryLedger: DeliveryLedger;
+  private readonly deliveryDispatchCoordinator: DeliveryDispatchCoordinator;
+  private readonly deliveryAgentDispatcher: DeliveryAgentDispatcher;
   private readonly projectIcons: ProjectIconReader;
   private readonly worktreesRoot: string | undefined;
   private readonly rewindInitiators = new Map<string, object | undefined>();
@@ -783,6 +837,8 @@ export class Session {
       agentManager,
       agentStorage,
       deliveryLedger,
+      deliveryDispatchCoordinator,
+      deliveryAgentDispatcher,
       projectRegistry,
       workspaceRegistry,
       directorySync,
@@ -858,6 +914,15 @@ export class Session {
     });
     this.agentManager = agentManager;
     this.agentStorage = agentStorage;
+    this.deliveryDispatchCoordinator = resolveDeliveryDispatchCoordinator(
+      deliveryDispatchCoordinator,
+    );
+    this.deliveryAgentDispatcher = resolveDeliveryAgentDispatcher(
+      deliveryAgentDispatcher,
+      this.agentManager,
+      this.agentStorage,
+      this.sessionLogger,
+    );
     this.projectRegistry = projectRegistry;
     this.workspaceRegistry = workspaceRegistry;
     this.directorySync = resolveDirectorySync(directorySync);
@@ -1998,21 +2063,47 @@ export class Session {
     msg: SessionInboundMessage,
     source?: object,
   ): Promise<void> | undefined {
+    if (!msg.type.startsWith("deliveries.")) return undefined;
+    if (this.principalId === "anonymous") {
+      throw new DeliveryLedgerError(
+        "delivery_ledger_unavailable",
+        "Durable delivery requires an authenticated principal",
+      );
+    }
+
     switch (msg.type) {
-      case "deliveries.send.request":
+      case "deliveries.send.request": {
+        const request = DeliveriesSendRequestSchema.parse(msg);
+        const targetAgentId =
+          request.targetAgentId === undefined
+            ? undefined
+            : DeliveryTargetAgentIdSchema.parse(request.targetAgentId);
+        const messageId =
+          request.messageId === undefined
+            ? undefined
+            : DeliveryMessageIdSchema.parse(request.messageId);
         return this.deliveryLedger
           .send(this.principalId, {
-            deliveryId: msg.deliveryId,
-            payload: msg.payload,
+            deliveryId: request.deliveryId,
+            ...(targetAgentId === undefined ? {} : { targetAgentId }),
+            ...(messageId === undefined ? {} : { messageId }),
+            payload: request.payload,
           })
-          .then((result) => {
+          .then(async (result) => {
+            let delivery = result.delivery;
+            if (delivery.targetAgentId && delivery.status === "recorded") {
+              delivery = await this.deliveryDispatchCoordinator.run(
+                JSON.stringify([this.principalId, delivery.deliveryId]),
+                () => this.dispatchStoredDelivery(delivery),
+              );
+            }
             this.emitForSource(
               {
                 type: "deliveries.send.response",
                 payload: {
-                  requestId: msg.requestId,
-                  deliveryId: result.delivery.deliveryId,
-                  delivery: result.delivery,
+                  requestId: request.requestId,
+                  deliveryId: delivery.deliveryId,
+                  delivery,
                   created: result.created,
                 },
               },
@@ -2020,21 +2111,23 @@ export class Session {
             );
             return undefined;
           });
+      }
       case "deliveries.get.request": {
+        const request = DeliveriesGetRequestSchema.parse(msg);
         const options: DeliveryLedgerGetOptions = {
-          ...(msg.deliveryId !== undefined ? { deliveryId: msg.deliveryId } : {}),
-          ...(msg.includeAcknowledged !== undefined
-            ? { includeAcknowledged: msg.includeAcknowledged }
+          ...(request.deliveryId !== undefined ? { deliveryId: request.deliveryId } : {}),
+          ...(request.includeAcknowledged !== undefined
+            ? { includeAcknowledged: request.includeAcknowledged }
             : {}),
-          ...(msg.cursor !== undefined ? { cursor: msg.cursor } : {}),
-          ...(msg.limit !== undefined ? { limit: msg.limit } : {}),
+          ...(request.cursor !== undefined ? { cursor: request.cursor } : {}),
+          ...(request.limit !== undefined ? { limit: request.limit } : {}),
         };
         return this.deliveryLedger.get(this.principalId, options).then((result) => {
           this.emitForSource(
             {
               type: "deliveries.get.response",
               payload: {
-                requestId: msg.requestId,
+                requestId: request.requestId,
                 delivery: result.delivery,
                 deliveries: result.deliveries,
                 nextCursor: result.nextCursor,
@@ -2045,15 +2138,16 @@ export class Session {
           return undefined;
         });
       }
-      case "deliveries.acknowledge.request":
+      case "deliveries.acknowledge.request": {
+        const request = DeliveriesAcknowledgeRequestSchema.parse(msg);
         return this.deliveryLedger
-          .acknowledge(this.principalId, msg.deliveryId)
+          .acknowledge(this.principalId, DeliveryIdSchema.parse(request.deliveryId))
           .then((delivery) => {
             this.emitForSource(
               {
                 type: "deliveries.acknowledge.response",
                 payload: {
-                  requestId: msg.requestId,
+                  requestId: request.requestId,
                   deliveryId: delivery.deliveryId,
                   delivery,
                 },
@@ -2062,8 +2156,60 @@ export class Session {
             );
             return undefined;
           });
+      }
       default:
         return undefined;
+    }
+  }
+
+  private async dispatchStoredDelivery(record: DeliveryRecord): Promise<DeliveryRecord> {
+    const currentResult = await this.deliveryLedger.get(this.principalId, {
+      deliveryId: record.deliveryId,
+      includeAcknowledged: true,
+    });
+    const current = currentResult.delivery;
+    if (!current) {
+      throw new DeliveryLedgerError(
+        "delivery_not_found",
+        `Delivery ${record.deliveryId} was not found`,
+      );
+    }
+    if (current.status !== "recorded" || !current.targetAgentId) return current;
+
+    const dispatching = await this.deliveryLedger.markDispatching(
+      this.principalId,
+      current.deliveryId,
+    );
+    if (dispatching.status !== "dispatching") return dispatching;
+    try {
+      const outcome = await this.deliveryAgentDispatcher({
+        targetAgentId: current.targetAgentId,
+        messageId: current.messageId ?? current.deliveryId,
+        payload: current.payload,
+      });
+      if (!outcome || outcome.outcome === "accepted") {
+        return await this.deliveryLedger.markAccepted(this.principalId, current.deliveryId);
+      }
+      if (outcome.outcome === "failed") {
+        return await this.deliveryLedger.markFailed(
+          this.principalId,
+          current.deliveryId,
+          outcome.error,
+        );
+      }
+      return await this.deliveryLedger.markAmbiguous(
+        this.principalId,
+        current.deliveryId,
+        outcome.error,
+      );
+    } catch (error) {
+      // Once the native path was entered, an exception cannot prove that the
+      // provider did not accept the prompt. Preserve at-most-once semantics.
+      return await this.deliveryLedger.markAmbiguous(
+        this.principalId,
+        dispatching.deliveryId,
+        error instanceof Error ? error.message : String(error),
+      );
     }
   }
 

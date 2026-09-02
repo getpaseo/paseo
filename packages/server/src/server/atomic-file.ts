@@ -5,6 +5,7 @@ import path from "node:path";
 export async function writeFileAtomic(
   filePath: string,
   data: string | NodeJS.ArrayBufferView,
+  options?: { mode?: number },
 ): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = path.join(
@@ -12,7 +13,10 @@ export async function writeFileAtomic(
     `.${path.basename(filePath)}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
   try {
-    await fs.writeFile(tempPath, data, "utf8");
+    await fs.writeFile(tempPath, data, {
+      encoding: "utf8",
+      ...(options?.mode === undefined ? {} : { mode: options.mode }),
+    });
     await fs.rename(tempPath, filePath);
   } catch (error) {
     await fs.rm(tempPath, { force: true });

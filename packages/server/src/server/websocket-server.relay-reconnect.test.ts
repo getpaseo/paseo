@@ -1012,6 +1012,8 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.pluginLogs).toBe(true);
     expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);
     expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
+    expect(serverInfo.features?.durableDeliveries).toBe(true);
+    expect(serverInfo.features?.durableDeliveryTargeting).toBe(true);
     expect(serverInfo.permissions).toEqual(DAEMON_PERMISSIONS);
     await server.close();
   });

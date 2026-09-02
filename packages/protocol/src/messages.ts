@@ -3527,6 +3527,9 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(durableDeliveries): added in v0.7.2, remove after the
         // supported clients understand the owner-scoped delivery ledger.
         durableDeliveries: z.boolean().optional(),
+        // COMPAT(durableDeliveryTargeting): added in v0.7.2; old durable
+        // delivery hosts must not silently downgrade targeted sends to pulls.
+        durableDeliveryTargeting: z.boolean().optional(),
       })
       .optional(),
   })

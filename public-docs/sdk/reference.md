@@ -159,13 +159,16 @@ A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `cu
 
 Durable deliveries persist JSON payloads in the daemon until the owning principal acknowledges them.
 
-| Method                              | Result                   | Behavior                                                                                                                 |
-| ----------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `send(payload, options?)`           | `PaseoDelivery`          | Persists before resolving. Set `deliveryId` to make retries idempotent.                                                  |
-| `get(options?)`                     | `PaseoDeliveryGetResult` | Returns pending deliveries by default. Use `includeAcknowledged`, `deliveryId`, `cursor`, and `limit` to filter or page. |
-| `acknowledge(deliveryId, options?)` | `PaseoDelivery`          | Records an acknowledgement; repeating the call is safe.                                                                  |
+| Method                                   | Result                   | Behavior                                                                                                                 |
+| ---------------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `send(payload, options?)`                | `PaseoDelivery`          | Persists before resolving. Set `deliveryId` to make retries idempotent.                                                  |
+| `send(targetAgentId, payload, options?)` | `PaseoDelivery`          | Persists, then sends to that exact native agent through the daemon's normal prompt path.                                 |
+| `get(options?)`                          | `PaseoDeliveryGetResult` | Returns pending deliveries by default. Use `includeAcknowledged`, `deliveryId`, `cursor`, and `limit` to filter or page. |
+| `acknowledge(deliveryId, options?)`      | `PaseoDelivery`          | Records an acknowledgement; repeating the call is safe.                                                                  |
 
-`payload` may be any JSON value. Delivery IDs are scoped to the authenticated principal, so plugin deliveries are isolated from daemon-owner deliveries. These methods require the daemon's `durableDeliveries` feature; an older host rejects them without sending an RPC.
+`payload` may be any bounded JSON value (64 KiB maximum; nested values and strings are also bounded). Targeted sends use `messageId` when supplied, or `deliveryId` as the stable provider-facing identity. A successful targeted send has status `accepted`; a known pre-dispatch failure has status `failed`; a provider or restart outcome that cannot be proven has status `ambiguous`. Ambiguous records are not retried automatically. Acknowledgement moves any terminal delivery to `acknowledged`.
+
+Delivery IDs are scoped to the authenticated principal. Plugin runtimes receive the scoped `PaseoPluginApi`, which does not expose `deliveries`; plugin-owned ledger state is isolated by installation and purged when the plugin socket closes. Pull delivery requires the daemon's `durableDeliveries` feature; targeted delivery additionally requires `durableDeliveryTargeting`. An older host rejects an unsupported call without sending an RPC.
 
 ## Errors and cleanup
 

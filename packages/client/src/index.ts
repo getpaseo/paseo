@@ -25,7 +25,7 @@ import type {
   WorkspaceDescriptorPayload,
   WorkspaceCreateRequest,
 } from "@getpaseo/protocol/messages";
-import { DaemonClient } from "./daemon-client.js";
+import { DaemonClient, isTargetedDeliveryCall } from "./daemon-client.js";
 import type {
   FetchAgentsEntry,
   FetchAgentsOptions,
@@ -424,6 +424,12 @@ export type PaseoDeliverySendOptions = Omit<SendDeliveryOptions, "timeout">;
 export interface PaseoDeliveryActions {
   /** Persists a JSON payload before resolving. Supply an id to make retries idempotent. */
   send(payload: PaseoDeliveryPayload, options?: PaseoDeliverySendOptions): Promise<PaseoDelivery>;
+  /** Dispatches the payload to this exact native agent id. */
+  send(
+    targetAgentId: string,
+    payload: PaseoDeliveryPayload,
+    options?: PaseoDeliverySendOptions,
+  ): Promise<PaseoDelivery>;
   get(options?: PaseoDeliveryGetOptions): Promise<PaseoDeliveryGetResult>;
   acknowledge(deliveryId: string, options?: { requestId?: string }): Promise<PaseoDelivery>;
 }
@@ -436,6 +442,9 @@ export interface PaseoApi {
   readonly config: PaseoConfigActions;
   readonly deliveries: PaseoDeliveryActions;
 }
+
+/** API exposed to plugin code; backend-owned delivery queues are not in scope. */
+export type PaseoPluginApi = Omit<PaseoApi, "deliveries">;
 
 export interface PaseoClient extends PaseoApi {
   connect(): Promise<void>;
@@ -541,11 +550,38 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
       patch: (patch, requestId) => daemonClient.patchDaemonConfig(patch, requestId),
     },
     deliveries: {
-      send: (payload, options) => daemonClient.sendDelivery(payload, options),
+      send: function (
+        payloadOrTargetAgentId: PaseoDeliveryPayload | string,
+        payloadOrOptions?: PaseoDeliveryPayload | PaseoDeliverySendOptions,
+        maybeOptions?: PaseoDeliverySendOptions,
+      ) {
+        const targeted = isTargetedDeliveryCall(
+          payloadOrTargetAgentId,
+          payloadOrOptions,
+          maybeOptions,
+          arguments.length,
+        );
+        return targeted
+          ? daemonClient.sendDelivery(
+              payloadOrTargetAgentId as string,
+              payloadOrOptions as PaseoDeliveryPayload,
+              maybeOptions,
+            )
+          : daemonClient.sendDelivery(
+              payloadOrTargetAgentId as PaseoDeliveryPayload,
+              payloadOrOptions as PaseoDeliverySendOptions | undefined,
+            );
+      },
       get: (options) => daemonClient.getDeliveries(options),
       acknowledge: (deliveryId, options) => daemonClient.acknowledgeDelivery(deliveryId, options),
     },
   };
+}
+
+export function createPaseoPluginApi(daemonClient: DaemonClient): PaseoPluginApi {
+  const api = createPaseoApi(daemonClient);
+  const { deliveries: _deliveries, ...scoped } = api;
+  return scoped;
 }
 
 type WorkspaceHandleFactory = (workspace: string | PaseoWorkspace) => PaseoWorkspaceHandle;
