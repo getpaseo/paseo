@@ -56,31 +56,35 @@ Apply these rules exactly:
 7. Keep `paseo-plugin.json`, `package.json`, and `tsconfig.json` at the root.
 8. Delete the old root entry. Paseo does not load it.
 
-The directories and suffixes are equivalent compiler boundaries. A file beneath any `client/`
-directory is client-only; a file beneath any `server/` directory is server-only. `shared/` is valid
-in both bundles.
+The directories are the compiler boundaries. A file beneath `client/` compiles only into the app
+bundle, a file beneath `server/` only into the daemon bundle, and `shared/` into both. Filename
+suffixes such as `*.client.tsx` no longer mean anything, and a code module left at the plugin root
+is a compile error.
 
 ## 3. Move every registration
 
 Use this table as the complete registration checklist.
 
-| Old registration and location                                      | New registration and location                                                              |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| `plugin.handle(contract, handler)` in the old root entry           | `server.handle(contract, handler)` in `index.server.ts`                                    |
-| `plugin.addSurface(id, Component)` in the old root entry           | `client.addSurface(id, Component)` in `index.client.tsx`                                   |
-| `plugin.addSidebarItem(item)` in the old root entry                | `client.addSidebarItem(item)` in `index.client.tsx`                                        |
-| `plugin.addWorkspacePanel(panel)` in the old root entry            | `client.addWorkspacePanel(panel)` in `index.client.tsx`                                    |
-| `plugin.addCommandCenterItem(item)` in the old root entry          | `client.addCommandCenterItem(item)` in `index.client.tsx`                                  |
-| `plugin.addClientSlashCommand(command)` in the old root entry      | `client.addSlashCommand(command)` in `index.client.tsx`                                    |
-| `plugin.addClientSide(fn)` in the old root entry                   | Delete the wrapper and move the body of `fn` into the default client entry function        |
-| `client.addComposerPill(pill)` inside the old client callback      | `client.addComposerPill(pill)` inside `index.client.tsx` or an imported `client/` function |
-| `plugin.addAttachmentSource(source)` in the old root entry         | `client.addAttachmentSource(source)` in `index.client.tsx`                                 |
-| `plugin.addTheme(theme)` in the old root entry                     | `client.addTheme(theme)` in `index.client.tsx`                                             |
-| `plugin.addTimelineTransformer(transformer)` in the old root entry | `client.addTimelineTransformer(transformer)` in `index.client.tsx`                         |
-| `plugin.addTimelineRenderer(renderer)` in the old root entry       | `client.addTimelineRenderer(renderer)` in `index.client.tsx`                               |
+| Old registration and location                                                                 | New registration and location                                                              |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `plugin.handle(contract, handler)` in the old root entry                                      | `server.handle(contract, handler)` in `index.server.ts`                                    |
+| `plugin.addSurface(id, Component)` in the old root entry                                      | `client.addSurface(id, Component)` in `index.client.tsx`                                   |
+| `plugin.addSidebarItem(item)` in the old root entry                                           | `client.addSidebarItem(item)` in `index.client.tsx`                                        |
+| `plugin.addWorkspacePanel(panel)` in the old root entry                                       | `client.addWorkspacePanel(panel)` in `index.client.tsx`                                    |
+| `plugin.addCommandCenterItem(item)` in the old root entry                                     | `client.addCommandCenterItem(item)` in `index.client.tsx`                                  |
+| `plugin.addClientSlashCommand(command)` in the old root entry                                 | `client.addSlashCommand(command)` in `index.client.tsx`                                    |
+| `plugin.addClientSide(fn)` in the old root entry                                              | Delete the wrapper and move the body of `fn` into the default client entry function        |
+| `client.addComposerPill(pill)` inside the old client callback                                 | `client.addComposerPill(pill)` inside `index.client.tsx` or an imported `client/` function |
+| `plugin.addAttachmentSource(source)` in the old root entry                                    | `client.addAttachmentSource(source)` in `index.client.tsx`                                 |
+| `plugin.addTheme(theme)` in the old root entry                                                | `client.addTheme(theme)` in `index.client.tsx`                                             |
+| `plugin.addTimelineTransformer(transformer)` in the old root entry                            | `client.addTimelineTransformer(transformer)` in `index.client.tsx`                         |
+| `plugin.addTimelineRenderer(renderer)` in the old root entry                                  | `client.addTimelineRenderer(renderer)` in `index.client.tsx`                               |
+| `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin/server"` in shared files | `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin"`                     |
+| `ZodOutput<typeof contract.input>` handler parameter types                                    | `RpcInput<typeof contract>` from `@getpaseo/plugin`; `RpcOutput` for return types          |
 
 Import `PluginClientContext` in the client entry and `PluginServerContext` in the server entry.
-Remove imports of the old context type. Every client `add*` now returns an idempotent removal
+Remove imports of the old context type. `@getpaseo/plugin/server` now exports only handler-side
+types such as `PluginHandlerContext`. Every client `add*` now returns an idempotent removal
 function. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
 registrations after the entry cleanup runs.
 
@@ -93,16 +97,19 @@ its registration; that registration belongs in the client entry.
 
 ## 5. Recognize half-migration errors
 
-| Compiler or load error                                                                                                     | Meaning and fix                                                                                                                         |
-| -------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `Plugin entry split is required`                                                                                           | The directory still has only the old root entry. Create a runtime entry, move registrations, then delete the old file.                  |
-| `Plugin entry points are missing: expected index.client.ts or index.client.tsx and/or index.server.ts or index.server.tsx` | No supported entry exists. Add at least one exact filename.                                                                             |
-| `server-only module cannot be imported into the plugin client bundle: <file>`                                              | A client import reaches a `server/` directory or `*.server.*` file. Move the call behind an RPC and import its contract from `shared/`. |
-| `client-only module cannot be imported into the plugin server bundle: <file>`                                              | A server import reaches a `client/` directory or `*.client.*` file. Move that registration and import to the client entry.              |
-| `Node module cannot be imported into the plugin client bundle: node:<name> imported by <file>`                             | Client code imports a Node API. Move the operation to `server/`, expose an RPC in `shared/`, and call it from the client.               |
-| TypeScript reports that `PluginContext`, `addClientSide`, or `addClientSlashCommand` does not exist                        | Replace the old context types and registrations using the table above.                                                                  |
+| Compiler or load error                                                                                                     | Meaning and fix                                                                                                           |
+| -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `Plugin entry split is required`                                                                                           | The directory still has only the old root entry. Create a runtime entry, move registrations, then delete the old file.    |
+| `Plugin entry points are missing: expected index.client.ts or index.client.tsx and/or index.server.ts or index.server.tsx` | No supported entry exists. Add at least one exact filename.                                                               |
+| `server-only module cannot be imported into the plugin client bundle: <file>`                                              | A client import reaches `server/`. Move the call behind an RPC and import its contract from `shared/`.                    |
+| `client-only module cannot be imported into the plugin server bundle: <file>`                                              | A server import reaches `client/`. Move that registration and import to the client entry.                                 |
+| `Plugin modules belong in client/, server/, or shared/: <file>`                                                            | A code module is still at the plugin root. Move it into the matching directory and fix its imports.                       |
+| `Node module cannot be imported into the plugin client bundle: node:<name> imported by <file>`                             | Client code imports a Node API. Move the operation to `server/`, expose an RPC in `shared/`, and call it from the client. |
+| TypeScript reports that `PluginContext`, `addClientSide`, or `addClientSlashCommand` does not exist                        | Replace the old context types and registrations using the table above.                                                    |
 
-## 6. Migrate `plugin-examples/local-plugin`
+## 6. Worked example: `plugin-examples/local-plugin`
+
+Only the entry files and import paths change. Component and handler bodies move without edits.
 
 Before:
 
@@ -145,156 +152,15 @@ export default function contribute(plugin: PluginContext) {
 }
 ```
 
-```tsx
-// main.client.tsx
-import { useMutation } from "@tanstack/react-query";
-import {
-  Icon,
-  type PluginClientContext,
-  type PluginComposerPillProps,
-  type PluginWorkspacePanelProps,
-  useAgent,
-  useRpc,
-  useWorkspace,
-} from "@getpaseo/plugin";
-import { useCallback, useMemo } from "react";
-import { Pressable, Text, View } from "react-native";
-import { incrementRpc } from "./increment.shared";
-
-export function OpenCounterPill({ theme, workspaceId, agentId }: PluginComposerPillProps) {
-  const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
-  const agent = useAgent(agentId, ({ title }) => ({ title }));
-  const textStyle = useMemo(() => ({ color: theme.colors.foregroundMuted }), [theme]);
-  return (
-    <>
-      <Icon name="Blocks" size={14} color={theme.colors.foregroundMuted} />
-      <Text style={textStyle} numberOfLines={1}>
-        {agent?.title ?? workspace?.name ?? "Counter"}
-      </Text>
-    </>
-  );
-}
-
-export function contributeClient(client: PluginClientContext) {
-  const pills = new Map<string, () => void>();
-  let stopped = false;
-  const register = (agent: { id: string; workspaceId?: string | null }) => {
-    if (stopped || !agent.workspaceId) return;
-    pills.get(agent.id)?.();
-    const workspaceId = agent.workspaceId;
-    const remove = client.addComposerPill({
-      id: "open-counter",
-      title: "Open plugin counter",
-      workspaceId,
-      agentId: agent.id,
-      Component: OpenCounterPill,
-      onPress() {
-        client.openPanel("counter", { workspaceId });
-      },
-    });
-    pills.set(agent.id, remove);
-  };
-  const remove = (agentId: string) => {
-    pills.get(agentId)?.();
-    pills.delete(agentId);
-  };
-  const unsubscribe = client.paseo.agents.subscribe((update) => {
-    if (update.kind === "remove") remove(update.agentId);
-    else register(update.agent);
-  });
-  void client.paseo.agents
-    .list()
-    .then(({ entries }) => {
-      for (const { agent } of entries) register(agent);
-      return undefined;
-    })
-    .catch(() => undefined);
-  return () => {
-    stopped = true;
-    unsubscribe();
-    for (const dispose of pills.values()) dispose();
-    pills.clear();
-  };
-}
-
-export function ExamplePanel({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
-  const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
-  const callIncrement = useRpc(incrementRpc);
-  const { data, error, isPending, mutate } = useMutation({ mutationFn: callIncrement });
-  const value = data?.value ?? 0;
-  const styles = useMemo(
-    () => ({
-      screen: {
-        flex: 1,
-        padding: layout.compact ? 16 : 24,
-        gap: 16,
-        backgroundColor: theme.colors.surface0,
-      },
-      title: { color: theme.colors.foreground, fontSize: layout.compact ? 20 : 24 },
-      detail: { color: theme.colors.foregroundMuted },
-      button: { padding: 14, borderRadius: 10, backgroundColor: theme.colors.accent },
-      buttonText: { color: theme.colors.accentForeground, textAlign: "center" as const },
-      error: { color: theme.colors.statusDanger },
-    }),
-    [theme, layout.compact],
-  );
-  const handleIncrement = useCallback(() => {
-    mutate({ value });
-  }, [mutate, value]);
-
-  return (
-    <View style={styles.screen}>
-      <Text style={styles.title}>Workspace plugin panel</Text>
-      <Text style={styles.detail}>{workspace?.name}</Text>
-      <Text style={styles.detail}>{data?.handledBy ?? "The RPC has not run yet."}</Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Increment plugin counter, currently ${value}`}
-        onPress={handleIncrement}
-        style={styles.button}
-      >
-        <Text style={styles.buttonText}>
-          {isPending ? "Calling daemon…" : `RPC counter: ${value}`}
-        </Text>
-      </Pressable>
-      {error ? <Text style={styles.error}>{error.message}</Text> : null}
-    </View>
-  );
-}
-```
-
-```ts
-// increment.shared.ts
-import { defineRpc } from "@getpaseo/plugin/server";
-import { z } from "zod";
-
-export const incrementRpc = defineRpc({
-  name: "increment",
-  input: z.object({ value: z.number() }),
-  output: z.object({ value: z.number(), handledBy: z.string() }),
-});
-
-// increment.server.ts
-import type { output as ZodOutput } from "zod";
-import { incrementRpc } from "./increment.shared";
-
-export function increment(input: ZodOutput<typeof incrementRpc.input>) {
-  return {
-    value: input.value + 1,
-    handledBy: "plugin subprocess",
-  };
-}
-```
-
 After:
 
 ```text
 local-plugin/
   index.client.tsx
   index.server.ts
-  client/main.tsx
-  server/increment.ts
-  shared/increment.ts
+  client/main.tsx        # was main.client.tsx
+  server/increment.ts    # was increment.server.ts
+  shared/increment.ts    # was increment.shared.ts
 ```
 
 ```tsx
@@ -336,146 +202,21 @@ export default function contribute(server: PluginServerContext) {
 }
 ```
 
-```tsx
-// client/main.tsx
-import { useMutation } from "@tanstack/react-query";
-import {
-  Icon,
-  type PluginClientContext,
-  type PluginComposerPillProps,
-  type PluginWorkspacePanelProps,
-  useAgent,
-  useRpc,
-  useWorkspace,
-} from "@getpaseo/plugin";
-import { useCallback, useMemo } from "react";
-import { Pressable, Text, View } from "react-native";
-import { incrementRpc } from "../shared/increment";
+Import path changes inside the moved files:
 
-export function OpenCounterPill({ theme, workspaceId, agentId }: PluginComposerPillProps) {
-  const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
-  const agent = useAgent(agentId, ({ title }) => ({ title }));
-  const textStyle = useMemo(() => ({ color: theme.colors.foregroundMuted }), [theme]);
-  return (
-    <>
-      <Icon name="Blocks" size={14} color={theme.colors.foregroundMuted} />
-      <Text style={textStyle} numberOfLines={1}>
-        {agent?.title ?? workspace?.name ?? "Counter"}
-      </Text>
-    </>
-  );
-}
+```diff
+ // client/main.tsx
+-import { incrementRpc } from "./increment.shared";
++import { incrementRpc } from "../shared/increment";
 
-export function contributeClient(client: PluginClientContext) {
-  const pills = new Map<string, () => void>();
-  let stopped = false;
-  const register = (agent: { id: string; workspaceId?: string | null }) => {
-    if (stopped || !agent.workspaceId) return;
-    pills.get(agent.id)?.();
-    const workspaceId = agent.workspaceId;
-    const remove = client.addComposerPill({
-      id: "open-counter",
-      title: "Open plugin counter",
-      workspaceId,
-      agentId: agent.id,
-      Component: OpenCounterPill,
-      onPress() {
-        client.openPanel("counter", { workspaceId });
-      },
-    });
-    pills.set(agent.id, remove);
-  };
-  const remove = (agentId: string) => {
-    pills.get(agentId)?.();
-    pills.delete(agentId);
-  };
-  const unsubscribe = client.paseo.agents.subscribe((update) => {
-    if (update.kind === "remove") remove(update.agentId);
-    else register(update.agent);
-  });
-  void client.paseo.agents
-    .list()
-    .then(({ entries }) => {
-      for (const { agent } of entries) register(agent);
-      return undefined;
-    })
-    .catch(() => undefined);
-  return () => {
-    stopped = true;
-    unsubscribe();
-    for (const dispose of pills.values()) dispose();
-    pills.clear();
-  };
-}
-
-export function ExamplePanel({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
-  const workspace = useWorkspace(workspaceId, ({ name }) => ({ name }));
-  const callIncrement = useRpc(incrementRpc);
-  const { data, error, isPending, mutate } = useMutation({ mutationFn: callIncrement });
-  const value = data?.value ?? 0;
-  const styles = useMemo(
-    () => ({
-      screen: {
-        flex: 1,
-        padding: layout.compact ? 16 : 24,
-        gap: 16,
-        backgroundColor: theme.colors.surface0,
-      },
-      title: { color: theme.colors.foreground, fontSize: layout.compact ? 20 : 24 },
-      detail: { color: theme.colors.foregroundMuted },
-      button: { padding: 14, borderRadius: 10, backgroundColor: theme.colors.accent },
-      buttonText: { color: theme.colors.accentForeground, textAlign: "center" as const },
-      error: { color: theme.colors.statusDanger },
-    }),
-    [theme, layout.compact],
-  );
-  const handleIncrement = useCallback(() => {
-    mutate({ value });
-  }, [mutate, value]);
-
-  return (
-    <View style={styles.screen}>
-      <Text style={styles.title}>Workspace plugin panel</Text>
-      <Text style={styles.detail}>{workspace?.name}</Text>
-      <Text style={styles.detail}>{data?.handledBy ?? "The RPC has not run yet."}</Text>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel={`Increment plugin counter, currently ${value}`}
-        onPress={handleIncrement}
-        style={styles.button}
-      >
-        <Text style={styles.buttonText}>
-          {isPending ? "Calling daemon…" : `RPC counter: ${value}`}
-        </Text>
-      </Pressable>
-      {error ? <Text style={styles.error}>{error.message}</Text> : null}
-    </View>
-  );
-}
+ // server/increment.ts
+-import { incrementRpc } from "./increment.shared";
++import { incrementRpc } from "../shared/increment";
 ```
 
-```ts
-// shared/increment.ts
-import { defineRpc } from "@getpaseo/plugin/server";
-import { z } from "zod";
-
-export const incrementRpc = defineRpc({
-  name: "increment",
-  input: z.object({ value: z.number() }),
-  output: z.object({ value: z.number(), handledBy: z.string() }),
-});
-
-// server/increment.ts
-import type { output as ZodOutput } from "zod";
-import { incrementRpc } from "../shared/increment";
-
-export function increment(input: ZodOutput<typeof incrementRpc.input>) {
-  return {
-    value: input.value + 1,
-    handledBy: "plugin subprocess",
-  };
-}
-```
+`contributeClient` already took a `PluginClientContext` and returned cleanup, so the client entry
+calls it directly and returns its cleanup. A plugin whose `addClientSide` callback also registered
+pills or subscriptions keeps that code; only the wrapper goes away.
 
 ## 7. Verify the migration
 
