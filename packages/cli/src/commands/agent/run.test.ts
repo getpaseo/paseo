@@ -26,6 +26,7 @@ describe("existing run workspace resolution", () => {
     await expect(resolveExistingRunWorkspace({ fetchWorkspaces }, "workspace-2")).resolves.toEqual({
       id: "workspace-2",
       cwd: "/workspace/two",
+      createdForRun: false,
     });
     expect(fetchWorkspaces).toHaveBeenCalledWith({
       filter: { query: "workspace-2" },

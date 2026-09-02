@@ -25,6 +25,7 @@ import { $ } from "zx";
 import { mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
+import { createE2ETestContext } from "./helpers/test-daemon.ts";
 
 $.verbose = false;
 
@@ -267,6 +268,56 @@ try {
     const output = result.stdout + result.stderr;
     assert(output.includes("unknown option"), "should report unknown option for --isolation");
     console.log("✓ run --isolation is rejected\n");
+  }
+
+  // Test 17: failed agent creation does not leave the run's workspace behind
+  {
+    console.log("Test 17: failed agent creation cleans up its workspace");
+    const ctx = await createE2ETestContext({ timeout: 45000 });
+    try {
+      await $({ cwd: ctx.workDir })`git init -b main`;
+      await $({ cwd: ctx.workDir })`git config user.email test@getpaseo.local`;
+      await $({ cwd: ctx.workDir })`git config user.name "Paseo Test"`;
+      await $({ cwd: ctx.workDir })`git commit --allow-empty -m initial`;
+
+      const before = await ctx.paseo(["workspace", "ls", "--json"]);
+      assert.strictEqual(before.exitCode, 0, before.stderr);
+
+      const result = await ctx.paseo(
+        [
+          "run",
+          "--provider",
+          "claude",
+          "--mode",
+          "bypass",
+          "--new-workspace",
+          "worktree",
+          "--worktree-mode",
+          "branch-off",
+          "--new-branch",
+          "failed-run-workspace",
+          "--base",
+          "main",
+          "--background",
+          "do something",
+        ],
+        {
+          env: { PASEO_AGENT_ID: "", PASEO_WORKSPACE_ID: "" },
+        },
+      );
+      assert.notStrictEqual(result.exitCode, 0, "invalid mode should reject agent creation");
+      assert(
+        `${result.stdout}\n${result.stderr}`.includes("Invalid mode 'bypass'"),
+        `failure should reach provider mode validation\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      );
+
+      const after = await ctx.paseo(["workspace", "ls", "--json"]);
+      assert.strictEqual(after.exitCode, 0, after.stderr);
+      assert.deepStrictEqual(JSON.parse(after.stdout), JSON.parse(before.stdout));
+    } finally {
+      await ctx.stop();
+    }
+    console.log("✓ failed agent creation cleans up its workspace\n");
   }
 } finally {
   // Clean up temp directory
