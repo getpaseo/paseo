@@ -10,6 +10,13 @@ export interface E2EWorker {
   close(): Promise<void>;
 }
 
+export interface E2EWorkerOptions {
+  forkProviders?: string[];
+  injectPaseoTools?: boolean;
+  daemonConfig?: Record<string, unknown>;
+  environment?: Record<string, string>;
+}
+
 function resolveOptionalHome(value: string | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
@@ -156,7 +163,7 @@ async function applyMetadataFork(targetHome: string, providerIds: string[]): Pro
 
 export async function startE2EWorker(
   workerIndex: number,
-  options: { forkProviders?: string[]; injectPaseoTools?: boolean } = {},
+  options: E2EWorkerOptions = {},
 ): Promise<E2EWorker> {
   const requestedRoot = resolveOptionalHome(process.env.E2E_PASEO_HOME);
   const paseoHome = requestedRoot
@@ -169,6 +176,14 @@ export async function startE2EWorker(
 
   try {
     await applyMetadataFork(paseoHome, options.forkProviders ?? []);
+    // Worker-scoped fixture config lets a spec exercise provider discovery without
+    // reading the developer's provider state or sharing configuration with other specs.
+    if (options.daemonConfig) {
+      await writeFile(
+        path.join(paseoHome, "config.json"),
+        `${JSON.stringify(options.daemonConfig, null, 2)}\n`,
+      );
+    }
     if (options.injectPaseoTools) {
       await enablePaseoTools(paseoHome);
     }
@@ -179,6 +194,7 @@ export async function startE2EWorker(
         NODE_ENV: "development",
         PATH: `${fakeEditorBin}${path.delimiter}${process.env.PATH ?? ""}`,
         PASEO_E2E_EDITOR_RECORD_PATH: editorRecordPath,
+        ...options.environment,
       },
     });
 
