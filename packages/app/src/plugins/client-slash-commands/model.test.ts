@@ -61,4 +61,13 @@ describe("plugin client slash commands", () => {
     });
     expect(onError).toHaveBeenCalledWith(failure);
   });
+
+  it("does not make the composer wait for a never-resolving handler", () => {
+    const run = vi.fn(() => new Promise<void>(() => undefined));
+
+    expect(
+      executePluginClientSlashCommand({ command: { run }, args: "foo", onError: vi.fn() }),
+    ).toBeUndefined();
+    expect(run).toHaveBeenCalledWith("foo");
+  });
 });

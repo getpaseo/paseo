@@ -1337,15 +1337,14 @@ function ComposerContentImpl({
       setSelectedAttachments([]);
       resetSuppression();
       setSendError(null);
-      setIsProcessing(true);
-      void executePluginClientSlashCommand({
+      executePluginClientSlashCommand({
         command: resolved.command,
         args: resolved.args,
         onError(error) {
           console.error("[Composer] Failed to run plugin client slash command:", error);
           toastErrorRef.current(error instanceof Error ? error.message : String(error));
         },
-      }).finally(() => setIsProcessing(false));
+      });
       return true;
     },
     [blurOnSubmit, clearDraft, replaceUserInput, resetSuppression, setSelectedAttachments],

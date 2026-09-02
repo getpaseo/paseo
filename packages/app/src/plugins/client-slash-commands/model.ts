@@ -57,13 +57,13 @@ export function resolvePluginClientSlashCommand<Command extends SlashCommandDesc
   return command ? { command, args: (match[2] ?? "").trim() } : null;
 }
 
-export async function executePluginClientSlashCommand(input: {
+export function executePluginClientSlashCommand(input: {
   command: { run(args: string): Promise<void> };
   args: string;
   onError(error: unknown): void;
-}): Promise<void> {
+}): void {
   try {
-    await input.command.run(input.args);
+    void input.command.run(input.args).catch(input.onError);
   } catch (error) {
     input.onError(error);
   }
