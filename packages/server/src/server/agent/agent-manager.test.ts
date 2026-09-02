@@ -1283,6 +1283,7 @@ test("pre-provider replacement failure clears replacement state and wakes exact 
 test("quarantines a session when post-dispatch prompt identity persistence fails", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-post-dispatch-failure-"));
   const durable = new RejectingPromptIdentityTimelineStore();
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
   const session = new CloseRecordingTestAgentSession({ provider: "codex", cwd: workdir });
   const manager = new AgentManager({
     clients: {
@@ -1293,6 +1294,7 @@ test("quarantines a session when post-dispatch prompt identity persistence fails
       })(),
     },
     durableTimelineStore: durable,
+    registry: storage,
     logger,
   });
   let agentId: string | null = null;
@@ -1306,9 +1308,20 @@ test("quarantines a session when post-dispatch prompt identity persistence fails
       clientMessageId: "identity-failure-client",
     });
     const waitForStart = manager.waitForAgentRunStart(agent.id);
+    void waitForStart.catch(() => undefined);
 
     await expect(run).rejects.toMatchObject({ code: "DURABLE_TIMELINE_MUTATION_FAILED" });
     await expect(waitForStart).rejects.toThrow(/failed/i);
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "error",
+      pendingReplacement: false,
+      activeForegroundTurnId: null,
+    });
+    await manager.flush();
+    await expect(storage.get(agent.id)).resolves.toMatchObject({
+      lastStatus: "error",
+      lastError: expect.stringContaining("submitted prompt identity"),
+    });
     expect(session.closed).toBe(true);
     await expect(manager.runAgent(agent.id, "must not reuse session")).rejects.toThrow(
       /quarantined/i,
@@ -1443,6 +1456,120 @@ test("poisonSession clears active ownership, settles streams, and persists termi
     rmSync(workdir, { recursive: true, force: true });
   }
 });
+
+test.each(["acknowledgement-before-timeout", "timeout-before-acknowledgement"] as const)(
+  "durable timeout and acknowledged cancellation are generation-safe (%s)",
+  async (order) => {
+    const workdir = mkdtempSync(join(tmpdir(), `agent-manager-cancel-poison-${order}-`));
+    const storage = new AgentStorage(join(workdir, "agents"), logger);
+    const durable = new BlockingTimelineStore();
+    const interruptStarted = deferred<void>();
+    const releaseInterrupt = deferred<void>();
+
+    class CancellationRaceSession extends TestAgentSession {
+      private startCount = 0;
+
+      override async startTurn(): Promise<{ turnId: string }> {
+        const turnNumber = ++this.startCount;
+        const turnId = `cancel-race-turn-${turnNumber}`;
+        setTimeout(() => {
+          this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+          if (turnNumber > 1) {
+            this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+          }
+        }, 0);
+        return { turnId };
+      }
+
+      override async interrupt(): Promise<void> {
+        interruptStarted.resolve();
+        await releaseInterrupt.promise;
+      }
+    }
+
+    const session = new CancellationRaceSession({ provider: "codex", cwd: workdir });
+    const manager = new AgentManager({
+      clients: {
+        codex: new (class extends TestAgentClient {
+          override async createSession(): Promise<AgentSession> {
+            return session;
+          }
+        })(),
+      },
+      durableTimelineStore: durable,
+      registry: storage,
+      rescueTimeouts: {
+        durableTimelineMutationMs: 10,
+        interruptSessionMs: 100,
+        reloadSessionCloseMs: 10,
+      },
+      logger,
+      idFactory: () => "00000000-0000-4000-8000-000000000316",
+    });
+
+    let agentId: string | null = null;
+    let consume: Promise<void> | undefined;
+    try {
+      const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+        workspaceId: undefined,
+      });
+      agentId = agent.id;
+      const stream = manager.streamAgent(agent.id, "cancel race");
+      consume = (async () => {
+        for await (const _event of stream) {
+          // Keep the cancellation waiter attached.
+        }
+      })();
+      await manager.waitForAgentRunStart(agent.id);
+
+      const append = manager.appendTimelineItem(agent.id, {
+        type: "assistant_message",
+        text: "timeout race",
+      });
+      await durable.bulkInsertStarted.promise;
+
+      const cancellation = manager.cancelAgentRun(agent.id);
+      await interruptStarted.promise;
+      if (order === "acknowledgement-before-timeout") {
+        releaseInterrupt.resolve();
+        await expect(cancellation).resolves.toEqual({ status: "settled" });
+        expect(manager.getAgent(agent.id)).toMatchObject({
+          lifecycle: "idle",
+          pendingReplacement: false,
+        });
+        await expect(append).rejects.toMatchObject({
+          code: "DURABLE_TIMELINE_MUTATION_TIMEOUT",
+        });
+        await expect(manager.runAgent(agent.id, "after acknowledged cancel")).resolves.toEqual(
+          expect.objectContaining({ canceled: false }),
+        );
+      } else {
+        await expect(append).rejects.toMatchObject({
+          code: "DURABLE_TIMELINE_MUTATION_TIMEOUT",
+        });
+        releaseInterrupt.resolve();
+        await expect(cancellation).resolves.toEqual({ status: "settled" });
+        expect(manager.getAgent(agent.id)).toMatchObject({
+          lifecycle: "error",
+          pendingReplacement: false,
+        });
+        await expect(manager.runAgent(agent.id, "must not reuse poisoned session")).rejects.toThrow(
+          /quarantined/i,
+        );
+        await manager.flush();
+        await expect(storage.get(agent.id)).resolves.toMatchObject({ lastStatus: "error" });
+      }
+    } finally {
+      releaseInterrupt.resolve();
+      durable.releaseBulkInsert.resolve();
+      if (consume) await consume.catch(() => undefined);
+      if (agentId && manager.getAgent(agentId)) {
+        await manager.closeAgent(agentId).catch(() => undefined);
+      }
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
 
 test("hydrates a late admitted row after close without shifting the next sequence", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-prompt-late-recovery-"));
@@ -3833,6 +3960,65 @@ test("reloadAgentSession completes when the previous session close hangs", async
     expect(client.firstSession.closeCalled).toBe(true);
     expect(client.resumeSessionCalls).toBe(1);
   } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent reloads share one captured session transition", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-concurrent-reload-"));
+  const client = new (class extends TestAgentClient {
+    readonly sessions: AgentSession[] = [];
+    readonly resumeStarted = deferred<void>();
+    readonly releaseResume = deferred<void>();
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      const session = new CloseRecordingTestAgentSession(config);
+      this.sessions.push(session);
+      return session;
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.resumeStarted.resolve();
+      await this.releaseResume.promise;
+      const session = new CloseRecordingTestAgentSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+      this.sessions.push(session);
+      return session;
+    }
+  })();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000304",
+  });
+
+  try {
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    const firstReload = manager.reloadAgentSession(agent.id);
+    const secondReload = manager.reloadAgentSession(agent.id);
+
+    expect(secondReload).toBe(firstReload);
+    await client.resumeStarted.promise;
+    expect(client.sessions).toHaveLength(1);
+
+    client.releaseResume.resolve();
+    const [first, second] = await Promise.all([firstReload, secondReload]);
+    expect(second).toBe(first);
+    expect(client.sessions).toHaveLength(2);
+    expect(manager.getAgent(agent.id)?.session).toBe(client.sessions[1]);
+  } finally {
+    client.releaseResume.resolve();
+    if (manager.getAgent("00000000-0000-4000-8000-000000000304")) {
+      await manager.closeAgent("00000000-0000-4000-8000-000000000304").catch(() => undefined);
+    }
     rmSync(workdir, { recursive: true, force: true });
   }
 });
