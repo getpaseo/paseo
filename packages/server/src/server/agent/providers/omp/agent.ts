@@ -891,6 +891,10 @@ export class OmpAgentSession implements AgentSession {
   // FIFO order; unmatched or external user rows carry no Paseo client ID.
   private readonly expectedUserEchoes: OmpExpectedUserEcho[] = [];
   private readonly claimedUserEchoes = new Set<OmpExpectedUserEcho>();
+  // Native-ID lookups may resolve out of order. Start them concurrently, but
+  // commit their results in message_end arrival order so client/native IDs
+  // retain the same FIFO pairing.
+  private userEchoResolutionTail: Promise<void> = Promise.resolve();
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -2216,12 +2220,14 @@ export class OmpAgentSession implements AgentSession {
       emitUserMessage(messageId);
       return;
     }
-    // Real OMP user message_end frames carry no id/entryId; the native ID is
-    // resolved from the branch messages. The claim is only committed once the
-    // resolution proves this frame is not a re-emission of a surfaced entry.
-    void this.runtimeSession
-      .getBranchMessages()
-      .then((messages) => {
+    // Real OMP user message_end frames carry no id/entryId; resolve their
+    // native IDs concurrently, then commit results in event arrival order.
+    // That preserves FIFO client/native identity pairing even when identical
+    // echoes' branch lookups complete out of order.
+    const branchMessages = this.runtimeSession.getBranchMessages();
+    this.userEchoResolutionTail = this.userEchoResolutionTail.then(async () => {
+      try {
+        const messages = await branchMessages;
         const matches = messages.filter((message) => message.text === text);
         const unemitted = matches.filter(
           (message) => !this.emittedUserMessageIds.has(message.entryId),
@@ -2233,20 +2239,18 @@ export class OmpAgentSession implements AgentSession {
           this.releaseExpectedUserEcho(claim);
           return undefined;
         }
-        // Earliest unemitted match preserves FIFO pairing between concurrently
-        // resolving identical echoes and their provisional client identities.
         this.commitExpectedUserEcho(claim);
         emitUserMessage(unemitted[0]?.entryId);
-        return undefined;
-      })
-      .catch((error: unknown) => {
+      } catch (error: unknown) {
         this.logger.debug(
           { err: error, sessionFile: this.state.sessionFile },
           "OMP native user message ID lookup failed",
         );
         this.commitExpectedUserEcho(claim);
         emitUserMessage();
-      });
+      }
+      return undefined;
+    });
   }
 
   private emitToolCallEvent(

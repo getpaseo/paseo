@@ -141,6 +141,7 @@ export class FakeOmpSession implements OmpRuntimeSession {
   branchResponse: { text?: string; cancelled?: boolean } = { text: "" };
   branchMessages: Array<{ entryId: string; text: string }> = [];
   readonly branchRequests: string[] = [];
+  getBranchMessagesRequestCount = 0;
   activeBranchEntryId?: string;
   closed = false;
   state: OmpSessionState;
@@ -156,6 +157,10 @@ export class FakeOmpSession implements OmpRuntimeSession {
     resolve: (result: { accepted: boolean }) => void;
   }> = [];
   private heldSteerResponseCount = 0;
+  private readonly branchMessageResponseHolds: Array<{
+    resolve: (messages: Array<{ entryId: string; text: string }>) => void;
+  }> = [];
+  private heldBranchMessageResponseCount = 0;
   private nextHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null = null;
   private activeHeldPrompt: { promise: Promise<void>; reject: (error: Error) => void } | null =
     null;
@@ -340,7 +345,33 @@ export class FakeOmpSession implements OmpRuntimeSession {
   }
 
   async getBranchMessages(): Promise<Array<{ entryId: string; text: string }>> {
+    this.getBranchMessagesRequestCount += 1;
+    if (this.heldBranchMessageResponseCount > 0) {
+      this.heldBranchMessageResponseCount -= 1;
+      const { promise, resolve } =
+        Promise.withResolvers<Array<{ entryId: string; text: string }>>();
+      this.branchMessageResponseHolds.push({ resolve });
+      return await promise;
+    }
     return this.branchMessages;
+  }
+
+  holdNextBranchMessageResponses(count = 1): void {
+    this.heldBranchMessageResponseCount += count;
+  }
+
+  async releaseHeldBranchMessageResponse(
+    index: number,
+    messages: Array<{ entryId: string; text: string }> = this.branchMessages,
+  ): Promise<void> {
+    const [hold] = this.branchMessageResponseHolds.splice(index, 1);
+    if (!hold) {
+      throw new Error(`FakeOmp has no held branch-message response at index ${index}`);
+    }
+    hold.resolve(messages);
+    const { promise, resolve } = Promise.withResolvers<void>();
+    setImmediate(resolve);
+    await promise;
   }
 
   steer(message: string, images?: Array<{ type: "image"; data: string; mimeType: string }>): void {

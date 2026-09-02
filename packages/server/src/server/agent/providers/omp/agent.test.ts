@@ -935,10 +935,16 @@ describe("OMP active-turn steering", () => {
       { entryId: "entry-again-1", text: "again" },
       { entryId: "entry-again-2", text: "again" },
     ];
-    // Both echoes arrive before either native-ID lookup resolves.
+    // Resolve both native-ID lookups in reverse order. Emission still waits
+    // for the first echo so the provider/client identity pairs remain FIFO.
+    runtime.holdNextBranchMessageResponses(2);
     runtime.acceptPromptWithoutId("again");
     runtime.acceptPromptWithoutId("again");
+    expect(runtime.getBranchMessagesRequestCount).toBe(3);
+    await runtime.releaseHeldBranchMessageResponse(1);
     await waitForImmediate();
+    expect(userMessages(omp).filter((row) => row.text === "again")).toEqual([]);
+    await runtime.releaseHeldBranchMessageResponse(0);
 
     const again = userMessages(omp).filter((row) => row.text === "again");
     expect(again).toEqual([
