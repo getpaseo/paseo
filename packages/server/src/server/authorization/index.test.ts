@@ -113,6 +113,27 @@ describe("SessionAuthorization", () => {
     expect(authorization.allowsOutbound(outboundMessage("agent_update"))).toBe(false);
   });
 
+  test("uses workspace permissions for launch operations", () => {
+    const readAuthorization = new SessionAuthorization(["workspace.read"]);
+    const writeAuthorization = new SessionAuthorization(["workspace.write"]);
+
+    expect(readAuthorization.allowsInbound(inboundMessage("workspace.launch.list.request"))).toBe(
+      true,
+    );
+    expect(
+      readAuthorization.allowsOutbound(outboundMessage("workspace.launch.list.response")),
+    ).toBe(true);
+    expect(readAuthorization.allowsInbound(inboundMessage("workspace.launch.start.request"))).toBe(
+      false,
+    );
+    expect(writeAuthorization.allowsInbound(inboundMessage("workspace.launch.start.request"))).toBe(
+      true,
+    );
+    expect(
+      writeAuthorization.allowsOutbound(outboundMessage("workspace.launch.stop.response")),
+    ).toBe(true);
+  });
+
   test("correlated authorization errors can always be emitted", () => {
     const authorization = new SessionAuthorization([]);
 
