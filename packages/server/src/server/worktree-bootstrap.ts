@@ -322,7 +322,10 @@ export function buildWorktreeSetupDetail(input: {
       log: renderedLog.log,
       status: commandStatusFromResult(result),
       exitCode: result.exitCode,
-      ...(result.durationMs > 0 ? { durationMs: result.durationMs } : {}),
+      // durationMs is only meaningful once the command has actually
+      // completed — gate on exitCode rather than durationMs itself, since a
+      // completed command can genuinely finish in under a millisecond.
+      ...(result.exitCode !== null ? { durationMs: result.durationMs } : {}),
     };
   });
   const renderedLog = buildWorktreeSetupLog({

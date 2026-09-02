@@ -112,6 +112,8 @@ Both fields accept a multiline shell script or an array of commands; commands ru
 
 Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to reach files in the original checkout (untracked config, local caches, etc).
 
+On macOS and Linux, when `$SHELL` is `bash`, `zsh`, or `fish`, every entry in a `setup`/`teardown` run shares one login+interactive shell session — the same session sources your profile (`.zshrc`, `.bash_profile`, `config.fish`, nvm, mise, Homebrew's `shellenv`, etc.), so tool activation and shell functions defined there are available to your commands. Because it's one session, state from one entry — an exported variable, a `cd`, a sourced function — carries into the next entry. The daemon's own `PATH` is kept reachable as a fallback even if your profile replaces `PATH` outright. Commands run in your shell's own syntax: if `$SHELL` is fish, write `setup`/`teardown` entries in fish syntax (`set -x FOO bar`, not `export FOO=bar`), not bash. Any other `$SHELL` (or Windows) runs each entry in its own isolated, non-interactive process instead, with no shared state between entries.
+
 ## Scripts and services
 
 `scripts` are named commands you can run inside a worktree on demand. Mark one as a _service_ and Paseo supervises it as a long-running process, assigns it a port, and routes HTTP traffic to it through the daemon's reverse proxy.
