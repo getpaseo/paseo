@@ -63,6 +63,7 @@ import {
   streamPiHistory,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
+import { mapPiIrcMessage } from "./irc-message-mapper.js";
 import { materializeProviderImage } from "../provider-image-output.js";
 import { PiCliRuntime } from "./cli-runtime.js";
 import { revertPiConversation } from "./rewind.js";
@@ -2390,12 +2391,13 @@ export class PiRpcAgentSession implements AgentSession {
     }
     if (event.message.role === "custom") {
       const text = getUserMessageText(event.message.content);
-      if (text) {
+      const ircMessage = mapPiIrcMessage({ message: event.message, rawText: text });
+      if (ircMessage || text) {
         this.emit({
           type: "timeline",
           provider: this.provider,
           turnId,
-          item: { type: "assistant_message", text },
+          item: ircMessage ?? { type: "assistant_message", text },
         });
       }
       this.completeTurn(turnId, []);
