@@ -282,6 +282,22 @@ export type PluginCommandCenterItemContribution =
       onSelect(context: PluginAgentCommandContext): void | Promise<void>;
     });
 
+interface PluginClientSlashCommandBase {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+
+export type PluginClientSlashCommandContribution =
+  | (PluginClientSlashCommandBase & {
+      context: "workspace";
+      onSubmit(context: PluginWorkspaceCommandContext & { args: string }): void | Promise<void>;
+    })
+  | (PluginClientSlashCommandBase & {
+      context: "agent";
+      onSubmit(context: PluginAgentCommandContext & { args: string }): void | Promise<void>;
+    });
+
 export interface PluginHandlerContext {
   paseo: PaseoApi;
 }
@@ -298,6 +314,7 @@ export interface PluginContext {
   addSidebarItem(contribution: PluginSidebarContribution): void;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
+  addClientSlashCommand(contribution: PluginClientSlashCommandContribution): void;
   addClientSide(contribution: PluginClientContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
   addTheme(contribution: PluginThemeContribution): void;

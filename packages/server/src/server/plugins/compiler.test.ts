@@ -138,6 +138,13 @@ describe("plugin contribution targets", () => {
     schema: { safeParse(value) { return { success: true, data: value }; } },
     Component() { return null; },
   });
+  plugin.addClientSlashCommand({
+    name: "review",
+    description: "Review changes",
+    argumentHint: "[scope]",
+    context: "agent",
+    onSubmit() {},
+  });
   plugin.addClientSide((client) => {
     return client.addComposerPill({
       id: "composer-card",
@@ -156,8 +163,10 @@ describe("plugin contribution targets", () => {
     const { clientBundle, serverBundle } = await compilePlugin(entryPath);
     expect(clientBundle).toContain("timeline-card");
     expect(clientBundle).toContain("composer-card");
+    expect(clientBundle).toContain("Review changes");
     expect(serverBundle).not.toContain("timeline-card");
     expect(serverBundle).not.toContain("composer-card");
+    expect(serverBundle).not.toContain("Review changes");
   });
 });
 
