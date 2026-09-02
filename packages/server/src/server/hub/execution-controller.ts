@@ -161,6 +161,7 @@ export class HubExecutionController {
         env: message.env,
         mcpServers: message.mcpServers,
         worktree: message.worktree,
+        workspaceAffinity: message.workspaceAffinity,
       });
       if (this.closed) return;
       this.send({
@@ -172,6 +173,7 @@ export class HubExecutionController {
           agent: result.agent,
           success: true,
           ...(message.toolPolicy ? { toolPolicyApplied: true as const } : {}),
+          ...(result.workspaceAffinityApplied ? { workspaceAffinityApplied: true as const } : {}),
           error: null,
         },
       });

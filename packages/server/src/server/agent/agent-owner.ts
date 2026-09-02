@@ -5,6 +5,8 @@ export const AgentOwnerSchema = z.discriminatedUnion("kind", [
     kind: z.literal("daemon"),
     daemonId: z.string(),
     executionId: z.string(),
+    // An opaque, daemon-local hash. The raw Hub affinity key is never persisted in agent state.
+    workspaceAffinityId: z.string().optional(),
   }),
 ]);
 

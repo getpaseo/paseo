@@ -6,13 +6,28 @@ import { expect, test, vi } from "vitest";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { createTestAgentClients } from "../../test-utils/fake-agent-client.js";
 import { createProviderSnapshotManagerStub } from "../../test-utils/session-stubs.js";
-import { AgentManager } from "../agent-manager.js";
+import { AgentManager, WorkspaceAgentRegistrationBlockedError } from "../agent-manager.js";
 import { AgentStorage } from "../agent-storage.js";
 import type { CreatePaseoWorktreeWorkflowResult } from "../../worktree-session.js";
 import { createAgentCommand } from "./create.js";
 import type { ManagedAgent } from "../agent-manager.js";
 
 const logger = createTestLogger();
+
+function passThroughWorkspaceAgentRegistrationLease<Value>(
+  _workspaceId: string | undefined,
+  action: () => Promise<Value>,
+): Promise<Value> {
+  return action();
+}
+
+function deferredVoid(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 function createRealAgentManager(storage: AgentStorage): AgentManager {
   return new AgentManager({
@@ -66,6 +81,7 @@ test("session create forwards clientMessageId to the initial prompt run options"
   const streamAgent = vi.fn(() => (async function* noop() {})());
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
+      runWithWorkspaceAgentRegistrationLease: passThroughWorkspaceAgentRegistrationLease,
       createAgent: vi.fn(async () => snapshot),
       getAgent: vi.fn(() => snapshot),
       tryRunOutOfBand: vi.fn(() => false),
@@ -109,6 +125,7 @@ test("session create validates the requested mode against the provider's modes",
   );
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
+      runWithWorkspaceAgentRegistrationLease: passThroughWorkspaceAgentRegistrationLease,
       createAgent,
     } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
     agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
@@ -153,6 +170,7 @@ test("session create applies the resolved mode from the provider create config",
   });
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
+      runWithWorkspaceAgentRegistrationLease: passThroughWorkspaceAgentRegistrationLease,
       createAgent,
       getAgent: vi.fn(() => snapshot),
     } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
@@ -191,6 +209,7 @@ test("mcp create accepts provider-only internal input and leaves model undefined
   const createAgent = vi.fn(async () => snapshot);
   const dependencies: Parameters<typeof createAgentCommand>[0] = {
     agentManager: {
+      runWithWorkspaceAgentRegistrationLease: passThroughWorkspaceAgentRegistrationLease,
       createAgent,
       getAgent: vi.fn(() => snapshot),
     } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
@@ -225,6 +244,112 @@ test("mcp create accepts provider-only internal input and leaves model undefined
       workspaceId: "ws-create-test",
     }),
   );
+});
+
+test("mcp create holds its workspace registration lease during provider resolution", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-archive-lease-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const providerResolutionStarted = deferredVoid();
+  const finishProviderResolution = deferredVoid();
+
+  try {
+    const creation = createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: {
+          async resolveCreateConfig() {
+            providerResolutionStarted.resolve();
+            await finishProviderResolution.promise;
+            return {};
+          },
+        },
+      },
+      {
+        kind: "mcp",
+        provider: "codex",
+        cwd: workdir,
+        workspaceId: "ws-create-archive-lease",
+        title: "archive lease",
+        background: true,
+        notifyOnFinish: false,
+      },
+    );
+    await providerResolutionStarted.promise;
+
+    let archiveStarted = false;
+    const archive = agentManager.runWithWorkspaceArchiveExclusion(
+      ["ws-create-archive-lease"],
+      async () => {
+        archiveStarted = true;
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(archiveStarted).toBe(false);
+
+    finishProviderResolution.resolve();
+    await expect(creation).rejects.toBeInstanceOf(WorkspaceAgentRegistrationBlockedError);
+    await archive;
+    expect(archiveStarted).toBe(true);
+    expect(agentManager.listAgents()).toEqual([]);
+  } finally {
+    finishProviderResolution.resolve();
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+test("top-level mcp create holds an unresolved lease during workspace provisioning", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-provisioning-lease-test-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentManager = createRealAgentManager(storage);
+  const provisioningStarted = deferredVoid();
+  const finishProvisioning = deferredVoid();
+
+  try {
+    const creation = createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        ensureWorkspaceForCreate: async () => {
+          provisioningStarted.resolve();
+          await finishProvisioning.promise;
+          return "ws-created-during-archive-race";
+        },
+      },
+      {
+        kind: "mcp",
+        provider: "codex",
+        cwd: workdir,
+        title: "provisioning lease",
+        background: true,
+        notifyOnFinish: false,
+      },
+    );
+    await provisioningStarted.promise;
+
+    let archiveStarted = false;
+    const archive = agentManager.runWithWorkspaceArchiveExclusion(
+      ["ws-affinity-expiring"],
+      async () => {
+        archiveStarted = true;
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(archiveStarted).toBe(false);
+
+    finishProvisioning.resolve();
+    const created = await creation;
+    await archive;
+    expect(created.snapshot.workspaceId).toBe("ws-created-during-archive-race");
+    expect(archiveStarted).toBe(true);
+  } finally {
+    finishProvisioning.resolve();
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
 });
 
 test("session create stamps the requested workspaceId when no worktree setup runs", async () => {

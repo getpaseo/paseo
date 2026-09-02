@@ -27,6 +27,130 @@ test("sequential replay after reconstruction keeps one durable owned agent", asy
   expect(reconstructed.durableAgentCount).toBe(1);
 });
 
+test("concurrent execution retries reject conflicting affinity keys and targets", async () => {
+  const hub = await launchRelationship();
+  const affinity = {
+    key: "slack-thread-concurrent",
+    retainUntil: "2099-08-06T12:02:00.000Z",
+    autoArchive: true,
+  };
+  const extendedRetainUntil = "2099-08-06T12:03:00.000Z";
+  hub.holdAgentCreation();
+  try {
+    hub.beginOwnedCreate("affinity-pending", "affinity-concurrent-execution", {
+      workspaceAffinity: affinity,
+    });
+    await hub.agentCreationAttempts(1);
+
+    hub.beginOwnedCreate("different-affinity-key", "affinity-concurrent-execution", {
+      workspaceAffinity: { ...affinity, key: "discord-thread-concurrent" },
+    });
+    hub.beginOwnedCreate("different-affinity-target", "affinity-concurrent-execution", {
+      workspaceAffinity: affinity,
+      worktree: { mode: "branch-off", newBranch: "different-affinity-target" },
+    });
+    hub.beginOwnedCreate("matching-affinity-extension", "affinity-concurrent-execution", {
+      workspaceAffinity: { ...affinity, retainUntil: extendedRetainUntil },
+    });
+
+    await expect(hub.ownedCreateResult("different-affinity-key")).resolves.toMatchObject({
+      type: "hub.execution.agent.create.response",
+      payload: {
+        success: false,
+        error: { message: expect.stringContaining("different workspace affinity") },
+      },
+    });
+    await expect(hub.ownedCreateResult("different-affinity-target")).resolves.toMatchObject({
+      type: "hub.execution.agent.create.response",
+      payload: {
+        success: false,
+        error: { message: expect.stringContaining("different cwd, worktree") },
+      },
+    });
+  } finally {
+    hub.finishAgentCreation();
+  }
+
+  const first = await hub.ownedCreateResult("affinity-pending");
+  const extension = await hub.ownedCreateResult("matching-affinity-extension");
+  expect(first).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, workspaceAffinityApplied: true },
+  });
+  expect(extension).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: true,
+      agentId: first.payload.agentId,
+      workspaceAffinityApplied: true,
+    },
+  });
+  expect(hub.workspaceAffinityMapping(affinity.key)).toMatchObject({
+    retainUntil: extendedRetainUntil,
+  });
+  expect(hub.executionProviderCreations()).toBe(1);
+}, 20_000);
+
+test("matching workspace affinity reuses an active workspace and archives only the completed agent", async () => {
+  const hub = await launchRelationship();
+  const affinity = {
+    key: "slack-thread-1700000000.000001",
+    retainUntil: "2099-08-06T12:02:00.000Z",
+    autoArchive: true,
+  };
+  hub.beginOwnedCreate("affinity-first", "affinity-execution-1", { workspaceAffinity: affinity });
+  const first = await hub.ownedCreateResult("affinity-first");
+  expect(first).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, workspaceAffinityApplied: true },
+  });
+  if (first.type !== "hub.execution.agent.create.response" || !first.payload.agentId) {
+    throw new Error("Expected affinity-owned agent");
+  }
+  const workspaceId = await hub.ownedWorkspaceId(first.payload.agentId);
+
+  await hub.archiveExecution("affinity-execution-1");
+  expect(await hub.ownedAgentArchivedAt(first.payload.agentId)).not.toBeNull();
+  expect(await hub.archivedWorkspaceAt(workspaceId)).toBeNull();
+  await hub.archiveWorkspace(workspaceId);
+  expect(await hub.archivedWorkspaceAt(workspaceId)).not.toBeNull();
+
+  hub.beginOwnedCreate("affinity-second", "affinity-execution-2", {
+    workspaceAffinity: { ...affinity, retainUntil: "2099-08-06T12:03:00.000Z" },
+  });
+  const second = await hub.ownedCreateResult("affinity-second");
+  expect(second).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, workspaceAffinityApplied: true },
+  });
+  if (second.type !== "hub.execution.agent.create.response" || !second.payload.agentId) {
+    throw new Error("Expected second affinity-owned agent");
+  }
+  expect(await hub.ownedWorkspaceId(second.payload.agentId)).toBe(workspaceId);
+  expect(await hub.archivedWorkspaceAt(workspaceId)).toBeNull();
+});
+
+test("relationship disconnect keeps daemon-owned affinity retention cleanup active", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("retired-affinity", "retired-affinity-execution", {
+    workspaceAffinity: {
+      key: "discord-thread-retired",
+      retainUntil: "2026-07-13T00:01:00.000Z",
+      autoArchive: true,
+    },
+  });
+  const created = await hub.ownedCreateResult("retired-affinity");
+  if (created.type !== "hub.execution.agent.create.response" || !created.payload.agentId) {
+    throw new Error("Expected affinity-owned agent");
+  }
+  const workspaceId = await hub.ownedWorkspaceId(created.payload.agentId);
+
+  await hub.disconnect(true);
+  await hub.advanceWorkspaceAffinityBy(60_000);
+
+  await expect(hub.workspaceArchivedBecomes(workspaceId)).resolves.toEqual(expect.any(String));
+}, 10_000);
+
 test("Hub MCP configuration reaches the provider alongside Paseo MCP without entering snapshots", async () => {
   const hub = await HubRelationshipHarness.startWithAgentMcp();
   await hub.beginConnect().result;
@@ -206,6 +330,69 @@ test("reserved Paseo MCP input does not invalidate replay of an owned execution"
   });
   expect(hub.executionProviderCreations()).toBe(executionProviderCreations);
   expect(await hub.durableOwnedAgentIds()).toEqual([original.payload.agentId]);
+});
+
+test("replaying a pre-affinity execution does not acknowledge an unapplied affinity", async () => {
+  const hub = await launchRelationship();
+  hub.beginOwnedCreate("legacy-create", "legacy-execution");
+  const original = await hub.ownedCreateResult("legacy-create");
+  expect(original).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: { success: true, executionId: "legacy-execution" },
+  });
+  expect(original.payload).not.toHaveProperty("workspaceAffinityApplied");
+  const executionProviderCreations = hub.executionProviderCreations();
+
+  hub.beginOwnedCreate("affinity-replay", "legacy-execution", {
+    workspaceAffinity: {
+      key: "thread-added-after-upgrade",
+      retainUntil: "2099-08-06T12:02:00.000Z",
+      autoArchive: true,
+    },
+  });
+  const replay = await hub.ownedCreateResult("affinity-replay");
+
+  expect(replay).toMatchObject({
+    type: "hub.execution.agent.create.response",
+    payload: {
+      success: true,
+      executionId: "legacy-execution",
+      agentId: original.payload.agentId,
+    },
+  });
+  expect(replay.payload).not.toHaveProperty("workspaceAffinityApplied");
+  expect(hub.executionProviderCreations()).toBe(executionProviderCreations);
+});
+
+test("replay repairs a provisional mapping before acknowledging affinity", async () => {
+  const hub = await launchRelationship();
+  const affinity = {
+    key: "github-pr-crash-recovery",
+    retainUntil: "2099-08-06T12:02:00.000Z",
+    autoArchive: true,
+  };
+  hub.beginOwnedCreate("affinity-before-crash", "affinity-crash-execution", {
+    workspaceAffinity: affinity,
+  });
+  const original = await hub.ownedCreateResult("affinity-before-crash");
+  if (original.type !== "hub.execution.agent.create.response" || !original.payload.agentId) {
+    throw new Error("Expected affinity-owned agent");
+  }
+  const workspaceId = await hub.ownedWorkspaceId(original.payload.agentId);
+  await hub.makeWorkspaceAffinityMappingProvisional(affinity.key);
+
+  const replay = await hub.reconstructAffinityAndReplay("affinity-crash-execution", affinity);
+
+  expect(replay).toMatchObject({
+    executionId: "affinity-crash-execution",
+    agent: { id: original.payload.agentId },
+    workspaceAffinityApplied: true,
+  });
+  expect(hub.workspaceAffinityMapping(affinity.key)).toMatchObject({
+    workspaceId,
+    cwd: original.payload.agent?.cwd,
+    retainUntil: affinity.retainUntil,
+  });
 });
 
 test("removing a daemon-owned agent removes its execution association", async () => {

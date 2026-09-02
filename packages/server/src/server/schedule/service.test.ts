@@ -74,6 +74,14 @@ const TEST_CLAUDE_PROVIDER_DEFINITION = {
   }),
 };
 
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 let workspaceArchiveInProgress = false;
 
 type TestScheduleServiceOptions = Omit<
@@ -461,6 +469,121 @@ describe("ScheduleService", () => {
     expect(inspected.runs[0]?.agentId).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
     );
+  });
+
+  test("serializes scheduled workspace provisioning and agent registration with expiry", async () => {
+    const manager = new AgentManager({
+      logger: createTestLogger(),
+      clients: createTestAgentClients(),
+      registry: agentStorage,
+    });
+    const provisioningStarted = deferred<void>();
+    const finishProvisioning = deferred<void>();
+    const agentCreateStarted = deferred<void>();
+    const finishAgentCreate = deferred<void>();
+    let workspaceCreates = 0;
+    const createDirectoryWorkspace: ScheduleServiceOptions["createDirectoryWorkspace"] = async (
+      input,
+    ) => {
+      workspaceCreates += 1;
+      provisioningStarted.resolve(undefined);
+      await finishProvisioning.promise;
+      const timestamp = new Date().toISOString();
+      return {
+        workspaceId: `wks_scheduled_affinity_race_${workspaceCreates}`,
+        projectId: "project-scheduled-affinity-race",
+        cwd: input.cwd,
+        kind: "directory",
+        displayName: "scheduled-affinity-race",
+        title: input.firstAgentContext.prompt,
+        branch: null,
+        baseBranch: null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        archivedAt: null,
+      };
+    };
+    const createScheduledAgent: ScheduleServiceOptions["createAgent"] = async (input) => {
+      agentCreateStarted.resolve(undefined);
+      await finishAgentCreate.promise;
+      return createAgentCommand(
+        {
+          agentManager: manager,
+          agentStorage,
+          logger: createTestLogger(),
+          providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY as ProviderSnapshotManager,
+        },
+        input,
+      );
+    };
+    const service = createScheduleService({
+      paseoHome: tempDir,
+      logger: createTestLogger(),
+      agentManager: manager,
+      agentStorage,
+      providerSnapshotManager: NO_UNATTENDED_SCHEDULE_POLICY,
+      createAgent: createScheduledAgent,
+      createDirectoryWorkspace,
+      now: () => now,
+    });
+    const schedule = await service.create({
+      prompt: "hold schedule provisioning through registration",
+      cadence: { type: "every", everyMs: 60_000 },
+      target: {
+        type: "new-agent",
+        config: { provider: "claude", model: "test-model", cwd: tempDir },
+      },
+      runOnCreate: false,
+    });
+
+    const execution = (service as unknown as ScheduleServiceInternals).executeSchedule(
+      schedule,
+      "run-before-expiry",
+    );
+    await provisioningStarted.promise;
+    let archiveEntered = false;
+    const archiveAfterCreate = manager.runWithWorkspaceArchiveExclusion(
+      ["ws-affinity-expiry"],
+      async () => {
+        archiveEntered = true;
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(archiveEntered).toBe(false);
+
+    finishProvisioning.resolve(undefined);
+    await agentCreateStarted.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(archiveEntered).toBe(false);
+
+    finishAgentCreate.resolve(undefined);
+    await archiveAfterCreate;
+    await execution;
+    expect(archiveEntered).toBe(true);
+    expect(workspaceCreates).toBe(1);
+
+    const archiveStarted = deferred<void>();
+    const finishArchive = deferred<void>();
+    const archiveBeforeCreate = manager.runWithWorkspaceArchiveExclusion(
+      ["ws-affinity-expiry"],
+      async () => {
+        archiveStarted.resolve(undefined);
+        await finishArchive.promise;
+      },
+    );
+    await archiveStarted.promise;
+    try {
+      await expect(
+        (service as unknown as ScheduleServiceInternals).executeSchedule(
+          schedule,
+          "run-during-expiry",
+        ),
+      ).rejects.toThrow("Workspace creation is blocked while archival is in progress");
+      expect(workspaceCreates).toBe(1);
+    } finally {
+      finishArchive.resolve(undefined);
+      await archiveBeforeCreate;
+    }
   });
 
   test("delivers agent-target schedules through the steer-or-interrupt path", async () => {

@@ -13,7 +13,9 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, test } from "vitest";
 
+import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { createWorktree } from "../../../utils/worktree.js";
+import { AgentManager } from "../../agent/agent-manager.js";
 import {
   createPersistedProjectRecord,
   createPersistedWorkspaceRecord,
@@ -24,6 +26,14 @@ import { createWorkspaceRecoveryService } from "./workspace-recovery-service.js"
 
 const NOW = "2026-07-11T10:12:30.752Z";
 const tempDirectories: string[] = [];
+
+function deferredSignal(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 afterEach(() => {
   for (const directory of tempDirectories.splice(0)) {
@@ -70,6 +80,10 @@ function createHarness(input?: {
   directories?: string[];
   paseoHome?: string;
   worktreesRoot?: string;
+  runWithWorkspaceActivationLease?: <Value>(
+    workspaceId: string,
+    action: () => Promise<Value>,
+  ) => Promise<Value>;
 }) {
   const workspace = input?.workspace === undefined ? createWorkspace() : input.workspace;
   const project = input?.project === undefined ? createProject() : input.project;
@@ -82,6 +96,8 @@ function createHarness(input?: {
       workspace?.workspaceId === workspaceId ? workspace : null,
     getProject: async (projectId) => (project?.projectId === projectId ? project : null),
     isDirectory: async (path) => directories.has(path),
+    runWithWorkspaceActivationLease:
+      input?.runWithWorkspaceActivationLease ?? (async (_workspaceId, action) => action()),
     unarchiveWorkspace: async (record) => {
       unarchived.push(record.workspaceId);
     },
@@ -115,6 +131,71 @@ describe("workspace recovery", () => {
       action: "unarchive",
     });
     expect(unarchived).toEqual([workspace.workspaceId]);
+  });
+
+  test("serializes workspace activation with archive exclusion in both orderings", async () => {
+    const logger = createTestLogger();
+    const manager = new AgentManager({ clients: {}, logger });
+    const workspace = createWorkspace({ kind: "directory", branch: null });
+    const activationStarted = deferredSignal();
+    const finishActivation = deferredSignal();
+    const archiveHolding = deferredSignal();
+    const finishArchive = deferredSignal();
+    let activationCount = 0;
+    const service = createWorkspaceRecoveryService({
+      paseoHome: "/paseo-home",
+      getWorkspace: async (workspaceId) =>
+        workspaceId === workspace.workspaceId ? workspace : null,
+      getProject: async (projectId) => (projectId === workspace.projectId ? createProject() : null),
+      isDirectory: async (path) => path === workspace.cwd,
+      runWithWorkspaceActivationLease: manager.runWithWorkspaceAgentRegistrationLease.bind(manager),
+      unarchiveWorkspace: async () => {
+        activationCount += 1;
+        activationStarted.resolve();
+        await finishActivation.promise;
+      },
+    });
+
+    try {
+      const activation = service.restore(workspace.workspaceId);
+      await activationStarted.promise;
+
+      let archiveEntered = false;
+      const archiveAfterActivation = manager.runWithWorkspaceArchiveExclusion(
+        [workspace.workspaceId],
+        async () => {
+          archiveEntered = true;
+        },
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(archiveEntered).toBe(false);
+
+      finishActivation.resolve();
+      await activation;
+      await archiveAfterActivation;
+      expect(archiveEntered).toBe(true);
+
+      const archiveBeforeActivation = manager.runWithWorkspaceArchiveExclusion(
+        [workspace.workspaceId],
+        async () => {
+          archiveHolding.resolve();
+          await finishArchive.promise;
+        },
+      );
+      await archiveHolding.promise;
+
+      await expect(service.restore(workspace.workspaceId)).rejects.toThrow(
+        `Workspace ${workspace.workspaceId} is being archived`,
+      );
+      expect(activationCount).toBe(1);
+
+      finishArchive.resolve();
+      await archiveBeforeActivation;
+    } finally {
+      finishActivation.resolve();
+      finishArchive.resolve();
+      await manager.flush().catch(() => undefined);
+    }
   });
 
   test("does not offer recovery for a missing non-worktree directory", async () => {
@@ -177,6 +258,7 @@ describe("workspace recovery", () => {
         workspaceId === workspace.workspaceId ? workspace : null,
       getProject: async (projectId) => (projectId === project.projectId ? project : null),
       isDirectory: async (path) => existsSync(path) && statSync(path).isDirectory(),
+      runWithWorkspaceActivationLease: async (_workspaceId, action) => action(),
       unarchiveWorkspace: async (record) => {
         unarchived.push(record.workspaceId);
       },
@@ -227,6 +309,7 @@ describe("workspace recovery", () => {
       getProject: async (projectId) => (projectId === project.projectId ? project : null),
       isDirectory: async (targetPath) =>
         existsSync(targetPath) && statSync(targetPath).isDirectory(),
+      runWithWorkspaceActivationLease: async (_workspaceId, action) => action(),
       unarchiveWorkspace: async (record) => {
         unarchived.push(record.workspaceId);
       },

@@ -71,6 +71,10 @@ export interface TerminalSessionControllerOptions {
   sessionLogger: pino.Logger;
   listTerminalWorkspaceRefs?: () => Promise<readonly TerminalWorkspaceRef[]>;
   listTerminalWorkspaceRoots?: () => Promise<readonly string[]>;
+  runWithWorkspaceTerminalCreationLease?: <Value>(
+    workspaceId: string | undefined,
+    action: () => Promise<Value>,
+  ) => Promise<Value>;
   // Whether the connected client can reflow restored snapshots. When true the
   // daemon attaches per-row soft-wrap flags to snapshots; otherwise it omits them
   // so old (strict-schema) clients still parse the snapshot.
@@ -129,6 +133,10 @@ export class TerminalSessionController {
   private readonly sessionLogger: pino.Logger;
   private readonly listTerminalWorkspaceRefs: () => Promise<readonly TerminalWorkspaceRef[]>;
   private readonly listTerminalWorkspaceRoots: () => Promise<readonly string[]>;
+  private readonly runWithWorkspaceTerminalCreationLease: <Value>(
+    workspaceId: string | undefined,
+    action: () => Promise<Value>,
+  ) => Promise<Value>;
   private readonly clientSupportsWrapReflow: () => boolean;
   private readonly getClientBufferedAmount: () => number | null;
   private readonly terminalSizeOwner = {};
@@ -158,6 +166,8 @@ export class TerminalSessionController {
     this.listTerminalWorkspaceRoots =
       options.listTerminalWorkspaceRoots ??
       (async () => (await this.listTerminalWorkspaceRefs()).map((workspace) => workspace.cwd));
+    this.runWithWorkspaceTerminalCreationLease =
+      options.runWithWorkspaceTerminalCreationLease ?? ((_workspaceId, action) => action());
     this.clientSupportsWrapReflow = options.clientSupportsWrapReflow ?? (() => false);
     this.getClientBufferedAmount = options.getClientBufferedAmount ?? (() => 0);
   }
@@ -520,7 +530,8 @@ export class TerminalSessionController {
   }
 
   private async handleCreateTerminalRequest(msg: CreateTerminalRequest): Promise<void> {
-    if (!this.terminalManager) {
+    const terminalManager = this.terminalManager;
+    if (!terminalManager) {
       this.emit({
         type: "create_terminal_response",
         payload: {
@@ -545,8 +556,25 @@ export class TerminalSessionController {
         return;
       }
 
-      const workspaceId = msg.workspaceId ?? (await this.resolveLegacyTerminalWorkspaceId(msg.cwd));
-      if (!workspaceId) {
+      const createForWorkspace = (workspaceId: string) =>
+        this.runWithWorkspaceTerminalCreationLease(workspaceId, () =>
+          terminalManager.createTerminal({
+            cwd: msg.cwd,
+            workspaceId,
+            name: msg.name,
+            command: msg.command,
+            args: msg.args,
+            rows: msg.size?.rows,
+            cols: msg.size?.cols,
+          }),
+        );
+      const session = msg.workspaceId
+        ? await createForWorkspace(msg.workspaceId)
+        : await this.runWithWorkspaceTerminalCreationLease(undefined, async () => {
+            const workspaceId = await this.resolveLegacyTerminalWorkspaceId(msg.cwd);
+            return workspaceId ? createForWorkspace(workspaceId) : null;
+          });
+      if (!session) {
         this.emit({
           type: "create_terminal_response",
           payload: {
@@ -557,16 +585,6 @@ export class TerminalSessionController {
         });
         return;
       }
-
-      const session = await this.terminalManager.createTerminal({
-        cwd: msg.cwd,
-        workspaceId,
-        name: msg.name,
-        command: msg.command,
-        args: msg.args,
-        rows: msg.size?.rows,
-        cols: msg.size?.cols,
-      });
       this.ensureExitSubscription(session);
       this.emit({
         type: "create_terminal_response",

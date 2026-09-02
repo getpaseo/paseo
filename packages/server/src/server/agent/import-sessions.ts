@@ -176,11 +176,26 @@ export async function importProviderSession(
   }
   const key = await resolveProviderSessionImportMutationKey(input);
   return serializeProviderSessionImport(input.agentManager, key, async () => {
-    const placement = await input.workspaceProvisioning.runInImportWorkspace(
-      { cwd, requestedWorkspaceId: input.request.workspaceId },
-      (workspace) => importProviderSessionNow(input, cwd, workspace.workspaceId),
+    const initialWorkspaceId = input.request.workspaceId;
+    return input.agentManager.runWithWorkspaceAgentRegistrationLease(
+      initialWorkspaceId,
+      async () => {
+        const placement = await input.workspaceProvisioning.runInImportWorkspace(
+          { cwd, requestedWorkspaceId: initialWorkspaceId },
+          (workspace) => {
+            const importIntoWorkspace = () =>
+              importProviderSessionNow(input, cwd, workspace.workspaceId);
+            return workspace.workspaceId === initialWorkspaceId
+              ? importIntoWorkspace()
+              : input.agentManager.runWithWorkspaceAgentRegistrationLease(
+                  workspace.workspaceId,
+                  importIntoWorkspace,
+                );
+          },
+        );
+        return { ...placement.value, createdWorkspace: placement.createdWorkspace };
+      },
     );
-    return { ...placement.value, createdWorkspace: placement.createdWorkspace };
   });
 }
 

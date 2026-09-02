@@ -115,6 +115,39 @@ export class AgentManagerShuttingDownError extends Error {
   }
 }
 
+export class WorkspaceAgentRegistrationBlockedError extends Error {
+  constructor(workspaceId?: string) {
+    super(
+      workspaceId
+        ? `Workspace ${workspaceId} is being archived`
+        : "Workspace creation is blocked while archival is in progress",
+    );
+    this.name = "WorkspaceAgentRegistrationBlockedError";
+  }
+}
+
+export class WorkspaceRelationshipMutationBlockedError extends Error {
+  constructor(workspaceId?: string) {
+    super(
+      workspaceId
+        ? `Workspace ${workspaceId} is being archived`
+        : "Workspace relationship mutation is blocked while archival is in progress",
+    );
+    this.name = "WorkspaceRelationshipMutationBlockedError";
+  }
+}
+
+export class WorkspaceTerminalCreationBlockedError extends Error {
+  constructor(workspaceId?: string) {
+    super(
+      workspaceId
+        ? `Workspace ${workspaceId} is being archived`
+        : "Terminal creation is blocked while workspace archival is in progress",
+    );
+    this.name = "WorkspaceTerminalCreationBlockedError";
+  }
+}
+
 export class AgentRunCancellationError extends Error {
   constructor(agentId: string, action: "reload" | "replace" | "rewind" | "stop") {
     super(
@@ -687,6 +720,15 @@ export class AgentManager {
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
+  private readonly agentRegistrationTasksByWorkspace = new Map<string, Set<Promise<void>>>();
+  private readonly unresolvedWorkspaceAgentRegistrationTasks = new Set<Promise<void>>();
+  private readonly terminalCreationTasksByWorkspace = new Map<string, Set<Promise<void>>>();
+  private readonly unresolvedWorkspaceTerminalCreationTasks = new Set<Promise<void>>();
+  private readonly workspaceArchiveExclusions = new Set<string>();
+  private readonly workspaceArchiveTails = new Map<string, Promise<void>>();
+  private readonly workspaceRelationshipMutationTasks = new Map<string, Set<Promise<void>>>();
+  private readonly unresolvedWorkspaceRelationshipMutationTasks = new Set<Promise<void>>();
+  private activeWorkspaceArchiveTransactions = 0;
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
@@ -783,6 +825,61 @@ export class AgentManager {
 
   prepareForShutdown(): void {
     this.acceptingAgentRegistrations = false;
+  }
+
+  /**
+   * Prevents agents and terminals from entering the supplied workspaces while an archive
+   * transaction runs. Registrations, terminal creations, and relationship mutations that started
+   * before the exclusion are allowed to settle (or are rejected at their final boundary) before
+   * the transaction observes workspace contents.
+   */
+  runWithWorkspaceArchiveExclusion<Value>(
+    workspaceIds: Iterable<string>,
+    action: () => Promise<Value>,
+  ): Promise<Value> {
+    const orderedWorkspaceIds = Array.from(new Set(workspaceIds)).sort();
+    let excludedAction = action;
+    for (const workspaceId of orderedWorkspaceIds.toReversed()) {
+      const nestedAction = excludedAction;
+      excludedAction = () => this.runWithSingleWorkspaceArchiveExclusion(workspaceId, nestedAction);
+    }
+    return this.runWithUnresolvedWorkspaceArchiveExclusion(excludedAction);
+  }
+
+  /**
+   * Registers create-command work before the command reaches the final provider-session
+   * registration boundary. A known workspace uses a scoped lease. An unresolved top-level create
+   * uses a daemon-wide provisioning lease because its backing workspace identity does not exist
+   * yet. Archive transactions either reject the command before work starts or wait for it to
+   * settle.
+   */
+  runWithWorkspaceAgentRegistrationLease<Value>(
+    workspaceId: string | undefined,
+    action: () => Promise<Value>,
+  ): Promise<Value> {
+    if (workspaceId === undefined && this.activeWorkspaceArchiveTransactions > 0) {
+      throw new WorkspaceAgentRegistrationBlockedError();
+    }
+    this.assertWorkspaceAcceptingAgentRegistrations(workspaceId);
+    return this.trackAgentRegistrationOperation(
+      Promise.resolve().then(action),
+      workspaceId,
+      workspaceId === undefined,
+    );
+  }
+
+  /** Prevents workspace archival from overtaking terminal creation. */
+  runWithWorkspaceTerminalCreationLease<Value>(
+    workspaceId: string | undefined,
+    action: () => Promise<Value>,
+  ): Promise<Value> {
+    if (workspaceId === undefined && this.activeWorkspaceArchiveTransactions > 0) {
+      throw new WorkspaceTerminalCreationBlockedError();
+    }
+    if (workspaceId && this.workspaceArchiveExclusions.has(workspaceId)) {
+      throw new WorkspaceTerminalCreationBlockedError(workspaceId);
+    }
+    return this.trackTerminalCreationOperation(Promise.resolve().then(action), workspaceId);
   }
 
   setPaseoToolsEnabled(enabled: boolean): void {
@@ -1135,7 +1232,11 @@ export class AgentManager {
     agentId: string | undefined,
     options: CreateAgentOptions,
   ): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.createAgentInternal(config, agentId, options));
+    this.assertWorkspaceAcceptingAgentRegistrations(options.workspaceId);
+    return this.trackAgentRegistrationOperation(
+      this.createAgentInternal(config, agentId, options),
+      options.workspaceId,
+    );
   }
 
   private async createAgentInternal(
@@ -1198,8 +1299,10 @@ export class AgentManager {
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
+    this.assertWorkspaceAcceptingAgentRegistrations(options?.workspaceId);
     return this.trackAgentRegistrationOperation(
       this.resumeAgentFromPersistenceInternal(handle, overrides, agentId, options, resumeOptions),
+      options?.workspaceId,
     );
   }
 
@@ -1262,7 +1365,11 @@ export class AgentManager {
     workspaceId: string;
     labels?: Record<string, string>;
   }): Promise<ManagedAgent> {
-    return this.trackAgentRegistrationOperation(this.importProviderSessionInternal(input));
+    this.assertWorkspaceAcceptingAgentRegistrations(input.workspaceId);
+    return this.trackAgentRegistrationOperation(
+      this.importProviderSessionInternal(input),
+      input.workspaceId,
+    );
   }
 
   private async importProviderSessionInternal(input: {
@@ -1339,8 +1446,11 @@ export class AgentManager {
     overrides?: Partial<AgentSessionConfig>,
     options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
+    const workspaceId = this.agents.get(agentId)?.workspaceId;
+    this.assertWorkspaceAcceptingAgentRegistrations(workspaceId);
     return this.trackAgentRegistrationOperation(
       this.reloadAgentSessionInternal(agentId, overrides, options),
+      workspaceId,
     );
   }
 
@@ -1794,10 +1904,15 @@ export class AgentManager {
   }
 
   async setLabels(agentId: string, labels: Record<string, string>): Promise<void> {
-    await this.runLifecycleMutation(agentId, async () => {
+    const write = async () => {
       const agent = this.requireAgent(agentId);
       await this.writeLabels(agent.id, labels);
-    });
+    };
+    await this.runLifecycleMutation(agentId, () =>
+      Object.prototype.hasOwnProperty.call(labels, PARENT_AGENT_ID_LABEL)
+        ? this.runWorkspaceRelationshipMutation(agentId, write)
+        : write(),
+    );
   }
 
   private async writeLabels(agentId: string, patch: AgentLabelPatch): Promise<WriteLabelsResult> {
@@ -1840,7 +1955,9 @@ export class AgentManager {
     live: boolean;
     previousParentAgentId: string | null;
   }> {
-    return this.runLifecycleMutation(agentId, () => this.detachAgentUnlocked(agentId));
+    return this.runLifecycleMutation(agentId, () =>
+      this.runWorkspaceRelationshipMutation(agentId, () => this.detachAgentUnlocked(agentId)),
+    );
   }
 
   private async detachAgentUnlocked(agentId: string): Promise<{
@@ -1940,41 +2057,56 @@ export class AgentManager {
     agentId: string,
     updates?: { workspaceId?: string; labels?: AgentLabelPatch },
   ): Promise<boolean> {
-    const registry = this.requireRegistry();
-    const record = await registry.get(agentId);
-    if (!record || !record.archivedAt) {
-      return false;
-    }
+    return this.runWithWorkspaceAgentRegistrationLease(undefined, async () => {
+      const registry = this.requireRegistry();
+      const record = await registry.get(agentId);
+      if (!record || !record.archivedAt) {
+        return false;
+      }
 
-    await this.syncNativeArchiveState(record.provider, record.persistence, "restore");
+      const restore = async (): Promise<boolean> => {
+        const current = await registry.get(agentId);
+        if (!current || !current.archivedAt) {
+          return false;
+        }
 
-    await registry.upsert({
-      ...record,
-      ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
-      ...(updates?.labels ? { labels: applyLabelPatch(record.labels, updates.labels) } : {}),
-      archivedAt: null,
-      updatedAt: new Date().toISOString(),
+        await this.syncNativeArchiveState(current.provider, current.persistence, "restore");
+
+        await registry.upsert({
+          ...current,
+          ...(updates?.workspaceId ? { workspaceId: updates.workspaceId } : {}),
+          ...(updates?.labels ? { labels: applyLabelPatch(current.labels, updates.labels) } : {}),
+          archivedAt: null,
+          updatedAt: new Date().toISOString(),
+        });
+
+        if (this.getAgent(agentId)) {
+          this.notifyAgentState(agentId);
+        }
+        return true;
+      };
+      const workspaceId = updates?.workspaceId ?? record.workspaceId;
+      return workspaceId
+        ? this.runWithWorkspaceAgentRegistrationLease(workspaceId, restore)
+        : restore();
     });
-
-    if (this.getAgent(agentId)) {
-      this.notifyAgentState(agentId);
-    }
-    return true;
   }
 
   async unarchiveSnapshotByHandle(handle: AgentPersistenceHandle): Promise<void> {
-    const registry = this.requireRegistry();
-    const records = await registry.list();
-    const matched = records.find(
-      (record) =>
-        record.persistence?.provider === handle.provider &&
-        record.persistence?.sessionId === handle.sessionId,
-    );
-    if (!matched) {
-      return;
-    }
+    await this.runWithWorkspaceAgentRegistrationLease(undefined, async () => {
+      const registry = this.requireRegistry();
+      const records = await registry.list();
+      const matched = records.find(
+        (record) =>
+          record.persistence?.provider === handle.provider &&
+          record.persistence?.sessionId === handle.sessionId,
+      );
+      if (!matched) {
+        return;
+      }
 
-    await this.unarchiveSnapshot(matched.id);
+      await this.unarchiveSnapshot(matched.id);
+    });
   }
 
   async updateAgentMetadata(
@@ -1984,8 +2116,11 @@ export class AgentManager {
       labels?: Record<string, string>;
     },
   ): Promise<void> {
+    const update = () => this.updateAgentMetadataUnlocked(agentId, updates);
     await this.runLifecycleMutation(agentId, () =>
-      this.updateAgentMetadataUnlocked(agentId, updates),
+      updates.labels && Object.prototype.hasOwnProperty.call(updates.labels, PARENT_AGENT_ID_LABEL)
+        ? this.runWorkspaceRelationshipMutation(agentId, update)
+        : update(),
     );
   }
 
@@ -2024,6 +2159,68 @@ export class AgentManager {
       if (this.lifecycleMutationTails.get(agentId) === tail) {
         this.lifecycleMutationTails.delete(agentId);
       }
+    });
+    return result;
+  }
+
+  private runWorkspaceRelationshipMutation<T>(
+    agentId: string,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    const liveAgent = this.agents.get(agentId);
+    if (liveAgent) {
+      return this.runWorkspaceRelationshipMutationForWorkspace(liveAgent.workspaceId, mutation);
+    }
+
+    const registry = this.registry;
+    if (!registry) {
+      return mutation();
+    }
+    if (this.activeWorkspaceArchiveTransactions > 0) {
+      throw new WorkspaceRelationshipMutationBlockedError();
+    }
+    const result = Promise.resolve().then(async () => {
+      const record = await registry.get(agentId);
+      return this.runWorkspaceRelationshipMutationForWorkspace(record?.workspaceId, mutation);
+    });
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.unresolvedWorkspaceRelationshipMutationTasks.add(settled);
+    void settled.then(() => {
+      this.unresolvedWorkspaceRelationshipMutationTasks.delete(settled);
+      return undefined;
+    });
+    return result;
+  }
+
+  private runWorkspaceRelationshipMutationForWorkspace<T>(
+    workspaceId: string | undefined,
+    mutation: () => Promise<T>,
+  ): Promise<T> {
+    if (!workspaceId) {
+      return mutation();
+    }
+    if (this.workspaceArchiveExclusions.has(workspaceId)) {
+      throw new WorkspaceRelationshipMutationBlockedError(workspaceId);
+    }
+
+    const result = Promise.resolve().then(mutation);
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    const workspaceTasks = this.workspaceRelationshipMutationTasks.get(workspaceId) ?? new Set();
+    workspaceTasks.add(settled);
+    this.workspaceRelationshipMutationTasks.set(workspaceId, workspaceTasks);
+    void settled.then(() => {
+      const currentTasks = this.workspaceRelationshipMutationTasks.get(workspaceId);
+      currentTasks?.delete(settled);
+      if (currentTasks?.size === 0) {
+        this.workspaceRelationshipMutationTasks.delete(workspaceId);
+      }
+      return undefined;
     });
     return result;
   }
@@ -3163,6 +3360,7 @@ export class AgentManager {
     let registered = false;
     try {
       this.assertAcceptingAgentRegistrations();
+      this.assertWorkspaceAcceptingAgentRegistrations(options?.workspaceId);
       const resolvedAgentId = validateAgentId(agentId, "registerSession");
       if (this.agents.has(resolvedAgentId)) {
         throw new Error(`Agent with id ${resolvedAgentId} already exists`);
@@ -3190,6 +3388,7 @@ export class AgentManager {
       });
 
       this.assertAcceptingAgentRegistrations();
+      this.assertWorkspaceAcceptingAgentRegistrations(options?.workspaceId);
       this.agents.set(resolvedAgentId, managed);
       registered = true;
       // Initialize previousStatus to track transitions
@@ -3224,6 +3423,104 @@ export class AgentManager {
   private assertAcceptingAgentRegistrations(): void {
     if (!this.acceptingAgentRegistrations) {
       throw new AgentManagerShuttingDownError();
+    }
+  }
+
+  private assertWorkspaceAcceptingAgentRegistrations(workspaceId: string | undefined): void {
+    if (workspaceId && this.workspaceArchiveExclusions.has(workspaceId)) {
+      throw new WorkspaceAgentRegistrationBlockedError(workspaceId);
+    }
+  }
+
+  private async runWithUnresolvedWorkspaceArchiveExclusion<Value>(
+    action: () => Promise<Value>,
+  ): Promise<Value> {
+    this.activeWorkspaceArchiveTransactions += 1;
+    try {
+      await Promise.all([
+        this.waitForUnresolvedWorkspaceAgentRegistrations(),
+        this.waitForUnresolvedWorkspaceTerminalCreations(),
+        this.waitForUnresolvedWorkspaceRelationshipMutations(),
+      ]);
+      return await action();
+    } finally {
+      this.activeWorkspaceArchiveTransactions -= 1;
+    }
+  }
+
+  private runWithSingleWorkspaceArchiveExclusion<Value>(
+    workspaceId: string,
+    action: () => Promise<Value>,
+  ): Promise<Value> {
+    const previous = this.workspaceArchiveTails.get(workspaceId) ?? Promise.resolve();
+    const result = previous
+      .catch(() => undefined)
+      .then(async () => {
+        this.workspaceArchiveExclusions.add(workspaceId);
+        try {
+          await Promise.all([
+            this.waitForWorkspaceAgentRegistrations(workspaceId),
+            this.waitForWorkspaceTerminalCreations(workspaceId),
+            this.waitForWorkspaceRelationshipMutations(workspaceId),
+          ]);
+          return await action();
+        } finally {
+          this.workspaceArchiveExclusions.delete(workspaceId);
+        }
+      });
+    const tail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.workspaceArchiveTails.set(workspaceId, tail);
+    void tail.then(() => {
+      if (this.workspaceArchiveTails.get(workspaceId) === tail) {
+        this.workspaceArchiveTails.delete(workspaceId);
+      }
+      return undefined;
+    });
+    return result;
+  }
+
+  private async waitForWorkspaceAgentRegistrations(workspaceId: string): Promise<void> {
+    while (true) {
+      const pending = this.agentRegistrationTasksByWorkspace.get(workspaceId);
+      if (!pending || pending.size === 0) return;
+      await Promise.allSettled(pending);
+    }
+  }
+
+  private async waitForWorkspaceTerminalCreations(workspaceId: string): Promise<void> {
+    while (true) {
+      const pending = this.terminalCreationTasksByWorkspace.get(workspaceId);
+      if (!pending || pending.size === 0) return;
+      await Promise.allSettled(pending);
+    }
+  }
+
+  private async waitForWorkspaceRelationshipMutations(workspaceId: string): Promise<void> {
+    while (true) {
+      const pending = this.workspaceRelationshipMutationTasks.get(workspaceId);
+      if (!pending || pending.size === 0) return;
+      await Promise.allSettled(pending);
+    }
+  }
+
+  private async waitForUnresolvedWorkspaceAgentRegistrations(): Promise<void> {
+    while (this.unresolvedWorkspaceAgentRegistrationTasks.size > 0) {
+      await Promise.allSettled(this.unresolvedWorkspaceAgentRegistrationTasks);
+    }
+  }
+
+  private async waitForUnresolvedWorkspaceTerminalCreations(): Promise<void> {
+    while (this.unresolvedWorkspaceTerminalCreationTasks.size > 0) {
+      await Promise.allSettled(this.unresolvedWorkspaceTerminalCreationTasks);
+    }
+  }
+
+  private async waitForUnresolvedWorkspaceRelationshipMutations(): Promise<void> {
+    while (this.unresolvedWorkspaceRelationshipMutationTasks.size > 0) {
+      await Promise.allSettled(this.unresolvedWorkspaceRelationshipMutationTasks);
     }
   }
 
@@ -4567,14 +4864,60 @@ export class AgentManager {
     });
   }
 
-  private trackAgentRegistrationOperation<T>(result: Promise<T>): Promise<T> {
+  private trackAgentRegistrationOperation<T>(
+    result: Promise<T>,
+    workspaceId?: string,
+    unresolvedWorkspace = false,
+  ): Promise<T> {
     const settled = result.then(
       () => undefined,
       () => undefined,
     );
     this.agentRegistrationTasks.add(settled);
+    if (unresolvedWorkspace) {
+      this.unresolvedWorkspaceAgentRegistrationTasks.add(settled);
+    }
+    if (workspaceId) {
+      const workspaceTasks = this.agentRegistrationTasksByWorkspace.get(workspaceId) ?? new Set();
+      workspaceTasks.add(settled);
+      this.agentRegistrationTasksByWorkspace.set(workspaceId, workspaceTasks);
+    }
     void settled.then(() => {
       this.agentRegistrationTasks.delete(settled);
+      this.unresolvedWorkspaceAgentRegistrationTasks.delete(settled);
+      if (workspaceId) {
+        const workspaceTasks = this.agentRegistrationTasksByWorkspace.get(workspaceId);
+        workspaceTasks?.delete(settled);
+        if (workspaceTasks?.size === 0) {
+          this.agentRegistrationTasksByWorkspace.delete(workspaceId);
+        }
+      }
+      return undefined;
+    });
+    return result;
+  }
+
+  private trackTerminalCreationOperation<T>(result: Promise<T>, workspaceId?: string): Promise<T> {
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    if (workspaceId) {
+      const workspaceTasks = this.terminalCreationTasksByWorkspace.get(workspaceId) ?? new Set();
+      workspaceTasks.add(settled);
+      this.terminalCreationTasksByWorkspace.set(workspaceId, workspaceTasks);
+    } else {
+      this.unresolvedWorkspaceTerminalCreationTasks.add(settled);
+    }
+    void settled.then(() => {
+      this.unresolvedWorkspaceTerminalCreationTasks.delete(settled);
+      if (workspaceId) {
+        const workspaceTasks = this.terminalCreationTasksByWorkspace.get(workspaceId);
+        workspaceTasks?.delete(settled);
+        if (workspaceTasks?.size === 0) {
+          this.terminalCreationTasksByWorkspace.delete(workspaceId);
+        }
+      }
       return undefined;
     });
     return result;

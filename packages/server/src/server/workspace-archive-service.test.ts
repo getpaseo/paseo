@@ -4,19 +4,24 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import pino, { type Logger } from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 
 import type { ForgeService } from "../services/forge-service.js";
+import type { TerminalManager } from "../terminal/terminal-manager.js";
 import { createRealpathAwarePathMatcher } from "../utils/path.js";
-import { createWorktree, type WorktreeConfig } from "../utils/worktree.js";
+import { createWorktree, deletePaseoWorktree, type WorktreeConfig } from "../utils/worktree.js";
 import type { ManagedAgent } from "./agent/agent-manager.js";
 import type { AgentStorage, StoredAgentRecord } from "./agent/agent-storage.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
+import type { PersistedWorkspaceRecord } from "./workspace-registry.js";
 import {
   archiveByScope,
   type ActiveWorkspaceRef,
   type ArchiveDependencies,
   type ArchiveResult,
+  killTerminalsForWorkspace,
   resolveWorkspaceIdAtPath,
+  WorkspaceTerminalTeardownError,
 } from "./workspace-archive-service.js";
 
 const cleanupPaths: string[] = [];
@@ -130,6 +135,7 @@ interface ArchiveTestDependencies extends ArchiveDependencies {
 function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
   const archivedWorkspaceIds = new Set<string>();
   const active = [...input.activeWorkspaces];
+  const all = [...active];
   const archivedAgentIds: string[] = [];
   const archivedSnapshotIds: string[] = [];
 
@@ -143,6 +149,10 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
     agentManager: {
       listAgents: () => [],
       getAgent: () => null,
+      runWithWorkspaceArchiveExclusion: async <Value>(
+        _workspaceIds: Iterable<string>,
+        action: () => Promise<Value>,
+      ) => action(),
       archiveAgent: vi.fn(async (agentId: string) => {
         archivedAgentIds.push(agentId);
         return { archivedAt: new Date().toISOString() };
@@ -156,6 +166,26 @@ function createArchiveDeps(input: ArchiveDepsInput): ArchiveTestDependencies {
       listByWorkspace: async (): Promise<StoredAgentRecord[]> => [],
     } as Pick<AgentStorage, "listByWorkspace">,
     findWorkspaceIdForCwd: input.findWorkspaceIdForCwd ?? vi.fn(async () => null),
+    getWorkspace: async (workspaceId: string) => {
+      const workspace = all.find((candidate) => candidate.workspaceId === workspaceId);
+      if (!workspace) return null;
+      return {
+        ...workspace,
+        projectId: "project-test",
+        displayName: workspace.workspaceId,
+        title: null,
+        branch: null,
+        worktreeRoot: workspace.worktreeRoot ?? null,
+        baseBranch: null,
+        isPaseoOwnedWorktree: workspace.isPaseoOwnedWorktree ?? false,
+        mainRepoRoot: workspace.mainRepoRoot ?? null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        archivedAt: archivedWorkspaceIds.has(workspaceId) ? "2026-01-01T00:00:00.000Z" : null,
+        autoArchivedChangeRequestUrl: null,
+        pinnedAt: null,
+      } satisfies PersistedWorkspaceRecord;
+    },
     listActiveWorkspaces: async () =>
       active.filter((workspace) => !archivedWorkspaceIds.has(workspace.workspaceId)),
     archiveWorkspaceRecord: async (workspaceId: string) => {
@@ -506,6 +536,143 @@ describe("archiveByScope", () => {
     expect(existsSync(localCheckoutDir)).toBe(true);
   });
 
+  test("resolves workspace state and checks protected agents inside the archive exclusion", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const workspaceId = "ws-affinity-guard";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId, cwd: repoDir, kind: "local_checkout" }],
+    });
+    let exclusionActive = false;
+    deps.agentManager.runWithWorkspaceArchiveExclusion = async <Value>(
+      workspaceIds: Iterable<string>,
+      action: () => Promise<Value>,
+    ) => {
+      expect(Array.from(workspaceIds)).toEqual([workspaceId]);
+      exclusionActive = true;
+      try {
+        return await action();
+      } finally {
+        exclusionActive = false;
+      }
+    };
+    const getWorkspace = deps.getWorkspace;
+    deps.getWorkspace = async (requestedWorkspaceId) => {
+      expect(exclusionActive).toBe(true);
+      return getWorkspace?.(requestedWorkspaceId) ?? null;
+    };
+    const listActiveWorkspaces = deps.listActiveWorkspaces;
+    deps.listActiveWorkspaces = async () => {
+      expect(exclusionActive).toBe(true);
+      return listActiveWorkspaces();
+    };
+    deps.agentManager.listAgents = () => {
+      expect(exclusionActive).toBe(true);
+      return [
+        {
+          id: "unrelated-agent",
+          workspaceId,
+          owner: {
+            kind: "daemon",
+            daemonId: "daemon-1",
+            executionId: "unrelated-execution",
+          },
+        } as ManagedAgent,
+      ];
+    };
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-affinity-guard",
+      canArchiveAgent: (agent) => agent.owner?.workspaceAffinityId === "expected-affinity",
+    });
+
+    expect(result).toMatchObject({
+      archivedAgentIds: [],
+      archivedWorkspaceIds: [],
+      blockedWorkspaceIds: [workspaceId],
+      failedWorkspaceIds: [],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceId]);
+    expect(deps.agentManager.archiveAgent).not.toHaveBeenCalled();
+    expect(deps.agentManager.archiveSnapshot).not.toHaveBeenCalled();
+  });
+
+  test("gives archive guards same-workspace ancestry inside the exclusion", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const workspaceId = "ws-affinity-descendant";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId, cwd: repoDir, kind: "local_checkout" }],
+    });
+    const root: StoredAgentRecord = {
+      id: "affinity-root",
+      provider: "codex",
+      cwd: repoDir,
+      workspaceId,
+      createdAt: "2026-08-06T12:00:00.000Z",
+      updatedAt: "2026-08-06T12:00:00.000Z",
+      labels: {},
+      lastStatus: "closed",
+      config: null,
+      persistence: null,
+      archivedAt: "2026-08-06T12:01:00.000Z",
+      owner: {
+        kind: "daemon",
+        daemonId: "daemon-1",
+        executionId: "affinity-execution",
+        workspaceAffinityId: "expected-affinity",
+      },
+    };
+    const child = {
+      id: "affinity-child",
+      workspaceId,
+      labels: { [PARENT_AGENT_ID_LABEL]: root.id },
+    } as ManagedAgent;
+    let exclusionActive = false;
+    deps.agentManager.runWithWorkspaceArchiveExclusion = async <Value>(
+      _workspaceIds: Iterable<string>,
+      action: () => Promise<Value>,
+    ) => {
+      exclusionActive = true;
+      try {
+        return await action();
+      } finally {
+        exclusionActive = false;
+      }
+    };
+    deps.agentManager.listAgents = () => {
+      expect(exclusionActive).toBe(true);
+      return [child];
+    };
+    deps.agentManager.getAgent = (agentId) => (agentId === child.id ? child : null);
+    deps.agentStorage.listByWorkspace = async () => {
+      expect(exclusionActive).toBe(true);
+      return [root];
+    };
+
+    const result = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-affinity-descendant",
+      canArchiveAgent: (agent, context) => {
+        if (agent.owner?.workspaceAffinityId === "expected-affinity") return true;
+        const parentId = agent.labels[PARENT_AGENT_ID_LABEL];
+        return (
+          typeof parentId === "string" &&
+          context.getAgent(parentId)?.owner?.workspaceAffinityId === "expected-affinity"
+        );
+      },
+    });
+
+    expect(result).toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+      blockedWorkspaceIds: [],
+      failedWorkspaceIds: [],
+    });
+    expect(deps.agentManager.archiveAgent).toHaveBeenCalledWith(child.id);
+  });
+
   test("worktree scope keeps the directory when one record teardown fails", async () => {
     const { tempDir, repoDir } = createGitRepo();
     const paseoHome = path.join(tempDir, ".paseo");
@@ -528,14 +695,245 @@ describe("archiveByScope", () => {
       return originalArchiveWorkspaceRecord(workspaceId);
     };
 
-    const result = await archiveByScope(deps, {
-      scope: { kind: "worktree", targetPath: worktree.worktreePath },
-      requestId: "req-partial-failure",
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: worktree.worktreePath },
+        requestId: "req-partial-failure",
+      }),
+    ).rejects.toMatchObject({
+      name: "WorkspaceArchiveIncompleteError",
+      result: {
+        archivedWorkspaceIds: [workspaceB],
+        failedWorkspaceIds: [workspaceA],
+        removedDirectory: false,
+      },
+    });
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+  });
+
+  test("keeps a workspace active until agent and terminal teardown both succeed", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const workspaceId = "ws-content-retry";
+    const agentId = "agent-content-retry";
+    const deps = createArchiveDeps({
+      paseoHome: path.join(tempDir, ".paseo"),
+      activeWorkspaces: [{ workspaceId, cwd: repoDir, kind: "local_checkout" }],
+    });
+    let archiveAttempts = 0;
+    let terminalAttempts = 0;
+    deps.agentManager = {
+      listAgents: () => [{ id: agentId, workspaceId }] as ManagedAgent[],
+      getAgent: () => ({ id: agentId, workspaceId }) as ManagedAgent,
+      runWithWorkspaceArchiveExclusion: async <Value>(
+        _workspaceIds: Iterable<string>,
+        action: () => Promise<Value>,
+      ) => action(),
+      archiveAgent: vi.fn(async () => {
+        archiveAttempts += 1;
+        if (archiveAttempts === 1) throw new Error("agent archive failed once");
+        return { archivedAt: new Date().toISOString() };
+      }),
+      archiveSnapshot: vi.fn(async () => ({})),
+    };
+    deps.killTerminalsForWorkspace = vi.fn(async () => {
+      terminalAttempts += 1;
+      if (terminalAttempts === 1) throw new Error("terminal teardown failed once");
     });
 
-    expect(result.archivedWorkspaceIds).toEqual([workspaceB]);
-    expect(result.archivedWorkspaceIds).not.toContain(workspaceA);
-    expect(result.removedDirectory).toBe(false);
+    const firstResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-content-retry-1",
+      failureMode: "return",
+    });
+
+    expect(firstResult).toMatchObject({
+      archivedWorkspaceIds: [],
+      failedWorkspaceIds: [workspaceId],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceId]);
+
+    const secondResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-content-retry-2",
+    });
+
+    expect(secondResult).toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+      failedWorkspaceIds: [],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces).toEqual([]);
+    expect(archiveAttempts).toBe(2);
+    expect(terminalAttempts).toBe(2);
+  });
+
+  test("retries a failed worktree teardown command before archiving the workspace", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    writeFileSync(
+      path.join(repoDir, "paseo.json"),
+      JSON.stringify({
+        worktree: {
+          teardown: [
+            "node -e \"const fs=require('fs');const marker=process.env.PASEO_SOURCE_CHECKOUT_PATH+'/teardown-retry.marker';if(!fs.existsSync(marker)){fs.writeFileSync(marker,'retry');process.exit(1)}\"",
+          ],
+        },
+      }),
+    );
+    execFileSync("git", ["add", "."], { cwd: repoDir, stdio: "pipe" });
+    execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-m", "retry teardown"], {
+      cwd: repoDir,
+      stdio: "pipe",
+    });
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "teardown-retry");
+    const workspaceId = "ws-teardown-retry";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+
+    const firstResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-teardown-retry-1",
+      failureMode: "return",
+    });
+
+    expect(firstResult).toMatchObject({
+      archivedWorkspaceIds: [],
+      failedWorkspaceIds: [workspaceId],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces.map((workspace) => workspace.workspaceId)).toEqual([workspaceId]);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+
+    const secondResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-teardown-retry-2",
+    });
+
+    expect(secondResult).toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+      failedWorkspaceIds: [],
+      removedDirectory: true,
+    });
+    expect(deps.activeWorkspaces).toEqual([]);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("retries worktree disk removal after the workspace record is archived", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "removal-retry");
+    const workspaceId = "ws-removal-retry";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    let removalAttempts = 0;
+    deps.removePaseoWorktree = vi.fn(async (options) => {
+      removalAttempts += 1;
+      if (removalAttempts === 1) throw new Error("worktree removal failed once");
+      await deletePaseoWorktree(options);
+    });
+
+    const firstResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-removal-retry-1",
+      failureMode: "return",
+    });
+
+    expect(firstResult).toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+      failedWorkspaceIds: [workspaceId],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces).toEqual([]);
+    expect(existsSync(worktree.worktreePath)).toBe(true);
+
+    const secondResult = await archiveByScope(deps, {
+      scope: { kind: "workspace", workspaceId },
+      requestId: "req-removal-retry-2",
+    });
+
+    expect(secondResult).toMatchObject({
+      archivedWorkspaceIds: [],
+      failedWorkspaceIds: [],
+      removedDirectory: true,
+    });
+    expect(removalAttempts).toBe(2);
+    expect(existsSync(worktree.worktreePath)).toBe(false);
+  });
+
+  test("reports repeated worktree cleanup failure after all workspace records are archived", async () => {
+    const { tempDir, repoDir } = createGitRepo();
+    const paseoHome = path.join(tempDir, ".paseo");
+    const worktree = await createPaseoOwnedWorktree(repoDir, paseoHome, "removal-repeat-failure");
+    const workspaceId = "ws-removal-repeat-failure";
+    const deps = createArchiveDeps({
+      paseoHome,
+      activeWorkspaces: [
+        {
+          workspaceId,
+          cwd: worktree.worktreePath,
+          kind: "worktree",
+          worktreeRoot: worktree.worktreePath,
+          isPaseoOwnedWorktree: true,
+          mainRepoRoot: repoDir,
+        },
+      ],
+    });
+    deps.removePaseoWorktree = vi.fn(async () => {
+      throw new Error("worktree removal keeps failing");
+    });
+
+    const firstResult = await archiveByScope(deps, {
+      scope: { kind: "worktree", targetPath: worktree.worktreePath },
+      requestId: "req-removal-repeat-failure-1",
+      failureMode: "return",
+    });
+
+    expect(firstResult).toMatchObject({
+      archivedWorkspaceIds: [workspaceId],
+      failedWorkspaceIds: [workspaceId],
+      failedDirectoryPaths: [worktree.worktreePath],
+      removedDirectory: false,
+    });
+    expect(deps.activeWorkspaces).toEqual([]);
+
+    await expect(
+      archiveByScope(deps, {
+        scope: { kind: "worktree", targetPath: worktree.worktreePath },
+        requestId: "req-removal-repeat-failure-2",
+      }),
+    ).rejects.toMatchObject({
+      name: "WorkspaceArchiveIncompleteError",
+      result: {
+        archivedWorkspaceIds: [],
+        failedWorkspaceIds: [],
+        failedDirectoryPaths: [worktree.worktreePath],
+        removedDirectory: false,
+      },
+    });
+    expect(deps.removePaseoWorktree).toHaveBeenCalledTimes(2);
     expect(existsSync(worktree.worktreePath)).toBe(true);
   });
 
@@ -693,6 +1091,10 @@ describe("archiveByScope", () => {
       listAgents: () => [{ id: liveAgentId, workspaceId: targetWorkspaceId }] as ManagedAgent[],
       getAgent: (agentId: string) =>
         agentId === liveAgentId ? ({ id: liveAgentId } as ManagedAgent) : null,
+      runWithWorkspaceArchiveExclusion: async <Value>(
+        _workspaceIds: Iterable<string>,
+        action: () => Promise<Value>,
+      ) => action(),
       archiveAgent: vi.fn(async (agentId: string) => {
         deps.archivedAgentIds.push(agentId);
         return { archivedAt: new Date().toISOString() };
@@ -741,6 +1143,10 @@ describe("archiveByScope", () => {
     deps.agentManager = {
       listAgents: () => [{ id: agentId, workspaceId }] as ManagedAgent[],
       getAgent: () => null,
+      runWithWorkspaceArchiveExclusion: async <Value>(
+        _workspaceIds: Iterable<string>,
+        action: () => Promise<Value>,
+      ) => action(),
       archiveAgent: vi.fn(async () => ({ archivedAt: new Date().toISOString() })),
       archiveSnapshot: vi.fn(async (id: string) => {
         deps.archivedSnapshotIds.push(id);
@@ -748,8 +1154,9 @@ describe("archiveByScope", () => {
       }),
     };
     deps.agentStorage = {
-      list: async () => [{ id: agentId, workspaceId, archivedAt: null }] as StoredAgentRecord[],
-    } as Pick<AgentStorage, "list">;
+      listByWorkspace: async () =>
+        [{ id: agentId, workspaceId, archivedAt: null }] as StoredAgentRecord[],
+    } as Pick<AgentStorage, "listByWorkspace">;
 
     const result = await archiveByScope(deps, {
       scope: { kind: "workspace", workspaceId },
@@ -825,5 +1232,38 @@ describe("resolveWorkspaceIdAtPath", () => {
     );
 
     expect(result).toBe("ws-nested");
+  });
+});
+
+describe("killTerminalsForWorkspace", () => {
+  test("reports terminal enumeration and kill failures for a retry", async () => {
+    const workspaceId = "ws-terminal-failure";
+    const terminalId = "terminal-failure";
+    const listError = new Error("terminal list failed");
+    const killError = new Error("terminal kill failed");
+    const terminalManager = {
+      listDirectories: () => ["/bad-terminals", "/good-terminals"],
+      getTerminals: vi.fn(async (cwd: string) => {
+        if (cwd === "/bad-terminals") throw listError;
+        return [{ id: terminalId, workspaceId }];
+      }),
+      killTerminalAndWait: vi.fn(async () => {
+        throw killError;
+      }),
+    } as unknown as TerminalManager;
+
+    const error: unknown = await killTerminalsForWorkspace(
+      { terminalManager, sessionLogger: createLogger() },
+      workspaceId,
+    ).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(WorkspaceTerminalTeardownError);
+    expect(error).toMatchObject({
+      workspaceId,
+      failures: [
+        { operation: "list", cwd: "/bad-terminals", error: listError },
+        { operation: "kill", terminalId, error: killError },
+      ],
+    });
   });
 });

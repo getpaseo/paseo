@@ -108,6 +108,111 @@ describe("Hub session protocol", () => {
     expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
   });
 
+  test("accepts a bounded workspace affinity lease on Hub creates", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-affinity",
+      executionId: "execution-affinity",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Implement the requested change",
+      workspaceAffinity: {
+        key: "slack:thread:1700000000.000001",
+        retainUntil: "2026-08-06T12:02:00.000Z",
+        autoArchive: true,
+      },
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual(message);
+    expect(
+      SessionOutboundMessageSchema.parse({
+        type: "hub.execution.agent.create.response",
+        payload: {
+          requestId: message.requestId,
+          executionId: message.executionId,
+          agentId: "agent-affinity",
+          agent,
+          success: true,
+          workspaceAffinityApplied: true,
+          error: null,
+        },
+      }),
+    ).toMatchObject({
+      type: "hub.execution.agent.create.response",
+      payload: { workspaceAffinityApplied: true },
+    });
+  });
+
+  test("preserves significant whitespace in an opaque workspace affinity key", () => {
+    const key = "  review:github:pull-request:42  ";
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-whitespace-affinity",
+      executionId: "execution-whitespace-affinity",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Implement the requested change",
+      workspaceAffinity: {
+        key,
+        retainUntil: "2026-08-06T12:02:00.000Z",
+        autoArchive: true,
+      },
+    };
+
+    const parsed = SessionInboundMessageSchema.parse(message);
+
+    expect(parsed).toMatchObject({ workspaceAffinity: { key } });
+  });
+
+  test.each(["", " ", "\t\n"])("rejects a blank workspace affinity key %#", (key) => {
+    expect(() =>
+      SessionInboundMessageSchema.parse({
+        type: "hub.execution.agent.create.request",
+        requestId: "request-blank-affinity",
+        executionId: "execution-blank-affinity",
+        provider: "codex",
+        cwd: "/workspace",
+        prompt: "Implement the requested change",
+        workspaceAffinity: {
+          key,
+          retainUntil: "2026-08-06T12:02:00.000Z",
+          autoArchive: true,
+        },
+      }),
+    ).toThrow();
+  });
+
+  test("ignores additive workspace affinity lease fields from a newer Hub", () => {
+    const message = {
+      type: "hub.execution.agent.create.request",
+      requestId: "request-future-affinity",
+      executionId: "execution-future-affinity",
+      provider: "codex",
+      cwd: "/workspace",
+      prompt: "Implement the requested change",
+      workspaceAffinity: {
+        key: "github:pull-request:42",
+        retainUntil: "2026-08-06T12:02:00.000Z",
+        autoArchive: true,
+        futureLeasePolicy: { mode: "newer-hub-only" },
+      },
+    };
+
+    expect(SessionInboundMessageSchema.parse(message)).toEqual({
+      type: message.type,
+      requestId: message.requestId,
+      executionId: message.executionId,
+      provider: message.provider,
+      cwd: message.cwd,
+      prompt: message.prompt,
+      workspaceAffinity: {
+        key: message.workspaceAffinity.key,
+        retainUntil: message.workspaceAffinity.retainUntil,
+        autoArchive: message.workspaceAffinity.autoArchive,
+      },
+    });
+  });
+
   test("keeps the retired Hub workspace selector wire-compatible", () => {
     const message = {
       type: "hub.execution.agent.create.request",

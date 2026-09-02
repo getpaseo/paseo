@@ -24,6 +24,7 @@ import type {
   TerminalWorkspaceContributionChangedListener,
   TerminalsChangedEvent,
   TerminalsChangedListener,
+  WorkspaceTerminalCreationLease,
 } from "./terminal-manager.js";
 import type {
   TerminalWorkerRequest,
@@ -59,7 +60,7 @@ type TerminalWorkerRequestInput = TerminalWorkerRequest extends infer Request
 interface PendingRequest {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout: ReturnType<typeof setTimeout> | null;
 }
 
 interface WorkerTerminalRecord {
@@ -93,6 +94,7 @@ interface WorkerTerminalManagerOptions {
   requestTimeoutMs?: number;
   forkWorker?: () => TerminalWorkerProcess;
   getTerminalActivityUrl?: () => string | null;
+  runWithWorkspaceTerminalCreationLease?: WorkspaceTerminalCreationLease;
 }
 
 function createActivityToken(): string {
@@ -152,6 +154,8 @@ export function createWorkerTerminalManager(
 ): TerminalManager {
   const worker = managerOptions.forkWorker ? managerOptions.forkWorker() : forkTerminalWorker();
   const requestTimeoutMs = managerOptions.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+  const runWithWorkspaceTerminalCreationLease =
+    managerOptions.runWithWorkspaceTerminalCreationLease ?? ((_workspaceId, action) => action());
   const pendingRequests = new Map<string, PendingRequest>();
   const recordsById = new Map<string, WorkerTerminalRecord>();
   const terminalIdsByCwd = new Map<string, Set<string>>();
@@ -582,7 +586,9 @@ export function createWorkerTerminalManager(
 
   function rejectPendingRequests(error: Error): void {
     for (const [requestId, pending] of pendingRequests) {
-      clearTimeout(pending.timeout);
+      if (pending.timeout) {
+        clearTimeout(pending.timeout);
+      }
       pending.reject(error);
       pendingRequests.delete(requestId);
     }
@@ -594,7 +600,9 @@ export function createWorkerTerminalManager(
       if (!pending) {
         return;
       }
-      clearTimeout(pending.timeout);
+      if (pending.timeout) {
+        clearTimeout(pending.timeout);
+      }
       pendingRequests.delete(message.requestId);
       if (message.ok) {
         pending.resolve(message.result);
@@ -622,16 +630,24 @@ export function createWorkerTerminalManager(
     const requestId = randomUUID();
     const message = { ...input, requestId } as TerminalWorkerRequest;
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        pendingRequests.delete(requestId);
-        reject(new Error(`Terminal worker request timed out: ${input.type}`));
-      }, requestTimeoutMs);
+      // A terminal create is not cancelable once queued in the worker. Timing out its parent
+      // request would release the workspace creation lease even though terminalCreated can still
+      // arrive later. Keep that request (and its lease) pending until the worker responds or exits.
+      const timeout =
+        input.type === "createTerminal"
+          ? null
+          : setTimeout(() => {
+              pendingRequests.delete(requestId);
+              reject(new Error(`Terminal worker request timed out: ${input.type}`));
+            }, requestTimeoutMs);
       pendingRequests.set(requestId, { resolve, reject, timeout });
       worker.send(message, (error) => {
         if (!error) {
           return;
         }
-        clearTimeout(timeout);
+        if (timeout) {
+          clearTimeout(timeout);
+        }
         pendingRequests.delete(requestId);
         reject(error);
       });
@@ -679,36 +695,38 @@ export function createWorkerTerminalManager(
       return sessions;
     },
 
-    async createTerminal(
+    createTerminal(
       options: WorkerCreateTerminalOptions & { workspaceId: string },
     ): Promise<TerminalSession> {
-      const terminalId = options.id ?? randomUUID();
-      const activityToken = createActivityToken();
-      const terminalActivityUrl = managerOptions.getTerminalActivityUrl?.() ?? null;
-      terminalActivityTokenById.set(terminalId, activityToken);
-      let result: {
-        terminal: RequiredWorkerTerminalInfo;
-        state: TerminalState;
-      };
-      try {
-        result = (await sendRequest({
-          type: "createTerminal",
-          options: {
-            ...options,
-            id: terminalId,
-            activityToken,
-            activityUrl: terminalActivityUrl,
-          },
-        })) as {
+      return runWithWorkspaceTerminalCreationLease(options.workspaceId, async () => {
+        const terminalId = options.id ?? randomUUID();
+        const activityToken = createActivityToken();
+        const terminalActivityUrl = managerOptions.getTerminalActivityUrl?.() ?? null;
+        terminalActivityTokenById.set(terminalId, activityToken);
+        let result: {
           terminal: RequiredWorkerTerminalInfo;
           state: TerminalState;
         };
-      } catch (error) {
-        terminalActivityTokenById.delete(terminalId);
-        throw error;
-      }
-      const session = registerRecord({ info: result.terminal, state: result.state });
-      return session;
+        try {
+          result = (await sendRequest({
+            type: "createTerminal",
+            options: {
+              ...options,
+              id: terminalId,
+              activityToken,
+              activityUrl: terminalActivityUrl,
+            },
+          })) as {
+            terminal: RequiredWorkerTerminalInfo;
+            state: TerminalState;
+          };
+        } catch (error) {
+          terminalActivityTokenById.delete(terminalId);
+          throw error;
+        }
+        const session = registerRecord({ info: result.terminal, state: result.state });
+        return session;
+      });
     },
 
     registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void {

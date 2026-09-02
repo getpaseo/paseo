@@ -16,6 +16,7 @@ import type {
   HubExecutionControlResponse,
   HubExecutionAgentStream,
   HubExecutionAgentUpdate,
+  HubExecutionWorkspaceAffinity,
   RpcErrorMessage,
   CreateAgentWorktreeTarget,
   SessionOutboundMessage,
@@ -38,6 +39,11 @@ import { DaemonClient } from "../../test-utils/daemon-client.js";
 import { AgentStorage } from "../../agent/agent-storage.js";
 import { AgentManager } from "../../agent/agent-manager.js";
 import { DaemonExecutions } from "../daemon-executions.js";
+import {
+  WorkspaceAffinityManager,
+  type WorkspaceAffinityClock,
+  workspaceAffinityId,
+} from "../workspace-affinity.js";
 import {
   createAgentCommand,
   type CreateAgentCommandDependencies,
@@ -145,6 +151,32 @@ class TestRelationshipClock implements HubRelationshipClock, HubRelationshipRetr
 
   pendingTasks(): number {
     return this.tasks.filter((task) => !task.cancelled).length;
+  }
+}
+
+class TestWorkspaceAffinityClock implements WorkspaceAffinityClock {
+  private current = new Date("2026-07-13T00:00:00.000Z");
+  private readonly tasks: Array<{ at: number; cancelled: boolean; task: () => void }> = [];
+
+  now(): Date {
+    return this.current;
+  }
+
+  schedule(delayMs: number, task: () => void) {
+    const scheduled = { at: this.current.getTime() + delayMs, cancelled: false, task };
+    this.tasks.push(scheduled);
+    return { cancel: () => (scheduled.cancelled = true) };
+  }
+
+  async advanceBy(delayMs: number): Promise<void> {
+    this.current = new Date(this.current.getTime() + delayMs);
+    while (true) {
+      const due = this.tasks.find((task) => !task.cancelled && task.at <= this.current.getTime());
+      if (!due) return;
+      due.cancelled = true;
+      due.task();
+      await new Promise((resolve) => setImmediate(resolve));
+    }
   }
 }
 
@@ -446,6 +478,7 @@ const providerCatalog = {
 
 export class HubRelationshipHarness {
   private readonly clock = new TestRelationshipClock();
+  private readonly workspaceAffinityClock = new TestWorkspaceAffinityClock();
   private readonly remote = new InMemoryHubRelationships(() => this.captureRelationship());
   private daemon: PaseoDaemon | null = null;
   private config!: PaseoDaemonConfig;
@@ -753,6 +786,7 @@ export class HubRelationshipHarness {
       mcpServers?: AgentSessionConfig["mcpServers"];
       providerOptions?: AgentSessionConfig["providerOptions"];
       toolPolicy?: AgentSessionConfig["toolPolicy"];
+      workspaceAffinity?: HubExecutionWorkspaceAffinity;
     } = {},
   ): void {
     const { prompt = "Create through the Hub", provider = "codex", ...requestOptions } = options;
@@ -859,8 +893,33 @@ export class HubRelationshipHarness {
     return this.workspaceArchivedAt(agent.workspaceId);
   }
 
+  async ownedWorkspaceId(agentId: string): Promise<string> {
+    const agent = await this.daemon!.agentStorage.get(agentId);
+    if (!agent?.workspaceId) throw new Error(`Owned agent ${agentId} has no workspace`);
+    return agent.workspaceId;
+  }
+
   async archivedWorkspaceAt(workspaceId: string): Promise<string | null> {
     return this.workspaceArchivedAt(workspaceId);
+  }
+
+  async workspaceArchivedBecomes(workspaceId: string): Promise<string> {
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const archivedAt = this.workspaceArchivedAt(workspaceId);
+      if (archivedAt) return archivedAt;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`Workspace ${workspaceId} was not archived`);
+  }
+
+  async archiveWorkspace(workspaceId: string): Promise<void> {
+    const client = await this.trustedClient();
+    try {
+      const result = await client.archiveWorkspace(workspaceId);
+      if (result.error) throw new Error(result.error);
+    } finally {
+      await client.close();
+    }
   }
 
   async createWorkspaceTerminal(workspaceId: string, cwd = this.root): Promise<string> {
@@ -1261,6 +1320,59 @@ export class HubRelationshipHarness {
     return { replay, durableAgentCount };
   }
 
+  async reconstructAffinityAndReplay(
+    executionId: string,
+    workspaceAffinity: HubExecutionWorkspaceAffinity,
+  ) {
+    const storage = new AgentStorage(
+      path.join(this.paseoHome, "agents"),
+      pino({ level: "silent" }),
+    );
+    const manager = new AgentManager({
+      clients: createTestAgentClients(),
+      registry: storage,
+      logger: pino({ level: "silent" }),
+    });
+    const affinityManager = new WorkspaceAffinityManager({
+      paseoHome: this.paseoHome,
+      daemonId: this.relationshipFile()!.relationship.daemonId,
+      agentStorage: storage,
+      runWithWorkspaceAgentRegistrationLease: (workspaceId, action) =>
+        manager.runWithWorkspaceAgentRegistrationLease(workspaceId, action),
+      ensureWorkspace: async () => undefined,
+      archiveWorkspace: async () => undefined,
+      logger: pino({ level: "silent" }),
+      clock: this.workspaceAffinityClock,
+    });
+    try {
+      return await this.executionsForReconstruction(manager, storage, affinityManager).create({
+        ...this.ownedCreateInput(executionId),
+        workspaceAffinity,
+      });
+    } finally {
+      affinityManager.dispose();
+    }
+  }
+
+  async makeWorkspaceAffinityMappingProvisional(key: string): Promise<void> {
+    const file = this.workspaceAffinityFile();
+    const state = JSON.parse(readFileSync(file, "utf8")) as {
+      affinities: Record<string, { workspaceId: string | null; cwd: string | null }>;
+    };
+    const mapping = state.affinities[workspaceAffinityId(key)];
+    if (!mapping) throw new Error("Workspace affinity mapping does not exist");
+    mapping.workspaceId = null;
+    mapping.cwd = null;
+    await writeFile(file, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  }
+
+  workspaceAffinityMapping(key: string): Record<string, unknown> | null {
+    const state = JSON.parse(readFileSync(this.workspaceAffinityFile(), "utf8")) as {
+      affinities: Record<string, Record<string, unknown>>;
+    };
+    return state.affinities[workspaceAffinityId(key)] ?? null;
+  }
+
   async removeOwnedAgent(agentId: string) {
     await this.daemon!.agentStorage.remove(agentId);
     const storage = new AgentStorage(
@@ -1351,6 +1463,10 @@ export class HubRelationshipHarness {
     await this.clock.runNext();
   }
 
+  async advanceWorkspaceAffinityBy(delayMs: number): Promise<void> {
+    await this.workspaceAffinityClock.advanceBy(delayMs);
+  }
+
   async restartDaemon(): Promise<void> {
     await this.stopDaemon();
     await this.startDaemon();
@@ -1410,6 +1526,7 @@ export class HubRelationshipHarness {
       hubRelationshipRemote: this.remote,
       hubRelationshipClock: this.clock,
       hubRelationshipRetryPolicy: this.clock,
+      hubWorkspaceAffinityClock: this.workspaceAffinityClock,
       createHubDaemonId: () => "daemon-test",
     });
     await this.daemon.start();
@@ -1546,7 +1663,11 @@ export class HubRelationshipHarness {
     };
   }
 
-  private executionsForReconstruction(manager: AgentManager, storage: AgentStorage) {
+  private executionsForReconstruction(
+    manager: AgentManager,
+    storage: AgentStorage,
+    workspaceAffinities?: WorkspaceAffinityManager,
+  ) {
     return new DaemonExecutions({
       daemonId: this.relationshipFile()!.relationship.daemonId,
       agentManager: manager,
@@ -1563,7 +1684,17 @@ export class HubRelationshipHarness {
         ),
       interruptAgent: (agentId) => manager.cancelAgentRun(agentId),
       archiveWorkspace: async () => undefined,
+      workspaceAffinities,
     });
+  }
+
+  private workspaceAffinityFile(): string {
+    return path.join(
+      this.paseoHome,
+      "hub-executions",
+      this.relationshipFile()!.relationship.daemonId,
+      "workspace-affinities.json",
+    );
   }
 
   private async trustedClient(): Promise<DaemonClient> {

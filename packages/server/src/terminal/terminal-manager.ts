@@ -95,7 +95,13 @@ export interface TerminalManager {
 
 export interface TerminalManagerOptions {
   getTerminalActivityUrl?: () => string | null;
+  runWithWorkspaceTerminalCreationLease?: WorkspaceTerminalCreationLease;
 }
+
+export type WorkspaceTerminalCreationLease = <Value>(
+  workspaceId: string,
+  action: () => Promise<Value>,
+) => Promise<Value>;
 
 function createActivityToken(): string {
   return randomBytes(32).toString("base64url");
@@ -104,6 +110,8 @@ function createActivityToken(): string {
 export function createTerminalManager(
   managerOptions: TerminalManagerOptions = {},
 ): TerminalManager {
+  const runWithWorkspaceTerminalCreationLease =
+    managerOptions.runWithWorkspaceTerminalCreationLease ?? ((_workspaceId, action) => action());
   const terminalsByCwd = new Map<string, TerminalSession[]>();
   const terminalsById = new Map<string, TerminalSession>();
   const terminalExitUnsubscribeById = new Map<string, () => void>();
@@ -308,7 +316,7 @@ export function createTerminalManager(
       return sessions;
     },
 
-    async createTerminal(options: {
+    createTerminal(options: {
       id?: string;
       cwd: string;
       workspaceId: string;
@@ -322,52 +330,54 @@ export function createTerminalManager(
       activityToken?: string;
       activityUrl?: string | null;
     }): Promise<TerminalSession> {
-      assertAbsolutePath(options.cwd);
+      return runWithWorkspaceTerminalCreationLease(options.workspaceId, async () => {
+        assertAbsolutePath(options.cwd);
 
-      const terminals = terminalsByCwd.get(options.cwd) ?? [];
-      const defaultName = `Terminal ${terminals.length + 1}`;
-      const inheritedEnv = resolveDefaultEnvForCwd(options.cwd);
-      const mergedEnv =
-        inheritedEnv || options.env ? { ...inheritedEnv, ...options.env } : undefined;
-      const terminalId = options.id ?? randomUUID();
-      const activityToken = options.activityToken ?? createActivityToken();
-      const terminalActivityUrl =
-        options.activityUrl === undefined
-          ? (managerOptions.getTerminalActivityUrl?.() ?? null)
-          : options.activityUrl;
-      const activityEnv = {
-        PASEO_TERMINAL_ID: terminalId,
-        PASEO_ACTIVITY_TOKEN: activityToken,
-        ...(terminalActivityUrl ? { PASEO_TERMINAL_ACTIVITY_URL: terminalActivityUrl } : {}),
-      };
-      terminalActivityTokenById.set(terminalId, activityToken);
-      let session: TerminalSession;
-      try {
-        session = registerSession(
-          await createTerminal({
-            id: terminalId,
-            cwd: options.cwd,
-            workspaceId: options.workspaceId,
-            name: options.name ?? defaultName,
-            ...(options.title ? { title: options.title } : {}),
-            ...(options.command ? { command: options.command } : {}),
-            ...(options.args ? { args: options.args } : {}),
-            ...(options.rows !== undefined ? { rows: options.rows } : {}),
-            ...(options.cols !== undefined ? { cols: options.cols } : {}),
-            ...(mergedEnv ? { env: mergedEnv } : {}),
-            activityEnv,
-          }),
-        );
-      } catch (error) {
-        terminalActivityTokenById.delete(terminalId);
-        throw error;
-      }
+        const terminals = terminalsByCwd.get(options.cwd) ?? [];
+        const defaultName = `Terminal ${terminals.length + 1}`;
+        const inheritedEnv = resolveDefaultEnvForCwd(options.cwd);
+        const mergedEnv =
+          inheritedEnv || options.env ? { ...inheritedEnv, ...options.env } : undefined;
+        const terminalId = options.id ?? randomUUID();
+        const activityToken = options.activityToken ?? createActivityToken();
+        const terminalActivityUrl =
+          options.activityUrl === undefined
+            ? (managerOptions.getTerminalActivityUrl?.() ?? null)
+            : options.activityUrl;
+        const activityEnv = {
+          PASEO_TERMINAL_ID: terminalId,
+          PASEO_ACTIVITY_TOKEN: activityToken,
+          ...(terminalActivityUrl ? { PASEO_TERMINAL_ACTIVITY_URL: terminalActivityUrl } : {}),
+        };
+        terminalActivityTokenById.set(terminalId, activityToken);
+        let session: TerminalSession;
+        try {
+          session = registerSession(
+            await createTerminal({
+              id: terminalId,
+              cwd: options.cwd,
+              workspaceId: options.workspaceId,
+              name: options.name ?? defaultName,
+              ...(options.title ? { title: options.title } : {}),
+              ...(options.command ? { command: options.command } : {}),
+              ...(options.args ? { args: options.args } : {}),
+              ...(options.rows !== undefined ? { rows: options.rows } : {}),
+              ...(options.cols !== undefined ? { cols: options.cols } : {}),
+              ...(mergedEnv ? { env: mergedEnv } : {}),
+              activityEnv,
+            }),
+          );
+        } catch (error) {
+          terminalActivityTokenById.delete(terminalId);
+          throw error;
+        }
 
-      terminals.push(session);
-      terminalsByCwd.set(options.cwd, terminals);
-      emitTerminalsChanged({ cwd: options.cwd });
+        terminals.push(session);
+        terminalsByCwd.set(options.cwd, terminals);
+        emitTerminalsChanged({ cwd: options.cwd });
 
-      return session;
+        return session;
+      });
     },
 
     registerCwdEnv(options: { cwd: string; env: Record<string, string> }): void {

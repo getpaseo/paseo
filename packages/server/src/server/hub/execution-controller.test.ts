@@ -54,9 +54,10 @@ class ControlledHubExecutionAgents implements HubExecutionAgents {
     await this.createObserved.promise;
   }
 
-  finishCreate(): void {
+  finishCreate(options: { workspaceAffinityApplied?: true } = {}): void {
     this.createGate.resolve({
       executionId: "execution-shutdown",
+      ...options,
       agent: {
         id: "agent-shutdown",
         status: "running",
@@ -174,6 +175,80 @@ describe("HubExecutionController", () => {
         }),
       }),
     ]);
+  });
+
+  test("acknowledges successful application of workspace affinity", async () => {
+    const agents = new ControlledHubExecutionAgents();
+    const messages: SessionOutboundMessage[] = [];
+    const controller = new HubExecutionController({
+      agents,
+      validateAgentConfiguration: async () => [],
+      send: (message) => messages.push(message),
+    });
+
+    const create = controller.createAgent({
+      type: "hub.execution.agent.create.request",
+      requestId: "affinity-create",
+      executionId: "execution-affinity",
+      provider: "codex",
+      cwd: "/tmp/paseo",
+      prompt: "retain the thread workspace",
+      workspaceAffinity: {
+        key: "thread-1",
+        retainUntil: "2026-08-06T12:02:00.000Z",
+        autoArchive: true,
+      },
+    });
+    await agents.creationStarted();
+    agents.finishCreate({ workspaceAffinityApplied: true });
+    await create;
+
+    expect(messages).toEqual([
+      expect.objectContaining({
+        type: "hub.execution.agent.create.response",
+        payload: expect.objectContaining({
+          success: true,
+          workspaceAffinityApplied: true,
+        }),
+      }),
+    ]);
+  });
+
+  test("does not acknowledge workspace affinity based only on the request", async () => {
+    const agents = new ControlledHubExecutionAgents();
+    const messages: SessionOutboundMessage[] = [];
+    const controller = new HubExecutionController({
+      agents,
+      validateAgentConfiguration: async () => [],
+      send: (message) => messages.push(message),
+    });
+
+    const create = controller.createAgent({
+      type: "hub.execution.agent.create.request",
+      requestId: "unapplied-affinity-create",
+      executionId: "execution-before-affinity",
+      provider: "codex",
+      cwd: "/tmp/paseo",
+      prompt: "retain the thread workspace",
+      workspaceAffinity: {
+        key: "thread-1",
+        retainUntil: "2026-08-06T12:02:00.000Z",
+        autoArchive: true,
+      },
+    });
+    await agents.creationStarted();
+    agents.finishCreate();
+    await create;
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({
+      type: "hub.execution.agent.create.response",
+      payload: { success: true },
+    });
+    if (messages[0]?.type !== "hub.execution.agent.create.response") {
+      throw new Error("Expected Hub execution create response");
+    }
+    expect(messages[0].payload).not.toHaveProperty("workspaceAffinityApplied");
   });
 
   test.each([

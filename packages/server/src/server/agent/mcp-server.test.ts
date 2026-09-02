@@ -6,6 +6,7 @@ import { realpathSync, rmSync } from "node:fs";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { tmpdir } from "node:os";
+import { setImmediate as waitForImmediate } from "node:timers/promises";
 import { z } from "zod";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
@@ -62,6 +63,14 @@ import { createWorkspaceProvisioningService } from "../session/workspace-provisi
 const REPO_CWD = resolvePath("/tmp/repo");
 const TARGET_CWD = resolvePath("/tmp/target");
 const BROWSER_WORKSPACE_ID = "wks_browser_tools";
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 interface LooseSafeParseResult {
   success: boolean;
@@ -228,6 +237,12 @@ function buildAgentManagerSpies() {
     getPendingPermissions: vi.fn(),
     getRegisteredProviderIds: vi.fn().mockReturnValue(["claude"]),
     listDraftFeatures: vi.fn(),
+    runWithWorkspaceArchiveExclusion: vi.fn(
+      <Value>(_workspaceIds: Iterable<string>, action: () => Promise<Value>) => action(),
+    ),
+    runWithWorkspaceAgentRegistrationLease: vi.fn(
+      <Value>(_workspaceId: string | undefined, action: () => Promise<Value>) => action(),
+    ),
   };
 }
 
@@ -238,6 +253,7 @@ function buildAgentStorageSpies() {
     upsert: vi.fn().mockResolvedValue(undefined),
     applySnapshot: vi.fn(),
     list: vi.fn().mockResolvedValue([]),
+    listByWorkspace: vi.fn().mockResolvedValue([]),
     remove: vi.fn(),
   };
 }
@@ -2467,6 +2483,79 @@ describe("create_agent MCP tool", () => {
     expect(workspaceGitService.getSnapshot).not.toHaveBeenCalled();
   });
 
+  it("serializes standalone workspace provisioning with workspace expiry", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const leaseManager = new AgentManager({ clients: {}, logger });
+    agentManager.runWithWorkspaceAgentRegistrationLease =
+      leaseManager.runWithWorkspaceAgentRegistrationLease.bind(leaseManager);
+    const provisioningStarted = deferred<void>();
+    const finishProvisioning = deferred<void>();
+    const createDirectoryWorkspace = vi.fn(async (cwd: string) => {
+      provisioningStarted.resolve(undefined);
+      await finishProvisioning.promise;
+      return createPersistedWorkspaceRecord({
+        workspaceId: "ws-mcp-standalone",
+        projectId: "project-mcp-standalone",
+        cwd,
+        kind: "directory",
+        displayName: "standalone",
+        createdAt: "2026-08-29T00:00:00.000Z",
+        updatedAt: "2026-08-29T00:00:00.000Z",
+      });
+    });
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      createDirectoryWorkspace,
+      logger,
+    });
+    const tool = registeredTool(server, "create_workspace");
+
+    const createBeforeArchive = invokeToolWithParsedInput(tool, {
+      isolation: "local",
+      path: REPO_CWD,
+    });
+    await provisioningStarted.promise;
+
+    let archiveEntered = false;
+    const archiveAfterCreate = leaseManager.runWithWorkspaceArchiveExclusion(
+      ["ws-affinity-expiry"],
+      async () => {
+        archiveEntered = true;
+      },
+    );
+    await waitForImmediate();
+    expect(archiveEntered).toBe(false);
+
+    finishProvisioning.resolve(undefined);
+    await expect(createBeforeArchive).resolves.toMatchObject({
+      structuredContent: { workspaceId: "ws-mcp-standalone" },
+    });
+    await archiveAfterCreate;
+    expect(archiveEntered).toBe(true);
+
+    const archiveStarted = deferred<void>();
+    const finishArchive = deferred<void>();
+    const archiveBeforeCreate = leaseManager.runWithWorkspaceArchiveExclusion(
+      ["ws-affinity-expiry"],
+      async () => {
+        archiveStarted.resolve(undefined);
+        await finishArchive.promise;
+      },
+    );
+    await archiveStarted.promise;
+    try {
+      await expect(
+        invokeToolWithParsedInput(tool, { isolation: "local", path: TARGET_CWD }),
+      ).rejects.toThrow("Workspace creation is blocked while archival is in progress");
+      expect(createDirectoryWorkspace).toHaveBeenCalledTimes(1);
+    } finally {
+      finishArchive.resolve(undefined);
+      await archiveBeforeCreate;
+    }
+  });
+
   it("creates a worktree-isolated workspace", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-create-worktree-"));
@@ -3960,6 +4049,70 @@ describe("rename_workspace MCP tool", () => {
       title: "Payments flow",
     });
     expect(emittedWorkspaceIds).toEqual([["wks_other"]]);
+  });
+
+  it("preserves the archived state when expiry races a rename", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const leaseManager = new AgentManager({ clients: {}, logger });
+    agentManager.runWithWorkspaceAgentRegistrationLease =
+      leaseManager.runWithWorkspaceAgentRegistrationLease.bind(leaseManager);
+    let workspace = createPersistedWorkspaceRecord({
+      workspaceId: "wks_rename_expiry",
+      projectId: "proj_parent",
+      cwd: REPO_CWD,
+      kind: "local_checkout",
+      displayName: "main",
+      createdAt: "2026-08-29T00:00:00.000Z",
+      updatedAt: "2026-08-29T00:00:00.000Z",
+    });
+    const workspaceRead = deferred<void>();
+    const finishWorkspaceRead = deferred<void>();
+    const emitWorkspaceUpdatesForWorkspaceIds = vi.fn(async () => undefined);
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      workspaceRegistry: {
+        get: async () => {
+          workspaceRead.resolve(undefined);
+          await finishWorkspaceRead.promise;
+          return workspace;
+        },
+        upsert: async (record) => {
+          workspace = record;
+        },
+      },
+      emitWorkspaceUpdatesForWorkspaceIds,
+      logger,
+    });
+    const rename = invokeToolWithParsedInput(registeredTool(server, "rename_workspace"), {
+      workspaceId: workspace.workspaceId,
+      title: "Renamed before expiry",
+    });
+    await workspaceRead.promise;
+
+    let archiveEntered = false;
+    const archivedAt = "2026-08-29T00:01:00.000Z";
+    const archive = leaseManager.runWithWorkspaceArchiveExclusion(
+      [workspace.workspaceId],
+      async () => {
+        archiveEntered = true;
+        workspace = { ...workspace, updatedAt: archivedAt, archivedAt };
+      },
+    );
+    await waitForImmediate();
+    expect(archiveEntered).toBe(false);
+
+    finishWorkspaceRead.resolve(undefined);
+    await rename;
+    await archive;
+
+    expect(archiveEntered).toBe(true);
+    expect(workspace).toMatchObject({
+      title: "Renamed before expiry",
+      archivedAt,
+    });
+    expect(emitWorkspaceUpdatesForWorkspaceIds).toHaveBeenCalledWith(["wks_rename_expiry"]);
   });
 
   it("rejects archived workspaces", async () => {

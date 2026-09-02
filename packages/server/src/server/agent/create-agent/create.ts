@@ -174,20 +174,29 @@ export async function createAgentCommand(
   dependencies: CreateAgentCommandDependencies,
   input: CreateAgentCommandInput,
 ): Promise<CreateAgentCommandResult> {
-  const resolved =
-    input.kind === "session"
-      ? await resolveSessionCreateAgent(dependencies, input)
-      : await resolveMcpCreateAgent(dependencies, input);
+  const resolveAndCreate = async () => {
+    const resolved =
+      input.kind === "session"
+        ? await resolveSessionCreateAgent(dependencies, input)
+        : await resolveMcpCreateAgent(dependencies, input);
 
-  const snapshot = await dependencies.agentManager.createAgent(
-    resolved.config,
-    undefined,
-    resolved.createOptions,
-  );
+    const snapshot = await dependencies.agentManager.createAgent(
+      resolved.config,
+      undefined,
+      resolved.createOptions,
+    );
 
-  resolved.setupContinuation?.startAfterAgentCreate({
-    agentId: snapshot.id,
-  });
+    resolved.setupContinuation?.startAfterAgentCreate({
+      agentId: snapshot.id,
+    });
+    return { resolved, snapshot };
+  };
+  const initialWorkspaceId = initialWorkspaceRegistrationId(dependencies.agentManager, input);
+  const { resolved, snapshot } =
+    await dependencies.agentManager.runWithWorkspaceAgentRegistrationLease(
+      initialWorkspaceId,
+      resolveAndCreate,
+    );
 
   let liveSnapshot = snapshot;
   let initialPromptStarted = false;
@@ -221,6 +230,15 @@ export async function createAgentCommand(
     initialPromptError,
     ...(resolved.createdWorktree ? { createdWorktree: resolved.createdWorktree } : {}),
   };
+}
+
+function initialWorkspaceRegistrationId(
+  agentManager: AgentManager,
+  input: CreateAgentCommandInput,
+): string | undefined {
+  if (input.workspaceId) return input.workspaceId;
+  if (input.kind !== "mcp" || !input.callerAgentId) return undefined;
+  return agentManager.getAgent(input.callerAgentId)?.workspaceId;
 }
 
 async function resolveSessionCreateAgent(

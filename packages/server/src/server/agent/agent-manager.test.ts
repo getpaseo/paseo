@@ -9,6 +9,9 @@ import { createTestLogger } from "../../test-utils/test-logger.js";
 import {
   AgentManager,
   AgentManagerShuttingDownError,
+  WorkspaceAgentRegistrationBlockedError,
+  WorkspaceRelationshipMutationBlockedError,
+  WorkspaceTerminalCreationBlockedError,
   commandMayHaveChangedExternalState,
   type AgentManagerEvent,
   type ManagedAgent,
@@ -282,6 +285,40 @@ class HeldAgentCreationClient extends TestAgentClient {
 
   finishCreating(): void {
     this.creationAllowed.resolve();
+  }
+}
+
+class HeldAgentResumeClient extends TestAgentClient {
+  private readonly resumeStarted = deferred<void>();
+  private readonly resumeAllowed = deferred<void>();
+  resumedSessionClosed = false;
+
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    const recordSessionClosed = () => {
+      this.resumedSessionClosed = true;
+    };
+    const session = new (class extends TestAgentSession {
+      override async close(): Promise<void> {
+        recordSessionClosed();
+      }
+    })({
+      provider: "codex",
+      cwd: config?.cwd ?? process.cwd(),
+    });
+    this.resumeStarted.resolve();
+    await this.resumeAllowed.promise;
+    return session;
+  }
+
+  waitForResumeToStart(): Promise<void> {
+    return this.resumeStarted.promise;
+  }
+
+  finishResuming(): void {
+    this.resumeAllowed.resolve();
   }
 }
 
@@ -1503,6 +1540,425 @@ test("does not register a session that finishes starting after shutdown begins",
     agents: [],
     sessionClosed: true,
   });
+});
+
+test("workspace archive exclusion rejects new registrations before provider startup", async () => {
+  const client = new SessionRecordingAgentClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+  });
+  const archiveStarted = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archive = manager.runWithWorkspaceArchiveExclusion(["workspace-archive"], async () => {
+    archiveStarted.resolve();
+    await finishArchive.promise;
+  });
+  await archiveStarted.promise;
+
+  expect(() =>
+    manager.createAgent(
+      { provider: "codex", cwd: process.cwd() },
+      "00000000-0000-4000-8000-000000000101",
+      { workspaceId: "workspace-archive" },
+    ),
+  ).toThrow(WorkspaceAgentRegistrationBlockedError);
+  expect(client.sessions).toHaveLength(0);
+
+  finishArchive.resolve();
+  await archive;
+});
+
+test("workspace archive exclusion rejects unresolved workspace creation leases", async () => {
+  const manager = new AgentManager({
+    clients: {},
+    logger,
+  });
+  const archiveStarted = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archive = manager.runWithWorkspaceArchiveExclusion(["workspace-archive"], async () => {
+    archiveStarted.resolve();
+    await finishArchive.promise;
+  });
+  await archiveStarted.promise;
+  const createWork = vi.fn(async () => undefined);
+
+  expect(() => manager.runWithWorkspaceAgentRegistrationLease(undefined, createWork)).toThrow(
+    WorkspaceAgentRegistrationBlockedError,
+  );
+  expect(createWork).not.toHaveBeenCalled();
+
+  finishArchive.resolve();
+  await archive;
+});
+
+test("workspace archive exclusion drains unresolved workspace creation leases", async () => {
+  const manager = new AgentManager({
+    clients: {},
+    logger,
+  });
+  const creationStarted = deferred<void>();
+  const finishCreation = deferred<void>();
+  const creation = manager.runWithWorkspaceAgentRegistrationLease(undefined, async () => {
+    creationStarted.resolve();
+    await finishCreation.promise;
+  });
+  await creationStarted.promise;
+
+  let archiveStarted = false;
+  const archive = manager.runWithWorkspaceArchiveExclusion(["workspace-archive"], async () => {
+    archiveStarted = true;
+  });
+  await Promise.resolve();
+  expect(archiveStarted).toBe(false);
+
+  finishCreation.resolve();
+  await creation;
+  await archive;
+  expect(archiveStarted).toBe(true);
+});
+
+test("workspace archive exclusion drains terminal creations that already started", async () => {
+  const manager = new AgentManager({
+    clients: {},
+    logger,
+  });
+  const creationStarted = deferred<void>();
+  const finishCreation = deferred<void>();
+  const creation = manager.runWithWorkspaceTerminalCreationLease(
+    "workspace-terminal-archive",
+    async () => {
+      creationStarted.resolve();
+      await finishCreation.promise;
+    },
+  );
+  await creationStarted.promise;
+
+  let archiveStarted = false;
+  const archive = manager.runWithWorkspaceArchiveExclusion(
+    ["workspace-terminal-archive"],
+    async () => {
+      archiveStarted = true;
+    },
+  );
+  await Promise.resolve();
+  expect(archiveStarted).toBe(false);
+
+  finishCreation.resolve();
+  await creation;
+  await archive;
+  expect(archiveStarted).toBe(true);
+});
+
+test("workspace archive exclusion rejects new terminal creation leases", async () => {
+  const manager = new AgentManager({
+    clients: {},
+    logger,
+  });
+  const archiveStarted = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archive = manager.runWithWorkspaceArchiveExclusion(
+    ["workspace-terminal-archive"],
+    async () => {
+      archiveStarted.resolve();
+      await finishArchive.promise;
+    },
+  );
+  await archiveStarted.promise;
+  const createWork = vi.fn(async () => undefined);
+
+  expect(() =>
+    manager.runWithWorkspaceTerminalCreationLease("workspace-terminal-archive", createWork),
+  ).toThrow(WorkspaceTerminalCreationBlockedError);
+  expect(() => manager.runWithWorkspaceTerminalCreationLease(undefined, createWork)).toThrow(
+    WorkspaceTerminalCreationBlockedError,
+  );
+  expect(createWork).not.toHaveBeenCalled();
+
+  finishArchive.resolve();
+  await archive;
+});
+
+test("workspace archive exclusion drains registrations that already started", async () => {
+  const client = new HeldAgentCreationClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000102",
+  });
+  const creation = manager.createAgent({ provider: "codex", cwd: process.cwd() }, undefined, {
+    workspaceId: "workspace-archive",
+  });
+  const rejectedCreation = expect(creation).rejects.toBeInstanceOf(
+    WorkspaceAgentRegistrationBlockedError,
+  );
+  await client.waitForCreationToStart();
+
+  let archiveStarted = false;
+  const archive = manager.runWithWorkspaceArchiveExclusion(["workspace-archive"], async () => {
+    archiveStarted = true;
+  });
+  await Promise.resolve();
+  expect(archiveStarted).toBe(false);
+
+  client.finishCreating();
+  await rejectedCreation;
+  await archive;
+  expect({
+    archiveStarted,
+    agents: manager.listAgents(),
+    sessionClosed: client.createdSessionClosed,
+  }).toEqual({ archiveStarted: true, agents: [], sessionClosed: true });
+});
+
+test("workspace archive exclusion drains persisted resumes that already started", async () => {
+  const client = new HeldAgentResumeClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+  });
+  const workspaceId = "workspace-resume-archive";
+  const resume = manager.resumeAgentFromPersistence(
+    { provider: "codex", sessionId: "persisted-resume-archive" },
+    { provider: "codex", cwd: process.cwd() },
+    "00000000-0000-4000-8000-000000000103",
+    { workspaceId },
+  );
+  const rejectedResume = expect(resume).rejects.toBeInstanceOf(
+    WorkspaceAgentRegistrationBlockedError,
+  );
+  await client.waitForResumeToStart();
+
+  let archiveStarted = false;
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted = true;
+  });
+  await Promise.resolve();
+  expect(archiveStarted).toBe(false);
+
+  client.finishResuming();
+  await rejectedResume;
+  await archive;
+  expect({
+    archiveStarted,
+    agents: manager.listAgents(),
+    sessionClosed: client.resumedSessionClosed,
+  }).toEqual({ archiveStarted: true, agents: [], sessionClosed: true });
+});
+
+test("workspace archive exclusion drains a detach that already started", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-detach-archive-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-detach-race";
+  const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId,
+  });
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+    workspaceId,
+  });
+  const detachPersistStarted = deferred<void>();
+  const finishDetachPersist = deferred<void>();
+  const originalApplySnapshot = storage.applySnapshot.bind(storage);
+  let heldChildPersist = false;
+  vi.spyOn(storage, "applySnapshot").mockImplementation(async (agent, options) => {
+    if (agent.id === child.id && !heldChildPersist) {
+      heldChildPersist = true;
+      detachPersistStarted.resolve();
+      await finishDetachPersist.promise;
+    }
+    await originalApplySnapshot(agent, options);
+  });
+
+  const detach = manager.detachAgent(child.id);
+  await detachPersistStarted.promise;
+
+  let archiveStarted = false;
+  let parentAtArchive: string | null = "not-observed";
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted = true;
+    parentAtArchive = manager.getAgent(child.id)?.labels[PARENT_AGENT_ID_LABEL] ?? null;
+  });
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(archiveStarted).toBe(false);
+  } finally {
+    finishDetachPersist.resolve();
+    await Promise.allSettled([detach, archive]);
+  }
+  await detach;
+  await archive;
+  expect({ archiveStarted, parentAtArchive }).toEqual({
+    archiveStarted: true,
+    parentAtArchive: null,
+  });
+});
+
+test("workspace archive exclusion drains stored-only detach lookup before observing labels", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stored-detach-archive-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-stored-detach-race";
+  const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId,
+  });
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+    workspaceId,
+  });
+  await manager.closeAgent(child.id);
+  await manager.flush();
+
+  const lookupStarted = deferred<void>();
+  const finishLookup = deferred<void>();
+  const originalGet = storage.get.bind(storage);
+  let holdChildLookup = true;
+  vi.spyOn(storage, "get").mockImplementation(async (agentId) => {
+    if (agentId === child.id && holdChildLookup) {
+      holdChildLookup = false;
+      lookupStarted.resolve();
+      await finishLookup.promise;
+    }
+    return originalGet(agentId);
+  });
+
+  const detach = manager.detachAgent(child.id);
+  await lookupStarted.promise;
+
+  let archiveStarted = false;
+  let parentAtArchive: string | null = "not-observed";
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted = true;
+    parentAtArchive = (await storage.get(child.id))?.labels[PARENT_AGENT_ID_LABEL] ?? null;
+  });
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(archiveStarted).toBe(false);
+  } finally {
+    finishLookup.resolve();
+    await Promise.allSettled([detach, archive]);
+  }
+  await detach;
+  await archive;
+  expect({ archiveStarted, parentAtArchive }).toEqual({
+    archiveStarted: true,
+    parentAtArchive: null,
+  });
+});
+
+test("workspace archive exclusion drains stored-only reparent lookup before observing labels", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-stored-reparent-archive-race-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-stored-reparent-race";
+  const originalParent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId,
+  });
+  const replacementParent = await manager.createAgent(
+    { provider: "codex", cwd: workdir },
+    undefined,
+    { workspaceId },
+  );
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    labels: { [PARENT_AGENT_ID_LABEL]: originalParent.id },
+    workspaceId,
+  });
+  await manager.closeAgent(child.id);
+  await manager.flush();
+
+  const lookupStarted = deferred<void>();
+  const finishLookup = deferred<void>();
+  const originalGet = storage.get.bind(storage);
+  let holdChildLookup = true;
+  vi.spyOn(storage, "get").mockImplementation(async (agentId) => {
+    if (agentId === child.id && holdChildLookup) {
+      holdChildLookup = false;
+      lookupStarted.resolve();
+      await finishLookup.promise;
+    }
+    return originalGet(agentId);
+  });
+
+  const reparent = manager.updateAgentMetadata(child.id, {
+    labels: { [PARENT_AGENT_ID_LABEL]: replacementParent.id },
+  });
+  await lookupStarted.promise;
+
+  let archiveStarted = false;
+  let parentAtArchive: string | null = "not-observed";
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted = true;
+    parentAtArchive = (await storage.get(child.id))?.labels[PARENT_AGENT_ID_LABEL] ?? null;
+  });
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(archiveStarted).toBe(false);
+  } finally {
+    finishLookup.resolve();
+    await Promise.allSettled([reparent, archive]);
+  }
+  await reparent;
+  await archive;
+  expect({ archiveStarted, parentAtArchive }).toEqual({
+    archiveStarted: true,
+    parentAtArchive: replacementParent.id,
+  });
+});
+
+test("workspace archive exclusion rejects new detach and parent-label mutations", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-relationship-archive-fence-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-relationship-fence";
+  const parent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId,
+  });
+  const child = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    labels: { [PARENT_AGENT_ID_LABEL]: parent.id },
+    workspaceId,
+  });
+  const archiveStarted = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted.resolve();
+    await finishArchive.promise;
+  });
+  await archiveStarted.promise;
+
+  try {
+    await expect(manager.detachAgent(child.id)).rejects.toBeInstanceOf(
+      WorkspaceRelationshipMutationBlockedError,
+    );
+    await expect(
+      manager.setLabels(child.id, { [PARENT_AGENT_ID_LABEL]: "replacement-parent" }),
+    ).rejects.toBeInstanceOf(WorkspaceRelationshipMutationBlockedError);
+    await expect(
+      manager.updateAgentMetadata(child.id, {
+        labels: { [PARENT_AGENT_ID_LABEL]: "replacement-parent" },
+      }),
+    ).rejects.toBeInstanceOf(WorkspaceRelationshipMutationBlockedError);
+    expect(manager.getAgent(child.id)?.labels[PARENT_AGENT_ID_LABEL]).toBe(parent.id);
+  } finally {
+    finishArchive.resolve();
+    await archive;
+  }
 });
 
 test("flush waits for rejected session cleanup that starts after shutdown", async () => {
@@ -7544,6 +8000,93 @@ test("unarchiveSnapshot keeps the stored record archived when native unarchive f
   const stored = await storage.get(agent.id);
   expect(stored?.archivedAt).toEqual(expect.any(String));
   expect(client.unarchivedHandles).toHaveLength(1);
+});
+
+test("workspace archive exclusion drains snapshot unarchive before classifying blockers", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchive-archive-drain-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-unarchive-drain";
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Unarchive before workspace classification",
+    },
+    undefined,
+    { workspaceId },
+  );
+  await manager.archiveAgent(agent.id);
+  const unarchiveStarted = deferred<void>();
+  const finishUnarchive = deferred<void>();
+  client.readArchivedAtDuringUnarchive = async () => {
+    unarchiveStarted.resolve();
+    await finishUnarchive.promise;
+    return (await storage.get(agent.id))?.archivedAt;
+  };
+
+  const unarchive = manager.unarchiveSnapshot(agent.id);
+  await unarchiveStarted.promise;
+  let archiveStarted = false;
+  let archivedAtDuringClassification: string | null | undefined;
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    archiveStarted = true;
+    archivedAtDuringClassification = (await storage.get(agent.id))?.archivedAt;
+  });
+  await Promise.resolve();
+  expect(archiveStarted).toBe(false);
+
+  finishUnarchive.resolve();
+  await expect(unarchive).resolves.toBe(true);
+  await archive;
+  expect(archiveStarted).toBe(true);
+  expect(archivedAtDuringClassification).toBeNull();
+});
+
+test("workspace archive exclusion rejects snapshot unarchive after classification begins", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-unarchive-archive-reject-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  const client = new NativeArchiveRecordingClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+  });
+  const workspaceId = "workspace-unarchive-reject";
+  const agent = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      title: "Unarchive after workspace classification",
+    },
+    undefined,
+    { workspaceId },
+  );
+  await manager.archiveAgent(agent.id);
+  const classificationFinished = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archive = manager.runWithWorkspaceArchiveExclusion([workspaceId], async () => {
+    expect((await storage.get(agent.id))?.archivedAt).toEqual(expect.any(String));
+    classificationFinished.resolve();
+    await finishArchive.promise;
+  });
+  await classificationFinished.promise;
+
+  const rejectedUnarchive = expect(manager.unarchiveSnapshot(agent.id)).rejects.toBeInstanceOf(
+    WorkspaceAgentRegistrationBlockedError,
+  );
+  finishArchive.resolve();
+  await archive;
+  await rejectedUnarchive;
+  expect((await storage.get(agent.id))?.archivedAt).toEqual(expect.any(String));
+  expect(client.unarchivedHandles).toEqual([]);
 });
 
 test("archiveAgent cascade archives in-memory children with the full archive contract", async () => {

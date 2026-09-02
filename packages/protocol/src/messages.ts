@@ -2939,9 +2939,23 @@ export const HubExecutionAgentCreateRequestSchema = z.object({
   env: z.record(z.string(), z.string()).optional(),
   mcpServers: z.record(z.string(), McpServerConfigSchema).optional(),
   worktree: CreateAgentWorktreeTargetSchema.optional(),
+  workspaceAffinity: z
+    .object({
+      key: z
+        .string()
+        .min(1)
+        .max(512)
+        .refine((key) => key.trim().length > 0, "Workspace affinity key cannot be blank"),
+      retainUntil: z.string().datetime(),
+      autoArchive: z.boolean(),
+    })
+    .optional(),
 });
 
 export type HubExecutionAgentCreateRequest = z.infer<typeof HubExecutionAgentCreateRequestSchema>;
+export type HubExecutionWorkspaceAffinity = NonNullable<
+  HubExecutionAgentCreateRequest["workspaceAffinity"]
+>;
 
 export const HubExecutionAgentValidateRequestSchema = z.object({
   type: z.literal("hub.execution.agent.validate.request"),
@@ -6054,6 +6068,9 @@ export const HubExecutionAgentCreateResponseSchema = z.object({
     agent: AgentSnapshotPayloadSchema.nullable(),
     success: z.boolean(),
     toolPolicyApplied: z.literal(true).optional(),
+    // Progressive capability acknowledgement. Hubs must accept omission as a successful create
+    // using the daemon's ordinary fresh-workspace behavior.
+    workspaceAffinityApplied: z.literal(true).optional(),
     error: HubExecutionAgentCreateErrorSchema.nullable(),
   }),
 });

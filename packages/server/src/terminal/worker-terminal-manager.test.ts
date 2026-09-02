@@ -5,6 +5,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { delimiter, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createWorkerTerminalManager } from "./worker-terminal-manager.js";
+import { AgentManager } from "../server/agent/agent-manager.js";
+import { createTestLogger } from "../test-utils/test-logger.js";
 import type {
   TerminalActivityTransitionEvent,
   TerminalManager,
@@ -202,6 +204,116 @@ it("creates a terminal through the worker and streams output", async () => {
 
   expect(messages.join("") + getVisibleText(session)).toContain("worker-output:hello");
   expect(snapshots).toBe(snapshotsBeforeOutput);
+});
+
+it("holds the configured workspace creation lease through the worker response", async () => {
+  const worker = new FakeTerminalWorker();
+  let leaseActive = false;
+  const leasedWorkspaceIds: string[] = [];
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 100,
+    forkWorker: () => worker,
+    runWithWorkspaceTerminalCreationLease: async (workspaceId, action) => {
+      leasedWorkspaceIds.push(workspaceId);
+      leaseActive = true;
+      try {
+        return await action();
+      } finally {
+        leaseActive = false;
+      }
+    },
+  });
+
+  const creation = manager.createTerminal({ cwd: "/workspace", workspaceId: "ws-leased" });
+  const request = worker.sentMessages.find((message) => message.type === "createTerminal");
+  expect(request).toBeDefined();
+  expect(leaseActive).toBe(true);
+  if (!request || request.type !== "createTerminal") {
+    throw new Error("createTerminal request not sent");
+  }
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: request.requestId,
+    ok: true,
+    result: {
+      terminal: {
+        id: request.options.id!,
+        name: "Terminal 1",
+        cwd: "/workspace",
+        workspaceId: "ws-leased",
+        activity: null,
+      },
+      state: createTerminalState(),
+    },
+  });
+
+  await creation;
+  expect(leasedWorkspaceIds).toEqual(["ws-leased"]);
+  expect(leaseActive).toBe(false);
+});
+
+it("keeps the workspace creation lease through a late worker completion", async () => {
+  const worker = new FakeTerminalWorker();
+  const leaseManager = new AgentManager({ clients: {}, logger: createTestLogger() });
+  manager = createWorkerTerminalManager({
+    requestTimeoutMs: 5,
+    forkWorker: () => worker,
+    runWithWorkspaceTerminalCreationLease:
+      leaseManager.runWithWorkspaceTerminalCreationLease.bind(leaseManager),
+  });
+
+  let creationSettled = false;
+  const creation = manager.createTerminal({ cwd: "/workspace", workspaceId: "ws-late-create" });
+  const trackedCreation = creation.then(
+    (session) => {
+      creationSettled = true;
+      return session;
+    },
+    (error: unknown) => {
+      creationSettled = true;
+      throw error;
+    },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const request = worker.sentMessages.find((message) => message.type === "createTerminal");
+  if (!request || request.type !== "createTerminal") {
+    throw new Error("createTerminal request not sent");
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  expect(creationSettled).toBe(false);
+  let archiveEntered = false;
+  const archive = leaseManager.runWithWorkspaceArchiveExclusion(["ws-late-create"], async () => {
+    archiveEntered = true;
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(archiveEntered).toBe(false);
+
+  const terminal = {
+    id: request.options.id!,
+    name: "Terminal 1",
+    cwd: "/workspace",
+    workspaceId: "ws-late-create",
+    activity: null,
+  };
+  worker.emitWorkerMessage({
+    type: "terminalCreated",
+    terminal,
+    state: createTerminalState(),
+  });
+  expect(manager.getTerminal(terminal.id)).toBeDefined();
+  expect(archiveEntered).toBe(false);
+
+  worker.emitWorkerMessage({
+    type: "response",
+    requestId: request.requestId,
+    ok: true,
+    result: { terminal, state: createTerminalState() },
+  });
+  await trackedCreation;
+  await archive;
+  expect(creationSettled).toBe(true);
+  expect(archiveEntered).toBe(true);
 });
 
 it("delivers rapid small writes complete and in order through worker coalescing", async () => {

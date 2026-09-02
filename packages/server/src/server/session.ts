@@ -37,6 +37,7 @@ import type { SpeechToTextProvider, TextToSpeechProvider } from "./speech/speech
 import type { TurnDetectionProvider } from "./speech/turn-detection-provider.js";
 import {
   buildConfigOverrides,
+  extractTimestamps,
   isStoredAgentProviderAvailable,
   toAgentPersistenceHandle,
 } from "./persistence-hooks.js";
@@ -858,6 +859,8 @@ export class Session {
       getWorkspace: (workspaceId) => this.workspaceRegistry.get(workspaceId),
       getProject: (projectId) => this.projectRegistry.get(projectId),
       isDirectory: (path) => this.filesystem.isDirectory(path),
+      runWithWorkspaceActivationLease: (workspaceId, action) =>
+        this.agentManager.runWithWorkspaceAgentRegistrationLease(workspaceId, action),
       unarchiveWorkspace: async (workspace) => {
         await this.workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
       },
@@ -982,6 +985,8 @@ export class Session {
       isPathWithinRoot: (rootPath, candidatePath) => this.isPathWithinRoot(rootPath, candidatePath),
       sessionLogger: this.sessionLogger,
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
+      runWithWorkspaceTerminalCreationLease: (workspaceId, action) =>
+        this.agentManager.runWithWorkspaceTerminalCreationLease(workspaceId, action),
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
@@ -2906,11 +2911,9 @@ export class Session {
     });
   }
 
-  private async unarchiveAgentByHandle(handle: AgentPersistenceHandle): Promise<{
-    record: StoredAgentRecord;
-    didUnarchive: boolean;
-    originalArchivedAt: string | null;
-  } | null> {
+  private async findAgentByHandle(
+    handle: AgentPersistenceHandle,
+  ): Promise<StoredAgentRecord | null> {
     const records = await this.agentStorage.listByProviderSession(
       handle.provider,
       handle.sessionId,
@@ -2930,16 +2933,7 @@ export class Session {
     if (!matched) {
       return null;
     }
-    const didUnarchive = await unarchiveAgentState(
-      this.agentStorage,
-      this.agentManager,
-      matched.id,
-    );
-    return {
-      record: matched,
-      didUnarchive,
-      originalArchivedAt: matched.archivedAt ?? null,
-    };
+    return matched;
   }
 
   private async handleUpdateAgentRequest(
@@ -3701,20 +3695,40 @@ export class Session {
       `Resuming agent ${handle.sessionId} (${handle.provider})`,
     );
     try {
-      const matched = await this.unarchiveAgentByHandle(handle);
-      const effectiveOverrides = matched
-        ? { ...buildConfigOverrides(matched.record), ...overrides }
-        : overrides;
-      let snapshot: ManagedAgent;
-      try {
-        snapshot = await this.agentManager.resumeAgentFromPersistence(handle, effectiveOverrides);
-      } catch (error) {
-        if (matched?.didUnarchive && matched.originalArchivedAt) {
-          await this.agentManager.archiveSnapshot(matched.record.id, matched.originalArchivedAt);
-        }
-        throw error;
-      }
-      await unarchiveAgentState(this.agentStorage, this.agentManager, snapshot.id);
+      const snapshot = await this.agentManager.runWithWorkspaceAgentRegistrationLease(
+        undefined,
+        async () => {
+          const matched = await this.findAgentByHandle(handle);
+          const effectiveOverrides = matched
+            ? { ...buildConfigOverrides(matched), ...overrides }
+            : overrides;
+          const resume = async (): Promise<ManagedAgent> => {
+            const originalArchivedAt = matched?.archivedAt ?? null;
+            const didUnarchive = matched
+              ? await unarchiveAgentState(this.agentStorage, this.agentManager, matched.id)
+              : false;
+            let resumed: ManagedAgent;
+            try {
+              resumed = await this.agentManager.resumeAgentFromPersistence(
+                handle,
+                effectiveOverrides,
+                matched?.id,
+                matched ? extractTimestamps(matched) : undefined,
+              );
+            } catch (error) {
+              if (matched && didUnarchive && originalArchivedAt) {
+                await this.agentManager.archiveSnapshot(matched.id, originalArchivedAt);
+              }
+              throw error;
+            }
+            await unarchiveAgentState(this.agentStorage, this.agentManager, resumed.id);
+            return resumed;
+          };
+          return matched?.workspaceId
+            ? this.agentManager.runWithWorkspaceAgentRegistrationLease(matched.workspaceId, resume)
+            : resume();
+        },
+      );
       await this.agentManager.hydrateTimelineFromProvider(snapshot.id);
       await this.agentUpdates.forwardLiveAgent(snapshot);
       const timelineSize = this.agentManager.getTimeline(snapshot.id).length;
@@ -5945,11 +5959,16 @@ export class Session {
     request: Extract<SessionInboundMessage, { type: "workspace.create.request" }>,
   ): Promise<void> {
     try {
-      if (request.source.kind === "directory") {
-        await this.handleWorkspaceCreateLocal(request);
-        return;
-      }
-      await this.handleWorkspaceCreateWorktree(request);
+      // The new workspace identity is unknown until provisioning completes. Register before any
+      // source lookup so expiry cannot remove an affinity-owned worktree underneath the new
+      // workspace while it is being created.
+      await this.agentManager.runWithWorkspaceAgentRegistrationLease(undefined, async () => {
+        if (request.source.kind === "directory") {
+          await this.handleWorkspaceCreateLocal(request);
+          return;
+        }
+        await this.handleWorkspaceCreateWorktree(request);
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to create workspace";
       this.sessionLogger.error(
@@ -6101,76 +6120,80 @@ export class Session {
   ): Promise<void> {
     const requestedCwd = request.cwd;
     const cwd = expandTilde(requestedCwd);
-    const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
-    if (!directoryExists) {
-      this.sessionLogger.info(
-        { requestedCwd, resolvedCwd: cwd, reason: "directory_not_found" },
-        "Open project rejected",
-      );
-      this.emit({
-        type: "open_project_response",
-        payload: {
-          requestId: request.requestId,
-          workspace: null,
-          error: `Directory not found: ${cwd}`,
-          errorCode: "directory_not_found",
-        },
-      });
-      return;
-    }
-
     try {
-      const projectsBefore = new Map<string, PersistedProjectRecord>();
-      for (const project of await this.projectRegistry.list()) {
-        projectsBefore.set(project.projectId, project);
-      }
-      const workspacesBefore = new Map<string, PersistedWorkspaceRecord>();
-      for (const workspaceRecord of await this.workspaceRegistry.list()) {
-        workspacesBefore.set(workspaceRecord.workspaceId, workspaceRecord);
-      }
-      const workspace = await this.workspaceProvisioning.findOrCreateWorkspaceForDirectory(cwd);
-      const project = await this.projectRegistry.get(workspace.projectId);
-      await this.syncWorkspaceGitObserverForWorkspace(workspace);
-      const descriptor = await this.describeWorkspaceRecord(workspace);
-      await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
-      this.sessionLogger.info(
-        {
-          requestedCwd,
-          resolvedCwd: cwd,
-          workspaceCwd: workspace.cwd,
-          workspaceId: workspace.workspaceId,
-          workspaceKind: workspace.kind,
-          workspaceTransition: describeRegistryTransition(
-            workspacesBefore.get(workspace.workspaceId) ?? null,
-          ),
-          projectId: workspace.projectId,
-          projectKind: project?.kind ?? null,
-          projectTransition: describeRegistryTransition(
-            projectsBefore.get(workspace.projectId) ?? null,
-          ),
-        },
-        "Project opened",
-      );
-      this.emit({
-        type: "open_project_response",
-        payload: {
-          requestId: request.requestId,
-          workspace: descriptor,
-          error: null,
-        },
-      });
-      void this.workspaceGitService
-        .getSnapshot(workspace.cwd, {
-          force: true,
-          includeForge: true,
-          reason: "open_project",
-        })
-        .catch((error) => {
-          this.sessionLogger.warn(
-            { err: error, cwd: workspace.cwd },
-            "Background snapshot refresh failed after open_project",
+      // The exact workspace is unknown until directory and registry lookup complete. Register the
+      // activation before either lookup so expiry cannot resolve an archived empty target first.
+      await this.agentManager.runWithWorkspaceAgentRegistrationLease(undefined, async () => {
+        const directoryExists = await this.filesystem.isDirectory(cwd).catch(() => false);
+        if (!directoryExists) {
+          this.sessionLogger.info(
+            { requestedCwd, resolvedCwd: cwd, reason: "directory_not_found" },
+            "Open project rejected",
           );
+          this.emit({
+            type: "open_project_response",
+            payload: {
+              requestId: request.requestId,
+              workspace: null,
+              error: `Directory not found: ${cwd}`,
+              errorCode: "directory_not_found",
+            },
+          });
+          return;
+        }
+
+        const projectsBefore = new Map<string, PersistedProjectRecord>();
+        for (const project of await this.projectRegistry.list()) {
+          projectsBefore.set(project.projectId, project);
+        }
+        const workspacesBefore = new Map<string, PersistedWorkspaceRecord>();
+        for (const workspaceRecord of await this.workspaceRegistry.list()) {
+          workspacesBefore.set(workspaceRecord.workspaceId, workspaceRecord);
+        }
+        const workspace = await this.workspaceProvisioning.findOrCreateWorkspaceForDirectory(cwd);
+        const project = await this.projectRegistry.get(workspace.projectId);
+        await this.syncWorkspaceGitObserverForWorkspace(workspace);
+        const descriptor = await this.describeWorkspaceRecord(workspace);
+        await this.emitWorkspaceUpdateForWorkspaceId(workspace.workspaceId);
+        this.sessionLogger.info(
+          {
+            requestedCwd,
+            resolvedCwd: cwd,
+            workspaceCwd: workspace.cwd,
+            workspaceId: workspace.workspaceId,
+            workspaceKind: workspace.kind,
+            workspaceTransition: describeRegistryTransition(
+              workspacesBefore.get(workspace.workspaceId) ?? null,
+            ),
+            projectId: workspace.projectId,
+            projectKind: project?.kind ?? null,
+            projectTransition: describeRegistryTransition(
+              projectsBefore.get(workspace.projectId) ?? null,
+            ),
+          },
+          "Project opened",
+        );
+        this.emit({
+          type: "open_project_response",
+          payload: {
+            requestId: request.requestId,
+            workspace: descriptor,
+            error: null,
+          },
         });
+        void this.workspaceGitService
+          .getSnapshot(workspace.cwd, {
+            force: true,
+            includeForge: true,
+            reason: "open_project",
+          })
+          .catch((error) => {
+            this.sessionLogger.warn(
+              { err: error, cwd: workspace.cwd },
+              "Background snapshot refresh failed after open_project",
+            );
+          });
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to open project";
       this.sessionLogger.error({ err: error, cwd }, "Failed to open project");

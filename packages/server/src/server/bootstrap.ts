@@ -1,7 +1,7 @@
 import express from "express";
 import { createServer as createHTTPServer, type IncomingMessage, type ServerResponse } from "http";
 import { constants, existsSync, unlinkSync } from "fs";
-import { open, rm } from "fs/promises";
+import { open, rm, stat } from "fs/promises";
 import { randomUUID } from "node:crypto";
 import { hostname as getHostname } from "node:os";
 import path from "node:path";
@@ -122,6 +122,7 @@ import { createWorkspaceLabelService } from "./workspace-labels/index.js";
 import { createGitHubService } from "../services/github-service.js";
 import { createPaseoWorktree as createRegisteredPaseoWorktree } from "./paseo-worktree-service.js";
 import { createWorkspaceProvisioningService } from "./session/workspace-provisioning/workspace-provisioning-service.js";
+import { createWorkspaceRecoveryService } from "./session/workspace-recovery/workspace-recovery-service.js";
 import { createPaseoWorktreeWorkflow } from "./worktree-session.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import type { OpenAiSpeechProviderConfig } from "./speech/providers/openai/config.js";
@@ -159,10 +160,14 @@ import {
   archivePersistedWorkspaceRecord,
   killTerminalsForWorkspace,
   type ActiveWorkspaceRef,
+  type WorkspaceArchiveAgentGuard,
 } from "./workspace-archive-service.js";
 import { setupAutoArchiveOnMerge } from "./auto-archive-on-merge/index.js";
 import { wrapSessionMessage, type SessionOutboundMessage } from "./messages.js";
-import type { TerminalManager } from "../terminal/terminal-manager.js";
+import type {
+  TerminalManager,
+  WorkspaceTerminalCreationLease,
+} from "../terminal/terminal-manager.js";
 import { createConfiguredTerminalManager } from "../terminal/terminal-manager-factory.js";
 import { applyTerminalAgentHookSetting } from "../terminal/agent-hooks/terminal-agent-hook-setting.js";
 import { loadOrCreateDaemonKeyPair } from "./daemon-keypair.js";
@@ -225,6 +230,10 @@ import {
   type HubRelationshipRemote,
 } from "./hub/relationship-remote.js";
 import { DaemonExecutions } from "./hub/daemon-executions.js";
+import {
+  WorkspaceAffinityManagerPool,
+  type WorkspaceAffinityClock,
+} from "./hub/workspace-affinity.js";
 import { PluginService } from "./plugins/index.js";
 import { ManagedPluginSources } from "./plugins/managed-source.js";
 
@@ -473,6 +482,7 @@ export interface PaseoDaemonDependencies {
   hubRelationshipRemote?: HubRelationshipRemote;
   hubRelationshipClock?: HubRelationshipClock;
   hubRelationshipRetryPolicy?: HubRelationshipRetryPolicy;
+  hubWorkspaceAffinityClock?: WorkspaceAffinityClock;
   createHubDaemonId?: () => string;
   serverFeatureOverrides?: {
     daemonStatusRpc?: boolean;
@@ -643,8 +653,13 @@ export async function createPaseoDaemon(
   });
   let boundListenTarget: ListenTarget | null = null;
   let workspaceRegistry: FileBackedWorkspaceRegistry | null = null;
+  let terminalCreationLease: WorkspaceTerminalCreationLease = async () => {
+    throw new Error("Terminal creation is unavailable while the agent manager initializes");
+  };
   const terminalManager = createConfiguredTerminalManager({
     getTerminalActivityUrl: () => createTerminalActivityUrl(boundListenTarget),
+    runWithWorkspaceTerminalCreationLease: (workspaceId, action) =>
+      terminalCreationLease(workspaceId, action),
   });
   applyTerminalAgentHookSetting({ store: daemonConfigStore, logger });
 
@@ -881,6 +896,24 @@ export async function createPaseoDaemon(
     workspaceGitService,
     logger,
   });
+  const hubWorkspaceRecovery = createWorkspaceRecoveryService({
+    paseoHome: config.paseoHome,
+    worktreesRoot: config.worktreesRoot,
+    getWorkspace: (workspaceId) => workspaceRegistry.get(workspaceId),
+    getProject: (projectId) => projectRegistry.get(projectId),
+    isDirectory: async (candidate) => {
+      try {
+        return (await stat(candidate)).isDirectory();
+      } catch {
+        return false;
+      }
+    },
+    runWithWorkspaceActivationLease: (workspaceId, action) =>
+      agentManager.runWithWorkspaceAgentRegistrationLease(workspaceId, action),
+    unarchiveWorkspace: async (workspace) => {
+      await workspaceProvisioning.ensureWorkspaceRecordUnarchived(workspace);
+    },
+  });
   const agentProviderRuntime = await createAgentProviderRuntime({
     paseoHome: config.paseoHome,
     logger,
@@ -918,6 +951,8 @@ export async function createPaseoDaemon(
     mcpAuthToken: agentMcpAuthToken,
     logger,
   });
+  terminalCreationLease = (workspaceId, action) =>
+    agentManager.runWithWorkspaceTerminalCreationLease(workspaceId, action);
 
   const detachAgentStoragePersistence = attachAgentStoragePersistence(
     logger,
@@ -1032,6 +1067,15 @@ export async function createPaseoDaemon(
         session.emitWorkspaceUpdatesForExternalWorkspaceIds(workspaceIdList),
       ),
     );
+  };
+  const ensureHubAffinityWorkspaceExternal = async (workspaceId: string): Promise<void> => {
+    const workspace = await workspaceRegistry.get(workspaceId);
+    if (!workspace) {
+      throw new Error(`Workspace affinity references missing workspace ${workspaceId}`);
+    }
+    if (!workspace.archivedAt) return;
+    await hubWorkspaceRecovery.restore(workspaceId);
+    await emitWorkspaceUpdatesExternal([workspaceId]);
   };
   const ensureWorkspaceForCreateAndBroadcastExternal = async (
     cwd: string,
@@ -1149,8 +1193,12 @@ export async function createPaseoDaemon(
   };
   const createAgent = (input: Parameters<typeof createAgentCommand>[1]) =>
     createAgentCommand(createAgentCommandDependencies, input);
-  const archiveWorkspaceByIdExternal = (workspaceId: string, requestId: string) =>
-    archiveByScope(
+  const archiveWorkspaceByIdExternal = async (
+    workspaceId: string,
+    requestId: string,
+    canArchiveAgent?: WorkspaceArchiveAgentGuard,
+  ) => {
+    const result = await archiveByScope(
       {
         paseoHome: config.paseoHome,
         paseoWorktreesBaseRoot: config.worktreesRoot,
@@ -1170,8 +1218,19 @@ export async function createPaseoDaemon(
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
         sessionLogger: logger,
       },
-      { scope: { kind: "workspace", workspaceId }, requestId },
+      {
+        scope: { kind: "workspace", workspaceId },
+        requestId,
+        canArchiveAgent,
+        failureMode: canArchiveAgent === undefined ? "throw" : "return",
+      },
     );
+    return !(
+      result.blockedWorkspaceIds?.includes(workspaceId) ||
+      result.failedWorkspaceIds?.includes(workspaceId) ||
+      (result.failedDirectoryPaths?.length ?? 0) > 0
+    );
+  };
   const hubAgentLifecycle = new CreateAgentLifecycleDispatch({
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
@@ -1193,6 +1252,16 @@ export async function createPaseoDaemon(
     killTerminalsForWorkspace: (workspaceId) =>
       killTerminalsForWorkspace({ terminalManager, sessionLogger: logger }, workspaceId),
     logger,
+  });
+  const hubWorkspaceAffinityManagers = new WorkspaceAffinityManagerPool({
+    paseoHome: config.paseoHome,
+    agentStorage,
+    runWithWorkspaceAgentRegistrationLease: (workspaceId, action) =>
+      agentManager.runWithWorkspaceAgentRegistrationLease(workspaceId, action),
+    ensureWorkspace: ensureHubAffinityWorkspaceExternal,
+    archiveWorkspace: archiveWorkspaceByIdExternal,
+    logger,
+    clock: dependencies.hubWorkspaceAffinityClock,
   });
   const hubRelationships = new HubRelationshipController({
     paseoHome: config.paseoHome,
@@ -1235,7 +1304,10 @@ export async function createPaseoDaemon(
         agentStorage,
         createAgent,
         interruptAgent: (agentId) => cancelAgentRunCommand({ agentManager, logger }, agentId),
+        archiveAgent: (agentId) =>
+          archiveAgentCommand({ agentManager, agentStorage, logger }, agentId),
         archiveWorkspace: archiveWorkspaceByIdExternal,
+        workspaceAffinities: hubWorkspaceAffinityManagers.forDaemon(daemonId),
         cleanupFailedCreate: (input) =>
           hubAgentLifecycle.cleanupCreatedWorktreeAfterFailedAgentCreate(input),
       }),
@@ -1702,6 +1774,7 @@ export async function createPaseoDaemon(
             daemonConfigStore.onFieldChange("relay.enabled", (value) => {
               relayRuntime?.setEnabled(value === true);
             });
+            await hubWorkspaceAffinityManagers.start();
             await hubRelationships.start();
           };
 
@@ -1725,6 +1798,7 @@ export async function createPaseoDaemon(
       speechService.start();
       scriptHealthMonitor.start();
     } catch (error) {
+      hubWorkspaceAffinityManagers.dispose();
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
       await agentProviderRuntime.shutdown().catch(() => undefined);
@@ -1739,6 +1813,7 @@ export async function createPaseoDaemon(
   const stop = async () => {
     await pluginRuntime.stopAllPlugins();
     await hubRelationships.stop();
+    hubWorkspaceAffinityManagers.dispose();
     workspaceReconciliation.dispose();
     scriptHealthMonitor.stop();
     // Freeze both ingress and registration before taking the agent closure snapshot.

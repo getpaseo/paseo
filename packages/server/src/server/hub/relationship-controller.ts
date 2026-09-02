@@ -246,7 +246,12 @@ export class HubRelationshipController implements HubRelationshipManagement {
   }
 
   async start(): Promise<void> {
-    if (this.record?.state === "active") this.openSocket(this.record, false);
+    if (this.record?.state === "active") {
+      // Workspace-affinity retention is daemon-owned and must resume even before the Hub socket
+      // reconnects, so construct the execution owner before opening the transport.
+      this.executionAgentsFor(this.record.relationship.daemonId);
+      this.openSocket(this.record, false);
+    }
     if (this.record?.state === "pending") {
       const enrollmentGeneration = this.beginEnrollmentAttempt();
       try {

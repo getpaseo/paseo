@@ -112,6 +112,7 @@ interface SessionTestAccess {
   };
   agentStorage: {
     list(...args: unknown[]): Promise<unknown[]>;
+    listByProviderSession(...args: unknown[]): Promise<unknown[]>;
     get(agentId: string): Promise<unknown>;
     upsert(record: unknown): Promise<void>;
   };
@@ -575,6 +576,14 @@ function createSessionForWorkspaceTests(
     listAgents: () => [],
     listProviderSubagentActivity: () => [],
     getAgent: () => null,
+    runWithWorkspaceArchiveExclusion: async <Value>(
+      _workspaceIds: Iterable<string>,
+      action: () => Promise<Value>,
+    ) => action(),
+    runWithWorkspaceAgentRegistrationLease: async <Value>(
+      _workspaceId: string | undefined,
+      action: () => Promise<Value>,
+    ) => action(),
     archiveAgent: async () => ({ archivedAt: new Date().toISOString() }),
     archiveSnapshot: async () => ({}),
     unarchiveSnapshot: async () => true,
@@ -736,6 +745,89 @@ function createSessionForWorkspaceTests(
   );
   return session;
 }
+
+test("resume_agent_request holds the workspace lease across unarchive and provider resume", async () => {
+  const updatedAt = "2026-08-29T09:30:00.000Z";
+  const archivedAt = "2026-08-29T09:45:00.000Z";
+  const workspaceId = "workspace-resume-lease";
+  const agentId = "agent-resume-lease";
+  const handle: AgentPersistenceHandle = {
+    provider: "codex",
+    sessionId: "provider-session-resume-lease",
+  };
+  const record: StoredAgentRecord = {
+    ...makeStoredAgent({ id: agentId, cwd: REPO_CWD, updatedAt }),
+    workspaceId,
+    labels: { source: "persisted" },
+    persistence: handle,
+    archivedAt,
+  };
+  const managed = makeManagedAgent({
+    id: agentId,
+    cwd: REPO_CWD,
+    workspaceId,
+    lifecycle: "idle",
+    updatedAt,
+  });
+  const resumeAgentFromPersistence = vi.fn(async () => managed);
+  let leaseDepth = 0;
+  const leasedWorkspaceIds: Array<string | undefined> = [];
+  const session = createSessionForWorkspaceTests({
+    agentManager: {
+      runWithWorkspaceAgentRegistrationLease: async <Value>(
+        candidateWorkspaceId: string | undefined,
+        action: () => Promise<Value>,
+      ) => {
+        leasedWorkspaceIds.push(candidateWorkspaceId);
+        leaseDepth += 1;
+        try {
+          return await action();
+        } finally {
+          leaseDepth -= 1;
+        }
+      },
+      resumeAgentFromPersistence: async (
+        ...args: Parameters<typeof resumeAgentFromPersistence>
+      ) => {
+        expect(leaseDepth).toBe(2);
+        return resumeAgentFromPersistence(...args);
+      },
+      unarchiveSnapshot: async () => {
+        expect(leaseDepth).toBe(2);
+        return true;
+      },
+      hydrateTimelineFromProvider: async () => undefined,
+      getTimeline: () => [],
+    },
+    agentStorage: {
+      listByProviderSession: async () => {
+        expect(leaseDepth).toBe(1);
+        return [record];
+      },
+      get: async () => ({ ...record, archivedAt: null }),
+    },
+  });
+  session.agentUpdates.forwardLiveAgent = async () => undefined;
+
+  await session.handleMessage({
+    type: "resume_agent_request",
+    handle,
+    requestId: "request-resume-lease",
+  });
+
+  expect(leasedWorkspaceIds).toEqual([undefined, workspaceId]);
+  expect(resumeAgentFromPersistence).toHaveBeenCalledWith(
+    handle,
+    expect.objectContaining({ cwd: REPO_CWD }),
+    agentId,
+    expect.objectContaining({
+      workspaceId,
+      labels: { source: "persisted" },
+      createdAt: new Date(updatedAt),
+      updatedAt: new Date(updatedAt),
+    }),
+  );
+});
 
 test("project.list.request catches up by sequence on the existing RPC", async () => {
   const emitted: SessionOutboundMessage[] = [];
@@ -4685,6 +4777,125 @@ test("open_project_request does not unarchive an archived parent workspace for a
   expect(projects.get(home)?.archivedAt).toBe(archivedAt);
 });
 
+test("open_project_request serializes archived workspace activation with expiry", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const logger = createTestLogger();
+  const leaseManager = new AgentManager({ clients: {}, logger });
+  const workspaceId = "ws-open-project-affinity-race";
+  const projectId = "project-open-project-affinity-race";
+  const cwd = REPO_CWD;
+  const archivedAt = "2026-08-28T20:00:00.000Z";
+  let project = createPersistedProjectRecord({
+    projectId,
+    rootPath: cwd,
+    kind: "non_git",
+    displayName: "repo",
+    createdAt: "2026-08-28T19:00:00.000Z",
+    updatedAt: archivedAt,
+  });
+  let workspace = createPersistedWorkspaceRecord({
+    workspaceId,
+    projectId,
+    cwd,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-08-28T19:00:00.000Z",
+    updatedAt: archivedAt,
+    archivedAt,
+  });
+  const directoryLookupStarted = deferred<void>();
+  const finishDirectoryLookup = deferred<void>();
+  const archiveHolding = deferred<void>();
+  const finishArchive = deferred<void>();
+  let directoryLookupCount = 0;
+  const session = createSessionForWorkspaceTests({
+    agentManager: {
+      runWithWorkspaceAgentRegistrationLease:
+        leaseManager.runWithWorkspaceAgentRegistrationLease.bind(leaseManager),
+    },
+    onMessage: (message) => {
+      if (isSessionOutboundMessage(message)) emitted.push(message);
+    },
+  });
+  session.filesystem.isDirectory = async () => {
+    directoryLookupCount += 1;
+    directoryLookupStarted.resolve(undefined);
+    await finishDirectoryLookup.promise;
+    return true;
+  };
+  session.projectRegistry.get = async (requestedProjectId: string) =>
+    requestedProjectId === projectId ? project : null;
+  session.projectRegistry.list = async () => [project];
+  session.projectRegistry.upsert = async (record: PersistedProjectRecord) => {
+    project = record;
+  };
+  session.workspaceRegistry.get = async (requestedWorkspaceId: string) =>
+    requestedWorkspaceId === workspaceId ? workspace : null;
+  session.workspaceRegistry.list = async () => [workspace];
+  session.workspaceRegistry.upsert = async (record: PersistedWorkspaceRecord) => {
+    workspace = record;
+  };
+
+  try {
+    const openBeforeArchive = session.handleMessage({
+      type: "open_project_request",
+      cwd,
+      requestId: "req-open-before-expiry",
+    });
+    await directoryLookupStarted.promise;
+
+    let archiveEntered = false;
+    const archiveAfterOpen = leaseManager.runWithWorkspaceArchiveExclusion(
+      [workspaceId],
+      async () => {
+        archiveEntered = true;
+      },
+    );
+    await waitForImmediate();
+    expect(archiveEntered).toBe(false);
+
+    finishDirectoryLookup.resolve(undefined);
+    await openBeforeArchive;
+    await archiveAfterOpen;
+    expect(archiveEntered).toBe(true);
+    expect(workspace.archivedAt).toBeNull();
+    expect(findByType(emitted, "open_project_response")?.payload).toMatchObject({
+      requestId: "req-open-before-expiry",
+      workspace: { id: workspaceId },
+      error: null,
+    });
+
+    workspace = { ...workspace, archivedAt, updatedAt: archivedAt };
+    const archiveBeforeOpen = leaseManager.runWithWorkspaceArchiveExclusion(
+      [workspaceId],
+      async () => {
+        archiveHolding.resolve(undefined);
+        await finishArchive.promise;
+      },
+    );
+    await archiveHolding.promise;
+
+    await session.handleMessage({
+      type: "open_project_request",
+      cwd,
+      requestId: "req-open-after-expiry",
+    });
+    expect(directoryLookupCount).toBe(1);
+    expect(filterByType(emitted, "open_project_response").at(-1)?.payload).toMatchObject({
+      requestId: "req-open-after-expiry",
+      workspace: null,
+      error: "Workspace creation is blocked while archival is in progress",
+    });
+
+    finishArchive.resolve(undefined);
+    await archiveBeforeOpen;
+  } finally {
+    finishDirectoryLookup.resolve(undefined);
+    finishArchive.resolve(undefined);
+    await leaseManager.flush().catch(() => undefined);
+  }
+});
+
 test("open_project_request reclassifies an archived directory workspace when git metadata becomes available", async () => {
   const emitted: SessionOutboundMessage[] = [];
   const session = createSessionForWorkspaceTests();
@@ -5812,6 +6023,57 @@ test("archive_workspace_request hides non-destructive workspace records", async 
     | { payload: Record<string, unknown> }
     | undefined;
   expect(response?.payload.error).toBeNull();
+});
+
+test("archive_workspace_request reports incomplete teardown instead of success", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const workspaceId = "ws-repo-archive-failure";
+  const agentId = "agent-repo-archive-failure";
+  const workspace = createPersistedWorkspaceRecord({
+    workspaceId,
+    projectId: "proj-repo-archive-failure",
+    cwd: REPO_CWD,
+    kind: "directory",
+    displayName: "repo",
+    createdAt: "2026-03-01T12:00:00.000Z",
+    updatedAt: "2026-03-01T12:00:00.000Z",
+  });
+  const archiveWorkspaceRecord = vi.fn(async () => {});
+  const session = createSessionForWorkspaceTests({
+    onMessage: (message) => emitted.push(message),
+    workspaceRegistry: {
+      initialize: async () => {},
+      existsOnDisk: async () => true,
+      list: async () => [workspace],
+      get: async () => workspace,
+      update: async (_id, updater) => updater(workspace),
+      upsert: async () => {},
+      archive: archiveWorkspaceRecord,
+      remove: async () => {},
+    },
+    agentManager: {
+      listAgents: () => [{ id: agentId, workspaceId } as ManagedAgent],
+      getAgent: () => ({ id: agentId, workspaceId }) as ManagedAgent,
+      archiveAgent: async () => {
+        throw new Error("intentional agent teardown failure");
+      },
+    },
+    agentStorage: { list: async () => [] },
+  });
+
+  await session.handleMessage({
+    type: "archive_workspace_request",
+    workspaceId,
+    requestId: "req-archive-failure",
+  });
+
+  const response = findByType(emitted, "archive_workspace_response");
+  expect(response?.payload).toMatchObject({
+    workspaceId,
+    archivedAt: null,
+    error: `Workspace archival incomplete for: workspace ${workspaceId}`,
+  });
+  expect(archiveWorkspaceRecord).not.toHaveBeenCalled();
 });
 
 test("archive_workspace_request archives a worktree-kind workspace and removes the directory on last reference", async () => {
@@ -9258,6 +9520,88 @@ test("checkout.rename_branch.request renames the branch without a denormalized b
   const persisted = workspaces.get(workspace.workspaceId);
   expect(persisted?.displayName).toBe("Refactor auth flow");
   expect(persisted?.title).toBe("Refactor auth flow");
+});
+
+test("workspace.create.request serializes standalone provisioning with workspace expiry", async () => {
+  const emitted: SessionOutboundMessage[] = [];
+  const leaseManager = new AgentManager({ clients: {}, logger: createTestLogger() });
+  const directoryLookupStarted = deferred<void>();
+  const finishDirectoryLookup = deferred<void>();
+  let directoryLookupCount = 0;
+  const session = createSessionForWorkspaceTests({
+    agentManager: {
+      runWithWorkspaceAgentRegistrationLease:
+        leaseManager.runWithWorkspaceAgentRegistrationLease.bind(leaseManager),
+    },
+    onMessage: (message) => {
+      if (isSessionOutboundMessage(message)) emitted.push(message);
+    },
+  });
+  session.filesystem.isDirectory = async () => {
+    directoryLookupCount += 1;
+    if (directoryLookupCount === 1) {
+      directoryLookupStarted.resolve(undefined);
+      await finishDirectoryLookup.promise;
+    }
+    return true;
+  };
+
+  const createBeforeArchive = session.handleMessage({
+    type: "workspace.create.request",
+    requestId: "req-create-before-expiry",
+    source: { kind: "directory", path: REPO_CWD },
+  });
+  await directoryLookupStarted.promise;
+
+  let archiveEntered = false;
+  const archiveAfterCreate = leaseManager.runWithWorkspaceArchiveExclusion(
+    ["ws-affinity-expiry"],
+    async () => {
+      archiveEntered = true;
+    },
+  );
+  await waitForImmediate();
+  expect(archiveEntered).toBe(false);
+
+  finishDirectoryLookup.resolve(undefined);
+  await createBeforeArchive;
+  await archiveAfterCreate;
+  expect(archiveEntered).toBe(true);
+  expect(findByType(emitted, "workspace.create.response")?.payload).toMatchObject({
+    requestId: "req-create-before-expiry",
+    error: null,
+  });
+
+  const archiveStarted = deferred<void>();
+  const finishArchive = deferred<void>();
+  const archiveBeforeCreate = leaseManager.runWithWorkspaceArchiveExclusion(
+    ["ws-affinity-expiry"],
+    async () => {
+      archiveStarted.resolve(undefined);
+      await finishArchive.promise;
+    },
+  );
+  await archiveStarted.promise;
+  try {
+    await session.handleMessage({
+      type: "workspace.create.request",
+      requestId: "req-create-during-expiry",
+      source: { kind: "directory", path: REPO_CWD },
+    });
+  } finally {
+    finishArchive.resolve(undefined);
+    await archiveBeforeCreate;
+  }
+
+  expect(directoryLookupCount).toBe(1);
+  expect(
+    filterByType(emitted, "workspace.create.response").find(
+      (message) => message.payload.requestId === "req-create-during-expiry",
+    )?.payload,
+  ).toMatchObject({
+    workspace: null,
+    error: "Workspace creation is blocked while archival is in progress",
+  });
 });
 
 test("workspace.create.response persists the first prompt as the initial title", async () => {
