@@ -89,6 +89,26 @@ describe("terminal key helpers", () => {
     expect(resolveDomTerminalKeyInput({ ...baseInput, key: "ArrowUp" })).toBeNull();
   });
 
+  it("preserves pending terminal modifiers instead of applying macOS line-boundary mapping", () => {
+    expect(
+      resolveDomTerminalKeyInput({
+        key: "ArrowLeft",
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        metaKey: true,
+        pendingModifiers: { ctrl: false, shift: true, alt: false },
+        isMacDesktop: true,
+      }),
+    ).toEqual({
+      key: "ArrowLeft",
+      ctrl: false,
+      shift: true,
+      alt: false,
+      meta: true,
+    });
+  });
+
   it("merges pending modifiers with native key modifiers", () => {
     expect(
       mergeTerminalModifiers({

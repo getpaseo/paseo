@@ -122,14 +122,16 @@ export function resolveDomTerminalKeyInput(args: {
   alt: boolean;
   meta: boolean;
 } | null {
-  const macLineBoundaryKey = resolveMacLineBoundaryTerminalKey({
-    key: args.key,
-    ctrlKey: args.ctrlKey,
-    shiftKey: args.shiftKey,
-    altKey: args.altKey,
-    metaKey: args.metaKey,
-    isMacDesktop: Boolean(args.isMacDesktop),
-  });
+  const macLineBoundaryKey = hasPendingTerminalModifiers(args.pendingModifiers)
+    ? null
+    : resolveMacLineBoundaryTerminalKey({
+        key: args.key,
+        ctrlKey: args.ctrlKey,
+        shiftKey: args.shiftKey,
+        altKey: args.altKey,
+        metaKey: args.metaKey,
+        isMacDesktop: Boolean(args.isMacDesktop),
+      });
   if (macLineBoundaryKey) {
     return macLineBoundaryKey;
   }
