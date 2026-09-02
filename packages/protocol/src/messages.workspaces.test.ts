@@ -264,6 +264,7 @@ describe("workspace message schemas", () => {
 
     expect(request.type).toBe("fetch_recent_provider_sessions_request");
     expect(request.providers).toEqual(["my-claude"]);
+    expect(request.query).toBeUndefined();
     expect(response.payload).toEqual({
       requestId: "req-recent-provider-sessions",
       entries: [
@@ -279,6 +280,30 @@ describe("workspace message schemas", () => {
         },
       ],
     });
+  });
+
+  test("parses session import search requests and per-provider errors", () => {
+    const request = SessionInboundMessageSchema.parse({
+      type: "fetch_recent_provider_sessions_request",
+      requestId: "req-search-provider-sessions",
+      query: "invoice",
+    });
+    const response = SessionOutboundMessageSchema.parse({
+      type: "fetch_recent_provider_sessions_response",
+      payload: {
+        requestId: "req-search-provider-sessions",
+        entries: [],
+        providerErrors: [{ provider: "codex", message: "Codex listing timed out" }],
+      },
+    });
+
+    expect(request.query).toBe("invoice");
+    if (response.type !== "fetch_recent_provider_sessions_response") {
+      throw new Error("expected fetch_recent_provider_sessions_response");
+    }
+    expect(response.payload.providerErrors).toEqual([
+      { provider: "codex", message: "Codex listing timed out" },
+    ]);
   });
 
   test("parses fetch_recent_provider_sessions response with filteredAlreadyImportedCount", () => {

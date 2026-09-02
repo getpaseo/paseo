@@ -544,6 +544,13 @@ export interface AgentSlashCommand {
 
 export interface ListImportableSessionsOptions {
   limit?: number;
+  /** Optional case-insensitive descriptor search text. */
+  query?: string;
+  /**
+   * Maximum number of cheap persisted-session candidates to inspect before
+   * applying the result limit. Providers must cap this at 500.
+   */
+  scanLimit?: number;
   /**
    * Optional cwd hint. Providers that can cheaply pre-filter importable
    * sessions by working directory should do so before doing expensive work.
