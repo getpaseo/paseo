@@ -298,6 +298,37 @@ describe("parseDiff", () => {
     expect(files[0].hunks).toHaveLength(1);
   });
 
+  it("uses the rename target for no-prefix renames between mnemonic-letter directories", () => {
+    // With diff.noprefix, a rename from a literal w/ directory to a literal
+    // i/ directory produces the same header shape as mnemonic-prefix output.
+    // The rename lines never carry prefixes and disambiguate the two.
+    const files = parseDiff(
+      [
+        "diff --git w/foo.ts i/foo.ts",
+        "similarity index 100%",
+        "rename from w/foo.ts",
+        "rename to i/foo.ts",
+        "",
+      ].join("\n"),
+    );
+
+    expect(files.map((file) => file.path)).toEqual(["i/foo.ts"]);
+  });
+
+  it("uses the rename target for mnemonic-prefix renames", () => {
+    const files = parseDiff(
+      [
+        "diff --git c/w/foo.ts i/w/bar.ts",
+        "similarity index 100%",
+        "rename from w/foo.ts",
+        "rename to w/bar.ts",
+        "",
+      ].join("\n"),
+    );
+
+    expect(files.map((file) => file.path)).toEqual(["w/bar.ts"]);
+  });
+
   it("preserves no-prefix paths that start with a mnemonic letter", () => {
     // With diff.noprefix a repo can contain a literal top-level w/ or i/
     // directory. Both sides carrying the same leading letter means it is a

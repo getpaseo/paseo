@@ -66,7 +66,26 @@ function extractPathFromMetadata(lines: string[], prefix: "--- " | "+++ "): stri
   return path === "/dev/null" ? null : path;
 }
 
+// Rename and copy extended header lines never carry path prefixes,
+// regardless of diff.mnemonicPrefix or diff.noprefix, so they give the
+// authoritative path when the diff --git line is ambiguous. For example a
+// no-prefix rename from a literal w/ directory to a literal i/ directory
+// produces the same header shape as mnemonic-prefix output.
+function extractRenameTargetPath(lines: string[]): string | null {
+  for (const line of lines) {
+    if (line.startsWith("@@") || line.startsWith("--- ")) break;
+    if (line.startsWith("rename to ")) return line.slice("rename to ".length);
+    if (line.startsWith("copy to ")) return line.slice("copy to ".length);
+  }
+  return null;
+}
+
 function extractPathFromDiffHeader(lines: string[]): string {
+  const renameTarget = extractRenameTargetPath(lines);
+  if (renameTarget) {
+    return renameTarget;
+  }
+
   const firstLine = lines[0] ?? "";
   const prefixedPathMatch = firstLine.match(/^([abciow])\/(.+) ([abciow])\/(.+)$/);
   if (prefixedPathMatch && prefixedPathMatch[1] !== prefixedPathMatch[3]) {
