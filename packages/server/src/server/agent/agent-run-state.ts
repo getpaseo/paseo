@@ -22,6 +22,8 @@ export interface PendingForegroundRun {
   readonly generation: symbol;
   stagedEvents: PendingAgentSessionEvent[];
   providerStartStarted: boolean;
+  providerStartSettled: Promise<void>;
+  resolveProviderStartSettled: () => void;
   start:
     | { status: "pending" }
     | { status: "started"; turnId: string }
@@ -287,6 +289,10 @@ export class ForegroundTurnStream {
 }
 
 function createPendingForegroundRun(generation: symbol): PendingForegroundRun {
+  let resolveProviderStartSettled!: () => void;
+  const providerStartSettled = new Promise<void>((resolvePromise) => {
+    resolveProviderStartSettled = resolvePromise;
+  });
   return {
     ...createTrackedRunState(),
     kind: "foreground",
@@ -294,6 +300,8 @@ function createPendingForegroundRun(generation: symbol): PendingForegroundRun {
     start: { status: "pending" },
     stagedEvents: [],
     providerStartStarted: false,
+    providerStartSettled,
+    resolveProviderStartSettled,
   };
 }
 

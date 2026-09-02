@@ -130,7 +130,8 @@ export class AgentRunCancellationError extends Error {
 
 export type DurableTimelineMutationErrorCode =
   | "DURABLE_TIMELINE_MUTATION_FAILED"
-  | "DURABLE_TIMELINE_MUTATION_TIMEOUT";
+  | "DURABLE_TIMELINE_MUTATION_TIMEOUT"
+  | "DURABLE_TIMELINE_PERSISTENCE_UNAVAILABLE";
 
 export class DurableTimelineMutationError extends Error {
   readonly code: DurableTimelineMutationErrorCode;
@@ -144,10 +145,14 @@ export class DurableTimelineMutationError extends Error {
     timeoutMs?: number;
     cause?: unknown;
   }) {
-    const message =
-      params.code === "DURABLE_TIMELINE_MUTATION_TIMEOUT"
-        ? `Durable timeline ${params.operation} for agent ${params.agentId} timed out after ${params.timeoutMs}ms`
-        : `Durable timeline ${params.operation} for agent ${params.agentId} failed`;
+    let message: string;
+    if (params.code === "DURABLE_TIMELINE_MUTATION_TIMEOUT") {
+      message = `Durable timeline ${params.operation} for agent ${params.agentId} timed out after ${params.timeoutMs}ms`;
+    } else if (params.code === "DURABLE_TIMELINE_PERSISTENCE_UNAVAILABLE") {
+      message = `Durable timeline persistence is unavailable for agent ${params.agentId} after ${params.operation}`;
+    } else {
+      message = `Durable timeline ${params.operation} for agent ${params.agentId} failed`;
+    }
     super(message, params.cause === undefined ? undefined : { cause: params.cause });
     this.name = "DurableTimelineMutationError";
     this.code = params.code;
@@ -587,6 +592,30 @@ interface DurableTimelineMutationOptions {
   onTimeout?: () => void;
 }
 
+interface FenceSessionGenerationOptions {
+  settlePendingStart?: boolean;
+  pendingRunStatus?: "canceled" | "failed";
+  pendingRunError?: string;
+  notifyPendingRun?: boolean;
+}
+
+interface QuarantineSessionOptions {
+  pendingRunStatus?: "canceled" | "failed";
+  pendingRunError?: string;
+  notifyPendingRun?: boolean;
+}
+
+interface DurableTimelineLane {
+  tail: Promise<void>;
+  poisoned: DurableTimelineMutationError | null;
+}
+
+interface PendingRunSettlement {
+  token: string;
+  status: "canceled" | "failed";
+  error?: string;
+}
+
 const BUSY_STATUSES: Set<AgentLifecycleStatus> = new Set(["initializing", "running"]);
 const AgentIdSchema = z.guid();
 
@@ -660,6 +689,106 @@ function buildExplicitTimelineSeedForRegister(
     nextSeq: options?.timelineNextSeq,
     timestamp: (options?.updatedAt ?? options?.createdAt ?? now).toISOString(),
   };
+}
+
+function stableTimelineRowId(row: AgentTimelineRow): string | null {
+  switch (row.item.type) {
+    case "user_message": {
+      if (row.item.clientMessageId) {
+        return `user-client:${row.item.clientMessageId}`;
+      }
+      if (row.item.messageId) {
+        return `user-provider:${row.item.messageId}`;
+      }
+      return null;
+    }
+    case "assistant_message":
+      return row.item.messageId ? `assistant:${row.item.messageId}` : null;
+    case "tool_call":
+      return `tool:${row.item.callId}`;
+    default:
+      return null;
+  }
+}
+
+function unkeyedTimelineRowKey(row: AgentTimelineRow): string {
+  return JSON.stringify({
+    timestamp: row.timestamp,
+    item: row.item,
+    turnId: row.turnId,
+    providerMessageId: row.providerMessageId,
+  });
+}
+
+function mergeTimelineRowsByStableOrder(
+  ...sources: readonly (readonly AgentTimelineRow[])[]
+): AgentTimelineRow[] {
+  interface Candidate {
+    row: AgentTimelineRow;
+    sourceIndex: number;
+    rowIndex: number;
+  }
+
+  const candidatesByStableId = new Map<string, Candidate>();
+  const unkeyedCandidates: Candidate[] = [];
+  const latestUnkeyedSourceByKey = new Map<string, number>();
+  for (const [sourceIndex, source] of sources.entries()) {
+    for (const [rowIndex, row] of source.entries()) {
+      const candidate = { row, sourceIndex, rowIndex };
+      const stableId = stableTimelineRowId(row);
+      if (stableId === null) {
+        unkeyedCandidates.push(candidate);
+        latestUnkeyedSourceByKey.set(unkeyedTimelineRowKey(row), sourceIndex);
+      } else {
+        // Later sources are the authoritative copy of a stable row. This keeps a durable
+        // provider identity/turn attachment from being replaced by retained memory.
+        candidatesByStableId.set(stableId, candidate);
+      }
+    }
+  }
+
+  const candidates = [
+    ...candidatesByStableId.values(),
+    ...unkeyedCandidates.filter(
+      (candidate) =>
+        latestUnkeyedSourceByKey.get(unkeyedTimelineRowKey(candidate.row)) ===
+        candidate.sourceIndex,
+    ),
+  ];
+  const durableSourceIndex = sources.length - 1;
+  const ordered = candidates.sort((left, right) => {
+    const leftIsDurable = left.sourceIndex === durableSourceIndex;
+    const rightIsDurable = right.sourceIndex === durableSourceIndex;
+    if (leftIsDurable !== rightIsDurable) {
+      return leftIsDurable ? -1 : 1;
+    }
+    return left.row.seq - right.row.seq || left.rowIndex - right.rowIndex;
+  });
+
+  const occupiedSequences = new Set<number>();
+  const merged: AgentTimelineRow[] = [];
+  for (const candidate of ordered) {
+    let seq = Math.max(1, candidate.row.seq);
+    while (occupiedSequences.has(seq)) {
+      seq += 1;
+    }
+    occupiedSequences.add(seq);
+    merged.push(seq === candidate.row.seq ? candidate.row : { ...candidate.row, seq });
+  }
+  return merged.sort((left, right) => left.seq - right.seq);
+}
+
+function isAlreadyCommittedTimelineRow(
+  row: AgentTimelineRow,
+  committedRows: readonly AgentTimelineRow[],
+): boolean {
+  const stableId = stableTimelineRowId(row);
+  if (stableId !== null) {
+    return committedRows.some((committedRow) => stableTimelineRowId(committedRow) === stableId);
+  }
+  return committedRows.some(
+    (committedRow) => unkeyedTimelineRowKey(committedRow) === unkeyedTimelineRowKey(row),
+  );
 }
 
 function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): AgentTimelineRow[] {
@@ -748,13 +877,18 @@ export class AgentManager {
   private readonly idFactory: () => string;
   private readonly registry?: AgentStorage;
   private readonly durableTimelineStore?: AgentTimelineStore;
-  private readonly durableTimelineMutationTails = new Map<string, Promise<void>>();
+  private readonly durableTimelineLanes = new Map<string, DurableTimelineLane>();
   private readonly coalescedTimelineTails = new Map<string, Promise<void>>();
   private readonly previousStatuses = new Map<string, AgentLifecycleStatus>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentRegistrationTasks = new Set<Promise<void>>();
   private readonly inFlightAgentCloses = new Map<string, Promise<void>>();
+  private readonly sessionClosePromises = new WeakMap<AgentSession, Promise<boolean>>();
   private readonly quarantinedAgentIds = new Set<string>();
+  private readonly poisonedSessionIds = new Set<string>();
+  private readonly poisonedSessionReasons = new Map<string, DurableTimelineMutationError>();
+  private readonly pendingRunSettlements = new Map<string, Map<string, PendingRunSettlement>>();
+  private readonly latestPendingRunSettlementTokens = new Map<string, string>();
   private readonly lifecycleMutationTails = new Map<string, Promise<void>>();
   private readonly agentStreamCoalescer: AgentStreamCoalescer;
   private mcpBaseUrl: string | null;
@@ -1424,11 +1558,16 @@ export class AgentManager {
     options?: { rehydrateFromDisk?: boolean },
   ): Promise<ManagedAgent> {
     this.assertAcceptingAgentRegistrations();
+    if (this.poisonedSessionIds.has(agentId)) {
+      throw this.sessionPersistenceUnavailable(agentId);
+    }
     let existing = this.requireSessionAgent(agentId);
+    const pendingStart = this.runs.getPendingRun(agentId);
     if (this.hasInFlightRun(agentId) && !this.quarantinedAgentIds.has(agentId)) {
       await this.cancelAgentRunBefore(agentId, "reload");
       existing = this.requireSessionAgent(agentId);
     }
+    await this.awaitPendingProviderStartTeardown(agentId, pendingStart, "reload");
     const wasQuarantined = this.quarantinedAgentIds.has(agentId);
     // Stop the old generation before reading anything to preserve. Detached provider work can
     // still be awaiting native I/O; it must not get a chance to write into the replacement.
@@ -1453,14 +1592,15 @@ export class AgentManager {
     const launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
-    let existingSessionClosed = false;
-    if (wasQuarantined) {
-      this.cancelRunningProviderSubagents(agentId);
-      if (existing.unsubscribeSession) {
-        existing.unsubscribeSession();
-        existing.unsubscribeSession = null;
-      }
-      existingSessionClosed = await this.closeReloadedSession(existing.session, agentId);
+    // Tear down the exact old session before creating or resuming its replacement. A provider
+    // start may still resolve after the generation was fenced; await that call above and close
+    // this session here so its continuation cannot race registration of the successor.
+    this.cancelRunningProviderSubagents(agentId);
+    const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+    try {
+      await this.persistSnapshot(closedExisting);
+    } finally {
+      await this.closeReloadedSession(existing.session, agentId);
     }
 
     // A quarantined provider session may still own the canceled turn even after close timed out.
@@ -1476,17 +1616,6 @@ export class AgentManager {
     let handedToRegistration = false;
     try {
       this.assertAcceptingAgentRegistrations();
-
-      this.cancelRunningProviderSubagents(agentId);
-      await this.drainSessionEvents(agentId);
-      const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
-      try {
-        await this.persistSnapshot(closedExisting);
-      } finally {
-        if (!existingSessionClosed) {
-          await this.closeReloadedSession(existing.session, agentId);
-        }
-      }
 
       if (rehydrateFromDisk) {
         // Wipe the in-memory timeline so registerSession mints a new epoch and
@@ -1519,29 +1648,73 @@ export class AgentManager {
   }
 
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<boolean> {
+    const existingClose = this.sessionClosePromises.get(session);
+    if (existingClose) {
+      return await existingClose;
+    }
+    const close = this.closeSessionBounded(
+      session,
+      agentId,
+      "refresh",
+      this.rescueTimeouts.reloadSessionCloseMs,
+    );
+    this.sessionClosePromises.set(session, close);
+    return await close;
+  }
+
+  private async closeSessionBounded(
+    session: AgentSession,
+    agentId: string,
+    context: "refresh" | "quarantine",
+    timeoutMs: number,
+  ): Promise<boolean> {
     try {
       const result = await this.waitWithTimeout({
         operation: session.close(),
-        timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+        timeoutMs,
         onLateError: (error) => {
           this.logger.warn(
             { err: error, agentId },
-            "Previous session close failed after refresh timeout",
+            `Previous session close failed after ${context} timeout`,
           );
         },
       });
 
       if (result === "timed_out") {
         this.logger.warn(
-          { agentId, timeoutMs: this.rescueTimeouts.reloadSessionCloseMs },
-          "Timed out closing previous session during refresh",
+          { agentId, timeoutMs },
+          `Timed out closing previous session during ${context}`,
         );
         return false;
       }
       return true;
     } catch (error) {
-      this.logger.warn({ err: error, agentId }, "Failed to close previous session during refresh");
+      this.logger.warn(
+        { err: error, agentId },
+        `Failed to close previous session during ${context}`,
+      );
       return false;
+    }
+  }
+
+  private async awaitPendingProviderStartTeardown(
+    agentId: string,
+    pendingRun: PendingForegroundRun | null,
+    action: "reload" | "replace",
+  ): Promise<void> {
+    if (!pendingRun?.providerStartStarted) return;
+    const result = await this.waitWithTimeout({
+      operation: pendingRun.providerStartSettled,
+      timeoutMs: this.rescueTimeouts.reloadSessionCloseMs,
+      onLateError: (error) => {
+        this.logger.warn(
+          { err: error, agentId },
+          "Provider start settled after replacement timeout",
+        );
+      },
+    });
+    if (result === "timed_out") {
+      throw new AgentRunCancellationError(agentId, action);
     }
   }
 
@@ -1675,6 +1848,12 @@ export class AgentManager {
   }
 
   private cancelRunningProviderSubagents(parentAgentId: string): void {
+    if (
+      this.poisonedSessionIds.has(parentAgentId) ||
+      this.durableTimelineLanes.get(parentAgentId)?.poisoned
+    ) {
+      return;
+    }
     for (const subagent of this.providerSubagents.list(parentAgentId)) {
       if (subagent.status !== "running") {
         continue;
@@ -2281,6 +2460,9 @@ export class AgentManager {
 
   async appendTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
     const agent = this.requireAgent(agentId);
+    if (this.poisonedSessionIds.has(agentId)) {
+      throw this.sessionPersistenceUnavailable(agentId);
+    }
     const generation = this.sessionGenerationTokens.get(agentId);
     item = limitAgentTimelineItemContent(item);
     const row = await this.recordTimeline(agentId, item, undefined, generation);
@@ -2307,6 +2489,9 @@ export class AgentManager {
 
   async emitLiveTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
     const agent = this.requireAgent(agentId);
+    if (this.poisonedSessionIds.has(agentId)) {
+      throw this.sessionPersistenceUnavailable(agentId);
+    }
     this.touchUpdatedAt(agent);
     this.dispatchStream(agentId, {
       type: "timeline",
@@ -2324,23 +2509,37 @@ export class AgentManager {
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
+      // The generator is lazy. A caller can reserve a run, cancel/close it, and only then pull
+      // the first item. Validate the exact run and generation at the last synchronous boundary
+      // before touching the provider, regardless of clientMessageId/admission persistence.
+      this.assertPendingForegroundRunCurrent(agent, pendingRun);
       pendingRun.providerStartStarted = true;
       const result = await agent.session.startTurn(prompt, options);
       this.assertPendingForegroundRunCurrent(agent, pendingRun);
       return result.turnId;
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
       if (!this.isPendingForegroundRunCurrent(agent, pendingRun)) {
-        if (pendingRun.settled || error instanceof TurnStartCanceledError) {
-          throw error instanceof TurnStartCanceledError ? error : new TurnStartCanceledError();
+        if (pendingRun.providerStartStarted) {
+          await this.quarantineAgentSession(
+            agent,
+            error instanceof TurnStartCanceledError
+              ? new Error("Provider start completed after its session generation was fenced")
+              : error,
+            {
+              pendingRunStatus: error instanceof TurnStartCanceledError ? "canceled" : "failed",
+              pendingRunError: errorMsg,
+              notifyPendingRun: true,
+            },
+          );
         }
-        throw error;
+        throw error instanceof TurnStartCanceledError ? error : new TurnStartCanceledError();
       }
       if (error instanceof TurnStartCanceledError) {
         this.runs.settleForegroundRun(agentId, pendingRun.token);
         throw error;
       }
       agent.pendingReplacement = false;
-      const errorMsg = error instanceof Error ? error.message : "Failed to start turn";
       pendingRun.start = { status: "failed", error: errorMsg };
       await this.handleStreamEvent(
         agent,
@@ -2351,9 +2550,12 @@ export class AgentManager {
         },
         { sessionGeneration: pendingRun.generation },
       );
+      this.assertPendingForegroundRunCurrent(agent, pendingRun);
       this.finalizeForegroundTurn(agent);
       this.runs.settleForegroundRun(agentId, pendingRun.token);
       throw error;
+    } finally {
+      pendingRun.resolveProviderStartSettled();
     }
   }
 
@@ -2393,6 +2595,9 @@ export class AgentManager {
     const existingAgent = this.requireSessionAgent(agentId);
     if (this.quarantinedAgentIds.has(agentId)) {
       throw new Error(`Agent ${agentId} session is quarantined and must be recreated`);
+    }
+    if (this.poisonedSessionIds.has(agentId)) {
+      throw this.sessionPersistenceUnavailable(agentId);
     }
     this.logger.trace(
       {
@@ -2435,6 +2640,7 @@ export class AgentManager {
     // admission lane. Durable timeline and session-event queues are independent async tails; no
     // lifecycle or admission gate may be held while either tail awaits persistence.
     const pendingRun = this.runs.createPendingRun(agentId, generation);
+    this.latestPendingRunSettlementTokens.delete(agentId);
     this.latestTurnTokens.set(agentId, pendingRun.token);
 
     // oxlint-disable-next-line complexity
@@ -2540,13 +2746,33 @@ export class AgentManager {
       } catch (error) {
         if (this.runs.getRun(agentId) === pendingRun && !pendingRun.settled) {
           if (providerStartCompleted) {
-            await this.quarantineAgentSession(agent, error);
+            await this.quarantineAgentSession(agent, error, {
+              pendingRunStatus: "failed",
+              pendingRunError: error instanceof Error ? error.message : "Failed to admit turn",
+              notifyPendingRun: true,
+            });
+            // quarantineAgentSession fenced and settled this exact run. Do not write error state
+            // through the retired generation after its close/quarantine await.
+            throw error;
           }
           pendingRun.start = {
             status: "failed",
             error: error instanceof Error ? error.message : "Failed to admit turn",
           };
           pendingRun.stagedEvents.length = 0;
+          pendingRun.resolveProviderStartSettled();
+          this.rememberPendingRunSettlement(agentId, {
+            token: pendingRun.token,
+            status: "failed",
+            error: pendingRun.start.error,
+          });
+          agent.lastError = pendingRun.start.error;
+          agent.lifecycle = "error";
+          this.touchUpdatedAt(agent);
+          this.emitState(agent, {
+            generation: pendingRun.generation,
+            persist: false,
+          });
           this.runs.settleForegroundRun(agentId, pendingRun.token);
         }
         throw error;
@@ -2674,6 +2900,7 @@ export class AgentManager {
     }
 
     const agent = this.requireSessionAgent(agentId);
+    const pendingStart = this.runs.getPendingRun(agentId);
     agent.pendingReplacement = true;
     agent.lifecycle = "running";
     this.touchUpdatedAt(agent);
@@ -2681,6 +2908,7 @@ export class AgentManager {
 
     try {
       await this.cancelAgentRunBefore(agentId, "replace");
+      await this.awaitPendingProviderStartTeardown(agentId, pendingStart, "replace");
       if (this.quarantinedAgentIds.has(agentId)) {
         await this.reloadAgentSession(agentId);
       }
@@ -2873,15 +3101,20 @@ export class AgentManager {
     if (!clientMessageId) {
       return;
     }
-    await this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
+    const generation = this.requireSessionGeneration(agent.id);
+    const turnToken = this.runs.getRun(agent.id)?.token;
+    const recorded = await this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
       messageId: clientMessageId,
       turnId: expectedTurnId,
-      sessionGeneration: this.sessionGenerationTokens.get(agent.id),
-      turnToken: this.runs.getRun(agent.id)?.token,
+      sessionGeneration: generation,
+      turnToken,
     });
+    if (!recorded || !this.isRefreshCurrent(agent, generation, turnToken)) {
+      return;
+    }
     this.emitState(agent, {
-      generation: this.sessionGenerationTokens.get(agent.id),
-      turnToken: this.runs.getRun(agent.id)?.token,
+      generation,
+      turnToken,
     });
   }
 
@@ -2892,11 +3125,22 @@ export class AgentManager {
     }
 
     const pendingRun = this.runs.getPendingRun(agentId);
+    const latestSettlement = this.getLatestPendingRunSettlement(agentId);
     if (
       (snapshot.lifecycle === "running" || pendingRun?.start.status === "started") &&
       !snapshot.pendingReplacement
     ) {
       return;
+    }
+
+    if (
+      !snapshot.activeForegroundTurnId &&
+      !pendingRun &&
+      !snapshot.pendingReplacement &&
+      latestSettlement &&
+      this.latestPendingRunSettlementTokens.get(agentId) === latestSettlement.token
+    ) {
+      throw this.pendingRunSettlementError(latestSettlement);
     }
 
     if (!snapshot.activeForegroundTurnId && !pendingRun && !snapshot.pendingReplacement) {
@@ -2913,6 +3157,7 @@ export class AgentManager {
         return;
       }
 
+      const observedPendingRunToken = pendingRun?.token;
       let unsubscribe: (() => void) | null = null;
       let abortHandler: (() => void) | null = null;
 
@@ -2951,6 +3196,7 @@ export class AgentManager {
         options.signal.addEventListener("abort", abortHandler, { once: true });
       }
 
+      // oxlint-disable-next-line complexity
       const checkCurrentState = () => {
         const current = this.getAgent(agentId);
         if (!current) {
@@ -2959,6 +3205,17 @@ export class AgentManager {
         }
 
         const currentPendingRun = this.runs.getPendingRun(agentId);
+        if (observedPendingRunToken) {
+          const settlement = this.getPendingRunSettlement(agentId, observedPendingRunToken);
+          if (settlement) {
+            finishErr(this.pendingRunSettlementError(settlement));
+            return true;
+          }
+          if (currentPendingRun && currentPendingRun.token !== observedPendingRunToken) {
+            finishErr(new Error("Agent run was replaced before it started"));
+            return true;
+          }
+        }
         if (
           (current.lifecycle === "running" || currentPendingRun?.start.status === "started") &&
           !current.pendingReplacement
@@ -3087,19 +3344,26 @@ export class AgentManager {
     }
 
     if (!pendingRun.providerStartStarted) {
-      pendingRun.start = {
-        status: "failed",
-        error: new TurnStartCanceledError().message,
-      };
-      pendingRun.stagedEvents.length = 0;
-      this.runs.settleForegroundRun(agentId, pendingRun.token);
+      // Fence before returning. The async generator may not have been consumed yet, so without
+      // this generation change its first pull could still dispatch a provider turn after cancel.
+      this.fenceSessionGeneration(agent, {
+        settlePendingStart: true,
+        pendingRunStatus: "canceled",
+        notifyPendingRun: true,
+      });
+      this.installSessionGeneration(agent);
       return { status: "settled" };
     }
 
     // A provider call has already crossed the admission boundary. Fence first so its late
     // result/events cannot activate this reservation, then use the provider's bounded interrupt
     // and quarantine path to avoid leaving a native turn owner behind.
-    this.fenceSessionGeneration(agent, { settlePendingStart: true });
+    this.quarantinedAgentIds.add(agentId);
+    this.fenceSessionGeneration(agent, {
+      settlePendingStart: true,
+      pendingRunStatus: "canceled",
+      notifyPendingRun: true,
+    });
     const interruptResult = await this.interruptSession(agent.session, agentId);
     await this.quarantineAgentSession(
       agent,
@@ -3250,46 +3514,57 @@ export class AgentManager {
     }
   }
 
-  private async quarantineAgentSession(agent: ActiveManagedAgent, reason?: unknown): Promise<void> {
-    this.quarantinedAgentIds.add(agent.id);
-    // This is synchronous on purpose: reload must observe a settled, fenced run before it can
-    // preserve any state or install a replacement session.
-    this.fenceSessionGeneration(agent, { settlePendingStart: true });
-    this.agentStreamCoalescer.discard(agent.id);
-    this.runs.cancelWaiters(agent, (turnId) => ({
-      type: "turn_canceled",
-      provider: agent.provider,
-      reason: "interrupted",
-      turnId,
-    }));
-    this.runs.clearAgentRun(agent.id);
+  private async quarantineAgentSession(
+    agent: ActiveManagedAgent,
+    reason?: unknown,
+    options?: QuarantineSessionOptions,
+  ): Promise<void> {
+    const ownsCurrentSession = this.agents.get(agent.id) === agent;
+    if (ownsCurrentSession) {
+      this.quarantinedAgentIds.add(agent.id);
+      // This is synchronous on purpose: reload must observe a settled, fenced run before it can
+      // preserve any state or install a replacement session.
+      this.fenceSessionGeneration(agent, {
+        settlePendingStart: true,
+        pendingRunStatus: options?.pendingRunStatus,
+        pendingRunError: options?.pendingRunError,
+        notifyPendingRun: options?.notifyPendingRun,
+      });
+      this.agentStreamCoalescer.discard(agent.id);
+      this.runs.cancelWaiters(agent, (turnId) => ({
+        type: "turn_canceled",
+        provider: agent.provider,
+        reason: "interrupted",
+        turnId,
+      }));
+      this.runs.clearAgentRun(agent.id);
+    }
     this.logger.error(
       { err: reason, agentId: agent.id, provider: agent.provider },
       "Quarantining agent session after cancellation failure",
     );
-    const close = Promise.resolve().then(() => agent.session.close());
+    const existingClose = this.sessionClosePromises.get(agent.session);
+    const close =
+      existingClose ??
+      this.closeSessionBounded(
+        agent.session,
+        agent.id,
+        "quarantine",
+        this.rescueTimeouts.interruptSessionMs,
+      );
+    if (!existingClose) {
+      this.sessionClosePromises.set(agent.session, close);
+    }
     try {
-      const result = await this.waitWithTimeout({
-        operation: close,
-        timeoutMs: this.rescueTimeouts.interruptSessionMs,
-        onLateError: (error) => {
-          this.logger.error(
-            { err: error, agentId: agent.id },
-            "Quarantined agent session close failed after timeout",
-          );
-        },
-      });
-      if (result === "timed_out") {
+      const closed = await close;
+      if (!closed) {
         this.logger.error(
           { agentId: agent.id, timeoutMs: this.rescueTimeouts.interruptSessionMs },
           "Quarantined agent session close timed out",
         );
       }
-    } catch (error) {
-      this.logger.error(
-        { err: error, agentId: agent.id },
-        "Failed to close quarantined agent session",
-      );
+    } catch {
+      // closeSessionBounded converts close failures into a false result and never rejects.
     }
   }
 
@@ -3678,6 +3953,9 @@ export class AgentManager {
     try {
       this.assertAcceptingAgentRegistrations();
       const resolvedAgentId = validateAgentId(agentId, "registerSession");
+      if (this.poisonedSessionIds.has(resolvedAgentId)) {
+        throw this.sessionPersistenceUnavailable(resolvedAgentId);
+      }
       if (this.agents.has(resolvedAgentId)) {
         throw new Error(`Agent with id ${resolvedAgentId} already exists`);
       }
@@ -3704,8 +3982,14 @@ export class AgentManager {
       });
 
       this.assertAcceptingAgentRegistrations();
+      if (this.agents.has(resolvedAgentId)) {
+        throw new Error(`Agent with id ${resolvedAgentId} already exists`);
+      }
       this.agents.set(resolvedAgentId, managed);
       this.sessionGenerationTokens.set(resolvedAgentId, Symbol(`session:${resolvedAgentId}`));
+      // Historical settlements remain available to waiters holding an old token, but a newly
+      // registered session must not report that old run to a fresh waitForAgentRunStart call.
+      this.latestPendingRunSettlementTokens.delete(resolvedAgentId);
       this.quarantinedAgentIds.delete(resolvedAgentId);
       registered = true;
       // Initialize previousStatus to track transitions
@@ -3771,6 +4055,7 @@ export class AgentManager {
     throw new Error(`Provider '${storedConfig.provider}' does not support MCP servers`);
   }
 
+  // oxlint-disable-next-line complexity
   private async initializeAgentTimelineForRegister(params: {
     agentId: string;
     now: Date;
@@ -3787,22 +4072,48 @@ export class AgentManager {
   }): Promise<{ durableTimelineHasRows: boolean }> {
     const { agentId, now, options } = params;
     const timelineAlreadyPrimed = this.timelineStore.has(agentId);
-    const timelineHasRows = timelineAlreadyPrimed && this.timelineStore.getRows(agentId).length > 0;
+    const retainedRows = timelineAlreadyPrimed ? this.timelineStore.getRows(agentId) : [];
     const explicitTimelineSeed = buildExplicitTimelineSeedForRegister(now, options);
-    const shouldSeedFromDurable =
-      !explicitTimelineSeed && !timelineHasRows && this.durableTimelineStore;
-    const durableTimelineSeed = shouldSeedFromDurable
+    const durableTimelineSeed = this.durableTimelineStore
       ? await this.loadCommittedTimelineSeed(agentId, now)
       : null;
-    const durableTimelineHasRows =
-      timelineAlreadyPrimed ||
-      (durableTimelineSeed != null && (durableTimelineSeed.nextSeq ?? 1) > 1);
-    const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
-    if (timelineSeed || !this.timelineStore.has(agentId)) {
-      this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
+    const explicitRows =
+      explicitTimelineSeed?.rows ??
+      (explicitTimelineSeed
+        ? (explicitTimelineSeed.items?.map((item, index) => ({
+            seq: (explicitTimelineSeed.nextSeq ?? 1) + index,
+            timestamp: explicitTimelineSeed.timestamp ?? now.toISOString(),
+            item,
+          })) ?? [])
+        : []);
+    const durableRows = durableTimelineSeed?.rows ?? [];
+    const mergedRows = mergeTimelineRowsByStableOrder(retainedRows, explicitRows, durableRows);
+    const maxRowSeq = mergedRows.reduce((maxSeq, row) => Math.max(maxSeq, row.seq), 0);
+    const durableTimelineHasRows = mergedRows.length > 0 || (durableTimelineSeed?.nextSeq ?? 1) > 1;
+    const hasTimelineSeed =
+      mergedRows.length > 0 ||
+      explicitTimelineSeed !== null ||
+      (durableTimelineSeed !== null && durableTimelineHasRows);
+    if (hasTimelineSeed || !this.timelineStore.has(agentId)) {
+      const epoch = timelineAlreadyPrimed
+        ? this.timelineStore.getEpoch(agentId)
+        : durableTimelineSeed?.epoch;
+      this.timelineStore.initialize(agentId, {
+        ...(mergedRows.length > 0 ? { rows: mergedRows } : {}),
+        ...(epoch ? { epoch } : {}),
+        nextSeq: Math.max(
+          maxRowSeq + 1,
+          explicitTimelineSeed?.nextSeq ?? 1,
+          durableTimelineSeed?.nextSeq ?? 1,
+        ),
+        timestamp: now.toISOString(),
+      });
     }
-    if (options?.timelineRows?.length) {
-      this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
+    if (mergedRows.length > 0) {
+      const rowsToPersist = mergedRows.filter(
+        (row) => !isAlreadyCommittedTimelineRow(row, durableRows),
+      );
+      this.enqueueDurableTimelineBulkInsert(agentId, rowsToPersist);
     }
     return { durableTimelineHasRows };
   }
@@ -3923,9 +4234,16 @@ export class AgentManager {
     this.turnTokensById.delete(agentId);
   }
 
+  private installSessionGeneration(agent: ActiveManagedAgent): symbol {
+    const generation = Symbol(`session:${agent.id}`);
+    this.sessionGenerationTokens.set(agent.id, generation);
+    this.subscribeToSession(agent);
+    return generation;
+  }
+
   private fenceSessionGeneration(
     agent: ActiveManagedAgent,
-    options?: { settlePendingStart?: boolean },
+    options?: FenceSessionGenerationOptions,
   ): void {
     const generation = this.sessionGenerationTokens.get(agent.id);
     const pendingRun = this.runs.getPendingRun(agent.id);
@@ -3935,18 +4253,83 @@ export class AgentManager {
       pendingRun?.generation === generation &&
       pendingRun.start.status === "pending"
     ) {
-      pendingRun.start = {
-        status: "failed",
-        error: "Agent session generation was fenced before turn start",
-      };
-      pendingRun.stagedEvents.length = 0;
-      this.runs.settleForegroundRun(agent.id, pendingRun.token);
+      const status = options.pendingRunStatus ?? "canceled";
+      this.settlePendingForegroundRun(agent, pendingRun, status, {
+        notify: options.notifyPendingRun === true,
+        error:
+          status === "canceled"
+            ? new TurnStartCanceledError().message
+            : (options.pendingRunError ?? "Agent session generation was fenced before turn start"),
+      });
     }
     this.invalidateSessionGeneration(agent.id);
     if (agent.unsubscribeSession) {
       agent.unsubscribeSession();
       agent.unsubscribeSession = null;
     }
+  }
+
+  private settlePendingForegroundRun(
+    agent: ActiveManagedAgent,
+    pendingRun: PendingForegroundRun,
+    status: "canceled" | "failed",
+    options: { error: string; notify: boolean },
+  ): void {
+    pendingRun.start = { status: "failed", error: options.error };
+    pendingRun.stagedEvents.length = 0;
+    pendingRun.resolveProviderStartSettled();
+    this.rememberPendingRunSettlement(agent.id, {
+      token: pendingRun.token,
+      status,
+      error: options.error,
+    });
+    this.runs.settleForegroundRun(agent.id, pendingRun.token);
+    if (options.notify && this.agents.get(agent.id) === agent) {
+      this.dispatchFencedAgentState(agent);
+    }
+  }
+
+  private rememberPendingRunSettlement(agentId: string, settlement: PendingRunSettlement): void {
+    let settlements = this.pendingRunSettlements.get(agentId);
+    if (!settlements) {
+      settlements = new Map();
+      this.pendingRunSettlements.set(agentId, settlements);
+    }
+    settlements.set(settlement.token, settlement);
+    this.latestPendingRunSettlementTokens.set(agentId, settlement.token);
+    while (settlements.size > 8) {
+      const oldestToken = settlements.keys().next().value;
+      if (oldestToken === undefined) {
+        break;
+      }
+      settlements.delete(oldestToken);
+    }
+  }
+
+  private getPendingRunSettlement(
+    agentId: string,
+    token: string,
+  ): PendingRunSettlement | undefined {
+    return this.pendingRunSettlements.get(agentId)?.get(token);
+  }
+
+  private getLatestPendingRunSettlement(agentId: string): PendingRunSettlement | undefined {
+    const settlements = this.pendingRunSettlements.get(agentId);
+    return settlements ? [...settlements.values()].at(-1) : undefined;
+  }
+
+  private pendingRunSettlementError(settlement: PendingRunSettlement): Error {
+    return new Error(
+      settlement.status === "canceled"
+        ? "Agent run was canceled before it started"
+        : (settlement.error ?? "Agent run failed before it started"),
+    );
+  }
+
+  private dispatchFencedAgentState(agent: ActiveManagedAgent): void {
+    if (this.agents.get(agent.id) !== agent || agent.internal) return;
+    this.syncFeaturesFromSession(agent);
+    this.dispatch({ type: "agent_state", agent: { ...agent } });
   }
 
   private discardRetainedAgentState(agentId: string): void {
@@ -4134,6 +4517,9 @@ export class AgentManager {
       return;
     }
     await this.drainCoalescedTimeline(agent.id);
+    if (!this.shouldHandleSessionEvent(agent, { sessionGeneration, turnToken })) {
+      return;
+    }
     if (event.type === "provider_subagent") {
       const update = this.providerSubagents.apply(agent.id, event.provider, event.event);
       this.dispatch({ type: "provider_subagent", event: update });
@@ -4623,6 +5009,9 @@ export class AgentManager {
     generation?: symbol,
     turnToken?: string,
   ): void {
+    if (this.poisonedSessionIds.has(agentId) || this.durableTimelineLanes.get(agentId)?.poisoned) {
+      return;
+    }
     if (generation !== undefined && !this.isSessionGenerationCurrentById(agentId, generation)) {
       return;
     }
@@ -4673,6 +5062,16 @@ export class AgentManager {
           turnToken: payload.turnToken,
         },
       );
+      const currentAgent = this.agents.get(payload.agentId);
+      if (
+        !currentAgent ||
+        !this.shouldHandleSessionEvent(currentAgent, {
+          sessionGeneration: payload.generation,
+          turnToken: payload.turnToken,
+        })
+      ) {
+        return undefined;
+      }
       this.notifyForegroundTurnWaiters(
         payload.agentId,
         event,
@@ -4713,6 +5112,17 @@ export class AgentManager {
       },
     });
     if (result === "timed_out") {
+      const reason = new DurableTimelineMutationError({
+        code: "DURABLE_TIMELINE_MUTATION_TIMEOUT",
+        agentId,
+        operation: "coalesced timeline drain",
+        timeoutMs: this.rescueTimeouts.durableTimelineMutationMs,
+      });
+      if (this.durableTimelineLanes.has(agentId)) {
+        this.poisonDurableTimelineLane(agentId, reason);
+      } else {
+        this.poisonSession(agentId, reason);
+      }
       this.logger.warn(
         { agentId, timeoutMs: this.rescueTimeouts.durableTimelineMutationMs },
         "Timed out draining coalesced timeline mutations",
@@ -4761,10 +5171,12 @@ export class AgentManager {
       ) {
         this.traceCoalescerBuffered(agent, event, eventTurnId);
         await this.drainCoalescedTimeline(agent.id);
+        if (!this.shouldHandleSessionEvent(agent, options)) return false;
         return false;
       }
       this.agentStreamCoalescer.flushFor(agent.id);
       await this.drainCoalescedTimeline(agent.id);
+      if (!this.shouldHandleSessionEvent(agent, options)) return false;
     }
 
     let terminalDisposition: ActiveTurnTerminalDisposition = "untracked";
@@ -5017,6 +5429,7 @@ export class AgentManager {
     });
   }
 
+  // oxlint-disable-next-line complexity
   private async onStreamTimelineEvent(params: {
     agent: ActiveManagedAgent;
     event: Extract<AgentStreamEvent, { type: "timeline" }>;
@@ -5031,17 +5444,18 @@ export class AgentManager {
       return;
     }
 
-    if (
-      event.item.type === "user_message" &&
-      event.item.clientMessageId &&
-      (await this.reconcileSubmittedPromptEcho(
-        agent,
-        event.item,
-        event.turnId,
-        options?.sessionGeneration,
-        options?.turnToken,
-      ))
-    ) {
+    const reconciledSubmittedPrompt =
+      event.item.type === "user_message" && event.item.clientMessageId
+        ? await this.reconcileSubmittedPromptEcho(
+            agent,
+            event.item,
+            event.turnId,
+            options?.sessionGeneration,
+            options?.turnToken,
+          )
+        : null;
+    if (!this.shouldHandleSessionEvent(agent, options)) return;
+    if (reconciledSubmittedPrompt) {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
@@ -5055,6 +5469,7 @@ export class AgentManager {
         options?.sessionGeneration,
         options?.turnToken,
       );
+      if (!this.shouldHandleSessionEvent(agent, options)) return;
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
@@ -5317,6 +5732,9 @@ export class AgentManager {
       turnToken?: string;
     },
   ): Promise<AgentStreamEvent> {
+    if (this.poisonedSessionIds.has(agentId)) {
+      throw new TurnStartCanceledError();
+    }
     if (
       options?.turnToken !== undefined &&
       !this.isLatestTurnTokenCurrent(agentId, options.turnToken)
@@ -5330,6 +5748,10 @@ export class AgentManager {
       options?.sessionGeneration,
       options?.turnToken,
     );
+    const lane = this.durableTimelineLanes.get(agentId);
+    if (lane?.poisoned) {
+      throw this.durableTimelinePersistenceUnavailable(agentId, lane);
+    }
     if (
       (options?.sessionGeneration !== undefined &&
         !this.isSessionGenerationCurrentById(agentId, options.sessionGeneration)) ||
@@ -5445,15 +5867,35 @@ export class AgentManager {
             inserted: true,
           };
     } else {
+      const lane = this.getDurableTimelineLane(agent.id);
+      if (lane.poisoned) {
+        throw this.durableTimelinePersistenceUnavailable(agent.id, lane);
+      }
       const mutation = this.queueDurableTimelineMutation(
         agent.id,
         generation,
+        // Keep the exact generation/pending-run checks adjacent to the storage await; this is
+        // the last point before a durable append.
+        // oxlint-disable-next-line complexity
         async (): Promise<SubmittedPromptRecord | undefined> => {
           const existing = this.timelineStore.getSubmittedUserMessage(agent.id, clientMessageId);
           if (existing) {
             return { row: existing, inserted: false };
           }
           const committedRows = await store.getCommittedRows(agent.id);
+          if (lane.poisoned) {
+            throw this.durableTimelinePersistenceUnavailable(agent.id, lane);
+          }
+          if (
+            !this.isDurableTimelineMutationCurrent(
+              agent.id,
+              generation,
+              options?.turnToken,
+              options?.pendingRun,
+            )
+          ) {
+            return;
+          }
           this.mergeCommittedTimelineRows(agent.id, committedRows, {
             generation,
             turnToken: options?.turnToken,
@@ -5482,6 +5924,9 @@ export class AgentManager {
             ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
           };
           await store.bulkInsert(agent.id, [row]);
+          if (lane.poisoned) {
+            throw this.durableTimelinePersistenceUnavailable(agent.id, lane);
+          }
           if (
             (generation !== undefined &&
               !this.isSessionGenerationCurrentById(agent.id, generation)) ||
@@ -5606,17 +6051,27 @@ export class AgentManager {
         ...(turnToken ? { turnToken } : {}),
       });
       existing = recorded?.row ?? null;
+      if (!this.shouldHandleSessionEvent(agent, { sessionGeneration: generation, turnToken })) {
+        return existing;
+      }
     }
     if (!existing || existing.item.type !== "user_message") return null;
     if (messageId) {
-      const enriched = this.timelineStore.enrichSubmittedUserMessage(
-        agent.id,
-        clientMessageId,
-        messageId,
-      );
-      if (enriched)
+      const enriched: AgentTimelineRow = { ...existing, providerMessageId: messageId };
+      if (this.durableTimelineStore) {
         await this.enqueueDurableTimelineUpdate(agent.id, enriched, generation, turnToken);
-      return enriched ?? existing;
+        if (!this.shouldHandleSessionEvent(agent, { sessionGeneration: generation, turnToken })) {
+          return existing;
+        }
+      } else if (
+        !this.shouldHandleSessionEvent(agent, { sessionGeneration: generation, turnToken })
+      ) {
+        return existing;
+      }
+      return (
+        this.timelineStore.enrichSubmittedUserMessage(agent.id, clientMessageId, messageId) ??
+        existing
+      );
     }
     return existing;
   }
@@ -5642,24 +6097,23 @@ export class AgentManager {
       return;
     }
 
-    const knownSequences = new Set(this.timelineStore.getRows(agentId).map((row) => row.seq));
-    for (const row of [...rows].sort((left, right) => left.seq - right.seq)) {
-      if (knownSequences.has(row.seq)) {
-        continue;
-      }
-      const nextSeq = this.timelineStore.fetch(agentId, { limit: 0 }).window.nextSeq;
-      if (row.seq < nextSeq) {
-        knownSequences.add(row.seq);
-        continue;
-      }
-      if (row.seq > nextSeq) {
-        break;
-      }
-      this.timelineStore.appendRow(agentId, row);
-      knownSequences.add(row.seq);
+    const currentRows = this.timelineStore.getRows(agentId);
+    const mergedRows = mergeTimelineRowsByStableOrder(currentRows, rows);
+    const currentFetch = this.timelineStore.fetch(agentId, { limit: 0 });
+    const sameRows =
+      currentRows.length === mergedRows.length &&
+      currentRows.every((row, index) => JSON.stringify(row) === JSON.stringify(mergedRows[index]));
+    if (!sameRows) {
+      const maxRowSeq = mergedRows.reduce((maxSeq, row) => Math.max(maxSeq, row.seq), 0);
+      this.timelineStore.initialize(agentId, {
+        rows: mergedRows,
+        epoch: currentFetch.epoch,
+        nextSeq: Math.max(currentFetch.window.nextSeq, maxRowSeq + 1),
+      });
     }
   }
 
+  // oxlint-disable-next-line complexity
   private async appendSystemErrorTimelineMessage(
     agent: ActiveManagedAgent,
     provider: AgentProvider,
@@ -5701,6 +6155,16 @@ export class AgentManager {
       options?.sessionGeneration,
       options?.turnToken,
     );
+    if (
+      this.poisonedSessionIds.has(agent.id) ||
+      this.durableTimelineLanes.get(agent.id)?.poisoned ||
+      (options?.sessionGeneration !== undefined &&
+        !this.isSessionGenerationCurrent(agent, options.sessionGeneration)) ||
+      (options?.turnToken !== undefined &&
+        !this.isLatestTurnTokenCurrent(agent.id, options.turnToken))
+    ) {
+      return;
+    }
     this.dispatchStream(
       agent.id,
       {
@@ -5809,6 +6273,12 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     options?: HandleStreamEventOptions,
   ): boolean {
+    if (this.poisonedSessionIds.has(agent.id)) {
+      return false;
+    }
+    if (this.durableTimelineLanes.get(agent.id)?.poisoned) {
+      return false;
+    }
     if (
       options?.sessionGeneration === undefined ||
       !this.isSessionGenerationCurrent(agent, options.sessionGeneration)
@@ -5824,6 +6294,19 @@ export class AgentManager {
     return true;
   }
 
+  private isDurableTimelineMutationCurrent(
+    agentId: string,
+    generation?: symbol,
+    turnToken?: string,
+    pendingRun?: PendingForegroundRun,
+  ): boolean {
+    return (
+      (generation === undefined || this.isSessionGenerationCurrentById(agentId, generation)) &&
+      (turnToken === undefined || this.isLatestTurnTokenCurrent(agentId, turnToken)) &&
+      (pendingRun === undefined || this.isPendingForegroundRunCurrentById(agentId, pendingRun))
+    );
+  }
+
   private async recordTimeline(
     agentId: string,
     item: AgentTimelineItem,
@@ -5835,6 +6318,11 @@ export class AgentManager {
     generation?: symbol,
     turnToken?: string,
   ): Promise<AgentTimelineRow> {
+    const store = this.durableTimelineStore;
+    const lane = store ? this.getDurableTimelineLane(agentId) : undefined;
+    if (lane?.poisoned) {
+      throw this.durableTimelinePersistenceUnavailable(agentId, lane);
+    }
     if (generation !== undefined && !this.isSessionGenerationCurrentById(agentId, generation)) {
       throw new TurnStartCanceledError();
     }
@@ -5842,7 +6330,6 @@ export class AgentManager {
       throw new TurnStartCanceledError();
     }
     item = limitAgentTimelineItemContent(item);
-    const store = this.durableTimelineStore;
     if (!store) {
       return this.timelineStore.append(agentId, item, options);
     }
@@ -5853,6 +6340,15 @@ export class AgentManager {
       generation,
       async () => {
         const committedRows = await store.getCommittedRows(agentId);
+        if (
+          lane?.poisoned ||
+          !this.isDurableTimelineMutationCurrent(agentId, generation, turnToken)
+        ) {
+          if (lane?.poisoned) {
+            throw this.durableTimelinePersistenceUnavailable(agentId, lane);
+          }
+          return;
+        }
         this.mergeCommittedTimelineRows(agentId, committedRows, { generation, turnToken });
         const durableNextSeq = committedRows.reduce(
           (nextSeq, row) => Math.max(nextSeq, row.seq + 1),
@@ -5870,6 +6366,9 @@ export class AgentManager {
           ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
         };
         await store.bulkInsert(agentId, [row]);
+        if (lane?.poisoned) {
+          throw this.durableTimelinePersistenceUnavailable(agentId, lane);
+        }
         if (
           mutationTimedOut ||
           (generation !== undefined && !this.isSessionGenerationCurrentById(agentId, generation)) ||
@@ -6065,14 +6564,15 @@ export class AgentManager {
       generation,
       () => store.updateCommittedRow(agentId, row),
       turnToken,
-    ).catch((err) => {
-      this.logger.error(
-        { err, agentId, seq: row.seq, itemType: row.item.type },
-        "Failed to enrich durable timeline row",
-      );
-    });
-    this.trackBackgroundTask(task);
-    return task;
+    );
+    const result = task.then(() => undefined);
+    this.trackBackgroundTask(
+      result.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return result;
   }
 
   private queueDurableTimelineMutation(
@@ -6096,31 +6596,30 @@ export class AgentManager {
     turnToken?: string,
     options?: DurableTimelineMutationOptions,
   ): Promise<T | undefined> {
-    const previous = this.durableTimelineMutationTails.get(agentId) ?? Promise.resolve();
-    const operation = previous
-      .catch(() => undefined)
-      .then(async () => {
-        if (
-          (generation !== undefined && !this.isSessionGenerationCurrentById(agentId, generation)) ||
-          (turnToken !== undefined && !this.isLatestTurnTokenCurrent(agentId, turnToken)) ||
-          (options?.pendingRun !== undefined &&
-            !this.isPendingForegroundRunCurrentById(agentId, options.pendingRun))
-        ) {
-          return;
-        }
-        return await mutation();
-      });
+    const lane = this.getDurableTimelineLane(agentId);
+    if (lane.poisoned) {
+      return Promise.reject(this.durableTimelinePersistenceUnavailable(agentId, lane));
+    }
+
+    const operation = lane.tail.then(async () => {
+      if (lane.poisoned) {
+        throw this.durableTimelinePersistenceUnavailable(agentId, lane);
+      }
+      if (
+        (generation !== undefined && !this.isSessionGenerationCurrentById(agentId, generation)) ||
+        (turnToken !== undefined && !this.isLatestTurnTokenCurrent(agentId, turnToken)) ||
+        (options?.pendingRun !== undefined &&
+          !this.isPendingForegroundRunCurrentById(agentId, options.pendingRun))
+      ) {
+        return;
+      }
+      return await mutation();
+    });
     const tail = operation.then(
       () => undefined,
       () => undefined,
     );
-    this.durableTimelineMutationTails.set(agentId, tail);
-    void tail.then(() => {
-      if (this.durableTimelineMutationTails.get(agentId) === tail) {
-        this.durableTimelineMutationTails.delete(agentId);
-      }
-      return undefined;
-    });
+    lane.tail = tail;
     return this.waitForDurableTimelineMutation(operation, {
       agentId,
       operation: options?.operation ?? "mutation",
@@ -6128,13 +6627,22 @@ export class AgentManager {
     });
   }
 
+  private getDurableTimelineLane(agentId: string): DurableTimelineLane {
+    let lane = this.durableTimelineLanes.get(agentId);
+    if (!lane) {
+      lane = { tail: Promise.resolve(), poisoned: null };
+      this.durableTimelineLanes.set(agentId, lane);
+    }
+    return lane;
+  }
+
   private async drainDurableTimelineMutations(agentId: string): Promise<void> {
-    const tail = this.durableTimelineMutationTails.get(agentId);
-    if (!tail) {
+    const lane = this.durableTimelineLanes.get(agentId);
+    if (!lane || lane.poisoned) {
       return;
     }
     const result = await this.waitWithTimeout({
-      operation: tail,
+      operation: lane.tail,
       timeoutMs: this.rescueTimeouts.durableTimelineMutationMs,
       onLateError: (error) => {
         this.logger.warn(
@@ -6144,6 +6652,15 @@ export class AgentManager {
       },
     });
     if (result === "timed_out") {
+      this.poisonDurableTimelineLane(
+        agentId,
+        new DurableTimelineMutationError({
+          code: "DURABLE_TIMELINE_MUTATION_TIMEOUT",
+          agentId,
+          operation: "timeline drain",
+          timeoutMs: this.rescueTimeouts.durableTimelineMutationMs,
+        }),
+      );
       this.logger.warn(
         { agentId, timeoutMs: this.rescueTimeouts.durableTimelineMutationMs },
         "Timed out draining durable timeline mutations",
@@ -6159,6 +6676,9 @@ export class AgentManager {
     const result = operation.then(
       (value) => value,
       (error: unknown) => {
+        if (error instanceof DurableTimelineMutationError) {
+          throw error;
+        }
         throw new DurableTimelineMutationError({
           code: "DURABLE_TIMELINE_MUTATION_FAILED",
           agentId: params.agentId,
@@ -6170,14 +6690,14 @@ export class AgentManager {
     const timeout = new Promise<T | undefined>((_, reject) => {
       timer = setTimeout(() => {
         params.onTimeout?.();
-        reject(
-          new DurableTimelineMutationError({
-            code: "DURABLE_TIMELINE_MUTATION_TIMEOUT",
-            agentId: params.agentId,
-            operation: params.operation,
-            timeoutMs: this.rescueTimeouts.durableTimelineMutationMs,
-          }),
-        );
+        const timeoutError = new DurableTimelineMutationError({
+          code: "DURABLE_TIMELINE_MUTATION_TIMEOUT",
+          agentId: params.agentId,
+          operation: params.operation,
+          timeoutMs: this.rescueTimeouts.durableTimelineMutationMs,
+        });
+        this.poisonDurableTimelineLane(params.agentId, timeoutError);
+        reject(timeoutError);
       }, this.rescueTimeouts.durableTimelineMutationMs);
     });
     try {
@@ -6187,6 +6707,66 @@ export class AgentManager {
         clearTimeout(timer);
       }
     }
+  }
+
+  private durableTimelinePersistenceUnavailable(
+    agentId: string,
+    lane: DurableTimelineLane,
+  ): DurableTimelineMutationError {
+    return new DurableTimelineMutationError({
+      code: "DURABLE_TIMELINE_PERSISTENCE_UNAVAILABLE",
+      agentId,
+      operation: lane.poisoned?.operation ?? "mutation",
+      cause: lane.poisoned,
+    });
+  }
+
+  private sessionPersistenceUnavailable(agentId: string): DurableTimelineMutationError {
+    const lane = this.durableTimelineLanes.get(agentId);
+    if (lane?.poisoned) {
+      return this.durableTimelinePersistenceUnavailable(agentId, lane);
+    }
+    const reason = this.poisonedSessionReasons.get(agentId);
+    return new DurableTimelineMutationError({
+      code: "DURABLE_TIMELINE_PERSISTENCE_UNAVAILABLE",
+      agentId,
+      operation: reason?.operation ?? "session",
+      cause: reason,
+    });
+  }
+
+  private poisonDurableTimelineLane(agentId: string, reason: DurableTimelineMutationError): void {
+    const lane = this.durableTimelineLanes.get(agentId);
+    if (!lane || lane.poisoned) return;
+    lane.poisoned = reason;
+    this.poisonSession(agentId, reason);
+  }
+
+  private poisonSession(agentId: string, reason: unknown): void {
+    if (this.poisonedSessionIds.has(agentId)) return;
+    this.poisonedSessionIds.add(agentId);
+    if (reason instanceof DurableTimelineMutationError) {
+      this.poisonedSessionReasons.set(agentId, reason);
+    }
+
+    const agent = this.agents.get(agentId);
+    if (!agent) return;
+    this.quarantinedAgentIds.add(agentId);
+    this.fenceSessionGeneration(agent, {
+      settlePendingStart: true,
+      pendingRunStatus: "failed",
+      pendingRunError: "Durable timeline persistence is unavailable",
+      notifyPendingRun: true,
+    });
+    this.agentStreamCoalescer.discard(agentId);
+    this.runs.cancelWaiters(agent, (turnId) => ({
+      type: "turn_canceled",
+      provider: agent.provider,
+      reason: "Durable timeline persistence is unavailable",
+      turnId,
+    }));
+    this.runs.clearAgentRun(agentId);
+    this.trackBackgroundTask(this.quarantineAgentSession(agent, reason));
   }
 
   private trackBackgroundTask(task: Promise<void>): void {
@@ -6265,6 +6845,9 @@ export class AgentManager {
     generation?: symbol,
     turnToken?: string,
   ): void {
+    if (this.poisonedSessionIds.has(agentId) || this.durableTimelineLanes.get(agentId)?.poisoned) {
+      return;
+    }
     if (generation !== undefined && !this.isSessionGenerationCurrentById(agentId, generation)) {
       return;
     }
