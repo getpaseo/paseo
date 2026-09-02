@@ -397,23 +397,24 @@ test("every interactive file header has the same hover feedback", async ({ page 
 
   const first = page.getByTestId("diff-file-0-toggle");
   const second = page.getByTestId("diff-file-1-toggle");
-  const canvas = page.getByTestId("git-diff-header-canvas");
-  const normalBackground = await headerCanvasPixel(canvas, first, 10);
+  const firstCanvas = page.getByTestId("git-diff-sticky-header-0");
+  const secondCanvas = page.getByTestId("git-diff-sticky-header-1");
+  const normalBackground = await headerCanvasPixel(firstCanvas, first, 10);
 
   await first.hover();
-  await expect.poll(() => headerCanvasPixel(canvas, first, 10)).not.toBe(normalBackground);
-  const hoverBackground = await headerCanvasPixel(canvas, first, 10);
+  await expect.poll(() => headerCanvasPixel(firstCanvas, first, 10)).not.toBe(normalBackground);
+  const hoverBackground = await headerCanvasPixel(firstCanvas, first, 10);
 
   await first.click();
   await page.mouse.move(0, 0);
   await expect(first).toHaveAttribute("aria-expanded", "false");
-  await expect.poll(() => headerCanvasPixel(canvas, first, 10)).toBe(normalBackground);
+  await expect.poll(() => headerCanvasPixel(firstCanvas, first, 10)).toBe(normalBackground);
 
   await first.hover();
-  await expect.poll(() => headerCanvasPixel(canvas, first, 10)).toBe(hoverBackground);
+  await expect.poll(() => headerCanvasPixel(firstCanvas, first, 10)).toBe(hoverBackground);
   await second.hover();
-  await expect.poll(() => headerCanvasPixel(canvas, first, 10)).toBe(normalBackground);
-  await expect.poll(() => headerCanvasPixel(canvas, second, 10)).toBe(hoverBackground);
+  await expect.poll(() => headerCanvasPixel(firstCanvas, first, 10)).toBe(normalBackground);
+  await expect.poll(() => headerCanvasPixel(secondCanvas, second, 10)).toBe(hoverBackground);
 });
 
 test("horizontal body scrolling never moves or repaints the canvas header", async ({ page }) => {
@@ -422,20 +423,26 @@ test("horizontal body scrolling never moves or repaints the canvas header", asyn
   await useUnwrappedDiffLines(page);
   await openSelectionWorkspaceChanges(page, workspace);
 
-  const headerCanvas = page.getByTestId("git-diff-header-canvas");
+  const headerCanvas = page.getByTestId("git-diff-canvas");
   const header = page.getByTestId("diff-file-0-toggle");
-  const beforeImage = await headerCanvas.evaluate((element) =>
-    (element as HTMLCanvasElement).toDataURL(),
-  );
+  const beforePixel = await headerCanvasPixel(headerCanvas, header, 10);
   const beforeBounds = await header.boundingBox();
 
   await horizontallyScrollFirstFile(page, 320);
   await page.waitForTimeout(50);
 
-  expect(await headerCanvas.evaluate((element) => (element as HTMLCanvasElement).toDataURL())).toBe(
-    beforeImage,
-  );
+  expect(await headerCanvasPixel(headerCanvas, header, 10)).toBe(beforePixel);
   expect(await header.boundingBox()).toEqual(beforeBounds);
+});
+
+test("in-flow file headers move with the diff document", async ({ page }) => {
+  const workspace = await createWorkspaceWithStickyTransitionDiff();
+  await useUnwrappedDiffLines(page);
+  await openWorkspaceChangesSurface(page, workspace);
+
+  const motion = await measureInFlowHeaderMotion(page);
+
+  expect(motion).toEqual({ headerSurface: -120, shell: -120 });
 });
 
 test("the outgoing sticky header hands off without a gap or overlap", async ({
@@ -1096,7 +1103,7 @@ test("canvas headers keep a many-file diff bounded while scrolling end to end", 
 
   const root = page.getByTestId("git-diff-canvas-root");
   const scroller = page.getByTestId("git-diff-scroll");
-  await expect(page.getByTestId("git-diff-header-canvas")).toBeVisible({ timeout: 30_000 });
+  await expect(root.locator('[data-testid^="git-diff-sticky-header-"]')).toHaveCount(2);
   await expect.poll(() => root.locator('[data-diff-header="true"]').count()).toBeLessThan(120);
 
   await scroller.evaluate((element) => {
@@ -1106,7 +1113,7 @@ test("canvas headers keep a many-file diff bounded while scrolling end to end", 
 
   await expect(page.getByTestId("diff-file-1999")).toBeVisible();
   await expect.poll(() => root.locator('[data-diff-header="true"]').count()).toBeLessThan(120);
-  await expect(page.getByTestId("git-diff-header-canvas")).toBeVisible();
+  await expect(root.locator('[data-testid^="git-diff-sticky-header-"]')).toHaveCount(2);
 });
 
 test("the whole reviewable row reveals the gutter affordance and uses a text cursor", async ({
@@ -2028,6 +2035,39 @@ async function horizontallyScrollFirstFile(page: Page, requestedOffset: number):
   }, requestedOffset);
   expect(retainedOffset).toBeGreaterThan(0);
   return retainedOffset;
+}
+
+async function measureInFlowHeaderMotion(
+  page: Page,
+): Promise<{ headerSurface: number; shell: number }> {
+  return page.getByTestId("git-diff-scroll").evaluate(async (element) => {
+    const scroll = element as HTMLElement;
+    const headerSurface = document.querySelector<HTMLElement>('[data-testid="git-diff-canvas"]');
+    const shell = document.querySelector<HTMLElement>('[data-diff-header-path="src/second.ts"]');
+    if (!headerSurface || !shell) throw new Error("Diff header motion surfaces are unavailable");
+
+    const shellDocumentTop =
+      scroll.scrollTop + shell.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
+    scroll.scrollTop = Math.max(0, shellDocumentTop - scroll.clientHeight + 80);
+    scroll.dispatchEvent(new Event("scroll", { bubbles: false }));
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+
+    const before = {
+      headerSurface: headerSurface.getBoundingClientRect().top,
+      shell: shell.getBoundingClientRect().top,
+    };
+    scroll.scrollTop += 120;
+    const after = {
+      headerSurface: headerSurface.getBoundingClientRect().top,
+      shell: shell.getBoundingClientRect().top,
+    };
+    return {
+      headerSurface: after.headerSurface - before.headerSurface,
+      shell: after.shell - before.shell,
+    };
+  });
 }
 
 async function longPressFileHeader(page: Page, header: Locator): Promise<void> {

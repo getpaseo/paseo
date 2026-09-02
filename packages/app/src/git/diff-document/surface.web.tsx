@@ -15,7 +15,6 @@ import { copyToClipboard } from "@/utils/copy-to-clipboard";
 import type { ReviewableDiffTarget } from "@/utils/diff-layout";
 import { DocumentFileHeader } from "./document-file-header";
 import {
-  diffHeaderViewportKey,
   diffInteractionWindowTop,
   diffMaterializationWindow,
   resolveVisibleFileSections,
@@ -29,12 +28,13 @@ import {
 import { retainHorizontalOffsetMapForPaths } from "./horizontal-offsets";
 import { HorizontalScroll } from "./horizontal-scroll.web";
 import { buildDiffDocumentModel, FILE_HEADER_HEIGHT, resolveRelayoutScrollTop } from "./model";
-import { paintWebHeaders, paintWebViewport } from "./paint.web";
+import { paintWebFileHeader, paintWebViewport } from "./paint.web";
 import { hasPointerDragStarted } from "./pointer-gesture";
 import { createMeasuredAdvances } from "./text-measurement";
 import { retainDiffViewport } from "./viewport";
 import type {
   DiffHit,
+  DiffFileSection,
   DiffSelection,
   DiffSurfaceProps,
   DiffTypography,
@@ -45,13 +45,40 @@ import { useDiffDocumentWorkspaceCache } from "./workspace-cache";
 const DEFAULT_MONO_STACK = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace";
 const RESIZE_SETTLE_DELAY_MS = 120;
 
+interface StickyHeaderCanvasSlot {
+  section: HTMLDivElement | null;
+  canvas: HTMLCanvasElement | null;
+  file: DiffFileSection | null;
+  active: boolean;
+  width: number;
+  ratio: number;
+  palette: DiffSurfaceProps["palette"] | null;
+  typography: DiffSurfaceProps["headerTypography"] | null;
+}
+
+function emptyStickyHeaderCanvasSlot(): StickyHeaderCanvasSlot {
+  return {
+    section: null,
+    canvas: null,
+    file: null,
+    active: false,
+    width: 0,
+    ratio: 0,
+    palette: null,
+    typography: null,
+  };
+}
+
 export function DiffSurface(props: DiffSurfaceProps) {
   const { t } = useTranslation();
   const toast = useToast();
   const workspaceCache = useDiffDocumentWorkspaceCache();
   const rootRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const headerCanvasRef = useRef<HTMLCanvasElement>(null);
+  const stickyHeaderSlotsRef = useRef<[StickyHeaderCanvasSlot, StickyHeaderCanvasSlot]>([
+    emptyStickyHeaderCanvasSlot(),
+    emptyStickyHeaderCanvasSlot(),
+  ]);
   const canvasScratchRef = useRef<HTMLCanvasElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const modelRef = useRef<ReturnType<typeof buildDiffDocumentModel> | null>(null);
@@ -68,16 +95,6 @@ export function DiffSurface(props: DiffSurfaceProps) {
     dismissSelectionOnClick: boolean;
   } | null>(null);
   const frameRef = useRef<number | null>(null);
-  const headerFrameRef = useRef<number | null>(null);
-  const headerPaintRef = useRef<{
-    key: string;
-    model: ReturnType<typeof buildDiffDocumentModel>;
-    width: number;
-    height: number;
-    ratio: number;
-    palette: DiffSurfaceProps["palette"];
-    typography: DiffSurfaceProps["headerTypography"];
-  } | null>(null);
   const activeHeaderPathRef = useRef<string | null>(null);
   const resizeSettleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const resizeReleaseFrameRef = useRef<number | null>(null);
@@ -185,6 +202,75 @@ export function DiffSurface(props: DiffSurfaceProps) {
   ]);
   modelRef.current = model;
 
+  const paintStickyHeaderPool = useCallback(
+    (currentModel: ReturnType<typeof buildDiffDocumentModel>, scrollTop: number) => {
+      const stickyFile = resolveVisibleFileSections({
+        files: currentModel.files,
+        scrollTop,
+        viewportHeight: Math.max(1, viewport.height),
+        overscan: 0,
+      }).sticky?.file;
+      const pooledFiles = stickyFile
+        ? [stickyFile, currentModel.files[stickyFile.fileIndex + 1]].filter(
+            (file): file is DiffFileSection => file !== undefined,
+          )
+        : [];
+      const ratio = window.devicePixelRatio || 1;
+
+      for (const [slotIndex, slot] of stickyHeaderSlotsRef.current.entries()) {
+        const file = pooledFiles.find((candidate) => candidate.fileIndex % 2 === slotIndex) ?? null;
+        const { section, canvas } = slot;
+        if (!section || !canvas) continue;
+        if (!file) {
+          section.style.display = "none";
+          slot.file = null;
+          continue;
+        }
+
+        section.style.display = "block";
+        section.style.top = `${file.top}px`;
+        section.style.height = `${file.bottom - file.top}px`;
+        section.dataset.diffStickyHeaderPath = file.path;
+        const active = activeHeaderPathRef.current === file.path;
+        const canReusePaint =
+          slot.file === file &&
+          slot.active === active &&
+          slot.width === viewport.width &&
+          slot.ratio === ratio &&
+          slot.palette === props.palette &&
+          slot.typography === props.headerTypography;
+        if (canReusePaint) continue;
+
+        const pixelWidth = Math.ceil(viewport.width * ratio);
+        const pixelHeight = Math.ceil(FILE_HEADER_HEIGHT * ratio);
+        if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
+        if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${FILE_HEADER_HEIGHT}px`;
+        const context = canvas.getContext("2d");
+        if (!context) continue;
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.clearRect(0, 0, viewport.width, FILE_HEADER_HEIGHT);
+        paintWebFileHeader({
+          context,
+          file,
+          palette: props.palette,
+          typography: props.headerTypography,
+          viewportWidth: viewport.width,
+          y: 0,
+          activePath: activeHeaderPathRef.current,
+        });
+        slot.file = file;
+        slot.active = active;
+        slot.width = viewport.width;
+        slot.ratio = ratio;
+        slot.palette = props.palette;
+        slot.typography = props.headerTypography;
+      }
+    },
+    [props.headerTypography, props.palette, viewport.height, viewport.width],
+  );
+
   const paint = useCallback(() => {
     frameRef.current = null;
     const canvas = canvasRef.current;
@@ -244,17 +330,19 @@ export function DiffSurface(props: DiffSurfaceProps) {
       model: currentModel,
       palette: props.palette,
       typography: loadedTypography,
+      headerTypography: props.headerTypography,
       measureText: measurement,
       scrollTop: canvasTop,
       viewportWidth: currentModel.viewportWidth,
       viewportHeight: canvasHeight,
       horizontalOffsets: horizontalOffsetsRef.current,
       selection: selectionRef.current,
+      activeHeaderPath: activeHeaderPathRef.current,
       devicePixelRatio: ratio,
       paintTop,
       paintHeight,
     });
-  }, [loadedTypography, measurement, props.palette, viewport.height]);
+  }, [loadedTypography, measurement, props.headerTypography, props.palette, viewport.height]);
   const schedulePaint = useCallback(
     (force = true) => {
       if (force) forcePaintRef.current = true;
@@ -262,65 +350,6 @@ export function DiffSurface(props: DiffSurfaceProps) {
     },
     [paint],
   );
-  const paintHeaders = useCallback(() => {
-    headerFrameRef.current = null;
-    const canvas = headerCanvasRef.current;
-    const currentModel = modelRef.current;
-    if (!canvas || !currentModel || viewport.width <= 0 || viewport.height <= 0) return;
-    const ratio = window.devicePixelRatio || 1;
-    const key = diffHeaderViewportKey({
-      files: currentModel.files,
-      scrollTop: scrollTopRef.current,
-      viewportHeight: viewport.height,
-      activePath: activeHeaderPathRef.current,
-    });
-    const previous = headerPaintRef.current;
-    if (
-      previous?.key === key &&
-      previous.model === currentModel &&
-      previous.width === viewport.width &&
-      previous.height === viewport.height &&
-      previous.ratio === ratio &&
-      previous.palette === props.palette &&
-      previous.typography === props.headerTypography
-    ) {
-      return;
-    }
-    headerPaintRef.current = {
-      key,
-      model: currentModel,
-      width: viewport.width,
-      height: viewport.height,
-      ratio,
-      palette: props.palette,
-      typography: props.headerTypography,
-    };
-    const pixelWidth = Math.ceil(viewport.width * ratio);
-    const pixelHeight = Math.ceil(viewport.height * ratio);
-    if (canvas.width !== pixelWidth) canvas.width = pixelWidth;
-    if (canvas.height !== pixelHeight) canvas.height = pixelHeight;
-    canvas.style.width = `${viewport.width}px`;
-    canvas.style.height = `${viewport.height}px`;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-    paintWebHeaders({
-      context,
-      model: currentModel,
-      palette: props.palette,
-      typography: props.headerTypography,
-      scrollTop: scrollTopRef.current,
-      viewportWidth: viewport.width,
-      viewportHeight: viewport.height,
-      devicePixelRatio: ratio,
-      activePath: activeHeaderPathRef.current,
-    });
-  }, [props.headerTypography, props.palette, viewport.height, viewport.width]);
-  const scheduleHeaderPaint = useCallback(() => {
-    if (headerFrameRef.current === null) {
-      headerFrameRef.current = requestAnimationFrame(paintHeaders);
-    }
-  }, [paintHeaders]);
-
   useLayoutEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -427,17 +456,15 @@ export function DiffSurface(props: DiffSurfaceProps) {
   );
   useLayoutEffect(() => {
     schedulePaint();
-    scheduleHeaderPaint();
+    paintStickyHeaderPool(model, scrollTopRef.current);
     updateInteractionFiles(scrollTopRef.current);
-  }, [model, scheduleHeaderPaint, schedulePaint, updateInteractionFiles]);
+  }, [model, paintStickyHeaderPool, schedulePaint, updateInteractionFiles]);
   useEffect(
     () => () => {
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
-      if (headerFrameRef.current !== null) cancelAnimationFrame(headerFrameRef.current);
       // Fast Refresh preserves refs while rerunning effects. Release ownership of the canceled
       // request so the refreshed renderer can schedule its first paint.
       frameRef.current = null;
-      headerFrameRef.current = null;
     },
     [],
   );
@@ -462,14 +489,18 @@ export function DiffSurface(props: DiffSurfaceProps) {
     (scrollElement: HTMLDivElement) => {
       const scrollTop = scrollElement.scrollTop;
       scrollTopRef.current = scrollTop;
-      if (activeHeaderPathRef.current !== null) activeHeaderPathRef.current = null;
-      scheduleHeaderPaint();
+      const clearedActiveHeader = activeHeaderPathRef.current !== null;
+      if (clearedActiveHeader) {
+        activeHeaderPathRef.current = null;
+        schedulePaint();
+      }
       updateInteractionFiles(scrollTop);
       if (hasHoveredAffordanceRef.current) {
         hasHoveredAffordanceRef.current = false;
         setHoveredAffordance(null);
       }
       const currentModel = modelRef.current;
+      if (currentModel) paintStickyHeaderPool(currentModel, scrollTop);
       const currentWindow = canvasWindowRef.current;
       if (!currentModel || currentWindow.height === 0) {
         schedulePaint(false);
@@ -489,7 +520,7 @@ export function DiffSurface(props: DiffSurfaceProps) {
       const nextTop = Math.round(requestedTop * ratio) / ratio;
       if (nextTop !== currentWindow.top) schedulePaint(false);
     },
-    [scheduleHeaderPaint, schedulePaint, updateInteractionFiles, viewport.height],
+    [paintStickyHeaderPool, schedulePaint, updateInteractionFiles, viewport.height],
   );
   useEffect(() => {
     const scroll = scrollRef.current;
@@ -580,9 +611,11 @@ export function DiffSurface(props: DiffSurfaceProps) {
       const activeHeaderPath = header?.dataset.diffHeaderPath ?? null;
       if (activeHeaderPathRef.current === activeHeaderPath) return;
       activeHeaderPathRef.current = activeHeaderPath;
-      scheduleHeaderPaint();
+      const currentModel = modelRef.current;
+      if (currentModel) paintStickyHeaderPool(currentModel, scrollTopRef.current);
+      schedulePaint();
     },
-    [scheduleHeaderPaint],
+    [paintStickyHeaderPool, schedulePaint],
   );
   const pointerMove = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
@@ -780,6 +813,8 @@ export function DiffSurface(props: DiffSurfaceProps) {
       >
         <div style={contentStyle} onMouseDown={preventDocumentMouseSelection}>
           <canvas ref={canvasRef} data-testid="git-diff-canvas" style={canvasStyle} />
+          <StickyHeaderCanvasSlotView slotsRef={stickyHeaderSlotsRef} slotIndex={0} />
+          <StickyHeaderCanvasSlotView slotsRef={stickyHeaderSlotsRef} slotIndex={1} />
           {interactionFiles.map((file) => (
             <WebFileHeaderSection key={file.path} file={file}>
               <DocumentFileHeader
@@ -831,11 +866,6 @@ export function DiffSurface(props: DiffSurfaceProps) {
             : null}
         </div>
       </div>
-      <canvas
-        ref={headerCanvasRef}
-        data-testid="git-diff-header-canvas"
-        style={HEADER_CANVAS_STYLE}
-      />
       <DomOverlayScrollbar scrollContainerRef={scrollRef} onUserScrollUp={noop} />
       {hoveredAffordance?.hit.target && reviewActions ? (
         <InlineReviewAddButton onPress={addHoveredComment} style={affordanceStyle} />
@@ -869,6 +899,36 @@ export function DiffSurface(props: DiffSurfaceProps) {
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
+  );
+}
+
+function StickyHeaderCanvasSlotView({
+  slotsRef,
+  slotIndex,
+}: {
+  slotsRef: React.RefObject<[StickyHeaderCanvasSlot, StickyHeaderCanvasSlot]>;
+  slotIndex: 0 | 1;
+}) {
+  const setSection = useCallback(
+    (section: HTMLDivElement | null) => {
+      slotsRef.current[slotIndex].section = section;
+    },
+    [slotIndex, slotsRef],
+  );
+  const setCanvas = useCallback(
+    (canvas: HTMLCanvasElement | null) => {
+      slotsRef.current[slotIndex].canvas = canvas;
+    },
+    [slotIndex, slotsRef],
+  );
+  return (
+    <div ref={setSection} style={STICKY_CANVAS_SECTION_STYLE}>
+      <canvas
+        ref={setCanvas}
+        data-testid={`git-diff-sticky-header-${slotIndex}`}
+        style={STICKY_CANVAS_STYLE}
+      />
+    </div>
   );
 }
 
@@ -1029,6 +1089,20 @@ const FILE_SECTION_STYLE: React.CSSProperties = {
   pointerEvents: "none",
   userSelect: "none",
 };
+const STICKY_CANVAS_SECTION_STYLE: React.CSSProperties = {
+  position: "absolute",
+  display: "none",
+  left: 0,
+  right: 0,
+  zIndex: 2,
+  pointerEvents: "none",
+};
+const STICKY_CANVAS_STYLE: React.CSSProperties = {
+  position: "sticky",
+  top: 0,
+  display: "block",
+  pointerEvents: "none",
+};
 const STICKY_HEADER_STYLE: React.CSSProperties = {
   position: "sticky",
   top: 0,
@@ -1049,12 +1123,6 @@ const CANVAS_STYLE: React.CSSProperties = {
   top: 0,
   left: 0,
   zIndex: 1,
-  pointerEvents: "none",
-};
-const HEADER_CANVAS_STYLE: React.CSSProperties = {
-  position: "absolute",
-  inset: 0,
-  zIndex: 3,
   pointerEvents: "none",
 };
 const AFFORDANCE_STYLE: ViewStyle = {
