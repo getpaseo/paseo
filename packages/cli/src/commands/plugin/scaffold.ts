@@ -8,7 +8,7 @@ const TSCONFIG = {
     target: "ES2020",
     module: "ESNext",
     moduleResolution: "Bundler",
-    lib: ["ES2023", "DOM"],
+    lib: ["ES2023"],
     jsx: "react-jsx",
     strict: true,
     skipLibCheck: true,
@@ -44,7 +44,7 @@ export default function contribute(server: PluginServerContext) {
 }
 `;
 
-const SHARED_GREETING = `import { defineRpc } from "@getpaseo/plugin/server";
+const SHARED_GREETING = `import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
 export const greetingRpc = defineRpc({
@@ -54,10 +54,10 @@ export const greetingRpc = defineRpc({
 });
 `;
 
-const SERVER_GREETING = `import type { output as ZodOutput } from "zod";
+const SERVER_GREETING = `import type { RpcInput } from "@getpaseo/plugin";
 import { greetingRpc } from "../shared/greeting";
 
-export function createGreeting({ name }: ZodOutput<typeof greetingRpc.input>) {
+export function createGreeting({ name }: RpcInput<typeof greetingRpc>) {
   return { message: "Hello, " + name + "!" };
 }
 `;
@@ -68,6 +68,7 @@ import { useMutation } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { Pressable, Text, View } from "react-native";
 import { greetingRpc } from "../shared/greeting";
+import { openExternal } from "./web";
 
 export function GreetingSurface({ theme, layout }: PluginSurfaceProps) {
   const createGreeting = useRpc(greetingRpc);
@@ -96,8 +97,29 @@ export function GreetingSurface({ theme, layout }: PluginSurfaceProps) {
       >
         <Text style={styles.buttonText}>Create greeting</Text>
       </Pressable>
+      <Pressable
+        accessibilityRole="link"
+        accessibilityLabel="Open the Paseo website"
+        style={styles.button}
+        onPress={() => openExternal("https://paseo.sh")}
+      >
+        <Text style={styles.buttonText}>Open paseo.sh</Text>
+      </Pressable>
     </View>
   );
+}
+`;
+
+const CLIENT_WEB = `/// <reference lib="dom" />
+
+import { Linking, Platform } from "react-native";
+
+export async function openExternal(url: string): Promise<void> {
+  if (Platform.OS === "web") {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return;
+  }
+  await Linking.openURL(url);
 }
 `;
 
@@ -142,6 +164,7 @@ export async function scaffoldPluginDirectory(
     ["shared/greeting.ts", SHARED_GREETING],
     ["server/greeting.ts", SERVER_GREETING],
     ["client/greeting.tsx", CLIENT_GREETING],
+    ["client/web.ts", CLIENT_WEB],
   ]);
   await Promise.all(
     ["shared", "server", "client"].map((name) => mkdir(path.join(directory, name))),

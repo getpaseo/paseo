@@ -22,6 +22,7 @@ describe("plugin scaffold", () => {
     const configPath = path.join(directory, "tsconfig.json");
     const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
     expect(loaded.error).toBeUndefined();
+    expect(loaded.config.compilerOptions.lib).toEqual(["ES2023"]);
     const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, directory);
     const diagnostics = ts.getPreEmitDiagnostics(
       ts.createProgram(parsed.fileNames, parsed.options),
@@ -62,6 +63,15 @@ describe("plugin scaffold", () => {
     await expect(readFile(path.join(directory, "client/greeting.tsx"), "utf8")).resolves.toContain(
       "useRpc(greetingRpc)",
     );
+    await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.toContain(
+      `/// <reference lib="dom" />`,
+    );
+    await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.toContain(
+      `Platform.OS === "web"`,
+    );
+    await expect(readFile(path.join(directory, "client/greeting.tsx"), "utf8")).resolves.toContain(
+      `openExternal("https://paseo.sh")`,
+    );
     await expect(readFile(path.join(directory, "server/greeting.ts"), "utf8")).resolves.toContain(
       '"Hello, " + name + "!"',
     );
@@ -77,8 +87,8 @@ describe("plugin scaffold", () => {
     await scaffoldPluginDirectory(directory);
     await Promise.all([
       writeFile(
-        path.join(directory, "inspect.shared.ts"),
-        `import { defineRpc } from "@getpaseo/plugin/server";
+        path.join(directory, "shared", "inspect.ts"),
+        `import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
 export const inspect = defineRpc({
@@ -89,13 +99,13 @@ export const inspect = defineRpc({
 `,
       ),
       writeFile(
-        path.join(directory, "inspect.server.ts"),
+        path.join(directory, "server", "inspect.ts"),
         `import type { PluginHandlerContext } from "@getpaseo/plugin/server";
-import type { output as ZodOutput } from "zod";
-import { inspect } from "./inspect.shared";
+import type { RpcInput } from "@getpaseo/plugin";
+import { inspect } from "../shared/inspect";
 
 export async function inspectConfig(
-  _input: ZodOutput<typeof inspect.input>,
+  _input: RpcInput<typeof inspect>,
   { paseo }: PluginHandlerContext,
 ) {
   return { configured: Boolean((await paseo.config.get()).config) };
@@ -103,7 +113,7 @@ export async function inspectConfig(
 `,
       ),
       writeFile(
-        path.join(directory, "main.client.tsx"),
+        path.join(directory, "client", "main.tsx"),
         `import React from "react";
 import { Text } from "react-native";
 import { Icon, Modal, useToast } from "@getpaseo/plugin/react-native";
@@ -116,7 +126,7 @@ import {
   usePaseo,
   useWorkspace,
 } from "@getpaseo/plugin";
-import { inspect } from "./inspect.shared";
+import { inspect } from "../shared/inspect";
 
 export function Surface({ navigation }: PluginSurfaceProps) {
   const paseo = usePaseo();
@@ -166,8 +176,8 @@ export function contributeClient(client: PluginClientContext) {
       writeFile(
         path.join(directory, "index.client.tsx"),
         `import type { PluginClientContext } from "@getpaseo/plugin";
-import { AgentPanel, contributeClient, Surface } from "./main.client";
-import { inspect } from "./inspect.shared";
+import { AgentPanel, contributeClient, Surface } from "./client/main";
+import { inspect } from "./shared/inspect";
 
 export default function contribute(client: PluginClientContext) {
   client.addSurface("main", Surface);
@@ -196,8 +206,8 @@ export default function contribute(client: PluginClientContext) {
       writeFile(
         path.join(directory, "index.server.ts"),
         `import type { PluginServerContext } from "@getpaseo/plugin";
-import { inspectConfig } from "./inspect.server";
-import { inspect } from "./inspect.shared";
+import { inspectConfig } from "./server/inspect";
+import { inspect } from "./shared/inspect";
 
 export default function contribute(server: PluginServerContext) {
   server.handle(inspect, inspectConfig);
