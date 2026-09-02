@@ -1,11 +1,27 @@
+import { execFile } from "node:child_process";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { createRequire } from "node:module";
 import path from "node:path";
 import { tmpdir } from "node:os";
-import ts from "typescript";
+import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { scaffoldPluginDirectory } from "./scaffold.js";
 
 const directories: string[] = [];
+const execFileAsync = promisify(execFile);
+const tscPath = createRequire(import.meta.url).resolve("typescript/bin/tsc");
+
+async function typecheckPlugin(directory: string): Promise<void> {
+  const configPath = path.join(directory, "tsconfig.json");
+  try {
+    await execFileAsync(process.execPath, [tscPath, "--noEmit", "-p", configPath], {
+      cwd: directory,
+    });
+  } catch (error) {
+    const failure = error as { stderr?: string; stdout?: string };
+    throw new Error(`${failure.stdout ?? ""}${failure.stderr ?? ""}`, { cause: error });
+  }
+}
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true })));
@@ -20,18 +36,12 @@ describe("plugin scaffold", () => {
     await scaffoldPluginDirectory(directory);
 
     const configPath = path.join(directory, "tsconfig.json");
-    const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
-    expect(loaded.error).toBeUndefined();
-    expect(loaded.config.compilerOptions.lib).toEqual(["ES2023"]);
-    const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, directory);
-    const diagnostics = ts.getPreEmitDiagnostics(
-      ts.createProgram(parsed.fileNames, parsed.options),
-    );
-    expect(
-      diagnostics.map((diagnostic) =>
-        ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
-      ),
-    ).toEqual([]);
+    const config = JSON.parse(await readFile(configPath, "utf8")) as {
+      compilerOptions: { lib: string[]; types: string[] };
+    };
+    expect(config.compilerOptions.lib).toEqual(["ES2023"]);
+    expect(config.compilerOptions.types).toEqual(["react"]);
+    await expect(typecheckPlugin(directory)).resolves.toBeUndefined();
     expect(JSON.parse(await readFile(path.join(directory, "paseo-plugin.json"), "utf8"))).toEqual({
       id: "hello-plugin",
     });
@@ -63,8 +73,11 @@ describe("plugin scaffold", () => {
     await expect(readFile(path.join(directory, "client/greeting.tsx"), "utf8")).resolves.toContain(
       "useRpc(greetingRpc)",
     );
-    await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.toContain(
+    await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.not.toContain(
       `/// <reference lib="dom" />`,
+    );
+    await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.toContain(
+      `declare const window: { open(url: string, target: string, features: string): unknown };`,
     );
     await expect(readFile(path.join(directory, "client/web.ts"), "utf8")).resolves.toContain(
       `Platform.OS === "web"`,
@@ -78,6 +91,11 @@ describe("plugin scaffold", () => {
     await expect(readFile(path.join(directory, "shared/greeting.ts"), "utf8")).resolves.toContain(
       'name: "greeting.create"',
     );
+
+    await writeFile(path.join(directory, "client/greeting.tsx"), '\ndocument.title = "x";\n', {
+      flag: "a",
+    });
+    await expect(typecheckPlugin(directory)).rejects.toThrow("Cannot find name 'document'.");
   });
 
   it("typechecks client and server Paseo API access", async () => {
@@ -217,18 +235,7 @@ export default function contribute(server: PluginServerContext) {
       ),
     ]);
 
-    const configPath = path.join(directory, "tsconfig.json");
-    const loaded = ts.readConfigFile(configPath, ts.sys.readFile);
-    const parsed = ts.parseJsonConfigFileContent(loaded.config, ts.sys, directory);
-    const diagnostics = ts.getPreEmitDiagnostics(
-      ts.createProgram(parsed.fileNames, parsed.options),
-    );
-
-    expect(
-      diagnostics.map((diagnostic) =>
-        ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n"),
-      ),
-    ).toEqual([]);
+    await expect(typecheckPlugin(directory)).resolves.toBeUndefined();
   }, 20_000);
 
   it("refuses to write into a non-empty directory", async () => {
