@@ -206,6 +206,8 @@ function LaunchRow({
   const isRunning = launch.lifecycle === "running";
   const isStartPending = pendingStartLaunchName === launch.launchName;
   const isStopPending = pendingStopLaunchName === launch.launchName;
+  const hasPendingLifecycleAction =
+    pendingStartLaunchName !== null || pendingStopLaunchName !== null;
   const liveTerminalId =
     launch.terminalId && liveTerminalIdSet.has(launch.terminalId) ? launch.terminalId : null;
   const handleStart = useCallback(() => onStart(launch.launchName), [launch.launchName, onStart]);
@@ -265,7 +267,7 @@ function LaunchRow({
               launchName: launch.launchName,
             })}
             testID={`workspace-launches-stop-${launch.launchName}`}
-            disabled={pendingStopLaunchName !== null}
+            disabled={hasPendingLifecycleAction}
             icon="stop"
             onPress={handleStop}
             pending={isStopPending}
@@ -277,7 +279,7 @@ function LaunchRow({
               launchName: launch.launchName,
             })}
             testID={`workspace-launches-start-${launch.launchName}`}
-            disabled={pendingStartLaunchName !== null}
+            disabled={hasPendingLifecycleAction}
             icon="start"
             onPress={handleStart}
             pending={isStartPending}
@@ -295,11 +297,7 @@ function LaunchRow({
           <View style={styles.launchErrorActions}>
             <LaunchActionButton
               accessibilityLabel={t("common.actions.retry")}
-              disabled={
-                launchError.action === "start"
-                  ? pendingStartLaunchName !== null
-                  : pendingStopLaunchName !== null
-              }
+              disabled={hasPendingLifecycleAction}
               label={t("common.actions.retry")}
               onPress={handleRetry}
               testID={`workspace-launches-retry-${launch.launchName}`}

@@ -15,6 +15,7 @@ void testI18n;
 const {
   theme,
   startWorkspaceLaunchMock,
+  stopWorkspaceLaunchMock,
   startWorkspaceScriptMock,
   killTerminalMock,
   setStringAsyncMock,
@@ -54,6 +55,7 @@ const {
     startWorkspaceLaunchMock: vi.fn(async () => ({
       launch: { terminalId: "terminal-launch-1" },
     })),
+    stopWorkspaceLaunchMock: vi.fn(async () => ({})),
     startWorkspaceScriptMock: vi.fn(async () => ({ terminalId: "terminal-script-1" })),
     killTerminalMock: vi.fn(async () => ({
       terminalId: "terminal-script-1",
@@ -124,6 +126,7 @@ vi.mock("@/stores/session-store", () => ({
         "test-server": {
           client: {
             startWorkspaceLaunch: startWorkspaceLaunchMock,
+            stopWorkspaceLaunch: stopWorkspaceLaunchMock,
             startWorkspaceScript: startWorkspaceScriptMock,
             killTerminal: killTerminalMock,
           },
@@ -346,6 +349,7 @@ describe("WorkspaceScriptsButton", () => {
     );
     document.body.innerHTML = "";
     startWorkspaceLaunchMock.mockClear();
+    stopWorkspaceLaunchMock.mockClear();
     startWorkspaceScriptMock.mockClear();
     killTerminalMock.mockClear();
     setStringAsyncMock.mockClear();
@@ -678,6 +682,39 @@ describe("WorkspaceScriptsButton", () => {
       expect(
         document.querySelector('[data-testid="workspace-launches-start-dev-pending"]'),
       ).toBeNull();
+    });
+  });
+
+  it("disables another launch's stop action while a start is pending", async () => {
+    let resolveStart!: (value: { launch: { terminalId: string } }) => void;
+    const pendingStart = new Promise<{ launch: { terminalId: string } }>((resolve) => {
+      resolveStart = resolve;
+    });
+    startWorkspaceLaunchMock.mockReturnValueOnce(pendingStart);
+    current = renderScripts([], {
+      launches: [
+        launch({ launchName: "dev" }),
+        launch({ launchName: "worker", lifecycle: "running" }),
+      ],
+    });
+
+    fireEvent.click(
+      document.querySelector('[data-testid="workspace-launches-start-dev"]') as HTMLElement,
+    );
+    await waitFor(() => {
+      expect(
+        document.querySelector('[data-testid="workspace-launches-start-dev-pending"]'),
+      ).not.toBeNull();
+    });
+
+    fireEvent.click(
+      document.querySelector('[data-testid="workspace-launches-stop-worker"]') as HTMLElement,
+    );
+    expect(stopWorkspaceLaunchMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveStart({ launch: { terminalId: "terminal-launch-1" } });
+      await pendingStart;
     });
   });
 });
