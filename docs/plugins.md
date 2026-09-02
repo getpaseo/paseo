@@ -172,11 +172,12 @@ import to any other code file in the plugin root is also rejected; move it into 
 or `shared/`. These are compile errors naming the importing file and boundary rule. Top-level React
 Native calls such as `StyleSheet.create` belong in `client/`.
 
-The scaffold omits the DOM library from `tsconfig.json` so browser globals are not available by
-default. Put sanctioned web-only APIs in `client/web.ts`, start that file with its DOM library
-reference, gate each export with `Platform.OS === "web"`, and provide a native implementation or
-no-op. See the [public plugin reference](../public-docs/plugins/reference.md#works-on-mobile) for the
-complete pattern.
+The scaffold omits `"DOM"` from `tsconfig.json` and does not use `/// <reference lib="dom" />`, so
+browser globals are not available across the plugin. Put sanctioned web-only APIs in
+`client/web.ts`, declare only the globals that module uses, gate each export with
+`Platform.OS === "web"`, and provide a native implementation or no-op. See the
+[public plugin reference](../public-docs/plugins/reference.md#works-on-mobile) for the complete
+pattern.
 
 ```ts
 // index.server.ts

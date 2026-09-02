@@ -241,8 +241,9 @@ Before reporting a plugin done:
 
 - Use React Native primitives only: `View`, `Text`, `Pressable`, `ScrollView`, and `TextInput`.
 - Do not use HTML elements, `className`, CSS strings, or `onClick`.
-- Put DOM globals only in `client/web.ts`. Start it with `/// <reference lib="dom" />`, gate every
-  export on `Platform.OS === "web"`, and provide the native alternative or a no-op.
+- Do not put `"DOM"` in `tsconfig.json` or use `/// <reference lib="dom" />`. Put DOM globals only in
+  `client/web.ts`, declare only what that module uses, gate every export on `Platform.OS === "web"`,
+  and provide the native alternative or a no-op.
 - Take colors from `theme.colors`.
 - Check the compact layout.
 
