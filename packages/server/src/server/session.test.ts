@@ -19,6 +19,7 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
+import { DeliveryLedger } from "./deliveries/delivery-ledger.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
@@ -365,6 +366,9 @@ interface SessionForTestOptions {
   pluginRuntime?: SessionOptions["pluginRuntime"];
   orchestrationSkills?: SessionOptions["orchestrationSkills"];
   workspaceLabelService?: WorkspaceLabelService;
+  principalId?: string;
+  clientCapabilities?: Record<string, unknown>;
+  deliveryLedger?: DeliveryLedger;
 }
 
 function createSessionForTest(options: SessionForTestOptions = {}): Session {
@@ -401,6 +405,8 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
 
   const sessionOptions: SessionOptions = {
     clientId: "test-client",
+    principalId: options.principalId,
+    clientCapabilities: options.clientCapabilities,
     onMessage: (message) => messages.push(message),
     ...(options.targetedMessages
       ? {
@@ -424,6 +430,7 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
       list: vi.fn().mockResolvedValue([]),
       ...options.agentStorage,
     }),
+    deliveryLedger: options.deliveryLedger,
     projectRegistry: {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn(),
@@ -471,6 +478,111 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   };
   return new Session(sessionOptions);
 }
+
+test("durable deliveries are scoped to the authenticated principal and source", async () => {
+  const home = mkdtempSync(join(tmpdir(), "paseo-session-deliveries-"));
+  const messages: SessionOutboundMessage[] = [];
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const source = {};
+  const ledger = new DeliveryLedger(home);
+  const session = createSessionForTest({
+    paseoHome: home,
+    principalId: "plugin:calendar",
+    deliveryLedger: ledger,
+    clientCapabilities: { [CLIENT_CAPS.durableDeliveries]: true },
+    messages,
+    targetedMessages,
+  });
+
+  try {
+    await session.handleMessage(
+      {
+        type: "deliveries.send.request",
+        requestId: "delivery-send",
+        deliveryId: "calendar-one",
+        payload: { event: "refresh" },
+      },
+      source,
+    );
+    expect(messages).toEqual([]);
+    expect(targetedMessages).toMatchObject([
+      {
+        source,
+        message: {
+          type: "deliveries.send.response",
+          payload: { requestId: "delivery-send", deliveryId: "calendar-one", created: true },
+        },
+      },
+    ]);
+
+    await session.handleMessage(
+      { type: "deliveries.get.request", requestId: "delivery-get" },
+      source,
+    );
+    expect(targetedMessages.at(-1)).toMatchObject({
+      source,
+      message: {
+        type: "deliveries.get.response",
+        payload: { requestId: "delivery-get", deliveries: [{ deliveryId: "calendar-one" }] },
+      },
+    });
+
+    await session.handleMessage(
+      {
+        type: "deliveries.acknowledge.request",
+        requestId: "delivery-ack",
+        deliveryId: "calendar-one",
+      },
+      source,
+    );
+    expect(targetedMessages.at(-1)).toMatchObject({
+      source,
+      message: {
+        type: "deliveries.acknowledge.response",
+        payload: { requestId: "delivery-ack", deliveryId: "calendar-one" },
+      },
+    });
+
+    const otherLedger = new DeliveryLedger(home);
+    await expect(otherLedger.get("owner")).resolves.toMatchObject({ deliveries: [] });
+    await expect(
+      otherLedger.get("plugin:calendar", { includeAcknowledged: true }),
+    ).resolves.toMatchObject({
+      deliveries: [{ deliveryId: "calendar-one", acknowledgedAt: expect.any(String) }],
+    });
+  } finally {
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("durable delivery authorization uses semantic workspace permissions", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({
+    messages,
+    permissions: ["workspace.read"],
+    clientCapabilities: { [CLIENT_CAPS.durableDeliveries]: true },
+  });
+
+  await session.handleMessage({
+    type: "deliveries.send.request",
+    requestId: "delivery-unauthorized",
+    payload: "not allowed",
+  });
+
+  expect(messages).toEqual([
+    {
+      type: "rpc_error",
+      payload: {
+        requestId: "delivery-unauthorized",
+        requestType: "deliveries.send.request",
+        error: "Session is not authorized for deliveries.send.request",
+        code: "access_denied",
+      },
+    },
+  ]);
+  await session.cleanup();
+});
 
 test("routes host-scoped agent skills requests through the daemon owner", async () => {
   const messages: SessionOutboundMessage[] = [];

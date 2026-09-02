@@ -172,6 +172,93 @@ function createAgent(input: Partial<PaseoAgent> = {}): PaseoAgent {
   };
 }
 
+test("createPaseoClient exposes durable deliveries through the daemon client", async () => {
+  const { client, ws } = await connectClient({ durableDeliveries: true });
+
+  const sendPromise = client.deliveries.send(
+    { event: "agent.finished", agentId: "agent_sdk" },
+    { deliveryId: "delivery-sdk", requestId: "delivery-send" },
+  );
+  const sendRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(sendRequest).toMatchObject({
+    type: "deliveries.send.request",
+    requestId: "delivery-send",
+    deliveryId: "delivery-sdk",
+    payload: { event: "agent.finished", agentId: "agent_sdk" },
+  });
+  ws.message(
+    sessionMessage({
+      type: "deliveries.send.response",
+      payload: {
+        requestId: "delivery-send",
+        deliveryId: "delivery-sdk",
+        delivery: {
+          deliveryId: "delivery-sdk",
+          payload: { event: "agent.finished", agentId: "agent_sdk" },
+          createdAt: "2026-05-16T00:00:00.000Z",
+          acknowledgedAt: null,
+        },
+        created: true,
+      },
+    }),
+  );
+  await expect(sendPromise).resolves.toMatchObject({ deliveryId: "delivery-sdk" });
+
+  const getPromise = client.deliveries.get({ requestId: "delivery-get" });
+  const getRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(getRequest).toMatchObject({ type: "deliveries.get.request", requestId: "delivery-get" });
+  ws.message(
+    sessionMessage({
+      type: "deliveries.get.response",
+      payload: {
+        requestId: "delivery-get",
+        delivery: null,
+        deliveries: [],
+        nextCursor: null,
+      },
+    }),
+  );
+  await expect(getPromise).resolves.toMatchObject({ deliveries: [] });
+
+  const acknowledgePromise = client.deliveries.acknowledge("delivery-sdk", {
+    requestId: "delivery-ack",
+  });
+  expect(parseSentSessionMessage(ws.sent.at(-1))).toMatchObject({
+    type: "deliveries.acknowledge.request",
+    requestId: "delivery-ack",
+    deliveryId: "delivery-sdk",
+  });
+  ws.message(
+    sessionMessage({
+      type: "deliveries.acknowledge.response",
+      payload: {
+        requestId: "delivery-ack",
+        deliveryId: "delivery-sdk",
+        delivery: {
+          deliveryId: "delivery-sdk",
+          payload: { event: "agent.finished", agentId: "agent_sdk" },
+          createdAt: "2026-05-16T00:00:00.000Z",
+          acknowledgedAt: "2026-05-16T00:01:00.000Z",
+        },
+      },
+    }),
+  );
+  await expect(acknowledgePromise).resolves.toMatchObject({
+    deliveryId: "delivery-sdk",
+    acknowledgedAt: "2026-05-16T00:01:00.000Z",
+  });
+  await client.close();
+});
+
+test("durable deliveries require the daemon feature", async () => {
+  const { client, ws } = await connectClient();
+  await expect(client.deliveries.get()).rejects.toThrow(
+    "Update the host to use durable deliveries",
+  );
+  expect(ws.sent).toHaveLength(1);
+  await client.close();
+});
+
 test("createPaseoClient exposes workspace list through the daemon client", async () => {
   const { client, ws } = await connectClient();
 
@@ -229,6 +316,7 @@ test("createPaseoApi borrows daemon capabilities without exposing connection own
   expect(Object.keys(paseo).sort()).toEqual([
     "agents",
     "config",
+    "deliveries",
     "projects",
     "providers",
     "workspaces",

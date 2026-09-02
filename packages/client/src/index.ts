@@ -35,7 +35,12 @@ import type {
   FetchAgentTimelinePayload,
   FetchAgentTimelineProjection,
   WaitForFinishResult,
+  SendDeliveryOptions,
+  GetDeliveriesOptions,
+  GetDeliveriesResult,
 } from "./daemon-client.js";
+import type { ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import type { DeliveryPayload, DeliveryRecord } from "@getpaseo/protocol/deliveries";
 
 /**
  * Coding turns routinely run for minutes, so the handle waits far longer than
@@ -78,6 +83,7 @@ export interface PaseoClientConfig {
   };
   runtimeMetricsIntervalMs?: number;
   runtimeMetricsWindowMs?: number;
+  capabilities?: Partial<Record<ClientCapability, unknown>>;
 }
 
 export type PaseoWorkspace = WorkspaceDescriptorPayload;
@@ -409,12 +415,26 @@ export interface PaseoConfigActions {
   ): Promise<{ requestId: string; config: MutableDaemonConfig }>;
 }
 
+export type PaseoDeliveryPayload = DeliveryPayload;
+export type PaseoDelivery = DeliveryRecord;
+export type PaseoDeliveryGetOptions = Omit<GetDeliveriesOptions, "timeout">;
+export type PaseoDeliveryGetResult = GetDeliveriesResult;
+export type PaseoDeliverySendOptions = Omit<SendDeliveryOptions, "timeout">;
+
+export interface PaseoDeliveryActions {
+  /** Persists a JSON payload before resolving. Supply an id to make retries idempotent. */
+  send(payload: PaseoDeliveryPayload, options?: PaseoDeliverySendOptions): Promise<PaseoDelivery>;
+  get(options?: PaseoDeliveryGetOptions): Promise<PaseoDeliveryGetResult>;
+  acknowledge(deliveryId: string, options?: { requestId?: string }): Promise<PaseoDelivery>;
+}
+
 export interface PaseoApi {
   readonly workspaces: PaseoWorkspaceActions;
   readonly projects: PaseoProjectActions;
   readonly agents: PaseoAgentActions;
   readonly providers: PaseoProviderActions;
   readonly config: PaseoConfigActions;
+  readonly deliveries: PaseoDeliveryActions;
 }
 
 export interface PaseoClient extends PaseoApi {
@@ -519,6 +539,11 @@ export function createPaseoApi(daemonClient: DaemonClient): PaseoApi {
     config: {
       get: (requestId) => daemonClient.getDaemonConfig(requestId),
       patch: (patch, requestId) => daemonClient.patchDaemonConfig(patch, requestId),
+    },
+    deliveries: {
+      send: (payload, options) => daemonClient.sendDelivery(payload, options),
+      get: (options) => daemonClient.getDeliveries(options),
+      acknowledge: (deliveryId, options) => daemonClient.acknowledgeDelivery(deliveryId, options),
     },
   };
 }

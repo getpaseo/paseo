@@ -99,6 +99,7 @@ import type { BrowserToolsBroker } from "./browser-tools/broker.js";
 import type { DaemonRuntimeConfig } from "./session/daemon/daemon-session.js";
 import { DirectorySyncService } from "./directory-sync/index.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
+import { DeliveryLedger } from "./deliveries/delivery-ledger.js";
 import type { WorkspaceLabelService } from "./workspace-labels/index.js";
 import {
   APPLICATION_SOCKET_LEASE_CHECK_INTERVAL_MS,
@@ -468,6 +469,7 @@ interface BrowserToolsRegistration {
 
 interface SocketSessionOptions {
   clientId: string;
+  principalId: string;
   appVersion: string | null;
   clientCapabilities: Record<string, unknown> | null;
   permissions: readonly DaemonPermission[];
@@ -480,6 +482,7 @@ interface SocketSessionOptions {
   onLifecycleIntent?: (intent: SessionLifecycleIntent) => void;
   hubExecutionAgents?: HubExecutionAgents;
   hubRelationships?: HubRelationshipManagement;
+  deliveryLedger: DeliveryLedger;
 }
 
 interface ClosePhysicalSocketParams {
@@ -555,6 +558,7 @@ export class VoiceAssistantWebSocketServer {
   private readonly workspaceAutoName: WorkspaceAutoName;
   private readonly downloadTokenStore: DownloadTokenStore;
   private readonly paseoHome: string;
+  private readonly deliveryLedger: DeliveryLedger;
   private readonly worktreesRoot: string | undefined;
   private readonly daemonConfigStore: DaemonConfigStore;
   private readonly pushNotifications: PushNotifications;
@@ -647,6 +651,7 @@ export class VoiceAssistantWebSocketServer {
     pluginRuntime?: SessionOptions["pluginRuntime"],
     orchestrationSkills?: SessionOptions["orchestrationSkills"],
     workspaceLabelService?: WorkspaceLabelService,
+    deliveryLedger?: DeliveryLedger,
   ) {
     this.logger = logger.child({ module: "websocket-server" });
     this.workspaceSetupRuntime = workspaceSetupRuntime;
@@ -679,6 +684,7 @@ export class VoiceAssistantWebSocketServer {
     this.workspaceAutoName = workspaceAutoName;
     this.downloadTokenStore = downloadTokenStore;
     this.paseoHome = paseoHome;
+    this.deliveryLedger = deliveryLedger ?? new DeliveryLedger(join(paseoHome, "deliveries"));
     this.worktreesRoot = daemonRuntimeConfig?.worktreesRoot;
     this.daemonConfigStore = daemonConfigStore;
     this.mcpBaseUrl = mcpBaseUrl;
@@ -985,7 +991,12 @@ export class VoiceAssistantWebSocketServer {
     this.pluginSocketIds.set(ws, pluginId);
     this.pluginSocketCleanup.set(ws, resolve);
     try {
-      await this.attachSocket(ws, undefined, undefined, true);
+      await this.attachSocket(ws, undefined, undefined, true, {
+        // Plugin sessions retain the daemon's existing permissions, but their
+        // durable deliveries belong to the plugin rather than the daemon owner.
+        principalId: `plugin:${pluginId}`,
+        permissions: OWNER_PERMISSIONS,
+      });
     } catch (error) {
       this.pluginSocketIds.delete(ws);
       this.finishPluginSocketCleanup(ws);
@@ -1092,6 +1103,7 @@ export class VoiceAssistantWebSocketServer {
     }
 
     await Promise.all(cleanupPromises);
+    await this.deliveryLedger.flush();
     this.providerSnapshotManager.destroy();
     this.checkoutDiffManager.dispose();
     await this.workspaceGitService.dispose();
@@ -1313,6 +1325,7 @@ export class VoiceAssistantWebSocketServer {
 
     const session = this.createSocketSession({
       clientId,
+      principalId: admission.principalId,
       appVersion,
       clientCapabilities,
       permissions: admission.permissions,
@@ -1362,6 +1375,7 @@ export class VoiceAssistantWebSocketServer {
       },
       hubExecutionAgents: admission.hubExecutionAgents,
       hubRelationships: this.hubRelationships ?? undefined,
+      deliveryLedger: this.deliveryLedger,
     });
 
     const base: SessionConnectionBase = {
@@ -1385,6 +1399,7 @@ export class VoiceAssistantWebSocketServer {
   private createSocketSession(options: SocketSessionOptions): Session {
     return new Session({
       clientId: options.clientId,
+      principalId: options.principalId,
       appVersion: options.appVersion,
       clientCapabilities: options.clientCapabilities,
       permissions: options.permissions,
@@ -1408,6 +1423,7 @@ export class VoiceAssistantWebSocketServer {
       worktreesRoot: this.worktreesRoot,
       agentManager: this.agentManager,
       agentStorage: this.agentStorage,
+      deliveryLedger: options.deliveryLedger,
       projectRegistry: this.projectRegistry,
       workspaceRegistry: this.workspaceRegistry,
       workspaceLabelService: this.workspaceLabelService ?? undefined,
@@ -1761,6 +1777,9 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        // COMPAT(durableDeliveries): added in v0.7.2, remove after clients
+        // understand the owner-scoped delivery ledger.
+        durableDeliveries: true,
       },
     };
   }

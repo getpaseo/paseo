@@ -55,6 +55,24 @@ import {
   LoopStopResponseSchema,
 } from "./loop/rpc-schemas.js";
 import {
+  DeliveriesSendRequestSchema,
+  DeliveriesGetRequestSchema,
+  DeliveriesAcknowledgeRequestSchema,
+  DeliveriesSendResponseSchema,
+  DeliveriesGetResponseSchema,
+  DeliveriesAcknowledgeResponseSchema,
+} from "./deliveries.js";
+export {
+  DeliveriesSendRequestSchema,
+  DeliveriesGetRequestSchema,
+  DeliveriesAcknowledgeRequestSchema,
+  DeliveriesSendResponseSchema,
+  DeliveriesGetResponseSchema,
+  DeliveriesAcknowledgeResponseSchema,
+  DeliveryRecordSchema,
+  type DeliveryRecord,
+} from "./deliveries.js";
+import {
   BrowserAutomationExecuteRequestSchema,
   BrowserAutomationExecuteResponseSchema,
 } from "./browser-automation/rpc-schemas.js";
@@ -2999,6 +3017,9 @@ export const HubExecutionControlRequestSchema = z.object({
 export type HubExecutionControlRequest = z.infer<typeof HubExecutionControlRequestSchema>;
 
 export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
+  DeliveriesSendRequestSchema,
+  DeliveriesGetRequestSchema,
+  DeliveriesAcknowledgeRequestSchema,
   HubExecutionAgentCreateRequestSchema,
   HubExecutionAgentValidateRequestSchema,
   HubExecutionControlRequestSchema,
@@ -3503,6 +3524,9 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
+        // COMPAT(durableDeliveries): added in v0.7.2, remove after the
+        // supported clients understand the owner-scoped delivery ledger.
+        durableDeliveries: z.boolean().optional(),
       })
       .optional(),
   })
@@ -6307,6 +6331,9 @@ export const AgentSkillsImportLegacySelectionResponseSchema = z.object({
 });
 
 export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
+  DeliveriesSendResponseSchema,
+  DeliveriesGetResponseSchema,
+  DeliveriesAcknowledgeResponseSchema,
   HubExecutionAgentCreateResponseSchema,
   HubExecutionAgentValidateResponseSchema,
   HubExecutionControlResponseSchema,
@@ -6990,6 +7017,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
       [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
+      [CLIENT_CAPS.durableDeliveries]: z.boolean().optional(),
     })
     .passthrough()
     .optional(),

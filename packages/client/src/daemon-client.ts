@@ -1,5 +1,6 @@
 import type { z } from "zod";
 import { CLIENT_CAPS, type ClientCapability } from "@getpaseo/protocol/client-capabilities";
+import type { DeliveryPayload, DeliveryRecord } from "@getpaseo/protocol/deliveries";
 import type { AgentAttentionNotificationPayload } from "@getpaseo/protocol/agent-attention-notification";
 import {
   AgentCreateFailedStatusPayloadSchema,
@@ -347,6 +348,26 @@ export interface SendMessageOptions {
   images?: Array<{ data: string; mimeType: string }>;
   attachments?: SendAgentMessageRequest["attachments"];
 }
+
+export interface SendDeliveryOptions {
+  deliveryId?: string;
+  requestId?: string;
+  timeout?: number;
+}
+
+export interface GetDeliveriesOptions {
+  deliveryId?: string;
+  includeAcknowledged?: boolean;
+  cursor?: string;
+  limit?: number;
+  requestId?: string;
+  timeout?: number;
+}
+
+export type GetDeliveriesResult = Extract<
+  SessionOutboundMessage,
+  { type: "deliveries.get.response" }
+>["payload"];
 
 export interface AgentAttentionRequiredNotification {
   agentId: string;
@@ -3036,6 +3057,61 @@ export class DaemonClient {
   }
 
   // ============================================================================
+  // Durable Deliveries
+  // ============================================================================
+
+  async sendDelivery(
+    payload: DeliveryPayload,
+    options?: SendDeliveryOptions,
+  ): Promise<DeliveryRecord> {
+    this.requireDurableDeliveriesSupport();
+    const result = await this.sendNamespacedCorrelatedSessionRequest<"deliveries.send.response">({
+      requestId: options?.requestId,
+      message: {
+        type: "deliveries.send.request",
+        payload,
+        ...(options?.deliveryId !== undefined ? { deliveryId: options.deliveryId } : {}),
+      },
+      timeout: options?.timeout,
+    });
+    return result.delivery;
+  }
+
+  async getDeliveries(options: GetDeliveriesOptions = {}): Promise<GetDeliveriesResult> {
+    this.requireDurableDeliveriesSupport();
+    return this.sendNamespacedCorrelatedSessionRequest<"deliveries.get.response">({
+      requestId: options.requestId,
+      message: {
+        type: "deliveries.get.request",
+        ...(options.deliveryId !== undefined ? { deliveryId: options.deliveryId } : {}),
+        ...(options.includeAcknowledged !== undefined
+          ? { includeAcknowledged: options.includeAcknowledged }
+          : {}),
+        ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
+        ...(options.limit !== undefined ? { limit: options.limit } : {}),
+      },
+      timeout: options.timeout,
+    });
+  }
+
+  async acknowledgeDelivery(
+    deliveryId: string,
+    options?: { requestId?: string; timeout?: number },
+  ): Promise<DeliveryRecord> {
+    this.requireDurableDeliveriesSupport();
+    const result =
+      await this.sendNamespacedCorrelatedSessionRequest<"deliveries.acknowledge.response">({
+        requestId: options?.requestId,
+        message: {
+          type: "deliveries.acknowledge.request",
+          deliveryId,
+        },
+        timeout: options?.timeout,
+      });
+    return result.delivery;
+  }
+
+  // ==========================================================================
   // Agent Interaction
   // ============================================================================
 
@@ -5605,6 +5681,14 @@ export class DaemonClient {
     }
   }
 
+  private requireDurableDeliveriesSupport(): void {
+    // COMPAT(durableDeliveries): added in v0.7.2; remove after the supported
+    // daemon floor understands the owner-scoped deliveries RPCs.
+    if (this.lastServerInfoMessage?.features?.durableDeliveries !== true) {
+      throw new Error("Update the host to use durable deliveries.");
+    }
+  }
+
   private resolveTransportUrlForAttempt(): string {
     return this.config.url;
   }
@@ -5632,6 +5716,7 @@ export class DaemonClient {
           [CLIENT_CAPS.providerSubagents]: true,
           [CLIENT_CAPS.projectUpdates]: true,
           [CLIENT_CAPS.compactProviderSnapshots]: true,
+          [CLIENT_CAPS.durableDeliveries]: true,
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),

@@ -28,6 +28,10 @@ export const CLIENT_CAPS = {
   // reconstructed timeline replay after 2027-02-21 once the client floor supports invalidation.
   timelineReplacementInvalidation: "timeline_replacement_invalidation",
   browserHost: "browser_host",
+  // COMPAT(durableDeliveries): added in v0.7.2. Capable clients may use the
+  // owner-scoped durable delivery ledger. Remove the request gate once the
+  // supported client floor understands the deliveries RPCs.
+  durableDeliveries: "durable_deliveries",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];

@@ -245,12 +245,29 @@ import {
 import { archiveByScope, type ActiveWorkspaceRef } from "./workspace-archive-service.js";
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import { SessionAuthorization, type DaemonPermission } from "./authorization/index.js";
+import {
+  DeliveryLedger,
+  DeliveryLedgerError,
+  type DeliveryLedgerGetOptions,
+} from "./deliveries/delivery-ledger.js";
 
 function resolveWorkspaceSetupRuntime(
   runtime: WorkspaceSetupRuntime | undefined,
 ): WorkspaceSetupRuntime {
   return runtime ?? new WorkspaceSetupRuntime();
 }
+
+function resolvePrincipalId(principalId: string | undefined): string {
+  return principalId ?? "owner";
+}
+
+function resolveDeliveryLedger(
+  ledger: DeliveryLedger | undefined,
+  paseoHome: string,
+): DeliveryLedger {
+  return ledger ?? new DeliveryLedger(resolve(paseoHome, "deliveries"));
+}
+
 import { WorktreeRequestError, toWorktreeWireError } from "./worktree-errors.js";
 import { parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import {
@@ -435,6 +452,8 @@ type AgentMcpTransportFactory = () => Promise<unknown>;
 
 export interface SessionOptions {
   clientId: string;
+  /** Authenticated principal used to scope durable deliveries. */
+  principalId?: string;
   permissions: readonly DaemonPermission[];
   appVersion?: string | null;
   clientCapabilities?: Record<string, unknown> | null;
@@ -452,6 +471,7 @@ export interface SessionOptions {
   worktreesRoot?: string;
   agentManager: AgentManager;
   agentStorage: AgentStorage;
+  deliveryLedger?: DeliveryLedger;
   projectRegistry: ProjectRegistry;
   workspaceRegistry: WorkspaceRegistry;
   directorySync?: DirectorySyncService;
@@ -641,6 +661,7 @@ function workspaceLabelErrorCode(error: unknown): string {
 
 export class Session {
   private readonly clientId: string;
+  private readonly principalId: string;
   private readonly authorization: SessionAuthorization;
   private appVersion: string | null;
   private clientCapabilities: ReadonlySet<ClientCapability>;
@@ -660,6 +681,7 @@ export class Session {
     | null;
   private readonly sessionLogger: pino.Logger;
   private readonly paseoHome: string;
+  private readonly deliveryLedger: DeliveryLedger;
   private readonly projectIcons: ProjectIconReader;
   private readonly worktreesRoot: string | undefined;
   private readonly rewindInitiators = new Map<string, object | undefined>();
@@ -742,6 +764,7 @@ export class Session {
   constructor(options: SessionOptions) {
     const {
       clientId,
+      principalId,
       permissions,
       appVersion,
       clientCapabilities,
@@ -759,6 +782,7 @@ export class Session {
       worktreesRoot,
       agentManager,
       agentStorage,
+      deliveryLedger,
       projectRegistry,
       workspaceRegistry,
       directorySync,
@@ -797,6 +821,7 @@ export class Session {
       getWebSocketRuntimeMetrics,
     } = options;
     this.clientId = clientId;
+    this.principalId = resolvePrincipalId(principalId);
     this.authorization = new SessionAuthorization(permissions);
     this.appVersion = appVersion ?? null;
     this.clientCapabilities = parseClientCapabilities(clientCapabilities);
@@ -810,6 +835,7 @@ export class Session {
     this.onWorkspaceRecovered = onWorkspaceRecovered ?? null;
     this.pushNotifications = pushNotifications;
     this.paseoHome = paseoHome;
+    this.deliveryLedger = resolveDeliveryLedger(deliveryLedger, paseoHome);
     this.projectIcons = new ProjectIconReader(paseoHome);
     this.worktreesRoot = worktreesRoot;
     this.pluginRuntime = pluginRuntime;
@@ -1856,15 +1882,18 @@ export class Session {
       if (!this.authorization.allowsInbound(msg)) {
         const requestId = sessionRequestId(msg);
         if (requestId) {
-          this.emit({
-            type: "rpc_error",
-            payload: {
-              requestId,
-              requestType: msg.type,
-              error: `Session is not authorized for ${msg.type}`,
-              code: "access_denied",
+          this.emitForSource(
+            {
+              type: "rpc_error",
+              payload: {
+                requestId,
+                requestType: msg.type,
+                error: `Session is not authorized for ${msg.type}`,
+                code: "access_denied",
+              },
             },
-          });
+            source,
+          );
         }
         return;
       }
@@ -1878,15 +1907,18 @@ export class Session {
           "requestId" in msg && typeof msg.requestId === "string" ? msg.requestId : undefined;
         if (typeof requestId === "string") {
           try {
-            this.emit({
-              type: "rpc_error",
-              payload: {
-                requestId,
-                requestType: msg.type,
-                error: `Request failed: ${err.message}`,
-                code: "handler_error",
+            this.emitForSource(
+              {
+                type: "rpc_error",
+                payload: {
+                  requestId,
+                  requestType: msg.type,
+                  error: `Request failed: ${err.message}`,
+                  code: error instanceof DeliveryLedgerError ? error.code : "handler_error",
+                },
               },
-            });
+              source,
+            );
           } catch (emitError) {
             this.sessionLogger.error({ err: emitError }, "Failed to emit rpc_error");
           }
@@ -1958,8 +1990,81 @@ export class Session {
       this.dispatchPluginMessage(msg) ??
       this.dispatchTerminalMessage(msg) ??
       this.dispatchScheduleMessage(msg) ??
-      this.dispatchMiscMessage(msg);
+      this.dispatchMiscMessage(msg, source);
     if (promise) await promise;
+  }
+
+  private dispatchDeliveriesMessage(
+    msg: SessionInboundMessage,
+    source?: object,
+  ): Promise<void> | undefined {
+    switch (msg.type) {
+      case "deliveries.send.request":
+        return this.deliveryLedger
+          .send(this.principalId, {
+            deliveryId: msg.deliveryId,
+            payload: msg.payload,
+          })
+          .then((result) => {
+            this.emitForSource(
+              {
+                type: "deliveries.send.response",
+                payload: {
+                  requestId: msg.requestId,
+                  deliveryId: result.delivery.deliveryId,
+                  delivery: result.delivery,
+                  created: result.created,
+                },
+              },
+              source,
+            );
+            return undefined;
+          });
+      case "deliveries.get.request": {
+        const options: DeliveryLedgerGetOptions = {
+          ...(msg.deliveryId !== undefined ? { deliveryId: msg.deliveryId } : {}),
+          ...(msg.includeAcknowledged !== undefined
+            ? { includeAcknowledged: msg.includeAcknowledged }
+            : {}),
+          ...(msg.cursor !== undefined ? { cursor: msg.cursor } : {}),
+          ...(msg.limit !== undefined ? { limit: msg.limit } : {}),
+        };
+        return this.deliveryLedger.get(this.principalId, options).then((result) => {
+          this.emitForSource(
+            {
+              type: "deliveries.get.response",
+              payload: {
+                requestId: msg.requestId,
+                delivery: result.delivery,
+                deliveries: result.deliveries,
+                nextCursor: result.nextCursor,
+              },
+            },
+            source,
+          );
+          return undefined;
+        });
+      }
+      case "deliveries.acknowledge.request":
+        return this.deliveryLedger
+          .acknowledge(this.principalId, msg.deliveryId)
+          .then((delivery) => {
+            this.emitForSource(
+              {
+                type: "deliveries.acknowledge.response",
+                payload: {
+                  requestId: msg.requestId,
+                  deliveryId: delivery.deliveryId,
+                  delivery,
+                },
+              },
+              source,
+            );
+            return undefined;
+          });
+      default:
+        return undefined;
+    }
   }
 
   private dispatchOrchestrationSkillsMessage(
@@ -2633,7 +2738,12 @@ export class Session {
     }
   }
 
-  private async dispatchMiscMessage(msg: SessionInboundMessage): Promise<void> {
+  private async dispatchMiscMessage(msg: SessionInboundMessage, source?: object): Promise<void> {
+    const deliveryPromise = this.dispatchDeliveriesMessage(msg, source);
+    if (deliveryPromise) {
+      await deliveryPromise;
+      return;
+    }
     switch (msg.type) {
       case "list_commands_request":
         await this.handleListCommandsRequest(msg);

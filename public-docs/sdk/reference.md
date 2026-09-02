@@ -155,6 +155,18 @@ A workspace handle exposes `id`, `projectId`, `directory`, `name`, `status`, `cu
 
 `config.patch(patch, requestId?)` validates, persists, and returns an updated configuration. Use this administrative surface for host configuration, not per-agent choices. A patch affects every client and future agent using that daemon.
 
+## `client.deliveries`
+
+Durable deliveries persist JSON payloads in the daemon until the owning principal acknowledges them.
+
+| Method                              | Result                   | Behavior                                                                                                                 |
+| ----------------------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `send(payload, options?)`           | `PaseoDelivery`          | Persists before resolving. Set `deliveryId` to make retries idempotent.                                                  |
+| `get(options?)`                     | `PaseoDeliveryGetResult` | Returns pending deliveries by default. Use `includeAcknowledged`, `deliveryId`, `cursor`, and `limit` to filter or page. |
+| `acknowledge(deliveryId, options?)` | `PaseoDelivery`          | Records an acknowledgement; repeating the call is safe.                                                                  |
+
+`payload` may be any JSON value. Delivery IDs are scoped to the authenticated principal, so plugin deliveries are isolated from daemon-owner deliveries. These methods require the daemon's `durableDeliveries` feature; an older host rejects them without sending an RPC.
+
 ## Errors and cleanup
 
 Connection, validation, rejection, and timeout failures reject their promise. Turn outcomes are returned through `PaseoAgentRunResult.status` because permission and provider errors are expected agent states.
