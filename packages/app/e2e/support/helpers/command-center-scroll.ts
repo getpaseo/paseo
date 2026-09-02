@@ -58,7 +58,7 @@ export async function observeCommandCenterScroll(page: Page): Promise<void> {
 }
 
 export async function openCommandCenterWithKeyboard(page: Page): Promise<Locator> {
-  await expect(page.getByTestId("sidebar-command-center-search")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("sidebar-search")).toBeVisible({ timeout: 30_000 });
   await page.keyboard.press("Meta+K");
   const panel = page.getByTestId("command-center-panel");
   await expect(panel).toBeVisible({ timeout: 30_000 });

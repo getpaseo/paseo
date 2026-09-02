@@ -11,6 +11,7 @@ import {
   type PluginAttachmentSourceContribution,
   type PluginCommandCenterItemContribution,
   type PluginClientContribution,
+  type PluginClientSlashCommandContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
   type PluginThemeContribution,
@@ -73,6 +74,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
+    clientSlashCommands: [],
     clientSide: null,
     attachmentSources: [],
     themes: [],
@@ -83,6 +85,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
   const sidebarItemIds = new Set<string>();
   const workspacePanelIds = new Set<string>();
   const commandCenterItemIds = new Set<string>();
+  const clientSlashCommandNames = new Set<string>();
   const attachmentSourceIds = new Set<string>();
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
@@ -164,6 +167,27 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
         title,
         icon,
         keywords: contribution.keywords?.map((keyword) => keyword.trim()).filter(Boolean),
+      });
+    },
+    addClientSlashCommand(contribution: PluginClientSlashCommandContribution) {
+      const name = requireId(contribution.name, "client slash command name");
+      if (clientSlashCommandNames.has(name)) {
+        throw new Error(`Duplicate client slash command: ${name}`);
+      }
+      const description = contribution.description.trim();
+      if (!description) throw new Error(`Client slash command ${name} has no description`);
+      if (contribution.context !== "workspace" && contribution.context !== "agent") {
+        throw new Error(`Client slash command ${name} has invalid context`);
+      }
+      if (typeof contribution.onSubmit !== "function") {
+        throw new Error(`Client slash command ${name} has no callback`);
+      }
+      clientSlashCommandNames.add(name);
+      collector.clientSlashCommands.push({
+        ...contribution,
+        name,
+        description,
+        argumentHint: contribution.argumentHint.trim(),
       });
     },
     addClientSide(contribution: PluginClientContribution) {
@@ -312,6 +336,7 @@ export function evaluatePluginClientBundle(id: string, bundle: string): Evaluate
     sidebarItems: collector.sidebarItems,
     workspacePanels: collector.workspacePanels as EvaluatedPlugin["workspacePanels"],
     commandCenterItems: collector.commandCenterItems,
+    clientSlashCommands: collector.clientSlashCommands,
     clientSide: collector.clientSide,
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,

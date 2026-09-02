@@ -1106,6 +1106,7 @@ export const ko: TranslationResources = {
     },
     sections: {
       sessions: "기록",
+      search: "검색",
       schedules: "일정",
     },
     worktreeSetup: {
@@ -2106,6 +2107,12 @@ export const ko: TranslationResources = {
       chatOutline: {
         title: "채팅 개요",
         description: "프롬프트 사이를 이동하기 위한 개요 표시",
+      },
+      sidebar: {
+        title: "사이드바",
+        description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
+        moveUp: "위로 이동",
+        moveDown: "아래로 이동",
       },
       fonts: {
         title: "글꼴",

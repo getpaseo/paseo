@@ -3,6 +3,7 @@ import type { ActiveTurnBehavior } from "@getpaseo/protocol/messages";
 import type { QueryClient } from "@tanstack/react-query";
 import type { DesktopSettings } from "@/desktop/settings/desktop-settings";
 import type { AppLanguage } from "@/i18n/locales";
+import type { SidebarNavPreference } from "@/sidebar-nav/model";
 import {
   DEFAULT_SIDEBAR_CHECKS_DISPLAY,
   type SidebarChecksDisplay,
@@ -82,6 +83,8 @@ export interface AppSettings {
   sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
   sidebarRowItems: SidebarRowItems;
   sidebarChecksDisplay: SidebarChecksDisplay;
+  /** Top-level sidebar rows in display order; empty means the default order, all visible. */
+  sidebarNavItems: SidebarNavPreference[];
   autoExpandReasoning: boolean;
   toolCallDetailLevel: ToolCallDetailLevel;
   chatOutlineEnabled: boolean;
@@ -90,6 +93,10 @@ export interface AppSettings {
   openInSidePane: OpenInSidePanePreferences;
   pullRequestOpenLocation: PullRequestOpenLocation;
 }
+
+export type AppSettingsUpdate =
+  | Partial<AppSettings>
+  | ((current: AppSettings) => Partial<AppSettings>);
 
 export interface OpenInSidePanePreferences {
   explorerFiles: boolean;
@@ -130,6 +137,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sidebarWorkspaceTrailing: "diff",
   sidebarRowItems: DEFAULT_SIDEBAR_ROW_ITEMS,
   sidebarChecksDisplay: DEFAULT_SIDEBAR_CHECKS_DISPLAY,
+  sidebarNavItems: [],
   autoExpandReasoning: false,
   toolCallDetailLevel: "detailed",
   chatOutlineEnabled: true,
@@ -218,6 +226,7 @@ const StoredAppSettingsSchema = z
       .enum(["iconAndText", "icon", "none"])
       .optional()
       .catch(DEFAULT_SIDEBAR_CHECKS_DISPLAY),
+    sidebarNavItems: z.array(z.object({ key: z.string(), visible: z.boolean() })).catch([]),
     autoExpandReasoning: z.boolean().catch(false),
     toolCallDetailLevel: z
       .enum(["overview", "detailed"])
@@ -319,14 +328,15 @@ export interface SettingsDeps {
 
 export async function saveAppSettings(input: {
   queryClient: QueryClient;
-  updates: Partial<AppSettings>;
+  updates: AppSettingsUpdate;
   deps: SettingsDeps;
 }): Promise<void> {
   const storedCurrent =
     input.queryClient.getQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY) ??
     (await loadAppSettingsFromStorage(input.deps));
   const current = normalizeAppSettings(storedCurrent);
-  const next = { ...current, ...input.updates };
+  const updates = typeof input.updates === "function" ? input.updates(current) : input.updates;
+  const next = { ...current, ...updates };
   input.queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
   await writeAppSettings(
     input.deps.storage,

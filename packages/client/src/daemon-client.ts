@@ -2883,6 +2883,19 @@ export class DaemonClient {
     return payload;
   }
 
+  async appendAgentTimelineItem(
+    agentId: string,
+    item: Omit<import("@getpaseo/protocol/agent-types").PluginTimelineItem, "pluginId">,
+  ): Promise<{ seq: number; epoch: string }> {
+    const requestId = this.createRequestId();
+    const payload = await this.sendCorrelatedSessionRequest({
+      requestId,
+      message: { type: "agent.timeline.append.request", requestId, agentId, item },
+      responseType: "agent.timeline.append.response",
+    });
+    return { seq: payload.seq, epoch: payload.epoch };
+  }
+
   async listAgentTimelinePrompts(
     agentId: string,
     options: { requestId?: string; timeout?: number } = {},

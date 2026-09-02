@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { PaseoApi } from "@getpaseo/client";
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract } from "./rpc.js";
 
@@ -182,16 +182,11 @@ export interface PluginAttachmentSourceContribution {
   search: PluginRpcContract;
 }
 
-export type PluginTimelineData =
-  | null
-  | boolean
-  | number
-  | string
-  | PluginTimelineData[]
-  | { [key: string]: PluginTimelineData };
+export type PluginTimelineData = JsonValue;
 
 export interface PluginTimelineItem {
   type: "plugin";
+  id?: string;
   kind: string;
   version: number;
   data: PluginTimelineData;
@@ -211,6 +206,7 @@ export type PluginTimelineTransformerContribution<
       };
       transform(input: {
         item: Extract<AgentTimelineItem, { type: ItemType }>;
+        phase: "streaming" | "complete";
       }): PluginTimelineTransformResult | undefined;
     }
   : never;
@@ -280,6 +276,22 @@ export type PluginCommandCenterItemContribution =
       onSelect(context: PluginAgentCommandContext): void | Promise<void>;
     });
 
+interface PluginClientSlashCommandBase {
+  name: string;
+  description: string;
+  argumentHint: string;
+}
+
+export type PluginClientSlashCommandContribution =
+  | (PluginClientSlashCommandBase & {
+      context: "workspace";
+      onSubmit(context: PluginWorkspaceCommandContext & { args: string }): void | Promise<void>;
+    })
+  | (PluginClientSlashCommandBase & {
+      context: "agent";
+      onSubmit(context: PluginAgentCommandContext & { args: string }): void | Promise<void>;
+    });
+
 export interface PluginHandlerContext {
   paseo: PaseoApi;
 }
@@ -296,6 +308,7 @@ export interface PluginContext {
   addSidebarItem(contribution: PluginSidebarContribution): void;
   addWorkspacePanel(contribution: PluginWorkspacePanelContribution): void;
   addCommandCenterItem(contribution: PluginCommandCenterItemContribution): void;
+  addClientSlashCommand(contribution: PluginClientSlashCommandContribution): void;
   addClientSide(contribution: PluginClientContribution): void;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): void;
   addTheme(contribution: PluginThemeContribution): void;

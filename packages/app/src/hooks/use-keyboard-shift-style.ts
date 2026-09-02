@@ -15,6 +15,7 @@ import {
 import {
   DEFAULT_IOS_KEYBOARD_INSET_MIN_HEIGHT,
   resolveKeyboardShift,
+  shouldReconcileHiddenKeyboardEnd,
 } from "@/hooks/keyboard-shift-policy";
 import { KeyboardShiftContext, useKeyboardShift } from "@/hooks/keyboard-shift-context";
 
@@ -34,9 +35,9 @@ export function KeyboardShiftProvider({ children }: { children: ReactNode }) {
     {
       onEnd: (event) => {
         "worklet";
-        if (isIos) {
-          keyboardHeight.value = -event.height;
-          keyboardProgress.value = event.progress;
+        if (isIos && shouldReconcileHiddenKeyboardEnd(event)) {
+          keyboardHeight.value = 0;
+          keyboardProgress.value = 0;
         }
       },
     },

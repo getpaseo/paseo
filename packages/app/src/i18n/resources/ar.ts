@@ -1099,6 +1099,7 @@ export const ar: TranslationResources = {
     },
     sections: {
       sessions: "السجل",
+      search: "بحث",
       schedules: "الجداول",
     },
     worktreeSetup: {
@@ -2095,6 +2096,12 @@ export const ar: TranslationResources = {
       chatOutline: {
         title: "مخطط المحادثة",
         description: "عرض مخطط للتنقل بين المطالبات",
+      },
+      sidebar: {
+        title: "الشريط الجانبي",
+        description: "اختر العناصر التي تظهر أعلى الشريط الجانبي وترتيبها",
+        moveUp: "نقل لأعلى",
+        moveDown: "نقل لأسفل",
       },
       fonts: {
         title: "الخطوط",
