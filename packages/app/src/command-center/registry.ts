@@ -10,6 +10,7 @@ export interface CommandCenterRegistry {
   subscribe(listener: () => void): () => void;
   replace(registration: CommandCenterRegistration): void;
   remove(owner: CommandCenterRegistrationOwner): void;
+  runShortcut(shortcutId: string): boolean;
 }
 
 interface ActiveRegistration {
@@ -17,7 +18,15 @@ interface ActiveRegistration {
   contributions: readonly CommandCenterContribution[];
 }
 
-const EMPTY_SNAPSHOT: CommandCenterContributionSnapshot = { contributions: [] };
+interface ShortcutCatalogEntry {
+  sourceId: string;
+  contribution: CommandCenterContribution;
+}
+
+const EMPTY_SNAPSHOT: CommandCenterContributionSnapshot = {
+  contributions: [],
+  shortcutCatalog: [],
+};
 
 function contributionId(sourceId: string, id: string): string {
   return `${sourceId}:${id}`;
@@ -43,6 +52,7 @@ function sameContributions(
 
 export function createCommandCenterRegistry(): CommandCenterRegistry {
   const registrations = new Map<string, ActiveRegistration>();
+  const shortcutCatalog = new Map<string, ShortcutCatalogEntry>();
   const listeners = new Set<() => void>();
   let snapshot = EMPTY_SNAPSHOT;
 
@@ -57,13 +67,28 @@ export function createCommandCenterRegistry(): CommandCenterRegistry {
           throw new Error(`Duplicate Command Center contribution id: ${id}`);
         }
         ids.add(id);
-        contributions.push({ ...contribution, id });
+        const registeredContribution = { ...contribution, id };
+        contributions.push(registeredContribution);
+        if (registeredContribution.shortcutId) {
+          shortcutCatalog.set(registeredContribution.shortcutId, {
+            sourceId: registration.owner.sourceId,
+            contribution: registeredContribution,
+          });
+        }
       }
     }
     contributions.sort(compareContributions);
+    const catalogContributions = [...shortcutCatalog.values()]
+      .map((entry) => entry.contribution)
+      .sort(compareContributions);
 
-    if (sameContributions(snapshot.contributions, contributions)) return;
-    snapshot = contributions.length === 0 ? EMPTY_SNAPSHOT : { contributions };
+    if (
+      sameContributions(snapshot.contributions, contributions) &&
+      sameContributions(snapshot.shortcutCatalog, catalogContributions)
+    ) {
+      return;
+    }
+    snapshot = { contributions, shortcutCatalog: catalogContributions };
     for (const listener of listeners) listener();
   }
 
@@ -81,6 +106,18 @@ export function createCommandCenterRegistry(): CommandCenterRegistry {
       ) {
         return;
       }
+      const nextShortcutIds = new Set(
+        registration.contributions.flatMap((contribution) =>
+          contribution.shortcutId ? [contribution.shortcutId] : [],
+        ),
+      );
+      for (const contribution of current?.contributions ?? []) {
+        if (!contribution.shortcutId || nextShortcutIds.has(contribution.shortcutId)) continue;
+        const catalogEntry = shortcutCatalog.get(contribution.shortcutId);
+        if (catalogEntry?.sourceId === registration.owner.sourceId) {
+          shortcutCatalog.delete(contribution.shortcutId);
+        }
+      }
       const ids = new Set<string>();
       for (const contribution of registration.contributions) {
         const id = contributionId(registration.owner.sourceId, contribution.id);
@@ -95,6 +132,14 @@ export function createCommandCenterRegistry(): CommandCenterRegistry {
       if (current?.owner.token !== owner.token) return;
       registrations.delete(owner.sourceId);
       publish();
+    },
+    runShortcut(shortcutId) {
+      const matches = snapshot.contributions.filter(
+        (contribution) => contribution.shortcutId === shortcutId,
+      );
+      if (matches.length !== 1) return false;
+      void matches[0].run();
+      return true;
     },
   };
 }

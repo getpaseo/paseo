@@ -109,7 +109,9 @@ function prefixFromCombo(
   if (combo.shiftedKey) {
     prefix.shiftedKey = combo.shiftedKey;
   }
-  return prefix.meta || prefix.control || prefix.alt ? prefix : null;
+  return prefix.meta || prefix.control || prefix.alt || combo.crossesBrowserBoundary === true
+    ? prefix
+    : null;
 }
 
 function isBrowserNativeNavigationPrefix(prefix: BrowserShortcutPrefix, isMac: boolean): boolean {

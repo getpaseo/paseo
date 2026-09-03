@@ -9,6 +9,7 @@ export type CommandCenterIcon = ComponentType<CommandCenterIconProps>;
 
 interface CommandCenterContributionBase {
   id: string;
+  shortcutId?: string;
   group: string;
   groupRank: number;
   rank: number;
@@ -40,6 +41,7 @@ export type CommandCenterContribution =
 
 export interface CommandCenterContributionSnapshot {
   contributions: readonly CommandCenterContribution[];
+  shortcutCatalog: readonly CommandCenterContribution[];
 }
 
 export interface CommandCenterRegistrationOwner {

@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { formatShortcut } from "@/utils/format-shortcut";
 import {
   buildKeyboardShortcutHelpSections,
+  buildCommandShortcutBindings,
   buildEffectiveBindings,
+  findKeyboardShortcutConflict,
+  getCommandShortcutBindingId,
+  getCommandShortcutIdFromBindingId,
   getBindingIdForAction,
   getDefaultKeysForAction,
   getWorkspaceIndexJumpModifierKey,
@@ -616,6 +620,130 @@ describe("keyboard-shortcuts", () => {
 
     expect(onChordReset).toHaveBeenCalledTimes(1);
     vi.useRealTimers();
+  });
+});
+
+describe("command contribution shortcut overrides", () => {
+  const shortcutId = "models:codex:gpt-5.6-sol";
+  const bindingId = "command-center.shortcut:models:codex:gpt-5.6-sol";
+
+  it("resolves a configured exact target through its stable shortcut identity", () => {
+    const bindings = buildCommandShortcutBindings([shortcutId], { [bindingId]: "F13" });
+    const result = resolveShortcut({
+      event: { key: "F13", code: "F13" },
+      context: { focusScope: "message-input" },
+      bindings,
+    });
+
+    expect(result.match).toMatchObject({
+      action: "command-center.contribution.run",
+      commandShortcutId: shortcutId,
+      payload: null,
+      preventDefault: true,
+      stopPropagation: true,
+    });
+  });
+
+  it("uses existing override persistence keys without assigning a default chord", () => {
+    expect(getCommandShortcutBindingId(shortcutId)).toBe(bindingId);
+    expect(getCommandShortcutIdFromBindingId(bindingId)).toBe(shortcutId);
+    expect(getCommandShortcutIdFromBindingId("message-input-model-pick-alt-m")).toBeNull();
+    expect(buildCommandShortcutBindings([shortcutId], {})).toEqual([]);
+  });
+
+  it("does not resolve targets that the focused composer does not offer", () => {
+    const bindings = buildCommandShortcutBindings(["models:claude:claude-opus-5"], {
+      [bindingId]: "F13",
+    });
+    const result = resolveShortcut({
+      event: { key: "F13", code: "F13" },
+      context: { focusScope: "message-input" },
+      bindings,
+    });
+
+    expect(bindings).toEqual([]);
+    expect(result.match).toBeNull();
+  });
+
+  it("uses the same non-terminal, closed-command-center scope as composer picker shortcuts", () => {
+    const bindings = buildCommandShortcutBindings([shortcutId], { [bindingId]: "F13" });
+
+    expect(
+      resolveShortcut({
+        event: { key: "F13", code: "F13" },
+        context: { focusScope: "terminal" },
+        bindings,
+      }).match,
+    ).toBeNull();
+    expect(
+      resolveShortcut({
+        event: { key: "F13", code: "F13" },
+        context: { commandCenterOpen: true },
+        bindings,
+      }).match,
+    ).toBeNull();
+    expect(
+      resolveShortcut({
+        event: { key: "F13", code: "F13" },
+        context: { focusScope: "editable" },
+        bindings,
+      }).match?.commandShortcutId,
+    ).toBe(shortcutId);
+  });
+
+  it("ignores invalid stored command shortcut overrides", () => {
+    expect(buildCommandShortcutBindings([shortcutId], { [bindingId]: "F25" })).toEqual([]);
+  });
+
+  it("rejects direct shortcuts that conflict with built-in bindings", () => {
+    const overrides = { [bindingId]: "Ctrl+W" };
+    const builtIns = buildEffectiveBindings(overrides);
+
+    expect(buildCommandShortcutBindings([shortcutId], overrides, builtIns)).toEqual([]);
+    expect(
+      findKeyboardShortcutConflict(bindingId, "Ctrl+W", {}, [shortcutId], {
+        isMac: false,
+        isDesktop: true,
+      }),
+    ).toBe("workspace-tab-close-current-ctrl-w-non-mac");
+  });
+
+  it("rejects all direct shortcuts sharing the same chord", () => {
+    const thinkingId = "thinking:high";
+    const thinkingBindingId = getCommandShortcutBindingId(thinkingId);
+    const overrides = { [bindingId]: "F13", [thinkingBindingId]: "F13" };
+
+    expect(buildCommandShortcutBindings([shortcutId, thinkingId], overrides)).toEqual([]);
+    expect(
+      findKeyboardShortcutConflict(bindingId, "F13", overrides, [shortcutId, thinkingId], {
+        isMac: false,
+        isDesktop: true,
+      }),
+    ).toBe(thinkingBindingId);
+  });
+
+  it("ignores conflicts from bindings that cannot run on the current platform", () => {
+    const overrides = { [bindingId]: "Alt+1" };
+    const builtIns = buildEffectiveBindings(overrides);
+
+    expect(
+      buildCommandShortcutBindings([shortcutId], overrides, builtIns, {
+        isMac: true,
+        isDesktop: true,
+      }),
+    ).toHaveLength(1);
+    expect(
+      findKeyboardShortcutConflict(bindingId, "Alt+1", {}, [shortcutId], {
+        isMac: true,
+        isDesktop: true,
+      }),
+    ).toBeNull();
+    expect(
+      findKeyboardShortcutConflict(bindingId, "Alt+1", {}, [shortcutId], {
+        isMac: true,
+        isDesktop: false,
+      }),
+    ).toBe("workspace-navigate-index-alt-digit-web");
   });
 });
 

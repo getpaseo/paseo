@@ -1,4 +1,5 @@
 import {
+  useCallback,
   createContext,
   useContext,
   useEffect,
@@ -26,6 +27,11 @@ function useCommandCenterRegistry(): CommandCenterRegistry {
   const registry = useContext(CommandCenterRegistryContext);
   if (!registry) throw new Error("CommandCenterProvider is required");
   return registry;
+}
+
+export function useCommandCenterShortcutRunner(): (shortcutId: string) => boolean {
+  const registry = useCommandCenterRegistry();
+  return useCallback((shortcutId: string) => registry.runShortcut(shortcutId), [registry]);
 }
 
 export function useCommandCenterContributions() {

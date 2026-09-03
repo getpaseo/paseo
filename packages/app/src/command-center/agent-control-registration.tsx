@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import { useIsFocused } from "@react-navigation/native";
 import type {
   AgentFeature,
   AgentMode,
@@ -148,9 +149,15 @@ export function useAgentControlCommandCenterActions(input: {
     ],
   );
 
+  // runShortcut dispatches only when exactly one live contribution matches a
+  // shortcutId. Stack navigation keeps blurred screens mounted, so pane focus
+  // alone lets a background route double-register and dead-lock every direct
+  // shortcut. Route focus scopes registration to the visible screen.
+  const isRouteFocused = useIsFocused();
+
   useCommandCenterActions({
     sourceId: input.sourceId,
-    enabled: input.enabled,
+    enabled: input.enabled && isRouteFocused,
     actions,
   });
 }

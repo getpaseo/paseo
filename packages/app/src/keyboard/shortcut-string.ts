@@ -5,6 +5,7 @@ export interface KeyCombo {
   key?: string;
   shiftedKey?: string;
   codeFallback?: boolean;
+  crossesBrowserBoundary?: true;
   meta?: true;
   ctrl?: true;
   alt?: true;
@@ -18,6 +19,7 @@ interface KeyMapping {
   key?: string;
   shiftedKey?: string;
   codeFallback?: boolean;
+  crossesBrowserBoundary?: true;
 }
 
 const KEY_MAP: Record<string, KeyMapping> = {};
@@ -70,8 +72,11 @@ KEY_MAP["PageUp"] = { code: "PageUp" };
 KEY_MAP["PageDown"] = { code: "PageDown" };
 KEY_MAP["Insert"] = { code: "Insert" };
 
-for (let i = 1; i <= 12; i++) {
-  KEY_MAP[`F${i}`] = { code: `F${i}` };
+for (let i = 1; i <= 24; i++) {
+  KEY_MAP[`F${i}`] = {
+    code: `F${i}`,
+    ...(i >= 13 ? { codeFallback: true, crossesBrowserBoundary: true } : {}),
+  };
 }
 
 /**
@@ -133,13 +138,16 @@ export function parseShortcutString(s: string): KeyCombo {
   }
 
   combo.code = mapping.code;
+  if (mapping.codeFallback === true) {
+    combo.codeFallback = true;
+  }
+  if (mapping.crossesBrowserBoundary === true) {
+    combo.crossesBrowserBoundary = true;
+  }
   if (mapping.key !== undefined) {
     combo.key = mapping.key;
     if (mapping.shiftedKey !== undefined) {
       combo.shiftedKey = mapping.shiftedKey;
-    }
-    if (mapping.codeFallback === true) {
-      combo.codeFallback = true;
     }
   }
 

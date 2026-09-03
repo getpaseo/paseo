@@ -46,6 +46,23 @@ describe("keyboardEventToComboString", () => {
   });
 });
 
+describe("F13-F24 shortcuts", () => {
+  for (let index = 13; index <= 24; index += 1) {
+    const key = `F${index}`;
+
+    it(`parses, displays, and captures ${key}`, () => {
+      const combo = parseShortcutString(key);
+      expect(combo).toEqual({
+        code: key,
+        codeFallback: true,
+        crossesBrowserBoundary: true,
+      });
+      expect(keyComboToString(combo)).toBe(key);
+      expect(keyboardEventToComboString(keyboardEvent({ key, code: key }))).toBe(key);
+    });
+  }
+});
+
 describe("parseShortcutString round-trips punctuation keys", () => {
   const cases: ReadonlyArray<[string, string, string, string]> = [
     ["-", "Minus", "-", "_"],

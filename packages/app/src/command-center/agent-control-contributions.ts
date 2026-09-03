@@ -66,6 +66,7 @@ export interface AgentControlContributionIcons {
 
 interface CommandCenterChoice {
   id: string;
+  shortcutId?: string;
   path: readonly string[];
   keywords?: readonly string[];
   icon?: CommandCenterIcon;
@@ -119,6 +120,7 @@ function buildContributions(
     for (const [rank, choice] of group.choices.entries()) {
       contributions.push({
         id: `${group.id}:${choice.id}`,
+        ...(choice.shortcutId ? { shortcutId: choice.shortcutId } : {}),
         group: group.id,
         groupRank: group.rank,
         rank,
@@ -151,6 +153,7 @@ function buildModelGroup(source: AgentControlContributionSource): CommandCenterC
       const modelId = model.modelId;
       choices.push({
         id: `${provider.id}:${modelId}`,
+        shortcutId: `models:${provider.id}:${modelId}`,
         path: [provider.label, model.modelLabel],
         keywords: [modelId],
         icon,
@@ -177,6 +180,7 @@ function buildThinkingGroup(source: AgentControlContributionSource): CommandCent
       ? source.thinking.options.map(
           (option): CommandCenterChoice => ({
             id: option.id,
+            shortcutId: `thinking:${normalizeThinkingShortcutTargetId(option.id)}`,
             path: [formatThinkingOptionLabel(option)],
             icon: source.icons.thinking,
             selected: option.id === source.thinking.selectedId,
@@ -192,6 +196,10 @@ function buildThinkingGroup(source: AgentControlContributionSource): CommandCent
     keywords: [source.labels.thinkingKeywords],
     choices,
   };
+}
+
+export function normalizeThinkingShortcutTargetId(optionId: string): string {
+  return optionId === "ultra" || optionId === "ultracode" ? "top" : optionId;
 }
 
 function buildModeGroup(source: AgentControlContributionSource): CommandCenterChoiceGroup {

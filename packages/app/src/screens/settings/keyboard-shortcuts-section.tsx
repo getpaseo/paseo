@@ -18,12 +18,15 @@ import { Shortcut } from "@/components/ui/shortcut";
 import { useKeyboardShortcutOverrides } from "@/hooks/use-keyboard-shortcut-overrides";
 import {
   buildKeyboardShortcutHelpSections,
+  findKeyboardShortcutConflict,
   getBindingIdForAction,
+  getCommandShortcutIdFromBindingId,
   getDefaultKeysForAction,
   resolveShortcutKeysForAction,
   type KeyboardShortcutHelpRow,
 } from "@/keyboard/keyboard-shortcuts";
 import {
+  chordStringToShortcutKeys,
   comboStringToShortcutKeys,
   heldModifiersFromEvent,
   keyboardEventToComboString,
@@ -34,6 +37,12 @@ import { getShortcutOs } from "@/utils/shortcut-platform";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { isNative } from "@/constants/platform";
 import { getDesktopHost } from "@/desktop/host";
+import { useCommandCenterContributions } from "@/command-center/provider";
+import {
+  buildCommandShortcutSettingsRows,
+  type CommandShortcutSettingsRow,
+} from "@/command-center/shortcut-settings";
+import { useToast } from "@/contexts/toast-context";
 
 const EMPTY_CAPTURED_COMBOS: string[] = [];
 
@@ -323,13 +332,115 @@ function ShortcutRow({
   );
 }
 
+function DirectShortcutRow({
+  row,
+  isCapturing,
+  capturedCombos,
+  heldModifiers,
+  onRebind,
+  onDone,
+  onCancel,
+  onReset,
+}: {
+  row: CommandShortcutSettingsRow;
+  isCapturing: boolean;
+  capturedCombos: string[];
+  heldModifiers: string | null;
+  onRebind: () => void;
+  onDone: () => void;
+  onCancel: () => void;
+  onReset: () => void;
+}) {
+  const { t } = useTranslation();
+  const label = row.available ? row.label : `${row.label} · ${t("settings.providers.unavailable")}`;
+  const displayChord = row.combo ? chordStringToShortcutKeys(row.combo) : null;
+  let shortcut = <Text style={styles.unassignedText}>—</Text>;
+  if (displayChord) shortcut = <Shortcut chord={displayChord} />;
+  if (isCapturing) {
+    shortcut = <ShortcutSequence chord={capturedCombos} heldModifiers={heldModifiers} />;
+  }
+  return (
+    <View style={[styles.row, isCapturing && styles.rowCapturing]}>
+      <Text style={styles.rowLabel}>{label}</Text>
+      <View style={styles.rowActions}>
+        {shortcut}
+        {row.available &&
+          (isCapturing ? (
+            <>
+              {capturedCombos.length > 0 && (
+                <Button variant="ghost" size="sm" onPress={onDone}>
+                  {t("settings.shortcuts.actions.done")}
+                </Button>
+              )}
+              <Button variant="ghost" size="sm" onPress={onCancel}>
+                {t("settings.shortcuts.actions.cancel")}
+              </Button>
+            </>
+          ) : (
+            <Button variant="ghost" size="sm" onPress={onRebind}>
+              {t("settings.shortcuts.actions.rebind")}
+            </Button>
+          ))}
+        {row.combo !== undefined && !isCapturing && (
+          <Button variant="ghost" size="sm" onPress={onReset}>
+            <Text style={styles.resetText}>{t("settings.shortcuts.actions.reset")}</Text>
+          </Button>
+        )}
+      </View>
+    </View>
+  );
+}
+
+function DirectShortcutRowContainer({
+  row,
+  isCapturing,
+  capturedCombos,
+  heldModifiers,
+  onStartCapture,
+  onSaveCapture,
+  onCancelCapture,
+  onRemoveOverride,
+}: {
+  row: CommandShortcutSettingsRow;
+  isCapturing: boolean;
+  capturedCombos: string[];
+  heldModifiers: string | null;
+  onStartCapture: (bindingId: string) => void;
+  onSaveCapture: () => void;
+  onCancelCapture: () => void;
+  onRemoveOverride: (bindingId: string) => void;
+}) {
+  const handleRebind = useCallback(
+    () => onStartCapture(row.bindingId),
+    [onStartCapture, row.bindingId],
+  );
+  const handleReset = useCallback(
+    () => onRemoveOverride(row.bindingId),
+    [onRemoveOverride, row.bindingId],
+  );
+  return (
+    <DirectShortcutRow
+      row={row}
+      isCapturing={isCapturing}
+      capturedCombos={capturedCombos}
+      heldModifiers={heldModifiers}
+      onRebind={handleRebind}
+      onDone={onSaveCapture}
+      onCancel={onCancelCapture}
+      onReset={handleReset}
+    />
+  );
+}
+
 export function KeyboardShortcutsSection() {
   const { t } = useTranslation();
+  const toast = useToast();
   const [capturingBindingId, setCapturingBindingId] = useState<string | null>(null);
   const [capturedCombos, setCapturedCombos] = useState<string[]>([]);
   const [heldModifiers, setHeldModifiers] = useState<string | null>(null);
   const { overrides, hasOverrides, setOverride, clearOverride, removeOverride, resetAll } =
     useKeyboardShortcutOverrides();
+  const commandCenterSnapshot = useCommandCenterContributions();
   const setCapturingShortcut = useKeyboardShortcutsStore((s) => s.setCapturingShortcut);
   const capturing = useKeyboardShortcutsStore((s) => s.capturingShortcut);
 
@@ -337,6 +448,25 @@ export function KeyboardShortcutsSection() {
   const isMac = getShortcutOs() === "mac";
   const isDesktopApp = getIsElectronRuntime();
   const sections = buildKeyboardShortcutHelpSections({ isMac, isDesktop: isDesktopApp });
+  const directShortcutRows = useMemo(
+    () => buildCommandShortcutSettingsRows(commandCenterSnapshot.shortcutCatalog, overrides),
+    [commandCenterSnapshot.shortcutCatalog, overrides],
+  );
+  const directShortcutGroups = useMemo(
+    () => [
+      {
+        id: "models",
+        title: t("shell.commandCenter.modelGroupLabel"),
+        rows: directShortcutRows.filter((row) => row.group === "models"),
+      },
+      {
+        id: "thinking",
+        title: t("shell.commandCenter.thinkingGroupLabel"),
+        rows: directShortcutRows.filter((row) => row.group === "thinking"),
+      },
+    ],
+    [directShortcutRows, t],
+  );
 
   const cancelCapture = useCallback(() => {
     setCapturedCombos([]);
@@ -359,9 +489,33 @@ export function KeyboardShortcutsSection() {
     if (capturingBindingId === null || capturedCombos.length === 0) {
       return;
     }
-    void setOverride(capturingBindingId, capturedCombos.join(" "));
+    const combo = capturedCombos.join(" ");
+    const commandShortcutIds = commandCenterSnapshot.shortcutCatalog.flatMap((contribution) =>
+      contribution.shortcutId ? [contribution.shortcutId] : [],
+    );
+    if (
+      getCommandShortcutIdFromBindingId(capturingBindingId) &&
+      findKeyboardShortcutConflict(capturingBindingId, combo, overrides, commandShortcutIds, {
+        isMac,
+        isDesktop: isDesktopApp,
+      })
+    ) {
+      toast.error("That shortcut is already assigned.");
+      return;
+    }
+    void setOverride(capturingBindingId, combo);
     cancelCapture();
-  }, [capturingBindingId, capturedCombos, setOverride, cancelCapture]);
+  }, [
+    cancelCapture,
+    capturedCombos,
+    commandCenterSnapshot.shortcutCatalog,
+    isDesktopApp,
+    isMac,
+    capturingBindingId,
+    overrides,
+    setOverride,
+    toast,
+  ]);
 
   useEffect(() => {
     if (!isFocused && capturingBindingId !== null) {
@@ -489,6 +643,36 @@ export function KeyboardShortcutsSection() {
           </SettingsSection>
         );
       })}
+      {directShortcutGroups.map(function (group) {
+        if (group.rows.length === 0) return null;
+        return (
+          <SettingsSection key={group.id} title={group.title}>
+            <View style={settingsStyles.card}>
+              {group.rows.map(function (row, index) {
+                return (
+                  <View key={row.shortcutId}>
+                    <DirectShortcutRowContainer
+                      row={row}
+                      isCapturing={capturingBindingId === row.bindingId}
+                      capturedCombos={
+                        capturingBindingId === row.bindingId
+                          ? capturedCombos
+                          : EMPTY_CAPTURED_COMBOS
+                      }
+                      heldModifiers={capturingBindingId === row.bindingId ? heldModifiers : null}
+                      onStartCapture={startCapture}
+                      onSaveCapture={saveCapture}
+                      onCancelCapture={cancelCapture}
+                      onRemoveOverride={handleRemoveOverride}
+                    />
+                    {index < group.rows.length - 1 && <View style={styles.separator} />}
+                  </View>
+                );
+              })}
+            </View>
+          </SettingsSection>
+        );
+      })}
     </>
   );
 }
@@ -539,7 +723,10 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
   },
   unassignedText: {
-    fontSize: theme.fontSize.base,
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+  },
+  resetText: {
     color: theme.colors.foregroundMuted,
   },
   separator: {

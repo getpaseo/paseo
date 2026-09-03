@@ -184,11 +184,20 @@ describe("Command Center agent-control contributions", () => {
     expect(
       contributions.map((contribution) => ({
         id: contribution.id,
+        shortcutId: contribution.shortcutId,
         selected: selected(contribution),
       })),
     ).toEqual([
-      { id: "models:claude:shared", selected: false },
-      { id: "models:codex:shared", selected: true },
+      {
+        id: "models:claude:shared",
+        shortcutId: "models:claude:shared",
+        selected: false,
+      },
+      {
+        id: "models:codex:shared",
+        shortcutId: "models:codex:shared",
+        selected: true,
+      },
     ]);
     expect(contributions[0].presentation).toMatchObject({
       path: ["Model", "Claude", "Claude model"],
@@ -219,6 +228,11 @@ describe("Command Center agent-control contributions", () => {
       "thinking:high",
       "thinking:xhigh",
     ]);
+    expect(contributions.map((contribution) => contribution.shortcutId)).toEqual([
+      "thinking:low",
+      "thinking:high",
+      "thinking:xhigh",
+    ]);
     expect(contributions.map(selected)).toEqual([false, true, false]);
     for (const contribution of contributions) contribution.run();
     expect(selections).toEqual(["low", "xhigh"]);
@@ -232,6 +246,32 @@ describe("Command Center agent-control contributions", () => {
       }),
     );
     expect(singleOption.filter((contribution) => contribution.group === "thinking")).toEqual([]);
+  });
+
+  it("uses one semantic top-effort shortcut for ultra and ultracode", () => {
+    const selections: string[] = [];
+
+    for (const optionId of ["ultra", "ultracode"]) {
+      const contribution = buildAgentControlContributions(
+        makeSource({
+          thinking: {
+            options: [
+              { id: "high", label: "High" },
+              { id: optionId, label: "Top" },
+            ],
+            selectedId: "high",
+            select: (id) => {
+              selections.push(id);
+            },
+          },
+        }),
+      ).find((candidate) => candidate.id === `thinking:${optionId}`);
+
+      expect(contribution?.shortcutId).toBe("thinking:top");
+      contribution?.run();
+    }
+
+    expect(selections).toEqual(["ultra", "ultracode"]);
   });
 
   it("formats access modes, excludes planning modes, and marks the current mode", () => {

@@ -13,6 +13,9 @@ const resolvePackageEntry = (packageName: string) => {
 };
 
 export default defineConfig({
+  // App sources are built for the automatic JSX runtime and may not import
+  // React; esbuild's default classic transform breaks them under test.
+  esbuild: { jsx: "automatic" },
   test: {
     environment: "node",
     exclude: [...configDefaults.exclude, "e2e/**"],

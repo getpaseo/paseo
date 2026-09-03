@@ -459,7 +459,18 @@ interface AppContainerProps {
 
 const WINDOW_SIDEBAR_TOGGLE_HORIZONTAL_PADDING = 12;
 
-function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppContainerProps) {
+function AppContainer(props: AppContainerProps) {
+  return (
+    <CommandCenterProvider>
+      <AppContainerContent {...props} />
+    </CommandCenterProvider>
+  );
+}
+
+function AppContainerContent({
+  children,
+  chromeEnabled: chromeEnabledOverride,
+}: AppContainerProps) {
   const keyboardActionDispatcher = useKeyboardActionDispatcher();
   const daemons = useHosts();
   const { settings, updateSettings } = useAppSettings();
@@ -614,7 +625,7 @@ function AppContainer({ children, chromeEnabled: chromeEnabledOverride }: AppCon
     surface
   );
 
-  return <CommandCenterProvider>{content}</CommandCenterProvider>;
+  return content;
 }
 
 function SidebarChrome({
