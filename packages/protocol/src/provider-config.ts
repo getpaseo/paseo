@@ -22,29 +22,39 @@ export const ProviderCommandSchema = z.discriminatedUnion("mode", [
   ProviderCommandReplaceSchema,
 ]);
 
+export const ProviderWebSocketUrlSchema = z
+  .string()
+  .url()
+  .superRefine((value, ctx) => {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return;
+    }
+    if (url.protocol === "wss:") return;
+    // Numeric hosts avoid trusting DNS (including a hosts-file override of localhost).
+    // WHATWG URL parsing canonicalizes IPv4 aliases before this comparison.
+    const isLoopback =
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(url.hostname) || url.hostname === "[::1]";
+    if (url.protocol === "ws:" && isLoopback) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "ACP WebSocket URLs require wss://, except ws:// on numeric loopback addresses (127.0.0.0/8 or [::1]).",
+    });
+  });
+
 export const ProviderWebSocketTransportSchema = z
   .object({
     type: z.literal("websocket"),
-    url: z.string().url(),
+    url: ProviderWebSocketUrlSchema,
     protocols: z.array(z.string().min(1)).optional(),
     headers: z.record(z.string(), z.string()).optional(),
     bearerTokenEnv: z.string().min(1).optional(),
     cwd: z.string().min(1).optional(),
   })
   .superRefine((transport, ctx) => {
-    let protocol: string;
-    try {
-      protocol = new URL(transport.url).protocol;
-    } catch {
-      return;
-    }
-    if (protocol !== "ws:" && protocol !== "wss:") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["url"],
-        message: "ACP WebSocket URL must use ws:// or wss://.",
-      });
-    }
     if (
       transport.bearerTokenEnv &&
       Object.keys(transport.headers ?? {}).some(

@@ -269,6 +269,36 @@ describe("createProviderEnv", () => {
 });
 
 describe("ProviderOverrideSchema", () => {
+  test.each([
+    "ws://agents.example.com/acp",
+    "ws://192.0.2.1/acp",
+    "ws://localhost/acp",
+    "ws://127.0.0.1.example.com/acp",
+    "ws://127.0.0.1@192.0.2.1/acp",
+    "ws://[::ffff:192.0.2.1]/acp",
+  ])("rejects non-loopback cleartext ACP endpoint %s", (url) => {
+    expect(
+      ProviderOverrideSchema.safeParse({
+        transport: { type: "websocket", url, bearerTokenEnv: "ACP_TOKEN" },
+      }).success,
+    ).toBe(false);
+  });
+
+  test.each([
+    "wss://agents.example.com/acp",
+    "ws://127.0.0.1/acp",
+    "ws://127.0.0.2/acp",
+    "ws://127.1/acp",
+    "ws://2130706433/acp",
+    "ws://[::1]/acp",
+  ])("accepts TLS or literal loopback ACP endpoint %s", (url) => {
+    expect(
+      ProviderOverrideSchema.safeParse({
+        transport: { type: "websocket", url, headers: { Authorization: "Bearer test-token" } },
+      }).success,
+    ).toBe(true);
+  });
+
   test("accepts a remote ACP provider without a local command", () => {
     const providers = ProviderOverridesSchema.parse({
       remote: {

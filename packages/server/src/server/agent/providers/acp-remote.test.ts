@@ -8,6 +8,9 @@ import { WebSocket, WebSocketServer } from "ws";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
+import { AgentManager } from "../agent-manager.js";
+import { createLoggedWebSocketStream, type ACPWebSocketStreamHandle } from "./acp-agent.js";
+import type { AgentStreamEvent } from "../agent-sdk-types.js";
 
 interface WireRequest {
   jsonrpc: "2.0";
@@ -183,6 +186,120 @@ async function startRemoteAgent(options: RemoteAgentOptions = {}) {
 }
 
 describe("remote ACP over WebSocket", () => {
+  test.each([
+    "ws://agents.invalid/acp",
+    "ws://127.0.0.1.agents.invalid/acp",
+    "ws://127.0.0.1@192.0.2.1/acp",
+    "http://127.0.0.1/acp",
+    "ws+unix:///tmp/acp.sock",
+  ])("enforces secure endpoints at the socket boundary for %s", async (url) => {
+    let handle: ACPWebSocketStreamHandle | undefined;
+    try {
+      expect(() => {
+        handle = createLoggedWebSocketStream(url, {
+          provider: "acp",
+          logger: createTestLogger(),
+          headers: { Cookie: "private-test-cookie" },
+        });
+      }).toThrow("ACP WebSocket URLs require wss://");
+    } finally {
+      await handle?.close();
+    }
+  });
+
+  test("cancellation and repeated cleanup do not close an already-cancelled stream", async () => {
+    const remote = await startRemoteAgent();
+    const logger = createTestLogger();
+    const warn = vi.spyOn(logger, "warn");
+    const handle = createLoggedWebSocketStream(remote.url, { provider: "acp", logger });
+    cleanups.push(() => handle.close());
+    await handle.ready;
+    await handle.stream.readable.cancel();
+    await handle.closed;
+    await handle.close();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  test("logs unexpected readable cleanup errors and still closes the socket", async () => {
+    const remote = await startRemoteAgent();
+    const logger = createTestLogger();
+    const warn = vi.spyOn(logger, "warn");
+    const handle = createLoggedWebSocketStream(remote.url, { provider: "acp", logger });
+    cleanups.push(() => handle.close());
+    await handle.ready;
+    const failure = new Error("injected stream cleanup failure");
+    const close = vi
+      .spyOn(ReadableStreamDefaultController.prototype, "close")
+      .mockImplementationOnce(() => {
+        throw failure;
+      });
+    try {
+      await handle.close();
+      expect(warn).toHaveBeenCalledExactlyOnceWith(
+        { err: failure, provider: "acp" },
+        "Failed to close ACP WebSocket readable stream",
+      );
+    } finally {
+      close.mockRestore();
+      await handle.stream.readable.cancel();
+    }
+  });
+
+  test("replays a disconnect to a subscriber attached after connection loss", async () => {
+    const remote = await startRemoteAgent();
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      transport: { type: "websocket", url: remote.url },
+    });
+    const session = await client.createSession({ provider: "acp", cwd: tmpdir() });
+    cleanups.push(() => session.close());
+    const before: AgentStreamEvent[] = [];
+    session.subscribe((event) => before.push(event));
+    for (const socket of remote.sockets) socket.terminate();
+    await vi.waitFor(() =>
+      expect(before).toContainEqual(expect.objectContaining({ type: "turn_failed" })),
+    );
+    const after: AgentStreamEvent[] = [];
+    session.subscribe((event) => after.push(event));
+    expect(after).toContainEqual(
+      expect.objectContaining({
+        type: "turn_failed",
+        error: expect.stringContaining("Remote ACP WebSocket closed"),
+      }),
+    );
+  });
+
+  test("normal session close does not emit a disconnect failure", async () => {
+    const remote = await startRemoteAgent();
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      transport: { type: "websocket", url: remote.url },
+    });
+    const session = await client.createSession({ provider: "acp", cwd: tmpdir() });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await session.close();
+    expect(events.filter((event) => event.type === "turn_failed")).toEqual([]);
+  });
+
+  test("projects an idle disconnect into the managed agent error lifecycle", async () => {
+    const remote = await startRemoteAgent();
+    const logger = createTestLogger();
+    const client = new GenericACPAgentClient({
+      logger,
+      transport: { type: "websocket", url: remote.url },
+    });
+    const manager = new AgentManager({ clients: { acp: client }, logger });
+    const agent = await manager.createAgent({ provider: "acp", cwd: tmpdir() }, undefined, {
+      workspaceId: undefined,
+    });
+    cleanups.push(() => manager.closeAgent(agent.id));
+    expect(manager.getAgent(agent.id)?.lifecycle).toBe("idle");
+    for (const socket of remote.sockets) socket.terminate();
+    await vi.waitFor(() => expect(manager.getAgent(agent.id)?.lifecycle).toBe("error"));
+    expect(manager.getAgent(agent.id)?.lastError).toContain("Remote ACP WebSocket closed");
+  });
+
   test("uses the same authenticated transport for catalog, prompt, resume, and cleanup", async () => {
     const remote = await startRemoteAgent({
       requireAuth: true,
@@ -280,7 +397,10 @@ describe("remote ACP over WebSocket", () => {
       transport: { type: "websocket", url: remote.url },
     });
     const session = await client.createSession({ provider: "acp", cwd: tmpdir() });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
     await expect(session.run("disconnect")).rejects.toThrow("Remote ACP WebSocket closed");
+    expect(events.filter((event) => event.type === "turn_failed")).toHaveLength(1);
     await session.close();
   });
 

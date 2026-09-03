@@ -60,6 +60,7 @@ import {
 } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 import { WebSocket, type RawData } from "ws";
+import { ProviderWebSocketUrlSchema } from "@getpaseo/protocol/provider-config";
 
 import {
   getAgentStreamEventTurnId,
@@ -325,6 +326,8 @@ export function createLoggedWebSocketStream(
     onUnexpectedClose?: (error: Error) => void;
   },
 ): ACPWebSocketStreamHandle {
+  // Validate at the socket boundary too: programmatic providers bypass config parsing.
+  ProviderWebSocketUrlSchema.parse(url);
   const socket = new WebSocket(url, options.protocols, {
     headers: options.headers,
     maxPayload: 16 * 1024 * 1024,
@@ -351,7 +354,12 @@ export function createLoggedWebSocketStream(
   const closeReadable = () => {
     try {
       readableController?.close();
-    } catch {}
+    } catch (error) {
+      options.logger.warn(
+        { err: error, provider: options.provider },
+        "Failed to close ACP WebSocket readable stream",
+      );
+    }
     readableController = null;
   };
   const failBeforeReady = (error: Error) => {
@@ -418,6 +426,8 @@ export function createLoggedWebSocketStream(
         readableController = controller;
       },
       cancel() {
+        // The stream is already closed by cancellation; do not close its controller again.
+        readableController = null;
         expectedClose = true;
         socket.close(1000, "ACP stream cancelled");
       },
@@ -1822,6 +1832,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private transportClose: (() => Promise<void>) | null = null;
   private transportDiagnostic: (() => string | undefined) | null = null;
   private transportFailure: Promise<never> | null = null;
+  private remoteDisconnectEvent: Extract<AgentStreamEvent, { type: "turn_failed" }> | null = null;
   private connection: ClientSideConnection | null = null;
   private agentCapabilities: ACPAgentCapabilities | null = null;
   private sessionId: string | null = null;
@@ -2056,6 +2067,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         provider: this.provider,
         sessionId: this.sessionId,
       });
+    }
+    if (!this.closed && this.remoteDisconnectEvent && !this.activeForegroundTurnId) {
+      callback(this.remoteDisconnectEvent);
     }
     return () => {
       this.subscribers.delete(callback);
@@ -2921,6 +2935,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.transportClose = transport.close;
     this.transportDiagnostic = transport.diagnostic;
     this.transportFailure = transport.failure;
+    if (transport.kind === "websocket") {
+      void transport.failure.catch((error: Error) => {
+        if (this.closed) return;
+        this.remoteDisconnectEvent = {
+          type: "turn_failed",
+          provider: this.provider,
+          error: error.message,
+          diagnostic: this.collectDiagnostic(error.message),
+        };
+        this.settleCommandsReady();
+        // Active prompts already report their own turn-scoped failure. Idle transport
+        // failure is unscoped so AgentManager moves the agent to its error lifecycle.
+        if (this.sessionId && !this.activeForegroundTurnId) {
+          this.pushEvent(this.remoteDisconnectEvent);
+        }
+      });
+    }
     const initialize = await this.runACPRequest(() =>
       initializeACPTransportConnection(transport, {
         clientCapabilityMeta: this.clientCapabilityMeta,

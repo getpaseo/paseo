@@ -510,8 +510,10 @@ the Paseo daemon host:
 
 The endpoint must exchange one ACP JSON-RPC 2.0 object per WebSocket text
 message. This follows the experimental ACP [WebSocket transport proposal](https://agentclientprotocol.com/rfds/streamable-http-websocket-transport),
-not Streamable HTTP/SSE. Use `wss://` outside trusted local development; `ws://`
-is unencrypted. Optional `protocols` selects WebSocket subprotocols, and `headers`
+not Streamable HTTP/SSE. Non-loopback endpoints require `wss://`. Unencrypted
+`ws://` is restricted to numeric loopback addresses (`127.0.0.0/8` or `[::1]`),
+including when no handshake credentials are configured. Use `127.0.0.1` instead
+of `localhost`; DNS names are not treated as verified loopback. Optional `protocols` selects WebSocket subprotocols, and `headers`
 sets handshake headers. The connection is outbound from the daemon; Paseo does
 not expose a new inbound agent service.
 
