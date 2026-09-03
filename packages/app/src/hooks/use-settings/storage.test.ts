@@ -197,6 +197,46 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.chatOutlineEnabled).toBe(false);
   });
 
+  it("defaults sidebar navigation items to an empty preference list", async () => {
+    const deps = makeDeps();
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarNavItems).toEqual([]);
+  });
+
+  it("loads stored sidebar navigation items in order", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          sidebarNavItems: [
+            { key: "history", visible: false },
+            { key: "new-workspace", visible: true },
+          ],
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarNavItems).toEqual([
+      { key: "history", visible: false },
+      { key: "new-workspace", visible: true },
+    ]);
+  });
+
+  it("falls back to the default sidebar navigation items when the stored list is malformed", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({ sidebarNavItems: [{ key: 3 }] }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.sidebarNavItems).toEqual([]);
+  });
+
   it("collapses legacy diff destinations into the former Explorer choice", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
@@ -377,6 +417,44 @@ describe("loadAppSettingsFromStorage", () => {
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result.language).toBe("system");
+  });
+});
+
+describe("saveAppSettings", () => {
+  it("applies consecutive functional updates to the latest cached settings", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+    queryClient.setQueryData(APP_SETTINGS_QUERY_KEY, DEFAULT_CLIENT_SETTINGS);
+
+    await Promise.all([
+      saveAppSettings({
+        queryClient,
+        updates: (current) => ({
+          sidebarNavItems: [...current.sidebarNavItems, { key: "history", visible: false }],
+        }),
+        deps,
+      }),
+      saveAppSettings({
+        queryClient,
+        updates: (current) => ({
+          sidebarNavItems: [...current.sidebarNavItems, { key: "search", visible: true }],
+        }),
+        deps,
+      }),
+    ]);
+
+    expect(queryClient.getQueryData(APP_SETTINGS_QUERY_KEY)).toMatchObject({
+      sidebarNavItems: [
+        { key: "history", visible: false },
+        { key: "search", visible: true },
+      ],
+    });
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toMatchObject({
+      sidebarNavItems: [
+        { key: "history", visible: false },
+        { key: "search", visible: true },
+      ],
+    });
   });
 });
 
@@ -659,8 +737,8 @@ describe("appearance settings", () => {
     expect(defaultUiBaseFontSize(false)).toBe(14);
   });
 
-  it("uses a 15px content default on mobile and web", () => {
-    expect(defaultContentFontSize(true)).toBe(15);
+  it("uses a 16px content default on mobile and a 15px default on web", () => {
+    expect(defaultContentFontSize(true)).toBe(16);
     expect(defaultContentFontSize(false)).toBe(15);
     expect(DEFAULT_CONTENT_FONT_SIZE).toBe(defaultContentFontSize(false));
   });

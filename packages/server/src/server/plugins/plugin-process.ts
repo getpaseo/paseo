@@ -1,15 +1,16 @@
 import type { PluginProcessMessage, PluginProcessRequest } from "./plugin-process-protocol.js";
 import { createRequire } from "node:module";
-import {
-  defineAttachmentSource,
-  defineRpc,
-  type PluginHandlerContext,
-  type PluginRpcContract,
-} from "@getpaseo/plugin/server";
+import { defineAttachmentSource, defineRpc, type PluginRpcContract } from "@getpaseo/plugin";
+import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { createPaseoApi, type PaseoApi } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginDaemonTransportFactory } from "./daemon-transport.js";
-import { isPluginClientOnlySdkSpecifier, isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
+import {
+  isPluginClientOnlySdkSpecifier,
+  isPluginSdkSpecifier,
+  isPluginServerTypesSdkSpecifier,
+} from "./plugin-sdk-specifiers.js";
+import { createPluginClientId } from "./plugin-session-identity.js";
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
 
@@ -74,6 +75,7 @@ function runtimeRequire(name: string): unknown {
   if (isPluginClientOnlySdkSpecifier(name)) {
     throw new Error(`${name} is available only in plugin client code`);
   }
+  if (isPluginServerTypesSdkSpecifier(name)) return {};
   if (isPluginSdkSpecifier(name)) return pluginAuthorRuntime;
   return nodeRequire(name);
 }
@@ -106,7 +108,7 @@ const transportFactory = createPluginDaemonTransportFactory({
 async function initialize(message: Extract<PluginProcessRequest, { type: "initialize" }>) {
   daemonClient = new DaemonClient({
     url: `ipc://plugin/${encodeURIComponent(message.pluginId)}`,
-    clientId: `plugin:${message.pluginId}`,
+    clientId: createPluginClientId(message.pluginId),
     clientType: "cli",
     appVersion: message.appVersion,
     reconnect: { enabled: false },

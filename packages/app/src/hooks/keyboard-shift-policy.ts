@@ -28,3 +28,11 @@ export function resolveKeyboardShift(input: {
 
   return Math.max(0, input.rawKeyboardHeight - input.bottomInset);
 }
+
+export function shouldReconcileHiddenKeyboardEnd(input: {
+  height: number;
+  progress: number;
+}): boolean {
+  "worklet";
+  return !(input.height > 0) || !(input.progress > 0);
+}

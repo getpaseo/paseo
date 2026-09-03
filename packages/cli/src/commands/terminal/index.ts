@@ -1,6 +1,10 @@
 import { Command } from "commander";
 import { withOutput } from "../../output/index.js";
-import { addDaemonHostOption, addJsonAndDaemonHostOptions } from "../../utils/command-options.js";
+import {
+  addDaemonHostOption,
+  addJsonAndDaemonHostOptions,
+  withGlobalOptions,
+} from "../../utils/command-options.js";
 import { runCaptureCommand } from "./capture.js";
 import { runCreateCommand } from "./create.js";
 import { runKillCommand } from "./kill.js";
@@ -43,7 +47,7 @@ export function createTerminalCommand(): Command {
       .option("-S, --scrollback", "Capture from the beginning of scrollback")
       .option("--ansi", "Preserve ANSI escape codes")
       .option("--json", "Output in JSON format"),
-  ).action(runCaptureCommand);
+  ).action(withGlobalOptions(runCaptureCommand));
 
   addDaemonHostOption(
     terminal
@@ -53,7 +57,7 @@ export function createTerminalCommand(): Command {
       .argument("<keys...>", "Keys to send")
       .option("-l, --literal", "Send raw keys without interpreting special tokens")
       .option("--json", "Output in JSON format"),
-  ).action(runSendKeysCommand);
+  ).action(withGlobalOptions(runSendKeysCommand));
 
   return terminal;
 }
