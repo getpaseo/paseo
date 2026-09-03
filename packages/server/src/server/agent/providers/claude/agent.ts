@@ -68,6 +68,7 @@ import {
   formatProviderDiagnostic,
   formatProviderDiagnosticError,
 } from "../diagnostic-utils.js";
+import { buildProviderAuthRecoveryGuidance, isProviderAuthError } from "../auth-error.js";
 import { appendOrReplaceGrowingAssistantMessage, runProviderTurn } from "../provider-runner.js";
 import {
   applyClaudeToolPolicy,
@@ -350,6 +351,10 @@ const REWIND_COMMAND: AgentSlashCommand = {
   description: "Rewind tracked files to a previous user message",
   argumentHint: "[user_message_uuid]",
 };
+// Claude Code's own advice on an expired token is "run /login", but the SDK
+// runtime has no interactive login. Intercept these locally so the user gets
+// steps that work instead of "/login isn't available in this environment."
+const AUTH_COMMAND_NAMES = new Set(["login", "logout"]);
 const CLAUDE_ROOT_ONLY_COMMANDS = new Set([
   "clear",
   "compact",
@@ -2208,6 +2213,13 @@ class ClaudeAgentSession implements AgentSession {
     }
 
     const slashCommand = this.resolveSlashCommandInvocation(prompt);
+    if (slashCommand && AUTH_COMMAND_NAMES.has(slashCommand.commandName)) {
+      const turnId = this.createTurnId("foreground");
+      this.activeForegroundTurnId = turnId;
+      this.transitionTurnState("foreground", "auth command");
+      this.executeAuthCommandTurn();
+      return { turnId };
+    }
     if (slashCommand?.commandName === REWIND_COMMAND_NAME) {
       const turnId = this.createTurnId("foreground");
       this.activeForegroundTurnId = turnId;
@@ -2785,10 +2797,10 @@ class ClaudeAgentSession implements AgentSession {
     if (!parsed) {
       return null;
     }
-    return parsed.commandName === REWIND_COMMAND_NAME ||
-      CLAUDE_ROOT_ONLY_COMMANDS.has(parsed.commandName)
-      ? parsed
-      : null;
+    const isPaseoHandledCommand =
+      parsed.commandName === REWIND_COMMAND_NAME || AUTH_COMMAND_NAMES.has(parsed.commandName);
+    const isRootOnlyCommand = CLAUDE_ROOT_ONLY_COMMANDS.has(parsed.commandName);
+    return isPaseoHandledCommand || isRootOnlyCommand ? parsed : null;
   }
 
   private parseSlashCommandInput(text: string): SlashCommandInvocation | null {
@@ -3438,12 +3450,22 @@ class ClaudeAgentSession implements AgentSession {
     const exitCodeMatch = normalized.match(/\bcode\s+(\d+)\b/i);
     const code = exitCodeMatch ? exitCodeMatch[1] : undefined;
     const diagnostic = this.getRecentStderrDiagnostic();
+    const authExpired = isProviderAuthError(normalized) || isProviderAuthError(diagnostic);
+    if (authExpired && this.query) {
+      // Claude Code caches credentials in the running process, so re-authenticating
+      // elsewhere does nothing until that process is replaced. Retire it here and
+      // the next turn spawns a fresh one on the same session. Only flag a live
+      // query: ensureQuery() clears the flag while retiring an existing process,
+      // so setting it against a dead one would retire the replacement instead.
+      this.queryRestartNeeded = true;
+    }
     return {
       type: "turn_failed",
       provider: "claude",
       error: normalized,
       ...(code ? { code } : {}),
       ...(diagnostic ? { diagnostic } : {}),
+      ...(authExpired ? { authState: "expired" as const } : {}),
     };
   }
 
@@ -3495,6 +3517,27 @@ class ClaudeAgentSession implements AgentSession {
       event.type === "turn_failed" ||
       event.type === "turn_canceled"
     );
+  }
+
+  private executeAuthCommandTurn(): void {
+    this.notifySubscribers({ type: "turn_started", provider: "claude" });
+    // Force a fresh process on the next turn so credentials refreshed by the
+    // steps below are actually picked up.
+    if (this.query) {
+      this.queryRestartNeeded = true;
+    }
+    this.notifySubscribers({
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "assistant_message",
+        text: buildProviderAuthRecoveryGuidance({
+          provider: "claude",
+          providerLabel: "Claude Code",
+        }),
+      },
+    });
+    this.finishForegroundTurn({ type: "turn_completed", provider: "claude" });
   }
 
   private async executeRewindTurn(

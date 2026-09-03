@@ -17,6 +17,7 @@ import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
+import { buildProviderAuthRecoveryGuidance } from "./providers/auth-error.js";
 
 import {
   getAgentStreamEventTurnId,
@@ -4503,6 +4504,11 @@ export class AgentManager {
     const diagnostic = event.diagnostic?.trim();
     if (diagnostic && diagnostic !== base) {
       parts.push(diagnostic);
+    }
+    if (event.authState === "expired") {
+      // The runtime's own text names neither the credential that failed nor a
+      // recovery path that exists inside Paseo. Supply both.
+      parts.push(buildProviderAuthRecoveryGuidance({ provider: event.provider }));
     }
     return parts.join("\n\n");
   }

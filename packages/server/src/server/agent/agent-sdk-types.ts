@@ -433,6 +433,8 @@ export type AgentStreamEvent =
       error: string;
       code?: string;
       diagnostic?: string;
+      /** Set when the failure was the provider's credentials, not the run itself. */
+      authState?: "expired";
       turnId?: string;
     }
   | { type: "turn_canceled"; provider: AgentProvider; reason: string; turnId?: string }

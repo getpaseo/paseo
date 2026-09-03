@@ -136,6 +136,14 @@ Boundary tests should assert observable behavior: cold reads may call provider a
 
 ---
 
+## Expired Credentials
+
+A provider whose credentials expire mid-session reports it as an ordinary turn failure, so an expired token is otherwise indistinguishable from a crash. Classify it instead: pass the failure text through `isProviderAuthError` in `packages/server/src/server/agent/providers/auth-error.ts` and set `authState: "expired"` on the `turn_failed` event. `AgentManager` uses that flag to append `buildProviderAuthRecoveryGuidance`, which names the credential that failed and gives the runtime's login steps. Add those steps to `PROVIDER_LOGIN_STEPS` when adding a provider; without an entry the guidance falls back to a generic line.
+
+Runtimes cache credentials in the running process, so re-authenticating elsewhere changes nothing until that process is replaced. A provider that classifies an auth failure should also retire its runtime so the next turn spawns a fresh one on the same session — the Claude client sets `queryRestartNeeded`, and only while a query is live, since `ensureQuery()` clears that flag as part of retiring an existing process.
+
+Runtimes launched non-interactively have no login command. If a runtime advertises one anyway (Claude Code tells users to run `/login`), intercept it locally and answer with the recovery guidance rather than forwarding it to a process that will reject it.
+
 ## Provider Usage Fetchers
 
 Provider plan usage is fetch-on-demand, not a daemon push subscription. The app calls `provider.usage.list.request` through React Query when the usage tooltip or Host Usage settings screen is shown, and the daemon returns the normalized `ProviderUsage` list directly.

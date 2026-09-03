@@ -774,6 +774,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     error: z.string(),
     code: z.string().optional(),
     diagnostic: z.string().optional(),
+    authState: z.literal("expired").optional(),
   }),
   z.object({
     type: z.literal("turn_canceled"),
