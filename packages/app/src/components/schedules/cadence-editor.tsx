@@ -97,7 +97,6 @@ export function CadenceEditor({ value, onChange, error, size = "md" }: CadenceEd
           onChange={handlePresetChange}
           placeholder="Select cadence"
           emptyText="No cadences found"
-          searchable={false}
           title="Cadence"
           size={size}
           triggerTestID="schedule-cadence-preset-trigger"

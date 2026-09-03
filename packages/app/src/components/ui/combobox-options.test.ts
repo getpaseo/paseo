@@ -89,6 +89,21 @@ describe("filterAndRankComboboxOptions", () => {
     expect(filterAndRankComboboxOptions(options, "zzz")).toEqual([]);
   });
 
+  it("keeps always-visible actions after filtered matches", () => {
+    const items = [
+      { id: "host-a", label: "Host A" },
+      { id: "host-b", label: "Host B" },
+      { id: "add-host", label: "Add host", alwaysVisible: true },
+      { id: "enable-daemon", label: "Enable built-in daemon", alwaysVisible: true },
+    ];
+
+    expect(filterAndRankComboboxOptions(items, "host b")).toEqual([
+      { id: "host-b", label: "Host B" },
+      { id: "add-host", label: "Add host", alwaysVisible: true },
+      { id: "enable-daemon", label: "Enable built-in daemon", alwaysVisible: true },
+    ]);
+  });
+
   it("ranks word-boundary matches above mid-word substring matches", () => {
     const items = [
       { id: "happy", label: "happy" },

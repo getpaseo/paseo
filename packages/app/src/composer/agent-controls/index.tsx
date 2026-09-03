@@ -886,8 +886,6 @@ interface DesktopAgentControlsContentProps {
   modelSelectorServerId: string | null;
 }
 
-const DESKTOP_SEARCH_THRESHOLD = 6;
-
 function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
@@ -971,7 +969,6 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             options={comboboxProviderOptions}
             value={selectedProviderId ?? ""}
             onSelect={handleProviderSelect}
-            searchable={comboboxProviderOptions.length > DESKTOP_SEARCH_THRESHOLD}
             open={openSelector === "provider"}
             onOpenChange={handleProviderOpenChange}
             anchorRef={providerAnchorRef}
@@ -1042,7 +1039,6 @@ function DesktopAgentControlsContent(props: DesktopAgentControlsContentProps) {
             options={comboboxThinkingOptions}
             value={selectedThinkingOptionId ?? ""}
             onSelect={handleThinkingSelect}
-            searchable={comboboxThinkingOptions.length > DESKTOP_SEARCH_THRESHOLD}
             open={openSelector === "thinking"}
             onOpenChange={handleThinkingOpenChange}
             anchorRef={thinkingAnchorRef}
@@ -1223,7 +1219,6 @@ function SheetAgentControlsContent(props: SheetAgentControlsContentProps) {
             options={comboboxThinkingOptions}
             value={selectedThinkingOptionId ?? ""}
             onSelect={handleSelectThinkingAndClose}
-            searchable={false}
             title={t("agentControls.thinking.title")}
             open={activeSheet === "thinking"}
             onOpenChange={handleThinkingSheetOpenChange}

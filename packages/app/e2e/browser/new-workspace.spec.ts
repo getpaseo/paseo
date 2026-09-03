@@ -280,6 +280,10 @@ test.describe("New workspace flow", () => {
       await page.keyboard.press("Escape");
 
       await page.getByTestId("host-picker-trigger").click();
+      await page.getByPlaceholder("Search hosts").fill("Empty");
+      await expect(
+        page.getByTestId(`new-workspace-host-picker-option-${primaryServerId}`),
+      ).toHaveCount(0);
       await page.getByTestId(`new-workspace-host-picker-option-${emptyServerId}`).click();
       await expect(projectTrigger).toContainText("Choose project");
       await projectTrigger.click();

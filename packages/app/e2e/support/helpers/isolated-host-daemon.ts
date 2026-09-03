@@ -152,6 +152,9 @@ export async function startIsolatedHostDaemon(
       cwd: serverDir,
       env: withDisabledE2ESpeechEnv({
         ...process.env,
+        // Test hosts must not inherit auth from the developer's daemon. A test
+        // can still opt into password auth through options.environment.
+        PASEO_PASSWORD: undefined,
         ...options.environment,
         PASEO_HOME: paseoHome,
         PASEO_SERVER_ID: serverId,

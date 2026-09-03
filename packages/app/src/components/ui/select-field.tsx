@@ -182,7 +182,7 @@ export function SelectField<TValue>({
   disabled = false,
   hint,
   error,
-  searchable = false,
+  searchable = true,
   searchPlaceholder,
   title,
   size = "md",

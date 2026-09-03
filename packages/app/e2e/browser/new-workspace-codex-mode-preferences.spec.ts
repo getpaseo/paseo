@@ -114,6 +114,12 @@ async function expectThinkingOptionsFit(page: Page): Promise<void> {
   await expect(popup).toBeVisible({ timeout: 10_000 });
   await expectNoTruncation(popup);
 
+  const searchInput = popup.getByPlaceholder("Search...");
+  await expect(searchInput).toBeVisible();
+  await searchInput.fill("Extra high");
+  await expect(popup.getByText("Extra high", { exact: true })).toBeVisible();
+  await expect(popup.getByText("Low", { exact: true })).toHaveCount(0);
+
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("combobox-desktop-container")).toHaveCount(0, { timeout: 5_000 });
 }
