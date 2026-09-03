@@ -27,6 +27,7 @@ interface RemoteAgentOptions {
   bearerToken?: string;
   ignoreInitialize?: boolean;
   rejectAuth?: boolean;
+  disconnectOn?: string;
   authMethods?: Array<{ id: string; name: string; type?: "terminal"; args?: string[] }>;
   requireAuth?: boolean;
   prompt?: (socket: WebSocket, request: WireRequest) => void;
@@ -66,6 +67,10 @@ async function startRemoteAgent(options: RemoteAgentOptions = {}) {
         return;
       }
       requests.push(message);
+      if (message.method === options.disconnectOn) {
+        socket.terminate();
+        return;
+      }
       const reply = (result: unknown) => {
         if (message.id !== undefined) {
           socket.send(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
@@ -291,6 +296,17 @@ describe("remote ACP over WebSocket", () => {
     await vi.waitFor(() => {
       expect(remote.requests).toContainEqual(expect.objectContaining({ method: "session/cancel" }));
     });
+    await session.close();
+  });
+
+  test("fails an in-flight model change when the connection is lost", async () => {
+    const remote = await startRemoteAgent({ disconnectOn: "session/set_model" });
+    const client = new GenericACPAgentClient({
+      logger: createTestLogger(),
+      transport: { type: "websocket", url: remote.url },
+    });
+    const session = await client.createSession({ provider: "acp", cwd: tmpdir() });
+    await expect(session.setModel("remote-model")).rejects.toThrow("Remote ACP WebSocket closed");
     await session.close();
   });
 

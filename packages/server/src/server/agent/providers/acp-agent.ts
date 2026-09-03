@@ -1904,7 +1904,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       this.sessionId = response.sessionId;
       this.bootstrapThreadEventPending = true;
       this.applySessionState(response);
-      await this.applyConfiguredOverrides();
+      await this.runACPRequest(() => this.applyConfiguredOverrides());
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
     }
@@ -1961,7 +1961,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         throw new Error(`${this.provider} does not support ACP session resume`);
       }
 
-      await this.applyConfiguredOverrides();
+      await this.runACPRequest(() => this.applyConfiguredOverrides());
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
     }
@@ -2159,7 +2159,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       availableModes: this.availableModes,
       configOptions: this.configOptions,
     });
-    await this.setModeWithSelection({ modeId, selection });
+    await this.runACPRequest(() => this.setModeWithSelection({ modeId, selection }));
   }
 
   // Mode/model selection updates stay after ACP RPC success; this intentionally diverges from Zed's optimistic rollback path (acp.rs:3080-3104).
@@ -2298,7 +2298,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       availableModels: this.availableModels,
       configOptions: this.configOptions,
     });
-    await this.setModelWithSelection({ modelId, selection });
+    await this.runACPRequest(() => this.setModelWithSelection({ modelId, selection }));
   }
 
   private async setModelWithSelection({
@@ -2389,7 +2389,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     if (this.thinkingOptionWriter) {
-      await this.thinkingOptionWriter(this.connection, this.sessionId, thinkingOptionId);
+      await this.runACPRequest(() =>
+        this.thinkingOptionWriter!(this.connection!, this.sessionId!, thinkingOptionId),
+      );
       this.thinkingOptionId = thinkingOptionId;
       this.pushEvent({
         type: "thinking_option_changed",
@@ -2406,11 +2408,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!option) {
       throw new Error(`${this.provider} does not expose ACP thought-level selection`);
     }
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: option.id,
-      value: thinkingOptionId,
-    });
+    const response = await this.runACPRequest(() =>
+      this.connection!.setSessionConfigOption({
+        sessionId: this.sessionId!,
+        configId: option.id,
+        value: thinkingOptionId,
+      }),
+    );
     this.thinkingOptionId = this.applyConfigOptionResponse({
       response,
       configId: option.id,
@@ -2456,11 +2460,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       );
     }
 
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: option.id,
-      value: requestedValue,
-    });
+    const response = await this.runACPRequest(() =>
+      this.connection!.setSessionConfigOption({
+        sessionId: this.sessionId!,
+        configId: option.id,
+        value: requestedValue,
+      }),
+    );
     const currentValue = this.applyConfigOptionResponse({
       response,
       configId: option.id,
