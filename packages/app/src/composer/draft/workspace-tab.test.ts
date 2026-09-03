@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { shouldAllowEmptyDraftText, validateDraftSubmission } from "./workspace-tab-core";
+import {
+  completeWorkspaceDraftCreation,
+  shouldAllowEmptyDraftText,
+  validateDraftSubmission,
+} from "./workspace-tab-core";
 
 const baseComposerState = {
   providerDefinitions: [{ id: "codewhale" }],
@@ -67,5 +71,48 @@ describe("workspace draft empty text readiness", () => {
         attachments: [],
       }),
     ).toBe(false);
+  });
+});
+
+describe("workspace draft creation handoff", () => {
+  test("clears the Android composer and waits two rendered frames before replacing the tab", async () => {
+    const events: string[] = [];
+    const pendingFrames: Array<() => void> = [];
+    const handoff = completeWorkspaceDraftCreation({
+      platform: "android",
+      result: "created-agent",
+      clearDraftState: () => events.push("clear"),
+      onCreated: (result) => events.push(`created:${result}`),
+      requestFrame: (callback) => pendingFrames.push(callback),
+    });
+
+    expect(events).toEqual(["clear"]);
+    expect(pendingFrames).toHaveLength(1);
+    pendingFrames.shift()?.();
+    await Promise.resolve();
+    expect(events).toEqual(["clear"]);
+    expect(pendingFrames).toHaveLength(1);
+
+    pendingFrames.shift()?.();
+    await handoff;
+    expect(events).toEqual(["clear", "created:created-agent"]);
+  });
+
+  test.each(["ios", "web"])("hands off immediately on %s", async (platform) => {
+    const events: string[] = [];
+    let requestedFrames = 0;
+
+    await completeWorkspaceDraftCreation({
+      platform,
+      result: "created-agent",
+      clearDraftState: () => events.push("clear"),
+      onCreated: (result) => events.push(`created:${result}`),
+      requestFrame: () => {
+        requestedFrames += 1;
+      },
+    });
+
+    expect(events).toEqual(["clear", "created:created-agent"]);
+    expect(requestedFrames).toBe(0);
   });
 });
