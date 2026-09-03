@@ -274,11 +274,11 @@ describe("paseo worktree manager", () => {
 
     // Repo has origin/main cached at "initial"; origin itself moves one commit ahead via a
     // second clone so the local remote-tracking ref stays stale, as after a long idle period.
-    function advanceOriginPastCachedRef(): string {
+    function advanceOriginPastCachedRef(remoteName = "origin"): string {
       const originDir = join(tempDir, "origin.git");
       git(["clone", "--bare", "-q", repoDir, originDir], tempDir);
-      git(["remote", "add", "origin", originDir], repoDir);
-      git(["fetch", "-q", "origin"], repoDir);
+      git(["remote", "add", remoteName, originDir], repoDir);
+      git(["fetch", "-q", remoteName], repoDir);
 
       const pusherDir = join(tempDir, "pusher");
       git(["clone", "-q", originDir, pusherDir], tempDir);
@@ -320,6 +320,37 @@ describe("paseo worktree manager", () => {
       });
 
       expect(git(["rev-parse", "HEAD"], created.worktreePath)).toBe(cachedTip);
+    });
+
+    it("fetches from a remote whose name contains a slash", async () => {
+      const remoteTip = advanceOriginPastCachedRef("team/upstream");
+
+      const created = await createLegacyWorktreeForTest({
+        branchName: "from-slash-remote",
+        cwd: repoDir,
+        baseBranch: "refs/remotes/team/upstream/main",
+        worktreeSlug: "from-slash-remote",
+        paseoHome,
+      });
+
+      expect(git(["rev-parse", "HEAD"], created.worktreePath)).toBe(remoteTip);
+    });
+
+    it("skips the fetch when the requested branch already exists locally", async () => {
+      advanceOriginPastCachedRef();
+      const cachedTip = git(["rev-parse", "refs/remotes/origin/main"], repoDir);
+      git(["branch", "existing"], repoDir);
+
+      const created = await createLegacyWorktreeForTest({
+        branchName: "existing",
+        cwd: repoDir,
+        baseBranch: "origin/main",
+        worktreeSlug: "existing",
+        paseoHome,
+      });
+
+      expect(git(["rev-parse", "HEAD"], created.worktreePath)).toBe(cachedTip);
+      expect(git(["rev-parse", "refs/remotes/origin/main"], repoDir)).toBe(cachedTip);
     });
   });
 });
