@@ -70,6 +70,7 @@ import {
   AgentRunState,
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
+  type TrackedAgentRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
@@ -2765,6 +2766,24 @@ export class AgentManager {
       return { status: "not_running" };
     }
 
+    // Persist the cancellation intent before the interrupt round-trip. Settling
+    // below can take seconds, and a container replacement inside that window
+    // would otherwise leave a "running" record that recovery happily resumes --
+    // reviving a run the user explicitly stopped. The marker is cleared once the
+    // cancellation resolves either way, so it only ever covers the live window.
+    await this.markCancelRequested(agent);
+    try {
+      return await this.cancelAcknowledgedRun(agent, run);
+    } finally {
+      await this.clearCancelRequested(agent);
+    }
+  }
+
+  private async cancelAcknowledgedRun(
+    agent: ActiveManagedAgent,
+    run: TrackedAgentRun,
+  ): Promise<AgentRunCancellationResult> {
+    const agentId = agent.id;
     const interruptAcknowledged = await this.interruptSession(agent.session, agentId);
     const settlement = await this.waitWithTimeout({
       operation: run.settledPromise,
@@ -2819,6 +2838,35 @@ export class AgentManager {
       this.emitState(agent);
     }
     return { status: "settled" };
+  }
+
+  private async markCancelRequested(agent: ManagedAgent): Promise<void> {
+    if (!this.registry || agent.internal) {
+      return;
+    }
+    try {
+      await this.registry.markCancelRequested(agent.id);
+    } catch (error) {
+      // Best effort: never block a cancellation on recovery bookkeeping.
+      this.logger.warn(
+        { err: error, agentId: agent.id },
+        "cancelAgentRun: could not persist cancellation intent",
+      );
+    }
+  }
+
+  private async clearCancelRequested(agent: ManagedAgent): Promise<void> {
+    if (!this.registry || agent.internal) {
+      return;
+    }
+    try {
+      await this.registry.clearCancelRequested(agent.id);
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId: agent.id },
+        "cancelAgentRun: could not clear cancellation intent",
+      );
+    }
   }
 
   private async cancelAgentRunBefore(

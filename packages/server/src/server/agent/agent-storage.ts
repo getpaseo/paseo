@@ -74,6 +74,13 @@ const STORED_AGENT_SCHEMA = z.object({
   attentionTimestamp: z.string().nullable().optional(),
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
+  // Set when a user cancellation is requested, before the provider interrupt is
+  // acknowledged. Recovery treats a record carrying this marker as cancelled
+  // even when an unclean shutdown ate the resulting idle transition.
+  cancelRequestedAt: z.string().nullable().optional(),
+  // Incremented before each recovery attempt so a record that kills the daemon
+  // mid-recovery cannot be retried forever.
+  recoveryAttempts: z.number().int().nonnegative().optional(),
   owner: AgentOwnerSchema.optional(),
 });
 
@@ -259,7 +266,72 @@ export class AgentStorage {
       if (existing && existing.archivedAt !== undefined) {
         record.archivedAt = existing.archivedAt;
       }
+      // The projection is built from live agent state, which does not carry the
+      // recovery bookkeeping below. Without this the next snapshot flush would
+      // silently drop a pending cancellation or reset the attempt counter.
+      if (existing && existing.cancelRequestedAt !== undefined) {
+        record.cancelRequestedAt = existing.cancelRequestedAt;
+      }
+      if (existing && existing.recoveryAttempts !== undefined) {
+        record.recoveryAttempts = existing.recoveryAttempts;
+      }
       return record;
+    });
+  }
+
+  /**
+   * Record that a user asked to cancel this agent's run, before the provider
+   * interrupt round-trip completes. Persisting the intent up front is what lets
+   * recovery tell "cancelled, then killed" apart from "killed mid-run".
+   */
+  async markCancelRequested(agentId: string): Promise<void> {
+    await this.load();
+    const requestedAt = new Date().toISOString();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+      return { ...existing, cancelRequestedAt: requestedAt };
+    });
+  }
+
+  /** Clear a cancellation marker once the run has actually settled. */
+  async clearCancelRequested(agentId: string): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+      return { ...existing, cancelRequestedAt: null };
+    });
+  }
+
+  /**
+   * Increment and return this agent's recovery attempt counter. The write is
+   * committed before the attempt runs so a crash during recovery still burns an
+   * attempt.
+   */
+  async recordRecoveryAttempt(agentId: string): Promise<number> {
+    await this.load();
+    let attempts = 0;
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+      attempts = (existing.recoveryAttempts ?? 0) + 1;
+      return { ...existing, recoveryAttempts: attempts };
+    });
+    return attempts;
+  }
+
+  /** Reset the recovery attempt counter after a clean resume. */
+  async clearRecoveryAttempts(agentId: string): Promise<void> {
+    await this.load();
+    await this.queueRecordMutation(agentId, (existing) => {
+      if (!existing) {
+        throw new Error(`Agent ${agentId} not found`);
+      }
+      return { ...existing, recoveryAttempts: 0 };
     });
   }
 
