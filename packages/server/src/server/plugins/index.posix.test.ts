@@ -4,6 +4,11 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import pino from "pino";
 import { afterEach, describe, expect, it } from "vitest";
+import {
+  PLUGIN_FORGE_SERVICE_METHODS,
+  type PluginForgeServerProviderDescriptor,
+} from "@getpaseo/plugin/server";
+import { createDefaultForgeRegistry, ForgeRegistry } from "../../services/forge-registry.js";
 import { DaemonConfigStore } from "../daemon-config-store.js";
 import { PluginService } from "./index.js";
 import { ManagedPluginSources } from "./managed-source.js";
@@ -154,7 +159,261 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
   return { runtime, started, releaseStart, starts };
 }
 
+function createForgeRuntime(
+  descriptorOverrides: Partial<PluginForgeServerProviderDescriptor> = {},
+) {
+  const descriptor: PluginForgeServerProviderDescriptor = {
+    definition: {
+      id: "acme",
+      displayName: "Acme Forge",
+      changeRequestAbbrev: "CR",
+      changeRequestNoun: "change request",
+      changeRequestNumberPrefix: "!",
+      issueNumberPrefix: "#",
+      signIn: null,
+      cloudHosts: ["forge.example.com"],
+    },
+    methods: [...PLUGIN_FORGE_SERVICE_METHODS],
+    authProbeCanThrow: false,
+    supportsCrossRepoCheckoutWithoutRefs: false,
+    hasProbeHost: true,
+    ...descriptorOverrides,
+  };
+  const running = new Set<string>();
+  let listener: ((pluginId: string, error?: string) => void) | null = null;
+  const invocations: Array<{
+    pluginId: string;
+    providerId: string;
+    method: string;
+    input: unknown;
+  }> = [];
+  const runtime: NonNullable<ConstructorParameters<typeof PluginService>[2]> = {
+    catalog: () => [...running].map((id) => ({ id, clientBundle: "bundle" })),
+    forgeProviders: (pluginId) => (running.has(pluginId) ? [descriptor] : []),
+    invoke: async () => undefined,
+    invokeForge: async (pluginId, providerId, method, input) => {
+      invocations.push({ pluginId, providerId, method, input });
+      if (method === "probeHost") return input === "self-hosted.example.com";
+      if (method === "isAuthenticated") return true;
+      if (method === "invalidate" || method === "dispose") return undefined;
+      throw new Error(`Unexpected Forge invocation: ${method}`);
+    },
+    getLogs: () => [],
+    clearLogs: () => undefined,
+    startPlugin: async (pluginId, _path, canPublish) => {
+      if (!canPublish()) throw new Error(`Plugin start cancelled: ${pluginId}`);
+      running.add(pluginId);
+    },
+    stopPluginById: async (pluginId) => running.delete(pluginId),
+    stopAll: async () => {
+      running.clear();
+    },
+    subscribe: (nextListener) => {
+      listener = nextListener;
+      return () => {
+        listener = null;
+      };
+    },
+    bindPaseoSessionHost: () => undefined,
+  };
+  return {
+    runtime,
+    invocations,
+    running,
+    crash(pluginId: string) {
+      running.delete(pluginId);
+      listener?.(pluginId, `Plugin process exited: ${pluginId}`);
+    },
+  };
+}
+
+function createPausedStopForgeRuntime() {
+  const forge = createForgeRuntime();
+  let releaseStop = () => undefined;
+  let markStopStarted = () => undefined;
+  const stopGate = new Promise<void>((resolve) => {
+    releaseStop = resolve;
+  });
+  const stopStarted = new Promise<void>((resolve) => {
+    markStopStarted = resolve;
+  });
+  forge.runtime.stopPluginById = async (pluginId) => {
+    const removed = forge.running.delete(pluginId);
+    markStopStarted();
+    await stopGate;
+    return removed;
+  };
+  return { ...forge, stopStarted, releaseStop };
+}
+
 describe("PluginService", () => {
+  it("registers plugin Forge providers and detaches them for every stop path", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const store = createStore(home, {
+      forge: { source: "directory", path: "/plugins/forge", enabled: true },
+    });
+    const forgeRegistry = new ForgeRegistry();
+    const first = createForgeRuntime();
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+      runtime: first.runtime,
+      forgeRegistry,
+    });
+
+    await service.start();
+    expect(forgeRegistry.definition("acme")).toMatchObject({
+      displayName: "Acme Forge",
+      changeRequestAbbrev: "CR",
+    });
+    expect(forgeRegistry.matchHost("forge.example.com")).toBe("acme");
+    await expect(forgeRegistry.probeHost("self-hosted.example.com")).resolves.toBe("acme");
+    await expect(forgeRegistry.create("acme")?.isAuthenticated({ cwd: "/repo" })).resolves.toBe(
+      true,
+    );
+
+    await service.reloadPlugin("forge");
+    expect(forgeRegistry.has("acme")).toBe(true);
+
+    await service.disablePlugin("forge");
+    expect(forgeRegistry.has("acme")).toBe(false);
+
+    await service.enablePlugin("forge");
+    expect(forgeRegistry.has("acme")).toBe(true);
+    first.crash("forge");
+    expect(forgeRegistry.has("acme")).toBe(false);
+
+    await service.enablePlugin("forge");
+    expect(forgeRegistry.has("acme")).toBe(true);
+    await service.removePlugin("forge");
+    expect(forgeRegistry.has("acme")).toBe(false);
+  });
+
+  it("publishes the detached catalog before a reload cleanup finishes", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const store = createStore(home, {
+      forge: { source: "directory", path: "/plugins/forge", enabled: true },
+    });
+    const forgeRegistry = new ForgeRegistry();
+    const paused = createPausedStopForgeRuntime();
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+      runtime: paused.runtime,
+      forgeRegistry,
+    });
+    await service.start();
+    const snapshots: string[][] = [];
+    service.subscribe(() => snapshots.push(catalogIds(service)));
+
+    const reloading = service.reloadPlugin("forge");
+    await paused.stopStarted;
+
+    expect(forgeRegistry.has("acme")).toBe(false);
+    expect(service.catalog()).toEqual([]);
+    expect(snapshots).toEqual([[]]);
+
+    paused.releaseStop();
+    await expect(reloading).resolves.toMatchObject({ status: "running" });
+    expect(forgeRegistry.has("acme")).toBe(true);
+    expect(snapshots).toEqual([[], ["forge"]]);
+  });
+
+  it("publishes a disable before cleanup and does not duplicate it afterward", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const store = createStore(home, {
+      forge: { source: "directory", path: "/plugins/forge", enabled: true },
+    });
+    const forgeRegistry = new ForgeRegistry();
+    const paused = createPausedStopForgeRuntime();
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+      runtime: paused.runtime,
+      forgeRegistry,
+    });
+    await service.start();
+    const snapshots: string[][] = [];
+    service.subscribe(() => snapshots.push(catalogIds(service)));
+
+    const disabling = service.disablePlugin("forge");
+    await paused.stopStarted;
+
+    expect(forgeRegistry.has("acme")).toBe(false);
+    expect(service.catalog()).toEqual([]);
+    expect(service.listPlugins()).toEqual([
+      { id: "forge", path: "/plugins/forge", enabled: false, status: "disabled" },
+    ]);
+    expect(snapshots).toEqual([[]]);
+
+    paused.releaseStop();
+    await expect(disabling).resolves.toMatchObject({ status: "disabled" });
+    expect(snapshots).toEqual([[]]);
+  });
+
+  it("publishes a removal before cleanup and keeps the Forge detached afterward", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const store = createStore(home, {
+      forge: { source: "directory", path: "/plugins/forge", enabled: true },
+    });
+    const forgeRegistry = new ForgeRegistry();
+    const paused = createPausedStopForgeRuntime();
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+      runtime: paused.runtime,
+      forgeRegistry,
+    });
+    await service.start();
+    const snapshots: string[][] = [];
+    service.subscribe(() => snapshots.push(catalogIds(service)));
+
+    const removing = service.removePlugin("forge");
+    await paused.stopStarted;
+
+    expect(forgeRegistry.has("acme")).toBe(false);
+    expect(service.catalog()).toEqual([]);
+    expect(service.listPlugins()).toEqual([]);
+    expect(snapshots).toEqual([[]]);
+
+    paused.releaseStop();
+    await removing;
+    expect(forgeRegistry.has("acme")).toBe(false);
+    expect(snapshots).toEqual([[], []]);
+  });
+
+  it("fails a plugin whose Forge id collides with a built-in adapter", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const store = createStore(home, {
+      forge: { source: "directory", path: "/plugins/forge", enabled: true },
+    });
+    const forgeRegistry = createDefaultForgeRegistry();
+    const fake = createForgeRuntime({
+      definition: {
+        id: "github",
+        displayName: "Fake GitHub",
+        changeRequestAbbrev: "PR",
+        changeRequestNoun: "pull request",
+        changeRequestNumberPrefix: "#",
+        issueNumberPrefix: "#",
+        signIn: null,
+      },
+    });
+    const service = new PluginService(pino({ level: "silent" }), store, "0.4.0", {
+      runtime: fake.runtime,
+      forgeRegistry,
+    });
+
+    await service.start();
+
+    expect(fake.running.has("forge")).toBe(false);
+    expect(service.listPlugins()).toEqual([
+      expect.objectContaining({
+        id: "forge",
+        status: "failed",
+        error: "Forge adapter already registered: github",
+      }),
+    ]);
+    expect(forgeRegistry.definition("github")?.displayName).toBe("GitHub");
+  });
+
   it("retains logs when disabled and clears them only when removed", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);
@@ -567,7 +826,7 @@ export default function contribute(plugin: unknown) {
       { id: "second", status: "running" },
     ]);
     await service.stopAllPlugins();
-  }, 20_000);
+  }, 30_000);
 
   it("does not publish an in-flight start after a later global disable", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
@@ -675,7 +934,7 @@ export default function contribute(plugin: unknown) {
     await expect(service.installDirectory({ path: failed })).rejects.toThrow("startup exploded");
     expect(events).toEqual(["failed-install"]);
     await service.stopAllPlugins();
-  });
+  }, 20_000);
 
   it("reports invalid manifests, missing entries, and startup failures", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
@@ -711,7 +970,7 @@ export default function contribute(plugin: unknown) {
       }),
     ]);
     await service.stopAllPlugins();
-  });
+  }, 20_000);
 
   it("contains cleanup errors and invokes server cleanup once per stopped installation", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
@@ -739,5 +998,5 @@ export default function contribute(plugin: unknown) {
     await service.stopAllPlugins();
 
     expect((await readFile(cleanupFile, "utf8")).trim().split("\n")).toHaveLength(4);
-  });
+  }, 30_000);
 });

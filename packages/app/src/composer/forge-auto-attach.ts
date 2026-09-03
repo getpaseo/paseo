@@ -12,6 +12,10 @@ import {
 import type { ComposerAttachment, UserComposerAttachment } from "@/attachments/types";
 import { buildForgeSearchQueryOptions, type ForgeSearchClient } from "@/git/use-forge-search-query";
 import { extractForgeRefs, type ForgeRef } from "@/git/forge-refs";
+import {
+  BUILTIN_CLIENT_FORGE_HOST,
+  type ClientForgeHostSnapshot,
+} from "@/git/client-forge-registry";
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import { isAttachmentSelectedForForgeItem, toggleForgeAttachment } from "./actions";
 
@@ -20,6 +24,7 @@ const AUTO_ATTACH_DEBOUNCE_MS = 300;
 interface ComposerForgeAutoAttachInput {
   text: string;
   remoteUrl: string | null | undefined;
+  clientForgeHost?: ClientForgeHostSnapshot;
   attachments: UserComposerAttachment[];
   client: ForgeSearchClient | null;
   isConnected: boolean;
@@ -174,7 +179,7 @@ function getLookupCandidateRefs(
   params: ComposerForgeAutoAttachInput,
   removedRefKeys: ReadonlySet<string>,
 ): ForgeRef[] {
-  return extractForgeRefs(params.text, params.remoteUrl).filter((ref) => {
+  return extractInputForgeRefs(params).filter((ref) => {
     const key = forgeRefKey(ref);
     return !removedRefKeys.has(key) && !hasForgeAttachment(params.attachments, ref);
   });
@@ -195,7 +200,7 @@ function getLookupRelevanceKey(
   params: ComposerForgeAutoAttachInput,
   removedRefKeys: ReadonlySet<string>,
 ): string {
-  return extractForgeRefs(params.text, params.remoteUrl)
+  return extractInputForgeRefs(params)
     .map(forgeRefKey)
     .filter((key) => !removedRefKeys.has(key))
     .sort()
@@ -203,7 +208,7 @@ function getLookupRelevanceKey(
 }
 
 function getPresentChangeRequestKey(params: ComposerForgeAutoAttachInput): string {
-  return extractForgeRefs(params.text, params.remoteUrl)
+  return extractInputForgeRefs(params)
     .filter((ref) => ref.kind === "change_request")
     .map(forgeRefKey)
     .sort()
@@ -247,7 +252,7 @@ function suppressRefsCarriedAcrossTargets({
   previousTargetRef.current = { serverId: params.serverId, cwd: params.cwd };
   if (!targetChanged) return;
 
-  for (const ref of extractForgeRefs(params.text, params.remoteUrl)) {
+  for (const ref of extractInputForgeRefs(params)) {
     removedRefKeys.add(forgeRefKey(ref));
   }
 }
@@ -260,7 +265,7 @@ function notifyNewChangeRequestRefs({
   presentChangeRequestKeysRef: RefObject<Set<string>>;
 }): void {
   const currentKeys = new Set(
-    extractForgeRefs(params.text, params.remoteUrl)
+    extractInputForgeRefs(params)
       .filter((ref) => ref.kind === "change_request")
       .map(forgeRefKey),
   );
@@ -448,7 +453,7 @@ function refsReadyForLookup({
     return [];
   }
 
-  return extractForgeRefs(params.text, params.remoteUrl).filter((ref) => {
+  return extractInputForgeRefs(params).filter((ref) => {
     const key = forgeRefKey(ref);
     return (
       !removedRefKeys.has(key) &&
@@ -488,7 +493,7 @@ async function fetchForgeRefSearch({
 }
 
 function isRefStillPresent(ref: ForgeRef, params: ComposerForgeAutoAttachInput): boolean {
-  return extractForgeRefs(params.text, params.remoteUrl).some(
+  return extractInputForgeRefs(params).some(
     (candidate) => forgeRefKey(candidate) === forgeRefKey(ref),
   );
 }
@@ -500,7 +505,16 @@ function isSameLookupTarget(
   return (
     initial.serverId === current.serverId &&
     initial.cwd === current.cwd &&
-    initial.remoteUrl === current.remoteUrl
+    initial.remoteUrl === current.remoteUrl &&
+    initial.clientForgeHost === current.clientForgeHost
+  );
+}
+
+function extractInputForgeRefs(params: ComposerForgeAutoAttachInput): ForgeRef[] {
+  return extractForgeRefs(
+    params.text,
+    params.remoteUrl,
+    params.clientForgeHost ?? BUILTIN_CLIENT_FORGE_HOST,
   );
 }
 

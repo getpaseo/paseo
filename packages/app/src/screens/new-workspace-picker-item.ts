@@ -2,6 +2,10 @@ import type { CreatePaseoWorktreeInput } from "@getpaseo/client/internal/daemon-
 import type { ForgeSearchItem } from "@getpaseo/protocol/messages";
 import type { ComboboxOptionModel } from "@/components/ui/combobox-options";
 import { getForgePresentation } from "@/git/forge";
+import {
+  BUILTIN_CLIENT_FORGE_HOST,
+  type ClientForgeHostSnapshot,
+} from "@/git/client-forge-registry";
 
 export interface BranchPickerDetail {
   name: string;
@@ -220,13 +224,19 @@ export function pickerOptionId(item: PickerItem): string {
     : prPickerOptionId(item.item.number);
 }
 
-function formatPrLabel(item: Pick<ForgeSearchItem, "forge" | "number" | "title">): string {
-  const presentation = getForgePresentation(item.forge ?? "github");
+function formatPrLabel(
+  item: Pick<ForgeSearchItem, "forge" | "number" | "title">,
+  clientForgeHost: ClientForgeHostSnapshot,
+): string {
+  const presentation = getForgePresentation(item.forge ?? "github", clientForgeHost);
   return `${presentation.numberPrefix}${item.number} ${item.title}`;
 }
 
-export function pickerItemLabel(item: PickerItem): string {
-  return item.kind === "branch" ? item.name : formatPrLabel(item.item);
+export function pickerItemLabel(
+  item: PickerItem,
+  clientForgeHost: ClientForgeHostSnapshot = BUILTIN_CLIENT_FORGE_HOST,
+): string {
+  return item.kind === "branch" ? item.name : formatPrLabel(item.item, clientForgeHost);
 }
 
 export interface PickerOptionData {
@@ -244,7 +254,9 @@ export function buildPickerOptionData(input: {
   branchDetails: readonly BranchPickerDetail[];
   prItems: readonly ForgeSearchItem[];
   baseItem: PickerItem | null;
+  clientForgeHost?: ClientForgeHostSnapshot;
 }): PickerOptionData {
+  const clientForgeHost = input.clientForgeHost ?? BUILTIN_CLIENT_FORGE_HOST;
   const itemById = new Map<string, PickerItem>();
   const timedOptions: TimedOption[] = [];
 
@@ -253,7 +265,7 @@ export function buildPickerOptionData(input: {
     const id = branchPickerOptionId(branch.refName);
     itemById.set(id, branch);
     timedOptions.push({
-      option: { id, label: pickerItemLabel(branch) },
+      option: { id, label: pickerItemLabel(branch, clientForgeHost) },
       timestamp: branch.committerDate ?? 0,
     });
   }
@@ -264,7 +276,7 @@ export function buildPickerOptionData(input: {
     itemById.set(id, { kind: "github-pr", item: pr });
     const updatedAtMs = pr.updatedAt ? Date.parse(pr.updatedAt) : 0;
     const timestamp = Number.isNaN(updatedAtMs) ? 0 : Math.floor(updatedAtMs / 1000);
-    timedOptions.push({ option: { id, label: formatPrLabel(pr) }, timestamp });
+    timedOptions.push({ option: { id, label: formatPrLabel(pr, clientForgeHost) }, timestamp });
   }
 
   const baseItem = input.baseItem;
@@ -279,7 +291,7 @@ export function buildPickerOptionData(input: {
     const labeledItem = disambiguate(baseItem, timedOptions);
     itemById.set(selectedOptionId, labeledItem);
     timedOptions.push({
-      option: { id: selectedOptionId, label: pickerItemLabel(labeledItem) },
+      option: { id: selectedOptionId, label: pickerItemLabel(labeledItem, clientForgeHost) },
       // The base sorts first: it is what a workspace is created from unless you pick something.
       timestamp: Number.POSITIVE_INFINITY,
     });

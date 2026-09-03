@@ -85,6 +85,7 @@ import {
 import { ProjectLeadingVisual } from "@/components/sidebar/project-leading-visual";
 import { useToast } from "@/contexts/toast-context";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
+import { useClientForgeHost } from "@/git/client-forge-registry";
 import { toWorktreeArchiveRisk } from "@/git/worktree-archive-warning";
 import { hasVisibleOrderChanged, mergeWithRemainder } from "@/utils/sidebar-reorder";
 import { confirmDialog } from "@/utils/confirm-dialog";
@@ -290,8 +291,17 @@ interface WorkspaceRowInnerProps {
   reserveIdleStatusIndicatorSpace?: boolean;
 }
 
-export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewStyle> }) {
+export function PrBadge({
+  hint,
+  serverId,
+  style,
+}: {
+  hint: PrHint;
+  serverId: string;
+  style?: StyleProp<ViewStyle>;
+}) {
   const { t } = useTranslation();
+  const clientForgeHost = useClientForgeHost(serverId);
   const [isHovered, setIsHovered] = useState(false);
 
   const handlePressIn = useCallback((event: GestureResponderEvent) => {
@@ -324,7 +334,7 @@ export function PrBadge({ hint, style }: { hint: PrHint; style?: StyleProp<ViewS
   const textStyle = isHovered
     ? [prBadgeStyles.text, prBadgeStyles.textHovered]
     : prBadgeStyles.text;
-  const presentation = getForgePresentation(normalizeForge(hint.forge));
+  const presentation = getForgePresentation(normalizeForge(hint.forge), clientForgeHost);
 
   return (
     <Pressable

@@ -1,0 +1,17 @@
+{
+  "name": "paseo-plugin-codeup",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run codeup.client.test.ts codeup-service.server.test.ts process.server.test.ts --bail=1",
+    "test:real": "vitest run codeup-service.real.e2e.test.ts --bail=1"
+  },
+  "devDependencies": {
+    "@getpaseo/plugin": "file:../../packages/plugin",
+    "@types/node": "^20.9.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.6",
+    "zod": "^4.4.3"
+  }
+}

@@ -5,6 +5,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ForgeCommandError } from "../../services/forge-cli-command.js";
+import { forgeAuthStateFromError, isForgeAuthError } from "../../utils/checkout-git.js";
 import { PluginRuntime } from "./runtime.js";
 import type { PluginSessionSocket } from "./session-socket.js";
 
@@ -32,7 +34,7 @@ function createReloadChild(name: string, events: string[], methods: string[] = [
       callback?.(null);
       if (message.type === "initialize") {
         events.push(`start:${name}`);
-        queueMicrotask(() => emit("message", { type: "ready", methods }));
+        queueMicrotask(() => emit("message", { type: "ready", methods, forgeProviders: [] }));
       }
       if (message.type === "shutdown") {
         events.push(`shutdown:${name}`);
@@ -295,7 +297,7 @@ describe("PluginRuntime", () => {
     expect(logs.map((entry) => entry.sequence)).toEqual(
       Array.from({ length: logs.length }, (_, index) => index + 1),
     );
-  });
+  }, 20_000);
 
   it("retains compilation failures in the plugin stderr tail", async () => {
     const directory = await createPlugin("broken-compile", `export default function contribute( {`);
@@ -879,6 +881,232 @@ export default function contribute(plugin: any) {
 
     expect(runtime.catalog()).toEqual([]);
     expect(events).toEqual(["start:blocked", "shutdown:blocked", "exit:blocked"]);
+  });
+
+  it("publishes Forge descriptors, validates results, and preserves classified auth errors", async () => {
+    const directory = await createPlugin(
+      "forge-runtime",
+      `import { ForgeCliMissingError, ForgeCommandError } from "@getpaseo/plugin/server";
+
+const pullRequest = {
+  number: 7,
+  title: "Plugin change",
+  url: "https://forge.example.com/acme/repo/changes/7",
+  state: "open",
+  body: null,
+  baseRefName: "main",
+  headRefName: "feature",
+  labels: [],
+  updatedAt: "2026-08-20T00:00:00.000Z",
+};
+let listPullRequestCalls = 0;
+
+export default function contribute(plugin: any) {
+  plugin.addForgeServerProvider({
+    definition: {
+      id: "acme",
+      displayName: "Acme Forge",
+      changeRequestAbbrev: "CR",
+      changeRequestNoun: "change request",
+      changeRequestNumberPrefix: "!",
+      issueNumberPrefix: "#",
+      signIn: null,
+      cloudHosts: ["forge.example.com"],
+    },
+    probeHost: async (host: string) => host === "self-hosted.example.com",
+    service: {
+      listPullRequests: async () => {
+        listPullRequestCalls += 1;
+        return listPullRequestCalls === 1 ? [] : [pullRequest];
+      },
+      listIssues() {
+        throw new ForgeCommandError(
+          { brand: "Acme", binary: "acme" },
+          {
+            args: ["merge", "--body", "sensitive body"],
+            cwd: "/sensitive/repo",
+            exitCode: 1,
+            stderr: "sensitive stderr",
+          },
+        );
+      },
+      getPullRequest: async () => pullRequest,
+      getPullRequestHeadRef: async () => 42,
+      getPullRequestCheckoutTarget: async () => ({
+        number: 7,
+        baseRefName: "main",
+        headRefName: "feature",
+        headOwnerLogin: null,
+        headRepositorySshUrl: null,
+        headRepositoryUrl: null,
+        isCrossRepository: false,
+      }),
+      getCurrentPullRequestStatus: async () => ({
+        number: 7,
+        repoOwner: "acme",
+        repoName: "repo",
+        url: pullRequest.url,
+        title: pullRequest.title,
+        state: pullRequest.state,
+        baseRefName: pullRequest.baseRefName,
+        headRefName: pullRequest.headRefName,
+        isMerged: false,
+        mergeable: "UNKNOWN",
+        checks: [
+          {
+            name: "Deploy approval",
+            status: "skipped",
+            url: null,
+            traits: ["manual", "future-forge-trait"],
+          },
+        ],
+        checksStatus: "success",
+        reviewDecision: null,
+      }),
+      getPullRequestTimeline: async () => ({
+        prNumber: 7,
+        repoOwner: "acme",
+        repoName: "repo",
+        items: [],
+        truncated: false,
+        error: null,
+      }),
+      getCheckDetails: async () => ({
+        checkRunId: 1,
+        name: "checks",
+        annotations: [],
+        failedJobs: [],
+        truncated: false,
+      }),
+      searchIssuesAndPrs: async () => ({
+        items: [],
+        featuresEnabled: true,
+        authState: "authenticated",
+      }),
+      createPullRequest: async () => ({ url: pullRequest.url, number: 7 }),
+      mergePullRequest: async () => ({ success: true }),
+      enablePullRequestAutoMerge: async () => ({ success: true }),
+      disablePullRequestAutoMerge: async () => ({ success: true }),
+      isAuthenticated() {
+        throw new ForgeCliMissingError("acme CLI is missing");
+      },
+      invalidate() {},
+    },
+  });
+  return () => undefined;
+}`,
+    );
+    const runtime = createTestRuntime();
+
+    await runtime.startPlugin("forge-runtime", directory);
+
+    expect(runtime.forgeProviders("forge-runtime")).toEqual([
+      expect.objectContaining({
+        definition: expect.objectContaining({ id: "acme", displayName: "Acme Forge" }),
+        hasProbeHost: true,
+      }),
+    ]);
+    await expect(
+      runtime.invokeForge("forge-runtime", "acme", "probeHost", "self-hosted.example.com"),
+    ).resolves.toBe(true);
+    await expect(
+      runtime.invokeForge("forge-runtime", "acme", "listPullRequests", {
+        cwd: "",
+        force: true,
+      }),
+    ).rejects.toThrow("Plugin forge listPullRequests received invalid input");
+    await expect(
+      runtime.invokeForge("forge-runtime", "acme", "mergePullRequest", {
+        cwd: "/repo",
+        prNumber: 7,
+        mergeMethod: "fast-forward",
+      }),
+    ).rejects.toThrow("Plugin forge mergePullRequest received invalid input");
+    await expect(
+      runtime.invokeForge("forge-runtime", "acme", "listPullRequests", { cwd: "/repo" }),
+    ).resolves.toEqual([]);
+    await expect(
+      runtime.invokeForge("forge-runtime", "acme", "getCurrentPullRequestStatus", {
+        cwd: "/repo",
+        headRef: "feature",
+      }),
+    ).resolves.toEqual({
+      number: 7,
+      repoOwner: "acme",
+      repoName: "repo",
+      url: "https://forge.example.com/acme/repo/changes/7",
+      title: "Plugin change",
+      state: "open",
+      baseRefName: "main",
+      headRefName: "feature",
+      isMerged: false,
+      mergeable: "UNKNOWN",
+      checks: [
+        {
+          name: "Deploy approval",
+          status: "skipped",
+          url: null,
+          traits: ["manual", "future-forge-trait"],
+        },
+      ],
+      checksStatus: "success",
+      reviewDecision: null,
+    });
+    await expect(
+      runtime.invokeForge("forge-runtime", "acme", "getPullRequestHeadRef", {
+        cwd: "/repo",
+        number: 7,
+      }),
+    ).rejects.toThrow("returned invalid output");
+
+    const authError = await runtime
+      .invokeForge("forge-runtime", "acme", "isAuthenticated", { cwd: "/repo" })
+      .catch((error: unknown) => error);
+    expect(isForgeAuthError(authError)).toBe(true);
+    expect(forgeAuthStateFromError(authError)).toBe("cli_missing");
+
+    const commandError = await runtime
+      .invokeForge("forge-runtime", "acme", "listIssues", { cwd: "/repo" })
+      .catch((error: unknown) => error);
+    expect(commandError).toBeInstanceOf(ForgeCommandError);
+    expect(commandError).toMatchObject({
+      message: "Acme CLI command failed: acme",
+      args: ["merge", "--body", "sensitive body"],
+      cwd: "/sensitive/repo",
+      exitCode: 1,
+      stderr: "sensitive stderr",
+    });
+    for (const key of ["args", "cwd", "stderr"]) {
+      expect(Object.keys(commandError as Error)).not.toContain(key);
+    }
+
+    await runtime.stopAll();
+  }, 10_000);
+
+  it("rejects Forge provider ids that are not already lowercase", async () => {
+    const directory = await createPlugin(
+      "invalid-forge-id",
+      `export default function contribute(plugin: any) {
+  plugin.addForgeServerProvider({
+    definition: {
+      id: "Codeup",
+      displayName: "Codeup",
+      changeRequestAbbrev: "MR",
+      changeRequestNoun: "merge request",
+      changeRequestNumberPrefix: "!",
+      issueNumberPrefix: "#",
+      signIn: null,
+    },
+    service: {},
+  });
+  return () => undefined;
+}`,
+    );
+    const runtime = createTestRuntime();
+
+    await expect(runtime.startPlugin("invalid-forge-id", directory)).rejects.toThrow(
+      "Invalid plugin forge provider id: Codeup",
+    );
   });
 
   it("reports an unexpected subprocess crash and removes its catalog entry", async () => {

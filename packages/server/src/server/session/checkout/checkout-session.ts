@@ -1,7 +1,7 @@
 import type pino from "pino";
 import { isAbsolute } from "node:path";
 import { getErrorMessage } from "@getpaseo/protocol/error-utils";
-import { getForgeDefinitionOrNeutral } from "@getpaseo/protocol/forge-manifest";
+import type { ForgeDefinition } from "@getpaseo/protocol/forge-manifest";
 import { validateBranchSlug } from "@getpaseo/protocol/branch-slug";
 import type {
   BranchSuggestionsRequest,
@@ -169,17 +169,21 @@ export class CheckoutSession {
 
   private async resolveForgeService(
     cwd: string,
-  ): Promise<{ forge: string; service: ForgeService } | null> {
+  ): Promise<{ forge: string; service: ForgeService; definition: ForgeDefinition } | null> {
     const resolution = await this.workspaceGitService.resolveForge(cwd);
     if (!resolution) {
       return null;
     }
-    return { forge: resolution.forge, service: resolution.service };
+    return {
+      forge: resolution.forge,
+      service: resolution.service,
+      definition: resolution.definition,
+    };
   }
 
   private async requireForgeService(
     cwd: string,
-  ): Promise<{ forge: string; service: ForgeService }> {
+  ): Promise<{ forge: string; service: ForgeService; definition: ForgeDefinition }> {
     const resolution = await this.resolveForgeService(cwd);
     if (!resolution) {
       throw new NoResolvedForgeServiceError(cwd);
@@ -1165,7 +1169,7 @@ export class CheckoutSession {
       });
       return;
     }
-    const { forge, service } = resolvedForge;
+    const { service, definition } = resolvedForge;
 
     // A throwing auth probe (authProbeCanThrow) yields the precise kind; a
     // false return can't distinguish cli_missing from unauthenticated, so
@@ -1188,7 +1192,7 @@ export class CheckoutSession {
           truncated: false,
           error: {
             kind: "unknown",
-            message: `${getForgeDefinitionOrNeutral(forge).displayName} CLI is unavailable or not authenticated`,
+            message: `${definition.displayName} CLI is unavailable or not authenticated`,
           },
           requestId,
           githubFeaturesEnabled: false,

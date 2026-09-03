@@ -81,14 +81,16 @@ Use this table as the complete registration checklist.
 | `plugin.addTheme(theme)` in the old root entry                                                | `client.addTheme(theme)` in `index.client.tsx`                                             |
 | `plugin.addTimelineTransformer(transformer)` in the old root entry                            | `client.addTimelineTransformer(transformer)` in `index.client.tsx`                         |
 | `plugin.addTimelineRenderer(renderer)` in the old root entry                                  | `client.addTimelineRenderer(renderer)` in `index.client.tsx`                               |
+| `plugin.addForgeClientProvider(provider)` in the old root entry                               | `client.addForgeClientProvider(provider)` in `index.client.tsx`                            |
+| `plugin.addForgeServerProvider(provider)` in the old root entry                               | `server.addForgeServerProvider(provider)` in `index.server.ts`                             |
 | `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin/server"` in shared files | `import { defineRpc, defineAttachmentSource } from "@getpaseo/plugin"`                     |
 | `ZodOutput<typeof contract.input>` handler parameter types                                    | `RpcInput<typeof contract>` from `@getpaseo/plugin`; `RpcOutput` for return types          |
 
 Import `PluginClientContext` in the client entry and `PluginServerContext` in the server entry.
-Remove imports of the old context type. `@getpaseo/plugin/server` now exports only handler-side
-types such as `PluginHandlerContext`. Every client `add*` now returns an idempotent removal
-function. Preserve any remover the plugin calls before teardown; Paseo removes outstanding
-registrations after the entry cleanup runs.
+Remove imports of the old context type. `@getpaseo/plugin/server` exports handler-side types and
+server Forge contracts and helpers. Every client `add*` now returns an idempotent removal function.
+Preserve any remover the plugin calls before teardown; Paseo removes outstanding registrations
+after the entry cleanup runs.
 
 ## 4. Separate imports
 

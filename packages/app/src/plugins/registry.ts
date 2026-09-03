@@ -4,6 +4,7 @@ import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { createPluginClientRuntime } from "./client-runtime";
 import { runPluginClientBundle } from "./evaluate";
 import type { InstalledPlugin } from "./types";
+import { clientForgeRegistry } from "@/git/client-forge-registry";
 
 interface CatalogPlugin {
   id: string;
@@ -52,6 +53,7 @@ class PluginRegistry {
     const removed = previous.filter((plugin) => !preserved.includes(plugin));
     if (removed.length > 0) {
       this.byHost.set(serverId, preserved);
+      this.syncForgeHost(serverId, preserved);
       this.publish();
       for (const plugin of removed) this.dispose(plugin);
     }
@@ -81,12 +83,16 @@ class PluginRegistry {
           themes: [],
           timelineTransformers: [],
           timelineRenderers: [],
+          forgeClientProviders: [],
         };
         const evaluated = runPluginClientBundle(
           entry.id,
           entry.clientBundle,
           createPluginClientRuntime(installation, options.client),
-          () => this.publish(),
+          () => {
+            this.syncForgeHost(serverId, this.byHost.get(serverId) ?? []);
+            this.publish();
+          },
         );
         Object.assign(installation, evaluated);
         this.evaluationErrors.delete(key);
@@ -104,6 +110,7 @@ class PluginRegistry {
       }
     }
     this.byHost.set(serverId, installed);
+    this.syncForgeHost(serverId, installed);
     this.publish();
     const installedTimelineBundles = installed
       .filter((plugin) => plugin.timelineTransformers.length > 0)
@@ -122,7 +129,24 @@ class PluginRegistry {
       if (key.startsWith(`${serverId}/`)) this.evaluationErrors.delete(key);
     }
     this.byHost.delete(serverId);
+    clientForgeRegistry.removeHost(serverId);
     this.publish();
+  }
+
+  private syncForgeHost(serverId: string, installed: InstalledPlugin[]): void {
+    const conflicts = clientForgeRegistry.replaceHost(
+      serverId,
+      installed.flatMap((plugin) =>
+        plugin.forgeClientProviders.map((contribution) => ({
+          pluginId: plugin.id,
+          contribution,
+        })),
+      ),
+    );
+    for (const conflict of conflicts) {
+      this.evaluationErrors.set(`${serverId}/${conflict.pluginId}`, conflict.message);
+      console.warn(`[Plugins] ${serverId}/${conflict.pluginId}: ${conflict.message}`);
+    }
   }
 
   private dispose(plugin: InstalledPlugin): void {

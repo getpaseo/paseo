@@ -42,6 +42,17 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addTheme({ id: "night", name: "Night", appearance: "dark", colors: { background: "#000", foreground: "#fff", raised: "#111", control: "#222", border: "#333", mutedForeground: "#aaa", ring: "#555" } }),
           plugin.addTimelineTransformer({ id: "transformer", query: { itemType: "tool_call" }, transform() { return { items: [] }; } }),
           plugin.addTimelineRenderer({ kind: "card", version: 1, schema, Component }),
+          plugin.addForgeClientProvider({
+            definition: {
+              id: "acme",
+              displayName: "Acme",
+              changeRequestAbbrev: "CR",
+              changeRequestNoun: "change request",
+              changeRequestNumberPrefix: "!",
+              issueNumberPrefix: "#",
+              signIn: null,
+            },
+          }),
         ];
       `),
       {
@@ -67,6 +78,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.themes,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
+        plugin.forgeClientProviders,
       ].every((items) => items.length === 1),
     ).toBe(true);
     expect(pillCount).toBe(1);
@@ -85,6 +97,7 @@ describe("evaluatePluginClientBundle", () => {
         plugin.themes,
         plugin.timelineTransformers,
         plugin.timelineRenderers,
+        plugin.forgeClientProviders,
       ].every((items) => items.length === 0),
     ).toBe(true);
     expect(pillCount).toBe(0);
@@ -266,6 +279,110 @@ describe("evaluatePluginClientBundle", () => {
         ),
       ).toThrow(message);
     }
+  });
+
+  it("collects a declarative Forge client provider", () => {
+    const plugin = evaluatePluginClientBundle(
+      "codeup",
+      bundle(`
+        plugin.addForgeClientProvider({
+          definition: {
+            id: "codeup",
+            displayName: " Codeup ",
+            changeRequestAbbrev: "MR",
+            changeRequestNoun: "merge request",
+            changeRequestNumberPrefix: "!",
+            issueNumberPrefix: "#",
+            signIn: { cli: "aliyun", command: "aliyun configure" },
+            cloudHosts: ["codeup.aliyun.com"],
+          },
+          view: {
+            icon: { kind: "svg-path", viewBox: [0, 0, 24, 24], path: "M0 0h24v24H0z" },
+            brandColor: { light: "#ff6a00", dark: "#ff6a00" },
+          },
+        });
+      `),
+    );
+
+    expect(plugin.forgeClientProviders).toEqual([
+      expect.objectContaining({
+        definition: expect.objectContaining({ id: "codeup", displayName: "Codeup" }),
+      }),
+    ]);
+  });
+
+  it("accepts daemon-compatible Forge ids and normalizes facts families and cloud hosts", () => {
+    const plugin = evaluatePluginClientBundle(
+      "acme",
+      bundle(`
+        plugin.addForgeClientProvider({
+          definition: {
+            id: " 1.acme_forge ",
+            displayName: "Acme",
+            changeRequestAbbrev: "CR",
+            changeRequestNoun: "change request",
+            changeRequestNumberPrefix: "!",
+            issueNumberPrefix: "#",
+            signIn: null,
+            cloudHosts: [" Code.Acme.Test. ", "ssh.code.acme.test"],
+          },
+          facts: {
+            family: " 2.shared_facts ",
+            schema: { safeParse(value) { return { success: true, data: value }; } },
+          },
+        });
+      `),
+    );
+
+    expect(plugin.forgeClientProviders[0]?.definition).toMatchObject({
+      id: "1.acme_forge",
+      cloudHosts: ["code.acme.test", "ssh.code.acme.test"],
+    });
+    expect(plugin.forgeClientProviders[0]?.facts?.family).toBe("2.shared_facts");
+  });
+
+  it("rejects Forge cloud hosts that collide after normalization", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "acme",
+        bundle(`
+          plugin.addForgeClientProvider({
+            definition: {
+              id: "acme",
+              displayName: "Acme",
+              changeRequestAbbrev: "CR",
+              changeRequestNoun: "change request",
+              changeRequestNumberPrefix: "!",
+              issueNumberPrefix: "#",
+              signIn: null,
+              cloudHosts: ["Code.Acme.Test.", "code.acme.test"],
+            },
+          });
+        `),
+      ),
+    ).toThrow("duplicate cloud hosts");
+  });
+
+  it("rejects malformed Forge client contributions", () => {
+    expect(() =>
+      evaluatePluginClientBundle(
+        "codeup",
+        bundle(`
+          plugin.addForgeClientProvider({
+            definition: {
+              id: "codeup",
+              displayName: "Codeup",
+              changeRequestAbbrev: "MR",
+              changeRequestNoun: "merge request",
+              changeRequestNumberPrefix: "!",
+              issueNumberPrefix: "#",
+              signIn: null,
+            },
+            view: { icon: { kind: "svg-path", viewBox: [0, 0, 0, 24], path: "M0 0" } },
+          });
+        `),
+      ),
+    ).toThrow("invalid SVG path icon");
   });
 
   it("rejects duplicate workspace panel and Command Center ids", () => {
@@ -491,6 +608,38 @@ describe("evaluatePluginClientBundle", () => {
     );
 
     expect(plugin.attachmentSources.map((source) => source.search.name)).toEqual(["issues.search"]);
+  });
+
+  it("provides client Forge helpers without exposing the server runtime", () => {
+    const plugin = evaluatePluginClientBundle(
+      "acme",
+      `(function(require) {
+        const currentRoot = require("@getpaseo/plugin");
+        const legacyRoot = require("@paseo/plugin");
+        const currentServer = require("@getpaseo/plugin/server");
+        const legacyServer = require("@paseo/plugin/server");
+        if (Object.keys(currentServer).length !== 0 || Object.keys(legacyServer).length !== 0) {
+          throw new Error("server runtime leaked into the client bundle");
+        }
+        const definition = currentRoot.defineForgeClientProvider({
+          definition: {
+            id: "acme",
+            displayName: "Acme",
+            changeRequestAbbrev: "CR",
+            changeRequestNoun: "change request",
+            changeRequestNumberPrefix: "!",
+            issueNumberPrefix: "#",
+            signIn: null,
+          },
+        });
+        return { default: function(plugin) {
+          plugin.addForgeClientProvider(legacyRoot.defineForgeClientProvider(definition));
+          return function() {};
+        } };
+      })`,
+    );
+
+    expect(plugin.forgeClientProviders[0]?.definition.displayName).toBe("Acme");
   });
 
   it("rejects modules that are not part of the client runtime", () => {

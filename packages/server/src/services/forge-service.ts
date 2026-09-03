@@ -36,6 +36,8 @@ export interface PullRequestCheckoutTarget {
   headRefName: string;
   checkoutRefs?: PullRequestCheckoutRef[];
   headOwnerLogin: string | null;
+  /** Adapter-selected push URL when transport choice must follow the checkout remote. */
+  preferredPushUrl?: string;
   headRepositorySshUrl: string | null;
   headRepositoryUrl: string | null;
   isCrossRepository: boolean;
@@ -43,6 +45,8 @@ export interface PullRequestCheckoutTarget {
 
 export interface PullRequestCheckoutRef {
   remoteName?: string;
+  /** Direct fetch URL for cross-repository heads that are not exposed on origin. */
+  remoteUrl?: string;
   remoteRef: string;
 }
 
@@ -448,7 +452,7 @@ export interface ForgeService {
   defaultCheckoutRefs?(params: {
     changeRequestNumber: number;
     headRef: string;
-  }): PullRequestCheckoutRef[];
+  }): PullRequestCheckoutRef[] | Promise<PullRequestCheckoutRef[]>;
   /**
    * Local branch name for a checked-out change request when the adapter
    * disambiguates cross-repository heads (GitHub prefixes the fork owner).
@@ -457,7 +461,7 @@ export interface ForgeService {
   buildPrLocalBranchName?(params: {
     headRef: string;
     checkoutTarget: PullRequestCheckoutTarget;
-  }): string | undefined;
+  }): string | undefined | Promise<string | undefined>;
   /**
    * True when the adapter can fetch a cross-repository change-request head with
    * no explicit refs on the checkout target (GitHub via refs/pull/N/head).
@@ -515,7 +519,7 @@ export interface ForgeService {
     onError?: (error: unknown) => void;
   }): { unsubscribe: () => void };
   invalidate(options: { cwd: string }): void;
-  dispose?(): void;
+  dispose?(): void | Promise<void>;
 }
 
 /** Parse an optional ISO timestamp to epoch ms, 0 when absent or unparseable. */

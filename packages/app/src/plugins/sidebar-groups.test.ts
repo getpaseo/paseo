@@ -26,6 +26,7 @@ function installed(serverId: string, contributionId = "main"): InstalledPlugin {
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    forgeClientProviders: [],
   };
 }
 

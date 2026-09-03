@@ -22,6 +22,7 @@ import {
   Server,
 } from "lucide-react-native";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
+import { type ClientForgeHostSnapshot, useClientForgeHost } from "@/git/client-forge-registry";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import type { Theme } from "@/styles/theme";
 import { DiffStat } from "@/components/diff-stat";
@@ -299,7 +300,9 @@ function WorkspaceHoverCardContent({
               {workspace.name}
             </Text>
           </View>
-          {prHint ? <PrBadge hint={prHint} style={styles.cardInfoRow} /> : null}
+          {prHint ? (
+            <PrBadge hint={prHint} serverId={workspace.serverId} style={styles.cardInfoRow} />
+          ) : null}
           {workspace.diffStat ? (
             <View style={styles.cardInfoRow}>
               <ThemedFileDiff size={12} uniProps={foregroundMutedColorMapping} />
@@ -335,6 +338,7 @@ function WorkspaceHoverCardContent({
                 checks={prHint.checks}
                 url={prHint.url}
                 forge={prHint.forge}
+                serverId={workspace.serverId}
               />
             </>
           ) : null}
@@ -385,8 +389,14 @@ function InfoRow({
   );
 }
 
-function renderChecksSummaryForgeIcon(icon: string, iconUniProps: typeof foregroundColorMapping) {
-  return <ForgeBrandIcon iconKind={icon} size={12} uniProps={iconUniProps} />;
+function renderChecksSummaryForgeIcon(
+  icon: string,
+  iconUniProps: typeof foregroundColorMapping,
+  clientForgeHost: ClientForgeHostSnapshot,
+) {
+  return (
+    <ForgeBrandIcon iconKind={icon} size={12} uniProps={iconUniProps} host={clientForgeHost} />
+  );
 }
 
 function CopyableInfoRow({
@@ -482,26 +492,29 @@ function ChecksSummaryContent({
   checks,
   forge,
   hovered,
+  serverId,
 }: {
   checks: NonNullable<PrHint["checks"]>;
   forge: PrHint["forge"];
   hovered: boolean;
+  serverId: string;
 }) {
   const { t } = useTranslation();
+  const clientForgeHost = useClientForgeHost(serverId);
   const counts = countCheckPresentations(checks);
 
   const labelStyle = hovered
     ? [styles.checksSummaryLabel, styles.checksSummaryLabelHovered]
     : styles.checksSummaryLabel;
   const iconUniProps = hovered ? foregroundColorMapping : foregroundMutedColorMapping;
-  const icon = getForgePresentation(normalizeForge(forge)).icon;
+  const icon = getForgePresentation(normalizeForge(forge), clientForgeHost).icon;
 
   return (
     <>
       {hovered ? (
         <ThemedExternalLink size={12} uniProps={iconUniProps} />
       ) : (
-        renderChecksSummaryForgeIcon(icon, iconUniProps)
+        renderChecksSummaryForgeIcon(icon, iconUniProps, clientForgeHost)
       )}
       <Text style={labelStyle}>{t("workspace.git.pr.sections.checks")}</Text>
       <View style={styles.checksSummaryCounts}>
@@ -521,12 +534,15 @@ function ChecksSummaryPressable({
   checks,
   forge,
   url,
+  serverId,
 }: {
   checks: NonNullable<PrHint["checks"]>;
   forge: PrHint["forge"];
   url: string;
+  serverId: string;
 }) {
   const { t } = useTranslation();
+  const clientForgeHost = useClientForgeHost(serverId);
   const counts = countCheckPresentations(checks);
   const accessibilityLabel = formatCheckPresentationCountsLabel(
     counts,
@@ -534,14 +550,19 @@ function ChecksSummaryPressable({
     t,
   );
   const handlePress = useCallback(() => {
-    void openExternalUrl(buildForgeChecksUrl(forge, url) ?? url);
-  }, [forge, url]);
+    void openExternalUrl(buildForgeChecksUrl(forge, url, clientForgeHost) ?? url);
+  }, [clientForgeHost, forge, url]);
 
   const renderChildren = useCallback(
     ({ hovered }: { pressed: boolean; hovered?: boolean }) => (
-      <ChecksSummaryContent checks={checks} forge={forge} hovered={Boolean(hovered)} />
+      <ChecksSummaryContent
+        checks={checks}
+        forge={forge}
+        hovered={Boolean(hovered)}
+        serverId={serverId}
+      />
     ),
-    [checks, forge],
+    [checks, forge, serverId],
   );
 
   return (

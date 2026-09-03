@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { extractForgeRefs, parseForgeRef } from "./forge-refs";
+import { ClientForgeRegistry } from "./client-forge-registry";
 
 describe("parseForgeRef", () => {
   it.each([
@@ -56,6 +57,41 @@ describe("parseForgeRef", () => {
         "ssh://git@ssh.github.com/getpaseo/paseo.git",
       ),
     ).toEqual({ kind: "change_request", number: 994 });
+  });
+
+  it("uses a host-scoped plugin route grammar", () => {
+    const registry = new ClientForgeRegistry();
+    registry.replaceHost("host", [
+      {
+        pluginId: "codeup-plugin",
+        contribution: {
+          definition: {
+            id: "codeup",
+            displayName: "Codeup",
+            changeRequestAbbrev: "MR",
+            changeRequestNoun: "merge request",
+            changeRequestNumberPrefix: "!",
+            issueNumberPrefix: "#",
+            signIn: null,
+            cloudHosts: ["codeup.aliyun.com"],
+          },
+          urlGrammar: {
+            treeInfix: "/tree/",
+            blobInfix: "/blob/",
+            lineAnchorStyle: "github",
+            referencePaths: [{ kind: "change_request", infix: "/merge_requests/" }],
+          },
+        },
+      },
+    ]);
+
+    expect(
+      parseForgeRef(
+        "https://codeup.aliyun.com/acme/project/merge_requests/42",
+        "git@codeup.aliyun.com:acme/project.git",
+        registry.getHostSnapshot("host"),
+      ),
+    ).toEqual({ kind: "change_request", number: 42 });
   });
 
   it("ignores another host, repository, and malformed local id", () => {

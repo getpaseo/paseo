@@ -1,10 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildForgeBlobUrl,
-  buildForgeBranchTreeUrl,
-  buildForgeChecksUrl,
-  hasForgeWebUrls,
+  buildForgeBlobUrl as buildForgeBlobUrlForHost,
+  buildForgeBranchTreeUrl as buildForgeBranchTreeUrlForHost,
+  buildForgeChecksUrl as buildForgeChecksUrlForHost,
+  hasForgeWebUrls as hasForgeWebUrlsForHost,
+  type ForgeBlobUrlInput,
+  type ForgeBranchTreeUrlInput,
 } from "./forge-url";
+import { BUILTIN_CLIENT_FORGE_HOST } from "./client-forge-registry";
+
+const buildForgeBlobUrl = (forge: string, input: ForgeBlobUrlInput) =>
+  buildForgeBlobUrlForHost(forge, input, BUILTIN_CLIENT_FORGE_HOST);
+const buildForgeBranchTreeUrl = (forge: string, input: ForgeBranchTreeUrlInput) =>
+  buildForgeBranchTreeUrlForHost(forge, input, BUILTIN_CLIENT_FORGE_HOST);
+const buildForgeChecksUrl = (forge: string, url: string) =>
+  buildForgeChecksUrlForHost(forge, url, BUILTIN_CLIENT_FORGE_HOST);
+const hasForgeWebUrls = (forge: string) => hasForgeWebUrlsForHost(forge, BUILTIN_CLIENT_FORGE_HOST);
 
 describe("buildForgeChecksUrl", () => {
   it.each([

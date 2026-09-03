@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { pluginRegistry as registry } from "./registry";
+import { clientForgeRegistry, getClientForgeDefinition } from "@/git/client-forge-registry";
 
 vi.mock("./navigation", () => ({
   createPluginNavigation: () => ({}),
@@ -19,6 +20,7 @@ const daemonClient = {} as DaemonClient;
 const pluginRegistry = {
   getSnapshot: registry.getSnapshot,
   subscribe: registry.subscribe,
+  getEvaluationError: registry.getEvaluationError.bind(registry),
   removeHost: registry.removeHost.bind(registry),
   installCatalog(
     serverId: string,
@@ -57,6 +59,25 @@ function timelineBundle(marker: string): string {
   })`;
 }
 
+function forgeBundle(displayName: string): string {
+  return `(function() { return { default: function(plugin) {
+    plugin.addForgeClientProvider({
+      definition: {
+        id: "codeup",
+        displayName: ${JSON.stringify(displayName)},
+        changeRequestAbbrev: "MR",
+        changeRequestNoun: "merge request",
+        changeRequestNumberPrefix: "!",
+        issueNumberPrefix: "#",
+        signIn: null,
+        cloudHosts: ["codeup.aliyun.com"],
+      },
+      view: { icon: { kind: "svg-path", viewBox: [0, 0, 24, 24], path: "M0 0h24v24H0z" } },
+    });
+    return function() {};
+  } }; })`;
+}
+
 function installedPluginIds(): string[] {
   return pluginRegistry.getSnapshot().map(({ id }) => id);
 }
@@ -65,6 +86,7 @@ afterEach(() => {
   pluginRegistry.removeHost("host-a");
   pluginRegistry.removeHost("host-b");
   Reflect.deleteProperty(globalThis, "__pluginCleanups");
+  Reflect.deleteProperty(globalThis, "__registerForge");
 });
 
 describe("PluginRegistry", () => {
@@ -213,5 +235,89 @@ describe("PluginRegistry", () => {
 
     expect(() => pluginRegistry.removeHost("host-a")).not.toThrow();
     expect(pluginRegistry.getSnapshot()).toEqual([]);
+  });
+
+  it("keeps Forge contributions host-scoped across reload and remove", () => {
+    pluginRegistry.installCatalog("host-a", [
+      { id: "codeup", clientBundle: forgeBundle("Codeup A") },
+    ]);
+    pluginRegistry.installCatalog("host-b", [
+      { id: "codeup", clientBundle: forgeBundle("Codeup B") },
+    ]);
+
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup")
+        ?.displayName,
+    ).toBe("Codeup A");
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-b"), "codeup")
+        ?.displayName,
+    ).toBe("Codeup B");
+
+    pluginRegistry.installCatalog("host-a", [
+      { id: "codeup", clientBundle: forgeBundle("Codeup A2") },
+    ]);
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup")
+        ?.displayName,
+    ).toBe("Codeup A2");
+
+    pluginRegistry.installCatalog("host-a", []);
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup"),
+    ).toBeNull();
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-b"), "codeup")
+        ?.displayName,
+    ).toBe("Codeup B");
+  });
+
+  it("removes the previous Forge contribution when replacement evaluation fails", () => {
+    pluginRegistry.installCatalog("host-a", [
+      { id: "codeup", clientBundle: forgeBundle("Codeup") },
+    ]);
+
+    pluginRegistry.installCatalog(
+      "host-a",
+      [{ id: "codeup", clientBundle: `(function() { throw new Error("broken bundle"); })` }],
+      { replacePluginId: "codeup" },
+    );
+
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup"),
+    ).toBeNull();
+    expect(pluginRegistry.getEvaluationError("host-a", "codeup")).toContain("broken bundle");
+  });
+
+  it("updates the host Forge registry when a client registration is removed dynamically", () => {
+    const dynamic = `(function() { return { default: function(plugin) {
+      globalThis.__registerForge = function() {
+        return plugin.addForgeClientProvider({
+          definition: {
+            id: "codeup",
+            displayName: "Codeup",
+            changeRequestAbbrev: "MR",
+            changeRequestNoun: "merge request",
+            changeRequestNumberPrefix: "!",
+            issueNumberPrefix: "#",
+            signIn: null,
+          },
+        });
+      };
+      return function() {};
+    } }; })`;
+    pluginRegistry.installCatalog("host-a", [{ id: "codeup", clientBundle: dynamic }]);
+
+    const register = Reflect.get(globalThis, "__registerForge") as () => () => void;
+    const remove = register();
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup")
+        ?.displayName,
+    ).toBe("Codeup");
+
+    remove();
+    expect(
+      getClientForgeDefinition(clientForgeRegistry.getHostSnapshot("host-a"), "codeup"),
+    ).toBeNull();
   });
 });

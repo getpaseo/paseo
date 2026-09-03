@@ -11,7 +11,7 @@
  * still maps to GitHub so old daemons (which never send a forge) render exactly
  * as before.
  */
-import { FORGE_DEFINITIONS, getForgeDefinitionOrNeutral } from "@getpaseo/protocol/forge-manifest";
+import type { ForgeDefinition } from "@getpaseo/protocol/forge-manifest";
 import { normalizeHost, parseGitRemoteLocation } from "@getpaseo/protocol/git-remote";
 import type { ForgeAuthState } from "@getpaseo/protocol/messages";
 import {
@@ -21,6 +21,10 @@ import {
   type ForgeBlobUrlInput,
   type ForgeBranchTreeUrlInput,
 } from "@/git/forge-url";
+import {
+  getClientForgeDefinition,
+  type ClientForgeHostSnapshot,
+} from "@/git/client-forge-registry";
 
 /**
  * A forge id. Open by design: any id the daemon reports is valid, and the
@@ -46,21 +50,28 @@ export function parseForgeAuthState(value: unknown): ForgeAuthState | undefined 
   }
 }
 
-export function forgeFromRemoteUrl(remoteUrl: string | null | undefined): string | null {
+export function forgeFromRemoteUrl(
+  remoteUrl: string | null | undefined,
+  clientForgeHost: ClientForgeHostSnapshot,
+): string | null {
   if (!remoteUrl) {
     return null;
   }
-  const host = parseGitRemoteLocation(remoteUrl)?.host;
-  if (!host) {
+  const remoteHost = parseGitRemoteLocation(remoteUrl)?.host;
+  if (!remoteHost) {
     return null;
   }
-  const normalized = normalizeHost(host);
-  for (const definition of FORGE_DEFINITIONS) {
+  const normalized = normalizeHost(remoteHost);
+  let match: string | null = null;
+  for (const definition of clientForgeHost.definitionsById.values()) {
     if (definition.cloudHosts?.some((cloudHost) => normalizeHost(cloudHost) === normalized)) {
-      return definition.id;
+      if (match !== null) {
+        return null;
+      }
+      match = definition.id;
     }
   }
-  return null;
+  return match;
 }
 
 export interface ForgePresentation {
@@ -90,10 +101,31 @@ export interface ForgePresentation {
   buildBranchTreeUrl: ((input: ForgeBranchTreeUrlInput) => string | null) | null;
 }
 
-export function getForgePresentation(forge: string): ForgePresentation {
-  const definition = getForgeDefinitionOrNeutral(forge);
+function getForgeDefinitionOrNeutral(
+  forge: string,
+  host: ClientForgeHostSnapshot,
+): ForgeDefinition {
+  return (
+    getClientForgeDefinition(host, forge) ?? {
+      id: forge,
+      displayName: forge,
+      changeRequestAbbrev: "PR",
+      changeRequestNoun: "pull request",
+      changeRequestNumberPrefix: "#",
+      issueNumberPrefix: "#",
+      iconKind: "git",
+      signIn: null,
+    }
+  );
+}
+
+export function getForgePresentation(
+  forge: string,
+  host: ClientForgeHostSnapshot,
+): ForgePresentation {
+  const definition = getForgeDefinitionOrNeutral(forge, host);
   const isMergeRequest = definition.changeRequestAbbrev === "MR";
-  const hasWebUrls = hasForgeWebUrls(definition.id);
+  const hasWebUrls = hasForgeWebUrls(definition.id, host);
   return {
     forge: definition.id,
     icon: definition.iconKind,
@@ -104,23 +136,27 @@ export function getForgePresentation(forge: string): ForgePresentation {
     issueNumberPrefix: definition.issueNumberPrefix,
     signInCli: definition.signIn?.cli ?? null,
     changeRequestContext: isMergeRequest ? "mr" : undefined,
-    buildBlobUrl: hasWebUrls ? (input) => buildForgeBlobUrl(definition.id, input) : null,
+    buildBlobUrl: hasWebUrls ? (input) => buildForgeBlobUrl(definition.id, input, host) : null,
     buildBranchTreeUrl: hasWebUrls
-      ? (input) => buildForgeBranchTreeUrl(definition.id, input)
+      ? (input) => buildForgeBranchTreeUrl(definition.id, input, host)
       : null,
   };
 }
 
-export function buildForgeSignInCommand(forge: string, host: string | null): string | null {
-  const signIn = getForgeDefinitionOrNeutral(forge).signIn;
+export function buildForgeSignInCommand(
+  forge: string,
+  remoteHost: string | null,
+  host: ClientForgeHostSnapshot,
+): string | null {
+  const signIn = getForgeDefinitionOrNeutral(forge, host).signIn;
   if (!signIn) {
     return null;
   }
   // A forge that needs a --hostname only gets it when a host is known; forges
   // whose command already targets the right API host (e.g. github's plain
   // `gh auth login`, which must NOT receive ssh.github.com) omit hostnameFlag.
-  if (signIn.hostnameFlag && host) {
-    return `${signIn.command} ${signIn.hostnameFlag} ${host}`;
+  if (signIn.hostnameFlag && remoteHost) {
+    return `${signIn.command} ${signIn.hostnameFlag} ${remoteHost}`;
   }
   return signIn.command;
 }

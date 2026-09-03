@@ -14,6 +14,7 @@ import {
 } from "lucide-react-native";
 import { isWeb } from "@/constants/platform";
 import { getForgePresentation, normalizeForge } from "@/git/forge";
+import { useClientForgeHost } from "@/git/client-forge-registry";
 import type { SidebarWorkspaceEntry } from "@/hooks/use-sidebar-workspaces-list";
 import { useAppSettings } from "@/hooks/use-settings";
 import type { Theme } from "@/styles/theme";
@@ -347,10 +348,12 @@ export function SidebarWorkspaceContextMenu({
     settings: { workspaceTitleSource },
   } = useAppSettings();
   const { t } = useTranslation();
+  const clientForgeHost = useClientForgeHost(workspace.serverId);
   const pullRequestLabel = workspace.prHint
     ? t("workspace.git.pr.accessibility.pullRequest", {
         number: workspace.prHint.number,
-        context: getForgePresentation(normalizeForge(workspace.prHint.forge)).changeRequestContext,
+        context: getForgePresentation(normalizeForge(workspace.prHint.forge), clientForgeHost)
+          .changeRequestContext,
       })
     : null;
   const rowAccessibilityLabel = resolveSidebarWorkspaceAccessibilityLabel({

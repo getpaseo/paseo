@@ -3,6 +3,10 @@ import type { PaseoApi } from "@getpaseo/client";
 import type { AgentTimelineItem, JsonValue } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract } from "./rpc.js";
+import type {
+  PluginForgeClientProviderContribution,
+  PluginForgeServerProviderContribution,
+} from "./forge.js";
 
 export interface PluginTheme {
   readonly colors: {
@@ -141,6 +145,7 @@ export interface PluginClientContext extends PluginCommandCapabilities {
   addTimelineRenderer<Schema extends ZodType>(
     contribution: PluginTimelineRendererContribution<Schema>,
   ): PluginCleanup;
+  addForgeClientProvider(contribution: PluginForgeClientProviderContribution): PluginCleanup;
   openPanel(id: string, options: PluginClientOpenPanelOptions): void;
 }
 
@@ -317,6 +322,7 @@ export interface PluginServerContext {
       context: PluginHandlerContext,
     ) => ZodInput<OutputSchema> | Promise<ZodInput<OutputSchema>>,
   ): void;
+  addForgeServerProvider(contribution: PluginForgeServerProviderContribution): PluginCleanup;
 }
 
 export type PluginCleanup = () => void | Promise<void>;

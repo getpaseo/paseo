@@ -1,16 +1,20 @@
 # Adding a Git Forge to Paseo
 
-Paseo's forge layer is a registry/manifest system. A forge is a runtime concern:
-shared protocol messages carry neutral/open facts, the server adapter owns
-behavior, and the app owns bundled presentation/runtime interpretation.
+Paseo's forge layer is a registry/manifest system. Shared protocol messages
+carry neutral/open facts, the server adapter owns behavior, and the app owns
+presentation and runtime interpretation.
 
-The maintainer litmus test is the rule of thumb:
+Choose one integration path:
 
-> Adding a new forge means adding files in a new directory/module that implement
-> an interface, plus one entry in the centralized registry/manifest for that
-> package.
+- Use a local plugin for a private, vendor-specific, or independently shipped
+  Forge. The Codeup example uses this path.
+- Use built-in modules when Paseo ships and maintains the Forge, or when it needs
+  client pane contributions that the plugin contract does not expose.
 
-## The Three Registrations
+Both paths implement the same server `ForgeService` contract and produce the
+same neutral protocol state. Do not add a Forge-specific protocol union arm.
+
+## Built-in registrations
 
 For forge `acme`, the expected end state is:
 
@@ -38,6 +42,30 @@ For forge `acme`, the expected end state is:
 
 There should be no protocol typed-union arm, no central app icon/color/url/facts
 map, and no central server union of known forge facts.
+
+## Plugin registrations
+
+A Forge plugin registers two contributions from one entry point:
+
+1. `addForgeServerProvider()` supplies the definition, a
+   `PluginForgeServerService`, and an optional authenticated `probeHost`.
+2. `addForgeClientProvider()` supplies the same definition plus optional facts,
+   URL grammar, declarative SVG path, and brand colors.
+
+Keep the definition in a shared file so the two runtimes cannot drift. The
+compiler removes the client registration and its imports from the server bundle,
+and removes the server registration and its imports from the client bundle.
+
+Plugin providers register into the daemon-owned `ForgeRegistry`. Never register
+them only in `defaultForgeRegistry`: each daemon has its own plugin catalog, and
+one process can host several isolated daemon instances in tests. The App registry
+is also keyed by server ID. Every consumer that renders a label, icon, setup
+command, URL, facts, or merge capability must receive that host snapshot.
+
+Provider removal is a registry change. Reload, disable, remove, global plugin
+disable, subprocess failure, and daemon shutdown must unregister the adapter,
+clear resolver caches, stop active status polls, ignore stale in-flight results,
+and refresh affected workspace snapshots.
 
 ## Protocol
 
@@ -97,6 +125,11 @@ Register the adapter in `defaultForgeRegistry` with:
 - `matchesHost` from manifest `cloudHosts`
 - `probeHost` when self-hosted/Enterprise detection is supported
 
+Plugin adapters use the same fields through `addForgeServerProvider()`. The
+daemon wraps the subprocess contribution in a `ForgeService` proxy and registers
+it in the daemon-owned registry. Reconstruct classified CLI/auth errors as the
+server's native error classes so existing auth-state handling keeps working.
+
 Current change-request lookup uses two identities deliberately:
 
 - An open PR/MR belongs to the checkout when its head branch and head repository
@@ -155,7 +188,13 @@ Facts modules use one source of truth: a Zod schema. Helpers like
 derive guards from `schema.safeParse` and re-parse before invoking typed
 derivers/renderers. That keeps typed derivers away from the open wire envelope.
 
-## Checklist
+Plugin client providers use the public `defineForgeFacts()` helper for the same
+boundary. Their icons are declarative single SVG paths; the App owns React
+component construction and theming. Plugin facts, definitions, icons, and URL
+grammar live in the server-ID-scoped client registry and disappear together on
+reload or removal.
+
+## Built-in checklist
 
 To add `acme`:
 
@@ -184,6 +223,26 @@ To add `acme`:
    checkout PR schema, app forge URL/presentation tests, app merge capability,
    and any PR-pane native data tests touched.
 
+## Plugin checklist
+
+To add `acme` as a local plugin:
+
+1. Put one `PluginForgeDefinition` in a shared file.
+2. Implement `PluginForgeServerService` in `*.server.ts` and register it with
+   `addForgeServerProvider()`.
+3. Define the facts schema and client presentation in `*.client.ts`, then
+   register it with `addForgeClientProvider()`.
+4. Return explicit cross-repository checkout refs. Use `remoteUrl` when the head
+   repository is not fetchable through an existing remote.
+5. Use the SDK's classified Forge errors for missing CLI, auth, and command
+   failures.
+6. Test the service, client facts/presentation, compiler split, registry
+   lifecycle, and change-request checkout.
+7. Run `npm run typecheck`, install the directory, and verify native status,
+   search, create/merge, checks, timeline, setup, and checkout against that host.
+
+See `plugin-examples/codeup` for the complete layout.
+
 Run `npm run typecheck` after each implementation slice. If protocol or client
 declarations are stale, run `npm run build:client`; if server/CLI declarations
 are stale, run `npm run build:server`.
@@ -202,8 +261,9 @@ are stale, run `npm run build:server`.
 - A blocked Gitea Actions task is not necessarily manual: only add the
   `action_required` trait when the matching run metadata reports
   `need_approval`.
-- Brand icons are bundled React components, so they cannot come from protocol
-  manifest data.
+- Built-in brand icons are bundled React components and cannot come from
+  protocol manifest data. Plugin icons travel in the client bundle as validated
+  SVG path data and are rendered by the App.
 - Source URL grammars are app-side because blob/tree path syntax is
   forge-specific. If a forge has no grammar, omit the "Open on ..." source link
   rather than constructing a wrong URL.

@@ -244,6 +244,260 @@ export default function contribute(server: PluginServerContext) {
     await expect(typecheckPlugin(directory)).resolves.toBeUndefined();
   }, 20_000);
 
+  it("typechecks Forge client and server providers", async () => {
+    const parent = await mkdtemp(path.join(process.cwd(), ".plugin-scaffold-"));
+    directories.push(parent);
+    const directory = path.join(parent, "forge-plugin");
+    await scaffoldPluginDirectory(directory);
+    await Promise.all([
+      writeFile(
+        path.join(directory, "shared", "forge-definition.ts"),
+        `import type { PluginForgeDefinition } from "@getpaseo/plugin";
+
+export const forgeDefinition = {
+  id: "example",
+  displayName: "Example Forge",
+  changeRequestAbbrev: "MR",
+  changeRequestNoun: "merge request",
+  changeRequestNumberPrefix: "!",
+  issueNumberPrefix: "#",
+  signIn: null,
+  cloudHosts: ["forge.example.com"],
+} satisfies PluginForgeDefinition;
+`,
+      ),
+      writeFile(
+        path.join(directory, "shared", "forge-module-boundaries.ts"),
+        `import type {
+  PluginForgeClientProviderContribution,
+  PluginForgeClientView,
+  PluginForgeFactsRegistration,
+  PluginForgeSignInCommand,
+} from "@getpaseo/plugin";
+import type {
+  PluginForgeDefinition,
+  PluginForgeServerService,
+} from "@getpaseo/plugin/server";
+
+// @ts-expect-error Client Forge presentation types are exported from the root module.
+import type { PluginForgeClientView as InvalidClientView } from "@getpaseo/plugin/server";
+// @ts-expect-error Server Forge service types are exported from the server module.
+import type { PluginForgeServerService as InvalidServerService } from "@getpaseo/plugin";
+// @ts-expect-error Legacy search-kind aliases are internal compatibility details.
+import type { ForgeSearchRequestKind } from "@getpaseo/plugin/server";
+
+export type ForgeModuleBoundarySmoke = [
+  PluginForgeClientProviderContribution,
+  PluginForgeClientView,
+  PluginForgeFactsRegistration,
+  PluginForgeSignInCommand,
+  PluginForgeDefinition,
+  PluginForgeServerService,
+];
+`,
+      ),
+      writeFile(
+        path.join(directory, "client", "forge.ts"),
+        `import {
+  defineForgeClientProvider,
+  defineForgeFacts,
+  type PluginForgeMergeCapability,
+} from "@getpaseo/plugin";
+import { z } from "zod";
+import { forgeDefinition } from "../shared/forge-definition";
+
+const factsSchema = z.object({
+  forge: z.literal("example"),
+  ready: z.boolean(),
+});
+
+const mergeCapability: PluginForgeMergeCapability = {
+  directMergeReady: true,
+  canEnableAutoMerge: false,
+  autoMergeEnabled: false,
+  canDisableAutoMerge: false,
+  mergeBlockedByQueue: false,
+  allowedMethods: ["merge"],
+  preferredMethod: "merge",
+};
+
+export const forgeClientProvider = defineForgeClientProvider({
+  definition: forgeDefinition,
+  facts: defineForgeFacts({
+    family: "example",
+    schema: factsSchema,
+    deriveMergeCapability: ({ ready }) => ({
+      ...mergeCapability,
+      directMergeReady: ready,
+    }),
+  }),
+  urlGrammar: {
+    treeInfix: "/tree/",
+    blobInfix: "/blob/",
+    lineAnchorStyle: "gitlab",
+  },
+  view: {
+    icon: {
+      kind: "svg-path",
+      viewBox: [0, 0, 24, 24] as const,
+      path: "M4 4h16v16H4z",
+    },
+    brandColor: { light: "#123456", dark: "#abcdef" },
+  },
+});
+`,
+      ),
+      writeFile(
+        path.join(directory, "server", "forge.ts"),
+        `import {
+  createUnavailableSearchResult,
+  defineForgeServerProvider,
+  type PluginForgeServerService,
+  type PullRequestCheck,
+  type PullRequestSummary,
+} from "@getpaseo/plugin/server";
+import { forgeDefinition } from "../shared/forge-definition";
+
+const manualCheck: PullRequestCheck = {
+  name: "Deploy approval",
+  status: "skipped",
+  url: null,
+  traits: ["manual", "future-forge-trait"],
+};
+
+function pullRequest(number: number): PullRequestSummary {
+  return {
+    number,
+    title: "Example change",
+    url: \`https://forge.example.com/project/merge_requests/\${number}\`,
+    state: "opened",
+    body: null,
+    baseRefName: "main",
+    headRefName: "feature",
+    labels: [],
+    updatedAt: new Date(0).toISOString(),
+  };
+}
+
+const service: PluginForgeServerService = {
+  async listPullRequests() {
+    return [pullRequest(1)];
+  },
+  async listIssues() {
+    return [];
+  },
+  async getPullRequest({ number }) {
+    return pullRequest(number);
+  },
+  async getPullRequestHeadRef() {
+    return "feature";
+  },
+  async getPullRequestCheckoutTarget({ number }) {
+    return {
+      number,
+      baseRefName: "main",
+      headRefName: "feature",
+      checkoutRefs: [{ remoteRef: "refs/merge-requests/1/head" }],
+      headOwnerLogin: null,
+      headRepositorySshUrl: null,
+      headRepositoryUrl: null,
+      isCrossRepository: false,
+    };
+  },
+  defaultCheckoutRefs({ changeRequestNumber }) {
+    return [{ remoteRef: \`refs/merge-requests/\${changeRequestNumber}/head\` }];
+  },
+  buildPrLocalBranchName({ checkoutTarget }) {
+    return \`mr-\${checkoutTarget.number}\`;
+  },
+  async getCurrentPullRequestStatus() {
+    return {
+      url: "https://forge.example.com/project/merge_requests/1",
+      title: "Example change",
+      state: "opened",
+      baseRefName: "main",
+      headRefName: "feature",
+      isMerged: false,
+      mergeable: "UNKNOWN",
+      checks: [manualCheck],
+      checksStatus: "success",
+      reviewDecision: null,
+    };
+  },
+  async getPullRequestTimeline({ prNumber, repoOwner, repoName }) {
+    return {
+      prNumber,
+      repoOwner,
+      repoName,
+      items: [],
+      truncated: false,
+      error: null,
+    };
+  },
+  async getCheckDetails({ checkRunId }) {
+    return {
+      checkRunId: checkRunId ?? 0,
+      name: "Example check",
+      annotations: [],
+      failedJobs: [],
+      truncated: false,
+    };
+  },
+  async searchIssuesAndPrs() {
+    return createUnavailableSearchResult("unauthenticated");
+  },
+  async createPullRequest() {
+    return { url: "https://forge.example.com/project/merge_requests/1", number: 1 };
+  },
+  async mergePullRequest() {
+    return { success: true };
+  },
+  async enablePullRequestAutoMerge() {
+    return { success: true };
+  },
+  async disablePullRequestAutoMerge() {
+    return { success: true };
+  },
+  async isAuthenticated() {
+    return false;
+  },
+  invalidate() {},
+};
+
+export const forgeServerProvider = defineForgeServerProvider({
+  definition: forgeDefinition,
+  service,
+  probeHost: (host) => host === "forge.example.com",
+});
+`,
+      ),
+      writeFile(
+        path.join(directory, "index.client.ts"),
+        `import type { PluginClientContext } from "@getpaseo/plugin";
+import { forgeClientProvider } from "./client/forge";
+
+export default function contribute(client: PluginClientContext) {
+  client.addForgeClientProvider(forgeClientProvider);
+  return () => {};
+}
+`,
+      ),
+      writeFile(
+        path.join(directory, "index.server.ts"),
+        `import type { PluginServerContext } from "@getpaseo/plugin";
+import { forgeServerProvider } from "./server/forge";
+
+export default function contribute(server: PluginServerContext) {
+  server.addForgeServerProvider(forgeServerProvider);
+  return () => {};
+}
+`,
+      ),
+    ]);
+
+    await expect(typecheckPlugin(directory)).resolves.toBeUndefined();
+  }, 20_000);
+
   it("refuses to write into a non-empty directory", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-scaffold-"));
     directories.push(directory);

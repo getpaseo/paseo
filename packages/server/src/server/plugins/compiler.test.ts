@@ -138,6 +138,43 @@ describe("plugin runtime entries", () => {
     expect(serverBundle).not.toContain("Client contribution");
   });
 
+  it("keeps Forge client and server providers in their matching bundles", async () => {
+    const entries = await createSplitPlugin();
+    await Promise.all([
+      writeFile(
+        path.join(entries.directory, "client", "forge.ts"),
+        `export const provider = { definition: { id: "codeup" }, marker: "CLIENT_FORGE_MARKER" };`,
+      ),
+      writeFile(
+        path.join(entries.directory, "server", "forge.ts"),
+        `export const provider = { definition: { id: "codeup" }, marker: "SERVER_FORGE_MARKER" };`,
+      ),
+      writeFile(
+        entries.client,
+        `import { provider } from "./client/forge";
+export default function contribute(client) {
+  client.addForgeClientProvider(provider);
+  return () => undefined;
+}`,
+      ),
+      writeFile(
+        entries.server,
+        `import { provider } from "./server/forge";
+export default function contribute(server) {
+  server.addForgeServerProvider(provider);
+  return () => undefined;
+}`,
+      ),
+    ]);
+
+    const { clientBundle, serverBundle } = await compilePlugin(entries);
+
+    expect(clientBundle).toContain("CLIENT_FORGE_MARKER");
+    expect(clientBundle).not.toContain("SERVER_FORGE_MARKER");
+    expect(serverBundle).toContain("SERVER_FORGE_MARKER");
+    expect(serverBundle).not.toContain("CLIENT_FORGE_MARKER");
+  });
+
   it("uses the automatic JSX runtime without a React import", async () => {
     const entries = await createSplitPlugin();
     const { clientBundle } = await compilePlugin(entries);

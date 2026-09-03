@@ -211,6 +211,46 @@ describe("resolveWorktreeCreationIntent", () => {
     expect(deps.headRefLookups).toEqual([]);
   });
 
+  test("uses an adapter-selected push URL before the generic SSH preference", async () => {
+    const deps = createResolverHarness({
+      forge: "codeup",
+      forgeService: {
+        getPullRequestCheckoutTarget: async () => ({
+          number: 7,
+          baseRefName: "main",
+          headRefName: "feature/codeup",
+          checkoutRefs: [
+            {
+              remoteUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
+              remoteRef: "refs/heads/feature/codeup",
+            },
+          ],
+          headOwnerLogin: "org/contributor/repo",
+          preferredPushUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
+          headRepositorySshUrl: "git@codeup.aliyun.com:org/contributor/repo.git",
+          headRepositoryUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
+          isCrossRepository: true,
+        }),
+      },
+    });
+
+    await expect(
+      resolveWorktreeCreationIntent(
+        {
+          action: "checkout",
+          checkoutSource: { kind: "change_request", forge: "codeup", number: 7 },
+        },
+        repoRoot,
+        deps,
+      ),
+    ).resolves.toMatchObject({
+      kind: "checkout-change-request",
+      forge: "codeup",
+      changeRequestNumber: 7,
+      pushRemoteUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
+    });
+  });
+
   test("uses an explicit PR head ref without calling GitHub", async () => {
     const deps = createResolverHarness();
 

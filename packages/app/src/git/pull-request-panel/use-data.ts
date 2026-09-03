@@ -12,6 +12,11 @@ import type { Forge } from "@/git/forge";
 import { i18n } from "@/i18n/i18next";
 import { mapPrPaneData, type PrPaneData } from "./data";
 import { prPaneTimelineQueryKey } from "./query-keys";
+import {
+  BUILTIN_CLIENT_FORGE_HOST,
+  type ClientForgeHostSnapshot,
+  useClientForgeHost,
+} from "@/git/client-forge-registry";
 
 type CheckoutPrStatus = CheckoutPrStatusResponse["payload"]["status"];
 type CheckoutPrStatusPayloadError = CheckoutPrStatusResponse["payload"]["error"];
@@ -161,6 +166,7 @@ export interface SelectPrPaneStateInput {
   timelineIsFetching: boolean;
   statusLoadFailedLabel?: string;
   activityLoadFailedLabel?: string;
+  clientForgeHost?: ClientForgeHostSnapshot;
 }
 
 export function selectPrPaneState(input: SelectPrPaneStateInput): UsePrPaneDataResult {
@@ -168,7 +174,13 @@ export function selectPrPaneState(input: SelectPrPaneStateInput): UsePrPaneDataR
   const data =
     identity.prNumber === null || !input.timelineEnabled
       ? null
-      : mapPrPaneData(input.status, input.timelinePayload, undefined, input.forge ?? "github");
+      : mapPrPaneData(
+          input.status,
+          input.timelinePayload,
+          undefined,
+          input.forge ?? "github",
+          input.clientForgeHost ?? BUILTIN_CLIENT_FORGE_HOST,
+        );
   const statusRefreshing = input.statusIsFetching && !input.statusIsLoading;
   const timelineRefreshing = input.timelineIsFetching && !input.timelineIsLoading;
   const timelinePending =
@@ -203,6 +215,7 @@ export function usePrPaneData({
 }: UsePrPaneDataOptions): UsePrPaneDataResult {
   const { t } = useTranslation();
   const daemonClient = useHostRuntimeClient(serverId);
+  const clientForgeHost = useClientForgeHost(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
   const checkoutPrStatus = useCheckoutPrStatusQuery({ serverId, cwd, enabled });
   const status = checkoutPrStatus.status;
@@ -275,6 +288,7 @@ export function usePrPaneData({
     timelineIsFetching: timelineQuery.isFetching,
     statusLoadFailedLabel: t("workspace.git.pr.errors.statusLoadFailed"),
     activityLoadFailedLabel: t("workspace.git.pr.errors.activityLoadFailed"),
+    clientForgeHost,
   });
 }
 

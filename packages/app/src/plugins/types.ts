@@ -5,6 +5,7 @@ import type {
   PluginClientSlashCommandContribution,
   PluginCleanup,
   PluginComposerPillContribution,
+  PluginForgeClientProviderContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginThemeContribution,
@@ -30,6 +31,7 @@ export interface EvaluatedPlugin {
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
+  forgeClientProviders: PluginForgeClientProviderContribution[];
 }
 
 export interface InstalledPlugin extends EvaluatedPlugin {
@@ -43,6 +45,7 @@ export type {
   PluginCommandCenterItemContribution,
   PluginClientSlashCommandContribution,
   PluginComposerPillContribution,
+  PluginForgeClientProviderContribution,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginThemeContribution,

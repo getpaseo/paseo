@@ -427,6 +427,91 @@ describe.skipIf(isPlatform("win32"))("worktree POSIX-only", () => {
       expect(currentBranch).toBe("Feature.X");
     });
 
+    it("fetches a cross-repository change request from its direct remote URL", async () => {
+      const originDir = join(tempDir, "origin.git");
+      const forkDir = join(tempDir, "fork.git");
+      const forkCloneDir = join(tempDir, "fork-clone");
+      execFileSync("git", ["clone", "--bare", repoDir, originDir]);
+      execFileSync("git", ["clone", "--bare", repoDir, forkDir]);
+      execFileSync("git", ["remote", "add", "origin", originDir], { cwd: repoDir });
+      execFileSync("git", ["clone", forkDir, forkCloneDir]);
+      execFileSync("git", ["config", "user.email", "test@test.com"], { cwd: forkCloneDir });
+      execFileSync("git", ["config", "user.name", "Test"], { cwd: forkCloneDir });
+      execFileSync("git", ["checkout", "-b", "contributor/codeup"], { cwd: forkCloneDir });
+      writeFileSync(join(forkCloneDir, "file.txt"), "from-codeup-fork\n");
+      execFileSync("git", ["add", "file.txt"], { cwd: forkCloneDir });
+      execFileSync(
+        "git",
+        ["-c", "commit.gpgsign=false", "commit", "-m", "cross repository branch"],
+        { cwd: forkCloneDir },
+      );
+      execFileSync("git", ["push", "origin", "contributor/codeup"], { cwd: forkCloneDir });
+
+      const result = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "codeup-cross-repo",
+        source: {
+          kind: "checkout-change-request",
+          forge: "codeup",
+          changeRequestNumber: 7,
+          headRef: "contributor/codeup",
+          headRepositoryOwner: "contributor/repo",
+          baseRefName: "main",
+          checkoutRefs: [
+            {
+              remoteUrl: forkDir,
+              remoteRef: "refs/heads/contributor/codeup",
+            },
+          ],
+          pushRemoteUrl: forkDir,
+        },
+        runSetup: false,
+        paseoHome,
+      });
+
+      expect(readFileSync(join(result.worktreePath, "file.txt"), "utf8")).toBe(
+        "from-codeup-fork\n",
+      );
+      expect(
+        execFileSync("git", ["branch", "--show-current"], { cwd: result.worktreePath })
+          .toString()
+          .trim(),
+      ).toBe("contributor/codeup");
+    });
+
+    it("does not expose a direct remote URL when fetching a change request fails", async () => {
+      const remoteUrl =
+        "http://codeup-user:codeup-secret@127.0.0.1:1/example/repo.git?token=query-secret";
+      const error = await createLegacyWorktreeForTest({
+        cwd: repoDir,
+        worktreeSlug: "codeup-private-remote",
+        source: {
+          kind: "checkout-change-request",
+          forge: "codeup",
+          changeRequestNumber: 8,
+          headRef: "contributor/private",
+          baseRefName: "main",
+          checkoutRefs: [
+            {
+              remoteUrl,
+              remoteRef: "refs/heads/contributor/private",
+            },
+          ],
+        },
+        runSetup: false,
+        paseoHome,
+      }).then(
+        () => null,
+        (reason: unknown) => reason,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain(
+        "Unable to fetch change request refs for worktree branch contributor/private: <direct remote> refs/heads/contributor/private",
+      );
+      expect((error as Error).message).not.toMatch(/codeup-secret|query-secret/);
+    });
+
     it("uses the selected local or origin ref when both exist", async () => {
       const remoteDir = join(tempDir, "remote.git");
       const remoteCloneDir = join(tempDir, "remote-clone");

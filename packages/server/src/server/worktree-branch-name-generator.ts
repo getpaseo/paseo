@@ -10,7 +10,10 @@ import {
   resolveStructuredGenerationProviders,
   type StructuredGenerationDaemonConfig,
 } from "./agent/structured-generation-providers.js";
-import { buildAgentBranchNameSeed } from "./agent/prompt-attachments.js";
+import {
+  buildAgentBranchNameSeed,
+  type ForgeDefinitionLookup,
+} from "./agent/prompt-attachments.js";
 import { buildMetadataPrompt } from "../utils/build-metadata-prompt.js";
 import type { WorkspaceGitService } from "./workspace-git-service.js";
 import type { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
@@ -33,6 +36,7 @@ export interface GenerateBranchNameFromFirstAgentContextOptions {
     thinkingOptionId?: string | null;
   };
   firstAgentContext: FirstAgentContext | undefined;
+  forgeDefinitionLookup?: ForgeDefinitionLookup;
   logger: BranchNameGeneratorLogger;
   deps?: {
     generateStructuredAgentResponseWithFallback?: typeof generateStructuredAgentResponseWithFallback;
@@ -92,7 +96,7 @@ export interface GeneratedWorkspaceName {
 export async function generateBranchNameFromFirstAgentContext(
   options: GenerateBranchNameFromFirstAgentContextOptions,
 ): Promise<GeneratedWorkspaceName | null> {
-  const seed = buildAgentBranchNameSeed(options.firstAgentContext);
+  const seed = buildAgentBranchNameSeed(options.firstAgentContext, options.forgeDefinitionLookup);
   if (!seed) {
     return null;
   }

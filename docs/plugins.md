@@ -1,8 +1,9 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, composer pills, app themes, and composer attachment sources.
-Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
+client slash commands, timeline items, composer pills, app themes, composer attachment sources, and
+Git Forge providers. Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every
+connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
 
@@ -162,9 +163,9 @@ See `public-docs/plugins/v0.8/reference.md`.
 
 | Module                          | Use it for                                                                                |
 | ------------------------------- | ----------------------------------------------------------------------------------------- |
-| `@getpaseo/plugin`              | contribution contracts, shared definitions, RPC input/output types, and client data hooks |
+| `@getpaseo/plugin`              | contribution contracts, shared definitions, client Forge types, RPC types, and data hooks |
 | `@getpaseo/plugin/react-native` | Paseo React Native components and UI hooks                                                |
-| `@getpaseo/plugin/server`       | handler-only types such as `PluginHandlerContext`                                         |
+| `@getpaseo/plugin/server`       | handler types and server Forge contracts and helpers                                      |
 
 The compiler rejects a client import of `server/`, a server import of `client/`, and every `node:`
 import reachable from client code. Shared modules cannot import runtime-owned modules. A relative
@@ -315,6 +316,61 @@ index is the default.
 Transformers run synchronously and must be deterministic. When several transformers match, the
 first one that returns a result owns that source item. Plugin and registration ordering is stable.
 See `plugin-examples/timeline-items` for the complete contract.
+
+## Contribute a Git Forge
+
+A Forge plugin registers the same provider ID in both runtimes:
+
+```ts
+// index.server.ts
+import type { PluginServerContext } from "@getpaseo/plugin";
+import { acmeServerProvider } from "./server/acme";
+
+export default function contribute(server: PluginServerContext) {
+  server.addForgeServerProvider(acmeServerProvider);
+  return () => {};
+}
+```
+
+```ts
+// index.client.ts
+import type { PluginClientContext } from "@getpaseo/plugin";
+import { acmeClientProvider } from "./client/acme";
+
+export default function contribute(client: PluginClientContext) {
+  client.addForgeClientProvider(acmeClientProvider);
+  return () => {};
+}
+```
+
+The server provider implements `PluginForgeServerService`. It owns authentication, API/CLI calls,
+search, status, checks, timeline, create/merge commands, and change-request checkout targets. Use
+the exported `ForgeCliMissingError`, `ForgeAuthenticationError`, and `ForgeCommandError` classes so
+the daemon preserves setup and auth failure states across the subprocess boundary. If
+`isAuthenticated()` throws those classified errors, set `authProbeCanThrow: true`; otherwise return
+`false` on authentication failure. Return explicit `checkoutRefs` for cross-repository heads. Set
+`supportsCrossRepoCheckoutWithoutRefs: true` only when the forge exposes a universal fetch ref that
+does not need those entries.
+
+The client provider contributes the shared definition plus optional facts parsing, merge-capability
+derivation, source URL grammar, a declarative SVG path, and brand colors. Client contributions are
+scoped to the daemon that supplied the plugin catalog. Do not put them in a process-global Forge
+map; one app can connect to hosts with different installed providers.
+
+Provider IDs and facts families match `^[a-z0-9][a-z0-9._-]*$`. They cannot replace an existing
+registration on the same host, and built-in Forge IDs are reserved. `cloudHosts` is the bounded list
+of public hosts. Use `probeHost` only for a self-hosted forge that can recognize a host through
+existing local authentication without sending credentials or anonymous requests to a
+remote-derived host.
+
+Reload, disable, removal, subprocess failure, and the global plugin switch unregister the server
+adapter and client contribution. Registry changes stop active status polls, discard cached adapter
+resolution, and refresh affected workspaces. Async `invalidate`, `defaultCheckoutRefs`, and
+`buildPrLocalBranchName` calls finish through the subprocess proxy before the next dependent read.
+
+See `plugin-examples/codeup` for a complete provider with Codeup MR status, search, checks, timeline,
+create/merge commands, a brand icon, merge facts, and cross-repository checkout. The generic Forge
+architecture and built-in path remain documented in [forge-providers.md](forge-providers.md).
 
 A plugin subprocess can also append a canonical plugin row from a server handler:
 

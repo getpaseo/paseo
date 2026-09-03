@@ -20,6 +20,7 @@ interface FakeSpawnController {
   peakActiveCount: number;
   processes: FakeChildProcess[];
   queue: FakeSpawnBehavior[];
+  spawnArgs: string[][];
   reset: () => void;
 }
 
@@ -29,6 +30,7 @@ const fakeSpawnController = vi.hoisted<FakeSpawnController>(() => ({
   peakActiveCount: 0,
   processes: [],
   queue: [],
+  spawnArgs: [],
   reset() {
     for (const process of this.processes) {
       process.dispose();
@@ -39,6 +41,7 @@ const fakeSpawnController = vi.hoisted<FakeSpawnController>(() => ({
     this.peakActiveCount = 0;
     this.processes = [];
     this.queue = [];
+    this.spawnArgs = [];
   },
 }));
 
@@ -201,11 +204,12 @@ vi.mock("node:child_process", async () => {
 
   return {
     ...actual,
-    spawn: vi.fn(() => {
+    spawn: vi.fn((_command: string, args: string[]) => {
       const behavior = fakeSpawnController.queue.shift() ?? {};
       if (behavior.spawnError) {
         throw behavior.spawnError;
       }
+      fakeSpawnController.spawnArgs.push([...args]);
       const child = new FakeChildProcess(behavior);
       fakeSpawnController.processes.push(child);
       return child as unknown as ReturnType<typeof actual.spawn>;
@@ -273,6 +277,77 @@ describe("runGitCommand", () => {
     ).resolves.toMatchObject({
       exitCode: 0,
       truncated: false,
+    });
+  });
+
+  it("uses credential-bearing URLs for execution but redacts timeout logs and metrics", async () => {
+    const { runGitCommand, startGitCommandMetrics, stopGitCommandMetrics } =
+      await loadRunGitCommand(1);
+    const trace = vi.fn();
+    const remoteUrl =
+      "https://codeup-user:codeup-secret@forge.example.com/acme/repo.git?token=query-secret";
+    enqueueSpawnBehaviors({ delayMs: 5_000 });
+    startGitCommandMetrics();
+
+    const error = await runGitCommand(["fetch", remoteUrl, "refs/heads/main"], {
+      cwd: process.cwd(),
+      logger: { trace } as never,
+      timeout: 20,
+    }).catch((reason: unknown) => reason);
+    await vi.waitFor(() => expect(fakeSpawnController.activeCount).toBe(0));
+    const metrics = stopGitCommandMetrics();
+
+    expect(fakeSpawnController.spawnArgs[0]).toEqual([
+      "-c",
+      "core.quotepath=false",
+      "fetch",
+      remoteUrl,
+      "refs/heads/main",
+    ]);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "git fetch https://[REDACTED]@forge.example.com/acme/repo.git?[REDACTED] refs/heads/main",
+    );
+    expect(JSON.stringify({ error, trace: trace.mock.calls, metrics })).not.toMatch(
+      /codeup-user|codeup-secret|query-secret/,
+    );
+    expect(metrics.submissions[0]?.args).toEqual([
+      "fetch",
+      "https://[REDACTED]@forge.example.com/acme/repo.git?[REDACTED]",
+      "refs/heads/main",
+    ]);
+  });
+
+  it("redacts signed URLs from command failures and returned stderr", async () => {
+    const { runGitCommand } = await loadRunGitCommand(1);
+    const remoteUrl =
+      "https://forge.example.com/acme/repo.git?X-Amz-Credential=credential-secret&X-Amz-Signature=signature-secret";
+    enqueueSpawnBehaviors({
+      exitCode: 128,
+      stderrData: `fatal: unable to access '${remoteUrl}': denied`,
+    });
+
+    const error = await runGitCommand(["config", "remote.paseo-pr-7.url", remoteUrl], {
+      cwd: process.cwd(),
+    }).catch((reason: unknown) => reason);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain(
+      "git config remote.paseo-pr-7.url https://forge.example.com/acme/repo.git?[REDACTED]",
+    );
+    expect((error as Error).message).toContain(
+      "fatal: unable to access 'https://forge.example.com/acme/repo.git?[REDACTED]': denied",
+    );
+    expect((error as Error).message).not.toMatch(/credential-secret|signature-secret/);
+
+    enqueueSpawnBehaviors({ exitCode: 128, stderrData: remoteUrl });
+    await expect(
+      runGitCommand(["fetch", remoteUrl, "refs/heads/main"], {
+        acceptExitCodes: [0, 128],
+        cwd: process.cwd(),
+      }),
+    ).resolves.toMatchObject({
+      stderr: "https://forge.example.com/acme/repo.git?[REDACTED]",
     });
   });
 

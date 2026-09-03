@@ -1259,6 +1259,77 @@ describe.skipIf(isPlatform("win32"))("worktree-core POSIX-only", () => {
       expect(remotePrHead).toBe(localHead);
     });
 
+    test.each([
+      {
+        originTransport: "HTTPS",
+        preferredPushUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
+      },
+      {
+        originTransport: "SSH",
+        preferredPushUrl: "git@codeup.aliyun.com:org/contributor/repo.git",
+      },
+    ])(
+      "configures a Codeup $originTransport cross-repository checkout with the matching push transport",
+      async ({ preferredPushUrl }) => {
+        const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
+        cleanupPaths.push(tempDir);
+        execFileSync("git", ["config", `url.file://${headRemoteDir}.insteadOf`, preferredPushUrl], {
+          cwd: repoDir,
+          stdio: "pipe",
+        });
+        const codeup: ForgeService = {
+          ...createGitHubServiceStub(),
+          defaultCheckoutRefs: undefined,
+          buildPrLocalBranchName: undefined,
+          supportsCrossRepoCheckoutWithoutRefs: false,
+          getPullRequestCheckoutTarget: async ({ number }) => ({
+            number,
+            baseRefName: "main",
+            headRefName: "main",
+            checkoutRefs: [
+              {
+                remoteUrl: preferredPushUrl,
+                remoteRef: "refs/heads/main",
+              },
+            ],
+            headOwnerLogin: "org/contributor/repo",
+            preferredPushUrl,
+            headRepositorySshUrl: "git@codeup.aliyun.com:org/contributor/repo.git",
+            headRepositoryUrl: "https://codeup.aliyun.com/org/contributor/repo.git",
+            isCrossRepository: true,
+          }),
+        };
+
+        const result = await createCoreWorktree(
+          {
+            cwd: repoDir,
+            worktreeSlug: "codeup-cross-repo",
+            action: "checkout",
+            checkoutSource: { kind: "change_request", forge: "codeup", number: 526 },
+            paseoHome,
+            runSetup: false,
+          },
+          createCoreDeps({ forge: { forge: "codeup", service: codeup } }),
+        );
+
+        expect(result.intent).toMatchObject({
+          kind: "checkout-change-request",
+          forge: "codeup",
+          changeRequestNumber: 526,
+          pushRemoteUrl: preferredPushUrl,
+        });
+        expect(getGitConfigValue(result.worktree.worktreePath, "remote.paseo-pr-526.url")).toBe(
+          preferredPushUrl,
+        );
+        expect(
+          getGitConfigValue(
+            result.worktree.worktreePath,
+            `branch.${result.worktree.branchName}.pushRemote`,
+          ),
+        ).toBe("paseo-pr-526");
+      },
+    );
+
     test("pushes a fork PR when the contributor branch cannot be fetched at checkout", async () => {
       const { tempDir, repoDir, headRemoteDir, paseoHome } = createForkGitHubPrRemoteRepo();
       cleanupPaths.push(tempDir);

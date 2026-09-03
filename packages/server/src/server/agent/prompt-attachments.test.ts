@@ -69,6 +69,37 @@ describe("prompt attachments", () => {
     ).toContain("GitLab MR !123: Fix race in worktree setup");
   });
 
+  it("uses an injected dynamic Forge definition for prompts and branch-name seeds", () => {
+    const attachment = {
+      type: "forge_change_request" as const,
+      mimeType: "application/paseo-forge-change-request",
+      forge: "codeup",
+      number: 42,
+      title: "Fix checkout lifecycle",
+      url: "https://codeup.aliyun.com/acme/repo/merge_requests/42",
+      body: null,
+      baseRefName: "main",
+      headRefName: "fix/checkout",
+    };
+    const resolveDefinition = () => ({
+      id: "codeup",
+      displayName: "Codeup",
+      changeRequestAbbrev: "MR",
+      changeRequestNoun: "merge request",
+      changeRequestNumberPrefix: "!",
+      issueNumberPrefix: "#",
+      iconKind: "git",
+      signIn: null,
+    });
+
+    expect(renderPromptAttachmentAsText(attachment, resolveDefinition)).toContain(
+      "Codeup MR !42: Fix checkout lifecycle",
+    );
+    expect(buildAgentBranchNameSeed({ attachments: [attachment] }, resolveDefinition)).toContain(
+      "Codeup MR !42: Fix checkout lifecycle",
+    );
+  });
+
   it("renders review attachments with compact file, line, comment, and context details", () => {
     expect(
       renderPromptAttachmentAsText({

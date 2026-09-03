@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { flushGitCommandTrace } from "./git-command-trace.js";
-import { runGitCommand } from "./run-git-command.js";
+import { runGitCommand, startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 
 describe("git command trace", () => {
   const tempDirectories: string[] = [];
@@ -49,5 +49,28 @@ describe("git command trace", () => {
       signal: null,
       durationMs: expect.any(Number),
     });
+  });
+
+  it("keeps remote config credentials out of trace and metrics while executing the original URL", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-git-trace-redaction-"));
+    tempDirectories.push(directory);
+    const tracePath = path.join(directory, "git.jsonl");
+    const remoteUrl =
+      "https://codeup-user:codeup-secret@forge.example.com/acme/repo.git?X-Amz-Signature=query-secret";
+    await runGitCommand(["init"], { cwd: directory });
+    vi.stubEnv("PASEO_GIT_TRACE_FILE", tracePath);
+    startGitCommandMetrics();
+
+    await runGitCommand(["config", "remote.paseo-pr-7.url", remoteUrl], { cwd: directory });
+    const metrics = stopGitCommandMetrics();
+    await flushGitCommandTrace();
+
+    const config = await readFile(path.join(directory, ".git", "config"), "utf8");
+    const trace = await readFile(tracePath, "utf8");
+    expect(config).toContain(remoteUrl);
+    expect(trace).toContain("https://[REDACTED]@forge.example.com/acme/repo.git?[REDACTED]");
+    expect(JSON.stringify({ metrics, trace })).not.toMatch(
+      /codeup-user|codeup-secret|query-secret/,
+    );
   });
 });

@@ -174,6 +174,7 @@ export interface WorktreeRootOptions {
 
 export interface WorktreeCheckoutRef {
   remoteName?: string;
+  remoteUrl?: string;
   remoteRef: string;
 }
 
@@ -1483,11 +1484,13 @@ async function fetchWorktreeCheckoutRefs(options: {
     | Awaited<ReturnType<typeof runGitCommand>>
     | { stderr: string; stdout: string; exitCode: number | null }
     | null = null;
+  let lastCheckoutRef: WorktreeCheckoutRef | null = null;
   for (const checkoutRef of options.checkoutRefs) {
+    lastCheckoutRef = checkoutRef;
     lastResult = await runGitCommand(
       [
         "fetch",
-        checkoutRef.remoteName ?? "origin",
+        checkoutRef.remoteUrl ?? checkoutRef.remoteName ?? "origin",
         `+${checkoutRef.remoteRef}:refs/heads/${options.localBranchName}`,
         "--force",
       ],
@@ -1502,10 +1505,19 @@ async function fetchWorktreeCheckoutRefs(options: {
     }
   }
   const attemptedRefs = options.checkoutRefs
-    .map((checkoutRef) => `${checkoutRef.remoteName ?? "origin"} ${checkoutRef.remoteRef}`)
+    .map((checkoutRef) =>
+      [
+        checkoutRef.remoteUrl ? "<direct remote>" : (checkoutRef.remoteName ?? "origin"),
+        checkoutRef.remoteRef,
+      ].join(" "),
+    )
     .join(", ");
+  // A direct URL may contain HTTP userinfo or a signed query string supplied
+  // by a plugin. Git repeats that URL in stderr, so omit stderr for this case
+  // instead of returning credentials through the workspace RPC and daemon log.
+  const stderr = lastCheckoutRef?.remoteUrl ? "" : lastResult?.stderr;
   throw new Error(
-    `Unable to fetch change request refs for worktree branch ${options.localBranchName}: ${attemptedRefs}${lastResult?.stderr ? `\n${lastResult.stderr}` : ""}`,
+    `Unable to fetch change request refs for worktree branch ${options.localBranchName}: ${attemptedRefs}${stderr ? `\n${stderr}` : ""}`,
   );
 }
 

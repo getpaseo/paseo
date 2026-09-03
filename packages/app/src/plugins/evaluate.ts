@@ -6,24 +6,30 @@ import * as ReactNative from "react-native";
 import * as ReactQuery from "@tanstack/react-query";
 import * as Zod from "zod";
 import {
+  PluginAttachmentItemSchema,
+  PluginAttachmentSearchPayloadSchema,
   defineAttachmentSource,
+  defineForgeClientProvider,
+  defineForgeFacts,
   defineRpc,
   type PluginAttachmentSourceContribution,
   type PluginCommandCenterItemContribution,
   type PluginCleanup,
   type PluginClientContext,
   type PluginClientSlashCommandContribution,
+  type PluginForgeClientProviderContribution,
   type PluginSidebarContribution,
   type PluginSurfaceProps,
   type PluginThemeContribution,
   type PluginTimelineRendererContribution,
   type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
-  usePaseo,
   useAgent,
-  useWorkspace,
+  usePaseo,
   useRpc,
+  useWorkspace,
 } from "@getpaseo/plugin";
+import { normalizeHost } from "@getpaseo/protocol/git-remote";
 import type { EvaluatedPlugin } from "./types";
 import type { ComponentType } from "react";
 import { Icon, resolvePluginIcon } from "./icons";
@@ -61,11 +67,164 @@ function normalizePanelLocations(
   }
   return normalized;
 }
+const FORGE_ID = /^[a-z0-9][a-z0-9._-]*$/;
+const FORGE_COLOR = /^(?:#[0-9a-f]{6}|#[0-9a-f]{8})$/i;
+const MAX_FORGE_ICON_PATH_LENGTH = 16_384;
+
+const PLUGIN_CLIENT_RUNTIME = {
+  PluginAttachmentItemSchema,
+  PluginAttachmentSearchPayloadSchema,
+  defineAttachmentSource,
+  defineForgeClientProvider,
+  defineForgeFacts,
+  defineRpc,
+  Icon,
+  useAgent,
+  usePaseo,
+  useRpc,
+  useWorkspace,
+};
 
 function requireId(value: string, label: string): string {
   const id = value.trim();
   if (!CONTRIBUTION_ID.test(id)) throw new Error(`Invalid ${label}: ${value}`);
   return id;
+}
+
+function requireForgeId(value: string, label: string): string {
+  const id = value.trim();
+  if (!FORGE_ID.test(id)) throw new Error(`Invalid ${label}: ${value}`);
+  return id;
+}
+
+function requireForgeText(value: string, providerId: string, label: string): string {
+  const normalized = value.trim();
+  if (!normalized) {
+    throw new Error(`Forge provider ${providerId} has no ${label}`);
+  }
+  return normalized;
+}
+
+function normalizeForgeDefinition(
+  contribution: PluginForgeClientProviderContribution,
+): PluginForgeClientProviderContribution["definition"] {
+  const definition = contribution.definition;
+  const id = requireForgeId(definition.id, "Forge provider id");
+  const signIn = definition.signIn
+    ? {
+        cli: definition.signIn.cli.trim(),
+        command: definition.signIn.command.trim(),
+        hostnameFlag: definition.signIn.hostnameFlag?.trim() || undefined,
+      }
+    : null;
+  if (signIn && (!signIn.cli || !signIn.command)) {
+    throw new Error(`Forge provider ${id} has an invalid sign-in recipe`);
+  }
+  const cloudHosts = definition.cloudHosts?.map(normalizeHost);
+  if (cloudHosts?.some((host) => !host)) {
+    throw new Error(`Forge provider ${id} has an empty cloud host`);
+  }
+  if (cloudHosts && new Set(cloudHosts).size !== cloudHosts.length) {
+    throw new Error(`Forge provider ${id} has duplicate cloud hosts`);
+  }
+  return {
+    ...definition,
+    id,
+    displayName: requireForgeText(definition.displayName, id, "display name"),
+    changeRequestAbbrev: requireForgeText(
+      definition.changeRequestAbbrev,
+      id,
+      "change-request abbreviation",
+    ),
+    changeRequestNoun: requireForgeText(definition.changeRequestNoun, id, "change-request noun"),
+    changeRequestNumberPrefix: requireForgeText(
+      definition.changeRequestNumberPrefix,
+      id,
+      "change-request number prefix",
+    ),
+    issueNumberPrefix: requireForgeText(definition.issueNumberPrefix, id, "issue number prefix"),
+    signIn,
+    cloudHosts,
+  };
+}
+
+function normalizeForgeFacts(
+  contribution: PluginForgeClientProviderContribution,
+  providerId: string,
+): PluginForgeClientProviderContribution["facts"] {
+  const facts = contribution.facts;
+  if (!facts) return undefined;
+  const family = requireForgeId(facts.family, "Forge facts family");
+  if (typeof facts.schema?.safeParse !== "function") {
+    throw new Error(`Forge provider ${providerId} has no valid facts schema`);
+  }
+  if (
+    facts.deriveMergeCapability !== undefined &&
+    typeof facts.deriveMergeCapability !== "function"
+  ) {
+    throw new Error(`Forge provider ${providerId} has an invalid merge capability callback`);
+  }
+  return { ...facts, family };
+}
+
+function validateForgeUrlGrammar(
+  contribution: PluginForgeClientProviderContribution,
+  providerId: string,
+): void {
+  const grammar = contribution.urlGrammar;
+  if (!grammar) return;
+  if (!grammar.treeInfix.startsWith("/")) {
+    throw new Error(`Forge provider ${providerId} tree URL infix must start with /`);
+  }
+  if (!grammar.blobInfix.startsWith("/")) {
+    throw new Error(`Forge provider ${providerId} blob URL infix must start with /`);
+  }
+  if (grammar.changeRequestChecksSuffix && !grammar.changeRequestChecksSuffix.startsWith("/")) {
+    throw new Error(`Forge provider ${providerId} checks URL suffix must start with /`);
+  }
+  for (const referencePath of grammar.referencePaths ?? []) {
+    if (referencePath.kind !== "change_request" && referencePath.kind !== "issue") {
+      throw new Error(`Forge provider ${providerId} has an invalid reference path kind`);
+    }
+    if (!referencePath.infix.startsWith("/") || !referencePath.infix.endsWith("/")) {
+      throw new Error(
+        `Forge provider ${providerId} reference path infix must start and end with /`,
+      );
+    }
+  }
+}
+
+function validateForgeView(
+  contribution: PluginForgeClientProviderContribution,
+  providerId: string,
+): void {
+  const view = contribution.view;
+  if (!view) return;
+  const { icon, brandColor } = view;
+  const validIcon =
+    icon.kind === "svg-path" &&
+    icon.viewBox.length === 4 &&
+    icon.viewBox.every(Number.isFinite) &&
+    icon.viewBox[2] > 0 &&
+    icon.viewBox[3] > 0 &&
+    icon.path.trim().length > 0 &&
+    icon.path.length <= MAX_FORGE_ICON_PATH_LENGTH;
+  if (!validIcon) {
+    throw new Error(`Forge provider ${providerId} has an invalid SVG path icon`);
+  }
+  if (brandColor && (!FORGE_COLOR.test(brandColor.light) || !FORGE_COLOR.test(brandColor.dark))) {
+    throw new Error(`Forge provider ${providerId} has invalid brand colors`);
+  }
+}
+
+function normalizeForgeClientProvider(
+  contribution: PluginForgeClientProviderContribution,
+): PluginForgeClientProviderContribution {
+  const definition = normalizeForgeDefinition(contribution);
+  const facts = normalizeForgeFacts(contribution, definition.id);
+  validateForgeUrlGrammar(contribution, definition.id);
+  validateForgeView(contribution, definition.id);
+  return { ...contribution, definition, ...(facts ? { facts } : {}) };
 }
 
 export type PluginClientRuntime = Pick<
@@ -89,6 +248,7 @@ export function runPluginClientBundle(
     themes: [],
     timelineTransformers: [],
     timelineRenderers: [],
+    forgeClientProviders: [],
   };
   const surfaceIds = new Set<string>();
   const sidebarItemIds = new Set<string>();
@@ -99,6 +259,7 @@ export function runPluginClientBundle(
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
+  const forgeProviderIds = new Set<string>();
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   const notifyChange = () => {
@@ -322,6 +483,17 @@ export function runPluginClientBundle(
         timelineRendererIds.delete(rendererId),
       );
     },
+    addForgeClientProvider(contribution: PluginForgeClientProviderContribution) {
+      const normalized = normalizeForgeClientProvider(contribution);
+      const providerId = normalized.definition.id;
+      if (forgeProviderIds.has(providerId)) {
+        throw new Error(`Duplicate Forge provider: ${providerId}`);
+      }
+      forgeProviderIds.add(providerId);
+      return register(collector.forgeClientProviders, normalized, () =>
+        forgeProviderIds.delete(providerId),
+      );
+    },
     addComposerPill(contribution) {
       const removePill = runtime.addComposerPill(contribution);
       let active = true;
@@ -339,16 +511,10 @@ export function runPluginClientBundle(
     if (name === "react") return React;
     if (name === "react/jsx-runtime") return ReactJsxRuntime;
     if (name === "react-native") return ReactNative;
-    if (name === "@getpaseo/plugin") {
-      return {
-        defineAttachmentSource,
-        defineRpc,
-        Icon,
-        usePaseo,
-        useAgent,
-        useWorkspace,
-        useRpc,
-      };
+    if (name === "@getpaseo/plugin" || name === "@paseo/plugin") {
+      // COMPAT(plugin-sdk-scope): @paseo/plugin was scaffolded through
+      // 0.5.0-beta.1; remove this alias after 2026-11-19.
+      return PLUGIN_CLIENT_RUNTIME;
     }
     if (name === "@getpaseo/plugin/react-native" || name === "@paseo/plugin/react-native") {
       return pluginReactNativeRuntime;
@@ -414,5 +580,6 @@ export function runPluginClientBundle(
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
     timelineRenderers: collector.timelineRenderers,
+    forgeClientProviders: collector.forgeClientProviders,
   };
 }
