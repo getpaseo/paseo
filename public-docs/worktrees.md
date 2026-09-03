@@ -110,6 +110,9 @@ Drop a `paseo.json` in your repo root. Paseo reads it from the committed version
 
 Both fields accept a multiline shell script or an array of commands; commands run sequentially either way.
 
+Setup commands inherit the daemon's environment. If it has `NODE_ENV=production`, npm omits dev
+dependencies; use `npm ci --include=dev` when setup needs development tools.
+
 Commands run with the worktree as `cwd`. Use `$PASEO_SOURCE_CHECKOUT_PATH` to reach files in the original checkout (untracked config, local caches, etc).
 
 ## Scripts and services

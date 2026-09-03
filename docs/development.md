@@ -385,6 +385,11 @@ behavior on macOS/Linux, but preserve their existing `cmd.exe /c` string semanti
 on Windows. Service scripts are separate:
 they launch in a terminal and receive the service environment described below.
 
+**`NODE_ENV=production` makes npm omit dev dependencies.** Lifecycle commands inherit the
+daemon environment, so an ambient production setting causes `npm ci` to skip tools such as
+`typescript`, `oxlint`, and `patch-package`. Use `npm ci --include=dev` for setup that needs
+development tools; this repo's own `paseo.json` does that.
+
 Because the shell differs per platform, a lifecycle command that must run
 everywhere cannot use POSIX-only syntax — `VAR=1 cmd` env prefixes, `$VAR`
 expansion, `cp`/`rm`, or a `./scripts/*.sh` entrypoint all fail under PowerShell,
