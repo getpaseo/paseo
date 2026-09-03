@@ -1,0 +1,925 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Paseo · Wear OS mock</title>
+    <style>
+      /* ------------------------------------------------------------------ */
+      /* Paseo dark theme tokens (packages/app/src/styles/theme.ts, paseo)  */
+      /* ------------------------------------------------------------------ */
+      :root {
+        --surface0: #181b1a;
+        --surface1: #1e2120;
+        --surface2: #272a29;
+        --surface3: #434645;
+        --foreground: #fafafa;
+        --foreground-muted: #a1a5a4;
+        --foreground-extra-muted: #717574;
+        --border: #252b2a;
+        --accent: #20744a;
+        --accent-bright: #239956;
+        --destructive: #c4564c;
+        --warning: #d9a13b;
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        background: #0d0f0e;
+        color: var(--foreground);
+        font-family:
+          "Roboto",
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        padding: 48px 32px 96px;
+      }
+
+      h1 {
+        font-weight: 300;
+        font-size: 28px;
+        margin-bottom: 4px;
+      }
+      .subtitle {
+        color: var(--foreground-muted);
+        font-size: 14px;
+        margin-bottom: 48px;
+      }
+
+      .board {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 56px 40px;
+        justify-content: flex-start;
+      }
+
+      .frame {
+        width: 340px;
+      }
+      .frame h2 {
+        font-size: 14px;
+        font-weight: 500;
+        margin: 20px 0 4px;
+        text-align: center;
+      }
+      .frame p.note {
+        font-size: 12px;
+        color: var(--foreground-extra-muted);
+        text-align: center;
+        line-height: 1.5;
+        padding: 0 16px;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Watch chrome — 450x450 round display scaled to 320px               */
+      /* ------------------------------------------------------------------ */
+      .watch {
+        width: 320px;
+        height: 320px;
+        margin: 0 auto;
+        border-radius: 50%;
+        background: var(--surface0);
+        box-shadow:
+          0 0 0 10px #000,
+          0 0 0 12px #2a2d2c,
+          0 24px 48px rgba(0, 0, 0, 0.6);
+        overflow: hidden;
+        position: relative;
+        /* 450px design canvas scaled down */
+        font-size: 0; /* children set their own */
+      }
+      .screen {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        overflow: hidden;
+      }
+
+      .time {
+        font-size: 12px;
+        color: var(--foreground-muted);
+        margin-top: 14px;
+        letter-spacing: 0.04em;
+        flex-shrink: 0;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* List screen                                                        */
+      /* ------------------------------------------------------------------ */
+      .list-title {
+        font-size: 13px;
+        color: var(--foreground);
+        font-weight: 500;
+        margin: 6px 0 10px;
+      }
+      .chips {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: center;
+      }
+
+      .chip {
+        width: 78%;
+        background: var(--surface2);
+        border-radius: 24px;
+        padding: 11px 16px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        text-align: left;
+      }
+      .chip.attention {
+        background: #2a2420;
+        box-shadow: inset 0 0 0 1px #4a3c22;
+      }
+
+      /* Project icon — colored rounded square with initial, color derived from
+     projectKey (packages/app/src/utils/project-icon-color.ts) */
+      .picon {
+        width: 26px;
+        height: 26px;
+        border-radius: 8px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 13px;
+        font-weight: 500;
+        color: #fff;
+        position: relative;
+      }
+      .picon .st {
+        position: absolute;
+        right: -2px;
+        bottom: -2px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        border: 2px solid var(--surface2);
+      }
+      .chip.attention .picon .st {
+        border-color: #2a2420;
+      }
+      .picon .st.running {
+        background: var(--accent-bright);
+      }
+      .picon .st.needs-input {
+        background: var(--warning);
+      }
+      .picon .st.idle {
+        background: var(--foreground-extra-muted);
+      }
+
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+      .dot.running {
+        background: var(--accent-bright);
+        animation: pulse 1.6s ease-in-out infinite;
+      }
+      .dot.needs-input {
+        background: var(--warning);
+      }
+      .dot.idle {
+        background: var(--foreground-extra-muted);
+      }
+
+      @keyframes pulse {
+        0%,
+        100% {
+          opacity: 1;
+          box-shadow: 0 0 0 0 rgba(35, 153, 86, 0.5);
+        }
+        50% {
+          opacity: 0.7;
+          box-shadow: 0 0 0 5px rgba(35, 153, 86, 0);
+        }
+      }
+
+      .chip .lines {
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+      }
+      .chip .name {
+        font-size: 13px;
+        color: var(--foreground);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .chip .meta {
+        font-size: 10.5px;
+        color: var(--foreground-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        margin-top: 1px;
+      }
+
+      .picon.sm {
+        width: 20px;
+        height: 20px;
+        border-radius: 6px;
+        font-size: 10.5px;
+      }
+
+      /* Workspace context header — project icon + workspace name */
+      .ws-head {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        margin: 6px 0 10px;
+        max-width: 80%;
+      }
+      .ws-head .ws-name {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--foreground);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .fade-bottom {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        height: 44px;
+        background: linear-gradient(to bottom, transparent, var(--surface0) 80%);
+        pointer-events: none;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Detail screen                                                      */
+      /* ------------------------------------------------------------------ */
+      .detail-head {
+        text-align: center;
+        margin-top: 4px;
+      }
+      .detail-head .name {
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .detail-head .status {
+        font-size: 11px;
+        color: var(--accent-bright);
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        margin-top: 3px;
+      }
+      .detail-head .status.waiting {
+        color: var(--warning);
+      }
+
+      .msg {
+        width: 76%;
+        margin-top: 10px;
+        background: var(--surface1);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 10px 13px;
+        font-size: 11.5px;
+        line-height: 1.45;
+        color: var(--foreground-muted);
+        text-align: left;
+      }
+      .msg b {
+        color: var(--foreground);
+        font-weight: 500;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .btn {
+        border: none;
+        border-radius: 50%;
+        width: 52px;
+        height: 52px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      }
+      .btn svg {
+        width: 22px;
+        height: 22px;
+      }
+      .btn.primary {
+        background: var(--accent);
+      }
+      .btn.primary svg {
+        stroke: #fff;
+      }
+      .btn.secondary {
+        background: var(--surface2);
+      }
+      .btn.secondary svg {
+        stroke: var(--foreground-muted);
+      }
+      .btn.allow {
+        background: var(--accent);
+      }
+      .btn.allow svg {
+        stroke: #fff;
+      }
+      .btn.deny {
+        background: var(--surface2);
+      }
+      .btn.deny svg {
+        stroke: var(--destructive);
+      }
+      .btn-label {
+        font-size: 10px;
+        color: var(--foreground-extra-muted);
+        text-align: center;
+        margin-top: 5px;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Permission screen                                                  */
+      /* ------------------------------------------------------------------ */
+      .perm-icon {
+        margin-top: 2px;
+      }
+      .perm-title {
+        font-size: 13px;
+        font-weight: 500;
+        margin-top: 6px;
+      }
+      .perm-agent {
+        font-size: 10.5px;
+        color: var(--foreground-extra-muted);
+        margin-top: 2px;
+      }
+      .cmd {
+        width: 74%;
+        margin-top: 10px;
+        background: #121413;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 9px 12px;
+        font-family: "SF Mono", "Cascadia Code", Consolas, monospace;
+        font-size: 11px;
+        color: var(--foreground);
+        text-align: left;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Voice input screen                                                 */
+      /* ------------------------------------------------------------------ */
+      .voice-wrap {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+      }
+      .voice-orb {
+        width: 68px;
+        height: 68px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 30%, var(--accent-bright), var(--accent));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        animation: orb 1.8s ease-in-out infinite;
+      }
+      .voice-orb svg {
+        width: 28px;
+        height: 28px;
+        stroke: #fff;
+      }
+      @keyframes orb {
+        0%,
+        100% {
+          box-shadow: 0 0 0 0 rgba(35, 153, 86, 0.45);
+        }
+        50% {
+          box-shadow: 0 0 0 18px rgba(35, 153, 86, 0);
+        }
+      }
+      .partial {
+        width: 74%;
+        margin-top: 16px;
+        font-size: 12.5px;
+        line-height: 1.5;
+        color: var(--foreground);
+        text-align: center;
+        min-height: 56px;
+      }
+      .partial .caret {
+        display: inline-block;
+        width: 2px;
+        height: 13px;
+        background: var(--accent-bright);
+        vertical-align: -2px;
+        animation: blink 1s steps(1) infinite;
+      }
+      @keyframes blink {
+        50% {
+          opacity: 0;
+        }
+      }
+
+      /* input-method picker */
+      .im-row {
+        display: flex;
+        gap: 14px;
+        margin-top: 14px;
+      }
+      .im {
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        background: var(--surface2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .im.active {
+        background: var(--accent);
+      }
+      .im svg {
+        width: 19px;
+        height: 19px;
+        stroke: var(--foreground-muted);
+      }
+      .im.active svg {
+        stroke: #fff;
+      }
+
+      .canned {
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        align-items: center;
+        margin-top: 10px;
+      }
+      .canned .chip {
+        justify-content: center;
+        padding: 9px 16px;
+      }
+      .canned .chip .name {
+        font-size: 12px;
+      }
+
+      /* ------------------------------------------------------------------ */
+      /* Tile                                                               */
+      /* ------------------------------------------------------------------ */
+      .tile-count {
+        font-size: 44px;
+        font-weight: 300;
+        margin-top: 18px;
+        line-height: 1;
+      }
+      .tile-label {
+        font-size: 11.5px;
+        color: var(--foreground-muted);
+        margin-top: 4px;
+      }
+      .tile-alert {
+        margin-top: 14px;
+        background: #2a2420;
+        box-shadow: inset 0 0 0 1px #4a3c22;
+        border-radius: 20px;
+        padding: 9px 18px;
+        font-size: 11.5px;
+        color: var(--warning);
+        display: flex;
+        align-items: center;
+        gap: 7px;
+      }
+      .tile-ok {
+        margin-top: 14px;
+        color: var(--foreground-extra-muted);
+        font-size: 11.5px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Paseo on the wrist</h1>
+    <div class="subtitle">
+      Wear OS · phone-tethered · system voice transcription — mock data, Paseo dark tokens<br />
+      <span style="color: var(--foreground-extra-muted)">
+        Navigation: Workspaces → (agent picker only if &gt;1 agent) → Agent → Reply. 1 agent skips
+        the picker; 0 agents goes straight to a voice prompt.
+      </span>
+    </div>
+
+    <div class="board">
+      <!-- ============================================================ -->
+      <!-- 1. Agent list                                                -->
+      <!-- ============================================================ -->
+      <div class="frame">
+        <div class="watch">
+          <div class="screen">
+            <div class="time">10:42</div>
+            <div class="list-title">Workspaces</div>
+            <div class="chips">
+              <div class="chip attention">
+                <span class="picon" style="background: #10b981"
+                  >P<span class="st needs-input"></span
+                ></span>
+                <span class="lines">
+                  <span class="name">jubilant-wombat</span>
+                  <span class="meta">Claude · needs approval</span>
+                </span>
+              </div>
+              <div class="chip">
+                <span class="picon" style="background: #10b981"
+                  >P<span class="st running"></span
+                ></span>
+                <span class="lines">
+                  <span class="name">crimson-falcon</span>
+                  <span class="meta">Claude · running 12m</span>
+                </span>
+              </div>
+              <div class="chip">
+                <span class="picon" style="background: #f97316"
+                  >W<span class="st running"></span
+                ></span>
+                <span class="lines">
+                  <span class="name">main</span>
+                  <span class="meta">3 agents · 1 running</span>
+                </span>
+              </div>
+              <div class="chip">
+                <span class="picon" style="background: #0ea5e9"
+                  >R<span class="st idle"></span
+                ></span>
+                <span class="lines">
+                  <span class="name">relay-tls</span>
+                  <span class="meta">no agents · tap to start</span>
+                </span>
+              </div>
+            </div>
+            <div class="fade-bottom"></div>
+          </div>
+        </div>
+        <h2>Workspaces</h2>
+        <p class="note">
+          Workspaces are the browsing unit; the project icon carries the project. Status dot on the
+          icon aggregates the workspace. Needs-attention first.
+        </p>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 1b. Agent picker — only when the workspace is ambiguous      -->
+      <!-- ============================================================ -->
+      <div class="frame">
+        <div class="watch">
+          <div class="screen">
+            <div class="time">10:42</div>
+            <div class="ws-head">
+              <span class="picon sm" style="background: #f97316">W</span>
+              <span class="ws-name">main</span>
+            </div>
+            <div class="chips">
+              <div class="chip">
+                <span class="dot running"></span>
+                <span class="lines">
+                  <span class="name">Claude</span>
+                  <span class="meta">running · 3m · docs rewrite</span>
+                </span>
+              </div>
+              <div class="chip">
+                <span class="dot idle"></span>
+                <span class="lines">
+                  <span class="name">Codex</span>
+                  <span class="meta">idle · 2h</span>
+                </span>
+              </div>
+              <div class="chip">
+                <span class="dot idle"></span>
+                <span class="lines">
+                  <span class="name">Copilot</span>
+                  <span class="meta">idle · 4h</span>
+                </span>
+              </div>
+              <div
+                class="chip"
+                style="background: transparent; box-shadow: inset 0 0 0 1px var(--surface3)"
+              >
+                <span class="lines" style="width: 100%; text-align: center">
+                  <span class="name" style="color: var(--foreground-muted)">+ New agent</span>
+                </span>
+              </div>
+            </div>
+            <div class="fade-bottom"></div>
+          </div>
+        </div>
+        <h2>
+          Agent picker
+          <span style="color: var(--foreground-extra-muted); font-weight: 400"
+            >· skipped when 1 agent</span
+          >
+        </h2>
+        <p class="note">
+          This screen only exists for multi-agent workspaces. One agent → straight to the agent.
+          Zero agents → straight to the voice prompt.
+        </p>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 2. Agent detail — running                                    -->
+      <!-- ============================================================ -->
+      <div class="frame">
+        <div class="watch">
+          <div class="screen">
+            <div class="time">10:42</div>
+            <div class="ws-head">
+              <span class="picon sm" style="background: #10b981">P</span>
+              <span class="ws-name">crimson-falcon</span>
+            </div>
+            <div class="detail-head">
+              <div class="status"><span class="dot running"></span>Claude · running 12m</div>
+            </div>
+            <div class="msg">
+              Rewrote the retry loop in relay-transport.ts. Now running the transport tests to
+              verify backoff timing…
+            </div>
+            <div class="actions">
+              <div>
+                <button class="btn primary" aria-label="Reply">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                    <line x1="12" y1="19" x2="12" y2="22" />
+                  </svg>
+                </button>
+                <div class="btn-label">Reply</div>
+              </div>
+              <div>
+                <button class="btn secondary" aria-label="Stop">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <rect x="7" y="7" width="10" height="10" rx="1.5" />
+                  </svg>
+                </button>
+                <div class="btn-label">Stop</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <h2>Agent · running</h2>
+        <p class="note">
+          Last assistant message tail, live status. Mic is the primary action — tap opens the system
+          input sheet.
+        </p>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 3. Permission request                                        -->
+      <!-- ============================================================ -->
+      <div class="frame">
+        <div class="watch">
+          <div class="screen">
+            <div class="time">10:42</div>
+            <div class="perm-icon">
+              <svg
+                width="26"
+                height="26"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="#d9a13b"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+                <path
+                  d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"
+                />
+              </svg>
+            </div>
+            <div class="perm-title">Run command?</div>
+            <div class="perm-agent">
+              <span
+                class="picon sm"
+                style="
+                  background: #10b981;
+                  display: inline-flex;
+                  vertical-align: -5px;
+                  margin-right: 4px;
+                "
+                >P</span
+              >
+              jubilant-wombat · Claude
+            </div>
+            <div class="cmd">git push origin jubilant-wombat</div>
+            <div class="actions">
+              <div>
+                <button class="btn allow" aria-label="Allow">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                </button>
+                <div class="btn-label">Allow</div>
+              </div>
+              <div>
+                <button class="btn deny" aria-label="Deny">
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                  >
+                    <path d="M18 6 6 18" />
+                    <path d="m6 6 12 12" />
+                  </svg>
+                </button>
+                <div class="btn-label">Deny</div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <h2>Permission request</h2>
+        <p class="note">
+          The money screen. Arrives as a bridged notification too — this is the in-app version with
+          the full command visible.
+        </p>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 4. Reply — input method choice                               -->
+      <!-- ============================================================ -->
+      <div class="frame">
+        <div class="watch">
+          <div class="screen">
+            <div class="time">10:42</div>
+            <div class="ws-head">
+              <span class="picon sm" style="background: #10b981">P</span>
+              <span class="ws-name" style="color: var(--foreground-muted); font-weight: 400"
+                >crimson-falcon</span
+              >
+            </div>
+            <div class="im-row">
+              <div class="im active">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="22" />
+                </svg>
+              </div>
+              <div class="im">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="2" y="6" width="20" height="12" rx="2" />
+                  <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8" />
+                </svg>
+              </div>
+            </div>
+            <div class="canned">
+              <div class="chip"><span class="name">Yes, continue</span></div>
+              <div class="chip"><span class="name">Looks good — ship it</span></div>
+              <div class="chip"><span class="name">Stop and explain first</span></div>
+            </div>
+            <div class="fade-bottom"></div>
+          </div>
+        </div>
+        <h2>Reply · input choice</h2>
+        <p class="note">
+          System RemoteInput sheet: voice + keyboard + canned replies in one flow. Canned replies
+          are configurable quick actions.
+        </p>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 5. Voice capture (live)                                      -->
+      <!-- ============================================================ -->
+      <div class="frame">
+        <div class="watch">
+          <div class="screen">
+            <div class="voice-wrap">
+              <div class="voice-orb">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                  <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                  <line x1="12" y1="19" x2="12" y2="22" />
+                </svg>
+              </div>
+              <div class="partial"><span id="partial-text"></span><span class="caret"></span></div>
+            </div>
+          </div>
+        </div>
+        <h2>Voice capture</h2>
+        <p class="note">
+          Google's on-device transcription via the system sheet — streaming partials, works offline,
+          zero audio code on our side.
+        </p>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 6. Tile                                                      -->
+      <!-- ============================================================ -->
+      <div class="frame">
+        <div class="watch">
+          <div class="screen">
+            <div class="time">10:42</div>
+            <div class="tile-count">2</div>
+            <div class="tile-label">agents running</div>
+            <div class="tile-alert">
+              <span
+                class="picon sm"
+                style="
+                  background: #10b981;
+                  width: 16px;
+                  height: 16px;
+                  border-radius: 5px;
+                  font-size: 9px;
+                "
+                >P</span
+              >
+              jubilant-wombat needs you
+            </div>
+          </div>
+        </div>
+        <h2>Tile</h2>
+        <p class="note">
+          One swipe from the watch face. Tap jumps straight to whatever needs attention. Refreshed
+          from the phone's DataClient snapshot.
+        </p>
+      </div>
+    </div>
+
+    <script>
+      // Simulated streaming transcription partials on screen 5.
+      const finalText = "make the error message more specific and rerun the transport tests";
+      const partials = [
+        "make",
+        "make the error",
+        "make the error message",
+        "make the error message more specific",
+        "make the error message more specific and rerun",
+        "make the error message more specific and rerun the transport tests",
+      ];
+      const el = document.getElementById("partial-text");
+      let i = 0;
+      function step() {
+        el.textContent = partials[i];
+        i = (i + 1) % partials.length;
+        setTimeout(step, i === 0 ? 2400 : 620);
+      }
+      step();
+    </script>
+  </body>
+</html>

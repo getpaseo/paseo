@@ -123,6 +123,11 @@ jobs:
       - name: Build server stack
         run: npm run build:server
 
+      # The app imports @getpaseo/expo-wear-bridge through its declarations, which
+      # only exist after the module is compiled.
+      - name: Build native module declarations
+        run: npm run build --workspace=@getpaseo/expo-wear-bridge
+
       - name: Typecheck all packages
         run: npm run typecheck
 

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <application>
+    <!-- Play Services binds this even when the app process is dead, which is how a
+         command sent from the watch reaches us at all. It must stay exported. -->
+    <service
+      android:name=".PaseoWearListenerService"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+        <data android:scheme="wear" android:host="*" android:pathPrefix="/paseo" />
+      </intent-filter>
+    </service>
+  </application>
+</manifest>

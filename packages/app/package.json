@@ -50,6 +50,7 @@
     "@floating-ui/react-native": "^0.10.7",
     "@getpaseo/client": "*",
     "@getpaseo/expo-two-way-audio": "*",
+    "@getpaseo/expo-wear-bridge": "*",
     "@getpaseo/highlight": "*",
     "@getpaseo/plugin": "*",
     "@getpaseo/protocol": "*",

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- Adaptive-icon background, matching the phone app's adaptiveIcon.backgroundColor
+       in packages/app/app.config.js. -->
+  <color name="ic_launcher_background">#000000</color>
+</resources>

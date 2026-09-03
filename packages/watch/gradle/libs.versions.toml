@@ -1,0 +1,52 @@
+[versions]
+# Pinned against live Google Maven / Maven Central. AGP 8.13.x requires Gradle
+# 8.13+; the repo's toolchain provides Gradle 8.14.4.
+agp = "8.13.2"
+kotlin = "2.3.21"
+composeBom = "2026.06.01"
+# Wear Compose Material 2. The chip + round-button vocabulary in
+# design/watch-mock.html maps 1:1 onto it, and TimeText/Vignette give the
+# watch chrome for free. Material3 for Wear (same version line) is the eventual
+# migration target; it renames most of this surface, so it is a deliberate
+# later step rather than a v1 risk.
+wearCompose = "1.6.2"
+# androidx.wear:wear-input, for RemoteInputIntentHelper — the system input picker
+# (keyboard, handwriting, voice, canned replies) that Wear expects a text field to
+# open. Separate version line from wear-compose; 1.1.0 is the current stable.
+wearInput = "1.1.0"
+activityCompose = "1.13.0"
+playServicesWearable = "20.0.1"
+kotlinxSerialization = "1.11.0"
+kotlinxCoroutines = "1.11.0"
+lifecycle = "2.10.0"
+
+[libraries]
+compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+compose-ui = { group = "androidx.compose.ui", name = "ui" }
+compose-ui-graphics = { group = "androidx.compose.ui", name = "ui-graphics" }
+compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
+compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview" }
+compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
+
+activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+
+wear-compose-material = { group = "androidx.wear.compose", name = "compose-material", version.ref = "wearCompose" }
+wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wearCompose" }
+wear-compose-navigation = { group = "androidx.wear.compose", name = "compose-navigation", version.ref = "wearCompose" }
+wear-input = { group = "androidx.wear", name = "wear-input", version.ref = "wearInput" }
+
+play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version.ref = "playServicesWearable" }
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "kotlinxCoroutines" }
+lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
+
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
+junit = { group = "junit", name = "junit", version = "4.13.2" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version = "1.3.0" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version = "1.7.0" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
