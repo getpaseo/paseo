@@ -9,6 +9,10 @@ import {
   observeCommandCenterScroll,
   openCommandCenterWithKeyboard,
 } from "../support/helpers/command-center-scroll";
+import {
+  captureActiveListHighlight,
+  navigateToHighlightedListItem,
+} from "../support/helpers/list-navigation";
 import { seedWorkspace } from "../support/helpers/seed-client";
 
 test.use({
@@ -57,18 +61,11 @@ test("Ctrl+N and Ctrl+P move the command center highlight", async ({ page }) => 
   const panel = await openCommandCenterWithKeyboard(page);
   const newWorkspace = panel.getByRole("button").filter({ hasText: "New workspace" });
   const history = panel.getByRole("button").filter({ hasText: "History" });
-  const background = (locator: typeof newWorkspace) =>
-    locator.evaluate((element) => getComputedStyle(element).backgroundColor);
+  const activeBackground = await captureActiveListHighlight(newWorkspace, history);
 
-  const activeBackground = await background(newWorkspace);
-  const inactiveBackground = await background(history);
-  expect(activeBackground).not.toBe(inactiveBackground);
-
-  await page.keyboard.press("Control+n");
-  await expect.poll(() => background(history)).toBe(activeBackground);
+  await navigateToHighlightedListItem(page, "next", history, activeBackground);
   await expect(panel).toBeVisible();
 
-  await page.keyboard.press("Control+p");
-  await expect.poll(() => background(newWorkspace)).toBe(activeBackground);
+  await navigateToHighlightedListItem(page, "previous", newWorkspace, activeBackground);
   await expect(panel).toBeVisible();
 });
