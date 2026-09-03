@@ -661,6 +661,8 @@ export const en = {
         bulkUnsaved: "{{count}} tab(s) have unsaved changes. Closing will discard those drafts.",
         closeTerminalTitle: "Close terminal?",
         closeTerminalMessage: "Any running process in this terminal will be stopped immediately.",
+        rememberChoice: "Remember this choice",
+        closeAndDontAskAgain: "Close and don't ask again",
         archiveRunningAgentTitle: "Archive running agent?",
         archiveRunningAgentMessage:
           "This agent is still running. Archiving it will stop the agent and close the tab.",
@@ -2107,6 +2109,10 @@ export const en = {
         label: "Terminal scrollback",
         description: "Lines kept in the built-in terminal buffer",
         accessibilityLabel: "Terminal scrollback lines",
+      },
+      confirmTerminalClose: {
+        label: "Confirm closing terminals",
+        description: "Ask before closing a terminal tab",
       },
       autoExpandReasoning: {
         label: "Always expand reasoning",

@@ -670,6 +670,8 @@ export const fr: TranslationResources = {
         closeTerminalTitle: "Fermer le terminal?",
         closeTerminalMessage:
           "Tout processus en cours d’exécution dans ce terminal sera immédiatement arrêté.",
+        rememberChoice: "Mémoriser ce choix",
+        closeAndDontAskAgain: "Fermer et ne plus demander",
         archiveRunningAgentTitle: "Archiver l'agent en cours d'exécution?",
         archiveRunningAgentMessage:
           "Cet agent est toujours en cours d'exécution. L'archiver arrêtera l'agent et fermera l'onglet.",
@@ -2061,6 +2063,10 @@ export const fr: TranslationResources = {
         label: "DéfilementTerminal",
         description: "Lignes conservées dans le tampon du terminal intégré",
         accessibilityLabel: "Lignes de défilementTerminal",
+      },
+      confirmTerminalClose: {
+        label: "Confirmer la fermeture des terminaux",
+        description: "Demander avant de fermer un onglet de terminal",
       },
       autoExpandReasoning: {
         label: "Toujours afficher le raisonnement",

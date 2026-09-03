@@ -662,6 +662,8 @@ export const zhCN: TranslationResources = {
         archive: "归档",
         closeTerminalTitle: "关闭 Terminal？",
         closeTerminalMessage: "此 Terminal 中任何正在运行的进程都会立即停止。",
+        rememberChoice: "记住此选择",
+        closeAndDontAskAgain: "关闭并不再询问",
         archiveRunningAgentTitle: "归档正在运行的 Agent？",
         archiveRunningAgentMessage: "此 Agent 仍在运行。归档会停止该 Agent 并关闭标签。",
         closeTabsLeftTitle: "关闭左侧标签？",
@@ -1984,6 +1986,10 @@ export const zhCN: TranslationResources = {
         label: "终端回滚",
         description: "内置终端缓冲区保留的行数",
         accessibilityLabel: "终端回滚行数",
+      },
+      confirmTerminalClose: {
+        label: "关闭终端前确认",
+        description: "关闭终端标签前先询问",
       },
       autoExpandReasoning: {
         label: "始终展开推理过程",
