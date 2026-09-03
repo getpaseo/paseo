@@ -20,6 +20,7 @@ import {
   filterAndRankCommandAutocompleteEntries,
   filterInlineSkillCommandEntries,
   findActiveSlashCommand,
+  shouldSubmitShellVariable,
   type SlashCommandRange,
 } from "@/utils/agent-command-autocomplete";
 import {
@@ -27,6 +28,8 @@ import {
   findActiveFileMention,
   type FileMentionRange,
 } from "@/utils/file-mention-autocomplete";
+import { DEFAULT_COMMAND_SIGIL, type ComposerSigils } from "@/composer/tokens/sigils";
+import type { ComposerTokenCatalog } from "@/composer/tokens/tokens";
 
 interface UseAgentAutocompleteInput {
   userInput: string;
@@ -39,6 +42,7 @@ interface UseAgentAutocompleteInput {
   onClientSlashCommand?: (command: ClientSlashCommand) => void;
   canExecuteClientSlashCommand?: boolean;
   pluginClientSlashCommands?: readonly PluginClientSlashCommand[];
+  sigils: ComposerSigils;
 }
 
 interface AgentAutocompleteKeyPressEvent {
@@ -73,6 +77,7 @@ interface AgentAutocompleteResult {
   errorMessage?: string;
   loadingText: string;
   emptyText: string;
+  tokenCatalog: ComposerTokenCatalog;
   onSelectOption: (option: AutocompleteOption, input?: AgentAutocompleteInputSnapshot) => void;
   onKeyPress: (event: AgentAutocompleteKeyPressEvent) => boolean;
 }
@@ -87,6 +92,7 @@ function resolveAgentAutocompleteSnapshot(input: {
   input?: AgentAutocompleteInputSnapshot;
   userInput: string;
   cursorIndex: number;
+  sigils: ComposerSigils;
   activeSlashCommand: SlashCommandRange | null;
   activeFileMention: FileMentionRange | null;
 }): AgentAutocompleteSnapshot {
@@ -102,7 +108,7 @@ function resolveAgentAutocompleteSnapshot(input: {
   const cursorIndex = input.input.selection.start;
   return {
     text,
-    slashCommand: findActiveSlashCommand({ text, cursorIndex }),
+    slashCommand: findActiveSlashCommand({ text, cursorIndex, sigils: input.sigils }),
     fileMention: findActiveFileMention({ text, cursorIndex }),
   };
 }
@@ -166,11 +172,15 @@ function mapDirectorySuggestionsToEntries(payload: {
   }));
 }
 
-function mapCommandToOption(entry: AvailableCommand, t: TFunction): AgentAutocompleteOption {
+function mapCommandToOption(
+  entry: AvailableCommand,
+  t: TFunction,
+  sigil: string,
+): AgentAutocompleteOption {
   const command = entry.command;
   const base = {
     id: command.name,
-    label: `/${command.name}`,
+    label: `${sigil}${command.name}`,
     detail: command.argumentHint || undefined,
     description:
       entry.source === "client" ? t(entry.command.descriptionKey) : entry.command.description,
@@ -204,6 +214,7 @@ interface BuildAutocompleteOptionsInput {
   activeSlashCommand: SlashCommandRange | null;
   activeFileMention: FileMentionRange | null;
   fileSuggestions: DirectorySuggestionEntry[];
+  sigils: ComposerSigils;
   t: TFunction;
 }
 
@@ -232,16 +243,18 @@ function buildCommandAutocompleteOptions(input: BuildAutocompleteOptionsInput) {
         if (entry.source === "built-in") return { source: "client", command: entry.command };
         return entry;
       });
-    const availableCommands: AvailableCommand[] =
-      input.activeSlashCommand?.position === "inline"
-        ? filterInlineSkillCommandEntries(providerCommands)
-        : rootCommands;
+    const skillsOnly =
+      input.activeSlashCommand?.menu === "skill" || input.activeSlashCommand?.position === "inline";
+    const availableCommands: AvailableCommand[] = skillsOnly
+      ? filterInlineSkillCommandEntries(providerCommands)
+      : rootCommands;
     const matches = filterAndRankCommandAutocompleteEntries(
       availableCommands,
       input.commandFilterQuery,
     );
     const orderedMatches = orderAutocompleteOptions(matches);
-    return orderedMatches.map((entry) => mapCommandToOption(entry, input.t));
+    const sigil = input.activeSlashCommand?.sigil ?? input.sigils.command;
+    return orderedMatches.map((entry) => mapCommandToOption(entry, input.t, sigil));
   }
 
   const activeFileMention = input.activeFileMention;
@@ -273,14 +286,16 @@ function resolveAutocompleteMode(args: {
   return null;
 }
 
-function resolveAutocompleteIsVisible(args: {
+export function resolveAutocompleteIsVisible(args: {
   mode: AutocompleteMode;
   canLoadCommands: boolean;
   serverId: string;
   autocompleteCwd: string;
+  isCommandsLoading: boolean;
+  isDraftContext: boolean;
 }): boolean {
   if (args.mode === "command") {
-    return args.canLoadCommands;
+    return args.canLoadCommands && (args.isDraftContext || !args.isCommandsLoading);
   }
   if (args.mode === "file") {
     return Boolean(args.serverId) && args.autocompleteCwd.length > 0;
@@ -350,6 +365,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     onClientSlashCommand,
     canExecuteClientSlashCommand,
     pluginClientSlashCommands = [],
+    sigils,
   } = input;
 
   const activeSlashCommand = useMemo(
@@ -357,10 +373,15 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       findActiveSlashCommand({
         text: userInput,
         cursorIndex,
+        sigils,
       }),
-    [cursorIndex, userInput],
+    [cursorIndex, userInput, sigils],
   );
   const showCommandAutocomplete = activeSlashCommand !== null;
+  const hasTokenCandidate =
+    userInput.includes(DEFAULT_COMMAND_SIGIL) ||
+    userInput.includes(sigils.command) ||
+    userInput.includes(sigils.skill);
   const commandFilterQuery = activeSlashCommand?.query ?? "";
 
   const activeFileMention = useMemo(
@@ -403,13 +424,6 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   const isConnected = useHostRuntimeIsConnected(serverId);
 
   const mode = resolveAutocompleteMode({ showFileAutocomplete, showCommandAutocomplete });
-  const canShowAutocomplete = resolveAutocompleteIsVisible({
-    mode,
-    canLoadCommands,
-    serverId,
-    autocompleteCwd,
-  });
-
   const {
     commands,
     isLoading: isCommandsLoading,
@@ -418,11 +432,33 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
   } = useAgentCommandsQuery({
     serverId,
     agentId,
-    enabled: mode === "command" && canLoadCommands,
+    enabled: hasTokenCandidate && canLoadCommands,
     draftConfig: queryDraftConfig,
   });
 
-  const isVisible = canShowAutocomplete && !(mode === "command" && isCommandsLoading);
+  const tokenCatalog = useMemo<ComposerTokenCatalog>(() => {
+    const commandNames = new Set(CLIENT_SLASH_COMMANDS.map((command) => command.name));
+    for (const command of pluginClientSlashCommands) {
+      commandNames.add(command.name);
+    }
+    const skillNames = new Set<string>();
+    for (const command of commands) {
+      commandNames.add(command.name);
+      if (command.kind === "skill") {
+        skillNames.add(command.name);
+      }
+    }
+    return { commandNames, skillNames };
+  }, [commands, pluginClientSlashCommands]);
+
+  const isVisible = resolveAutocompleteIsVisible({
+    mode,
+    canLoadCommands,
+    serverId,
+    autocompleteCwd,
+    isCommandsLoading,
+    isDraftContext,
+  });
 
   const fileSuggestionsQuery = useQuery({
     queryKey: [
@@ -472,6 +508,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         isDraftContext,
         isVisible,
         mode,
+        sigils,
         t,
       }),
     [
@@ -484,6 +521,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       isDraftContext,
       isVisible,
       mode,
+      sigils,
       t,
     ],
   );
@@ -495,6 +533,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         input: snapshot,
         userInput,
         cursorIndex,
+        sigils,
         activeSlashCommand,
         activeFileMention,
       });
@@ -515,7 +554,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
 
       if (selectedIsCommand) {
         if (!current.slashCommand) {
-          setUserInput(`/${selected.id} `);
+          setUserInput(`${sigils.command}${selected.id} `);
           onAutocompleteApplied?.();
           return;
         }
@@ -548,6 +587,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
       cursorIndex,
       activeFileMention,
       activeSlashCommand,
+      sigils,
     ],
   );
 
@@ -557,7 +597,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     [onSelectOption],
   );
 
-  const { selectedIndex, onKeyPress } = useAutocomplete({
+  const { selectedIndex, onKeyPress: onAutocompleteKeyPress } = useAutocomplete({
     isVisible,
     options,
     query: mode === "command" ? commandFilterQuery : fileFilterQuery,
@@ -567,6 +607,15 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
         ? () => setUserInput("")
         : undefined,
   });
+  const onKeyPress = useCallback(
+    (event: AgentAutocompleteKeyPressEvent) => {
+      if (shouldSubmitShellVariable({ key: event.key, command: activeSlashCommand })) {
+        return false;
+      }
+      return onAutocompleteKeyPress(event);
+    },
+    [activeSlashCommand, onAutocompleteKeyPress],
+  );
 
   const isLoading = resolveAutocompleteIsLoading({
     mode,
@@ -598,6 +647,7 @@ export function useAgentAutocomplete(input: UseAgentAutocompleteInput): AgentAut
     errorMessage,
     loadingText,
     emptyText,
+    tokenCatalog,
     onSelectOption,
     onKeyPress,
   };

@@ -288,6 +288,61 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.useLegacyTerminalRenderer).toBe(true);
   });
 
+  it("defaults the composer trigger sigils", async () => {
+    const result = await loadAppSettingsFromStorage(makeDeps());
+
+    expect(result.commandTriggerSigil).toBe("/");
+    expect(result.skillTriggerSigil).toBe("$");
+  });
+
+  it("loads remapped composer trigger sigils", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          commandTriggerSigil: "!",
+          skillTriggerSigil: "#",
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.commandTriggerSigil).toBe("!");
+    expect(result.skillTriggerSigil).toBe("#");
+  });
+
+  it("falls back when stored composer trigger sigils are invalid", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          commandTriggerSigil: "@",
+          skillTriggerSigil: "abc",
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.commandTriggerSigil).toBe("/");
+    expect(result.skillTriggerSigil).toBe("$");
+  });
+
+  it("resolves colliding stored composer trigger sigils", async () => {
+    const deps = makeDeps({
+      storage: createInMemoryKeyValueStorage({
+        [APP_SETTINGS_KEY]: JSON.stringify({
+          commandTriggerSigil: "$",
+          skillTriggerSigil: "$",
+        }),
+      }),
+    });
+
+    const result = await loadAppSettingsFromStorage(deps);
+
+    expect(result.commandTriggerSigil).toBe("$");
+    expect(result.skillTriggerSigil).toBe("/");
+  });
+
   it("loads configured terminal scrollback lines from app settings", async () => {
     const deps = makeDeps({
       storage: createInMemoryKeyValueStorage({
@@ -660,6 +715,22 @@ describe("saveAppSettings", () => {
     await saveAppSettings({ queryClient, updates: { sidebarRowItems }, deps });
 
     expect((await loadAppSettingsFromStorage(deps)).sidebarRowItems).toEqual(sidebarRowItems);
+  });
+
+  it("keeps saved composer trigger sigils distinct", async () => {
+    const deps = makeDeps();
+    const queryClient = new QueryClient();
+
+    await saveAppSettings({
+      queryClient,
+      updates: { commandTriggerSigil: "$" },
+      deps,
+    });
+
+    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toMatchObject({
+      commandTriggerSigil: "$",
+      skillTriggerSigil: "/",
+    });
   });
 });
 

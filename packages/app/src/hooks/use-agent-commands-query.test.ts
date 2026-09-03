@@ -64,4 +64,32 @@ describe("fetchAgentCommands", () => {
 
     expect(client.calls).toEqual([{ agentId: "agent-1", draftConfig: undefined }]);
   });
+
+  it("reports a failed draft listing instead of reading it as an empty catalog", async () => {
+    const client = createClient({
+      requestId: "req_commands",
+      agentId: "new-workspace",
+      error: "Codex app-server exited with code 1",
+      commands: [],
+    });
+
+    await expect(
+      fetchAgentCommands({
+        client,
+        agentId: "new-workspace",
+        draftConfig: { provider: "codex", cwd: "/repo" },
+      }),
+    ).rejects.toThrow("Codex app-server exited with code 1");
+  });
+
+  it("treats a draft surface with no config yet as an ordinary empty catalog", async () => {
+    const client = createClient({
+      requestId: "req_commands",
+      agentId: "new-workspace",
+      error: "Agent not found: new-workspace",
+      commands: [],
+    });
+
+    await expect(fetchAgentCommands({ client, agentId: "new-workspace" })).resolves.toEqual([]);
+  });
 });

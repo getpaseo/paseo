@@ -2028,6 +2028,14 @@ export const ru: TranslationResources = {
           queue: "Поставить в очередь",
         },
       },
+      commandTrigger: {
+        label: "Триггер команд",
+        description: "Открывает полный список команд в начале сообщения.",
+      },
+      skillTrigger: {
+        label: "Триггер навыков",
+        description: "Открывает список навыков в любом месте сообщения.",
+      },
       serviceUrls: {
         label: "URL-адреса сервисов",
         description: "Где открывать URL-адреса запущенных скриптов",

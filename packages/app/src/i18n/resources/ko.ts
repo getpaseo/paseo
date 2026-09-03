@@ -2006,6 +2006,14 @@ export const ko: TranslationResources = {
           queue: "대기열",
         },
       },
+      commandTrigger: {
+        label: "명령 트리거",
+        description: "메시지 시작에서 전체 명령 목록을 엽니다.",
+      },
+      skillTrigger: {
+        label: "스킬 트리거",
+        description: "메시지 어디에서나 스킬 목록을 엽니다.",
+      },
       serviceUrls: {
         label: "서비스 URL",
         description: "실행 중인 스크립트의 URL을 열 위치",

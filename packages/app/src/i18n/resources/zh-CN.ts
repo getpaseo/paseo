@@ -1971,6 +1971,14 @@ export const zhCN: TranslationResources = {
           queue: "排队",
         },
       },
+      commandTrigger: {
+        label: "命令触发符",
+        description: "在消息开头打开完整的命令列表。",
+      },
+      skillTrigger: {
+        label: "技能触发符",
+        description: "在消息中的任意位置打开技能列表。",
+      },
       serviceUrls: {
         label: "服务 URL",
         description: "运行脚本中的 URL 打开位置",

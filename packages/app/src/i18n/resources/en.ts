@@ -2094,6 +2094,14 @@ export const en = {
           queue: "Queue",
         },
       },
+      commandTrigger: {
+        label: "Command trigger",
+        description: "Opens the full command list at the start of a message.",
+      },
+      skillTrigger: {
+        label: "Skill trigger",
+        description: "Opens the skills list anywhere in a message.",
+      },
       serviceUrls: {
         label: "Service URLs",
         description: "Where to open URLs from running scripts",

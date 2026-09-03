@@ -2028,6 +2028,14 @@ export const ptBR: TranslationResources = {
           queue: "Fila",
         },
       },
+      commandTrigger: {
+        label: "Gatilho de comandos",
+        description: "Abre a lista completa de comandos no início de uma mensagem.",
+      },
+      skillTrigger: {
+        label: "Gatilho de habilidades",
+        description: "Abre a lista de habilidades em qualquer ponto de uma mensagem.",
+      },
       serviceUrls: {
         label: "URLs de serviço",
         description: "Onde abrir URLs de scripts em execução",

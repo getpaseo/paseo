@@ -2012,6 +2012,14 @@ export const ja: TranslationResources = {
           queue: "キュー",
         },
       },
+      commandTrigger: {
+        label: "コマンドのトリガー",
+        description: "メッセージの先頭でコマンド一覧を開きます。",
+      },
+      skillTrigger: {
+        label: "スキルのトリガー",
+        description: "メッセージ内のどこでもスキル一覧を開きます。",
+      },
       serviceUrls: {
         label: "サービスURL",
         description: "実行中のスクリプトからURLを開く場所",
