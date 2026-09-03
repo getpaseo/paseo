@@ -2242,6 +2242,7 @@ export const fr: TranslationResources = {
         jumpToTab: "Aller à l'onglet",
         previousWorkspace: "Espace de travail précédent",
         nextWorkspace: "Espace de travail suivant",
+        nextReadyWaitingWorkspace: "Espace de travail suivant prêt ou en attente",
         previousTab: "Onglet précédent",
         nextTab: "Onglet suivant",
         splitPaneRight: "Volet divisé à droite",

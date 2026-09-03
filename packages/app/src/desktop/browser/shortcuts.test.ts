@@ -232,6 +232,15 @@ describe("buildBrowserKeyboardPolicy", () => {
 
     expect(policy.prefixes).toContainEqual({
       alt: true,
+      code: "KeyR",
+      control: false,
+      editable: false,
+      key: "r",
+      meta: false,
+      shift: false,
+    });
+    expect(policy.prefixes).toContainEqual({
+      alt: true,
       code: "KeyT",
       control: false,
       key: "t",

@@ -18,6 +18,7 @@ function makeCtx(overrides: Partial<ShortcutRoutingContext> = {}): ShortcutRouti
     pathname: "/h/srv/workspace/ws-2",
     isMobile: false,
     sidebarShortcutTargets: SIDEBAR_TARGETS,
+    readyWaitingWorkspaceTargets: [],
     navigationActiveWorkspace: null,
     commandCenterOpen: false,
     shortcutsDialogOpen: false,
@@ -292,6 +293,68 @@ describe("routeKeyboardShortcut — workspace.navigate.relative", () => {
       serverId: "srv",
       workspaceId: "ws-1",
     });
+  });
+});
+
+describe("routeKeyboardShortcut — workspace.navigate.ready-waiting.next", () => {
+  const READY_WAITING_TARGETS = [
+    { serverId: "srv", workspaceId: "waiting-1" },
+    { serverId: "srv", workspaceId: "waiting-2" },
+    { serverId: "srv", workspaceId: "ready-1" },
+  ] as const;
+
+  it("moves to the next ready/waiting workspace", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "workspace.navigate.ready-waiting.next", payload: null },
+        makeCtx({
+          readyWaitingWorkspaceTargets: READY_WAITING_TARGETS,
+          navigationActiveWorkspace: { serverId: "srv", workspaceId: "waiting-2" },
+        }),
+      ),
+    ).toEqual<ShortcutAction>({
+      kind: "navigate-workspace",
+      serverId: "srv",
+      workspaceId: "ready-1",
+    });
+  });
+
+  it("wraps from the final ready/waiting workspace to the first", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "workspace.navigate.ready-waiting.next", payload: null },
+        makeCtx({
+          readyWaitingWorkspaceTargets: READY_WAITING_TARGETS,
+          navigationActiveWorkspace: { serverId: "srv", workspaceId: "ready-1" },
+        }),
+      ),
+    ).toEqual<ShortcutAction>({
+      kind: "navigate-workspace",
+      serverId: "srv",
+      workspaceId: "waiting-1",
+    });
+  });
+
+  it("opens the first ready/waiting workspace when the current workspace is not actionable", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "workspace.navigate.ready-waiting.next", payload: null },
+        makeCtx({ readyWaitingWorkspaceTargets: READY_WAITING_TARGETS }),
+      ),
+    ).toEqual<ShortcutAction>({
+      kind: "navigate-workspace",
+      serverId: "srv",
+      workspaceId: "waiting-1",
+    });
+  });
+
+  it("does nothing when no workspace is ready or waiting", () => {
+    expect(
+      routeKeyboardShortcut(
+        { action: "workspace.navigate.ready-waiting.next", payload: null },
+        makeCtx(),
+      ),
+    ).toEqual<ShortcutAction>({ kind: "none" });
   });
 });
 

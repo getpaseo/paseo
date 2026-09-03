@@ -10,6 +10,7 @@ beforeEach(() => {
     altDown: false,
     cmdOrCtrlDown: false,
     sidebarShortcutWorkspaceTargets: [],
+    readyWaitingWorkspaceTargets: [],
   });
 });
 
@@ -38,5 +39,15 @@ describe("keyboard-shortcuts-store", () => {
     expect(useKeyboardShortcutsStore.getState().capturingShortcut).toBe(false);
     useKeyboardShortcutsStore.getState().setCapturingShortcut(true);
     expect(useKeyboardShortcutsStore.getState().capturingShortcut).toBe(true);
+  });
+
+  it("stores ready/waiting workspace navigation targets", () => {
+    useKeyboardShortcutsStore
+      .getState()
+      .setReadyWaitingWorkspaceTargets([{ serverId: "srv", workspaceId: "ws-ready" }]);
+
+    expect(useKeyboardShortcutsStore.getState().readyWaitingWorkspaceTargets).toEqual([
+      { serverId: "srv", workspaceId: "ws-ready" },
+    ]);
   });
 });

@@ -175,6 +175,11 @@ describe("keyboard-shortcuts", () => {
       payload: { index: 2 },
     },
     {
+      name: "matches Alt+R to navigate to the next ready/waiting workspace",
+      event: { key: "r", code: "KeyR", altKey: true },
+      action: "workspace.navigate.ready-waiting.next",
+    },
+    {
       name: "matches workspace index jump on desktop via Mod+digit",
       event: { key: "2", code: "Digit2", metaKey: true },
       context: { isMac: true, isDesktop: true },
@@ -351,6 +356,12 @@ describe("keyboard-shortcuts", () => {
       action: "theme.cycle",
     },
     {
+      name: "matches Option+R on macOS when Option substitutes event.key",
+      event: { key: "\u00ae", code: "KeyR", altKey: true },
+      context: { isMac: true },
+      action: "workspace.navigate.ready-waiting.next",
+    },
+    {
       name: "matches Alt+Shift+[ to previous tab on macOS when Option substitutes event.key",
       event: { key: "\u201D", code: "BracketLeft", altKey: true, shiftKey: true },
       context: { isMac: true },
@@ -465,6 +476,21 @@ describe("keyboard-shortcuts", () => {
       name: "keeps mac Option+digit available for international text input",
       event: { key: "@", code: "Digit2", altKey: true },
       context: { isMac: true, isDesktop: true, focusScope: "message-input" },
+    },
+    {
+      name: "keeps mac Option+R available for text input in the message input",
+      event: { key: "®", code: "KeyR", altKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+    },
+    {
+      name: "keeps Alt+R available in generic editable fields",
+      event: { key: "r", code: "KeyR", altKey: true },
+      context: { focusScope: "editable" },
+    },
+    {
+      name: "does not jump to the next ready/waiting workspace while a terminal is focused",
+      event: { key: "r", code: "KeyR", altKey: true },
+      context: { focusScope: "terminal" },
     },
     {
       name: "does not match Ctrl+K for command center on non-mac in terminal",
@@ -638,6 +664,7 @@ describe("keyboard-shortcut help sections", () => {
         "new-agent": ["mod", "O"],
         "workspace-tab-new": ["mod", "T"],
         "workspace-jump-index": ["alt", "1-9"],
+        "workspace-next-ready-waiting": ["alt", "R"],
         "workspace-tab-jump-index": ["alt", "shift", "1-9"],
         "workspace-tab-close-current": ["alt", "shift", "W"],
         "workspace-pane-split-right": ["mod", "\\"],
@@ -792,6 +819,7 @@ describe("keyboard-shortcut help sections", () => {
     const workspaces = sections.find((section) => section.id === "workspaces");
     const layout = sections.find((section) => section.id === "layout");
     const openProject = findRow(sections, "new-agent");
+    const nextReadyWaiting = findRow(sections, "workspace-next-ready-waiting");
     const cycleAgentMode = findRow(sections, "cycle-agent-mode");
     const showShortcuts = findRow(sections, "show-shortcuts");
 
@@ -799,6 +827,7 @@ describe("keyboard-shortcut help sections", () => {
     expect(layout?.titleKey).toBe("settings.shortcuts.sections.layout");
     expect(openProject?.labelKey).toBe("settings.shortcuts.help.openProject");
     expect(openProject?.label).toBe("Open project");
+    expect(nextReadyWaiting?.labelKey).toBe("settings.shortcuts.help.nextReadyWaitingWorkspace");
     expect(cycleAgentMode?.labelKey).toBe("settings.shortcuts.help.cycleAgentMode");
     expect(showShortcuts?.noteKey).toBe("settings.shortcuts.helpNotes.showKeyboardShortcuts");
   });

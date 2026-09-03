@@ -218,6 +218,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-tab-jump-index": "settings.shortcuts.help.jumpToTab",
   "workspace-prev": "settings.shortcuts.help.previousWorkspace",
   "workspace-next": "settings.shortcuts.help.nextWorkspace",
+  "workspace-next-ready-waiting": "settings.shortcuts.help.nextReadyWaitingWorkspace",
   "workspace-tab-prev": "settings.shortcuts.help.previousTab",
   "workspace-tab-next": "settings.shortcuts.help.nextTab",
   "workspace-pane-split-right": "settings.shortcuts.help.splitPaneRight",
@@ -684,6 +685,23 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "workspace-next",
       section: "workspaces",
       label: "Next workspace",
+    },
+  },
+
+  // --- Next ready/waiting workspace ---
+  {
+    id: "workspace-navigate-ready-waiting-next-alt-r",
+    action: "workspace.navigate.ready-waiting.next",
+    combo: "Alt+R",
+    // Alt/Option+R is a plain letter combo with no mod key, so it stays out of
+    // text entry and terminals: macOS turns Option+R into "®", and readline
+    // binds Alt+R to revert-line.
+    when: { commandCenter: false, editable: false, terminal: false },
+    help: {
+      id: "workspace-next-ready-waiting",
+      section: "navigation",
+      label: "Next ready/waiting workspace",
+      keys: ["alt", "R"],
     },
   },
 

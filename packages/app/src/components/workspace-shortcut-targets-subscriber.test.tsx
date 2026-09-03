@@ -80,6 +80,7 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
 
     useKeyboardShortcutsStore.setState({
       sidebarShortcutWorkspaceTargets: [],
+      readyWaitingWorkspaceTargets: [],
     });
     useSidebarCollapsedSectionsStore.setState({
       collapsedProjectKeys: new Set(),
@@ -209,6 +210,63 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
     ]);
   });
 
+  it("publishes only waiting and ready targets in status order", async () => {
+    act(() => {
+      useSessionStore.getState().setWorkspaces(
+        "srv",
+        new Map([
+          [
+            "ws-ready",
+            workspaceDescriptor({
+              id: "ws-ready",
+              status: "attention",
+              statusEnteredAt: new Date("2026-03-01T00:00:00.000Z"),
+            }),
+          ],
+          [
+            "ws-running",
+            workspaceDescriptor({
+              id: "ws-running",
+              status: "running",
+              statusEnteredAt: new Date("2026-04-01T00:00:00.000Z"),
+            }),
+          ],
+          [
+            "ws-waiting-old",
+            workspaceDescriptor({
+              id: "ws-waiting-old",
+              status: "needs_input",
+              statusEnteredAt: new Date("2026-01-01T00:00:00.000Z"),
+            }),
+          ],
+          [
+            "ws-waiting-new",
+            workspaceDescriptor({
+              id: "ws-waiting-new",
+              status: "needs_input",
+              statusEnteredAt: new Date("2026-02-01T00:00:00.000Z"),
+            }),
+          ],
+          ["ws-done", workspaceDescriptor({ id: "ws-done", status: "done" })],
+        ]),
+      );
+    });
+
+    await act(async () => {
+      root?.render(
+        <SidebarModelProvider>
+          <WorkspaceShortcutTargetsSubscriber enabled={true} />
+        </SidebarModelProvider>,
+      );
+    });
+
+    expect(useKeyboardShortcutsStore.getState().readyWaitingWorkspaceTargets).toEqual([
+      { serverId: "srv", workspaceId: "ws-waiting-new" },
+      { serverId: "srv", workspaceId: "ws-waiting-old" },
+      { serverId: "srv", workspaceId: "ws-ready" },
+    ]);
+  });
+
   it("publishes shortcut targets from the visible host filter in project and status modes", async () => {
     act(() => {
       setHostProfiles([hostProfile("host-a"), hostProfile("host-b")]);
@@ -266,5 +324,6 @@ describe("WorkspaceShortcutTargetsSubscriber", () => {
     });
 
     expect(useKeyboardShortcutsStore.getState().sidebarShortcutWorkspaceTargets).toEqual([]);
+    expect(useKeyboardShortcutsStore.getState().readyWaitingWorkspaceTargets).toEqual([]);
   });
 });

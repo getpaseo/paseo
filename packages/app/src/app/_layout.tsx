@@ -631,7 +631,7 @@ function SidebarChrome({
   const isDesktopOpen = usePanelStore((state) => state.desktop.agentListOpen);
   const active = visible && (isCompactLayout ? isMobileActive : isDesktopOpen);
   return (
-    <SidebarModelProvider active={active}>
+    <SidebarModelProvider active={active || keyboardShortcutsEnabled}>
       {mounted ? <LeftSidebar active={active} /> : null}
       <WorkspaceShortcutTargetsSubscriber enabled={keyboardShortcutsEnabled} />
     </SidebarModelProvider>
