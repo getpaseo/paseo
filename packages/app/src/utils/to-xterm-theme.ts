@@ -1,6 +1,7 @@
 import type { ITheme } from "@xterm/xterm";
 
 import type { Theme } from "@/styles/theme";
+import type { TerminalFindColors } from "@/terminal/runtime/terminal-emulator-runtime";
 
 type TerminalPalette = Theme["colors"]["terminal"];
 
@@ -29,5 +30,16 @@ export function toXtermTheme(terminal: TerminalPalette): ITheme {
     brightMagenta: terminal.brightMagenta,
     brightCyan: terminal.brightCyan,
     brightWhite: terminal.brightWhite,
+  };
+}
+
+/**
+ * Find highlight colors travel with the xterm theme so both are derived from one memo
+ * over the same palette, and a theme switch can never update one without the other.
+ */
+export function toXtermFindColors(terminal: TerminalPalette): TerminalFindColors {
+  return {
+    match: terminal.findMatch,
+    activeMatch: terminal.findMatchActive,
   };
 }

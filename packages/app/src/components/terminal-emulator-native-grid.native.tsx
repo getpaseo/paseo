@@ -575,6 +575,11 @@ function NativeTerminalEmulator({
         inputRef.current?.blur();
         Keyboard.dismiss();
       },
+      // Find is web-only (keyboard/availability.ts); no native surface can open the bar.
+      findNext: () => {},
+      findPrevious: () => {},
+      clearFind: () => {},
+      getSelectionText: () => "",
     }),
     [
       enqueueOutputText,

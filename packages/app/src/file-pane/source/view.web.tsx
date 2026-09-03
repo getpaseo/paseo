@@ -4,7 +4,7 @@ import { EditorView } from "@codemirror/view";
 import { getLanguageForFile } from "@getpaseo/highlight";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
 import type { EditorVisualTheme } from "../editor/extensions.web";
-import { editorTheme } from "../editor/extensions.web";
+import { editorSearchExtension, editorTheme } from "../editor/extensions.web";
 import { selectSourcePresentation, type SourcePresentation } from "./presentation";
 
 interface FileSourceViewProps {
@@ -15,6 +15,8 @@ interface FileSourceViewProps {
   size: number;
   theme: EditorVisualTheme;
   tooLargeMessage: string;
+  /** Hands the live view to the file pane so find can search it. */
+  onEditorViewChange?(view: EditorView | null): void;
 }
 
 const languageCompartment = new Compartment();
@@ -28,6 +30,7 @@ export function FileSourceView({
   size,
   theme,
   tooLargeMessage,
+  onEditorViewChange,
 }: FileSourceViewProps) {
   const presentation = selectSourcePresentation({ size, platform: "web" });
   if (presentation === "unsupported") {
@@ -45,6 +48,7 @@ export function FileSourceView({
       navigationRevision={navigationRevision}
       presentation={presentation}
       theme={theme}
+      onEditorViewChange={onEditorViewChange}
     />
   );
 }
@@ -56,12 +60,15 @@ function ReadonlyCodeMirror({
   navigationRevision,
   presentation,
   theme,
+  onEditorViewChange,
 }: Omit<FileSourceViewProps, "size" | "tooLargeMessage"> & {
   presentation: Exclude<SourcePresentation, "unsupported">;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const initial = useRef({ content, filename, presentation, theme });
+  const onEditorViewChangeRef = useRef(onEditorViewChange);
+  onEditorViewChangeRef.current = onEditorViewChange;
 
   useEffect(() => {
     if (!hostRef.current) return;
@@ -77,11 +84,14 @@ function ReadonlyCodeMirror({
             languageFor({ filename: values.filename, presentation: values.presentation }),
           ),
           themeCompartment.of(editorTheme(values.theme)),
+          editorSearchExtension(),
         ],
       }),
     });
     viewRef.current = view;
+    onEditorViewChangeRef.current?.(view);
     return () => {
+      onEditorViewChangeRef.current?.(null);
       view.destroy();
       viewRef.current = null;
     };

@@ -1,10 +1,18 @@
-import { useCallback, type ClipboardEvent, type CSSProperties, type ReactNode } from "react";
+import {
+  useCallback,
+  type ClipboardEvent,
+  type CSSProperties,
+  type ReactNode,
+  type Ref,
+} from "react";
 import { View, type StyleProp, type ViewStyle } from "react-native";
 import { createAssistantSelectionClipboardContent } from "./content.web";
 
 interface AssistantSelectionCopySurfaceProps {
   children: ReactNode;
   style?: StyleProp<ViewStyle>;
+  /** The surface view, which find registers as the transcript pane's root. */
+  ref?: Ref<View>;
 }
 
 const DISPLAY_CONTENTS: CSSProperties = { display: "contents" };
@@ -12,6 +20,7 @@ const DISPLAY_CONTENTS: CSSProperties = { display: "contents" };
 export function AssistantSelectionCopySurface({
   children,
   style,
+  ref,
 }: AssistantSelectionCopySurfaceProps) {
   const handleCopy = useCallback((event: ClipboardEvent<HTMLDivElement>) => {
     const content = createAssistantSelectionClipboardContent(window.getSelection());
@@ -26,7 +35,9 @@ export function AssistantSelectionCopySurface({
 
   return (
     <div onCopy={handleCopy} style={DISPLAY_CONTENTS}>
-      <View style={style}>{children}</View>
+      <View ref={ref} style={style}>
+        {children}
+      </View>
     </div>
   );
 }

@@ -51,7 +51,10 @@ import { resolveTerminalRestoreOptions } from "@/terminal/runtime/terminal-resto
 import { usePanelStore } from "@/stores/panel-store";
 import { useBlockMobilePanelOpenGestures } from "@/mobile-panels/provider";
 import { useSessionStore } from "@/stores/session-store";
-import { toXtermTheme } from "@/utils/to-xterm-theme";
+import { toXtermFindColors, toXtermTheme } from "@/utils/to-xterm-theme";
+import { FindBar } from "@/find/bar";
+import { domElementOf } from "@/find/dom/element";
+import { useTerminalFind } from "@/find/terminal/use-terminal-find";
 import TerminalEmulator, { type TerminalEmulatorHandle } from "./terminal-emulator";
 import { TerminalFloatingCopyAction, TerminalPasteAction } from "./terminal-copy-paste-actions";
 import {
@@ -59,7 +62,7 @@ import {
   type TerminalResizeRequest,
 } from "./terminal-resize-debouncer";
 import { useIsCompactFormFactor } from "@/constants/layout";
-import { isNative } from "@/constants/platform";
+import { isNative, isWeb } from "@/constants/platform";
 import {
   applyTerminalRendererReadyChange,
   resolveTerminalStreamTarget,
@@ -215,6 +218,7 @@ export function TerminalPane({
   const { theme } = useUnistyles();
   const { settings } = useAppSettings();
   const xtermTheme = useMemo(() => toXtermTheme(theme.colors.terminal), [theme]);
+  const xtermFindColors = useMemo(() => toXtermFindColors(theme.colors.terminal), [theme]);
   const terminalFontFamily = useMemo(() => {
     const trimmed = settings.monoFontFamily.trim();
     return trimmed.length > 0 ? trimmed : undefined;
@@ -267,6 +271,16 @@ export function TerminalPane({
   const [resizeRequestToken, setResizeRequestToken] = useState(0);
   useBlockMobilePanelOpenGestures(isMobile && isWorkspaceFocused && isPaneFocused && hasSelection);
   const emulatorRef = useRef<TerminalEmulatorHandle>(null);
+  const outputContainerRef = useRef<View | null>(null);
+  // The find surface registry decides which pane owns Cmd+F by asking whose root
+  // contains the focused element, so the output container is this pane's root.
+  const getFindRoot = useCallback(() => domElementOf(outputContainerRef.current), []);
+  const { find, onFindResultsChange, onFindBufferChange } = useTerminalFind({
+    enabled: isWeb && retainedPanelActive,
+    engineKey: rendererReadyStreamKey === terminalStreamKey ? terminalStreamKey : null,
+    emulatorRef,
+    getRoot: getFindRoot,
+  });
   const terminalIdRef = useRef<string>(terminalId);
   const terminalPresentedRef = useRef(isTerminalPresented);
   terminalPresentedRef.current = isTerminalPresented;
@@ -1041,7 +1055,7 @@ export function TerminalPane({
 
   return (
     <Animated.View style={containerStyle}>
-      <View style={styles.outputContainer}>
+      <View ref={outputContainerRef} style={styles.outputContainer}>
         <View style={styles.terminalGestureContainer}>
           <TerminalEmulator
             ref={emulatorRef}
@@ -1050,6 +1064,7 @@ export function TerminalPane({
             supportsTerminalInputModeReplay={supportsTerminalInputModeReplay}
             testId="terminal-surface"
             xtermTheme={xtermTheme}
+            findColors={xtermFindColors}
             scrollbackLines={settings.terminalScrollbackLines}
             fontFamily={terminalFontFamily}
             fontSize={settings.codeFontSize}
@@ -1058,6 +1073,8 @@ export function TerminalPane({
             swipeGesturesEnabled={swipeGesturesEnabled}
             initialSnapshot={initialSnapshot}
             onRendererReadyChange={handleRendererReadyChange}
+            onFindResultsChange={onFindResultsChange}
+            onFindBufferChange={onFindBufferChange}
             onSwipeRight={handleSwipeRight}
             onSwipeLeft={handleSwipeLeft}
             onInput={handleTerminalData}
@@ -1085,6 +1102,18 @@ export function TerminalPane({
           <View pointerEvents="box-none" style={styles.floatingCopyContainer}>
             <TerminalFloatingCopyAction hasSelection={hasSelection} onCopy={handleTerminalCopy} />
           </View>
+        ) : null}
+
+        {find.isOpen ? (
+          <FindBar
+            query={find.query}
+            result={find.result}
+            inputRef={find.inputRef}
+            onChangeQuery={find.setQuery}
+            onNext={find.next}
+            onPrevious={find.previous}
+            onClose={find.close}
+          />
         ) : null}
       </View>
 

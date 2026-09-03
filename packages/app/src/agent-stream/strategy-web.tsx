@@ -287,6 +287,7 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     renderers,
     listEmptyComponent,
     viewportRef,
+    onViewportReady,
     routeBottomAnchorRequest,
     isAuthoritativeHistoryReady,
     onNearBottomChange,
@@ -740,6 +741,27 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
     onNearBottomChange,
   });
 
+  // Find centers the match itself once the row is measurable, so this only has to get
+  // a virtualized row mounted and stop the stream from scrolling out from under it.
+  const revealRow = useStableEvent((itemId: string) => {
+    const scrollContainer = scrollContainerRef.current;
+    if (!scrollContainer) {
+      return;
+    }
+    cancelPendingStickToBottom();
+    setFollowOutput(false);
+    const selector = `[data-history-row-id="${CSS.escape(itemId)}"]`;
+    if (scrollContainer.querySelector(selector)) {
+      return;
+    }
+    const index = segments.historyVirtualized.findIndex((item) => item.id === itemId);
+    if (index >= 0) {
+      rowVirtualizer.scrollToIndex(index, { align: "start" });
+    }
+  });
+
+  const getScrollElement = useStableEvent(() => scrollContainerRef.current);
+
   const stopFollowingOutputFromUserIntent = useStableEvent(() => {
     cancelPendingStickToBottom();
     if (followOutputRef.current) {
@@ -1123,6 +1145,8 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
         scheduleStickToBottom();
       },
       scrollToMessage,
+      getScrollElement,
+      revealRow,
     };
     viewportRef.current = handle;
     return () => {
@@ -1134,10 +1158,19 @@ function WebStreamViewport(props: StreamRenderInput & { isMobileBreakpoint: bool
   }, [
     cancelPendingStickToBottom,
     forceStickToBottom,
+    getScrollElement,
+    revealRow,
     scheduleStickToBottom,
     scrollToMessage,
     viewportRef,
   ]);
+
+  // Kept out of the effect above: that one re-runs on every render because the handle's
+  // callbacks are rebuilt, and a false/true pair per render would loop through state.
+  useEffect(() => {
+    onViewportReady?.(true);
+    return () => onViewportReady?.(false);
+  }, [onViewportReady]);
 
   const contentContainerStyle = useMemo((): CSSProperties => {
     return {

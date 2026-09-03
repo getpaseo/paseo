@@ -52,6 +52,9 @@ export type KeyboardActionId =
   | "worktree.new"
   | "workspace.archive"
   | "workspace.pin"
+  | "find.open"
+  | "find.next"
+  | "find.previous"
   // Command-center only: no keybind, so these are absent from route-shortcut.ts.
   | "workspace.rename"
   | "workspace.setup.show";
@@ -110,6 +113,9 @@ export type KeyboardActionDefinition =
   | { id: "worktree.new"; scope: KeyboardActionScope }
   | { id: "workspace.archive"; scope: KeyboardActionScope }
   | { id: "workspace.pin"; scope: KeyboardActionScope }
+  | { id: "find.open"; scope: KeyboardActionScope }
+  | { id: "find.next"; scope: KeyboardActionScope }
+  | { id: "find.previous"; scope: KeyboardActionScope }
   | { id: "workspace.rename"; scope: KeyboardActionScope }
   | { id: "workspace.setup.show"; scope: KeyboardActionScope };
 

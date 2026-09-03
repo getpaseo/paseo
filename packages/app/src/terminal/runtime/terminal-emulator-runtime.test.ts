@@ -26,6 +26,16 @@ vi.mock("@xterm/addon-ligatures/lib/addon-ligatures.mjs", () => ({
 
 vi.mock("@xterm/addon-search", () => ({
   SearchAddon: class SearchAddon {
+    findNext(): boolean {
+      return false;
+    }
+    findPrevious(): boolean {
+      return false;
+    }
+    clearDecorations(): void {}
+    onDidChangeResults(): { dispose: () => void } {
+      return { dispose: () => undefined };
+    }
     dispose(): void {}
   },
 }));

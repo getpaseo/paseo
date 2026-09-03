@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { FlatList, Text, View, type ListRenderItem } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
+import type { EditorView } from "@codemirror/view";
 import { highlightCode, type HighlightToken } from "@getpaseo/highlight";
 import { syntaxTokenStyleFor } from "@/styles/syntax-token-styles";
 import type { WorkspaceFileLocation } from "@/workspace/file-open";
@@ -15,6 +16,8 @@ interface FileSourceViewProps {
   size: number;
   theme: EditorVisualTheme;
   tooLargeMessage: string;
+  /** Prop-compatible with the web view; there is no CodeMirror view to hand over here. */
+  onEditorViewChange?(view: EditorView | null): void;
 }
 
 interface SourceLine {

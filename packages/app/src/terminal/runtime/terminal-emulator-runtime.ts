@@ -1,7 +1,7 @@
 import { ClipboardAddon } from "@xterm/addon-clipboard";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
-import { SearchAddon } from "@xterm/addon-search";
+import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -29,8 +29,31 @@ import {
   type TerminalLocalFileLinkTarget,
 } from "../local-links/terminal-local-link-provider";
 import { resolveTerminalFontFamily, resolveTerminalFontSize } from "./terminal-font";
+import { resolveFindSeed } from "./find-seed";
 
 export type TerminalOutputData = Uint8Array;
+
+/**
+ * Opaque `#rrggbb` values. xterm's renderers mask the alpha channel of decoration
+ * backgrounds (addon-webgl CellColorResolver, DomRendererRowFactory), so a translucent
+ * color paints solid; styles/theme.ts pre-blends these over the terminal background.
+ */
+export interface TerminalFindColors {
+  match: string;
+  activeMatch: string;
+}
+
+export interface TerminalFindResults {
+  /**
+   * -1 when no match is active. The addon tracks only the matches it highlighted, so a
+   * match found past the highlight limit reports -1 rather than its real position.
+   */
+  resultIndex: number;
+  /** Capped at the addon's highlight limit. */
+  resultCount: number;
+  /** `resultCount` hit the highlight limit, so it is a floor and not a total. */
+  countIsCapped: boolean;
+}
 
 export interface TerminalEmulatorRuntimeMountInput {
   root: HTMLDivElement;
@@ -38,6 +61,8 @@ export interface TerminalEmulatorRuntimeMountInput {
   initialSnapshot: TerminalState | null;
   scrollback: number;
   theme: ITheme;
+  /** Omitted by hosts that never search (the native webview); find then does nothing. */
+  findColors?: TerminalFindColors;
   fontFamily?: string;
   fontSize?: number;
 }
@@ -62,6 +87,12 @@ export interface TerminalEmulatorRuntimeCallbacks {
     disposition: "main" | "side",
   ) => Promise<void> | void;
   onInputModeChange?: (state: TerminalInputModeState) => Promise<void> | void;
+  onFindResultsChange?: (results: TerminalFindResults) => void;
+  /**
+   * The active buffer was swapped (an app entered or left the alternate screen), which
+   * dropped the current find. Re-issue the query to search the buffer now on screen.
+   */
+  onFindBufferChange?: () => void;
 }
 
 export interface TerminalResizeEvent {
@@ -105,6 +136,7 @@ interface TerminalEmulatorRuntimeDisposables {
   restoreViewportStyles: () => void;
   disposeFitAddon: () => void;
   disposeWebglAddon: () => void;
+  disposeFind: () => void;
   disposeTerminal: () => void;
 }
 
@@ -137,6 +169,9 @@ const isAppleHandheld =
   });
 
 const DEFAULT_TOUCH_SCROLL_LINE_HEIGHT_PX = 18;
+// The addon's own default. Every decoration is a marker plus a DOM/WebGL overlay, and the
+// addon re-scans the whole buffer 200ms after each write while a term is set.
+const FIND_HIGHLIGHT_LIMIT = 1_000;
 const FIT_TIMEOUT_DELAYS_MS = [0, 16, 48, 120, 250, 500, 1_000, 2_000];
 const OUTPUT_OPERATION_TIMEOUT_MS = 5_000;
 const EMPTY_TERMINAL_OUTPUT = new Uint8Array(0);
@@ -173,6 +208,12 @@ export class TerminalEmulatorRuntime {
   };
   private terminal: Terminal | null = null;
   private fitAddon: FitAddon | null = null;
+  private searchAddon: SearchAddon | null = null;
+  private findColors: TerminalFindColors | null = null;
+  // The term the addon is currently decorating, or null when nothing is being searched.
+  // The addon restarts from the current selection whenever the term differs from the
+  // previous one, so the runtime has to know when a term is new.
+  private findTerm: string | null = null;
   private fitAndEmitResize: ((input?: TerminalResizeRequest) => void) | null = null;
   private lastSize: { rows: number; cols: number } | null = null;
   private cleanup: (() => void) | null = null;
@@ -267,7 +308,8 @@ export class TerminalEmulatorRuntime {
         },
       }),
     );
-    terminal.loadAddon(new SearchAddon({ highlightLimit: 20_000 }));
+    const searchAddon = new SearchAddon({ highlightLimit: FIND_HIGHLIGHT_LIMIT });
+    terminal.loadAddon(searchAddon);
     terminal.loadAddon(new ClipboardAddon());
     try {
       terminal.loadAddon(new LigaturesAddon());
@@ -356,7 +398,28 @@ export class TerminalEmulatorRuntime {
 
     this.terminal = terminal;
     this.fitAddon = fitAddon;
+    this.searchAddon = searchAddon;
+    this.findColors = input.findColors ?? null;
+    this.findTerm = null;
     window.__paseoTerminal = terminal;
+
+    const findResultsDisposable = searchAddon.onDidChangeResults((event) => {
+      this.callbacks.onFindResultsChange?.({
+        resultIndex: event.resultIndex,
+        resultCount: event.resultCount,
+        countIsCapped: event.resultCount >= FIND_HIGHLIGHT_LIMIT,
+      });
+    });
+    // Decorations are markers on the buffer that was active when the search ran, so a
+    // swap to or from the alternate screen leaves them pointing at the wrong lines.
+    // Search on the alternate screen therefore only ever covers the visible screen.
+    const bufferChangeDisposable = terminal.buffer.onBufferChange(() => {
+      if (this.findTerm === null) {
+        return;
+      }
+      this.clearFind();
+      this.callbacks.onFindBufferChange?.();
+    });
 
     const fitAndEmitResize = (resizeInput?: TerminalResizeRequest): void => {
       const forceRefresh = resizeInput?.forceRefresh ?? false;
@@ -585,6 +648,10 @@ export class TerminalEmulatorRuntime {
         disposeWebglRenderer();
         disposeImageAddon();
       },
+      disposeFind: () => {
+        findResultsDisposable.dispose();
+        bufferChangeDisposable.dispose();
+      },
       disposeTerminal: () => {
         localFileLinkProvider.dispose();
         terminal.dispose();
@@ -603,6 +670,7 @@ export class TerminalEmulatorRuntime {
       disposables.removeTouchListeners();
       disposables.disposeFitAddon();
       disposables.disposeWebglAddon();
+      disposables.disposeFind();
       disposables.disposeTerminal();
       disposables.restoreDocumentStyles();
       disposables.restoreViewportStyles();
@@ -675,11 +743,109 @@ export class TerminalEmulatorRuntime {
     this.fitAndEmitResize?.(input);
   }
 
-  setTheme(input: { theme: ITheme }): void {
+  /**
+   * Search forwards and select the match.
+   *
+   * Repeating the same term steps to the next match; a different term restarts the
+   * search. Results arrive asynchronously through `onFindResultsChange`, which the
+   * addon also fires on its own 200ms rescan after terminal output.
+   */
+  findNext(input: { term: string }): void {
+    const options = this.buildFindOptions();
+    if (!this.searchAddon || !options) {
+      return;
+    }
+    this.seedFindStart(input.term);
+    this.searchAddon.findNext(input.term, options);
+    this.findTerm = input.term;
+  }
+
+  findPrevious(input: { term: string }): void {
+    const options = this.buildFindOptions();
+    if (!this.searchAddon || !options) {
+      return;
+    }
+    this.seedFindStart(input.term);
+    this.searchAddon.findPrevious(input.term, options);
+    this.findTerm = input.term;
+  }
+
+  clearFind(): void {
+    if (this.findTerm === null) {
+      return;
+    }
+    this.findTerm = null;
+    this.searchAddon?.clearDecorations();
+    // clearDecorations leaves the active match selected, and the selection is ours.
+    this.terminal?.clearSelection();
+  }
+
+  getSelectionText(): string {
+    return this.terminal?.getSelection() ?? "";
+  }
+
+  private buildFindOptions(): ISearchOptions | null {
+    const colors = this.findColors;
+    if (!colors) {
+      return null;
+    }
+    return {
+      caseSensitive: false,
+      regex: false,
+      // onDidChangeResults only fires when decorations are requested, so the counter in
+      // the find bar depends on this option being present on every search.
+      decorations: {
+        matchBackground: colors.match,
+        matchOverviewRuler: colors.match,
+        activeMatchBackground: colors.activeMatch,
+        activeMatchColorOverviewRuler: colors.activeMatch,
+      },
+    };
+  }
+
+  private seedFindStart(term: string): void {
     const terminal = this.terminal;
     if (!terminal) {
       return;
     }
+    const seed = resolveFindSeed({
+      term,
+      previousTerm: this.findTerm,
+      hasSelection: terminal.hasSelection(),
+      viewportY: terminal.buffer.active.viewportY,
+    });
+    if (seed) {
+      terminal.select(seed.column, seed.row, seed.length);
+    }
+  }
+
+  /**
+   * Repaints the decorations of a running search in the colors that just arrived.
+   *
+   * The addon built them from the previous theme's values and caches the options it last
+   * searched with, so neither its own post-write rescan nor anything else repaints them.
+   * Making both sides forget the term is what keeps this from stepping to the next match:
+   * the addon resumes from the END of the selection for a term it just searched and from
+   * its START otherwise, and the selection is the active match. Unlike `clearFind` this
+   * leaves that selection in place, because it is the anchor the re-search needs.
+   */
+  private repaintFind(): void {
+    const term = this.findTerm;
+    if (term === null || !this.searchAddon) {
+      return;
+    }
+    this.searchAddon.clearDecorations();
+    this.findTerm = null;
+    this.findNext({ term });
+  }
+
+  setTheme(input: { theme: ITheme; findColors?: TerminalFindColors }): void {
+    const terminal = this.terminal;
+    if (!terminal) {
+      return;
+    }
+
+    this.findColors = input.findColors ?? null;
 
     try {
       terminal.options.theme = withOverviewRulerBorderHidden(input.theme);
@@ -690,6 +856,7 @@ export class TerminalEmulatorRuntime {
 
     this.applyThemeBackground(input.theme);
     this.refreshVisibleRows();
+    this.repaintFind();
   }
 
   setScrollback(input: { lines: number }): void {
@@ -797,6 +964,9 @@ export class TerminalEmulatorRuntime {
     }
     this.terminal = null;
     this.fitAddon = null;
+    this.searchAddon = null;
+    this.findColors = null;
+    this.findTerm = null;
     this.fitAndEmitResize = null;
     this.lastSize = null;
     this.themeBackgroundElements = [];
