@@ -12,6 +12,7 @@ import type {
   AgentManagerProviderState,
   ProviderDiagnosticResult,
   ResolvedProviderCreateConfig,
+  StagedMutableProviderConfig,
 } from "../agent/provider-snapshot-manager.js";
 import { ProviderSnapshotManager } from "../agent/provider-snapshot-manager.js";
 import type { SessionOptions } from "../session.js";
@@ -169,6 +170,9 @@ export interface ProviderSnapshotManagerSpies {
     typeof vi.fn<[AgentProvider], Promise<ProviderDiagnosticResult>>
   >;
   applyMutableProviderConfig: ReturnType<typeof vi.fn<[unknown], AgentManagerProviderState>>;
+  stageMutableProviderConfig: ReturnType<
+    typeof vi.fn<[unknown, unknown?], StagedMutableProviderConfig>
+  >;
   destroy: ReturnType<typeof vi.fn<[], void>>;
 }
 
@@ -213,6 +217,13 @@ export function createProviderSnapshotManagerStub(): {
     providerDefinitions: {},
     clients: {},
   }));
+  const stageMutableProviderConfig = vi.fn<[unknown, unknown?], StagedMutableProviderConfig>(
+    () => ({
+      agentManagerState: { providerDefinitions: {}, clients: {} },
+      publish: vi.fn(),
+      rollback: vi.fn(),
+    }),
+  );
   const on = vi.fn();
   const off = vi.fn();
   const destroy = vi.fn<[], void>();
@@ -234,6 +245,7 @@ export function createProviderSnapshotManagerStub(): {
     resolveDefaultModel,
     getProviderDiagnostic,
     applyMutableProviderConfig,
+    stageMutableProviderConfig,
     on,
     off,
     destroy,
@@ -260,6 +272,7 @@ export function createProviderSnapshotManagerStub(): {
     resolveDefaultModel,
     getProviderDiagnostic,
     applyMutableProviderConfig,
+    stageMutableProviderConfig,
     destroy,
   };
 }

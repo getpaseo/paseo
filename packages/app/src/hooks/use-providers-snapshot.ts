@@ -13,6 +13,7 @@ import {
   ProviderSnapshotCacheMissError,
   type ProviderSnapshotCache,
 } from "@/data/provider-snapshot-cache";
+import { registerProviderIconAliases } from "@/components/provider-icon-name";
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import {
   isProvidersSnapshotHomeScope,
@@ -47,8 +48,10 @@ export async function fetchProvidersSnapshot(input: {
     if (!cached) {
       throw new ProviderSnapshotCacheMissError();
     }
+    registerProviderIconAliases(cached.entries);
     return { ...snapshot, entries: cached.entries };
   }
+  registerProviderIconAliases(snapshot.entries);
   if (snapshot.compactSnapshot && snapshot.snapshotHash) {
     await cache.write({
       serverId: input.serverId,

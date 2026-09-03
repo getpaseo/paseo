@@ -366,6 +366,50 @@ export async function installAcpCatalogProvider(page: Page, providerName: string
   await page.getByRole("button", { name: "Add", exact: true }).click();
 }
 
+export interface ProviderAccountFormInput {
+  label: string;
+  providerId?: string;
+  description?: string;
+  env?: { key: string; value: string }[];
+}
+
+export async function openProviderAccountForm(page: Page, providerId: string): Promise<void> {
+  await page.getByTestId(`provider-actions-${providerId}`).click();
+  await page.getByTestId(`provider-add-account-${providerId}`).click();
+  await expect(page.getByTestId("provider-account-sheet")).toBeVisible();
+}
+
+export async function openProviderAccountEditForm(page: Page, providerId: string): Promise<void> {
+  await page.getByTestId(`provider-actions-${providerId}`).click();
+  await page.getByTestId(`provider-edit-account-${providerId}`).click();
+  await expect(page.getByTestId("provider-account-sheet")).toBeVisible();
+}
+
+export async function fillProviderAccountForm(
+  page: Page,
+  input: ProviderAccountFormInput,
+): Promise<void> {
+  await page.getByTestId("provider-account-label-input").fill(input.label);
+  if (input.providerId !== undefined) {
+    await page.getByTestId("provider-account-id-input").fill(input.providerId);
+  }
+  if (input.description !== undefined) {
+    await page.getByTestId("provider-account-description-input").fill(input.description);
+  }
+  const env = input.env ?? [];
+  for (const [index, variable] of env.entries()) {
+    if (index > 0) {
+      await page.getByTestId("provider-account-env-add").click();
+    }
+    await page.getByTestId(`provider-account-env-key-${index}`).fill(variable.key);
+    await page.getByTestId(`provider-account-env-value-${index}`).fill(variable.value);
+  }
+}
+
+export async function submitProviderAccountForm(page: Page): Promise<void> {
+  await page.getByTestId("provider-account-submit").click();
+}
+
 export async function expectProviderInstalledInSettings(
   page: Page,
   providerName: string,

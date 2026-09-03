@@ -2619,8 +2619,48 @@ export const en = {
       updateErrorTitle: "Unable to update provider",
       actions: {
         menu: "{{name}} actions",
+        addAccount: "Add account",
+        editAccount: "Edit account",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      account: {
+        title: "Add {{provider}} account",
+        editTitle: "Edit {{provider}} account",
+        errorTitle: "Unable to save account",
+        submit: "Add account",
+        save: "Save changes",
+        fields: {
+          label: "Name",
+          providerId: "Provider ID",
+          description: "Description",
+          env: "Environment variables",
+          envKey: "Variable name",
+          envValue: "Variable value",
+        },
+        placeholders: {
+          label: "{{provider}} (Work)",
+          providerId: "claude-work",
+          description: "Optional",
+          envKey: "NAME",
+          envValue: "Value",
+        },
+        actions: {
+          addVariable: "Add variable",
+          removeVariable: "Remove variable",
+        },
+        warnings: {
+          renameUnsupported:
+            "This host can't move existing chats to the new ID. Chats using this account will be unavailable until you update the host or restore the old ID.",
+        },
+        errors: {
+          labelRequired: "Enter a name.",
+          idRequired: "Enter a provider ID.",
+          idInvalid: "Use lowercase letters, numbers, and dashes, starting with a letter.",
+          idTaken: "This provider ID is already taken.",
+          envKeyRequired: "Enter a variable name.",
+          envDuplicate: "This variable is already set.",
+        },
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

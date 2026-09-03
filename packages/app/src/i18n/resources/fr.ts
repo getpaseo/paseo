@@ -2580,8 +2580,49 @@ export const fr: TranslationResources = {
       updateErrorTitle: "Impossible de mettre à jour le fournisseur",
       actions: {
         menu: "{{name}} actions",
+        addAccount: "Ajouter un compte",
+        editAccount: "Modifier le compte",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      account: {
+        title: "Ajouter un compte {{provider}}",
+        editTitle: "Modifier le compte {{provider}}",
+        errorTitle: "Impossible d'enregistrer le compte",
+        submit: "Ajouter un compte",
+        save: "Enregistrer",
+        fields: {
+          label: "Nom",
+          providerId: "ID du fournisseur",
+          description: "Description",
+          env: "Variables d'environnement",
+          envKey: "Nom de la variable",
+          envValue: "Valeur de la variable",
+        },
+        placeholders: {
+          label: "{{provider}} (Travail)",
+          providerId: "claude-work",
+          description: "Facultatif",
+          envKey: "NOM",
+          envValue: "Valeur",
+        },
+        actions: {
+          addVariable: "Ajouter une variable",
+          removeVariable: "Supprimer la variable",
+        },
+        warnings: {
+          renameUnsupported:
+            "Cet hôte ne peut pas déplacer les conversations existantes vers le nouvel ID. Les conversations utilisant ce compte seront indisponibles tant que vous n'aurez pas mis à jour l'hôte ou restauré l'ancien ID.",
+        },
+        errors: {
+          labelRequired: "Saisissez un nom.",
+          idRequired: "Saisissez un ID de fournisseur.",
+          idInvalid:
+            "Utilisez des minuscules, des chiffres et des tirets, en commençant par une lettre.",
+          idTaken: "Cet ID de fournisseur est déjà utilisé.",
+          envKeyRequired: "Saisissez le nom de la variable.",
+          envDuplicate: "Cette variable est déjà définie.",
+        },
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

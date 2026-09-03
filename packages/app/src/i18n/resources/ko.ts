@@ -2530,8 +2530,48 @@ export const ko: TranslationResources = {
       updateErrorTitle: "프로바이더를 업데이트할 수 없습니다",
       actions: {
         menu: "{{name}} 작업",
+        addAccount: "계정 추가",
+        editAccount: "계정 편집",
         remove: "프로바이더 제거",
         removing: "제거 중...",
+      },
+      account: {
+        title: "{{provider}} 계정 추가",
+        editTitle: "{{provider}} 계정 편집",
+        errorTitle: "계정을 저장할 수 없습니다",
+        submit: "계정 추가",
+        save: "변경 사항 저장",
+        fields: {
+          label: "이름",
+          providerId: "프로바이더 ID",
+          description: "설명",
+          env: "환경 변수",
+          envKey: "변수 이름",
+          envValue: "변수 값",
+        },
+        placeholders: {
+          label: "{{provider}} (업무)",
+          providerId: "claude-work",
+          description: "선택 사항",
+          envKey: "NAME",
+          envValue: "값",
+        },
+        actions: {
+          addVariable: "변수 추가",
+          removeVariable: "변수 제거",
+        },
+        warnings: {
+          renameUnsupported:
+            "이 호스트는 기존 대화를 새 ID로 옮길 수 없습니다. 호스트를 업데이트하거나 이전 ID를 복원할 때까지 이 계정을 사용하는 대화를 사용할 수 없습니다.",
+        },
+        errors: {
+          labelRequired: "이름을 입력하세요.",
+          idRequired: "프로바이더 ID를 입력하세요.",
+          idInvalid: "영문 소문자로 시작하고 소문자, 숫자, 하이픈만 사용하세요.",
+          idTaken: "이미 사용 중인 프로바이더 ID입니다.",
+          envKeyRequired: "변수 이름을 입력하세요.",
+          envDuplicate: "이미 설정된 변수입니다.",
+        },
       },
       remove: {
         confirmTitle: "{{name}}를 제거하시겠습니까?",

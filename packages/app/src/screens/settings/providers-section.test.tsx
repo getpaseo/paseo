@@ -7,41 +7,47 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderSnapshotEntry } from "@getpaseo/protocol/agent-types";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
-const { theme, snapshotState, configState, patchConfigMock, openProviderSettingsMock } = vi.hoisted(
-  () => ({
-    theme: {
-      spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
-      iconSize: { sm: 14, md: 20 },
-      fontSize: { xs: 11, sm: 13, base: 15 },
-      fontWeight: { normal: "400" },
-      borderRadius: { lg: 8 },
-      opacity: { 50: 0.5 },
-      colors: {
-        surface1: "#111",
-        surface2: "#222",
-        surface3: "#333",
-        foreground: "#fff",
-        foregroundMuted: "#aaa",
-        border: "#555",
-        accent: "#0a84ff",
-        statusSuccess: "#00ff00",
-        statusWarning: "#ff9500",
-        statusDanger: "#ff0000",
-        palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
-      },
+const {
+  theme,
+  snapshotState,
+  configState,
+  featureState,
+  patchConfigMock,
+  openProviderSettingsMock,
+} = vi.hoisted(() => ({
+  theme: {
+    spacing: { 1: 4, "1.5": 6, 2: 8, 3: 12, 4: 16, 6: 24 },
+    iconSize: { sm: 14, md: 20 },
+    fontSize: { xs: 11, sm: 13, base: 15 },
+    fontWeight: { normal: "400" },
+    borderRadius: { lg: 8 },
+    opacity: { 50: 0.5 },
+    colors: {
+      surface1: "#111",
+      surface2: "#222",
+      surface3: "#333",
+      foreground: "#fff",
+      foregroundMuted: "#aaa",
+      border: "#555",
+      accent: "#0a84ff",
+      statusSuccess: "#00ff00",
+      statusWarning: "#ff9500",
+      statusDanger: "#ff0000",
+      palette: { red: { 300: "#ff6b6b" }, white: "#fff" },
     },
-    snapshotState: {
-      entries: undefined as ProviderSnapshotEntry[] | undefined,
-      isLoading: false,
-      isRefreshing: false,
-    },
-    configState: {
-      config: null as MutableDaemonConfig | null,
-    },
-    patchConfigMock: vi.fn(async () => undefined),
-    openProviderSettingsMock: vi.fn(),
-  }),
-);
+  },
+  snapshotState: {
+    entries: undefined as ProviderSnapshotEntry[] | undefined,
+    isLoading: false,
+    isRefreshing: false,
+  },
+  configState: {
+    config: null as MutableDaemonConfig | null,
+  },
+  featureState: {} as Record<string, boolean>,
+  patchConfigMock: vi.fn(async () => undefined),
+  openProviderSettingsMock: vi.fn(),
+}));
 
 vi.mock("react-native", () => ({
   Platform: { OS: "web" },
@@ -100,6 +106,8 @@ vi.mock("lucide-react-native", () => {
     ChevronRight: icon("ChevronRight"),
     MoreHorizontal: icon("MoreHorizontal"),
     Trash2: icon("Trash2"),
+    UserPlus: icon("UserPlus"),
+    Pencil: icon("Pencil"),
   };
 });
 
@@ -120,6 +128,8 @@ vi.mock("react-i18next", () => ({
           "settings.providers.addErrorTitle": "Unable to add provider",
           "settings.providers.updateErrorTitle": "Unable to update provider",
           "settings.providers.actions.menu": "{{name}} actions",
+          "settings.providers.actions.addAccount": "Add account",
+          "settings.providers.actions.editAccount": "Edit account",
           "settings.providers.actions.remove": "Remove provider",
           "settings.providers.actions.removing": "Removing...",
           "settings.providers.remove.confirmTitle": "Remove {{name}}?",
@@ -246,6 +256,24 @@ vi.mock("@/components/provider-catalog-list", () => ({
   ProviderCatalogList: () => null,
 }));
 
+// The real sheet pulls in react-native-reanimated, which is untransformed here.
+vi.mock("@/components/provider-account-sheet", () => ({
+  ProviderAccountSheet: ({
+    visible,
+    baseProviderId,
+    account,
+  }: {
+    visible?: boolean;
+    baseProviderId?: string;
+    account?: { providerId: string };
+  }) =>
+    visible
+      ? React.createElement("div", {
+          "data-testid": `provider-account-sheet-${account?.providerId ?? baseProviderId}`,
+        })
+      : null,
+}));
+
 vi.mock("@/hooks/use-providers-snapshot", () => ({
   useProvidersSnapshot: () => ({
     entries: snapshotState.entries,
@@ -272,7 +300,7 @@ vi.mock("@/runtime/host-runtime", () => ({
 }));
 
 vi.mock("@/runtime/host-features", () => ({
-  useHostFeature: () => false,
+  useHostFeature: (_serverId: string, feature: string) => featureState[feature] ?? false,
 }));
 
 vi.mock("@/utils/confirm-dialog", () => ({
@@ -304,6 +332,18 @@ const disabledCodexEntry: ProviderSnapshotEntry = {
   description: "OpenAI Codex",
   defaultModeId: null,
   modes: [],
+};
+
+const claudeWorkEntry: ProviderSnapshotEntry = {
+  provider: "claude-work",
+  source: "custom",
+  status: "ready",
+  enabled: true,
+  label: "Claude · Work",
+  description: "Claude Code work account",
+  defaultModeId: null,
+  modes: [],
+  models: [],
 };
 
 function makeConfig(providers: MutableDaemonConfig["providers"] = {}): MutableDaemonConfig {
@@ -347,6 +387,7 @@ describe("ProvidersSection", () => {
     snapshotState.isLoading = false;
     snapshotState.isRefreshing = false;
     configState.config = null;
+    for (const feature of Object.keys(featureState)) delete featureState[feature];
     patchConfigMock.mockReset();
     patchConfigMock.mockResolvedValue(undefined);
     openProviderSettingsMock.mockReset();
@@ -423,6 +464,32 @@ describe("ProvidersSection", () => {
     expect(switchEl).toBeGreaterThan(modelCount);
   });
 
+  it("groups an account with its base provider and reuses the base icon", () => {
+    snapshotState.entries = [claudeEntry, disabledCodexEntry, claudeWorkEntry];
+    configState.config = makeConfig({
+      codex: { enabled: false },
+      "claude-work": { extends: "claude", label: "Claude · Work" },
+    });
+
+    render();
+
+    const rows = Array.from(
+      container?.querySelectorAll<HTMLElement>('[role="button"][aria-label$="provider details"]') ??
+        [],
+    );
+    expect(rows.map((row) => row.getAttribute("aria-label"))).toEqual([
+      "Claude provider details",
+      "Claude · Work provider details",
+      "Codex provider details",
+    ]);
+    expect(
+      findRow("Claude · Work provider details").querySelector('[data-icon="provider-claude"]'),
+    ).not.toBeNull();
+    expect(
+      container?.querySelector('[data-testid="provider-edit-account-claude-work"]'),
+    ).toBeNull();
+  });
+
   it("opens the diagnostic sheet when the outer row is pressed for a disabled provider", () => {
     snapshotState.entries = [disabledCodexEntry];
     configState.config = makeConfig({ codex: { enabled: false } });
@@ -441,6 +508,56 @@ describe("ProvidersSection", () => {
       serverId: "server-1",
       provider: "codex",
     });
+  });
+
+  it("opens the account sheet from the actions menu of a builtin provider", () => {
+    snapshotState.entries = [claudeEntry];
+    configState.config = makeConfig();
+
+    render();
+
+    const sheetSelector = '[data-testid="provider-account-sheet-claude"]';
+    expect(container?.querySelector(sheetSelector)).toBeNull();
+    expect(container?.querySelector('[data-testid="provider-remove-claude"]')).toBeNull();
+
+    const addAccount = container?.querySelector<HTMLElement>(
+      '[data-testid="provider-add-account-claude"]',
+    );
+    expect(addAccount).not.toBeNull();
+
+    act(() => {
+      addAccount?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(container?.querySelector(sheetSelector)).not.toBeNull();
+    expect(openProviderSettingsMock).not.toHaveBeenCalled();
+  });
+
+  it("opens an existing account for editing when the daemon supports exact replacement", () => {
+    snapshotState.entries = [claudeEntry, claudeWorkEntry];
+    configState.config = makeConfig({
+      "claude-work": {
+        extends: "claude",
+        label: "Claude · Work",
+        env: { CLAUDE_CONFIG_DIR: "/work/claude" },
+      },
+    });
+    featureState.providerConfigReplace = true;
+
+    render();
+
+    const editAccount = container?.querySelector<HTMLElement>(
+      '[data-testid="provider-edit-account-claude-work"]',
+    );
+    expect(editAccount).not.toBeNull();
+    act(() => {
+      editAccount?.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(
+      container?.querySelector('[data-testid="provider-account-sheet-claude-work"]'),
+    ).not.toBeNull();
+    expect(openProviderSettingsMock).not.toHaveBeenCalled();
   });
 
   it("toggles the provider enabled flag through patchConfig when the switch is pressed", async () => {

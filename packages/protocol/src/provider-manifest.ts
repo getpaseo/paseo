@@ -25,6 +25,8 @@ export interface AgentProviderDefinition {
   id: string;
   label: string;
   description: string;
+  /** Builtin provider this definition extends, when it comes from a custom provider account. */
+  baseProviderId?: string;
   enabledByDefault?: boolean;
   defaultModeId: string | null;
   modes: AgentProviderModeDefinition[];

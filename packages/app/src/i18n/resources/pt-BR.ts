@@ -2557,8 +2557,48 @@ export const ptBR: TranslationResources = {
       updateErrorTitle: "Não foi possível atualizar provedor",
       actions: {
         menu: "{{name}} actions",
+        addAccount: "Adicionar conta",
+        editAccount: "Editar conta",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      account: {
+        title: "Adicionar conta do {{provider}}",
+        editTitle: "Editar conta do {{provider}}",
+        errorTitle: "Não foi possível salvar a conta",
+        submit: "Adicionar conta",
+        save: "Salvar alterações",
+        fields: {
+          label: "Nome",
+          providerId: "ID do provedor",
+          description: "Descrição",
+          env: "Variáveis de ambiente",
+          envKey: "Nome da variável",
+          envValue: "Valor da variável",
+        },
+        placeholders: {
+          label: "{{provider}} (Trabalho)",
+          providerId: "claude-work",
+          description: "Opcional",
+          envKey: "NOME",
+          envValue: "Valor",
+        },
+        actions: {
+          addVariable: "Adicionar variável",
+          removeVariable: "Remover variável",
+        },
+        warnings: {
+          renameUnsupported:
+            "Este host não consegue mover as conversas existentes para o novo ID. As conversas que usam esta conta ficarão indisponíveis até você atualizar o host ou restaurar o ID anterior.",
+        },
+        errors: {
+          labelRequired: "Digite um nome.",
+          idRequired: "Digite um ID de provedor.",
+          idInvalid: "Use letras minúsculas, números e hifens, começando por uma letra.",
+          idTaken: "Este ID de provedor já está em uso.",
+          envKeyRequired: "Digite o nome da variável.",
+          envDuplicate: "Esta variável já está definida.",
+        },
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

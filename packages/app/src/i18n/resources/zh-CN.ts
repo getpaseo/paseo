@@ -2485,8 +2485,48 @@ export const zhCN: TranslationResources = {
       updateErrorTitle: "无法更新 Provider",
       actions: {
         menu: "{{name}} actions",
+        addAccount: "添加账户",
+        editAccount: "编辑账户",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      account: {
+        title: "添加 {{provider}} 账户",
+        editTitle: "编辑 {{provider}} 账户",
+        errorTitle: "无法保存账户",
+        submit: "添加账户",
+        save: "保存更改",
+        fields: {
+          label: "名称",
+          providerId: "Provider ID",
+          description: "描述",
+          env: "环境变量",
+          envKey: "变量名",
+          envValue: "变量值",
+        },
+        placeholders: {
+          label: "{{provider}}（工作）",
+          providerId: "claude-work",
+          description: "可选",
+          envKey: "名称",
+          envValue: "值",
+        },
+        actions: {
+          addVariable: "添加变量",
+          removeVariable: "移除变量",
+        },
+        warnings: {
+          renameUnsupported:
+            "此主机无法将现有对话迁移到新 ID。在你更新主机或恢复原 ID 之前，使用该账户的对话将不可用。",
+        },
+        errors: {
+          labelRequired: "请输入名称。",
+          idRequired: "请输入 Provider ID。",
+          idInvalid: "只能使用小写字母、数字和连字符，且以字母开头。",
+          idTaken: "该 Provider ID 已被占用。",
+          envKeyRequired: "请输入变量名。",
+          envDuplicate: "该变量已设置。",
+        },
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

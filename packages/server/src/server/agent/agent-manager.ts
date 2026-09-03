@@ -786,6 +786,25 @@ export class AgentManager {
     }
   }
 
+  /**
+   * Repoints live agents at a renamed provider id. Must run after the registry rebuild so the
+   * new id already has a client, and before storage migration so the next persistence flush
+   * doesn't write the old id back over the migrated record.
+   */
+  renameProviderOnLiveAgents(fromProviderId: string, toProviderId: string): void {
+    for (const agent of this.agents.values()) {
+      if (agent.provider === fromProviderId) {
+        agent.provider = toProviderId;
+      }
+      if (agent.runtimeInfo?.provider === fromProviderId) {
+        agent.runtimeInfo = { ...agent.runtimeInfo, provider: toProviderId };
+      }
+      if (agent.persistence?.provider === fromProviderId) {
+        agent.persistence = { ...agent.persistence, provider: toProviderId };
+      }
+    }
+  }
+
   getRegisteredProviderIds(): AgentProvider[] {
     return Array.from(this.clients.keys());
   }

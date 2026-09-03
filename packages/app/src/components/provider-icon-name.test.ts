@@ -5,7 +5,7 @@ import {
   TERMINAL_PROFILE_ICON_NAMES,
 } from "@getpaseo/protocol/provider-icon-names";
 import { ACP_PROVIDER_CATALOG } from "@/data/acp-provider-catalog";
-import { resolveProviderIconName } from "./provider-icon-name";
+import { registerProviderIconAliases, resolveProviderIconName } from "./provider-icon-name";
 
 describe("resolveProviderIconName", () => {
   it("returns the built-in identifier for known provider ids", () => {
@@ -24,6 +24,26 @@ describe("resolveProviderIconName", () => {
 
   it("falls back to the bot icon for unknown custom providers", () => {
     expect(resolveProviderIconName("custom-claude-profile")).toEqual({ kind: "bot" });
+  });
+
+  it("resolves registered provider accounts to their base provider's icon", () => {
+    registerProviderIconAliases([
+      { provider: "claude-work", baseProviderId: "claude" },
+      { provider: "gemini-personal", baseProviderId: "gemini" },
+      { provider: "claude" },
+    ]);
+    expect(resolveProviderIconName("claude-work")).toEqual({ kind: "builtin", id: "claude" });
+    expect(resolveProviderIconName("gemini-personal")).toEqual({ kind: "catalog", id: "gemini" });
+  });
+
+  it("keeps the bot fallback when an alias points at an unknown base provider", () => {
+    registerProviderIconAliases([{ provider: "mystery-account", baseProviderId: "mystery" }]);
+    expect(resolveProviderIconName("mystery-account")).toEqual({ kind: "bot" });
+  });
+
+  it("never lets an alias shadow a real provider id", () => {
+    registerProviderIconAliases([{ provider: "codex", baseProviderId: "claude" }]);
+    expect(resolveProviderIconName("codex")).toEqual({ kind: "builtin", id: "codex" });
   });
 });
 

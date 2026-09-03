@@ -259,7 +259,15 @@ export const MutableDaemonConfigPatchSchema = z
     providers: z
       .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
       .optional(),
+    // COMPAT(providerConfigReplace): added in v0.2.X, remove after 2027-02-02 when old daemons are unsupported.
+    replaceProviders: z
+      .record(z.string(), MutableDaemonProviderConfigSchema.partial().passthrough())
+      .optional(),
     removeProviders: z.array(z.string().min(1)).optional(),
+    // Maps an old provider id to the new one it was renamed to. The new definition still
+    // arrives in `replaceProviders` and the old id still arrives in `removeProviders`; this
+    // only tells the daemon the two are the same account so persisted agents can be migrated.
+    renameProviders: z.record(z.string().min(1), z.string().min(1)).optional(),
     metadataGeneration: MutableMetadataGenerationConfigSchema.partial().optional(),
     autoArchiveAfterMerge: z.boolean().optional(),
     enableTerminalAgentHooks: z.boolean().optional(),
@@ -371,6 +379,8 @@ export const ProviderSnapshotEntrySchema = z.object({
   status: ProviderStatusSchema,
   enabled: z.boolean().optional().default(true),
   source: z.enum(["builtin", "custom"]).optional(),
+  /** Builtin provider this entry extends, when it is a custom provider account. */
+  baseProviderId: z.string().optional(),
   error: z.string().optional(),
   models: z.array(AgentModelDefinitionSchema).optional(),
   modes: z.array(AgentModeSchema).optional(),
@@ -3505,6 +3515,11 @@ export const ServerInfoStatusPayloadSchema = z
         commitBaseClassification: z.boolean().optional(),
         // COMPAT(providerRemoval): added in v0.1.105, drop the gate when floor >= v0.1.105.
         providerRemoval: z.boolean().optional(),
+        // COMPAT(providerConfigReplace): added in v0.2.X, remove after 2027-02-02 when old daemons are unsupported.
+        providerConfigReplace: z.boolean().optional(),
+        // COMPAT(providerConfigRename): added in v0.2.X, remove after 2027-02-02 when old daemons are unsupported.
+        // Daemon migrates persisted agents when a provider account is renamed.
+        providerConfigRename: z.boolean().optional(),
         // COMPAT(importSessionWorkspaceTarget): added in v0.1.110, remove gate after 2027-01-16.
         importSessionWorkspaceTarget: z.boolean().optional(),
         // COMPAT(importSessionSearch): added in v0.7.3, remove gate after 2027-03-02.
@@ -5919,6 +5934,8 @@ export const ProviderUsageDetailSchema = z.object({
 
 export const ProviderUsageSchema = z.object({
   providerId: z.string(),
+  // COMPAT(providerUsageBaseProvider): added in v0.2.X, remove after 2027-02-02 when old clients are unsupported.
+  baseProviderId: z.string().optional(),
   displayName: z.string(),
   status: ProviderUsageStatusSchema,
   planLabel: z.string().nullable(),

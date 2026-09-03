@@ -14,6 +14,7 @@ import { GrokQuotaProvider } from "./providers/grok.js";
 import { KimiQuotaProvider } from "./providers/kimi.js";
 import { MiniMaxQuotaProvider } from "./providers/minimax.js";
 import { ZaiQuotaProvider } from "./providers/zai.js";
+import { createProviderUsageFetchers } from "./manifest.js";
 import { ProviderUsageService } from "./service.js";
 
 function writeClaudeCredentials(
@@ -343,6 +344,58 @@ describe("ProviderUsageService", () => {
           windows: [{ id: "weekly", label: "Weekly", usedPct: 29 }],
         },
       ],
+    });
+  });
+
+  it("rebuilds account fetchers and invalidates cached usage when provider config changes", async () => {
+    const service = new ProviderUsageService({
+      logger: createLogger(),
+      now: () => Date.parse("2026-06-19T00:00:00.000Z"),
+      fetcherFactory: (providers) =>
+        Object.keys(providers).map((providerId) =>
+          usageFetcher({
+            providerId,
+            displayName: providerId,
+            status: "available",
+            planLabel: null,
+            windows: [],
+          }),
+        ),
+      providerConfigs: { claude: {} },
+    });
+
+    expect((await service.listUsage()).providers.map((provider) => provider.providerId)).toEqual([
+      "claude",
+    ]);
+    service.updateProviderConfigs({ "claude-work": { extends: "claude" } });
+    expect((await service.listUsage()).providers.map((provider) => provider.providerId)).toEqual([
+      "claude-work",
+    ]);
+  });
+
+  it("groups configured accounts after their base usage provider", async () => {
+    const fetchers = createProviderUsageFetchers(
+      { logger: createLogger() },
+      {
+        "codex-work": { extends: "codex", label: "Codex (Work)", env: {} },
+        "claude-work": { extends: "claude", label: "Claude (Work)", env: {} },
+        "opencode-work": { extends: "opencode", label: "OpenCode (Work)", env: {} },
+      },
+    );
+
+    expect(fetchers.map((fetcher) => fetcher.providerId).slice(0, 6)).toEqual([
+      "claude",
+      "claude-work",
+      "codex",
+      "codex-work",
+      "copilot",
+      "cursor",
+    ]);
+    await expect(fetchers[1]?.fetchUsage()).resolves.toMatchObject({
+      providerId: "claude-work",
+      baseProviderId: "claude",
+      displayName: "Claude (Work)",
+      status: "unavailable",
     });
   });
 });

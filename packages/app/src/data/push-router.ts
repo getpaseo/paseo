@@ -4,6 +4,7 @@ import type {
   MutableDaemonConfig,
   SessionOutboundMessage,
 } from "@getpaseo/protocol/messages";
+import { registerProviderIconAliases } from "@/components/provider-icon-name";
 import { agentCommandsQueryRoot } from "@/hooks/agent-commands-query";
 import { orderCheckoutDiffFiles } from "@/git/diff-order";
 import { daemonConfigQueryKey } from "@/data/daemon-config";
@@ -194,6 +195,7 @@ export function applyProvidersSnapshotUpdate(input: {
   if (input.message.type !== "providers_snapshot_update") {
     return;
   }
+  registerProviderIconAliases(input.message.payload.entries);
   const queryKey = providersSnapshotQueryKey(input.serverId, input.message.payload.cwd);
   input.queryClient.setQueryData(queryKey, {
     entries: input.message.payload.entries,

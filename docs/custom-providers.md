@@ -261,6 +261,12 @@ You can create multiple entries that extend the same built-in provider. Each get
 
 "Profile" here means a provider alias, and it is not an **Agent profile** — that is a named bundle of provider, model, mode, thinking option and features, stored under `daemon.agentProfiles`. See [glossary.md](glossary.md) for all four senses of the word.
 
+Three ways to create one, all writing the same `config.json` entry:
+
+- **App** — Settings > Providers, then use **Add account** on a built-in row. Use **Edit account** on the new row to change its name, ID, description, or environment.
+- **CLI** — `paseo provider add claude-work --extends claude --label "Claude (Work)" --env ANTHROPIC_API_KEY=sk-ant-...`, and `paseo provider rm claude-work` to delete it.
+- **By hand** — edit `config.json` as below.
+
 Example: two different Anthropic accounts as separate profiles:
 
 ```json
@@ -288,7 +294,17 @@ Example: two different Anthropic accounts as separate profiles:
 }
 ```
 
-Each profile appears as a separate provider in the Paseo app. You can select which one to use when launching an agent.
+Each account appears immediately after its built-in provider in provider lists and usage. You can select it when launching an agent. The shared agent tools return the account as its own provider ID and include `baseProviderId` in `list_providers` and `inspect_provider` so agents can recognize the relationship.
+
+Usage reads credentials from the account's environment without falling back to the built-in provider's credentials:
+
+| Provider | Account-specific usage credentials                                   |
+| -------- | -------------------------------------------------------------------- |
+| Claude   | `CLAUDE_CONFIG_DIR` or `CLAUDE_HOME`, containing `.credentials.json` |
+| Codex    | `CODEX_HOME`, containing `auth.json`                                 |
+| Copilot  | `COPILOT_TOKEN`, `GITHUB_TOKEN`, or `GITHUB_PAT`                     |
+
+An account without supported OAuth credentials still appears in usage as unavailable. API-key and custom-endpoint accounts often have no subscription quota API to report.
 
 You can also combine profiles with model overrides to pin specific models per profile:
 

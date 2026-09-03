@@ -145,7 +145,7 @@ function buildModelGroup(source: AgentControlContributionSource): CommandCenterC
   for (const provider of source.models.providers) {
     if (provider.modelSelection.kind !== "models") continue;
     const agentProvider = provider.id;
-    const icon = source.icons.provider(agentProvider);
+    const icon = source.icons.provider(provider.baseProviderId ?? agentProvider);
     for (const model of provider.modelSelection.rows) {
       if (!model.modelId) continue;
       const modelId = model.modelId;

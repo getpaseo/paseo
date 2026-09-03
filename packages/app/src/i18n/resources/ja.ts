@@ -2541,8 +2541,48 @@ export const ja: TranslationResources = {
       updateErrorTitle: "プロバイダーを更新できません",
       actions: {
         menu: "{{name}} actions",
+        addAccount: "アカウントを追加",
+        editAccount: "アカウントを編集",
         remove: "Remove provider",
         removing: "Removing...",
+      },
+      account: {
+        title: "{{provider}} アカウントを追加",
+        editTitle: "{{provider}} アカウントを編集",
+        errorTitle: "アカウントを保存できません",
+        submit: "アカウントを追加",
+        save: "変更を保存",
+        fields: {
+          label: "名前",
+          providerId: "プロバイダー ID",
+          description: "説明",
+          env: "環境変数",
+          envKey: "変数名",
+          envValue: "変数の値",
+        },
+        placeholders: {
+          label: "{{provider}}（仕事）",
+          providerId: "claude-work",
+          description: "省略可",
+          envKey: "名前",
+          envValue: "値",
+        },
+        actions: {
+          addVariable: "変数を追加",
+          removeVariable: "変数を削除",
+        },
+        warnings: {
+          renameUnsupported:
+            "このホストは既存のチャットを新しい ID に移行できません。ホストを更新するか元の ID に戻すまで、このアカウントを使うチャットは利用できません。",
+        },
+        errors: {
+          labelRequired: "名前を入力してください。",
+          idRequired: "プロバイダー ID を入力してください。",
+          idInvalid: "英小文字・数字・ハイフンを使い、先頭は英字にしてください。",
+          idTaken: "このプロバイダー ID は既に使われています。",
+          envKeyRequired: "変数名を入力してください。",
+          envDuplicate: "この変数は既に設定されています。",
+        },
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

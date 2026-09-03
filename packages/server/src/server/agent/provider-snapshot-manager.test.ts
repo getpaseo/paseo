@@ -1343,9 +1343,12 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
       expect(manager.hasProvider("zai-claude")).toBe(true);
       expect(state.providerDefinitions["zai-claude"]).toMatchObject({ enabled: true });
       expect(manager.listRegisteredProviderIds()).toContain("zai-claude");
-      expect(manager.getSnapshot().find((entry) => entry.provider === "zai-claude")?.source).toBe(
-        "custom",
+      const snapshot = manager.getSnapshot();
+      expect(snapshot.find((entry) => entry.provider === "zai-claude")?.source).toBe("custom");
+      expect(snapshot.find((entry) => entry.provider === "zai-claude")?.baseProviderId).toBe(
+        "claude",
       );
+      expect(snapshot.find((entry) => entry.provider === "claude")?.baseProviderId).toBeUndefined();
     } finally {
       manager.destroy();
     }
@@ -1369,6 +1372,35 @@ describe("ProviderSnapshotManager applyMutableProviderConfig", () => {
 
       manager.applyMutableProviderConfig({ codex: { enabled: false } });
       expect(manager.hasProvider("zai-claude")).toBe(false);
+    } finally {
+      manager.destroy();
+    }
+  });
+
+  test("replaces startup provider overrides instead of merging stale fields", () => {
+    const manager = new ProviderSnapshotManager({
+      logger: createTestLogger(),
+      providerOverrides: {
+        "claude-work": {
+          extends: "claude",
+          label: "Old label",
+          description: "Remove me",
+          env: { OLD_TOKEN: "secret" },
+        },
+      },
+    });
+    try {
+      const state = manager.applyMutableProviderConfig(
+        {
+          "claude-work": { extends: "claude", label: "Work" },
+        },
+        { replaceProviders: ["claude-work"] },
+      );
+
+      expect(state.providerDefinitions["claude-work"]).toBeDefined();
+      const snapshot = manager.getSnapshot().find((entry) => entry.provider === "claude-work");
+      expect(snapshot?.label).toBe("Work");
+      expect(snapshot?.description).not.toBe("Remove me");
     } finally {
       manager.destroy();
     }
