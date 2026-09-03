@@ -708,6 +708,10 @@ export const ru: TranslationResources = {
           "Рабочее пространство подготавливается. Терминал откроется, когда оно будет готово...",
         workspacePathCopiedLabel: "Путь к рабочему пространству",
         branchNameCopiedLabel: "Имя ветки",
+        changeRequestLinkCopiedLabel: "ссылка на PR",
+        changeRequestLinkCopiedLabel_mr: "ссылка на MR",
+        changeRequestLinkUnavailable:
+          "Для этого рабочего пространства не найдено запросов на изменение",
       },
     },
     scripts: {
@@ -2219,6 +2223,7 @@ export const ru: TranslationResources = {
         newWorkspace: "Новое рабочее пространство",
         newWorktree: "Новый worktree",
         archiveWorkspace: "Архивировать рабочее пространство",
+        copyChangeRequestLink: "Скопировать ссылку на PR",
         newTab: "Новая вкладка",
         closeCurrentTab: "Закрыть текущую вкладку",
         jumpToWorkspace: "Перейти к рабочему пространству",

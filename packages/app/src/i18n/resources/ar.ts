@@ -702,6 +702,9 @@ export const ar: TranslationResources = {
         terminalQueued: "تحضير مساحة العمل، وفتح الوحدة الطرفية عندما تكون جاهزة...",
         workspacePathCopiedLabel: "مسار Workspace",
         branchNameCopiedLabel: "اسم الفرع",
+        changeRequestLinkCopiedLabel: "رابط PR",
+        changeRequestLinkCopiedLabel_mr: "رابط MR",
+        changeRequestLinkUnavailable: "لا يوجد طلب تغيير لمساحة العمل هذه",
       },
     },
     scripts: {
@@ -2181,6 +2184,7 @@ export const ar: TranslationResources = {
         newWorkspace: "مساحة عمل جديدة",
         newWorktree: "شجرة عمل جديدة",
         archiveWorkspace: "أرشفة مساحة العمل",
+        copyChangeRequestLink: "نسخ رابط PR",
         newTab: "علامة تبويب جديدة",
         closeCurrentTab: "إغلاق علامة التبويب الحالية",
         jumpToWorkspace: "انتقل إلى مساحة العمل",

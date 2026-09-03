@@ -168,6 +168,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
     "workspace-next",
     "pin-workspace",
     "archive-workspace",
+    "copy-pr-link",
   ],
   "tabs-panes": [
     "workspace-tab-new",
@@ -218,6 +219,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-tab-jump-index": "settings.shortcuts.help.jumpToTab",
   "workspace-prev": "settings.shortcuts.help.previousWorkspace",
   "workspace-next": "settings.shortcuts.help.nextWorkspace",
+  "copy-pr-link": "settings.shortcuts.help.copyChangeRequestLink",
   "workspace-tab-prev": "settings.shortcuts.help.previousTab",
   "workspace-tab-next": "settings.shortcuts.help.nextTab",
   "workspace-pane-split-right": "settings.shortcuts.help.splitPaneRight",
@@ -381,6 +383,30 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "pin-workspace",
       section: "workspaces",
       label: "Pin chat",
+    },
+  },
+
+  // --- Copy change request link ---
+  {
+    id: "workspace-pr-copy-cmd-shift-c-mac",
+    action: "workspace.pr.copy",
+    combo: "Cmd+Shift+C",
+    when: { mac: true, commandCenter: false },
+    help: {
+      id: "copy-pr-link",
+      section: "workspaces",
+      label: "Copy change request link",
+    },
+  },
+  {
+    id: "workspace-pr-copy-ctrl-shift-c-non-mac",
+    action: "workspace.pr.copy",
+    combo: "Ctrl+Shift+C",
+    when: { mac: false, commandCenter: false, terminal: false },
+    help: {
+      id: "copy-pr-link",
+      section: "workspaces",
+      label: "Copy change request link",
     },
   },
 

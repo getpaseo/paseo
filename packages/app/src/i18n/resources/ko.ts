@@ -702,6 +702,9 @@ export const ko: TranslationResources = {
         terminalQueued: "워크스페이스 준비 중, 준비되면 터미널을 엽니다...",
         workspacePathCopiedLabel: "워크스페이스 경로",
         branchNameCopiedLabel: "브랜치 이름",
+        changeRequestLinkCopiedLabel: "PR 링크",
+        changeRequestLinkCopiedLabel_mr: "MR 링크",
+        changeRequestLinkUnavailable: "이 워크스페이스에 대한 변경 요청이 없습니다",
       },
     },
     scripts: {
@@ -2191,6 +2194,7 @@ export const ko: TranslationResources = {
         newWorkspace: "새 워크스페이스",
         newWorktree: "새 워크트리",
         archiveWorkspace: "워크스페이스 보관",
+        copyChangeRequestLink: "PR 링크 복사",
         newTab: "새 탭",
         closeCurrentTab: "현재 탭 닫기",
         jumpToWorkspace: "워크스페이스로 이동",

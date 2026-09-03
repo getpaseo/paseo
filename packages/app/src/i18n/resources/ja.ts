@@ -704,6 +704,9 @@ export const ja: TranslationResources = {
         terminalQueued: "ワークスペースを準備中、準備ができたらターミナルを開きます...",
         workspacePathCopiedLabel: "ワークスペースパス",
         branchNameCopiedLabel: "ブランチ名",
+        changeRequestLinkCopiedLabel: "PRリンク",
+        changeRequestLinkCopiedLabel_mr: "MRリンク",
+        changeRequestLinkUnavailable: "このワークスペースには変更リクエストがありません",
       },
     },
     scripts: {
@@ -2199,6 +2202,7 @@ export const ja: TranslationResources = {
         newWorkspace: "新しいワークスペース",
         newWorktree: "新しいワークツリー",
         archiveWorkspace: "ワークスペースをアーカイブ",
+        copyChangeRequestLink: "PRリンクをコピー",
         newTab: "新しいタブ",
         closeCurrentTab: "現在のタブを閉じる",
         jumpToWorkspace: "ワークスペースにジャンプ",

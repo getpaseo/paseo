@@ -698,6 +698,9 @@ export const en = {
         terminalQueued: "Preparing workspace, opening terminal when ready...",
         workspacePathCopiedLabel: "Workspace path",
         branchNameCopiedLabel: "Branch name",
+        changeRequestLinkCopiedLabel: "PR link",
+        changeRequestLinkCopiedLabel_mr: "MR link",
+        changeRequestLinkUnavailable: "No change request found for this workspace",
       },
     },
     scripts: {
@@ -2279,6 +2282,7 @@ export const en = {
         newWorkspace: "New workspace",
         newWorktree: "New worktree",
         archiveWorkspace: "Archive workspace",
+        copyChangeRequestLink: "Copy change request link",
         newTab: "New tab",
         closeCurrentTab: "Close current tab",
         jumpToWorkspace: "Jump to workspace",
