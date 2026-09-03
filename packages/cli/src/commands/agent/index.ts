@@ -41,7 +41,7 @@ export function createAgentCommand(): Command {
     withGlobalOptions(runAttachCommand),
   );
 
-  addDaemonHostOption(addLogsOptions(agent.command("logs"))).action(
+  addJsonAndDaemonHostOptions(addLogsOptions(agent.command("logs"))).action(
     withGlobalOptions(runLogsCommand),
   );
 

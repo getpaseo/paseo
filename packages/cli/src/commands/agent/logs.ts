@@ -53,6 +53,24 @@ export function formatAgentActivityTranscript(
   );
 }
 
+/**
+ * Items the command should emit, applying the same tail semantics the text
+ * transcript uses (`curateAgentActivity` slices the raw timeline by `maxItems`),
+ * so `--tail n` selects the same entries with and without `--json`.
+ */
+export function selectTimelineItemsForJson(
+  timelineItems: AgentTimelineItem[],
+  tailCount?: number,
+): AgentTimelineItem[] {
+  if (tailCount === undefined) {
+    return timelineItems;
+  }
+  if (tailCount <= 0) {
+    return [];
+  }
+  return timelineItems.length > tailCount ? timelineItems.slice(-tailCount) : timelineItems;
+}
+
 function parseTailCount(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
   const parsed = Number.parseInt(raw, 10);
@@ -150,6 +168,11 @@ export async function runLogsCommand(
 
     await client.close();
 
+    if (options.json) {
+      console.log(JSON.stringify(selectTimelineItemsForJson(timelineItems, tailCount), null, 2));
+      return;
+    }
+
     // Use curateAgentActivity to format the transcript
     if (tailCount === 0) {
       return;
@@ -191,18 +214,27 @@ async function runFollowMode(
     existingItems = existingItems.filter((item) => matchesFilter(item, options.filter));
   }
 
-  // Print existing transcript (tail-like behavior)
-  if (tailCount > 0) {
-    const existingTranscript = formatAgentActivityTranscript(existingItems, tailCount);
-    if (existingTranscript !== NO_ACTIVITY_MESSAGE) {
-      console.log(existingTranscript);
+  // In JSON mode the stream is newline-delimited JSON: one timeline item per
+  // line, so a consumer can parse each line as it arrives. The human banner is
+  // omitted because it would not parse.
+  if (options.json) {
+    for (const item of selectTimelineItemsForJson(existingItems, tailCount)) {
+      console.log(JSON.stringify(item));
     }
-  }
+  } else {
+    // Print existing transcript (tail-like behavior)
+    if (tailCount > 0) {
+      const existingTranscript = formatAgentActivityTranscript(existingItems, tailCount);
+      if (existingTranscript !== NO_ACTIVITY_MESSAGE) {
+        console.log(existingTranscript);
+      }
+    }
 
-  // Subscribe to new events
-  const tailLabel =
-    tailCount === 0 ? "no history" : `last ${tailCount} entr${tailCount === 1 ? "y" : "ies"}`;
-  console.log(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
+    // Subscribe to new events
+    const tailLabel =
+      tailCount === 0 ? "no history" : `last ${tailCount} entr${tailCount === 1 ? "y" : "ies"}`;
+    console.log(`\n--- Following logs (${tailLabel}; Ctrl+C to stop) ---\n`);
+  }
 
   const unsubscribe = client.on("agent_stream", (msg: unknown) => {
     const message = msg as AgentStreamMessage;
@@ -213,6 +245,10 @@ async function runFollowMode(
       const item = message.payload.event.item;
       // Apply filter
       if (options.filter && !matchesFilter(item, options.filter)) {
+        return;
+      }
+      if (options.json) {
+        console.log(JSON.stringify(item));
         return;
       }
       // Print each timeline item as it arrives using the curator format
