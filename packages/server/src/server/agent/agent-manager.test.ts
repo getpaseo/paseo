@@ -2464,7 +2464,7 @@ test("listProviderAvailability uses registered client keys, including custom pro
   ]);
 });
 
-test("createAgent passes daemon launch env through the provider launch context", async () => {
+test("createAgent passes authoritative workspace identity through the provider launch context", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-test-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -2499,7 +2499,10 @@ test("createAgent passes daemon launch env through the provider launch context",
       cwd: workdir,
     },
     undefined,
-    { workspaceId: undefined },
+    {
+      workspaceId: "workspace-create",
+      env: { PASEO_WORKSPACE_ID: "stale-workspace" },
+    },
   );
 
   expect(client.lastConfig).toEqual({
@@ -2512,6 +2515,27 @@ test("createAgent passes daemon launch env through the provider launch context",
     env: {
       PASEO_AGENT_ID: snapshot.id,
       PASEO_AGENT_CWD: workdir,
+      PASEO_WORKSPACE_ID: "workspace-create",
+    },
+  });
+
+  const unscoped = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+    },
+    "00000000-0000-4000-8000-000000000109",
+    {
+      workspaceId: undefined,
+      env: { PASEO_WORKSPACE_ID: "stale-workspace" },
+    },
+  );
+  expect(client.lastLaunchContext).toEqual({
+    agentId: unscoped.id,
+    env: {
+      PASEO_AGENT_ID: unscoped.id,
+      PASEO_AGENT_CWD: workdir,
+      PASEO_WORKSPACE_ID: "",
     },
   });
 });
@@ -3442,17 +3466,22 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     },
   };
 
-  const resumed = await manager.resumeAgentFromPersistence(handle, {
-    cwd: workdir,
-    systemPrompt: "new prompt",
-    mcpServers: {
-      paseo: {
-        type: "stdio",
-        command: "node",
-        args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/paseo.sock"],
+  const resumed = await manager.resumeAgentFromPersistence(
+    handle,
+    {
+      cwd: workdir,
+      systemPrompt: "new prompt",
+      mcpServers: {
+        paseo: {
+          type: "stdio",
+          command: "node",
+          args: ["/tmp/mcp-bridge.mjs", "--socket", "/tmp/paseo.sock"],
+        },
       },
     },
-  });
+    undefined,
+    { workspaceId: "workspace-resume" },
+  );
 
   expect(resumed.config.systemPrompt).toBe("new prompt");
   expect(resumed.config.mcpServers).toEqual({
@@ -3479,6 +3508,7 @@ test("resumeAgentFromPersistence keeps metadata config, applies overrides, and p
     env: {
       PASEO_AGENT_ID: resumed.id,
       PASEO_AGENT_CWD: workdir,
+      PASEO_WORKSPACE_ID: "workspace-resume",
     },
   });
 });
@@ -3587,6 +3617,7 @@ test("importProviderSession imports the selected session without listing and pub
     env: {
       PASEO_AGENT_ID: imported.id,
       PASEO_AGENT_CWD: workdir,
+      PASEO_WORKSPACE_ID: "ws-imported",
     },
   });
   expect(imported.lifecycle).toBe("idle");
@@ -3682,7 +3713,7 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
       cwd: workdir,
     },
     undefined,
-    { workspaceId: undefined },
+    { workspaceId: "workspace-reload" },
   );
 
   expect(client.lastCreateLaunchContext).toEqual({
@@ -3690,6 +3721,7 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
     env: {
       PASEO_AGENT_ID: snapshot.id,
       PASEO_AGENT_CWD: workdir,
+      PASEO_WORKSPACE_ID: "workspace-reload",
     },
   });
 
@@ -3702,6 +3734,7 @@ test("reloadAgentSession passes daemon launch env through the provider launch co
     env: {
       PASEO_AGENT_ID: snapshot.id,
       PASEO_AGENT_CWD: workdir,
+      PASEO_WORKSPACE_ID: "workspace-reload",
     },
   });
 });
