@@ -140,6 +140,114 @@ describe("Pi history mapper", () => {
     ]);
   });
 
+  test("formats structured Tintinweb agent notifications as compact summaries", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "custom",
+          customType: "subagent-notification",
+          content: [
+            "Background agent group completed: 2 agent(s) finished (partial - others still running)",
+            "",
+            "<task-notification>raw XML</task-notification>",
+            "",
+            "Use get_subagent_result for full output.",
+          ].join("\n"),
+          details: {
+            id: "agent-1",
+            description: "inspect Paseo pin",
+            status: "completed",
+            toolUses: 10,
+            turnCount: 4,
+            maxTurns: 12,
+            totalTokens: 101_088,
+            durationMs: 36_787,
+            outputFile: "/tmp/agent-1.output",
+            resultPreview: "- Source pins: `flake.nix`",
+            others: [
+              {
+                id: "agent-2",
+                description: "trace Paseo services",
+                status: "steered",
+                toolUses: 19,
+                turnCount: 8,
+                totalTokens: 110_374,
+                durationMs: 47_904,
+                outputFile: "/tmp/agent-2.output",
+                resultPreview: "Read-only findings; no files changed.",
+              },
+            ],
+          },
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: [
+            "**Background agent results (other agents still running)**",
+            "",
+            "**Agent completed: inspect Paseo pin**",
+            "4/12 turns | 10 tool uses | 101.1k tokens | 36.8s",
+            "",
+            "- Source pins: `flake.nix`",
+            "",
+            "Transcript: `/tmp/agent-1.output`",
+            "",
+            "---",
+            "",
+            "**Agent completed at turn limit: trace Paseo services**",
+            "8 turns | 19 tool uses | 110.4k tokens | 47.9s",
+            "",
+            "Read-only findings; no files changed.",
+            "",
+            "Transcript: `/tmp/agent-2.output`",
+            "",
+            "Use `get_subagent_result` for full output.",
+          ].join("\n"),
+        },
+      },
+    ]);
+  });
+
+  test("falls back to Tintinweb task notification XML when details are unavailable", async () => {
+    await expect(
+      collectHistory([
+        {
+          role: "custom",
+          customType: "subagent-notification",
+          content: [
+            "<task-notification>",
+            "<task-id>agent-1</task-id>",
+            "<output-file>/tmp/agent-1.output</output-file>",
+            '<summary>Agent "inspect Paseo pin" completed</summary>',
+            "<result>- Source &lt;pin&gt;</result>",
+            "<usage><total_tokens>101088</total_tokens><tool_uses>10</tool_uses><duration_ms>36787</duration_ms></usage>",
+            "</task-notification>",
+          ].join("\n"),
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "pi",
+        item: {
+          type: "assistant_message",
+          text: [
+            '**Agent "inspect Paseo pin" completed**',
+            "10 tool uses | 101.1k tokens | 36.8s",
+            "",
+            "- Source <pin>",
+            "",
+            "Transcript: `/tmp/agent-1.output`",
+          ].join("\n"),
+        },
+      },
+    ]);
+  });
+
   test("uses Pi tree entry ids for replayed user messages", async () => {
     await expect(
       collectHistory(

@@ -156,13 +156,21 @@ The rows combine two kinds of children:
 parentAgentId === thisAgent.id  AND  !archivedAt
 ```
 
-- **Provider subagents** are child executions owned by Claude, Codex, or OpenCode. They are not inserted into `AgentManager` as managed agents. Providers emit a separate descriptor and timeline stream through `agent.provider_subagents.*`; the client keeps that state outside the normal agent store and merges only the presentation rows into the track.
+- **Provider subagents** are child executions owned by Claude, Codex, OpenCode, or Pi. They are not inserted into `AgentManager` as managed agents. Providers emit a separate descriptor and timeline stream through `agent.provider_subagents.*`; the client keeps that state outside the normal agent store and merges only the presentation rows into the track.
 
 Clicking either kind opens a workspace tab. A Paseo subagent tab is a normal interactive agent pane. A provider subagent tab is a read-only timeline pane with no composer, archive, detach, rewind, or fork actions. Both panes use `AgentStreamView`, so message, reasoning, tool-call, and layout rendering stay identical.
 
 Provider timelines use the same structural timeline item format but deliberately have a separate lifecycle and transport. A provider thread/session identifier is not a Paseo agent identifier, and closing its tab is always layout-only.
 
 Provider descriptors may include one compact subtitle. The provider owns its contents and formatting; clients display and truncate it without interpreting provider-specific model, thinking, or usage fields.
+
+### Pi provider subagents
+
+Pi RPC does not expose extension event-bus messages. The daemon's injected Pi extension forwards background `Agent` events from `@tintinweb/pi-subagents` through Pi's extension-notification channel. It uses Tintinweb's cross-package manager registry to subscribe to each running child session, then sends completed turns through the provider timeline stream. The lifecycle event remains the fallback source for a terminal result or error when no child session was available.
+
+Tintinweb also sends the parent model a `subagent-notification` custom message when background work finishes. Paseo keeps that message in the model context but displays its structured details as a compact summary instead of the XML content. The XML parser is a fallback for older notifications that have no details.
+
+Queued children use the provider `running` state because the provider-subagent contract has no queued state. A queued child starts timeline forwarding when Tintinweb announces that it is running. Session shutdown cancels active descriptors and removes child subscriptions. The parent agent lifecycle stays literal; the provider child contributes to the daemon-owned workspace activity projection. Pi cannot rebuild these child timelines after a daemon restart because Tintinweb does not expose them through provider history.
 
 ### Claude provider subagents: the task protocol
 

@@ -60,6 +60,7 @@ import {
 } from "../diagnostic-utils.js";
 import {
   getUserMessageText,
+  PiHistoryMapper,
   streamPiHistory,
   type PiCapturedUserMessageEntry,
 } from "./history-mapper.js";
@@ -87,6 +88,7 @@ import {
   type PiToolResult,
   type PiTrackedToolCall,
 } from "./tool-call-mapper.js";
+import { formatTintinwebSubagentNotification } from "./tintinweb-notification.js";
 
 const PI_PROVIDER = "pi";
 const DEFAULT_PI_THINKING_LEVEL: PiThinkingLevel = "medium";
@@ -96,12 +98,73 @@ const PASEO_PI_CAPTURE_EXTENSION_COMMAND = "paseo_capture_entries";
 const PASEO_PI_ENTRY_CAPTURE_MARKER = "PASEO_ENTRY_CAPTURE";
 const PASEO_PI_SUBMITTED_USER_ENTRY_MARKER = "PASEO_SUBMITTED_USER_ENTRY";
 const PASEO_PI_COMMAND_RESULT_MARKER = "PASEO_COMMAND_RESULT";
+const PASEO_PI_TINTINWEB_SUBAGENT_MARKER = "PASEO_PI_TINTINWEB_SUBAGENT";
 const DEFAULT_PI_EXTENSION_RESULT_TIMEOUT_MS = 30_000;
 const DEFAULT_PI_RPC_TIMEOUT_MS = 60_000;
 const QUESTION_RESPONSE_HEADER = "Response";
 const QUESTION_COMMENT_HEADER = "Comment";
 const PI_ASK_USER_FREEFORM_SENTINEL = "✏️ Type custom response...";
 const COMBINED_ASK_USER_METADATA = "ask_user_select_optional_comment";
+
+const PiTextContentSchema = z.object({
+  type: z.literal("text"),
+  text: z.string(),
+});
+const PiImageContentSchema = z.object({
+  type: z.literal("image"),
+  data: z.string(),
+  mimeType: z.string(),
+});
+const PiAssistantContentSchema = z.discriminatedUnion("type", [
+  PiTextContentSchema,
+  z.object({ type: z.literal("thinking"), thinking: z.string() }),
+  z.object({
+    type: z.literal("toolCall"),
+    id: z.string(),
+    name: z.string(),
+    arguments: z.unknown(),
+  }),
+]);
+const PiAgentMessageSchema: z.ZodType<PiAgentMessage> = z.discriminatedUnion("role", [
+  z.object({
+    role: z.literal("user"),
+    content: z.union([z.string(), z.array(z.union([PiTextContentSchema, PiImageContentSchema]))]),
+  }),
+  z.object({
+    role: z.literal("custom"),
+    content: z.union([z.string(), z.array(z.union([PiTextContentSchema, PiImageContentSchema]))]),
+    customType: z.string().optional(),
+    display: z.boolean().optional(),
+    details: z.unknown().optional(),
+  }),
+  z.object({
+    role: z.literal("assistant"),
+    content: z.array(PiAssistantContentSchema),
+    provider: z.string().optional(),
+    model: z.string().optional(),
+    responseId: z.string().optional(),
+    responseModel: z.string().optional(),
+    errorMessage: z.string().nullable().optional(),
+    stopReason: z.string().optional(),
+  }),
+  z.object({
+    role: z.literal("toolResult"),
+    toolCallId: z.string(),
+    toolName: z.string(),
+    content: z.unknown(),
+    isError: z.boolean().optional(),
+    details: z.unknown().optional(),
+  }),
+  z.object({
+    role: z.literal("bashExecution"),
+    command: z.string(),
+    output: z.string().optional(),
+    exitCode: z.number().nullable().optional(),
+    cancelled: z.boolean().optional(),
+    timestamp: z.number(),
+  }),
+]);
+const PiAgentMessagesSchema = z.array(PiAgentMessageSchema);
 
 export const PiProviderParamsSchema = z
   .object({
@@ -667,8 +730,255 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
 	  );
 	}
 
+	function tintinwebSubagentId(payload) {
+	  const value = payload?.id;
+	  if (typeof value !== "string") return undefined;
+	  return value.trim() || undefined;
+	}
+
+	function tintinwebManager() {
+	  const manager = globalThis[Symbol.for("pi-subagents:manager")];
+	  return manager && typeof manager.getRecord === "function" ? manager : undefined;
+	}
+
+	function tintinwebRecord(id) {
+	  return tintinwebManager()?.getRecord(id);
+	}
+
+	function tintinwebTokenTotal(record, payload) {
+	  if (typeof payload?.tokens?.total === "number") return payload.tokens.total;
+	  const usage = record?.lifetimeUsage;
+	  if (!usage) return 0;
+	  return (usage.input || 0) + (usage.output || 0) + (usage.cacheWrite || 0);
+	}
+
+	function formatTintinwebTokens(total) {
+	  if (total <= 0) return undefined;
+	  if (total < 1000) return Math.round(total) + " tokens";
+	  return Math.round(total / 100) / 10 + "k tokens";
+	}
+
+	function formatTintinwebThinking(value) {
+	  if (typeof value !== "string" || !value.trim()) return undefined;
+	  if (value === "xhigh") return "Extra High";
+	  return value
+	    .split(/[-_\\s]+/)
+	    .filter(Boolean)
+	    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+	    .join(" ");
+	}
+
+	function tintinwebSubtitle(record, payload) {
+	  const type =
+	    typeof payload?.type === "string" && payload.type.trim()
+	      ? payload.type.trim()
+	      : record?.type;
+	  const model = record?.invocation?.modelName;
+	  const thinking = formatTintinwebThinking(record?.invocation?.thinking);
+	  const tokens = formatTintinwebTokens(tintinwebTokenTotal(record, payload));
+	  const parts = [type, model, thinking, tokens].filter(Boolean);
+	  return parts.length > 1 ? parts.join(" · ") : undefined;
+	}
+
+	function reportTintinwebSubagent(ctx, event) {
+	  if (!ctx) return;
+	  ctx.ui.notify(
+	    "${PASEO_PI_TINTINWEB_SUBAGENT_MARKER} " + JSON.stringify(event),
+	    "info",
+	  );
+	}
+
 	export default function paseoIntegration(pi) {
 	  const submittedUserMessages = [];
+	  const activeTintinwebSubagentIds = new Set();
+	  const tintinwebAttachTimers = new Map();
+	  const tintinwebStreams = new Map();
+	  const tintinwebSubtitles = new Map();
+	  let tintinwebContext;
+	  let unsubscribeTintinwebEvents = [];
+
+	  function reportTintinwebPresentation(id, payload) {
+	    const record = tintinwebRecord(id);
+	    const subtitle = tintinwebSubtitle(record, payload);
+	    if (!subtitle || tintinwebSubtitles.get(id) === subtitle) return;
+	    tintinwebSubtitles.set(id, subtitle);
+	    reportTintinwebSubagent(tintinwebContext, { id, subtitle });
+	  }
+
+	  function flushTintinwebStream(id) {
+	    const stream = tintinwebStreams.get(id);
+	    if (!stream) return;
+	    const messages = stream.session.messages;
+	    while (stream.writtenCount < messages.length) {
+	      const message = messages[stream.writtenCount];
+	      stream.writtenCount += 1;
+	      if (stream.skipNextUser && message?.role === "user") {
+	        stream.skipNextUser = false;
+	        continue;
+	      }
+	      if (message?.role === "assistant") stream.hasAssistantMessage = true;
+	      reportTintinwebSubagent(tintinwebContext, {
+	        kind: "messages",
+	        id,
+	        messages: [message],
+	      });
+	    }
+	  }
+
+	  function attachTintinwebStream(id, startAtCurrentMessages) {
+	    if (tintinwebStreams.has(id)) return true;
+	    const record = tintinwebRecord(id);
+	    const session = record?.session;
+	    if (!session || !Array.isArray(session.messages) || typeof session.subscribe !== "function") {
+	      return false;
+	    }
+	    const stream = {
+	      session,
+	      writtenCount: startAtCurrentMessages ? session.messages.length : 0,
+	      skipNextUser: true,
+	      hasAssistantMessage: false,
+	      unsubscribe: undefined,
+	    };
+	    tintinwebStreams.set(id, stream);
+	    stream.unsubscribe = session.subscribe((event) => {
+	      if (event.type === "turn_end") {
+	        flushTintinwebStream(id);
+	        reportTintinwebPresentation(id);
+	      }
+	      if (event.type === "compaction_start") {
+	        flushTintinwebStream(id);
+	        const trigger = event.reason === "manual" ? "manual" : "auto";
+	        reportTintinwebSubagent(tintinwebContext, {
+	          kind: "compaction",
+	          id,
+	          status: "loading",
+	          trigger,
+	        });
+	      }
+	      if (event.type === "compaction_end") {
+	        reportTintinwebSubagent(tintinwebContext, {
+	          kind: "compaction",
+	          id,
+	          status: "completed",
+	        });
+	        if (!event.aborted && event.result) {
+	          queueMicrotask(() => {
+	            stream.writtenCount = session.messages.length;
+	          });
+	        }
+	      }
+	    });
+	    flushTintinwebStream(id);
+	    return true;
+	  }
+
+	  function scheduleTintinwebStream(id, startAtCurrentMessages = false) {
+	    if (tintinwebStreams.has(id) || tintinwebAttachTimers.has(id)) return;
+	    const attach = () => {
+	      tintinwebAttachTimers.delete(id);
+	      if (!activeTintinwebSubagentIds.has(id)) return;
+	      if (attachTintinwebStream(id, startAtCurrentMessages)) return;
+	      tintinwebAttachTimers.set(id, setTimeout(attach, 250));
+	    };
+	    attach();
+	  }
+
+	  function stopTintinwebStream(id) {
+	    const timer = tintinwebAttachTimers.get(id);
+	    if (timer) clearTimeout(timer);
+	    tintinwebAttachTimers.delete(id);
+	    flushTintinwebStream(id);
+	    const stream = tintinwebStreams.get(id);
+	    stream?.unsubscribe?.();
+	    tintinwebStreams.delete(id);
+	    return stream?.hasAssistantMessage === true;
+	  }
+
+	  function finishTintinwebSubagent(payload, status) {
+	    const id = tintinwebSubagentId(payload);
+	    if (!id || !activeTintinwebSubagentIds.delete(id)) return;
+	    if (!tintinwebStreams.has(id)) attachTintinwebStream(id, false);
+	    const hasAssistantMessage = stopTintinwebStream(id);
+	    reportTintinwebPresentation(id, payload);
+	    const result = typeof payload?.result === "string" ? payload.result.trim() : "";
+	    const error = typeof payload?.error === "string" ? payload.error.trim() : "";
+	    if (status === "completed" && result && !hasAssistantMessage) {
+	      reportTintinwebSubagent(tintinwebContext, {
+	        kind: "messages",
+	        id,
+	        messages: [{ role: "assistant", content: [{ type: "text", text: result }] }],
+	      });
+	    }
+	    if (status === "failed" && error) {
+	      reportTintinwebSubagent(tintinwebContext, { kind: "error", id, message: error });
+	    }
+	    tintinwebSubtitles.delete(id);
+	    reportTintinwebSubagent(tintinwebContext, { id, status });
+	  }
+
+	  function stopTintinwebEvents() {
+	    for (const id of activeTintinwebSubagentIds) {
+	      stopTintinwebStream(id);
+	      reportTintinwebSubagent(tintinwebContext, { id, status: "canceled" });
+	    }
+	    activeTintinwebSubagentIds.clear();
+	    tintinwebSubtitles.clear();
+	    for (const unsubscribe of unsubscribeTintinwebEvents) unsubscribe();
+	    unsubscribeTintinwebEvents = [];
+	    tintinwebContext = undefined;
+	  }
+
+	  function startTintinwebEvents(ctx) {
+	    stopTintinwebEvents();
+	    tintinwebContext = ctx;
+	    unsubscribeTintinwebEvents = [
+	      pi.events.on("subagents:started", (payload) => {
+	        const id = tintinwebSubagentId(payload);
+	        const record = id ? tintinwebRecord(id) : undefined;
+	        if (id && record?.isBackground === true && activeTintinwebSubagentIds.has(id)) {
+	          scheduleTintinwebStream(id);
+	        }
+	      }),
+	      pi.events.on("subagents:created", (payload) => {
+	        const id = tintinwebSubagentId(payload);
+	        if (!id || payload?.isBackground !== true || activeTintinwebSubagentIds.has(id)) return;
+	        // Tintinweb uses this event for queued and running work; Paseo has no queued child status.
+	        activeTintinwebSubagentIds.add(id);
+	        const type = typeof payload.type === "string" ? payload.type.trim() : "";
+	        const description =
+	          typeof payload.description === "string" ? payload.description.trim() : "";
+	        const record = tintinwebRecord(id);
+	        const subtitle = tintinwebSubtitle(record, payload);
+	        const toolCallId =
+	          typeof record?.toolCallId === "string" && record.toolCallId.trim()
+	            ? record.toolCallId.trim()
+	            : undefined;
+	        reportTintinwebSubagent(tintinwebContext, {
+	          id,
+	          title: type || "Pi subagent",
+	          description: description || undefined,
+	          status: "running",
+	          subtitle,
+	          toolCallId,
+	        });
+	        if (subtitle) tintinwebSubtitles.set(id, subtitle);
+	        if (record?.status === "running") scheduleTintinwebStream(id);
+	      }),
+	      pi.events.on("subagents:completed", (payload) => {
+	        if (payload?.status !== "completed" && payload?.status !== "steered") return;
+	        finishTintinwebSubagent(payload, "completed");
+	      }),
+	      pi.events.on("subagents:failed", (payload) => {
+	        if (payload?.status === "stopped") {
+	          finishTintinwebSubagent(payload, "canceled");
+	          return;
+	        }
+	        if (payload?.status === "aborted" || payload?.status === "error") {
+	          finishTintinwebSubagent(payload, "failed");
+	        }
+	      }),
+	    ];
+	  }
 
 	  function emitSubmittedUserEntries(ctx) {
 	    const entries = ctx.sessionManager.getEntries();
@@ -701,7 +1011,12 @@ function createPiPaseoExtensionFile(systemPrompt?: string): PiTempFile {
     }
 
 	  pi.on("session_start", async (_event, ctx) => {
+	    startTintinwebEvents(ctx);
 	    emitEntryCapture(ctx, "session_start");
+	  });
+
+	  pi.on("session_shutdown", async () => {
+	    stopTintinwebEvents();
 	  });
 
 	  pi.on("message_end", async (event) => {
@@ -853,6 +1168,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function parseTintinwebLifecycleStatus(
+  value: unknown,
+): "running" | "completed" | "failed" | "canceled" | null {
+  if (value === "running" || value === "completed" || value === "failed" || value === "canceled") {
+    return value;
+  }
+  return null;
 }
 
 function parseExtensionMarkerPayload(
@@ -1223,6 +1547,8 @@ export class PiRpcAgentSession implements AgentSession {
 
   private readonly subscribers = new Set<(event: AgentStreamEvent) => void>();
   private readonly activeToolCalls = new Map<string, PiTrackedToolCall>();
+  private readonly activeTintinwebSubagentIds = new Set<string>();
+  private readonly tintinwebSubagentMappers = new Map<string, PiHistoryMapper>();
   private readonly pendingExtensionUiRequests = new Map<string, AgentPermissionRequest>();
   private activeAskUserDialog: ActiveAskUserDialog | null = null;
   private pendingCombinedAskUserResponse: PendingCombinedAskUserResponse | null = null;
@@ -1629,6 +1955,7 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     this.closed = true;
+    this.settleActiveTintinwebSubagents("canceled");
     this.usagePoller.close();
     try {
       await this.runtimeSession.close();
@@ -2021,6 +2348,121 @@ export class PiRpcAgentSession implements AgentSession {
     return true;
   }
 
+  private handleTintinwebSubagentMarker(message: string): boolean {
+    const payload = parseExtensionMarkerPayload(message, PASEO_PI_TINTINWEB_SUBAGENT_MARKER);
+    if (!payload) {
+      return false;
+    }
+    if (this.closed) {
+      return true;
+    }
+    const id = optionalString(payload.id)?.trim();
+    if (!id) {
+      return true;
+    }
+    switch (optionalString(payload.kind)) {
+      case "messages":
+        this.emitTintinwebMessages(id, payload.messages);
+        break;
+      case "error":
+        this.emitTintinwebError(id, payload.message);
+        break;
+      case "compaction":
+        this.emitTintinwebCompaction(id, payload);
+        break;
+      default:
+        this.emitTintinwebUpsert(id, payload);
+    }
+    return true;
+  }
+
+  private emitTintinwebMessages(id: string, value: unknown): void {
+    const parsed = PiAgentMessagesSchema.safeParse(value);
+    if (!parsed.success) {
+      return;
+    }
+    const mapper = this.tintinwebSubagentMappers.get(id) ?? new PiHistoryMapper(this.provider);
+    this.tintinwebSubagentMappers.set(id, mapper);
+    for (const event of mapper.mapMessages(parsed.data)) {
+      if (event.type !== "timeline") {
+        continue;
+      }
+      this.emit({
+        type: "provider_subagent",
+        provider: this.provider,
+        event: {
+          type: "timeline",
+          id,
+          item: event.item,
+          ...(event.timestamp ? { timestamp: event.timestamp } : {}),
+        },
+      });
+    }
+  }
+
+  private emitTintinwebError(id: string, value: unknown): void {
+    const error = optionalString(value)?.trim();
+    if (!error) {
+      return;
+    }
+    this.emit({
+      type: "provider_subagent",
+      provider: this.provider,
+      event: { type: "timeline", id, item: { type: "error", message: error } },
+    });
+  }
+
+  private emitTintinwebCompaction(id: string, payload: Record<string, unknown>): void {
+    const status = optionalString(payload.status);
+    if (status !== "loading" && status !== "completed") {
+      return;
+    }
+    const trigger = optionalString(payload.trigger);
+    this.emit({
+      type: "provider_subagent",
+      provider: this.provider,
+      event: {
+        type: "timeline",
+        id,
+        item: {
+          type: "compaction",
+          status,
+          ...(trigger === "auto" || trigger === "manual" ? { trigger } : {}),
+        },
+      },
+    });
+  }
+
+  private emitTintinwebUpsert(id: string, payload: Record<string, unknown>): void {
+    const status = parseTintinwebLifecycleStatus(payload.status);
+    const title = optionalString(payload.title)?.trim();
+    const description = optionalString(payload.description)?.trim();
+    const subtitle = optionalString(payload.subtitle)?.trim();
+    const toolCallId = optionalString(payload.toolCallId)?.trim();
+    if (!status && !title && !description && !subtitle && !toolCallId) {
+      return;
+    }
+    if (status === "running") {
+      this.activeTintinwebSubagentIds.add(id);
+    } else if (status) {
+      this.activeTintinwebSubagentIds.delete(id);
+      this.tintinwebSubagentMappers.delete(id);
+    }
+    this.emit({
+      type: "provider_subagent",
+      provider: this.provider,
+      event: {
+        type: "upsert",
+        id,
+        ...(status ? { status } : {}),
+        ...(title ? { title } : {}),
+        ...(description ? { description } : {}),
+        ...(subtitle ? { subtitle } : {}),
+        ...(toolCallId ? { toolCallId } : {}),
+      },
+    });
+  }
+
   private handleExtensionUiRequest(
     event: Extract<PiRuntimeEvent, { type: "extension_ui_request" }>,
   ): void {
@@ -2029,7 +2471,8 @@ export class PiRpcAgentSession implements AgentSession {
       if (
         this.handleSubmittedUserEntryMarker(message) ||
         this.handleEntryCaptureMarker(message) ||
-        this.handleCommandResultMarker(message)
+        this.handleCommandResultMarker(message) ||
+        this.handleTintinwebSubagentMarker(message)
       ) {
         return;
       }
@@ -2148,8 +2591,21 @@ export class PiRpcAgentSession implements AgentSession {
     }
   }
 
+  private settleActiveTintinwebSubagents(status: "failed" | "canceled"): void {
+    for (const id of this.activeTintinwebSubagentIds) {
+      this.emit({
+        type: "provider_subagent",
+        provider: this.provider,
+        event: { type: "upsert", id, status },
+      });
+    }
+    this.activeTintinwebSubagentIds.clear();
+    this.tintinwebSubagentMappers.clear();
+  }
+
   private handleProcessExit(error: string): void {
     this.rejectAllExtensionResults(new Error(error));
+    this.settleActiveTintinwebSubagents("failed");
     if (!this.activeTurnId) {
       return;
     }
@@ -2389,7 +2845,9 @@ export class PiRpcAgentSession implements AgentSession {
       return;
     }
     if (event.message.role === "custom") {
-      const text = getUserMessageText(event.message.content);
+      const text =
+        formatTintinwebSubagentNotification(event.message) ??
+        getUserMessageText(event.message.content);
       if (text) {
         this.emit({
           type: "timeline",
