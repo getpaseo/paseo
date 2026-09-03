@@ -71,6 +71,8 @@ test("configured launches appear in the shared workspace run menu", async ({ pag
     await expect(page.getByTestId("workspace-launches-open-dev-dev:p0")).toBeVisible({
       timeout: 30_000,
     });
+    await page.getByTestId("workspace-launches-route-dev:p0").click();
+    await expect(page.getByTestId("workspace-launches-route-dev:p0-direct")).toBeVisible();
     await expect(launch).toContainText(String(portBase));
     await expect(launch).toContainText(String(portBase + 2));
     await expect(launch).toContainText("TCP");
