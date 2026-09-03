@@ -2573,38 +2573,8 @@ export const es: TranslationResources = {
       updateErrorTitle: "No se puede actualizar el proveedor",
       actions: {
         menu: "{{name}} actions",
-        configureTools: "Configurar herramientas",
         remove: "Remove provider",
         removing: "Removing...",
-      },
-      tools: {
-        title: "Configurar herramientas de {{name}}",
-        searchPlaceholder: "Buscar herramientas",
-        updateRequired: {
-          title: "Actualiza el host para configurar las herramientas de Paseo",
-          description:
-            "Los ajustes de herramientas por proveedor no están disponibles en este host.",
-        },
-        master: {
-          title: "Activar herramientas de Paseo",
-          hint: "Permitir que este proveedor use herramientas de Paseo",
-          accessibilityLabel: "Activar herramientas de Paseo para {{name}}",
-        },
-        enableAll: "Activar todas",
-        disableAll: "Desactivar todas",
-        globalOverride: {
-          title: "Las herramientas de Paseo están desactivadas",
-          description:
-            "El ajuste global de inyectar herramientas de Paseo anula estas elecciones guardadas",
-        },
-        browserUnavailable: {
-          title: "Las herramientas del navegador no están disponibles",
-          description:
-            "Activa las herramientas del navegador en los ajustes del host para usarlas. Las elecciones guardadas no cambian",
-        },
-        toolAccessibilityLabel: "Herramienta de Paseo: {{name}}",
-        noSearchMatches: "No hay herramientas que coincidan con tu búsqueda",
-        updateErrorTitle: "No se pudieron actualizar los ajustes de herramientas de Paseo",
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

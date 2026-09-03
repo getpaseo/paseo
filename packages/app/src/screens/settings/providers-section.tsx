@@ -23,8 +23,6 @@ import {
 } from "@/hooks/use-acp-provider-catalog";
 import { ProviderCatalogList } from "@/components/provider-catalog-list";
 import { getProviderIcon } from "@/components/provider-icons";
-import { PaseoToolsPolicySheet } from "@/screens/settings/paseo-tools-policy-sheet";
-import { Alert as InlineAlert } from "@/components/ui/alert";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -37,7 +35,7 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import { useProviderSettingsStore } from "@/stores/provider-settings-store";
 import { confirmDialog } from "@/utils/confirm-dialog";
 import { filterSelectableModels } from "@/provider-selection/model-catalog";
-import { ChevronRight, MoreHorizontal, Settings2, Trash2 } from "lucide-react-native";
+import { ChevronRight, MoreHorizontal, Trash2 } from "lucide-react-native";
 
 type ProviderDefinition = ReturnType<typeof buildProviderDefinitions>[number];
 type ProviderEntry = NonNullable<ReturnType<typeof useProvidersSnapshot>["entries"]>[number];
@@ -86,10 +84,8 @@ interface ProviderRowProps {
   isRemoving: boolean;
   canRemove: boolean;
   isFirst: boolean;
-  canConfigureTools: boolean;
   onPress: (providerId: string) => void;
   onToggleEnabled: (providerId: string, enabled: boolean) => void;
-  onConfigureTools: (providerId: string) => void;
   onRemove: (providerId: string, providerLabel: string) => void;
 }
 
@@ -105,9 +101,6 @@ interface ProviderActionsMenuProps {
   foregroundColor: string;
   foregroundMutedColor: string;
   dangerColor: string;
-  canRemove: boolean;
-  canConfigureTools: boolean;
-  onConfigureTools: (providerId: string) => void;
   onRemove: (providerId: string, providerLabel: string) => void;
 }
 
@@ -119,18 +112,12 @@ function ProviderActionsMenu({
   foregroundColor,
   foregroundMutedColor,
   dangerColor,
-  canRemove,
-  canConfigureTools,
-  onConfigureTools,
   onRemove,
 }: ProviderActionsMenuProps) {
   const { t } = useTranslation();
   const handleRemove = useCallback(() => {
     onRemove(providerId, providerLabel);
   }, [onRemove, providerId, providerLabel]);
-  const handleConfigureTools = useCallback(() => {
-    onConfigureTools(providerId);
-  }, [onConfigureTools, providerId]);
   const triggerStyle = useCallback(
     ({
       pressed,
@@ -144,10 +131,6 @@ function ProviderActionsMenu({
     [],
   );
   const trashLeading = useMemo(() => <Trash2 size={16} color={dangerColor} />, [dangerColor]);
-  const settingsLeading = useMemo(
-    () => <Settings2 size={16} color={foregroundMutedColor} />,
-    [foregroundMutedColor],
-  );
 
   return (
     <DropdownMenu>
@@ -168,27 +151,16 @@ function ProviderActionsMenu({
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" width={220}>
-        {canConfigureTools ? (
-          <DropdownMenuItem
-            leading={settingsLeading}
-            onSelect={handleConfigureTools}
-            testID={`provider-configure-tools-${providerId}`}
-          >
-            {t("settings.providers.actions.configureTools")}
-          </DropdownMenuItem>
-        ) : null}
-        {canRemove ? (
-          <DropdownMenuItem
-            destructive
-            leading={trashLeading}
-            onSelect={handleRemove}
-            status={isRemoving ? "pending" : "idle"}
-            pendingLabel={t("settings.providers.actions.removing")}
-            testID={`provider-remove-${providerId}`}
-          >
-            {t("settings.providers.actions.remove")}
-          </DropdownMenuItem>
-        ) : null}
+        <DropdownMenuItem
+          destructive
+          leading={trashLeading}
+          onSelect={handleRemove}
+          status={isRemoving ? "pending" : "idle"}
+          pendingLabel={t("settings.providers.actions.removing")}
+          testID={`provider-remove-${providerId}`}
+        >
+          {t("settings.providers.actions.remove")}
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -202,10 +174,8 @@ function ProviderRow({
   isRemoving,
   canRemove,
   isFirst,
-  canConfigureTools,
   onPress,
   onToggleEnabled,
-  onConfigureTools,
   onRemove,
 }: ProviderRowProps) {
   const { t } = useTranslation();
@@ -279,23 +249,20 @@ function ProviderRow({
               disabled={isToggling || isRemoving}
               accessibilityLabel={t("settings.providers.enableProvider", { name: def.label })}
             />
-            {canConfigureTools || canRemove ? (
-              <View style={styles.menuSlot}>
+            <View style={styles.menuSlot}>
+              {canRemove ? (
                 <ProviderActionsMenu
                   providerId={def.id}
                   providerLabel={def.label}
                   isRemoving={isRemoving}
-                  canRemove={canRemove}
-                  canConfigureTools={canConfigureTools}
                   iconSize={theme.iconSize.sm}
                   foregroundColor={theme.colors.foreground}
                   foregroundMutedColor={theme.colors.foregroundMuted}
                   dangerColor={theme.colors.statusDanger}
-                  onConfigureTools={onConfigureTools}
                   onRemove={onRemove}
                 />
-              </View>
-            ) : null}
+              ) : null}
+            </View>
           </View>
         </>
       )}
@@ -358,16 +325,13 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
   const { t } = useTranslation();
   const isConnected = useHostRuntimeIsConnected(serverId);
   const supportsProviderRemoval = useHostFeature(serverId, "providerRemoval");
-  const supportsPaseoToolPolicies = useHostFeature(serverId, "paseoToolPolicies");
   const { entries, isLoading, refresh } = useProvidersSnapshot(serverId);
-  const { config, patchConfig } = useDaemonConfig(serverId);
+  const { patchConfig } = useDaemonConfig(serverId);
   const openProviderSettings = useProviderSettingsStore((state) => state.open);
   const [pendingProviderId, setPendingProviderId] = useState<string | null>(null);
   const [removingProviderId, setRemovingProviderId] = useState<string | null>(null);
   const removingProviderIdRef = useRef<string | null>(null);
   const [installingProviderId, setInstallingProviderId] = useState<string | null>(null);
-  const [toolPolicyProviderId, setToolPolicyProviderId] = useState<string | null>(null);
-  const [toolPolicyVisible, setToolPolicyVisible] = useState(false);
 
   const providerDefinitions = useMemo(() => buildProviderDefinitions(entries), [entries]);
   const hasServer = serverId.length > 0;
@@ -395,13 +359,6 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
     },
     [patchConfig, t],
   );
-
-  const handleOpenToolPolicy = useCallback((providerId: string) => {
-    setToolPolicyProviderId(providerId);
-    setToolPolicyVisible(true);
-  }, []);
-  const handleCloseToolPolicy = useCallback(() => setToolPolicyVisible(false), []);
-  const handleDismissToolPolicy = useCallback(() => setToolPolicyProviderId(null), []);
 
   const handleRemoveProvider = useCallback(
     async (providerId: string, providerLabel: string) => {
@@ -461,14 +418,6 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
         testID="host-page-providers-card"
         style={styles.sectionSpacing}
       >
-        {hasServer && isConnected && !supportsPaseoToolPolicies ? (
-          <InlineAlert
-            variant="info"
-            title={t("settings.providers.tools.updateRequired.title")}
-            description={t("settings.providers.tools.updateRequired.description")}
-            testID="provider-tools-update-required"
-          />
-        ) : null}
         {!hasServer || !isConnected ? (
           <View style={[settingsStyles.card, styles.emptyCard]}>
             <Text style={styles.emptyText}>{t("settings.providers.unavailable")}</Text>
@@ -494,10 +443,8 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
                   isRemoving={removingProviderId === def.id}
                   canRemove={supportsProviderRemoval && entry.source === "custom"}
                   isFirst={index === 0}
-                  canConfigureTools={supportsPaseoToolPolicies}
                   onPress={handleOpenProviderSettings}
                   onToggleEnabled={handleToggleEnabled}
-                  onConfigureTools={handleOpenToolPolicy}
                   onRemove={handleRemoveProvider}
                 />
               );
@@ -518,20 +465,6 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
             onInstall={handleInstall}
           />
         </SettingsSection>
-      ) : null}
-      {supportsPaseoToolPolicies && toolPolicyProviderId ? (
-        <PaseoToolsPolicySheet
-          providerId={toolPolicyProviderId}
-          providerLabel={
-            providerDefinitions.find((provider) => provider.id === toolPolicyProviderId)?.label ??
-            toolPolicyProviderId
-          }
-          config={config}
-          visible={toolPolicyVisible}
-          onClose={handleCloseToolPolicy}
-          onDismiss={handleDismissToolPolicy}
-          patchConfig={patchConfig}
-        />
       ) : null}
     </>
   );

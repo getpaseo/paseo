@@ -3078,7 +3078,7 @@ test("keeps the global Paseo-tools gate outside provider policy and MCP injectio
   });
 
   const disabledClient = new McpClient();
-  const catalogFactory = vi.fn();
+  let catalogFactoryCalls = 0;
   const disabledManager = new AgentManager({
     clients: { codex: disabledClient },
     registry: storage,
@@ -3086,7 +3086,10 @@ test("keeps the global Paseo-tools gate outside provider policy and MCP injectio
     mcpBaseUrl: "http://127.0.0.1:6767/mcp/agents",
     paseoToolsEnabled: false,
     resolvePaseoToolPolicy: () => ({ enabled: true }),
-    paseoToolCatalogFactory: catalogFactory,
+    paseoToolCatalogFactory: () => {
+      catalogFactoryCalls += 1;
+      return paseoTools;
+    },
   });
   const disabledAgent = await disabledManager.createAgent(
     { provider: "codex", cwd: workdir },
@@ -3095,7 +3098,7 @@ test("keeps the global Paseo-tools gate outside provider policy and MCP injectio
   );
 
   expect(disabledClient.lastConfig?.mcpServers).toBeUndefined();
-  expect(catalogFactory).not.toHaveBeenCalled();
+  expect(catalogFactoryCalls).toBe(0);
   expect(disabledManager.getPaseoToolPolicy(disabledAgent.id)).toEqual({ enabled: false });
 
   rmSync(workdir, { recursive: true, force: true });

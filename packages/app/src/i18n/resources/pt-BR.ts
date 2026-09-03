@@ -2557,38 +2557,8 @@ export const ptBR: TranslationResources = {
       updateErrorTitle: "Não foi possível atualizar provedor",
       actions: {
         menu: "{{name}} actions",
-        configureTools: "Configurar ferramentas",
         remove: "Remove provider",
         removing: "Removing...",
-      },
-      tools: {
-        title: "Configurar ferramentas de {{name}}",
-        searchPlaceholder: "Buscar ferramentas",
-        updateRequired: {
-          title: "Atualize o host para configurar as ferramentas do Paseo",
-          description:
-            "As configurações de ferramentas por provedor não estão disponíveis neste host.",
-        },
-        master: {
-          title: "Ativar ferramentas do Paseo",
-          hint: "Permitir que este provedor use ferramentas do Paseo",
-          accessibilityLabel: "Ativar ferramentas do Paseo para {{name}}",
-        },
-        enableAll: "Ativar todas",
-        disableAll: "Desativar todas",
-        globalOverride: {
-          title: "As ferramentas do Paseo estão desativadas",
-          description:
-            "A configuração global de injetar ferramentas do Paseo substitui estas escolhas salvas",
-        },
-        browserUnavailable: {
-          title: "As ferramentas do navegador estão indisponíveis",
-          description:
-            "Ative as ferramentas do navegador nas configurações do host para usá-las. As escolhas salvas não mudam",
-        },
-        toolAccessibilityLabel: "Ferramenta do Paseo: {{name}}",
-        noSearchMatches: "Nenhuma ferramenta corresponde à sua busca",
-        updateErrorTitle: "Não foi possível atualizar as configurações das ferramentas do Paseo",
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

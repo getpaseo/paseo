@@ -14,6 +14,7 @@ import {
 } from "@getpaseo/protocol/agent-labels";
 import type { Logger } from "pino";
 import type { ProviderOptions, ToolPolicy } from "@getpaseo/protocol/agent-types";
+import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import { z } from "zod";
 import type { TerminalManager } from "../../terminal/terminal-manager.js";
 
@@ -77,7 +78,6 @@ import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtim
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
 import { isPaseoToolPolicyEnabled } from "./paseo-tool-policy.js";
-import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
 import {
   ProviderSubagentStore,
   type ProviderSubagentDescriptor,
@@ -711,7 +711,9 @@ export class AgentManager {
   private paseoToolsEnabled = true;
   private paseoToolCatalogFactory: PaseoToolCatalogFactory | null = null;
   private readonly paseoToolPolicies = new Map<string, ProviderPaseoToolsPolicy | undefined>();
-  private resolvePaseoToolPolicy: (provider: AgentProvider) => ProviderPaseoToolsPolicy | undefined;
+  private readonly resolvePaseoToolPolicy: (
+    provider: AgentProvider,
+  ) => ProviderPaseoToolsPolicy | undefined;
   private appendSystemPrompt: string;
   private onAgentAttention?: AgentAttentionCallback;
   private onAgentArchived?: AgentArchivedCallback;

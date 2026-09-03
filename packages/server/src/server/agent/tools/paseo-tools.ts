@@ -92,8 +92,8 @@ import type {
   PaseoToolExecutionContext,
   PaseoToolResult,
 } from "./types.js";
-import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
 import type { ProviderPaseoToolsPolicy } from "@getpaseo/protocol/provider-config";
+import { isPaseoToolEnabled } from "../paseo-tool-policy.js";
 
 export interface PaseoToolHostDependencies {
   agentManager: AgentManager;

@@ -117,16 +117,6 @@ describe("wire schema compatibility", () => {
     });
   });
 
-  test("server info accepts the optional Paseo tool policies feature flag", () => {
-    const parsed = ServerInfoStatusPayloadSchema.parse({
-      status: "server_info",
-      serverId: "paseo-tools-server",
-      features: { paseoToolPolicies: true },
-    });
-
-    expect(parsed.features?.paseoToolPolicies).toBe(true);
-  });
-
   test("assistant timeline message ids are optional on the wire", () => {
     expect(
       AgentTimelineItemPayloadSchema.parse({

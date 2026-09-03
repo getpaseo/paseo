@@ -2619,37 +2619,8 @@ export const en = {
       updateErrorTitle: "Unable to update provider",
       actions: {
         menu: "{{name}} actions",
-        configureTools: "Configure tools",
         remove: "Remove provider",
         removing: "Removing...",
-      },
-      tools: {
-        title: "Configure {{name}} tools",
-        searchPlaceholder: "Search tools",
-        updateRequired: {
-          title: "Update the host to configure Paseo tools",
-          description: "Per-provider tool settings are unavailable on this host.",
-        },
-        master: {
-          title: "Enable Paseo tools",
-          hint: "Allow this provider to use Paseo tools",
-          accessibilityLabel: "Enable Paseo tools for {{name}}",
-        },
-        enableAll: "Enable all",
-        disableAll: "Disable all",
-        globalOverride: {
-          title: "Paseo tools are disabled",
-          description:
-            "The global Inject Paseo tools setting overrides these saved provider and tool choices",
-        },
-        browserUnavailable: {
-          title: "Browser tools are unavailable",
-          description:
-            "Turn on Browser tools in host settings to use these tools. Saved choices remain unchanged",
-        },
-        toolAccessibilityLabel: "{{name}} Paseo tool",
-        noSearchMatches: "No tools match your search",
-        updateErrorTitle: "Unable to update Paseo tool settings",
       },
       remove: {
         confirmTitle: "Remove {{name}}?",

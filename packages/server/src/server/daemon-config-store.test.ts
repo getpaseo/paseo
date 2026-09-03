@@ -403,6 +403,10 @@ describe("DaemonConfigStore", () => {
   test("patch persists provider Paseo-tool policy without changing availability", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ agents: { providers: { claude: { enabled: false } } } }),
+    );
     const store = new DaemonConfigStore(paseoHome, {
       mcp: { injectIntoAgents: true },
       browserTools: { enabled: false },

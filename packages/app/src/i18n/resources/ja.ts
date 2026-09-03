@@ -2541,37 +2541,8 @@ export const ja: TranslationResources = {
       updateErrorTitle: "プロバイダーを更新できません",
       actions: {
         menu: "{{name}} actions",
-        configureTools: "ツールを設定",
         remove: "Remove provider",
         removing: "Removing...",
-      },
-      tools: {
-        title: "{{name}} のツールを設定",
-        searchPlaceholder: "ツールを検索",
-        updateRequired: {
-          title: "ホストを更新してPaseoツールを設定",
-          description: "このホストではプロバイダーごとのツール設定を利用できません。",
-        },
-        master: {
-          title: "Paseo ツールを有効にする",
-          hint: "このプロバイダーが Paseo ツールを使用できるようにします",
-          accessibilityLabel: "{{name}} の Paseo ツールを有効にする",
-        },
-        enableAll: "すべて有効にする",
-        disableAll: "すべて無効にする",
-        globalOverride: {
-          title: "Paseo ツールは無効です",
-          description:
-            "グローバルの Paseo ツール注入設定が、保存済みのプロバイダーとツールの選択を上書きします",
-        },
-        browserUnavailable: {
-          title: "ブラウザツールは利用できません",
-          description:
-            "使用するにはホスト設定でブラウザツールを有効にしてください。保存済みの選択は変更されません",
-        },
-        toolAccessibilityLabel: "{{name}} Paseo ツール",
-        noSearchMatches: "検索に一致するツールがありません",
-        updateErrorTitle: "Paseo ツール設定を更新できません",
       },
       remove: {
         confirmTitle: "Remove {{name}}?",
