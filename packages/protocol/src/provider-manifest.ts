@@ -91,6 +91,14 @@ const CODEX_MODES: AgentProviderModeDefinition[] = [
     colorTier: "moderate",
   },
   {
+    id: "auto-review-full-access",
+    label: "Auto-review + Full Access",
+    description:
+      "Run without a sandbox while routing eligible `on-request` approvals through the auto-reviewer subagent.",
+    icon: "ShieldCheck",
+    colorTier: "dangerous",
+  },
+  {
     id: "full-access",
     label: "Full Access",
     description: "Edit files, run commands, and access the network without additional prompts.",
