@@ -21,9 +21,7 @@ export async function runLsCommand(
     }
     return {
       type: "list",
-      data: payload.schedules
-        .filter((schedule) => schedule.target.type === "new-agent")
-        .map(toScheduleRow),
+      data: payload.schedules.map(toScheduleRow),
       schema: scheduleSchema,
     };
   } catch (error) {

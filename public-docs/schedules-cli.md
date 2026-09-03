@@ -8,7 +8,7 @@ category: Schedules
 
 # Schedules from the CLI
 
-`paseo schedule` creates and manages new-agent [schedules](/docs/schedules) from your terminal, useful for headless boxes and scripts. Every run starts a fresh agent.
+`paseo schedule` creates and manages [schedules](/docs/schedules) from your terminal, useful for headless boxes and scripts. A schedule can start a new agent or prompt an existing agent.
 
 ## Create
 
@@ -62,6 +62,15 @@ paseo schedule create \
   "Review overnight CI failures and summarize anything urgent."
 ```
 
+Schedules start a new agent by default. To prompt an existing agent instead, pass its ID:
+
+```bash
+paseo schedule create \
+  --every 15m \
+  --target <agent-id> \
+  "Check the current task and continue with the next useful step."
+```
+
 ## Heartbeats
 
 Inside a running Paseo agent, create a heartbeat for that same conversation:
@@ -82,7 +91,7 @@ paseo heartbeat delete <id>
 
 Updating a heartbeat changes only its cron cadence and optional time zone. Its target and prompt stay fixed. Heartbeat commands require `PASEO_AGENT_ID`, which Paseo sets inside agent sessions.
 
-Heartbeats require a raw `--cron` expression. The `--every` presets below are available only for new-agent schedules.
+Heartbeats require a raw `--cron` expression. The `--every` presets below are available through `paseo schedule`, not `paseo heartbeat`.
 
 ## Manage
 

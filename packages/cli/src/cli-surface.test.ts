@@ -65,6 +65,15 @@ describe("canonical CLI surface", () => {
     expect(scheduleCreate?.helpInformation()).toContain("--thinking <id>");
   });
 
+  it("schedule create help exposes --target", () => {
+    const schedule = createCli().commands.find((command) => command.name() === "schedule");
+    const create = schedule?.commands.find((command) => command.name() === "create");
+    const help = create?.helpInformation();
+
+    expect(help).toContain("--target <target>");
+    expect(help).toContain("new-agent or an agent ID");
+  });
+
   it("offers opening an existing agent in the desktop app", () => {
     const agent = createCli().commands.find((command) => command.name() === "agent");
     const open = agent?.commands.find((command) => command.name() === "open");
