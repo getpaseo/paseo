@@ -3141,26 +3141,36 @@ export class WorkspaceGitServiceImpl implements WorkspaceGitService {
     let result: WorkspaceGitFetchResult | null = null;
     const eventsBeforeFetchSnapshot: FileChange[] = [];
     try {
-      result = await this.deps.runGitFetch(
-        target.cwd,
-        {
-          onRefSnapshot: (phase) => {
-            const events = target.bufferedFetchMetadataEvents.splice(0);
-            if (phase === "before") {
-              eventsBeforeFetchSnapshot.push(...events);
-            }
+      try {
+        result = await this.deps.runGitFetch(
+          target.cwd,
+          {
+            onRefSnapshot: (phase) => {
+              const events = target.bufferedFetchMetadataEvents.splice(0);
+              if (phase === "before") {
+                eventsBeforeFetchSnapshot.push(...events);
+              }
+            },
           },
-        },
-        createRunGitCommand("background-fetch"),
-      );
-    } catch (error) {
-      this.logger.warn(
-        { err: error, repoGitRoot: target.repoGitRoot, cwd: target.cwd },
-        "Background git fetch failed",
-      );
+          createRunGitCommand("background-fetch"),
+        );
+      } catch (error) {
+        this.logger.warn(
+          { err: error, repoGitRoot: target.repoGitRoot, cwd: target.cwd },
+          "Background git fetch failed",
+        );
+      }
+      this.applyRepoFetchResult(target, result, eventsBeforeFetchSnapshot);
     } finally {
       target.fetchInFlight = false;
     }
+  }
+
+  private applyRepoFetchResult(
+    target: RepoGitTarget,
+    result: WorkspaceGitFetchResult | null,
+    eventsBeforeFetchSnapshot: FileChange[],
+  ): void {
     this.flushFetchMetadataEvents(target, eventsBeforeFetchSnapshot);
     if (!result || result.changes === null) {
       target.recentFetchRemoteRefChanges.clear();

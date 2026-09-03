@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  shouldReconcileHiddenKeyboardEnd,
   resolveKeyboardShift,
   shouldUseCompactExplorerKeyboardPadding,
 } from "./keyboard-shift-policy";
@@ -39,6 +40,23 @@ describe("resolveKeyboardShift", () => {
         iosMinHeight: 120,
       }),
     ).toBe(0);
+  });
+});
+
+describe("shouldReconcileHiddenKeyboardEnd", () => {
+  it("closes stale iOS keyboard state without letting a late visible end resurrect it", () => {
+    expect(
+      shouldReconcileHiddenKeyboardEnd({
+        height: 0,
+        progress: 0,
+      }),
+    ).toBe(true);
+    expect(
+      shouldReconcileHiddenKeyboardEnd({
+        height: 320,
+        progress: 1,
+      }),
+    ).toBe(false);
   });
 });
 

@@ -1,0 +1,11 @@
+Changed
+- Changed the project license to Apache-2.0
+- Changed Cmd/Ctrl+E to toggle Explorer visibility without selecting a view
+- Changed the default mobile content text size from 15px to 16px
+
+Added
+- Added plugin installation and updates directly from Git repositories
+- Added plugin-defined timeline transformations and rendering
+- Added SSH connections to existing remote daemons from Desktop and CLI
+
+Full notes: https://paseo.sh/changelog

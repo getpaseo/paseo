@@ -737,6 +737,27 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   await timelinePromise;
   expect(agent.current()).toEqual(timelineAgent);
 
+  const appendPromise = agent.timeline.append({
+    type: "plugin",
+    id: "review-1",
+    kind: "review",
+    version: 1,
+    data: { status: "running" },
+  });
+  const appendRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(appendRequest).toMatchObject({
+    type: "agent.timeline.append.request",
+    agentId: "agent_sdk",
+    item: { id: "review-1", kind: "review" },
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent.timeline.append.response",
+      payload: { requestId: appendRequest.requestId, seq: 8, epoch: "epoch-sdk" },
+    }),
+  );
+  await expect(appendPromise).resolves.toEqual({ seq: 8, epoch: "epoch-sdk" });
+
   const archivePromise = agent.archive();
   const archiveRequest = parseSentSessionMessage(ws.sent.at(-1));
   expect(archiveRequest).toMatchObject({

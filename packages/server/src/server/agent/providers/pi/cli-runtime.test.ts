@@ -368,6 +368,47 @@ describe("PiCliRuntime", () => {
     expect(child.killedSignals).toContain("SIGTERM");
   });
 
+  test("sends the steer RPC frame", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const steerCommand = capturePendingCommand(child, "steer");
+    await session.steer("focus on error handling", [
+      { type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+    ]);
+
+    expect(await steerCommand).toMatchObject({
+      type: "steer",
+      message: "focus on error handling",
+      images: [{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" }],
+    });
+  });
+
+  test("sends the steer RPC frame without images", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const steerCommand = capturePendingCommand(child, "steer");
+    await session.steer("focus on error handling");
+
+    const command = await steerCommand;
+    expect(command).toMatchObject({ type: "steer", message: "focus on error handling" });
+    expect(command.images).toBeUndefined();
+  });
+
+  test("sends the clear_queue RPC frame", async () => {
+    const child = createPiChild();
+    replyToCommands(child, () => ({}));
+    const session = await createRuntime(child).startSession({ cwd: "/workspace/project" });
+
+    const clearQueueCommand = capturePendingCommand(child, "clear_queue");
+    await session.clearQueue();
+
+    expect(await clearQueueCommand).toMatchObject({ type: "clear_queue" });
+  });
+
   test("falls back to get_state when get_session_stats is unsupported", async () => {
     const child = createPiChild();
     let commandSequence: string[] = [];

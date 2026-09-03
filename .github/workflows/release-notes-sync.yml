@@ -15,7 +15,7 @@ on:
         required: false
         type: string
       create_if_missing:
-        description: "Create release if missing (normally only needed for tag events)."
+        description: "Create a draft release if missing (normally only needed for tag events)."
         required: false
         default: false
         type: boolean
@@ -29,7 +29,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-
     steps:
       - uses: actions/checkout@v4
         with:
