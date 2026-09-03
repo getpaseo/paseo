@@ -1,6 +1,6 @@
 {
   "name": "@getpaseo/plugin",
-  "version": "0.6.1",
+  "version": "0.7.2",
   "description": "Paseo plugin SDK package",
   "files": [
     "dist",
@@ -17,6 +17,11 @@
       "types": "./dist/server.d.ts",
       "source": "./src/server.ts",
       "default": "./dist/server.js"
+    },
+    "./react-native": {
+      "types": "./dist/react-native.d.ts",
+      "source": "./src/react-native.ts",
+      "default": "./dist/react-native.js"
     },
     "./host": {
       "types": "./dist/host.d.ts",
@@ -39,7 +44,8 @@
     "use-sync-external-store": "^1.6.0"
   },
   "devDependencies": {
-    "@getpaseo/client": "0.6.1",
+    "@getpaseo/client": "0.7.2",
+    "@getpaseo/protocol": "0.7.2",
     "@types/node": "^20.9.0",
     "@types/react": "~19.2.0",
     "react": "19.1.0",
@@ -48,7 +54,8 @@
     "zod": "^4.4.3"
   },
   "peerDependencies": {
-    "@getpaseo/client": "0.6.1",
+    "@getpaseo/client": "0.7.2",
+    "@getpaseo/protocol": "0.7.2",
     "react": "19.1.0",
     "zod": "^4.4.3"
   }

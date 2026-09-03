@@ -32,6 +32,14 @@ steps:
 
 Field-by-field detail is in the [configuration reference](/docs/hub/configuration/hub-yml).
 
+## Choose the agent in Hub
+
+When you create or edit a trigger in the Hub dashboard, choose the daemon and enter its working directory first. Hub then asks that daemon for its available providers, models, execution modes, and thinking options. The suggested model and mode are the daemon's defaults.
+
+Changing the daemon or working directory reloads the choices. If an existing trigger names a model, mode, or thinking option that the daemon no longer reports, Hub marks that value unavailable without replacing it. You can keep the authored value, choose a current value, or switch to YAML editing.
+
+If the daemon is offline or needs a newer Paseo version, the agent selectors show an error and a retry action. The rest of the trigger and its YAML remain editable.
+
 ## Events
 
 | `on`                                  | Fires when                                           |

@@ -7,10 +7,12 @@ export const en = {
       cancel: "Cancel",
       close: "Close",
       copy: "Copy",
+      copyLine: "Copy line",
       dismiss: "Dismiss",
       retry: "Retry",
       search: "Search",
       select: "Select",
+      selectAll: "Select all",
     },
     placeholders: {
       search: "Search...",
@@ -30,6 +32,7 @@ export const en = {
     errors: {
       error: "Error",
       unableToSave: "Unable to save",
+      unableToCopy: "Unable to copy",
       nameRequired: "Name is required",
       daemonUnavailable: "Daemon unavailable",
       daemonClientUnavailable: "Daemon client unavailable",
@@ -200,6 +203,7 @@ export const en = {
     empty: "Start chatting with this agent...",
     scrollToBottom: "Scroll to bottom",
     historyLoadFailed: "Couldn't load agent history",
+    messageCapped: "This message was capped ({{bytes}} bytes).",
     permission: {
       plan: "Plan",
       required: "Permission Required",
@@ -283,6 +287,7 @@ export const en = {
       zoomIn: "Zoom in",
       zoomOut: "Zoom out",
       resetZoom: "Reset view",
+      fullscreen: "Fullscreen",
       viewSource: "View source",
       viewDiagram: "View diagram",
     },
@@ -343,7 +348,6 @@ export const en = {
         added: "Added",
         started: "Started",
         completed: "Completed",
-        reopened: "Reopened",
       },
     },
     compaction: {
@@ -356,6 +360,12 @@ export const en = {
   },
   importSession: {
     title: "Import session",
+    chooseHostTitle: "Import from host",
+    searchPlaceholder: "Search sessions...",
+    scope: {
+      host: "Sessions on {{host}}",
+      workspace: "This workspace",
+    },
     filters: {
       all: "All",
     },
@@ -364,12 +374,13 @@ export const en = {
       updateHost: "Update the host to import sessions.",
       noProviders: "No importable providers are enabled.",
       loading: "Loading recent sessions...",
-      failedAll: "Could not load recent sessions.",
-      failedProviders: "Could not load sessions for {{providers}}.",
+      failedProvider: "Could not load {{provider}} sessions",
       failedImport: "Could not import selected session.",
     },
     actions: {
       refresh: "Refresh sessions",
+      showAll: "Show all",
+      loadMore: "Load more",
     },
     preview: {
       untitledSession: "Untitled session",
@@ -377,6 +388,7 @@ export const en = {
     },
     empty: {
       noRecent: "No recent sessions to import.",
+      noMatches: "No sessions match your search.",
       alreadyImported: "All recent sessions are already imported.",
       noProviderSessions: "No {{provider}} sessions found.",
     },
@@ -414,6 +426,7 @@ export const en = {
     },
     fileActions: {
       openFile: "Open file",
+      openIn: "Open in {{target}}",
       openToSide: "Open to the side",
       copyPath: "Copy path",
       copyRelativePath: "Copy relative path",
@@ -488,14 +501,23 @@ export const en = {
         completed: "Setup completed",
         failed: "Setup failed",
         workspace: "Workspace setup",
+        blocked: "Setup blocked",
       },
       status: {
         running: "Running",
         completed: "Completed",
         failed: "Failed",
         waiting: "Waiting for setup output",
+        blocked: "Blocked",
       },
       waiting: "Setting up workspace...",
+      blocked: {
+        title: "Setup was not run",
+        description:
+          "This PR comes from {{repository}}, a different repository. Its setup and scripts could run code you have not reviewed.",
+        run: "Run setup",
+        runFailed: "Failed to run workspace setup",
+      },
       empty: {
         noCommands: "No setup commands ran for this workspace.",
       },
@@ -1090,7 +1112,6 @@ export const en = {
       addProject: "Add project",
       newWorkspace: "New workspace",
       hosts: "Hosts",
-      home: "Home",
       settings: "Settings",
       closeSidebar: "Close sidebar",
     },
@@ -1107,6 +1128,7 @@ export const en = {
     },
     sections: {
       sessions: "History",
+      search: "Search",
       schedules: "Schedules",
     },
     worktreeSetup: {
@@ -1421,7 +1443,7 @@ export const en = {
       },
       importSession: {
         title: "Import session",
-        description: "Bring in recent external CLI sessions",
+        description: "Open a Claude Code, Codex or other session you started in a terminal",
       },
       setupProviders: {
         title: "Setup providers",
@@ -1567,6 +1589,10 @@ export const en = {
         title: "Direct connection",
         description: "Local network or VPN.",
       },
+      remoteSsh: {
+        title: "Remote SSH",
+        description: "Connect through the desktop SSH client.",
+      },
       scanQr: {
         title: "Scan QR code",
         description: "Encrypted relay connection.",
@@ -1616,6 +1642,23 @@ export const en = {
           "TLS error. Direct connections use SSL only when a TLS terminator is in front of the daemon.",
         unableToConnect: "Unable to connect. Check the host/port and that the daemon is reachable.",
         details: "Details: {{detail}}",
+      },
+    },
+    remoteSsh: {
+      title: "Remote SSH",
+      helper: "Connect to a Paseo daemon running on the remote host.",
+      fields: {
+        target: "SSH host",
+      },
+      actions: {
+        cancel: "Cancel",
+        connect: "Connect",
+        connecting: "Connecting...",
+      },
+      errors: {
+        targetRequired: "SSH host is required",
+        invalidTarget: "Enter a valid ssh:// host",
+        failedToConnect: "Unable to connect over SSH. {{detail}}",
       },
     },
     link: {
@@ -1892,15 +1935,16 @@ export const en = {
         destinations: {
           main: "Main panel",
           side: "On the side",
+          explorer: "Explorer sidebar",
         },
         sources: {
           explorerFiles: {
             label: "Selecting a file in Explorer",
             description: "Open files selected in the Explorer sidebar beside your work",
           },
-          explorerChanges: {
-            label: "Selecting a change in Explorer",
-            description: "Open diffs selected in the Explorer sidebar beside your work",
+          diffs: {
+            label: "Opening a diff",
+            description: "Open diffs from Explorer and agent conversations beside your work",
           },
           chatFiles: {
             label: "Opening a file from an agent chat",
@@ -1917,10 +1961,6 @@ export const en = {
           pullRequests: {
             label: "Opening a pull request from Changes",
             description: "Open pull request details beside Changes",
-          },
-          changesLinks: {
-            label: "Opening Changes from an agent",
-            description: "Open diff stats and review attachments beside the conversation",
           },
         },
       },
@@ -2176,6 +2216,12 @@ export const en = {
         title: "Chat outline",
         description: "Show an outline for jumping between prompts",
       },
+      sidebar: {
+        title: "Sidebar",
+        description: "Choose which items appear at the top of the sidebar and in what order",
+        moveUp: "Move up",
+        moveDown: "Move down",
+      },
       fonts: {
         title: "Fonts",
         systemDefault: "System default",
@@ -2344,6 +2390,7 @@ export const en = {
       badges: {
         relay: "Relay",
         local: "Local",
+        remoteSsh: "Remote SSH",
       },
       connections: {
         title: "Connections",

@@ -1,4 +1,10 @@
-import type { AgentProvider, ToolCallDetail } from "@getpaseo/protocol/agent-types";
+import type {
+  AgentProvider,
+  AgentTimelineItem,
+  JsonValue,
+  ToolCallDetail,
+} from "@getpaseo/protocol/agent-types";
+import { timelineItemIdentity } from "@getpaseo/protocol/timeline-identity";
 import type { AgentAttachment, AgentStreamEventPayload } from "@getpaseo/protocol/messages";
 import type { AttachmentMetadata } from "@/attachments/types";
 import { extractTaskEntriesFromToolCall } from "../utils/tool-call-parsers";
@@ -79,7 +85,8 @@ export type StreamItem =
   | ToolCallItem
   | TodoListItem
   | ActivityLogItem
-  | CompactionItem;
+  | CompactionItem
+  | PluginTimelineStreamItem;
 
 export type UserMessageImageAttachment = AttachmentMetadata;
 
@@ -435,11 +442,14 @@ function removeUserMessageAt(items: UserMessageItem[], index: number): UserMessa
 }
 
 function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): StreamItem[] | null {
+  if (retained.kind === "plugin") {
+    return replaceTimelineIdentityItem(tail, retained);
+  }
   if (!retained.timelineCursor) {
     return null;
   }
   if (isAgentToolCallItem(retained)) {
-    const tailIndex = findExistingAgentToolCallIndex(tail, retained.payload.data.callId);
+    const tailIndex = findExistingTimelineIdentityIndex(tail, retained.payload.data.callId);
     const existing = tail[tailIndex];
     if (tailIndex < 0 || !existing || !isAgentToolCallItem(existing)) {
       return null;
@@ -487,6 +497,20 @@ function mergeRetainedLifecycleItem(tail: StreamItem[], retained: StreamItem): S
     return next;
   }
   return null;
+}
+
+function replaceTimelineIdentityItem(
+  items: StreamItem[],
+  retained: PluginTimelineStreamItem,
+): StreamItem[] | null {
+  const identity = streamTimelineItemIdentity(retained);
+  if (identity === null) return null;
+  const index = findExistingTimelineIdentityIndex(items, identity);
+  const existing = items[index];
+  if (index < 0 || !existing || existing.kind !== "plugin") return null;
+  const next = [...items];
+  next[index] = retained;
+  return next;
 }
 
 function reconcileReplacementHeadAgainstTail(
@@ -771,6 +795,19 @@ export interface CompactionItem {
   preTokens?: number;
 }
 
+export interface PluginTimelineStreamItem {
+  kind: "plugin";
+  id: string;
+  timelineCursor?: TimelinePosition;
+  turnId?: string;
+  timestamp: Date;
+  pluginId: string;
+  pluginItemId: string;
+  itemKind: string;
+  version: number;
+  data: JsonValue;
+}
+
 export interface TodoEntry {
   text: string;
   completed: boolean;
@@ -781,7 +818,7 @@ export interface TodoEntry {
 
 export type TaskActivity =
   | { type: "created"; count: number }
-  | { type: "added" | "started" | "completed" | "reopened"; task: string };
+  | { type: "added" | "started" | "completed"; task: string };
 
 export interface TodoListItem {
   kind: "todo_list";
@@ -984,13 +1021,14 @@ function finalizeActiveThoughts(state: StreamItem[]): StreamItem[] {
   return mutated ? nextState : state;
 }
 
-function findExistingAgentToolCallIndex(state: StreamItem[], callId: string): number {
-  return state.findIndex(
-    (entry) =>
-      entry.kind === "tool_call" &&
-      entry.payload.source === "agent" &&
-      entry.payload.data.callId === callId,
-  );
+export function streamTimelineItemIdentity(item: StreamItem): string | null {
+  if (isAgentToolCallItem(item)) return item.payload.data.callId;
+  if (item.kind === "plugin") return `${item.pluginId}/${item.pluginItemId}`;
+  return null;
+}
+
+function findExistingTimelineIdentityIndex(state: StreamItem[], identity: string): number {
+  return state.findIndex((entry) => streamTimelineItemIdentity(entry) === identity);
 }
 
 function hasNonEmptyObject(value: unknown): boolean {
@@ -1133,7 +1171,7 @@ function appendAgentToolCall(
   timestamp: Date,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
-  const existingIndex = findExistingAgentToolCallIndex(state, data.callId);
+  const existingIndex = findExistingTimelineIdentityIndex(state, data.callId);
 
   if (existingIndex >= 0) {
     const existing = state[existingIndex];
@@ -1175,6 +1213,34 @@ function appendAgentToolCall(
   };
 
   return [...state, item];
+}
+
+function appendPluginTimelineItem(
+  state: StreamItem[],
+  item: Extract<AgentTimelineItem, { type: "plugin" }>,
+  timestamp: Date,
+  timelineCursor?: TimelinePosition,
+): StreamItem[] {
+  const identity = timelineItemIdentity(item);
+  if (identity === null) return state;
+  const nextItem: PluginTimelineStreamItem = {
+    kind: "plugin",
+    id: identity,
+    pluginId: item.pluginId,
+    pluginItemId: item.id,
+    itemKind: item.kind,
+    version: item.version,
+    data: item.data,
+    timestamp,
+    ...(timelineCursor ? { timelineCursor } : {}),
+  };
+  const existingIndex = findExistingTimelineIdentityIndex(state, identity);
+  if (existingIndex < 0) return [...state, nextItem];
+  const existing = state[existingIndex];
+  if (!existing || existing.kind !== "plugin") return state;
+  const next = [...state];
+  next[existingIndex] = { ...nextItem, id: existing.id };
+  return next;
 }
 
 function appendActivityLog(state: StreamItem[], entry: ActivityLogItem): StreamItem[] {
@@ -1287,8 +1353,6 @@ function deriveTaskActivities(
     if (before === after) continue;
     if (after === "completed") {
       activities.push({ type: "completed", task: task.text });
-    } else if (before === "completed") {
-      activities.push({ type: "reopened", task: task.text });
     } else if (after === "in_progress") {
       activities.push({ type: "started", task: task.text });
     }
@@ -1473,6 +1537,10 @@ function reduceTimelineEvent(
       return finalizeActiveThoughts(
         reduceTimelineCompaction(state, item, timestamp, timelineCursor),
       );
+    case "plugin":
+      return finalizeActiveThoughts(
+        appendPluginTimelineItem(state, item, timestamp, timelineCursor),
+      );
     default:
       return state;
   }
@@ -1569,7 +1637,7 @@ export function hydrateStreamState(
     timestamp: Date;
     timelineCursor?: TimelinePosition;
   }>,
-  options?: { source?: StreamUpdateSource; reservedItemIds?: ReadonlySet<string> },
+  options?: Pick<StreamUpdateOptions, "source" | "reservedItemIds">,
 ): StreamItem[] {
   const hydrated = events.reduce<StreamItem[]>((state, { event, timestamp, timelineCursor }) => {
     return reduceStreamUpdate(state, event, timestamp, { ...options, timelineCursor });
@@ -1626,6 +1694,8 @@ function getEventItemKind(event: AgentStreamEventPayload): StreamItem["kind"] | 
       return "todo_list";
     case "error":
       return "activity_log";
+    case "plugin":
+      return "plugin";
     default:
       return null;
   }

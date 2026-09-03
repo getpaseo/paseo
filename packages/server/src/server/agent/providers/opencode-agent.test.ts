@@ -460,7 +460,7 @@ describe("OpenCodeAgentClient adapter smoke tests", () => {
       {
         sessionID: "session-1",
         directory: cwd,
-        time: { archived: null },
+        time: { archived: 0 },
       },
     ]);
     expect(runtime.acquisitions.every((acquisition) => acquisition.releaseCount === 1)).toBe(true);
@@ -6361,7 +6361,7 @@ describe("OpenCode provider subagent contract", () => {
           messageID: "msg_child_prompt",
           type: "text",
           text: "Inspect the auth flow.",
-          time: { start: 1, end: 2 },
+          time: { start: 1 },
         },
       },
     });

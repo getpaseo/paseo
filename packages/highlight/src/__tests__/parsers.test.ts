@@ -24,6 +24,7 @@ describe("isLanguageSupported", () => {
     expect(isLanguageSupported("test.nix")).toBe(true);
     expect(isLanguageSupported("test.ex")).toBe(true);
     expect(isLanguageSupported("Counter.svelte")).toBe(true);
+    expect(isLanguageSupported("Page.astro")).toBe(true);
   });
 
   it("returns false for unsupported file extensions", () => {
@@ -65,6 +66,7 @@ describe("getSupportedExtensions", () => {
     expect(extensions).toContain("nix");
     expect(extensions).toContain("json");
     expect(extensions).toContain("svelte");
+    expect(extensions).toContain("astro");
   });
 });
 

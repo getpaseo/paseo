@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 const DATABASE_NAME = "paseo-replica-row-store";
 const STORE_NAME = "rows";
@@ -18,7 +18,7 @@ interface ReplicaCacheHostRecord {
   agents: Array<Record<string, unknown>>;
   workspaces: Array<Record<string, unknown>>;
   projects: Array<Record<string, unknown>>;
-  timeline?: {
+  timelines: Array<{
     agentId?: string;
     items?: Array<Record<string, unknown>>;
     range?: {
@@ -26,7 +26,7 @@ interface ReplicaCacheHostRecord {
       epoch?: string;
       startSeq?: number;
     } | null;
-  } | null;
+  }>;
   directorySync?: unknown;
 }
 
@@ -83,7 +83,7 @@ function assembleCache(rows: ReplicaRowRecord[]): ReplicaCacheRecord {
       agents: [],
       workspaces: [],
       projects: [],
-      timeline: null,
+      timelines: [],
     };
     const payload = JSON.parse(row.payload) as Record<string, unknown>;
     switch (row.kind) {
@@ -97,7 +97,7 @@ function assembleCache(rows: ReplicaRowRecord[]): ReplicaCacheRecord {
         host.projects.push(payload);
         break;
       case "timeline":
-        host.timeline = payload;
+        host.timelines.push(payload);
         break;
       case "checkpoint":
         host.directorySync = payload;
@@ -114,6 +114,23 @@ export async function readReplicaCache(page: Page): Promise<ReplicaCacheRecord |
     storeName: STORE_NAME,
   });
   return rows.length > 0 ? assembleCache(rows) : null;
+}
+
+export async function waitForWorkspaceInReplicaCache(
+  page: Page,
+  workspaceId: string,
+): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const cache = await readReplicaCache(page);
+        return cache?.hosts?.some((host) =>
+          host.workspaces.some((workspace) => workspace.id === workspaceId),
+        );
+      },
+      { timeout: 15_000 },
+    )
+    .toBe(true);
 }
 
 export async function writeReplicaCache(page: Page, value: ReplicaCacheRecord): Promise<void> {
@@ -147,12 +164,13 @@ export async function writeReplicaCache(page: Page, value: ReplicaCacheRecord): 
         });
       }
     }
-    if (host.timeline) {
+    for (const timeline of host.timelines) {
+      if (typeof timeline.agentId !== "string") continue;
       rows.push({
         serverId: host.serverId,
         kind: "timeline",
-        id: SINGLETON_ID,
-        payload: JSON.stringify(host.timeline),
+        id: timeline.agentId,
+        payload: JSON.stringify(timeline),
       });
     }
     if (host.directorySync !== undefined) {

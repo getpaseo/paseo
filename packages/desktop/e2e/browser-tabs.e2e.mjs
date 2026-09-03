@@ -13,6 +13,7 @@ import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { chromium } from "playwright";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
+import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
@@ -230,6 +231,20 @@ function mcpPayload(result, command) {
 
 async function callBrowserTool(client, name, args = {}) {
   return mcpPayload(await client.callTool({ name, args }), name);
+}
+
+async function callBrowserToolUntilReady(client, name, args = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const result = await client.callTool({ name, args });
+    const payload = result.structuredContent;
+    if (payload?.ok === true) return payload.result;
+    if (payload?.ok !== false || payload.error?.retryable !== true) {
+      return mcpPayload(result, name);
+    }
+    await delay(100);
+  }
+  throw new Error(`${name} remained unavailable for ${timeoutMs}ms`);
 }
 
 async function waitForGuestSelector(client, browserId) {
@@ -566,9 +581,21 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   const responsiveViewport = await readViewport(client, browserId);
 
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
-  await page.waitForTimeout(500);
+  await page.waitForFunction(
+    ({ id, webContentsId }) => {
+      const webview = document.querySelector(`[data-paseo-browser-id="${id}"]`);
+      return (
+        webview?.parentElement?.getAttribute("data-paseo-browser-surface") === id &&
+        webview.parentElement.style.width === "1px" &&
+        webview.parentElement.style.pointerEvents === "none" &&
+        webview.getWebContentsId() === webContentsId
+      );
+    },
+    { id: browserId, webContentsId: firstGuest.webContentsId },
+    { timeout: timeoutMs },
+  );
   try {
-    await callBrowserTool(client, "browser_screenshot", { browserId });
+    await callBrowserToolUntilReady(client, "browser_screenshot", { browserId });
   } catch (error) {
     failures.push(`inactive browser remains captureable: ${String(error)}`);
   }
@@ -808,7 +835,7 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   await originalDeck.getByRole("button", { name: "Cancel element selector" }).click();
 
   await originalDeck.getByTestId(`workspace-tab-agent_${callerAgentId}`).click();
-  await page.getByRole("button", { name: "Open command center" }).click();
+  await page.getByTestId("sidebar-search").click();
   await page.getByTestId("command-center-input").fill("Split pane right");
   await page.getByText("Split pane right", { exact: true }).click();
   assert(
@@ -935,6 +962,15 @@ async function main() {
     const page = await waitForAppPage(browser, expoPort);
     const status = await waitForDesktopStatus(page);
 
+    const settingsMemory = await runSettingsMemoryRegression(page);
+    if (process.env.PASEO_DESKTOP_SETTINGS_MEMORY_ONLY === "1") {
+      writeJson(path.join(artifactDir, "result.json"), { settingsMemory });
+      console.log(
+        `Desktop Settings memory regression passed: ${settingsMemory.detachedAfterWarmRound} detached panes after warm and stress rotations.`,
+      );
+      return;
+    }
+
     await runAppearanceFontSizeRegression(page);
 
     const callerAgentId = await createCallerAgent(daemonPort);
@@ -952,7 +988,7 @@ async function main() {
       callerAgentId,
       artifactDir,
     });
-    writeJson(path.join(artifactDir, "result.json"), report);
+    writeJson(path.join(artifactDir, "result.json"), { ...report, settingsMemory });
     console.log(
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,
     );

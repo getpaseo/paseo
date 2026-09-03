@@ -155,6 +155,11 @@ describe("translation resources", () => {
     expect(es.settings.project.scripts.title).toBe("Scripts");
   });
 
+  it("uses the Russian term for continuing a session in copied commands", () => {
+    expect(ru.workspace.tabs.menu.copyResumeCommand).toBe("Копировать команду продолжения");
+    expect(ru.workspace.tabs.toasts.resumeCommandCopiedLabel).toBe("команда продолжения");
+  });
+
   it("keeps model count labels spaced around the count", () => {
     expect(ar.modelSelector.modelCountPlural).toBe("{{count}} نماذج");
     expect(es.modelSelector.modelCountPlural).toBe("{{count}} modelos");
@@ -280,6 +285,7 @@ describe("translation resources", () => {
 
   it("includes workspace and panel keys for the Batch 4A migration", () => {
     expect(en.importSession.title).toBe("Import session");
+    expect(en.importSession.chooseHostTitle).toBe("Import from host");
     expect(en.importSession.status.connectHost).toBe("Connect to a host to import sessions");
     expect(en.importSession.actions.refresh).toBe("Refresh sessions");
     expect(en.workspace.fileExplorer.sort.name).toBe("Name");
@@ -293,6 +299,9 @@ describe("translation resources", () => {
     expect(en.workspace.browser.controls.enterUrl).toBe("Enter URL");
     expect(en.workspace.terminal.hostDisconnected).toBe("Host is not connected");
     expect(en.panels.file.directoryMissing).toBe("Workspace directory not found.");
+    expect(en.openProject.tiles.importSession.description).toBe(
+      "Open a Claude Code, Codex or other session you started in a terminal",
+    );
   });
 
   it("includes workspace Git and review keys for the Batch 4B migration", () => {
@@ -417,7 +426,6 @@ describe("translation resources", () => {
       added: "Added",
       started: "Started",
       completed: "Completed",
-      reopened: "Reopened",
     });
   });
 
@@ -440,7 +448,6 @@ describe("translation resources", () => {
     expect(en.sidebar.host.searchPlaceholder).toBe("Search hosts...");
     expect(en.sidebar.actions.addProject).toBe("Add project");
     expect(en.sidebar.actions.hosts).toBe("Hosts");
-    expect(en.sidebar.actions.home).toBe("Home");
     expect(en.sidebar.actions.settings).toBe("Settings");
     expect(en.sidebar.actions.closeSidebar).toBe("Close sidebar");
     expect(en.sidebar.sections.sessions).toBe("History");
