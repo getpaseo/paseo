@@ -158,6 +158,21 @@ export async function seedSavedSettingsHosts(
   );
 }
 
+export async function openSettingsWithSeededHost(
+  page: Page,
+  host: SavedSettingsHostInput,
+): Promise<void> {
+  const seededHost = buildSeededHost({ ...host, nowIso: new Date().toISOString() });
+  await page.addInitScript(
+    ({ registryKey, storedHost }) => {
+      localStorage.setItem(registryKey, JSON.stringify([storedHost]));
+    },
+    { registryKey: REGISTRY_KEY, storedHost: seededHost },
+  );
+  await page.goto(buildSettingsSectionRoute("general"));
+  await expect(page.getByTestId("settings-sidebar")).toBeVisible();
+}
+
 export async function selectSettingsHost(page: Page, serverId: string): Promise<void> {
   await page.locator('[data-testid="settings-host-picker"]:visible').click();
   await page.locator(`[data-testid="settings-host-picker-item-${serverId}"]:visible`).click();
@@ -183,6 +198,28 @@ export async function expectSettingsSidebarVisible(page: Page): Promise<void> {
 
 export async function expectSettingsSidebarHidden(page: Page): Promise<void> {
   await expect(page.locator('[data-testid="settings-sidebar"]:visible')).toHaveCount(0);
+}
+
+export async function scrollSettingsSidebarToBottom(page: Page): Promise<number> {
+  const scrollBody = page.getByTestId("settings-sidebar-scroll-body");
+  await expect(scrollBody).toBeVisible();
+  const scrollTop = await scrollBody.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    return element.scrollTop;
+  });
+  expect(scrollTop).toBeGreaterThan(0);
+  return scrollTop;
+}
+
+export async function expectSettingsSidebarScrollTop(
+  page: Page,
+  expectedScrollTop: number,
+): Promise<void> {
+  await expect
+    .poll(() =>
+      page.getByTestId("settings-sidebar-scroll-body").evaluate((element) => element.scrollTop),
+    )
+    .toBe(expectedScrollTop);
 }
 
 export async function expectSettingsSidebarSections(
