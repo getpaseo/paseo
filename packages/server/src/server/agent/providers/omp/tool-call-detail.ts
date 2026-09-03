@@ -68,11 +68,20 @@ interface OmpToolResultTextContent {
   text: string;
 }
 
+interface OmpToolResultImageContent {
+  type: "image";
+  data: string;
+  mimeType: string;
+}
+
 interface OmpToolResultUnknownContent {
   type: string;
 }
 
-type OmpToolResultContent = OmpToolResultTextContent | OmpToolResultUnknownContent;
+type OmpToolResultContent =
+  | OmpToolResultTextContent
+  | OmpToolResultImageContent
+  | OmpToolResultUnknownContent;
 export type OmpToolResult = string | OmpToolResultObject | null;
 
 interface OmpBashToolCall {
@@ -142,6 +151,11 @@ const OmpToolResultTextContentSchema = z.object({
   type: z.literal("text"),
   text: z.string(),
 });
+const OmpToolResultImageContentSchema = z.object({
+  type: z.literal("image"),
+  data: z.string(),
+  mimeType: z.string(),
+});
 
 const OmpToolResultUnknownContentSchema = z
   .object({
@@ -151,6 +165,7 @@ const OmpToolResultUnknownContentSchema = z
 
 const OmpToolResultContentSchema = z.union([
   OmpToolResultTextContentSchema,
+  OmpToolResultImageContentSchema,
   OmpToolResultUnknownContentSchema,
 ]);
 
@@ -242,6 +257,42 @@ export function parseToolResult(rawResult: unknown): OmpToolResult {
     return parsed.data;
   }
   return null;
+}
+export interface OmpToolResultImage {
+  data: string;
+  mimeType: string;
+}
+
+export function sanitizeOmpToolResultImages(result: unknown): {
+  images: OmpToolResultImage[];
+  result: unknown;
+} {
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    return { images: [], result };
+  }
+  const content = Reflect.get(result, "content");
+  if (!Array.isArray(content)) {
+    return { images: [], result };
+  }
+
+  const images: OmpToolResultImage[] = [];
+  const sanitizedContent = content.map((block) => {
+    if (
+      typeof block !== "object" ||
+      block === null ||
+      Array.isArray(block) ||
+      Reflect.get(block, "type") !== "image"
+    ) {
+      return block;
+    }
+    const image = OmpToolResultImageContentSchema.safeParse(block);
+    if (image.success) {
+      images.push({ data: image.data.data, mimeType: image.data.mimeType });
+    }
+    return { type: "text" as const, text: "[image]" };
+  });
+
+  return { images, result: { ...result, content: sanitizedContent } };
 }
 
 export function extractTextFromToolResult(result: OmpToolResult): string | undefined {
