@@ -595,6 +595,7 @@ export const zhCN: TranslationResources = {
       },
       menu: {
         openFor: "打开 {{label}} 的菜单",
+        copyConversation: "复制对话",
         copyResumeCommand: "复制恢复命令",
         copyAgentId: "复制 Agent ID",
         copyTerminalId: "复制 Terminal ID",
@@ -640,6 +641,9 @@ export const zhCN: TranslationResources = {
       },
       toasts: {
         copyFailed: "复制失败",
+        copyingConversation: "正在复制对话...",
+        conversationCopiedLabel: "对话",
+        conversationEmpty: "此对话没有可复制的消息",
         agentIdCopiedLabel: "Agent ID",
         terminalIdCopiedLabel: "Terminal ID",
         resumeCommandCopiedLabel: "恢复命令",

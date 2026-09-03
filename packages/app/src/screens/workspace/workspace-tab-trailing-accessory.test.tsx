@@ -141,6 +141,7 @@ function renderAccessory(
     tabCount: 2,
     menuTestIDBase: base,
     onCopyResumeCommand: vi.fn(),
+    onCopyConversation: vi.fn(),
     onCopyAgentId: vi.fn(),
     onCopyTerminalId: vi.fn(),
     onCopyFilePath: vi.fn(),

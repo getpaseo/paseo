@@ -599,6 +599,7 @@ export const ptBR: TranslationResources = {
       },
       menu: {
         openFor: "Abrir menu de {{label}}",
+        copyConversation: "Copiar conversa",
         copyResumeCommand: "Copiar comando de retomada",
         copyAgentId: "Copiar ID do agente",
         copyTerminalId: "Copiar ID do terminal",
@@ -644,6 +645,9 @@ export const ptBR: TranslationResources = {
       },
       toasts: {
         copyFailed: "Falha ao copiar",
+        copyingConversation: "Copiando conversa...",
+        conversationCopiedLabel: "Conversa",
+        conversationEmpty: "Esta conversa não tem mensagens para copiar",
         agentIdCopiedLabel: "ID do agente",
         terminalIdCopiedLabel: "ID do terminal",
         resumeCommandCopiedLabel: "comando de retomada",

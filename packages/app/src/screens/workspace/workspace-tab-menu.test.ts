@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   buildWorkspaceDesktopTabActions,
   buildWorkspaceTabMenuEntries,
+  type WorkspaceTabMenuEntry,
 } from "@/screens/workspace/workspace-tab-menu";
 import type { WorkspaceTabDescriptor } from "@/screens/workspace/workspace-tabs-types";
 
@@ -17,6 +18,7 @@ function createAgentTab(): WorkspaceTabDescriptor {
 describe("buildWorkspaceTabMenuEntries", () => {
   it("uses desktop tab ordering labels for desktop menus", () => {
     const onCopyResumeCommand = vi.fn();
+    const onCopyConversation = vi.fn();
     const onCopyAgentId = vi.fn();
     const onCopyFilePath = vi.fn();
     const onReloadAgent = vi.fn();
@@ -33,6 +35,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       tabCount: 3,
       menuTestIDBase: "workspace-tab-context-agent_123",
       onCopyResumeCommand,
+      onCopyConversation,
       onCopyAgentId,
       onCopyTerminalId: vi.fn(),
       onCopyFilePath,
@@ -45,6 +48,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     });
 
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
+      "Copy conversation",
       "Copy resume command",
       "Copy agent id",
       "Rename",
@@ -54,6 +58,14 @@ describe("buildWorkspaceTabMenuEntries", () => {
       "Reload agent",
       "Close",
     ]);
+
+    const copyConversation = entries.find(
+      (entry) => entry.kind === "item" && entry.key === "copy-conversation",
+    );
+    expect(copyConversation).toMatchObject({ kind: "item", key: "copy-conversation" });
+    (copyConversation as Extract<WorkspaceTabMenuEntry, { kind: "item" }>).onSelect();
+
+    expect(onCopyConversation).toHaveBeenCalledWith("agent-123");
   });
 
   it("uses stacked ordering labels for mobile menus", () => {
@@ -64,6 +76,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       tabCount: 3,
       menuTestIDBase: "workspace-tab-menu-agent_123",
       onCopyResumeCommand: vi.fn(),
+      onCopyConversation: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
@@ -76,6 +89,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
     });
 
     expect(entries.filter((entry) => entry.kind === "item").map((entry) => entry.label)).toEqual([
+      "Copy conversation",
       "Copy resume command",
       "Copy agent id",
       "Rename",
@@ -100,6 +114,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       tabCount: 1,
       menuTestIDBase: "workspace-tab-menu-draft_123",
       onCopyResumeCommand: vi.fn(),
+      onCopyConversation: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
@@ -129,6 +144,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       tabCount: 1,
       menuTestIDBase: "workspace-tab-context-agent_123",
       onCopyResumeCommand: vi.fn(),
+      onCopyConversation: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
@@ -159,6 +175,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       tabCount: 1,
       menuTestIDBase: "workspace-tab-context-agent_123",
       onCopyResumeCommand: vi.fn(),
+      onCopyConversation: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
@@ -195,6 +212,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       tabCount: 1,
       menuTestIDBase: "workspace-tab-context-terminal_abc",
       onCopyResumeCommand: vi.fn(),
+      onCopyConversation: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyTerminalId,
       onCopyFilePath: vi.fn(),
@@ -246,6 +264,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       tabCount: 1,
       menuTestIDBase: "workspace-tab-context-file_abc",
       onCopyResumeCommand: vi.fn(),
+      onCopyConversation: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath,
@@ -289,6 +308,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       index: 0,
       tabCount: 1,
       onCopyResumeCommand: vi.fn(),
+      onCopyConversation: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),
@@ -320,6 +340,7 @@ describe("buildWorkspaceTabMenuEntries", () => {
       tabCount: 1,
       menuTestIDBase,
       onCopyResumeCommand: vi.fn(),
+      onCopyConversation: vi.fn(),
       onCopyAgentId: vi.fn(),
       onCopyTerminalId: vi.fn(),
       onCopyFilePath: vi.fn(),

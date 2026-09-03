@@ -596,6 +596,7 @@ export const ko: TranslationResources = {
       },
       menu: {
         openFor: "{{label}}의 메뉴 열기",
+        copyConversation: "대화 복사",
         copyResumeCommand: "재개 명령 복사",
         copyAgentId: "에이전트 ID 복사",
         copyTerminalId: "터미널 ID 복사",
@@ -642,6 +643,9 @@ export const ko: TranslationResources = {
       },
       toasts: {
         copyFailed: "복사 실패",
+        copyingConversation: "대화를 복사하는 중...",
+        conversationCopiedLabel: "대화",
+        conversationEmpty: "복사할 메시지가 없습니다",
         agentIdCopiedLabel: "에이전트 ID",
         terminalIdCopiedLabel: "터미널 ID",
         resumeCommandCopiedLabel: "재개 명령",
