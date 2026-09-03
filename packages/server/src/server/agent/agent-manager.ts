@@ -72,7 +72,8 @@ import {
   type PendingForegroundRun,
 } from "./agent-run-state.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
-import { isSystemInjectedEnvelope } from "./agent-prompt.js";
+import { displayTextForUserMessage } from "./agent-prompt.js";
+import { projectAgentMessageForDisplay } from "./agent-spawn-context.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
 import { resolveCreateAgentTitles } from "./create-agent-title.js";
 import type { PaseoToolCatalogFactory } from "./tools/types.js";
@@ -615,16 +616,35 @@ function buildExplicitTimelineSeedForRegister(
   };
 }
 
+// Shapes a timeline item for display: drops fully system-injected user messages,
+// trims a leading <paseo-system> spawn-context block off the visible first user
+// message, and rewrites an agent-to-agent <paseo-agent-message> turn to a
+// readable "Message from agent ..." header. The provider already received the
+// full text; this only affects what the timeline shows. Returns null when the
+// item should be hidden.
+function projectTimelineItemForDisplay<Item extends AgentTimelineItem>(item: Item): Item | null {
+  if (item.type !== "user_message") {
+    return item;
+  }
+  const display = displayTextForUserMessage(item.text);
+  if (display === null) {
+    return null;
+  }
+  const projected = projectAgentMessageForDisplay(display);
+  return projected === item.text ? item : { ...item, text: projected };
+}
+
 function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): AgentTimelineRow[] {
   const rows: AgentTimelineRow[] = [];
   for (const entry of entries) {
-    if (entry.item.type === "user_message" && isSystemInjectedEnvelope(entry.item.text)) {
+    const displayItem = projectTimelineItemForDisplay(entry.item);
+    if (!displayItem) {
       continue;
     }
     rows.push({
       seq: rows.length + 1,
       timestamp: entry.timestamp ?? new Date().toISOString(),
-      item: limitAgentTimelineItemContent(entry.item),
+      item: limitAgentTimelineItemContent(displayItem),
     });
   }
   return rows;
@@ -3706,10 +3726,11 @@ export class AgentManager {
     for await (const rawEvent of agent.session.streamHistory()) {
       const event = limitAgentStreamEventContent(rawEvent);
       if (event.type === "timeline") {
-        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+        const displayItem = projectTimelineItemForDisplay(event.item);
+        if (!displayItem) {
           continue;
         }
-        historyEvents.push(event);
+        historyEvents.push(displayItem === event.item ? event : { ...event, item: displayItem });
       } else if (event.type === "provider_subagent") {
         providerSubagentEvents.push(event);
       }
@@ -3777,12 +3798,13 @@ export class AgentManager {
         if (event.type !== "timeline") {
           continue;
         }
-        if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+        const displayItem = projectTimelineItemForDisplay(event.item);
+        if (!displayItem) {
           continue;
         }
         const row = this.recordTimeline(
           agent.id,
-          event.item,
+          displayItem,
           event.timestamp ? { timestamp: event.timestamp } : undefined,
         );
         if (deferredBroadcast) {
@@ -4086,7 +4108,8 @@ export class AgentManager {
   }): Promise<void> {
     const { agent, event, options, flags } = params;
 
-    if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
+    const displayItem = projectTimelineItemForDisplay(event.item);
+    if (!displayItem) {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
@@ -4105,7 +4128,7 @@ export class AgentManager {
     if (options?.fromHistory) {
       this.recordTimeline(
         agent.id,
-        event.item,
+        displayItem,
         event.timestamp ? { timestamp: event.timestamp } : undefined,
       );
       flags.shouldDispatchEvent = false;
@@ -4113,7 +4136,7 @@ export class AgentManager {
       return;
     }
 
-    this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
+    this.recordAndDispatchTimelineItem(agent.id, displayItem, event.provider, event.turnId);
     if (event.item.type === "user_message") {
       agent.lastUserMessageAt = new Date();
       this.emitState(agent);

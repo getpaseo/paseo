@@ -80,6 +80,56 @@ Some providers can create their own child sessions inside one provider runtime. 
 
 The provider still owns the underlying runtime. Paseo keeps an agent record so the child can be opened, tracked, archived, and cascaded with the parent, but prompts and history hydration route through the provider adapter for that native child handle.
 
+## Automatic spawn-context injection
+
+Spawned agents used to receive only the parent-authored `initialPrompt`, so a child had no deterministic way to know it runs inside a multi-agent environment, who spawned it, or that its last idle message is auto-delivered to the parent as its report.
+That awareness is now injected by the daemon on two layers, so no parent model has to hand-write a protocol block.
+
+Both layers are composed by `composeAgentMcpInstructions` / `buildSpawnContextEnvelope` in `packages/server/src/server/agent/agent-spawn-context.ts`.
+
+**Layer 1 - per-agent MCP server instructions.**
+`createAgentMcpSession(callerAgentId)` (`bootstrap.ts`) looks up the connecting agent's own record, reads its `paseo.parent-agent-id` label plus the parent's title, and composes a personalized `instructions` string that is passed to the MCP `McpServer` constructor.
+Providers that surface MCP server instructions in their system prompt (Claude Code, per the claude-peers prior art) make the agent "born knowing" its id, its parent, the `<paseo-system>` / `<agent-response>` semantics, and the delegation contract for when it spawns its own children.
+External MCP clients (no `callerAgentId`) still get the generic delegation contract, minus the identity/parent lines.
+
+**Layer 2 - daemon-side spawn-context block.**
+MCP instructions only help providers that surface them, so Layer 1 is not sufficient on its own.
+When a create comes from another agent (`callerAgentId` present), `createAgentCommand` prepends a compact `<paseo-system>` block - naming the child, the parent, and the report contract - to the child's initial prompt before dispatch (`prependSpawnContext`).
+This is applied after `createAgent` returns, because the block names the child's own id.
+The block is short by design: it duplicates only the identity + report-contract core of Layer 1, so agents on providers that already surface MCP instructions are not bloated with a second full copy.
+
+**Report contract wording follows `notifyOnFinish`, not the relationship kind.**
+The "your final message is automatically delivered to the parent as your report" sentence is emitted only when `notifyOnFinish` is set (the same flag that arms `setupFinishNotification`).
+A detached spawn still gets the identity/environment context, but is told its final message is not auto-delivered unless the parent follows up.
+
+**Timeline display.**
+The Layer 2 block rides on the child's first user message, but the timeline must still show only what the parent actually asked.
+`displayTextForUserMessage` (`agent-prompt.ts`) extends the existing "hide a pure `<paseo-system>` envelope" rule: a message that begins with a system envelope and then has real content has the leading envelope stripped for display, while the provider still receives the full text.
+The four timeline choke points in `agent-manager.ts` route through `projectTimelineItemForDisplay`, so both live turns and history replay show the clean parent prompt.
+
+## Agent-to-agent message envelope
+
+When one agent calls `send_agent_prompt` targeting another, the receiver used to get the text verbatim - unable to tell it came from an agent (vs a human, a schedule, or a finish notification) or whom to reply to.
+The daemon now wraps agent-initiated sends in a sender-identity envelope, composed by `buildAgentMessageEnvelope` in `agent-spawn-context.ts` and applied in the `send_agent_prompt` handler **only when `callerAgentId` is present**.
+Human/app sends and other system paths (chat mentions, schedule fires, notify-on-finish) are untouched.
+
+**Envelope format.**
+The prompt is wrapped in an attributed tag: `<paseo-agent-message from="<senderId>" from_title="<title>">\n<prompt>\n</paseo-agent-message>`, followed by a trailing reply-contract line.
+This is deliberately **not** a `<paseo-system>` envelope: it must not match `SYSTEM_ENVELOPE_PATTERN` / `isSystemInjectedEnvelope`, because a full match would hide the message from the receiver's timeline (round-1 behavior) - and sender attribution is exactly what a human viewing the receiver wants to see.
+It also keeps the archived-target delivery path intact: `send_agent_prompt` calls `sendPromptToAgent` with `unarchive` defaulting to true, and because the message is not a system envelope it cannot accidentally flip that gate.
+
+**Reply contract (conditional, like the spawn-context wording).**
+The handler already arms `setupFinishNotification` back to the sender for agent-scoped background sends (`shouldNotifyOnFinish = callerAgentId && notifyOnFinish && background`).
+When that is set, the envelope tells the receiver its final idle message is automatically delivered back to the sender as its reply.
+Otherwise it tells the receiver the reply is not automatic and to use `send_agent_prompt` with the sender's agentId.
+
+**Timeline display.**
+Unlike spawn context (stripped entirely), sender attribution is useful, so `projectAgentMessageForDisplay` rewrites the turn to a compact `Message from agent <id> (<title>):` header followed by the original prompt, dropping the trailing reply-contract boilerplate.
+It runs through the same daemon-side `projectTimelineItemForDisplay` choke points, so every client - including old ones - sees the readable form.
+The receiving model still gets the full envelope (identity + reply contract) in the dispatched prompt.
+
+`composeAgentMcpInstructions` (Layer 1) also teaches every agent to recognize `<paseo-agent-message>` turns, read the `from` id, and reply via `send_agent_prompt` (or rely on the automatic relay when the envelope says so).
+
 ## Archive
 
 Archive is a **soft delete**: the agent record stays on disk with `archivedAt` set, the runtime is closed, and the agent disappears from active lists. Archive is **global** — it lives on the server and propagates to every connected client.
