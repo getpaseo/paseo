@@ -386,6 +386,12 @@ interface ManagedAgentBase {
   >;
   inFlightPermissionResponses: Set<string>;
   pendingReplacement: boolean;
+  /**
+   * True when the provider session was closed without a replacement (failed
+   * reload after close-before-resume). Prompts must not call startTurn until a
+   * later reload succeeds. In-memory only; not persisted.
+   */
+  providerSessionClosed?: boolean;
   persistence: AgentPersistenceHandle | null;
   historyPrimed: boolean;
   lastUserMessageAt: Date | null;
@@ -1389,7 +1395,7 @@ export class AgentManager {
     const rehydrateFromDisk = options?.rehydrateFromDisk ?? false;
     const preservedHistoryPrimed = existing.historyPrimed;
     const preservedLastUsage = existing.lastUsage;
-    const preservedLastError = existing.lastError;
+    const preservedLastError = existing.providerSessionClosed ? undefined : existing.lastError;
     const preservedAttention = existing.attention;
     const handle = existing.persistence;
     const provider = handle?.provider ?? existing.provider;
@@ -1403,22 +1409,32 @@ export class AgentManager {
     const launchContext = await this.buildLaunchContext(agentId, client, storedConfig.cwd);
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
 
-    const session = handle
-      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
-      : await client.createSession(providerLaunchConfig, launchContext);
-    await this.requireExternalMcpSupport(session, storedConfig);
+    // Codex holds an exclusive thread writer until the previous app-server exits.
+    // Spawning the replacement and calling thread/resume first deadlocks reload:
+    // the new process fails with "already has an active writer".
+    this.cancelRunningProviderSubagents(agentId);
+    this.logger.debug({ agentId, provider }, "Closing previous session before reload resume");
+    await this.closeReloadedSession(existing.session, agentId);
+
+    let session: AgentSession;
+    try {
+      session = handle
+        ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
+        : await client.createSession(providerLaunchConfig, launchContext);
+      await this.requireExternalMcpSupport(session, storedConfig);
+    } catch (error) {
+      // The previous writer is already gone. Keep the agent visible in error
+      // instead of closing it, but do not leave it idle for startTurn.
+      await this.finalizeFailedReload(existing, error);
+      throw error;
+    }
 
     let handedToRegistration = false;
     try {
       this.assertAcceptingAgentRegistrations();
 
-      this.cancelRunningProviderSubagents(agentId);
       const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
-      try {
-        await this.persistSnapshot(closedExisting);
-      } finally {
-        await this.closeReloadedSession(existing.session, agentId);
-      }
+      await this.persistSnapshot(closedExisting);
 
       if (rehydrateFromDisk) {
         // Wipe the in-memory timeline so registerSession mints a new epoch and
@@ -1448,6 +1464,39 @@ export class AgentManager {
         await this.closeUnregisteredSession(session);
       }
     }
+  }
+
+  private formatReloadFailureMessage(error: unknown): string {
+    const detail =
+      error instanceof Error && error.message.trim().length > 0
+        ? error.message.trim()
+        : "replacement session setup failed";
+    return `Reload failed: ${detail}`;
+  }
+
+  private async finalizeFailedReload(existing: LiveManagedAgent, error: unknown): Promise<void> {
+    if (existing.unsubscribeSession) {
+      existing.unsubscribeSession();
+      existing.unsubscribeSession = null;
+    }
+
+    const failed = existing as ManagedAgentError;
+    failed.lifecycle = "error";
+    failed.lastError = this.formatReloadFailureMessage(error);
+    failed.providerSessionClosed = true;
+    failed.activeForegroundTurnId = null;
+    this.touchUpdatedAt(failed);
+    await this.appendSystemErrorTimelineMessage(failed, failed.provider, failed.lastError);
+
+    try {
+      await this.persistSnapshot(failed);
+    } catch (persistError) {
+      this.logger.warn(
+        { err: persistError, agentId: failed.id },
+        "Failed to persist error snapshot after reload replacement failure",
+      );
+    }
+    this.emitState(failed, { persist: false });
   }
 
   private async closeReloadedSession(session: AgentSession, agentId: string): Promise<void> {
@@ -2218,6 +2267,11 @@ export class AgentManager {
     options?: AgentRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
+    if (existingAgent.providerSessionClosed) {
+      throw new Error(
+        existingAgent.lastError ?? `Agent ${agentId} provider session closed after a failed reload`,
+      );
+    }
     this.logger.trace(
       {
         agentId,
