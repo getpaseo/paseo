@@ -2,6 +2,7 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { ProviderUsageCard } from "./card";
 import { providerUsageCopy } from "./copy";
+import { useProviderUsagePreferences } from "./preferences";
 import type { ProviderUsage, ProviderUsageView } from "./types";
 
 function matchProvider(
@@ -23,6 +24,8 @@ export function ProviderUsageTooltipSection({
   view: ProviderUsageView;
   activeProviderId: string | null | undefined;
 }) {
+  const percentageDisplay = useProviderUsagePreferences((state) => state.percentageDisplay);
+
   if (view.kind === "loading") {
     return (
       <>
@@ -47,7 +50,7 @@ export function ProviderUsageTooltipSection({
   return (
     <>
       <View style={styles.divider} />
-      <ProviderUsageCard usage={usage} compact />
+      <ProviderUsageCard usage={usage} percentageDisplay={percentageDisplay} compact />
     </>
   );
 }

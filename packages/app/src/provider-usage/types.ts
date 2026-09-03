@@ -19,6 +19,7 @@ export type {
 
 export type ProviderUsageBalanceUnit = ProviderUsageBalance["unit"];
 export type ProviderUsageListPayload = ProviderUsageListResponseMessage["payload"];
+export type ProviderUsagePercentageDisplay = "used" | "remaining";
 
 export type ProviderUsageView =
   | { kind: "loading" }

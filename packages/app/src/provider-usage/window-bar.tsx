@@ -1,15 +1,13 @@
 import { useMemo } from "react";
 import { Text, View, type StyleProp, type ViewStyle } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
-import { clampPct, formatPct, formatResetLabel } from "./format";
-import { deriveTone } from "./tone";
-import type { ProviderUsageTone, ProviderUsageWindow } from "./types";
-
-function resolveUsedPct(window: ProviderUsageWindow): number | null {
-  if (window.usedPct != null) return window.usedPct;
-  if (window.remainingPct != null) return 100 - window.remainingPct;
-  return null;
-}
+import { clampPct, formatPct, formatResetLabel, resolvePercentages } from "./format";
+import { resolveWindowBarTone } from "./tone";
+import type {
+  ProviderUsagePercentageDisplay,
+  ProviderUsageTone,
+  ProviderUsageWindow,
+} from "./types";
 
 function fillToneStyle(tone: ProviderUsageTone) {
   switch (tone) {
@@ -24,11 +22,18 @@ function fillToneStyle(tone: ProviderUsageTone) {
   }
 }
 
-export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow }) {
-  const usedPct = resolveUsedPct(window);
-  const tone = window.tone ?? deriveTone(usedPct);
+export function ProviderUsageWindowBar({
+  window,
+  percentageDisplay,
+}: {
+  window: ProviderUsageWindow;
+  percentageDisplay: ProviderUsagePercentageDisplay;
+}) {
+  const percentages = resolvePercentages(window, percentageDisplay);
+  const usedPct = percentages.used;
+  const tone = resolveWindowBarTone(percentageDisplay, usedPct, window.tone);
 
-  const fillWidth = clampPct(usedPct ?? 0);
+  const fillWidth = clampPct(percentages.fillPct ?? 0);
   const fillStyle = useMemo<StyleProp<ViewStyle>>(
     () => [styles.fill, fillToneStyle(tone), { width: `${fillWidth}%` }],
     [fillWidth, tone],
@@ -46,7 +51,7 @@ export function ProviderUsageWindowBar({ window }: { window: ProviderUsageWindow
           {window.label}
         </Text>
         <Text style={styles.value}>
-          {usedPct != null ? formatPct(usedPct) : "—"}
+          {percentages.displayed != null ? formatPct(percentages.displayed) : "—"}
           {trailing ? (
             <Text style={isAtRisk ? styles.atRisk : styles.reset}>{` · ${trailing}`}</Text>
           ) : null}

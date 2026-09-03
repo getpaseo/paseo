@@ -4,11 +4,18 @@ import { Text, View } from "react-native";
 import { StyleSheet } from "react-native-unistyles";
 import { Alert } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { SegmentedControl, type SegmentedControlOption } from "@/components/ui/segmented-control";
 import { settingsStyles } from "@/styles/settings";
 import { SettingsSection } from "@/screens/settings/settings-section";
 import { providerUsageCopy } from "./copy";
 import { ProviderUsageList } from "./list";
-import type { ProviderUsageView } from "./types";
+import { useProviderUsagePreferences } from "./preferences";
+import type { ProviderUsagePercentageDisplay, ProviderUsageView } from "./types";
+
+const percentageDisplayOptions = [
+  { value: "used", label: providerUsageCopy.percentageUsed },
+  { value: "remaining", label: providerUsageCopy.percentageRemaining },
+] satisfies SegmentedControlOption<ProviderUsagePercentageDisplay>[];
 
 export function ProviderUsageSettingsSection({
   view,
@@ -18,6 +25,8 @@ export function ProviderUsageSettingsSection({
   onRefresh: () => void;
 }) {
   const busy = view.kind === "loading" || (view.kind === "ready" && view.isRefreshing);
+  const percentageDisplay = useProviderUsagePreferences((state) => state.percentageDisplay);
+  const setPercentageDisplay = useProviderUsagePreferences((state) => state.setPercentageDisplay);
 
   const refreshButton = useMemo(
     () => (
@@ -41,7 +50,21 @@ export function ProviderUsageSettingsSection({
       testID="provider-usage-card"
       trailing={refreshButton}
     >
-      <ProviderUsageBody view={view} onRefresh={onRefresh} />
+      <View style={settingsStyles.card}>
+        <View style={settingsStyles.row}>
+          <View style={settingsStyles.rowContent}>
+            <Text style={settingsStyles.rowTitle}>{providerUsageCopy.percentageDisplayLabel}</Text>
+          </View>
+          <SegmentedControl
+            options={percentageDisplayOptions}
+            value={percentageDisplay}
+            onValueChange={setPercentageDisplay}
+            size="sm"
+            testID="provider-usage-percentage-display"
+          />
+        </View>
+      </View>
+      <ProviderUsageBody view={view} onRefresh={onRefresh} percentageDisplay={percentageDisplay} />
     </SettingsSection>
   );
 }
@@ -49,9 +72,11 @@ export function ProviderUsageSettingsSection({
 function ProviderUsageBody({
   view,
   onRefresh,
+  percentageDisplay,
 }: {
   view: ProviderUsageView;
   onRefresh: () => void;
+  percentageDisplay: ProviderUsagePercentageDisplay;
 }) {
   if (view.kind === "loading") {
     return (
@@ -79,7 +104,9 @@ function ProviderUsageBody({
     );
   }
 
-  return <ProviderUsageList providers={view.payload.providers} />;
+  return (
+    <ProviderUsageList providers={view.payload.providers} percentageDisplay={percentageDisplay} />
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({

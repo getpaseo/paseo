@@ -60,6 +60,10 @@ test.describe("provider usage settings", () => {
     await expect(card.getByText("Biweekly", { exact: true })).toBeVisible();
     await expect(card.getByText("Daily", { exact: true })).toBeVisible();
     await expect(card.getByText("70%")).toBeVisible();
+
+    await page.getByTestId("provider-usage-percentage-display").getByText("Remaining").click();
+    await expect(card.getByText("30%")).toBeVisible();
+    await expect(card.getByText("70%")).not.toBeVisible();
     await expect(card.getByText("Credits", { exact: true })).toBeVisible();
     await expect(card.getByText("1,234 left", { exact: true })).toBeVisible();
     await expect(card.getByText("Extra usage", { exact: true })).toBeVisible();

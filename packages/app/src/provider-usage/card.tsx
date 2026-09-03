@@ -6,7 +6,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import type { Theme } from "@/styles/theme";
 import { ProviderUsageBalanceBar } from "./balance-bar";
 import { formatAgo } from "./format";
-import type { ProviderUsage } from "./types";
+import type { ProviderUsage, ProviderUsagePercentageDisplay } from "./types";
 import { ProviderUsageWindowBar } from "./window-bar";
 
 interface ProviderUsageIconProps {
@@ -39,9 +39,11 @@ function footerText(usage: ProviderUsage): string | null {
 
 export function ProviderUsageCard({
   usage,
+  percentageDisplay,
   compact = false,
 }: {
   usage: ProviderUsage;
+  percentageDisplay: ProviderUsagePercentageDisplay;
   compact?: boolean;
 }) {
   const status = statusText(usage);
@@ -88,7 +90,11 @@ export function ProviderUsageCard({
       {usage.windows.length > 0 || balances.length > 0 ? (
         <View style={styles.bars}>
           {usage.windows.map((window) => (
-            <ProviderUsageWindowBar key={window.id} window={window} />
+            <ProviderUsageWindowBar
+              key={window.id}
+              window={window}
+              percentageDisplay={percentageDisplay}
+            />
           ))}
           {balances.map((balance) => (
             <ProviderUsageBalanceBar key={balance.id} balance={balance} />

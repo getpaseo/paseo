@@ -1,5 +1,25 @@
 import { formatTokenCount } from "@/components/context-window-meter.utils";
-import type { ProviderUsageBalanceUnit } from "./types";
+import type {
+  ProviderUsageBalanceUnit,
+  ProviderUsagePercentageDisplay,
+  ProviderUsageWindow,
+} from "./types";
+
+export interface ProviderUsagePercentages {
+  displayed: number | null;
+  fillPct: number | null;
+  used: number | null;
+}
+
+export function resolvePercentages(
+  window: ProviderUsageWindow,
+  display: ProviderUsagePercentageDisplay,
+): ProviderUsagePercentages {
+  const used = window.usedPct ?? (window.remainingPct != null ? 100 - window.remainingPct : null);
+  const remaining = window.remainingPct ?? (window.usedPct != null ? 100 - window.usedPct : null);
+  const displayed = display === "used" ? used : remaining;
+  return { displayed, fillPct: displayed, used };
+}
 
 export function clampPct(value: number): number {
   return Math.max(0, Math.min(100, value));
