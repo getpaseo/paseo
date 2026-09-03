@@ -40,9 +40,12 @@ export function useGlobalWorkspaceCopyPrAction() {
       toast.error(t("workspace.header.toasts.changeRequestLinkUnavailable"));
       return true;
     }
-    void copyToClipboard(hint.url);
     const context = getForgePresentation(normalizeForge(hint.forge)).changeRequestContext;
-    toast.copied(t("workspace.header.toasts.changeRequestLinkCopiedLabel", { context }));
+    void copyToClipboard(hint.url)
+      .then(() =>
+        toast.copied(t("workspace.header.toasts.changeRequestLinkCopiedLabel", { context })),
+      )
+      .catch(() => toast.error(t("common.errors.unableToCopy")));
     return true;
   }, [fields, t, toast]);
 

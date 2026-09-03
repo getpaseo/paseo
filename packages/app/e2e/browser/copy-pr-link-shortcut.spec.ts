@@ -7,6 +7,7 @@ import {
   connectWorkspaceSetupClient,
   openHomeWithProject,
   seedProjectForWorkspaceSetup,
+  type WorkspaceSetupDaemonClient,
 } from "../support/helpers/workspace-setup";
 import { waitForWorkspaceTabsVisible } from "../support/helpers/workspace-tabs";
 import { getServerId } from "../support/helpers/server-id";
@@ -24,6 +25,18 @@ function pressCopyPrLinkShortcut(page: import("@playwright/test").Page) {
 }
 
 /** A local repo whose origin looks like the fixture GitHub remote the fake `gh` answers for. */
+/** Creates the workspace and turns the RPC error shape into a thrown test failure. */
+async function createWorkspaceOrFail(
+  client: WorkspaceSetupDaemonClient,
+  source: Parameters<WorkspaceSetupDaemonClient["createWorkspace"]>[0]["source"],
+) {
+  const result = await client.createWorkspace({ source });
+  if (!result.workspace || result.error) {
+    throw new Error(result.error ?? "Workspace creation failed");
+  }
+  return result.workspace;
+}
+
 async function createFixtureRepo(prefix: string, branch: string) {
   const repo = await createTempGitRepo(prefix, {
     withRemote: true,
@@ -64,20 +77,15 @@ test("copies the workspace change request link with Cmd/Ctrl+Shift+C", async ({
   const repo = await createFixtureRepo("pr-copy-shortcut-", PR_BRANCH);
   try {
     await seedProjectForWorkspaceSetup(client, repo.path);
-    const result = await client.createWorkspace({
-      source: {
-        kind: "worktree",
-        cwd: repo.path,
-        action: "checkout",
-        checkoutSource: { kind: "change_request", forge: "github", number: 1 },
-      },
+    const workspace = await createWorkspaceOrFail(client, {
+      kind: "worktree",
+      cwd: repo.path,
+      action: "checkout",
+      checkoutSource: { kind: "change_request", forge: "github", number: 1 },
     });
-    if (!result.workspace || result.error) {
-      throw new Error(result.error ?? "Workspace creation failed");
-    }
 
     await openHomeWithProject(page, repo.path);
-    await page.goto(buildHostWorkspaceRoute(getServerId(), result.workspace.id));
+    await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
     await waitForWorkspaceTabsVisible(page);
 
     // The shortcut reads the change request off the workspace descriptor, so wait until the
@@ -109,15 +117,13 @@ test("shows an error toast when the workspace has no change request", async ({ p
   const repo = await createTempGitRepo("pr-copy-shortcut-none-");
   try {
     await seedProjectForWorkspaceSetup(client, repo.path);
-    const result = await client.createWorkspace({
-      source: { kind: "directory", path: repo.path },
+    const workspace = await createWorkspaceOrFail(client, {
+      kind: "directory",
+      path: repo.path,
     });
-    if (!result.workspace || result.error) {
-      throw new Error(result.error ?? "Workspace creation failed");
-    }
 
     await openHomeWithProject(page, repo.path);
-    await page.goto(buildHostWorkspaceRoute(getServerId(), result.workspace.id));
+    await page.goto(buildHostWorkspaceRoute(getServerId(), workspace.id));
     await waitForWorkspaceTabsVisible(page);
 
     await pressCopyPrLinkShortcut(page);
