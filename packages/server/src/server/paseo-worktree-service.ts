@@ -75,7 +75,10 @@ async function createPaseoWorktreeWithPriority(
   const workspaceCwdPlan = await planWorkspaceCwdForWorktree(input.cwd, deps.workspaceGitService);
   const createdWorktree = await createWorktreeCore(input, deps);
   try {
-    maybeMarkFirstAgentBranchAutoNameEligible({ createdWorktree });
+    maybeMarkFirstAgentBranchAutoNameEligible({
+      createdWorktree,
+      ...(input.reuseExisting === undefined ? {} : { reuseExisting: input.reuseExisting }),
+    });
     const workspaceCwd = mapWorkspaceRelativeCwdToWorktree({
       relativeWorkspaceCwd: workspaceCwdPlan.relativeWorkspaceCwd,
       targetWorktreePath: createdWorktree.worktree.worktreePath,
@@ -261,9 +264,18 @@ async function findAvailableBranchName(options: {
 
 function maybeMarkFirstAgentBranchAutoNameEligible(options: {
   createdWorktree: Awaited<ReturnType<typeof createWorktreeCore>>;
+  reuseExisting?: boolean;
 }): void {
   const { createdWorktree } = options;
   if (!createdWorktree.created || createdWorktree.intent.kind !== "branch-off") {
+    return;
+  }
+  // A caller that asks to reuse a worktree by name has chosen that name deliberately — it
+  // identifies the work, not the run. Renaming its branch after the first prompt would break the
+  // very thing reuse exists for: the next run looks for `eng-42`, finds `eng-42-add-snapshots`,
+  // and cuts a second worktree beside it. Worse, git then refuses `eng-42` outright, since a
+  // branch cannot also be a directory of branches.
+  if (options.reuseExisting === true) {
     return;
   }
 
