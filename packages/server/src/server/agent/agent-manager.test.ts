@@ -6195,6 +6195,44 @@ test("bounds the live root timeline while paging 600 durable rows in both direct
   }
 }, 30_000);
 
+test("bounds oversized assistant messages before writing the disposable timeline cache", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-root-message-"));
+  const manager = new AgentManager({
+    clients: { codex: new TestAgentClient() },
+    registry: new AgentStorage(join(workdir, "agents"), logger),
+    durableTimelineStore: new SegmentedFileAgentTimelineStore(join(workdir, "timeline-cache")),
+    boundedTimeline: { hot: { maxRows: 4, maxBytes: 8 * 1024 * 1024 } },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000606",
+  });
+
+  try {
+    const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+
+    await expect(
+      manager.appendTimelineItem(snapshot.id, {
+        type: "assistant_message",
+        text: "x".repeat(250 * 1024),
+      }),
+    ).resolves.toEqual({ seq: 1, epoch: expect.any(String) });
+    await manager.flush();
+
+    const timeline = await manager.fetchTimelinePage(snapshot.id, {
+      direction: "tail",
+      limit: 10,
+    });
+    expect(timeline.rows).toHaveLength(1);
+    expect(timeline.rows[0]?.item).toMatchObject({
+      type: "assistant_message",
+      text: expect.stringMatching(/\[truncated to fit timeline storage\]$/),
+    });
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("force hydration clears the disposable cache before provider history repopulates it", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-bounded-provider-replay-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);
