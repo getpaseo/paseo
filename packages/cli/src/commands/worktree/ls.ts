@@ -55,17 +55,26 @@ export type WorktreeLsResult = ListResult<WorktreeListItem>;
 
 export interface WorktreeLsOptions extends CommandOptions {
   host?: string;
+  cwd?: string;
 }
 
 export async function runLsCommand(
   options: WorktreeLsOptions,
   _command: Command,
 ): Promise<WorktreeLsResult> {
+  return runLsCommandWithDeps(options, { connectToDaemon });
+}
+
+export async function runLsCommandWithDeps(
+  options: WorktreeLsOptions,
+  deps: { connectToDaemon: typeof connectToDaemon },
+): Promise<WorktreeLsResult> {
   const host = getDaemonHost({ host: options.host });
+  const cwd = options.cwd ?? process.cwd();
 
   let client: DaemonClient;
   try {
-    client = await connectToDaemon({ host: options.host });
+    client = await deps.connectToDaemon({ host: options.host });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const error: CommandError = {
@@ -81,7 +90,7 @@ export async function runLsCommand(
     const agents = agentsPayload.entries.map((entry) => entry.agent);
 
     // Get worktree list from daemon
-    const response = await client.getPaseoWorktreeList({});
+    const response = await client.getPaseoWorktreeList({ cwd });
 
     await client.close();
 
