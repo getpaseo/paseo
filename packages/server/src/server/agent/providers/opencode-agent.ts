@@ -3533,7 +3533,7 @@ class OpenCodeAgentSession implements AgentSession {
       this.config.providerOptions,
       this.config.toolPolicy,
     );
-    const model = this.parseModel(this.config.model);
+    const model = this.parseModel();
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
     const effectiveVariant = this.config.thinkingOptionId ?? undefined;
 
@@ -3746,7 +3746,8 @@ class OpenCodeAgentSession implements AgentSession {
     this.pendingUserMessageText = buildOpenCodeUserTimelineText(prompt);
     this.pendingClientMessageId = options?.clientMessageId ?? null;
     this.suppressAssistantMessagesUntilIdle.active = false;
-    const model = this.parseModel(this.config.model);
+    const model = this.parseModel();
+    const requestModelId = this.resolveRequestModelId();
     const thinkingOptionId = this.config.thinkingOptionId;
     const effectiveVariant = thinkingOptionId ?? undefined;
     const effectiveMode = resolveOpenCodeRuntimeAgentId(this.currentMode);
@@ -3807,7 +3808,7 @@ class OpenCodeAgentSession implements AgentSession {
           command: slashCommand.commandName,
           arguments: slashCommand.args ?? "",
           messageID: this.activeDispatchMessageId,
-          ...(this.config.model ? { model: this.config.model } : {}),
+          ...(requestModelId ? { model: requestModelId } : {}),
           ...(effectiveMode ? { agent: effectiveMode } : {}),
           ...(effectiveVariant ? { variant: effectiveVariant } : {}),
         })
@@ -4994,10 +4995,14 @@ class OpenCodeAgentSession implements AgentSession {
     }
   }
 
-  private parseModel(model?: string): { providerID: string; modelID: string } | undefined {
-    if (!model || isOpenCodeAgentModelEnabled(this.config)) {
-      return undefined;
-    }
+  private resolveRequestModelId(): string | undefined {
+    if (!this.config.model || isOpenCodeAgentModelEnabled(this.config)) return undefined;
+    return this.config.model;
+  }
+
+  private parseModel(): { providerID: string; modelID: string } | undefined {
+    const model = this.resolveRequestModelId();
+    if (!model) return undefined;
     const parts = model.split("/");
     if (parts.length >= 2) {
       return { providerID: parts[0], modelID: parts.slice(1).join("/") };

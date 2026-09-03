@@ -171,6 +171,33 @@ describe("OpenCode auto_accept feature", () => {
     await session.close();
   });
 
+  test("omits the model for slash commands when agent model is enabled", async () => {
+    const { openCodeClient, runtime } = mockOpenCodeClient();
+    openCodeClient.commandListResponse = {
+      data: [{ name: "help", description: "Show help", hints: [] }],
+    };
+    const client = new OpenCodeAgentClient(createTestLogger(), undefined, {
+      serverManager: runtime,
+      createClient: runtime.createClient,
+    });
+    const session = await client.createSession({
+      provider: "opencode",
+      cwd: "/tmp/project",
+      model: "openai/gpt-5.4",
+      modeId: "build",
+    });
+
+    await session.setFeature("agent_model", true);
+    await session.run("/help");
+
+    expect(openCodeClient.calls.sessionCommand[0]).toEqual(
+      expect.objectContaining({ agent: "build" }),
+    );
+    expect(openCodeClient.calls.sessionCommand[0]).not.toHaveProperty("model");
+
+    await session.close();
+  });
+
   test("keeps legacy full-access as an alias for build plus auto accept", async () => {
     const { openCodeClient, runtime } = mockOpenCodeClient();
 
