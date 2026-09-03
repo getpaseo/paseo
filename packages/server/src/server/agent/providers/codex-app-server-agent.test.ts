@@ -4681,6 +4681,16 @@ describe("Codex app-server provider", () => {
       itemId: "child-live-assistant",
       delta: "Second live fragment.",
     });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "history-child-thread",
+      itemId: "child-repeated-assistant",
+      delta: "Echo",
+    });
+    asInternals(session).handleNotification("item/agentMessage/delta", {
+      threadId: "history-child-thread",
+      itemId: "child-repeated-assistant",
+      delta: "Echo",
+    });
     expect(
       events.filter(
         (event) => event.type === "provider_subagent" && event.event.type === "timeline",
@@ -4701,6 +4711,11 @@ describe("Codex app-server provider", () => {
                 type: "userMessage",
                 id: "child-live-message",
                 content: [{ type: "text", text: "Concurrent child message." }],
+              },
+              {
+                type: "agentMessage",
+                id: "child-repeated-assistant",
+                text: "Echo",
               },
             ],
           },
@@ -4730,6 +4745,11 @@ describe("Codex app-server provider", () => {
       },
       {
         type: "assistant_message",
+        messageId: "child-repeated-assistant",
+        text: "Echo",
+      },
+      {
+        type: "assistant_message",
         messageId: "child-live-assistant",
         text: "First live fragment. ",
       },
@@ -4737,6 +4757,11 @@ describe("Codex app-server provider", () => {
         type: "assistant_message",
         messageId: "child-live-assistant",
         text: "Second live fragment.",
+      },
+      {
+        type: "assistant_message",
+        messageId: "child-repeated-assistant",
+        text: "Echo",
       },
     ]);
   });

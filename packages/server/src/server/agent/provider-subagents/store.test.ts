@@ -311,7 +311,7 @@ describe("ProviderSubagentStore", () => {
       limit: 1,
     });
 
-    expect(page.rows.map((row) => row.seq)).toEqual([5]);
+    expect(page.rows.map((row) => row.seq)).toEqual([3, 4, 5]);
   });
 
   test.each([
