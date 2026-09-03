@@ -1,2 +1,2 @@
-export { EditingTextInput } from "./text-input";
+export { EditingTextInput, hasFocusedTextInput } from "./text-input";
 export type { EditingTextInputHandle, EditingTextInputProps } from "./types";

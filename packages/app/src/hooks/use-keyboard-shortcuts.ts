@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { AppState, TextInput } from "react-native";
+import { AppState } from "react-native";
 import { usePathname, useRouter } from "expo-router";
 import { getIsElectronRuntime } from "@/constants/layout";
 import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
@@ -50,6 +50,7 @@ import {
 import { dispatchTopWebOverlayKeyDown } from "@/lib/overlay-root";
 import { listSearchDispatcher } from "@/keyboard/list-search-dispatcher";
 import { routeNativeListSearchBeforeShortcut } from "@/keyboard/native-list-search-routing";
+import { hasFocusedTextInput } from "@/components/ui/text-input";
 
 export function useKeyboardShortcuts({
   enabled,
@@ -364,9 +365,7 @@ export function useKeyboardShortcuts({
         }
         // Native can't resolve DOM focus scopes; a focused TextInput is the
         // only text-editing surface, so it maps to "editable".
-        const focusScope: KeyboardFocusScope = TextInput.State.currentlyFocusedInput()
-          ? "editable"
-          : "other";
+        const focusScope: KeyboardFocusScope = hasFocusedTextInput() ? "editable" : "other";
         routeNativeListSearchBeforeShortcut({
           event: nativeEvent,
           dispatchList: (event) => listSearchDispatcher.dispatch(event),
