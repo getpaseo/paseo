@@ -15,6 +15,7 @@ import { deriveAgentStreamTurnLiveness } from "@/timeline/session-stream-reducer
 import { planTimelineTailFetch } from "@/timeline/timeline-sync-plan";
 import { requestTimelineReplacement } from "@/timeline/timeline-replacement";
 import {
+  consumeForcedTimelineTailReplacement,
   type TimelineDeliveryMode,
   type TimelineResponsePayload,
   type ViewedTimelineOwner,
@@ -58,15 +59,6 @@ import { showProviderNoticeToast } from "@/utils/provider-notice-toast";
 import { applyCheckoutStatusUpdateFromEvent } from "@/git/checkout-status-cache";
 import { useProviderSubagentStore } from "@/subagents/provider-store";
 import { revalidateSessionAfterResume } from "@/contexts/session-resume-revalidation";
-
-function consumeForcedTimelineTailReplacement(
-  payload: TimelineResponsePayload,
-  replacements: Set<string>,
-): TimelineResponsePayload {
-  if (payload.direction !== "tail") return payload;
-  if (!replacements.delete(payload.agentId)) return payload;
-  return { ...payload, reset: true };
-}
 
 // Re-export types from session-store and draft-store for backward compatibility
 export type { DraftInput } from "@/stores/draft-store";

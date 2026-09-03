@@ -400,6 +400,48 @@ describe("DaemonConfigStore", () => {
     });
   });
 
+  test("patch persists provider Paseo-tool policy without changing availability", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    writeFileSync(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ agents: { providers: { claude: { enabled: false } } } }),
+    );
+    const store = new DaemonConfigStore(paseoHome, {
+      mcp: { injectIntoAgents: true },
+      browserTools: { enabled: false },
+      providers: { claude: { enabled: false } },
+      metadataGeneration: { providers: [] },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    });
+
+    store.patch({
+      providers: {
+        claude: {
+          paseoTools: { enabled: true, disabledTools: ["list_agents"] },
+        },
+      },
+    });
+    store.patch({
+      providers: {
+        claude: {
+          paseoTools: { disabledTools: ["create_agent"] },
+        },
+      },
+    });
+
+    expect(store.get().providers.claude).toEqual({
+      enabled: false,
+      paseoTools: { enabled: true, disabledTools: ["create_agent"] },
+    });
+    expect(loadPersistedConfig(paseoHome).agents?.providers?.claude).toEqual({
+      enabled: false,
+      paseoTools: { enabled: true, disabledTools: ["create_agent"] },
+    });
+  });
+
   test("patch removes provider entries from config.json", () => {
     const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
     tempDirs.push(paseoHome);

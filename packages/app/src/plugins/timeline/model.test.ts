@@ -17,7 +17,7 @@ function plugin(input: {
     sidebarItems: [],
     workspacePanels: [],
     commandCenterItems: [],
-    clientSide: null,
+    clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
     timelineTransformers: [
@@ -44,26 +44,32 @@ const toolCall = {
 };
 
 describe("plugin timeline transforms", () => {
-  it("adds the installation identity to plain transformed items", () => {
-    const transformed = transformTimelineItem(toolCall, [
-      plugin({
-        id: "reports",
-        transform: () => ({
-          items: [
-            {
-              type: "plugin" as const,
-              kind: "test-report",
-              version: 1,
-              data: { passed: 4 },
-            },
-          ],
+  it("adds installation and source identity to plain transformed items", () => {
+    const transformed = transformTimelineItem({
+      item: toolCall,
+      phase: "complete",
+      sourceId: "agent_tool_call-1",
+      plugins: [
+        plugin({
+          id: "reports",
+          transform: () => ({
+            items: [
+              {
+                type: "plugin" as const,
+                kind: "test-report",
+                version: 1,
+                data: { passed: 4 },
+              },
+            ],
+          }),
         }),
-      }),
-    ]);
+      ],
+    });
 
     expect(transformed).toEqual([
       {
         type: "plugin",
+        id: "agent_tool_call-1/0",
         pluginId: "reports",
         kind: "test-report",
         version: 1,
@@ -74,16 +80,26 @@ describe("plugin timeline transforms", () => {
 
   it("keeps the source item when no transformer returns a result", () => {
     expect(
-      transformTimelineItem(toolCall, [plugin({ id: "reports", transform: () => undefined })]),
+      transformTimelineItem({
+        item: toolCall,
+        phase: "complete",
+        sourceId: "agent_tool_call-1",
+        plugins: [plugin({ id: "reports", transform: () => undefined })],
+      }),
     ).toBeUndefined();
   });
 
   it("accepts an empty replacement and stops after the first result", () => {
     const second = vi.fn(() => ({ items: [] }));
-    const transformed = transformTimelineItem(toolCall, [
-      plugin({ id: "first", transform: () => ({ items: [] }) }),
-      plugin({ id: "second", transform: second }),
-    ]);
+    const transformed = transformTimelineItem({
+      item: toolCall,
+      phase: "complete",
+      sourceId: "agent_tool_call-1",
+      plugins: [
+        plugin({ id: "first", transform: () => ({ items: [] }) }),
+        plugin({ id: "second", transform: second }),
+      ],
+    });
 
     expect(transformed).toEqual([]);
     expect(second).not.toHaveBeenCalled();
@@ -91,21 +107,26 @@ describe("plugin timeline transforms", () => {
 
   it("rejects non-JSON data without breaking the timeline", () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const transformed = transformTimelineItem(toolCall, [
-      plugin({
-        id: "broken",
-        transform: () => ({
-          items: [
-            {
-              type: "plugin" as const,
-              kind: "bad-data",
-              version: 1,
-              data: { value: Number.NaN },
-            },
-          ],
+    const transformed = transformTimelineItem({
+      item: toolCall,
+      phase: "complete",
+      sourceId: "agent_tool_call-1",
+      plugins: [
+        plugin({
+          id: "broken",
+          transform: () => ({
+            items: [
+              {
+                type: "plugin" as const,
+                kind: "bad-data",
+                version: 1,
+                data: { value: Number.NaN },
+              },
+            ],
+          }),
         }),
-      }),
-    ]);
+      ],
+    });
 
     expect(transformed).toBeUndefined();
     expect(warning).toHaveBeenCalledOnce();
@@ -114,21 +135,26 @@ describe("plugin timeline transforms", () => {
 
   it("rejects class instances disguised as JSON data", () => {
     const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
-    const transformed = transformTimelineItem(toolCall, [
-      plugin({
-        id: "broken",
-        transform: () => ({
-          items: [
-            {
-              type: "plugin" as const,
-              kind: "bad-data",
-              version: 1,
-              data: { createdAt: new Date() } as never,
-            },
-          ],
+    const transformed = transformTimelineItem({
+      item: toolCall,
+      phase: "complete",
+      sourceId: "agent_tool_call-1",
+      plugins: [
+        plugin({
+          id: "broken",
+          transform: () => ({
+            items: [
+              {
+                type: "plugin" as const,
+                kind: "bad-data",
+                version: 1,
+                data: { createdAt: new Date() } as never,
+              },
+            ],
+          }),
         }),
-      }),
-    ]);
+      ],
+    });
 
     expect(transformed).toBeUndefined();
     expect(warning).toHaveBeenCalledOnce();
@@ -137,16 +163,48 @@ describe("plugin timeline transforms", () => {
 
   it("takes a JSON snapshot of transformed data", () => {
     const data = { passed: 4 };
-    const transformed = transformTimelineItem(toolCall, [
-      plugin({
-        id: "reports",
-        transform: () => ({
-          items: [{ type: "plugin" as const, kind: "test-report", version: 1, data }],
+    const transformed = transformTimelineItem({
+      item: toolCall,
+      phase: "complete",
+      sourceId: "agent_tool_call-1",
+      plugins: [
+        plugin({
+          id: "reports",
+          transform: () => ({
+            items: [{ type: "plugin" as const, kind: "test-report", version: 1, data }],
+          }),
         }),
-      }),
-    ]);
+      ],
+    });
 
     data.passed = 0;
     expect(transformed?.[0]?.data).toEqual({ passed: 4 });
+  });
+
+  it("passes phase and preserves explicit output identity", () => {
+    const transform = vi.fn(() => ({
+      items: [
+        {
+          type: "plugin" as const,
+          id: "summary",
+          kind: "test-report",
+          version: 1,
+          data: { passed: 4 },
+        },
+      ],
+    }));
+
+    const transformed = transformTimelineItem({
+      item: { ...toolCall, status: "running" },
+      phase: "streaming",
+      sourceId: "agent_tool_call-1",
+      plugins: [plugin({ id: "reports", transform })],
+    });
+
+    expect(transform).toHaveBeenCalledWith({
+      item: { ...toolCall, status: "running" },
+      phase: "streaming",
+    });
+    expect(transformed?.[0]?.id).toBe("summary");
   });
 });

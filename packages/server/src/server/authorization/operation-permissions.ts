@@ -3,6 +3,7 @@ import type { DaemonPermission } from "./index.js";
 
 type InboundOperation = SessionInboundMessage["type"];
 type OutboundOperation = SessionOutboundMessage["type"];
+export type PermissionRequirement = DaemonPermission | readonly DaemonPermission[] | null;
 
 const INBOUND_PERMISSION = {
   abort_request: "workspace.write",
@@ -18,6 +19,7 @@ const INBOUND_PERMISSION = {
   "agent.skills.save_selection.request": "daemon.manage",
   "agent.skills.uninstall.request": "daemon.manage",
   "agent.timeline.list_prompts.request": "workspace.read",
+  "agent.timeline.append.request": "workspace.write",
   "agent.timeline.set_subscription.request": "workspace.read",
   agent_permission_response: "workspace.write",
   archive_agent_request: "workspace.write",
@@ -88,7 +90,7 @@ const INBOUND_PERMISSION = {
   "fs.file.unsubscribe.request": "workspace.read",
   "fs.file.write.request": "workspace.write",
   get_daemon_config_request: "daemon.read",
-  get_providers_snapshot_request: "daemon.read",
+  get_providers_snapshot_request: ["daemon.read", "hub.execute"],
   github_search_request: "workspace.read",
   "hub.execution.agent.create.request": "hub.execute",
   "hub.execution.agent.validate.request": "hub.execute",
@@ -144,7 +146,7 @@ const INBOUND_PERMISSION = {
   "push.unregister.request": "workspace.read",
   read_project_config_request: "workspace.read",
   refresh_agent_request: "workspace.write",
-  refresh_providers_snapshot_request: "daemon.read",
+  refresh_providers_snapshot_request: ["daemon.read", "hub.execute"],
   register_push_token: "workspace.read",
   restart_server_request: "daemon.manage",
   resume_agent_request: "workspace.write",
@@ -197,8 +199,9 @@ const INBOUND_PERMISSION = {
   "workspace.script.stop.request": "workspace.write",
   "workspace.title.set.request": "workspace.manage",
   workspace_setup_status_request: "workspace.read",
+  "workspace.setup.run.request": "workspace.write",
   write_project_config_request: "workspace.write",
-} as const satisfies Record<InboundOperation, DaemonPermission | null>;
+} as const satisfies Record<InboundOperation, PermissionRequirement>;
 
 const OUTBOUND_PERMISSION = {
   activity_log: "workspace.read",
@@ -215,6 +218,7 @@ const OUTBOUND_PERMISSION = {
   "agent.skills.save_selection.response": "daemon.manage",
   "agent.skills.uninstall.response": "daemon.manage",
   "agent.timeline.list_prompts.response": "workspace.read",
+  "agent.timeline.append.response": "workspace.write",
   "agent.timeline.replacement": "workspace.read",
   "agent.timeline.set_subscription.response": "workspace.read",
   agent_archived: "workspace.read",
@@ -296,7 +300,7 @@ const OUTBOUND_PERMISSION = {
   "fs.file.update": "workspace.read",
   "fs.file.write.response": "workspace.write",
   get_daemon_config_response: "daemon.read",
-  get_providers_snapshot_response: "daemon.read",
+  get_providers_snapshot_response: ["daemon.read", "hub.execute"],
   github_search_response: "workspace.read",
   "hub.execution.agent.create.response": "hub.execute",
   "hub.execution.agent.stream": "hub.execute",
@@ -350,11 +354,11 @@ const OUTBOUND_PERMISSION = {
   project_icon_response: "workspace.read",
   "provider.usage.list.response": "daemon.read",
   provider_diagnostic_response: "daemon.read",
-  providers_snapshot_update: "daemon.read",
+  providers_snapshot_update: ["daemon.read", "hub.execute"],
   pull_request_timeline_response: "workspace.read",
   "push.unregister.response": "workspace.read",
   read_project_config_response: "workspace.read",
-  refresh_providers_snapshot_response: "daemon.read",
+  refresh_providers_snapshot_response: ["daemon.read", "hub.execute"],
   rpc_error: null,
   "schedule/create/response": "automation.manage",
   "schedule/delete/response": "automation.manage",
@@ -407,16 +411,15 @@ const OUTBOUND_PERMISSION = {
   "workspace.title.set.response": "workspace.manage",
   workspace_setup_progress: "workspace.read",
   workspace_setup_status_response: "workspace.read",
+  "workspace.setup.run.response": "workspace.write",
   workspace_update: "workspace.read",
   write_project_config_response: "workspace.write",
-} as const satisfies Record<OutboundOperation, DaemonPermission | null>;
+} as const satisfies Record<OutboundOperation, PermissionRequirement>;
 
-export function requiredPermissionForInbound(operation: InboundOperation): DaemonPermission | null {
+export function requiredPermissionForInbound(operation: InboundOperation): PermissionRequirement {
   return INBOUND_PERMISSION[operation];
 }
 
-export function requiredPermissionForOutbound(
-  operation: OutboundOperation,
-): DaemonPermission | null {
+export function requiredPermissionForOutbound(operation: OutboundOperation): PermissionRequirement {
   return OUTBOUND_PERMISSION[operation];
 }

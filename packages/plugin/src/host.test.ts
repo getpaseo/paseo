@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, expectTypeOf, it } from "vitest";
 import { z } from "zod";
-import { defineAttachmentSource, defineRpc } from "./index.js";
+import { defineAttachmentSource, defineRpc, type RpcInput, type RpcOutput } from "./index.js";
 import { callPluginRpc, searchPluginAttachments } from "./host.js";
 
 const contract = defineRpc({
@@ -10,6 +10,11 @@ const contract = defineRpc({
 });
 
 describe("plugin RPC contracts", () => {
+  it("derives handler input and output types from a contract", () => {
+    expectTypeOf<RpcInput<typeof contract>>().toEqualTypeOf<{ value: number }>();
+    expectTypeOf<RpcOutput<typeof contract>>().toEqualTypeOf<{ value: number }>();
+  });
+
   it("validates input before invoking the daemon", async () => {
     let invocations = 0;
     const invoke = async () => {

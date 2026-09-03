@@ -77,6 +77,7 @@ interface BuildOptions {
   project?: PersistedProjectRecord | null;
   spawnThrows?: string;
   gitService?: Pick<WorkspaceGitService, "peekSnapshot">;
+  automationError?: Error;
 }
 
 function buildService(options: BuildOptions = {}) {
@@ -119,6 +120,9 @@ function buildService(options: BuildOptions = {}) {
         port: null,
         terminalId: "terminal-1",
       };
+    },
+    assertAutomationAllowed: async () => {
+      if (options.automationError) throw options.automationError;
     },
   });
 
@@ -269,6 +273,28 @@ describe("stop", () => {
 });
 
 describe("start", () => {
+  test("refuses to start a script while repository automation is blocked", async () => {
+    const { service, emitted, spawnCalls } = buildService({
+      automationError: new Error(
+        "Scripts are blocked for PR #42 from contributor/paseo. Run setup to allow them.",
+      ),
+    });
+
+    await service.start(request);
+
+    expect(spawnCalls).toEqual([]);
+    expect(emitted).toContainEqual({
+      type: "start_workspace_script_response",
+      payload: {
+        requestId: "req-1",
+        workspaceId: "ws-1",
+        scriptName: "app",
+        terminalId: null,
+        error: "Scripts are blocked for PR #42 from contributor/paseo. Run setup to allow them.",
+      },
+    });
+  });
+
   test("reports an error when workspace scripts are unavailable", async () => {
     const { service, emitted, spawnCalls } = buildService({ terminalManager: null });
     await service.start(request);

@@ -7006,10 +7006,11 @@ export class CodexAppServerAgentClient implements AgentClient {
       client.notify("initialized", {});
 
       const limit = options?.limit ?? 20;
+      const scanLimit = Math.min(options?.scanLimit ?? limit, 500);
       // thread/list returns the cheap `cwd` field. Fetch a wider window when
       // filtering since most threads will be from other cwds, then keep the
       // local realpath-aware filter for symlink-equivalent workspace paths.
-      const listLimit = options?.cwd ? Math.max(limit, 50) : limit;
+      const listLimit = options?.cwd ? Math.max(scanLimit, 50) : scanLimit;
       const response = toObjectRecord(
         await client.request("thread/list", {
           limit: listLimit,

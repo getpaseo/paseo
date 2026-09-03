@@ -150,6 +150,7 @@ import { ScheduleService } from "./schedule/service.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
 import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js";
+import { resolvePaseoToolPolicy } from "./agent/paseo-tool-policy.js";
 import { BrowserToolsBroker } from "./browser-tools/broker.js";
 import { DaemonConfigBrowserToolsPolicy } from "./browser-tools/policy.js";
 import { WorkspaceGitServiceImpl } from "./workspace-git-service.js";
@@ -189,6 +190,7 @@ import { ScriptHealthMonitor } from "./script-health-monitor.js";
 import { createScriptStatusEmitter } from "./script-status-projection.js";
 import { WorkspaceScriptRuntimeStore } from "./workspace-script-runtime-store.js";
 import { createWorkspaceScriptsService } from "./session/workspace-scripts/workspace-scripts-service.js";
+import { assertWorkspaceAutomationAllowedForWorkspace } from "./workspace-automation-gate.js";
 import { spawnWorkspaceScript } from "./worktree-bootstrap.js";
 import {
   createManagedProcessRegistry,
@@ -916,6 +918,8 @@ export async function createPaseoDaemon(
       workspaceGitService.onWorkspaceStateMayHaveChanged(cwd);
     },
     mcpAuthToken: agentMcpAuthToken,
+    resolvePaseoToolPolicy: (provider) =>
+      resolvePaseoToolPolicy(provider, daemonConfigStore.get().providers),
     logger,
   });
 
@@ -1120,6 +1124,8 @@ export async function createPaseoDaemon(
         cacheWorkspaceSetupSnapshot: () => {},
         startWorkspaceSetup: (workspaceId, operation) =>
           workspaceSetupRuntime.start(workspaceId, operation),
+        assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
+          assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
         emit: emitExternalSessionMessage,
         sessionLogger: logger,
         terminalManager,
@@ -1168,6 +1174,8 @@ export async function createPaseoDaemon(
         killTerminalsForWorkspace: (workspaceIdToKill) =>
           killTerminalsForWorkspace({ terminalManager, sessionLogger: logger }, workspaceIdToKill),
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
+        assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
+          assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
         sessionLogger: logger,
       },
       { scope: { kind: "workspace", workspaceId }, requestId },
@@ -1293,6 +1301,8 @@ export async function createPaseoDaemon(
             workspaceIdToKill,
           ),
         stopWorkspaceSetup: (workspaceIdToStop) => workspaceSetupRuntime.stop(workspaceIdToStop),
+        assertWorkspaceAutomationAllowed: (guardedWorkspaceId) =>
+          assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, guardedWorkspaceId),
         sessionLogger: logger,
       },
       {
@@ -1374,6 +1384,8 @@ export async function createPaseoDaemon(
       // status updates fan out to every connected client.
       emit: (message) => wsServer?.broadcast(wrapSessionMessage(message)),
       spawnWorkspaceScript,
+      assertAutomationAllowed: (workspaceId) =>
+        assertWorkspaceAutomationAllowedForWorkspace(workspaceRegistry, workspaceId),
       globalServicePorts: loadPersistedConfig(config.paseoHome).worktrees?.servicePorts,
     }),
     markWorkspaceArchiving: markWorkspaceArchivingExternal,
@@ -1382,6 +1394,9 @@ export async function createPaseoDaemon(
     createPaseoWorktree: createAgentCommandDependencies.createPaseoWorktree,
     browserToolsEnabled: browserToolsPolicy.isEnabled(),
     browserToolsBroker,
+    paseoToolPolicy:
+      runtime.paseoToolPolicy ??
+      (runtime.callerAgentId ? agentManager.getPaseoToolPolicy(runtime.callerAgentId) : undefined),
     paseoHome: config.paseoHome,
     worktreesRoot: config.worktreesRoot,
     callerAgentId: runtime.callerAgentId,
@@ -1407,7 +1422,12 @@ export async function createPaseoDaemon(
 
     const createAgentMcpSession = async (callerAgentId?: string) => {
       const agentMcpServer = await createAgentMcpServer(
-        createAgentToolHostDependencies({ callerAgentId }),
+        createAgentToolHostDependencies({
+          callerAgentId,
+          paseoToolPolicy: callerAgentId
+            ? agentManager.getPaseoToolPolicy(callerAgentId)
+            : undefined,
+        }),
       );
 
       // Stateless mode: each HTTP request builds a fresh server + transport that is

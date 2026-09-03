@@ -10,10 +10,12 @@ export const ar: TranslationResources = {
       cancel: "يلغي",
       close: "يغلق",
       copy: "ينسخ",
+      copyLine: "نسخ السطر",
       dismiss: "رفض",
       retry: "أعد المحاولة",
       search: "يبحث",
       select: "يختار",
+      selectAll: "تحديد الكل",
     },
     placeholders: {
       search: "يبحث...",
@@ -33,6 +35,7 @@ export const ar: TranslationResources = {
     errors: {
       error: "خطأ",
       unableToSave: "غير قادر على الحفظ",
+      unableToCopy: "تعذر النسخ",
       nameRequired: "الاسم مطلوب",
       daemonUnavailable: "Daemon غير متوفر",
       daemonClientUnavailable: "عميل Daemon غير متوفر",
@@ -286,6 +289,7 @@ export const ar: TranslationResources = {
       zoomIn: "تكبير",
       zoomOut: "تصغير",
       resetZoom: "إعادة تعيين العرض",
+      fullscreen: "ملء الشاشة",
       viewSource: "عرض المصدر",
       viewDiagram: "عرض المخطط",
     },
@@ -357,7 +361,13 @@ export const ar: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "جلسة الاستيراد",
+    searchPlaceholder: "البحث في الجلسات...",
+    scope: {
+      host: "الجلسات على {{host}}",
+      workspace: "مساحة العمل هذه",
+    },
     filters: {
       all: "الجميع",
     },
@@ -366,12 +376,13 @@ export const ar: TranslationResources = {
       updateHost: "قم بتحديث المضيف لاستيراد الجلسات.",
       noProviders: "لم يتم تمكين أي موفري خدمات قابلين للاستيراد.",
       loading: "جارٍ تحميل الجلسات الأخيرة...",
-      failedAll: "تعذر تحميل الجلسات الأخيرة.",
-      failedProviders: "تعذر تحميل جلسات العمل لـ{{providers}}.",
+      failedProvider: "تعذر تحميل جلسات {{provider}}",
       failedImport: "تعذر استيراد الجلسة المحددة.",
     },
     actions: {
       refresh: "تحديث الجلسات",
+      showAll: "عرض الكل",
+      loadMore: "تحميل المزيد",
     },
     preview: {
       untitledSession: "جلسة بلا عنوان",
@@ -379,6 +390,7 @@ export const ar: TranslationResources = {
     },
     empty: {
       noRecent: "لا توجد جلسات حديثة لاستيرادها.",
+      noMatches: "لا توجد جلسات تطابق بحثك.",
       alreadyImported: "تم بالفعل استيراد كافة الجلسات الأخيرة.",
       noProviderSessions: "لم يتم العثور على جلسات{{provider}}.",
     },
@@ -491,14 +503,23 @@ export const ar: TranslationResources = {
         completed: "اكتمل الإعداد",
         failed: "فشل الإعداد",
         workspace: "إعداد Workspace",
+        blocked: "تم حظر الإعداد",
       },
       status: {
         running: "جري",
         completed: "مكتمل",
         failed: "فشل",
         waiting: "في انتظار إخراج الإعداد",
+        blocked: "محظور",
       },
       waiting: "جارٍ إعداد مساحة العمل...",
+      blocked: {
+        title: "لم يتم تشغيل الإعداد",
+        description:
+          "يأتي طلب السحب هذا من {{repository}}، وهو مستودع مختلف. قد يشغّل الإعداد والبرامج النصية تعليمات برمجية لم تراجعها.",
+        run: "تشغيل الإعداد",
+        runFailed: "فشل تشغيل إعداد مساحة العمل",
+      },
       empty: {
         noCommands: "لم يتم تشغيل أي أوامر إعداد لمساحة العمل هذه.",
       },
@@ -1082,7 +1103,6 @@ export const ar: TranslationResources = {
       addProject: "إضافة مشروع",
       newWorkspace: "مساحة عمل جديدة",
       hosts: "المضيفون",
-      home: "بيت",
       settings: "إعدادات",
       closeSidebar: "إغلاق الشريط الجانبي",
     },
@@ -1099,6 +1119,7 @@ export const ar: TranslationResources = {
     },
     sections: {
       sessions: "السجل",
+      search: "بحث",
       schedules: "الجداول",
     },
     worktreeSetup: {
@@ -2095,6 +2116,12 @@ export const ar: TranslationResources = {
       chatOutline: {
         title: "مخطط المحادثة",
         description: "عرض مخطط للتنقل بين المطالبات",
+      },
+      sidebar: {
+        title: "الشريط الجانبي",
+        description: "اختر العناصر التي تظهر أعلى الشريط الجانبي وترتيبها",
+        moveUp: "نقل لأعلى",
+        moveDown: "نقل لأسفل",
       },
       fonts: {
         title: "الخطوط",

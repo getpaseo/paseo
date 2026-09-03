@@ -176,6 +176,45 @@ describe("projectTimelineRows", () => {
     expect(tool?.collapsed).toContain("tool_lifecycle");
   });
 
+  test("replaces plugin rows with the same identity across turns", () => {
+    const rows: AgentTimelineRow[] = [
+      {
+        seq: 1,
+        turnId: "turn-1",
+        timestamp: "2026-02-13T00:00:00.000Z",
+        item: {
+          type: "plugin",
+          id: "review-1",
+          pluginId: "review",
+          kind: "review",
+          version: 1,
+          data: { status: "running" },
+        },
+      },
+      {
+        seq: 2,
+        turnId: "turn-2",
+        timestamp: "2026-02-13T00:00:00.100Z",
+        item: {
+          type: "plugin",
+          id: "review-1",
+          pluginId: "review",
+          kind: "review",
+          version: 1,
+          data: { status: "complete" },
+        },
+      },
+    ];
+
+    const projected = projectTimelineRows({ rows, mode: "projected" });
+
+    expect(projected).toHaveLength(1);
+    expect(projected[0]?.item).toEqual(rows[1]?.item);
+    expect(projected[0]?.turnId).toBe("turn-2");
+    expect(projected[0]?.sourceSeqRanges).toEqual([{ startSeq: 1, endSeq: 2 }]);
+    expect(projected[0]?.collapsed).toContain("identity");
+  });
+
   test("returns canonical rows unchanged in canonical mode", () => {
     const rows: AgentTimelineRow[] = [
       {
