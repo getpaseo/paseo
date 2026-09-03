@@ -8,17 +8,41 @@ category: Configuration
 
 # Configuration
 
-Paseo loads configuration from a single JSON file in your Paseo home directory, with optional environment variable and CLI overrides.
+Paseo loads configuration from a single JSON file, with optional environment variable and CLI overrides.
 
 ## Where config lives
 
-By default, Paseo uses `~/.paseo` as its home directory. The configuration file is:
+If you already have a `~/.paseo` directory, that is your Paseo home and the configuration file is:
 
 ```bash
 ~/.paseo/config.json
 ```
 
-You can change the home directory by setting `PASEO_HOME` or passing `--home` to `paseo daemon start`.
+On Linux, a machine with no `~/.paseo` follows the XDG base directory spec instead, so the file
+you edit is separate from the directories Paseo writes state and caches into:
+
+```bash
+~/.config/paseo/config.json          # or $XDG_CONFIG_HOME/paseo/config.json
+```
+
+Paseo picks one of these once, in this order:
+
+1. `PASEO_HOME` (or `--home`) is set — everything lives in that one directory.
+2. macOS and Windows — `~/.paseo`, as before. XDG is a Linux convention, and these platforms
+   keep the single-directory layout.
+3. A Linux install has already selected XDG — keep using that layout, even if a legacy
+   `~/.paseo` directory later appears.
+4. `~/.paseo` exists — everything lives there, exactly as it always has.
+5. A fresh Linux install — config lives under `$XDG_CONFIG_HOME`, the rest under
+   `$XDG_DATA_HOME`.
+
+Setting `PASEO_HOME` always wins, so an existing layout can be pinned explicitly. There is no
+automatic migration between layouts: an install that has `~/.paseo` keeps using it until you move
+the files yourself.
+
+The point of the split is that `config.json` is the one file you author and would want in a
+dotfiles repo, and it is easier to manage declaratively when it does not share a directory with
+private keys, machine-specific state, and logs.
 
 ## Precedence
 

@@ -144,6 +144,22 @@ Run it locally with the same command owned by the Ubuntu `desktop-tests` require
 npm run test:e2e:browser-tabs --workspace=@getpaseo/desktop
 ```
 
+### Desktop settings file regression
+
+Covers the writable client settings file described in
+[data-model.md](data-model.md#settings-files-desktop): a fresh profile creates `settings.json`, a
+theme change in the settings UI lands in it, unregistered keys stay in local storage, the one-time
+migration off local storage runs once and only once, and a hand-edited file beats the local storage
+values it replaced. Unit tests cover both halves against fakes; only a real Electron run proves
+Metro resolves the `.electron.ts` base store and the IPC pair is registered.
+
+Not part of any required check — it boots a daemon, Metro and Electron. Run it by hand when
+touching the settings layering:
+
+```bash
+npm run test:e2e:settings-file --workspace=@getpaseo/desktop
+```
+
 ## Test organization
 
 - Collocate tests with implementation: `thing.ts` + `thing.test.ts`

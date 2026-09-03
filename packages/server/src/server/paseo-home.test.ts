@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { resolvePaseoHome } from "./paseo-home.js";
+import { XDG_LAYOUT_MARKER } from "./paseo-paths.js";
 import { PRIVATE_DIRECTORY_MODE } from "./private-files.js";
 
 const MODE_MASK = 0o777;
@@ -23,4 +24,20 @@ describe.skipIf(process.platform === "win32")("resolvePaseoHome permissions", ()
       rmSync(parent, { recursive: true, force: true });
     }
   });
+
+  test.skipIf(process.platform !== "linux")(
+    "records XDG layout selection for later processes",
+    () => {
+      const homeDirectory = mkdtempSync(path.join(tmpdir(), "paseo-xdg-home-"));
+      try {
+        const paseoHome = resolvePaseoHome({}, "linux", homeDirectory);
+
+        expect(paseoHome).toBe(path.join(homeDirectory, ".local", "share", "paseo"));
+        expect(existsSync(path.join(paseoHome, XDG_LAYOUT_MARKER))).toBe(true);
+        expect(modeOf(path.join(paseoHome, XDG_LAYOUT_MARKER))).toBe(0o600);
+      } finally {
+        rmSync(homeDirectory, { recursive: true, force: true });
+      }
+    },
+  );
 });

@@ -1,13 +1,29 @@
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   DEFAULT_DESKTOP_SETTINGS,
   type DesktopSettings,
-  createDesktopSettingsStore,
+  createDesktopSettingsStore as createDesktopSettingsStoreForPlatform,
 } from "./desktop-settings";
+import { loadSettingsSeed } from "./settings-seed";
+
+function createDesktopSettingsStore(
+  options: Parameters<typeof createDesktopSettingsStoreForPlatform>[0],
+) {
+  return createDesktopSettingsStoreForPlatform({
+    ...options,
+    loadSeed:
+      options.loadSeed ??
+      (() =>
+        loadSettingsSeed({
+          userDataPath: options.userDataPath,
+          platform: "darwin",
+        })),
+  });
+}
 
 async function createTempUserDataDir(): Promise<string> {
   return await mkdtemp(path.join(os.tmpdir(), "paseo-desktop-settings-"));
@@ -15,6 +31,19 @@ async function createTempUserDataDir(): Promise<string> {
 
 function settingsFilePath(userDataPath: string): string {
   return path.join(userDataPath, "desktop-settings.json");
+}
+
+async function writeSeed(userDataPath: string, seed: unknown): Promise<void> {
+  await writeFile(path.join(userDataPath, "settings-seed.json"), JSON.stringify(seed));
+}
+
+function silence(): void {}
+
+async function readPersistedSettings(userDataPath: string): Promise<unknown> {
+  const document = JSON.parse(await readFile(settingsFilePath(userDataPath), "utf8")) as {
+    settings: unknown;
+  };
+  return document.settings;
 }
 
 describe("desktop-settings", () => {
@@ -277,6 +306,173 @@ describe("desktop-settings", () => {
       },
     });
     expect(ignoredSecondMigration).toEqual(migrated);
+  });
+
+  describe("settings seed", () => {
+    it("layers the seed under the persisted settings without copying it into them", async () => {
+      const userDataPath = await createTempUserDataDir();
+      directories.add(userDataPath);
+      await writeSeed(userDataPath, {
+        app: { theme: "dark" },
+        desktop: { releaseChannel: "beta", daemon: { manageBuiltInDaemon: false } },
+      });
+      const store = createDesktopSettingsStore({ userDataPath });
+
+      const settings = await store.get();
+
+      expect(settings).toEqual({
+        releaseChannel: "beta",
+        notifications: { playSound: true },
+        daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: false },
+      });
+      expect(await readPersistedSettings(userDataPath)).toEqual({});
+    });
+
+    it("persists only the difference against the seed", async () => {
+      const userDataPath = await createTempUserDataDir();
+      directories.add(userDataPath);
+      await writeSeed(userDataPath, {
+        desktop: { releaseChannel: "beta", daemon: { manageBuiltInDaemon: false } },
+      });
+      const store = createDesktopSettingsStore({ userDataPath });
+
+      const next = await store.patch({
+        releaseChannel: "beta",
+        daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
+      });
+
+      expect(next).toEqual({
+        releaseChannel: "beta",
+        notifications: { playSound: true },
+        daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
+      });
+      expect(await readPersistedSettings(userDataPath)).toEqual({
+        daemon: { keepRunningAfterQuit: true },
+      });
+    });
+
+    it("drops a local override once it matches the seed again", async () => {
+      const userDataPath = await createTempUserDataDir();
+      directories.add(userDataPath);
+      await writeSeed(userDataPath, { desktop: { releaseChannel: "beta" } });
+      const store = createDesktopSettingsStore({ userDataPath });
+
+      await store.patch({ releaseChannel: "stable" });
+      const overridden = await readPersistedSettings(userDataPath);
+      const restored = await store.patch({ releaseChannel: "beta" });
+
+      expect(overridden).toEqual({ releaseChannel: "stable" });
+      expect(restored.releaseChannel).toBe("beta");
+      expect(await readPersistedSettings(userDataPath)).toEqual({});
+    });
+
+    it("applies later seed edits to values the user never overrode", async () => {
+      const userDataPath = await createTempUserDataDir();
+      directories.add(userDataPath);
+      await writeSeed(userDataPath, { desktop: { releaseChannel: "beta" } });
+      const store = createDesktopSettingsStore({ userDataPath });
+
+      await store.patch({ daemon: { keepRunningAfterQuit: true } });
+      await writeSeed(userDataPath, { desktop: { releaseChannel: "stable" } });
+      const settings = await store.get();
+
+      expect(settings).toEqual({
+        releaseChannel: "stable",
+        notifications: { playSound: true },
+        daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: true },
+      });
+    });
+
+    it("ignores invalid seed fields", async () => {
+      const userDataPath = await createTempUserDataDir();
+      directories.add(userDataPath);
+      await writeSeed(userDataPath, {
+        desktop: {
+          releaseChannel: "nightly",
+          daemon: { manageBuiltInDaemon: "yes", keepRunningAfterQuit: true },
+        },
+      });
+      const store = createDesktopSettingsStore({ userDataPath });
+
+      const settings = await store.get();
+
+      expect(settings).toEqual({
+        releaseChannel: "stable",
+        notifications: { playSound: true },
+        daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: true },
+      });
+    });
+
+    it("keeps working when the seed file cannot be read", async () => {
+      const userDataPath = await createTempUserDataDir();
+      directories.add(userDataPath);
+      const consoleError = vi.spyOn(console, "error").mockImplementation(silence);
+      const store = createDesktopSettingsStore({
+        userDataPath,
+        loadSeed: async () => {
+          throw new Error("[SettingsSeed] Invalid JSON in settings-seed.json: unexpected token");
+        },
+      });
+
+      const settings = await store.get();
+      const patched = await store.patch({ releaseChannel: "beta" });
+
+      expect(settings).toEqual(DEFAULT_DESKTOP_SETTINGS);
+      expect(patched.releaseChannel).toBe("beta");
+      // No seed means no delta layer: the file still holds the full settings.
+      expect(await readPersistedSettings(userDataPath)).toEqual({
+        releaseChannel: "beta",
+        notifications: { playSound: true },
+        daemon: { manageBuiltInDaemon: true, keepRunningAfterQuit: false },
+      });
+      expect(consoleError).toHaveBeenCalled();
+      consoleError.mockRestore();
+    });
+
+    it("switches to delta persistence for a seed that only carries app settings", async () => {
+      const userDataPath = await createTempUserDataDir();
+      directories.add(userDataPath);
+      await writeSeed(userDataPath, { app: { theme: "dark" } });
+      const store = createDesktopSettingsStore({ userDataPath });
+
+      const settings = await store.get();
+      await store.patch({ daemon: { manageBuiltInDaemon: true } });
+
+      expect(settings).toEqual(DEFAULT_DESKTOP_SETTINGS);
+      expect(await readPersistedSettings(userDataPath)).toEqual({});
+    });
+
+    it("keeps a stored full-settings document readable by older versions", async () => {
+      const userDataPath = await createTempUserDataDir();
+      directories.add(userDataPath);
+      await writeSeed(userDataPath, { desktop: { releaseChannel: "beta" } });
+      await writeFile(
+        settingsFilePath(userDataPath),
+        JSON.stringify({
+          version: 1,
+          settings: {
+            releaseChannel: "stable",
+            daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
+          },
+          migrations: {
+            legacyRendererSettingsImported: true,
+            daemonStopOnQuitDefaultApplied: true,
+          },
+        }),
+      );
+      const store = createDesktopSettingsStore({ userDataPath });
+
+      // A document written before the seed existed shadows it until the next patch
+      // rewrites the delta.
+      const shadowed = await store.get();
+      await store.patch({ daemon: { manageBuiltInDaemon: false } });
+
+      expect(shadowed.releaseChannel).toBe("stable");
+      expect(await readPersistedSettings(userDataPath)).toEqual({
+        releaseChannel: "stable",
+        daemon: { manageBuiltInDaemon: false, keepRunningAfterQuit: true },
+      });
+    });
   });
 
   it("keeps keys written by another build across a patch", async () => {

@@ -149,16 +149,15 @@ describe("loadAppSettingsFromStorage", () => {
     expect(result.theme).toBe(name);
   });
 
-  it("seeds storage with the client defaults when nothing is persisted", async () => {
+  it("returns the client defaults without persisting them when nothing is stored", async () => {
     const deps = makeDeps();
 
     const result = await loadAppSettingsFromStorage(deps);
 
     expect(result).toEqual(DEFAULT_CLIENT_SETTINGS);
     expect(DEFAULT_CLIENT_SETTINGS.language).toBe("system");
-    expect(JSON.parse(deps.storage.entries.get(APP_SETTINGS_KEY) ?? "null")).toEqual(
-      DEFAULT_CLIENT_SETTINGS,
-    );
+    // Persisted defaults would shadow a seed layer that supplies its own values.
+    expect(deps.storage.entries.has(APP_SETTINGS_KEY)).toBe(false);
   });
 
   it("defaults language to system when storage is empty", async () => {

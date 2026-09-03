@@ -32,7 +32,10 @@ checkout from `mainRepoRoot`, then restores the relative path from `worktreeRoot
 
 Paseo uses **file-based JSON persistence** instead of a traditional database. All data is validated at runtime with Zod schemas. Most stores write atomically (write to temp file, then rename); a few still use plain `writeFile` — see each section. There is no schema-versioning/migration framework — schemas rely on optional fields with defaults for forward compatibility, with a small amount of inline normalization in `persisted-config.ts` for legacy provider/speech entries.
 
-All server-side stores live under `$PASEO_HOME` (defaults to `~/.paseo`).
+Server-side data stores live under Paseo's data root. Existing installs and explicit
+`PASEO_HOME` configurations use the historical flat root. Fresh Linux installs use
+`$XDG_DATA_HOME/paseo` (default `~/.local/share/paseo`) for data and
+`$XDG_CONFIG_HOME/paseo/config.json` (default `~/.config/paseo/config.json`) for daemon config.
 
 ## Store Surface Rules
 
@@ -43,8 +46,9 @@ Store APIs own persistence atomicity and should not make services coordinate raw
 ## Directory layout
 
 ```
-$PASEO_HOME/
-├── config.json                          # Daemon configuration
+Paseo data root/
+├── .xdg-layout                         # Pins XDG layout selection across restarts (XDG only)
+├── config.json                          # Daemon configuration (flat layout only)
 ├── server-id                            # Stable daemon identifier (plain text, "srv_<base64url>")
 ├── daemon-keypair.json                  # E2EE keypair for relay (mode 0600)
 ├── paseo.pid                            # Daemon PID lock file
@@ -176,9 +180,28 @@ Terminal activity contributes to the workspace status bucket **per `workspaceId`
 
 ## 2. Daemon Configuration
 
-**Path:** `$PASEO_HOME/config.json`
+**Root path:** `$PASEO_HOME/config.json`
 
-Single file, validated with `PersistedConfigSchema`.
+Each file is validated with `PersistedConfigSchema`. The root can import shared layers and select
+which layer receives settings changes:
+
+```json
+{
+  "imports": ["../dotfiles/paseo.json", "machine.json"],
+  "writeTo": "machine.json"
+}
+```
+
+Imports are flattened depth-first. Later imports override earlier ones, and each file overrides its
+imports. Relative paths start from the referencing file's directory; paths beginning with `~/`
+start from the user's home directory. A file reached through more than one branch participates once
+at its first depth-first position. `writeTo` must name the root or a file in its import graph and is
+allowed only in the root. Without `writeTo`, settings changes write to the root.
+
+Settings changes rewrite only the selected layer's difference from all other layers. Imported files
+are read without changing their permissions, so shared configuration can live in a Nix store or Git
+checkout. A setting from another layer that cannot be overridden or removed through the writable
+layer is rejected with the owning file path.
 
 `agents.skills.selection` is the daemon host's orchestration-skill preference. Missing means
 `{ mode: "all" }`. Installed state is not persisted; the daemon derives it from its three managed
@@ -190,6 +213,9 @@ fields and their removal/default semantics; session handlers and the CLI only re
 result. Normal config patches persist only the requested fields, so launch overrides and resolved
 defaults never leak into the file. Startup-only fields remain compared with the daemon's launch
 snapshot so a mixed edit can apply its live subset and still name the paths that require restart.
+
+Client-side preferences layer the same way through the desktop settings files — see
+[Settings files (desktop)](#settings-files-desktop).
 
 ```
 {
@@ -523,6 +549,68 @@ These small files are not validated as full Zod schemas but are persisted under 
 ## Client-side stores (App)
 
 These live in React Native `AsyncStorage` or browser `IndexedDB`, not on the daemon filesystem.
+
+### Settings files (desktop)
+
+On Electron desktop, preferences live in two files:
+
+| File                 | Location                                                                                  | Layer                            | Written by                                                                 |
+| -------------------- | ----------------------------------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------- |
+| `settings-seed.json` | `$XDG_CONFIG_HOME/paseo/` on Linux; Electron `userData` on macOS and Windows              | Read-only defaults, bottom layer | Nobody. The app only reads it, so a dotfiles repo can symlink it directly. |
+| `settings.json`      | Electron `userData` (`~/.config/Paseo/` on Linux, `~/Library/Application Support/Paseo/`) | Writable overrides, on top of it | The Electron main process, on behalf of the settings UI.                   |
+
+`PASEO_SETTINGS_SEED_FILE` overrides the seed path on every platform. On Linux, an existing seed
+in Electron `userData` takes precedence over the XDG path so upgrades keep their current layout;
+remove that legacy file to opt into the XDG location.
+
+Both hold the same field names and value shapes, so a value copied from `settings.json` into
+`settings-seed.json` needs no translation.
+
+```json
+{
+  "version": 1,
+  "app": {
+    "appSettings": { "theme": "dark" },
+    "keyboardShortcutOverrides": { "<binding-id>": "<combo>" },
+    "preferredEditor": "zed",
+    "changesPreferences": { "layout": "split" },
+    "createAgentPreferences": { "provider": "claude" }
+  }
+}
+```
+
+The seed adds a `desktop` section — `releaseChannel` and `daemon.manageBuiltInDaemon` /
+`daemon.keepRunningAfterQuit` — that seeds `desktop-settings.json` the same way. `settings.json`
+has no `desktop` section and no `path`.
+
+Layering is opt-in per storage key. The registry in
+`packages/app/src/storage/settings-seed/registry.ts` maps the five `app` fields above to their
+storage keys; every other key (caches, drafts, layout state, client identity, the daemon registry)
+passes straight through to AsyncStorage, on desktop as everywhere else.
+
+Reads merge the seed under the local value; local wins per field. Saves persist only the
+difference from the seed, following the daemon-config rule, so a value set back to the seed's
+drops out of `settings.json` and later dotfiles edits keep applying. Removing a seed-provided
+value — resetting a seeded keyboard shortcut, clearing a seeded editor — fails with the seed file
+path; change it in that file instead.
+
+The point of the writable file is that desktop preferences are editable and source-controllable.
+AsyncStorage on Electron is `window.localStorage`, which is opaque LevelDB records under
+`<userData>/Local Storage/leveldb`. So the registered keys move to a file the user can read,
+diff, and check in.
+
+- **Migration is once, and its trigger is the file's absence.** On first run with no
+  `settings.json`, the renderer copies the registered keys' current localStorage values into the
+  file. The legacy localStorage values stay where they are and are ignored from then on; the file
+  is authoritative, and its existence ends the migration forever.
+- **An unreadable `settings.json` fails loudly**, naming the path, the same as the seed. There is
+  no fallback to localStorage — running on stale shadow copies of the user's settings is worse
+  than not starting.
+- **External edits apply on reload.** The main process re-reads on every get, and the renderer
+  fetches the document once per page load.
+
+On iOS, Android, and plain browser web there is no seed and no settings file: every key persists
+to AsyncStorage exactly as before.
 
 ### Keying convention: directory-backed vs workspace-owned
 

@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { DaemonConfigStore, applyMutableProviderConfigToOverrides } from "./daemon-config-store.js";
-import { loadPersistedConfig } from "./persisted-config.js";
+import { loadPersistedConfig, savePersistedConfig } from "./persisted-config.js";
 import type { PersistedConfig } from "./persisted-config.js";
 import type { MutableDaemonConfig } from "@getpaseo/protocol/messages";
 
@@ -38,6 +38,37 @@ function reloadableConfig(
     app: { baseUrl: "https://app.paseo.sh" },
     pluginsEnabled: persisted.pluginsEnabled ?? false,
     plugins: persisted.plugins ?? {},
+  };
+}
+
+function writeJson(filePath: string, value: unknown): void {
+  writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function createMutableConfig() {
+  return {
+    relay: { enabled: false },
+    mcp: { injectIntoAgents: false },
+    browserTools: { enabled: false },
+    providers: {},
+    metadataGeneration: { providers: [] },
+    autoArchiveAfterMerge: false,
+    enableTerminalAgentHooks: false,
+    appendSystemPrompt: "",
+  };
+}
+
+function createSharedConfig() {
+  return {
+    daemon: {
+      relay: { enabled: false },
+      mcp: { injectIntoAgents: false },
+      browserTools: { enabled: false },
+      autoArchiveAfterMerge: false,
+      enableTerminalAgentHooks: false,
+      appendSystemPrompt: "",
+    },
+    agents: { metadataGeneration: { providers: [] } },
   };
 }
 
@@ -869,6 +900,173 @@ describe("DaemonConfigStore", () => {
       command: ["npx", "-y", "--version"],
       env: {},
     });
+  });
+
+  test("writes only the effective delta to the configured target", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const sharedPath = path.join(paseoHome, "shared.json");
+    const writablePath = path.join(paseoHome, "machine.json");
+    const rootPath = path.join(paseoHome, "config.json");
+    writeJson(sharedPath, createSharedConfig());
+    writeJson(writablePath, { version: 1 });
+    writeJson(rootPath, {
+      imports: ["shared.json", "machine.json"],
+      writeTo: "machine.json",
+    });
+    const sharedBefore = readFileSync(sharedPath, "utf-8");
+    const rootBefore = readFileSync(rootPath, "utf-8");
+    const store = new DaemonConfigStore(paseoHome, createMutableConfig());
+
+    store.patch({ mcp: { injectIntoAgents: true } });
+
+    expect(JSON.parse(readFileSync(writablePath, "utf-8"))).toEqual({
+      version: 1,
+      daemon: { mcp: { injectIntoAgents: true } },
+    });
+    expect(readFileSync(sharedPath, "utf-8")).toBe(sharedBefore);
+    expect(readFileSync(rootPath, "utf-8")).toBe(rootBefore);
+  });
+
+  test("drops target keys that become equal to another layer on re-save", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const sharedPath = path.join(paseoHome, "shared.json");
+    const writablePath = path.join(paseoHome, "machine.json");
+    writeJson(sharedPath, createSharedConfig());
+    writeJson(writablePath, {
+      version: 1,
+      daemon: { mcp: { injectIntoAgents: true } },
+    });
+    writeJson(path.join(paseoHome, "config.json"), {
+      imports: ["shared.json", "machine.json"],
+      writeTo: "machine.json",
+    });
+    const shared = createSharedConfig();
+    shared.daemon.mcp.injectIntoAgents = true;
+    writeJson(sharedPath, shared);
+
+    savePersistedConfig(paseoHome, loadPersistedConfig(paseoHome));
+
+    expect(JSON.parse(readFileSync(writablePath, "utf-8"))).toEqual({ version: 1 });
+  });
+
+  test("rejects a patch shadowed by a later layer without writing any file", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const sharedPath = path.join(paseoHome, "shared.json");
+    const writablePath = path.join(paseoHome, "writable.json");
+    const localPath = path.join(paseoHome, "machine-local.json");
+    const rootPath = path.join(paseoHome, "config.json");
+    writeJson(sharedPath, createSharedConfig());
+    writeJson(writablePath, {});
+    writeJson(localPath, { daemon: { mcp: { injectIntoAgents: false } } });
+    writeJson(rootPath, {
+      imports: ["shared.json", "writable.json", "machine-local.json"],
+      writeTo: "writable.json",
+    });
+    const files = [sharedPath, writablePath, localPath, rootPath];
+    const before = files.map((filePath) => readFileSync(filePath, "utf-8"));
+    const store = new DaemonConfigStore(paseoHome, createMutableConfig());
+
+    expect(() => store.patch({ mcp: { injectIntoAgents: true } })).toThrow(
+      `daemon.mcp.injectIntoAgents is defined in ${localPath}, which overrides the writable config file. Change it there instead.`,
+    );
+    expect(files.map((filePath) => readFileSync(filePath, "utf-8"))).toEqual(before);
+  });
+
+  test("preserves root structural keys when the root is writable", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const sharedPath = path.join(paseoHome, "shared.json");
+    const rootPath = path.join(paseoHome, "config.json");
+    writeJson(sharedPath, createSharedConfig());
+    writeJson(rootPath, {
+      $schema: "https://paseo.sh/schemas/paseo.config.v1.json",
+      version: 1,
+      imports: ["shared.json"],
+      writeTo: "config.json",
+    });
+    const store = new DaemonConfigStore(paseoHome, createMutableConfig());
+
+    store.patch({ mcp: { injectIntoAgents: true } });
+
+    expect(JSON.parse(readFileSync(rootPath, "utf-8"))).toEqual({
+      $schema: "https://paseo.sh/schemas/paseo.config.v1.json",
+      version: 1,
+      imports: ["shared.json"],
+      writeTo: "config.json",
+      daemon: { mcp: { injectIntoAgents: true } },
+    });
+  });
+
+  test("removes providers from the target and rejects removal from a read-only layer", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const sharedPath = path.join(paseoHome, "shared.json");
+    const writablePath = path.join(paseoHome, "machine.json");
+    const shared = createSharedConfig();
+    writeJson(sharedPath, {
+      ...shared,
+      agents: {
+        ...shared.agents,
+        providers: { claude: { enabled: false } },
+      },
+    });
+    writeJson(writablePath, {
+      version: 1,
+      agents: {
+        providers: {
+          gemini: {
+            extends: "acp",
+            label: "Gemini",
+            command: ["gemini", "--acp"],
+          },
+        },
+      },
+    });
+    writeJson(path.join(paseoHome, "config.json"), {
+      imports: ["shared.json", "machine.json"],
+      writeTo: "machine.json",
+    });
+    const store = new DaemonConfigStore(paseoHome, {
+      ...createMutableConfig(),
+      providers: {
+        claude: { enabled: false },
+        gemini: {},
+      },
+    });
+
+    store.patch({ removeProviders: ["gemini"] });
+
+    expect(JSON.parse(readFileSync(writablePath, "utf-8"))).toEqual({ version: 1 });
+    const beforeRejectedRemoval = readFileSync(writablePath, "utf-8");
+    expect(() => store.patch({ removeProviders: ["claude"] })).toThrow(
+      `agents.providers is defined in ${sharedPath}, which overrides the writable config file. Change it there instead.`,
+    );
+    expect(readFileSync(writablePath, "utf-8")).toBe(beforeRejectedRemoval);
+  });
+
+  test("restores the previous write-target bytes when a field transition fails", () => {
+    const paseoHome = mkdtempSync(path.join(tmpdir(), "paseo-daemon-config-store-"));
+    tempDirs.push(paseoHome);
+    const writablePath = path.join(paseoHome, "machine.json");
+    writeJson(path.join(paseoHome, "shared.json"), createSharedConfig());
+    writeJson(writablePath, { version: 1 });
+    writeJson(path.join(paseoHome, "config.json"), {
+      imports: ["shared.json", "machine.json"],
+      writeTo: "machine.json",
+    });
+    const writableBefore = readFileSync(writablePath, "utf-8");
+    const store = new DaemonConfigStore(paseoHome, createMutableConfig());
+    store.onFieldChange("relay.enabled", (enabled) => {
+      if (enabled === true) throw new Error("Relay transport failed to start");
+    });
+
+    expect(() => store.patch({ relay: { enabled: true } })).toThrow(
+      "Relay transport failed to start",
+    );
+    expect(readFileSync(writablePath, "utf-8")).toBe(writableBefore);
   });
 });
 

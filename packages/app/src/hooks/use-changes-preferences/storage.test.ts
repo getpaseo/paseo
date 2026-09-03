@@ -10,18 +10,17 @@ import {
 } from "./storage";
 
 describe("loadChangesPreferencesFromStorage", () => {
-  it("defaults to unified layout with visible whitespace and writes the defaults back", async () => {
+  it("defaults to unified layout with visible whitespace without persisting the defaults", async () => {
     const storage = createInMemoryKeyValueStorage();
 
     const result = await loadChangesPreferencesFromStorage(storage);
 
     expect(result).toEqual(DEFAULT_CHANGES_PREFERENCES);
-    expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(
-      JSON.stringify(DEFAULT_CHANGES_PREFERENCES),
-    );
+    // Persisted defaults would shadow a seed layer that supplies its own values.
+    expect(storage.entries.size).toBe(0);
   });
 
-  it("migrates the legacy wrap-lines toggle into the new preferences object", async () => {
+  it("honors the legacy wrap-lines toggle without persisting the derived preferences", async () => {
     const storage = createInMemoryKeyValueStorage({ "diff-wrap-lines": "true" });
 
     const result = await loadChangesPreferencesFromStorage(storage);
@@ -34,7 +33,7 @@ describe("loadChangesPreferencesFromStorage", () => {
       inlineDiff: false,
       commitsCollapsed: true,
     });
-    expect(storage.entries.get(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(JSON.stringify(result));
+    expect(storage.entries.has(CHANGES_PREFERENCES_STORAGE_KEY)).toBe(false);
   });
 
   it("loads persisted layout and whitespace preferences without rewriting storage", async () => {

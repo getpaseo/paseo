@@ -1,8 +1,7 @@
 import { cancel, confirm, intro, isCancel, log, note, outro, spinner } from "@clack/prompts";
 import { Command, Option } from "commander";
-import { writeFileSync } from "node:fs";
 import path from "node:path";
-import { loadPersistedConfig, type PersistedConfig } from "@getpaseo/server";
+import { loadPersistedConfig, savePersistedConfig, type PersistedConfig } from "@getpaseo/server";
 import {
   resolveLocalPaseoHome,
   resolveLocalDaemonState,
@@ -67,11 +66,6 @@ function parseTimeoutMs(raw: string | undefined): number {
   }
 
   return Math.ceil(seconds * 1000);
-}
-
-function savePersistedConfig(paseoHome: string, config: OnboardPersistedConfig): void {
-  const configPath = path.join(paseoHome, "config.json");
-  writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`);
 }
 
 function applyVoiceSelection(

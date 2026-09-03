@@ -2,11 +2,22 @@
 export { createPaseoDaemon, type PaseoDaemon, type PaseoDaemonConfig } from "./bootstrap.js";
 export { loadConfig, type CliConfigOverrides } from "./config.js";
 export { resolvePaseoHome } from "./paseo-home.js";
+export { resolvePersistedConfigPath } from "./persisted-config.js";
+export {
+  resolvePaseoPath,
+  resolvePaseoPaths,
+  type PaseoLayout,
+  type PaseoPathCategory,
+  type PaseoPaths,
+} from "./paseo-paths.js";
 export { getOrCreateServerId } from "./server-id.js";
 export { createRootLogger, type LogLevel, type LogFormat } from "./logger.js";
 export {
+  loadConfigStack,
   loadPersistedConfig,
   savePersistedConfig,
+  type ConfigLayer,
+  type ConfigStack,
   type PersistedConfig,
 } from "./persisted-config.js";
 export { hashDaemonPassword, isBearerTokenValid } from "./auth.js";
