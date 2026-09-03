@@ -32,6 +32,38 @@ describe("hostnames (vite-style)", () => {
     expect(isHostnameAllowed("notexample.com:6767", hostnames)).toBe(false);
   });
 
+  it("ignores the Host header port unless the pattern names one", () => {
+    expect(isHostnameAllowed("example.com:6767", ["example.com"])).toBe(true);
+    expect(isHostnameAllowed("example.com", ["example.com:"])).toBe(true);
+    expect(isHostnameAllowed("foo.example.com:6767", [".example.com:"])).toBe(true);
+    expect(isHostnameAllowed("example.com:6767", ["example.com:6767"])).toBe(true);
+    expect(isHostnameAllowed("foo.example.com:6767", [".example.com:6767"])).toBe(true);
+    expect(isHostnameAllowed("example.com:6768", ["example.com:6767"])).toBe(false);
+    expect(isHostnameAllowed("example.com", ["example.com:6767"])).toBe(false);
+  });
+
+  it("keeps default hosts allowed on every port, whatever the entries say", () => {
+    expect(isHostnameAllowed("localhost:9999", ["localhost:6767"])).toBe(true);
+    expect(isHostnameAllowed("127.0.0.1:9999", ["127.0.0.1:6767"])).toBe(true);
+  });
+
+  it("compares ports numerically", () => {
+    expect(isHostnameAllowed("example.com:06767", ["example.com:6767"])).toBe(true);
+  });
+
+  it("never matches a pattern that names a scheme", () => {
+    expect(isHostnameAllowed("example.com:6767", ["https://example.com"])).toBe(false);
+  });
+
+  it("rejects malformed Host headers", () => {
+    expect(isHostnameAllowed("example.com:abc", true)).toBe(false);
+    expect(isHostnameAllowed("example.com:65536", true)).toBe(false);
+    expect(isHostnameAllowed("[::1", true)).toBe(false);
+    expect(isHostnameAllowed("[example.com]:6767", true)).toBe(false);
+    expect(isHostnameAllowed("::1", true)).toBe(false);
+    expect(isHostnameAllowed("", true)).toBe(false);
+  });
+
   it("merges arrays (append + de-dupe) and short-circuits on true", () => {
     expect(mergeHostnames([["a"], ["a", "b"]])).toEqual(["a", "b"]);
     expect(mergeHostnames([["a"], true, ["b"]])).toBe(true);

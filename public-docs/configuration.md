@@ -49,6 +49,8 @@ Minimal example that configures listening address, hostnames, and MCP:
 
 `daemon.hostnames` is the primary field. The old `daemon.allowedHosts` name still works as a deprecated alias for backward compatibility.
 
+`daemon.hostnames` and `daemon.cors.allowedOrigins` share one pattern syntax, described under [Security](/docs/security#dns-rebinding-protection).
+
 ## Apply changes
 
 After saving `config.json`, reload it:
@@ -235,6 +237,7 @@ Set the persisted value in `config.json`:
 - `PASEO_LISTEN`, override `daemon.listen`
 - `PASEO_RELAY_ENABLED`, enable or disable the outbound relay for this daemon launch
 - `PASEO_HOSTNAMES`, override/extend `daemon.hostnames`
+- `PASEO_CORS_ORIGINS`, extend `daemon.cors.allowedOrigins`
 - `PASEO_ALLOWED_HOSTS`, deprecated alias for `PASEO_HOSTNAMES`
 - `PASEO_WEB_UI_ENABLED`, enable or disable the daemon-served web UI
 - `PASEO_WEB_UI_DIST_DIR`, override the daemon web UI build directory

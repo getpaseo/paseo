@@ -1,42 +1,12 @@
 import net from "node:net";
+import {
+  type HostTarget,
+  matchesHostPattern,
+  parseHostAuthority,
+  parseHostPattern,
+} from "./host-patterns.js";
 
 export type HostnamesConfig = true | string[] | undefined;
-
-function normalizeHostname(hostname: string): string {
-  return hostname.trim().toLowerCase();
-}
-
-function parseHostnameFromHostHeader(hostHeader: string): string | null {
-  const trimmed = hostHeader.trim();
-  if (!trimmed) return null;
-
-  // IPv6 in brackets: [::1]:6767
-  if (trimmed.startsWith("[")) {
-    const end = trimmed.indexOf("]");
-    if (end === -1) return null;
-    return normalizeHostname(trimmed.slice(1, end));
-  }
-
-  // IPv4/hostname with optional port: localhost:6767
-  const colonIndex = trimmed.indexOf(":");
-  if (colonIndex === -1) {
-    return normalizeHostname(trimmed);
-  }
-  return normalizeHostname(trimmed.slice(0, colonIndex));
-}
-
-function matchesHostnamePattern(hostname: string, pattern: string): boolean {
-  const normalizedPattern = normalizeHostname(pattern);
-  if (!normalizedPattern) return false;
-
-  if (normalizedPattern.startsWith(".")) {
-    const base = normalizedPattern.slice(1);
-    if (!base) return false;
-    return hostname === base || hostname.endsWith(`.${base}`);
-  }
-
-  return hostname === normalizedPattern;
-}
 
 function isDefaultAllowedHostname(hostname: string): boolean {
   // Vite-style defaults: localhost, *.localhost, and all IP addresses.
@@ -53,22 +23,26 @@ function isDefaultAllowedHostname(hostname: string): boolean {
  * - `hostnames === true` => allow any host.
  * - `hostnames === []` or `undefined` => allow localhost, *.localhost, and all IPs.
  * - `hostnames === ['.example.com', 'myhost']` => allow those *in addition* to defaults.
+ *
+ * Entries follow the grammar in host-patterns.ts. The Host header's port is
+ * ignored unless the entry names one.
  */
 export function isHostnameAllowed(
   hostHeader: string | undefined,
   hostnames: HostnamesConfig,
 ): boolean {
-  const hostname = hostHeader ? parseHostnameFromHostHeader(hostHeader) : null;
-  if (!hostname) return false;
+  const authority = hostHeader ? parseHostAuthority(hostHeader) : null;
+  if (!authority) return false;
 
   if (hostnames === true) return true;
 
   // Defaults are always allowed.
-  if (isDefaultAllowedHostname(hostname)) return true;
+  if (isDefaultAllowedHostname(authority.hostname)) return true;
 
-  const patterns = hostnames ?? [];
-  for (const pattern of patterns) {
-    if (matchesHostnamePattern(hostname, pattern)) return true;
+  const target: HostTarget = { ...authority, scheme: null, defaultPort: null };
+  for (const raw of hostnames ?? []) {
+    const pattern = parseHostPattern(raw, { unspecifiedPort: "any" });
+    if (pattern && matchesHostPattern(pattern, target)) return true;
   }
   return false;
 }
