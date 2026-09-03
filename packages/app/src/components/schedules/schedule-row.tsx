@@ -13,6 +13,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { getProviderIcon } from "@/components/provider-icons";
 import { isNative } from "@/constants/platform";
 import { useIsCompactFormFactor } from "@/constants/layout";
+import { useTimeAgo } from "@/hooks/use-time-ago";
 import { settingsStyles } from "@/styles/settings";
 import type { Theme } from "@/styles/theme";
 import type { ScheduleDerivedState } from "@/schedules/schedule-derivation";
@@ -22,7 +23,6 @@ import {
   resolveScheduleTitle,
   scheduleProductName,
 } from "@/utils/schedule-format";
-import { formatTimeAgo } from "@/utils/time";
 import type { ScheduleSummary } from "@getpaseo/protocol/schedule/types";
 
 // Themed lucide wrappers — module-scope so only the icon re-renders on theme
@@ -100,11 +100,13 @@ function buildMeta(
   state: ScheduleDerivedState,
   serverName: string | undefined,
   singleHost: boolean,
+  createdAgo: string,
+  lastRunAgo: string,
 ): string {
   const parts = [
     formatCadence(schedule.cadence),
-    `Created ${formatTimeAgo(new Date(schedule.createdAt))}`,
-    schedule.lastRunAt ? `Last run ${formatTimeAgo(new Date(schedule.lastRunAt))}` : "Never run",
+    `Created ${createdAgo}`,
+    schedule.lastRunAt ? `Last run ${lastRunAgo}` : "Never run",
   ];
   if (state === "active") {
     const next = formatNextRun(schedule.nextRunAt);
@@ -160,7 +162,11 @@ export function ScheduleRow({
   const title = resolveScheduleTitle(schedule);
   const productName = scheduleProductName(schedule);
   const badge = stateBadge(state);
-  const meta = buildMeta(schedule, state, serverName, singleHost ?? false);
+  // The meta line is one composed string, so the tick has to land on the row rather than on a
+  // `<Text>` of its own — without it "Created/Last run Xm ago" freezes while the pane sits open.
+  const createdAgo = useTimeAgo(new Date(schedule.createdAt));
+  const lastRunAgo = useTimeAgo(schedule.lastRunAt ? new Date(schedule.lastRunAt) : null);
+  const meta = buildMeta(schedule, state, serverName, singleHost ?? false, createdAgo, lastRunAgo);
   const canRun = schedule.target.type === "new-agent" && (state === "active" || state === "paused");
 
   const rowStyle = useCallback(
