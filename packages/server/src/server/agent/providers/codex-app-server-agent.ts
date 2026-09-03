@@ -730,11 +730,6 @@ function historicalProviderSubagentItemCoversLiveReplay(
   if (liveItem.type === "user_message") {
     return historicalItems.some((item) => item.type === "user_message");
   }
-  if (liveItem.type === "assistant_message") {
-    return historicalItems.some(
-      (item) => item.type === "assistant_message" && item.text.includes(liveItem.text),
-    );
-  }
   if (liveItem.type === "tool_call") {
     const historicalToolCalls = historicalItems.filter(
       (item): item is ToolCallTimelineItem =>
@@ -746,6 +741,117 @@ function historicalProviderSubagentItemCoversLiveReplay(
     );
   }
   return false;
+}
+
+function longestTextSuffixMatchingPrefix(text: string, prefix: string): number {
+  if (text.length === 0 || prefix.length === 0) {
+    return 0;
+  }
+  const fallback = Array.from({ length: prefix.length }, () => 0);
+  for (let index = 1, matched = 0; index < prefix.length; index += 1) {
+    while (matched > 0 && prefix[index] !== prefix[matched]) {
+      matched = fallback[matched - 1] ?? 0;
+    }
+    if (prefix[index] === prefix[matched]) {
+      matched += 1;
+    }
+    fallback[index] = matched;
+  }
+
+  let matched = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    while (matched > 0 && text[index] !== prefix[matched]) {
+      matched = fallback[matched - 1] ?? 0;
+    }
+    if (text[index] === prefix[matched]) {
+      matched += 1;
+    }
+    if (matched === prefix.length && index < text.length - 1) {
+      matched = fallback[matched - 1] ?? 0;
+    }
+  }
+  return matched;
+}
+
+function providerSubagentAssistantReplayCoverage(
+  historicalItemsByReplayIdentity: ReadonlyMap<string, readonly AgentTimelineItem[]>,
+  liveEvents: readonly BufferedProviderSubagentEvent[],
+): Map<string, number> {
+  const bufferedTextByReplayIdentity = new Map<string, string[]>();
+  for (const buffered of liveEvents) {
+    if (!buffered.replayIdentity || buffered.event.event.type !== "timeline") {
+      continue;
+    }
+    const item = buffered.event.event.item;
+    if (item.type !== "assistant_message") {
+      continue;
+    }
+    const text = bufferedTextByReplayIdentity.get(buffered.replayIdentity) ?? [];
+    text.push(item.text);
+    bufferedTextByReplayIdentity.set(buffered.replayIdentity, text);
+  }
+
+  const coverageByReplayIdentity = new Map<string, number>();
+  for (const [replayIdentity, chunks] of bufferedTextByReplayIdentity) {
+    const bufferedText = chunks.join("");
+    const historicalItems = historicalItemsByReplayIdentity.get(replayIdentity) ?? [];
+    let coverage = 0;
+    for (const item of historicalItems) {
+      if (item.type === "assistant_message") {
+        coverage = Math.max(coverage, longestTextSuffixMatchingPrefix(item.text, bufferedText));
+      }
+    }
+    if (coverage > 0) {
+      coverageByReplayIdentity.set(replayIdentity, coverage);
+    }
+  }
+  return coverageByReplayIdentity;
+}
+
+function reconcileProviderSubagentLiveEvents(
+  historicalItemsByReplayIdentity: ReadonlyMap<string, readonly AgentTimelineItem[]>,
+  liveEvents: readonly BufferedProviderSubagentEvent[],
+): ProviderSubagentStreamEvent[] {
+  const assistantReplayCoverageByIdentity = providerSubagentAssistantReplayCoverage(
+    historicalItemsByReplayIdentity,
+    liveEvents,
+  );
+  const reconciled: ProviderSubagentStreamEvent[] = [];
+  for (const buffered of liveEvents) {
+    let event = buffered.event;
+    if (
+      buffered.replayIdentity &&
+      event.event.type === "timeline" &&
+      event.event.item.type === "assistant_message"
+    ) {
+      const coverage = assistantReplayCoverageByIdentity.get(buffered.replayIdentity) ?? 0;
+      if (coverage >= event.event.item.text.length) {
+        assistantReplayCoverageByIdentity.set(
+          buffered.replayIdentity,
+          coverage - event.event.item.text.length,
+        );
+        continue;
+      }
+      if (coverage > 0) {
+        assistantReplayCoverageByIdentity.delete(buffered.replayIdentity);
+        event = {
+          ...event,
+          event: {
+            ...event.event,
+            item: { ...event.event.item, text: event.event.item.text.slice(coverage) },
+          },
+        };
+      }
+    }
+    const historicalItems = buffered.replayIdentity
+      ? historicalItemsByReplayIdentity.get(buffered.replayIdentity)
+      : undefined;
+    if (historicalItems && historicalProviderSubagentItemCoversLiveReplay(historicalItems, event)) {
+      continue;
+    }
+    reconciled.push(event);
+  }
+  return reconciled;
 }
 
 interface CodexThreadHistoryProjection {
@@ -4303,17 +4409,11 @@ export class CodexAppServerAgentSession implements AgentSession {
         childThreadId,
         routeState.generation,
       );
-      for (const buffered of liveEvents) {
-        const historicalItems = buffered.replayIdentity
-          ? historicalItemsByReplayIdentity.get(buffered.replayIdentity)
-          : undefined;
-        if (
-          historicalItems &&
-          historicalProviderSubagentItemCoversLiveReplay(historicalItems, buffered.event)
-        ) {
-          continue;
-        }
-        this.emitEvent(buffered.event);
+      for (const event of reconcileProviderSubagentLiveEvents(
+        historicalItemsByReplayIdentity,
+        liveEvents,
+      )) {
+        this.emitEvent(event);
       }
     } finally {
       this.collectingProviderSubagentHistoryEvents = null;
