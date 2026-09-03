@@ -5825,6 +5825,7 @@ test("archive_workspace_request hides non-destructive workspace records", async 
     | { payload: Record<string, unknown> }
     | undefined;
   expect(response?.payload.error).toBeNull();
+  expect(response?.payload.removedDirectory).toBe(false);
 });
 
 test("archive_workspace_request archives a worktree-kind workspace and removes the directory on last reference", async () => {
@@ -5927,6 +5928,7 @@ test("archive_workspace_request archives a worktree-kind workspace and removes t
       | { payload: Record<string, unknown> }
       | undefined;
     expect(response?.payload.error).toBeNull();
+    expect(response?.payload.removedDirectory).toBe(true);
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }

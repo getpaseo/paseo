@@ -2,10 +2,11 @@ import type { Command } from "commander";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandError, OutputSchema, SingleResult } from "../../output/index.js";
 
-interface WorkspaceArchiveResult {
+export interface WorkspaceArchiveResult {
   workspaceId: string;
   status: "archived";
   archivedAt: string;
+  removedDirectory: boolean | null;
 }
 
 const workspaceArchiveSchema: OutputSchema<WorkspaceArchiveResult> = {
@@ -14,8 +15,21 @@ const workspaceArchiveSchema: OutputSchema<WorkspaceArchiveResult> = {
     { header: "WORKSPACE ID", field: "workspaceId", width: 20 },
     { header: "STATUS", field: "status", width: 10 },
     { header: "ARCHIVED AT", field: "archivedAt", width: 26 },
+    { header: "REMOVED DIRECTORY", field: "removedDirectory", width: 19 },
   ],
 };
+
+export function buildWorkspaceArchiveResult(
+  workspaceId: string,
+  payload: { archivedAt: string; removedDirectory?: boolean },
+): WorkspaceArchiveResult {
+  return {
+    workspaceId,
+    status: "archived",
+    archivedAt: payload.archivedAt,
+    removedDirectory: payload.removedDirectory ?? null,
+  };
+}
 
 export async function runArchiveCommand(
   workspaceId: string,
@@ -40,7 +54,10 @@ export async function runArchiveCommand(
     }
     return {
       type: "single",
-      data: { workspaceId, status: "archived", archivedAt: payload.archivedAt },
+      data: buildWorkspaceArchiveResult(workspaceId, {
+        archivedAt: payload.archivedAt,
+        removedDirectory: payload.removedDirectory,
+      }),
       schema: workspaceArchiveSchema,
     };
   } catch (error) {
