@@ -79,8 +79,25 @@ Paseo uses a host allowlist to validate the `Host` header on incoming requests. 
 Configure via `daemon.hostnames` in `config.json`:
 
 - Default (`[]`): allow `localhost`, `*.localhost`, and all IP addresses
-- `['.example.com']`: allow `example.com` and any subdomain, plus defaults
+- `["myhost"]`: allow `myhost`, plus defaults
+- `[".example.com"]`: allow `example.com` and any subdomain, plus defaults
 - `true`: allow any host (not recommended)
+
+Entries ignore the port in the `Host` header. Append a port to require it, `example.com:6767`. A trailing colon, `example.com:`, spells out any port. A port narrows only the entry it is written on: the defaults stay allowed on every port, so `localhost:6767` does not block `localhost:9999`. Entries take no scheme; schemes belong to origins.
+
+## Browser origins
+
+Browsers send an `Origin` header on cross-origin requests and on every WebSocket connection. The daemon adds CORS headers, and accepts the upgrade, only when that origin is listed in `daemon.cors.allowedOrigins` or `PASEO_CORS_ORIGINS` (comma-separated). Same-origin traffic, including the web UI the daemon serves itself, needs no entry, and neither does the desktop app.
+
+Entries use the `hostnames` syntax with an optional scheme. Without a port, an entry matches only an origin that has no explicit port:
+
+- `https://app.example.com`: that origin exactly
+- `.example.com`: `example.com` and any subdomain, on any scheme, without an explicit port
+- `.example.com:`: the same on any port
+- `https://.example.com:8443`: HTTPS subdomains on port 8443
+- `*`: any origin (not recommended)
+
+Prefer entries with a scheme. Without one, `.example.com` also admits plain `http://` pages on those hosts. Browsers send `Origin: null` for sandboxed frames and local files, so an entry of `null` admits all of them and is as broad as `*`.
 
 ## Password authentication
 
