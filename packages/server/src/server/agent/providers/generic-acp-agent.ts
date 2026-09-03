@@ -10,6 +10,8 @@ import {
   type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
+  type ACPExtensionNotificationHandler,
+  type ACPUserMessageChunkFilter,
 } from "./acp-agent.js";
 import {
   buildBinaryDiagnosticRows,
@@ -51,6 +53,8 @@ interface GenericACPAgentClientOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
+  shouldSuppressUserMessageChunk?: ACPUserMessageChunkFilter;
+  extensionNotificationHandler?: ACPExtensionNotificationHandler;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -76,6 +80,8 @@ export class GenericACPAgentClient extends ACPAgentClient {
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
+      shouldSuppressUserMessageChunk: options.shouldSuppressUserMessageChunk,
+      extensionNotificationHandler: options.extensionNotificationHandler,
     });
 
     this.command = options.command;

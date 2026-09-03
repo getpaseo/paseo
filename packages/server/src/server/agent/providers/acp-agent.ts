@@ -384,6 +384,31 @@ export type ACPExtensionCommandsParser = (
 ) => AgentSlashCommand[] | null;
 
 /**
+ * Provider-owned display policy for ACP `user_message_chunk` updates.
+ * Return true to drop the chunk before message assembly or timeline emission.
+ * Generic ACP keeps this unset.
+ */
+export type ACPUserMessageChunkFilter = (
+  update: Extract<SessionUpdate, { sessionUpdate: "user_message_chunk" }>,
+) => boolean;
+
+export interface ACPExtensionNotificationContext {
+  sessionId: string | null;
+}
+
+/**
+ * Provider-owned ACP extension notification → timeline items.
+ * Return null when the method is not owned by this handler. Return an empty
+ * array when owned but ignored (wrong session, malformed payload). Returned
+ * items take the same live-stream vs history-replay path as `session/update`.
+ */
+export type ACPExtensionNotificationHandler = (
+  method: string,
+  params: Record<string, unknown>,
+  context: ACPExtensionNotificationContext,
+) => AgentTimelineItem[] | null;
+
+/**
  * Context handed to an {@link ACPCatalogModelResolver} during `fetchCatalog`. It exposes
  * the already-derived models plus the live probe session so a resolver can refine them
  * (e.g. switch through each model to read back per-model options) without re-implementing
@@ -436,6 +461,8 @@ interface ACPAgentClientOptions {
   ) => Promise<void>;
   capabilities?: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  shouldSuppressUserMessageChunk?: ACPUserMessageChunkFilter;
+  extensionNotificationHandler?: ACPExtensionNotificationHandler;
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
@@ -466,6 +493,8 @@ interface ACPAgentSessionOptions {
   ) => Promise<void>;
   capabilities: AgentCapabilityFlags;
   extensionCommandsParser?: ACPExtensionCommandsParser;
+  shouldSuppressUserMessageChunk?: ACPUserMessageChunkFilter;
+  extensionNotificationHandler?: ACPExtensionNotificationHandler;
   handle?: AgentPersistenceHandle;
   agentId?: string;
   launchEnv?: Record<string, string>;
@@ -826,6 +855,8 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly shouldSuppressUserMessageChunk?: ACPUserMessageChunkFilter;
+  private readonly extensionNotificationHandler?: ACPExtensionNotificationHandler;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -854,6 +885,8 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.shouldSuppressUserMessageChunk = options.shouldSuppressUserMessageChunk;
+    this.extensionNotificationHandler = options.extensionNotificationHandler;
   }
 
   async createSession(
@@ -884,6 +917,8 @@ export class ACPAgentClient implements AgentClient {
         agentId: launchContext?.agentId,
         launchEnv: launchContext?.env,
         extensionCommandsParser: this.extensionCommandsParser,
+        shouldSuppressUserMessageChunk: this.shouldSuppressUserMessageChunk,
+        extensionNotificationHandler: this.extensionNotificationHandler,
         waitForInitialCommands: this.waitForInitialCommands,
         initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
       },
@@ -935,6 +970,8 @@ export class ACPAgentClient implements AgentClient {
       agentId: launchContext?.agentId,
       launchEnv: launchContext?.env,
       extensionCommandsParser: this.extensionCommandsParser,
+      shouldSuppressUserMessageChunk: this.shouldSuppressUserMessageChunk,
+      extensionNotificationHandler: this.extensionNotificationHandler,
       waitForInitialCommands: this.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
     });
@@ -1453,6 +1490,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private waitForInitialCommands: boolean;
   private initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly shouldSuppressUserMessageChunk?: ACPUserMessageChunkFilter;
+  private readonly extensionNotificationHandler?: ACPExtensionNotificationHandler;
   private currentTurnUsage: AgentUsage | undefined;
   private activeForegroundTurnId: string | null = null;
   private fallbackAssistantMessageId: string | null = null;
@@ -1493,6 +1532,8 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.shouldSuppressUserMessageChunk = options.shouldSuppressUserMessageChunk;
+    this.extensionNotificationHandler = options.extensionNotificationHandler;
   }
 
   get id(): string | null {
@@ -2336,6 +2377,14 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         sessionId: typeof params.sessionId === "string" ? params.sessionId : undefined,
       });
     }
+
+    const timelineItems = this.extensionNotificationHandler?.(method, params, {
+      sessionId: this.sessionId,
+    });
+    if (!timelineItems) {
+      return;
+    }
+    this.deliverTranslatedEvents(timelineItems.map((item) => this.wrapTimeline(item)));
   }
 
   // Cache an asynchronously-delivered slash-command batch and unblock any
@@ -2699,6 +2748,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private handleUserMessageChunk(
     update: Extract<SessionUpdate, { sessionUpdate: "user_message_chunk" }>,
   ): AgentStreamEvent[] {
+    if (this.shouldSuppressUserMessageChunk?.(update)) {
+      return [];
+    }
     this.fallbackAssistantMessageId = null;
     if (
       this.activeForegroundTurnId &&
