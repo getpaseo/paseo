@@ -281,6 +281,25 @@ vi.mock("./worktree-bootstrap.js", async (importOriginal) => {
   };
 });
 
+const hostClipboardMocks = vi.hoisted(() => ({
+  writeImageToHostClipboard: vi.fn(),
+  materializeClipboardImageToTempFile: vi.fn(),
+}));
+
+// Pass-through by default so non-clipboard tests keep real behavior; the
+// clipboard tests below override with mockResolvedValueOnce et al.
+vi.mock("./host-clipboard.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./host-clipboard.js")>();
+  return {
+    ...actual,
+    writeImageToHostClipboard: (input: Parameters<typeof actual.writeImageToHostClipboard>[0]) =>
+      hostClipboardMocks.writeImageToHostClipboard(input),
+    materializeClipboardImageToTempFile: (
+      input: Parameters<typeof actual.materializeClipboardImageToTempFile>[0],
+    ) => hostClipboardMocks.materializeClipboardImageToTempFile(input),
+  };
+});
+
 interface SessionForTestOptions {
   clientId?: string;
   permissions?: readonly DaemonPermission[];
@@ -5691,4 +5710,96 @@ describe("agent config setters", () => {
       },
     });
   });
+});
+
+const PNG_PAYLOAD = Buffer.from("89504e470d0a1a0a", "hex").toString("base64");
+
+test("terminal clipboard write image success passes through untouched", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({ messages });
+  hostClipboardMocks.writeImageToHostClipboard.mockResolvedValueOnce({
+    success: true,
+    error: null,
+  });
+
+  await session.handleMessage({
+    type: "terminal.clipboard.write_image.request",
+    requestId: "clip-ok",
+    data: PNG_PAYLOAD,
+    mimeType: "image/png",
+  });
+
+  expect(messages).toEqual([
+    {
+      type: "terminal.clipboard.write_image.response",
+      payload: {
+        requestId: "clip-ok",
+        success: true,
+        error: null,
+      },
+    },
+  ]);
+  expect(hostClipboardMocks.materializeClipboardImageToTempFile).not.toHaveBeenCalled();
+});
+
+test("terminal clipboard write image failure falls back to a temp file path", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({ messages });
+  hostClipboardMocks.writeImageToHostClipboard.mockResolvedValueOnce({
+    success: false,
+    error: "no clipboard tool available on the host; install wl-clipboard (wl-copy) or xclip",
+  });
+  hostClipboardMocks.materializeClipboardImageToTempFile.mockResolvedValueOnce({
+    path: "/tmp/paseo-image-paste-1-0.png",
+  });
+
+  await session.handleMessage({
+    type: "terminal.clipboard.write_image.request",
+    requestId: "clip-fallback",
+    data: PNG_PAYLOAD,
+    mimeType: "image/png",
+  });
+
+  expect(messages).toEqual([
+    {
+      type: "terminal.clipboard.write_image.response",
+      payload: {
+        requestId: "clip-fallback",
+        success: false,
+        error: "no clipboard tool available on the host; install wl-clipboard (wl-copy) or xclip",
+        path: "/tmp/paseo-image-paste-1-0.png",
+      },
+    },
+  ]);
+});
+
+test("terminal clipboard write image reports a combined error when both strategies fail", async () => {
+  const messages: SessionOutboundMessage[] = [];
+  const session = createSessionForTest({ messages });
+  hostClipboardMocks.writeImageToHostClipboard.mockResolvedValueOnce({
+    success: false,
+    error: "no clipboard tool available on the host; install wl-clipboard (wl-copy) or xclip",
+  });
+  hostClipboardMocks.materializeClipboardImageToTempFile.mockRejectedValueOnce(
+    new Error("clipboard image payload is empty"),
+  );
+
+  await session.handleMessage({
+    type: "terminal.clipboard.write_image.request",
+    requestId: "clip-double-fail",
+    data: "",
+    mimeType: "image/png",
+  });
+
+  expect(messages).toEqual([
+    {
+      type: "terminal.clipboard.write_image.response",
+      payload: {
+        requestId: "clip-double-fail",
+        success: false,
+        error:
+          "no clipboard tool available on the host; install wl-clipboard (wl-copy) or xclip; temp file fallback failed: clipboard image payload is empty",
+      },
+    },
+  ]);
 });

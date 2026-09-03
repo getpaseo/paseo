@@ -269,6 +269,10 @@ import {
 import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
+import {
+  materializeClipboardImageToTempFile,
+  writeImageToHostClipboard,
+} from "./host-clipboard.js";
 
 type ProviderSubagentManagerEvent = Extract<
   AgentManagerEvent,
@@ -2630,6 +2634,8 @@ export class Session {
         return this.handleWorkspaceScriptStartRequest(msg);
       case "workspace.script.stop.request":
         return this.handleWorkspaceScriptStopRequest(msg);
+      case "terminal.clipboard.write_image.request":
+        return this.handleTerminalClipboardWriteImageRequest(msg);
       default:
         return this.terminalController.dispatch(msg);
     }
@@ -6580,6 +6586,56 @@ export class Session {
           scriptName: request.scriptName,
           script: null,
           error: error instanceof Error ? error.message : "Failed to stop workspace script",
+        },
+      });
+    }
+  }
+
+  private async handleTerminalClipboardWriteImageRequest(
+    request: Extract<SessionInboundMessage, { type: "terminal.clipboard.write_image.request" }>,
+  ): Promise<void> {
+    // The module never throws; failures travel to the client as success:false
+    // so it can surface them instead of forwarding the paste keystroke.
+    const result = await writeImageToHostClipboard({
+      mimeType: request.mimeType,
+      dataBase64: request.data,
+    });
+    if (result.success) {
+      this.emit({
+        type: "terminal.clipboard.write_image.response",
+        payload: {
+          requestId: request.requestId,
+          success: true,
+          error: result.error,
+        },
+      });
+      return;
+    }
+    // Headless fallback: the image never reached the host clipboard, so hand
+    // the client a temp file path it can paste as text for path-aware TUIs.
+    try {
+      const fallback = await materializeClipboardImageToTempFile({
+        mimeType: request.mimeType,
+        dataBase64: request.data,
+      });
+      this.emit({
+        type: "terminal.clipboard.write_image.response",
+        payload: {
+          requestId: request.requestId,
+          success: false,
+          error: result.error,
+          path: fallback.path,
+        },
+      });
+    } catch (fallbackError) {
+      const fallbackMessage =
+        fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+      this.emit({
+        type: "terminal.clipboard.write_image.response",
+        payload: {
+          requestId: request.requestId,
+          success: false,
+          error: `${result.error}; temp file fallback failed: ${fallbackMessage}`,
         },
       });
     }

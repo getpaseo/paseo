@@ -24,6 +24,10 @@ import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
 } from "../terminal/local-links/terminal-local-link-provider";
+import type {
+  TerminalImagePasteMimeType,
+  TerminalImagePasteOutcome,
+} from "../terminal/runtime/terminal-paste";
 import { terminalEmulatorWebViewHtml } from "../terminal/webview/terminal-emulator-webview-html";
 import type { PendingTerminalModifiers } from "../utils/terminal-keys";
 import { openExternalUrl } from "../utils/open-external-url";
@@ -56,6 +60,13 @@ type BridgeInboundMessage =
   | { type: "setFont"; streamKey: string; fontFamily?: string; fontSize?: number }
   | { type: "setPendingModifiers"; streamKey: string; pendingModifiers: PendingTerminalModifiers }
   | { type: "setSwipeGesturesEnabled"; streamKey: string; enabled: boolean }
+  | { type: "rawInput"; streamKey: string; data: string }
+  | {
+      type: "imagePasteResult";
+      streamKey: string;
+      requestId: number;
+      outcome: TerminalImagePasteOutcome;
+    }
   | {
       type: "resolveLocalFileLinkResponse";
       streamKey: string;
@@ -87,6 +98,13 @@ type BridgeOutboundMessage =
   | { type: "pendingModifiersConsumed"; streamKey: string }
   | { type: "inputModeChange"; streamKey: string; state: TerminalInputModeState }
   | { type: "openExternalUrl"; streamKey: string; url: string }
+  | {
+      type: "imagePaste";
+      streamKey: string;
+      requestId: number;
+      data: string;
+      mimeType: TerminalImagePasteMimeType;
+    }
   | {
       type: "resolveLocalFileLink";
       streamKey: string;
@@ -146,6 +164,107 @@ function createMountMessage(input: {
   };
 }
 
+interface TerminalBridgeCallbacks {
+  onInput?: TerminalEmulatorProps["onInput"];
+  onOpenLocalFileLink?: TerminalEmulatorProps["onOpenLocalFileLink"];
+  onImagePaste?: TerminalEmulatorProps["onImagePaste"];
+  onResize?: TerminalEmulatorProps["onResize"];
+  onTerminalKey?: TerminalEmulatorProps["onTerminalKey"];
+  onPendingModifiersConsumed?: TerminalEmulatorProps["onPendingModifiersConsumed"];
+  onInputModeChange?: TerminalEmulatorProps["onInputModeChange"];
+  onSwipeLeft?: TerminalEmulatorProps["onSwipeLeft"];
+  onSwipeRight?: TerminalEmulatorProps["onSwipeRight"];
+}
+
+async function respondToImagePaste(
+  message: Extract<BridgeOutboundMessage, { type: "imagePaste" }>,
+  handleImagePaste: TerminalEmulatorProps["onImagePaste"],
+  send: (message: BridgeInboundMessage) => void,
+): Promise<void> {
+  let outcome: TerminalImagePasteOutcome = "error";
+  try {
+    outcome =
+      (await handleImagePaste?.({ data: message.data, mimeType: message.mimeType })) ?? "error";
+  } catch {
+    outcome = "error";
+  }
+  send({
+    type: "imagePasteResult",
+    streamKey: message.streamKey,
+    requestId: message.requestId,
+    outcome,
+  });
+}
+
+interface TerminalBridgeDispatchDeps {
+  callbacks: TerminalBridgeCallbacks;
+  resolveLocalFileLink: (
+    message: Extract<BridgeOutboundMessage, { type: "resolveLocalFileLink" }>,
+  ) => Promise<void>;
+  openExternalUrl: (url: string) => void;
+  sendToWebView: (message: BridgeInboundMessage) => void;
+}
+
+// A dispatcher over the bridge's message union; one case per message is the
+// honest shape. Same complexity exemption as sidebar-workspace-list.tsx.
+// oxlint-disable-next-line complexity
+function dispatchTerminalBridgeMessage(
+  message: Exclude<BridgeOutboundMessage, { type: "bridgeReady" } | { type: "rendererReady" }>,
+  deps: TerminalBridgeDispatchDeps,
+): void {
+  const { callbacks } = deps;
+  if (message.type === "resolveLocalFileLink") {
+    void deps.resolveLocalFileLink(message);
+    return;
+  }
+  if (message.type === "openLocalFileLink") {
+    callbacks.onOpenLocalFileLink?.(message.target, message.disposition);
+    return;
+  }
+  switch (message.type) {
+    case "input":
+      callbacks.onInput?.(message.data);
+      break;
+    case "imagePaste":
+      void respondToImagePaste(message, callbacks.onImagePaste, deps.sendToWebView);
+      break;
+    case "resize":
+      callbacks.onResize?.({
+        rows: message.rows,
+        cols: message.cols,
+        shouldClaim: message.shouldClaim !== false,
+        forceClaim: message.forceClaim,
+      });
+      break;
+    case "terminalKey":
+      callbacks.onTerminalKey?.({
+        key: message.key,
+        ctrl: message.ctrl,
+        shift: message.shift,
+        alt: message.alt,
+        meta: message.meta,
+      });
+      break;
+    case "pendingModifiersConsumed":
+      callbacks.onPendingModifiersConsumed?.();
+      break;
+    case "inputModeChange":
+      callbacks.onInputModeChange?.(message.state);
+      break;
+    case "openExternalUrl":
+      void deps.openExternalUrl(message.url);
+      break;
+    case "swipeLeft":
+      callbacks.onSwipeLeft?.();
+      break;
+    case "swipeRight":
+      callbacks.onSwipeRight?.();
+      break;
+    case "debug":
+      break;
+  }
+}
+
 export default function WebViewTerminalEmulator({
   ref,
   streamKey,
@@ -174,6 +293,7 @@ export default function WebViewTerminalEmulator({
   pendingModifiers = { ctrl: false, shift: false, alt: false },
   focusRequestToken = 0,
   resizeRequestToken = 0,
+  onImagePaste,
 }: TerminalEmulatorProps) {
   const webViewRef = useRef<WebView>(null);
   const [webViewEpoch, setWebViewEpoch] = useState(0);
@@ -218,6 +338,7 @@ export default function WebViewTerminalEmulator({
     onRendererReadyChange,
     onResolveLocalFileLink,
     onOpenLocalFileLink,
+    onImagePaste,
     onSwipeLeft,
     onSwipeRight,
   });
@@ -227,10 +348,11 @@ export default function WebViewTerminalEmulator({
     onResize,
     onTerminalKey,
     onPendingModifiersConsumed,
+    onOpenLocalFileLink,
+    onImagePaste,
     onInputModeChange,
     onRendererReadyChange,
     onResolveLocalFileLink,
-    onOpenLocalFileLink,
     onSwipeLeft,
     onSwipeRight,
   };
@@ -333,6 +455,9 @@ export default function WebViewTerminalEmulator({
       renderSnapshot: (state: TerminalState | null) => {
         outputDecoderRef.current.decode();
         sendToWebView({ type: "renderSnapshot", streamKey, state });
+      },
+      inputRaw: (data: string) => {
+        sendToWebView({ type: "rawInput", streamKey, data });
       },
       paste: (text: string) => {
         sendToWebView({ type: "paste", streamKey, text });
@@ -491,55 +616,14 @@ export default function WebViewTerminalEmulator({
     (
       message: Exclude<BridgeOutboundMessage, { type: "bridgeReady" } | { type: "rendererReady" }>,
     ) => {
-      if (message.type === "resolveLocalFileLink") {
-        void resolveLocalFileLink(message);
-        return;
-      }
-      if (message.type === "openLocalFileLink") {
-        callbacksRef.current.onOpenLocalFileLink?.(message.target, message.disposition);
-        return;
-      }
-      switch (message.type) {
-        case "input":
-          callbacksRef.current.onInput?.(message.data);
-          break;
-        case "resize":
-          callbacksRef.current.onResize?.({
-            rows: message.rows,
-            cols: message.cols,
-            shouldClaim: message.shouldClaim !== false,
-            forceClaim: message.forceClaim,
-          });
-          break;
-        case "terminalKey":
-          callbacksRef.current.onTerminalKey?.({
-            key: message.key,
-            ctrl: message.ctrl,
-            shift: message.shift,
-            alt: message.alt,
-            meta: message.meta,
-          });
-          break;
-        case "pendingModifiersConsumed":
-          callbacksRef.current.onPendingModifiersConsumed?.();
-          break;
-        case "inputModeChange":
-          callbacksRef.current.onInputModeChange?.(message.state);
-          break;
-        case "openExternalUrl":
-          void openExternalUrl(message.url);
-          break;
-        case "swipeLeft":
-          callbacksRef.current.onSwipeLeft?.();
-          break;
-        case "swipeRight":
-          callbacksRef.current.onSwipeRight?.();
-          break;
-        case "debug":
-          break;
-      }
+      dispatchTerminalBridgeMessage(message, {
+        callbacks: callbacksRef.current,
+        resolveLocalFileLink,
+        openExternalUrl,
+        sendToWebView,
+      });
     },
-    [resolveLocalFileLink],
+    [resolveLocalFileLink, sendToWebView],
   );
 
   const handleMessage = useCallback(

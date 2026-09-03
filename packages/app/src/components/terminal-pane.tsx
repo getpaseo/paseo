@@ -34,7 +34,13 @@ import {
   TERMINAL_VIRTUAL_KEYBOARD_ROWS,
   type TerminalVirtualKeyboardControl,
 } from "@/terminal/runtime/terminal-virtual-keyboard";
-import { pasteTerminalClipboard } from "@/terminal/runtime/terminal-paste";
+import { useToast } from "@/contexts/toast-context";
+import {
+  pasteTerminalClipboard,
+  TERMINAL_IMAGE_PASTE_KEYSTROKE,
+  type TerminalImagePasteInput,
+  type TerminalImagePasteOutcome,
+} from "@/terminal/runtime/terminal-paste";
 import { getWorkspaceTerminalSession } from "@/terminal/runtime/workspace-terminal-session";
 import {
   EMPTY_FOCUS_CLAIM_STATE,
@@ -232,6 +238,7 @@ export function TerminalPane({
 
   const client = useHostRuntimeClient(serverId);
   const isConnected = useHostRuntimeIsConnected(serverId);
+  const toast = useToast();
   const isTerminalPresented = retainedPanelActive && isWorkspaceFocused;
   const supportsTerminalRestoreModes = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-restore-modes"] === true,
@@ -242,6 +249,9 @@ export function TerminalPane({
   );
   const supportsTerminalSizeOwnership = useSessionStore(
     (state) => state.sessions[serverId]?.serverInfo?.features?.["terminal-size-ownership"] === true,
+  );
+  const supportsTerminalClipboardImage = useSessionStore(
+    (state) => state.sessions[serverId]?.serverInfo?.features?.terminalClipboardImage === true,
   );
   const setFocusedTerminalId = useSessionStore((state) => state.setFocusedTerminalId);
 
@@ -262,6 +272,7 @@ export function TerminalPane({
   const [modifiers, setModifiers] = useState<ModifierState>(EMPTY_MODIFIERS);
   const [hasSelection, setHasSelection] = useState(false);
   const [hasClipboardText, setHasClipboardText] = useState(false);
+  const [hasClipboardImage, setHasClipboardImage] = useState(false);
   const [isKeyboardToggleVisible, setIsKeyboardToggleVisible] = useState(false);
   const [focusRequestToken, setFocusRequestToken] = useState(0);
   const [resizeRequestToken, setResizeRequestToken] = useState(0);
@@ -282,17 +293,22 @@ export function TerminalPane({
     inputModeRef.current = DEFAULT_TERMINAL_INPUT_MODE_STATE;
     setHasSelection(false);
   }, [terminalId]);
-
   const refreshClipboardAvailability = useCallback(async () => {
     if (!isMobile) {
       setHasClipboardText(false);
+      setHasClipboardImage(false);
       return;
     }
     try {
-      const hasText = await Clipboard.hasStringAsync();
+      const [hasText, hasImage] = await Promise.all([
+        Clipboard.hasStringAsync(),
+        Clipboard.hasImageAsync(),
+      ]);
       setHasClipboardText(hasText);
+      setHasClipboardImage(hasImage);
     } catch {
       setHasClipboardText(false);
+      setHasClipboardImage(false);
     }
   }, [isMobile]);
 
@@ -854,14 +870,79 @@ export function TerminalPane({
   const handlePendingModifiersConsumed = useCallback(() => {
     clearPendingModifiers();
   }, [clearPendingModifiers]);
+  const handleTerminalImagePaste = useCallback(
+    async (input: TerminalImagePasteInput): Promise<TerminalImagePasteOutcome> => {
+      if (!client) {
+        toast.error(t("workspace.terminal.hostDisconnected"));
+        return "error";
+      }
+      if (!supportsTerminalClipboardImage) {
+        return "unsupported";
+      }
+      try {
+        const result = await client.writeTerminalClipboardImage({
+          data: input.data,
+          mimeType: input.mimeType,
+        });
+        const { success, path } = result;
+        if (success) {
+          return "written";
+        }
+        if (typeof path === "string" && path.length > 0) {
+          // The daemon saved the image to a file; paste the path as text
+          // instead (POSIX single-quoting keeps spaces/quotes intact), letting
+          // bracketed-paste wrapping apply inside the emulator.
+          emulatorRef.current?.paste(`'${path.replaceAll("'", `'\\''`)}'`);
+          return "injected";
+        }
+      } catch {
+        // Report any RPC failure through the shared paste-image error path below.
+      }
+      toast.error(t("workspace.terminal.pasteImageFailed"));
+      return "error";
+    },
+    [client, emulatorRef, supportsTerminalClipboardImage, t, toast],
+  );
 
   const handleTerminalPaste = useCallback(() => {
     requestTerminalReflow();
-    void pasteTerminalClipboard({
-      clipboard: { readText: () => Clipboard.getStringAsync() },
-      terminal: { paste: (text) => emulatorRef.current?.paste(text) },
-    }).then(() => refreshClipboardAvailability());
-  }, [requestTerminalReflow, refreshClipboardAvailability]);
+    void (async () => {
+      try {
+        const pastedText = await pasteTerminalClipboard({
+          clipboard: { readText: () => Clipboard.getStringAsync() },
+          terminal: { paste: (text) => emulatorRef.current?.paste(text) },
+        });
+        if (pastedText) {
+          return;
+        }
+        if (!(await Clipboard.hasImageAsync())) {
+          return;
+        }
+        // expo-clipboard normalizes every clipboard image to PNG, so mobile
+        // always ships image/png; web/Electron pass the native mime through
+        // (jpeg included) via the runtime's clipboard item inspection.
+        const image = await Clipboard.getImageAsync({ format: "png" });
+        if (!image?.data) {
+          return;
+        }
+        // getImageAsync returns a data URL ("data:image/png;base64,..."); the RPC
+        // carries bare base64 image bytes.
+        const dataUrl = image.data;
+        const base64Start = dataUrl.indexOf(",");
+        const outcome = await handleTerminalImagePaste({
+          data: base64Start >= 0 ? dataUrl.slice(base64Start + 1) : dataUrl,
+          mimeType: "image/png",
+        });
+        if (outcome === "written" || outcome === "unsupported") {
+          emulatorRef.current?.inputRaw(TERMINAL_IMAGE_PASTE_KEYSTROKE);
+        }
+      } catch {
+        // Clipboard access can fail (permissions or empty); leave the terminal alone.
+      } finally {
+        refreshClipboardAvailability();
+      }
+    })();
+  }, [handleTerminalImagePaste, refreshClipboardAvailability, requestTerminalReflow]);
 
   const handleTerminalCopy = useCallback(() => {
     void emulatorRef.current
@@ -1008,7 +1089,7 @@ export function TerminalPane({
         return showPasteAction ? (
           <TerminalPasteAction
             key={controlId}
-            hasClipboardText={hasClipboardText}
+            hasClipboardContent={hasClipboardText || hasClipboardImage}
             onPaste={handleTerminalPaste}
           />
         ) : null;

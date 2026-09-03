@@ -16,6 +16,7 @@ import {
   SessionInboundMessageSchema,
   type ActiveTurnBehavior,
   type ServerInfoStatusPayload,
+  type TerminalClipboardWriteImageRequest,
 } from "@getpaseo/protocol/messages";
 import { validateWSOutboundMessage } from "@getpaseo/protocol/validation/ws-outbound";
 import type {
@@ -5466,6 +5467,31 @@ export class DaemonClient {
       responseType: "capture_terminal_response",
       options: { skipQueue: true },
     });
+  }
+
+  /**
+   * Ships clipboard image bytes to the daemon host so agent TUIs can paste
+   * them; the client forwards the paste keystroke into the pty itself once
+   * this resolves with success.
+   */
+  async writeTerminalClipboardImage(
+    input: { data: string; mimeType: TerminalClipboardWriteImageRequest["mimeType"] },
+    requestId?: string,
+  ): Promise<{ success: boolean; error: string | null; path?: string }> {
+    const payload =
+      await this.sendNamespacedCorrelatedSessionRequest<"terminal.clipboard.write_image.response">({
+        requestId,
+        message: {
+          type: "terminal.clipboard.write_image.request",
+          data: input.data,
+          mimeType: input.mimeType,
+        },
+      });
+    return {
+      success: payload.success,
+      error: payload.error,
+      ...(payload.path ? { path: payload.path } : {}),
+    };
   }
 
   async scheduleCreate(options: CreateScheduleOptions): Promise<ScheduleCreatePayload> {

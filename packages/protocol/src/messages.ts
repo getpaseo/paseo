@@ -2954,6 +2954,18 @@ export const CaptureTerminalRequestSchema = z.object({
   requestId: z.string(),
 });
 
+// Carries an image from the client clipboard to the daemon host so agent TUIs
+// can paste it. The TUIs read the OS clipboard of the machine they run on, and
+// no image bytes travel through the pty, so the daemon materializes the image
+// onto its own host clipboard; the client then forwards the \x16 keystroke.
+export const TerminalClipboardWriteImageRequestSchema = z.object({
+  type: z.literal("terminal.clipboard.write_image.request"),
+  requestId: z.string(),
+  // Base64-encoded image bytes.
+  data: z.string(),
+  mimeType: z.enum(["image/png", "image/jpeg"]),
+});
+
 export const HubExecutionAgentCreateRequestSchema = z.object({
   type: z.literal("hub.execution.agent.create.request"),
   requestId: z.string(),
@@ -3202,6 +3214,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   TerminalInputSchema,
   KillTerminalRequestSchema,
   CaptureTerminalRequestSchema,
+  TerminalClipboardWriteImageRequestSchema,
   ChatCreateRequestSchema,
   ChatListRequestSchema,
   ChatInspectRequestSchema,
@@ -3445,6 +3458,8 @@ export const ServerInfoStatusPayloadSchema = z
         skillManagement: z.boolean().optional(),
         // COMPAT(terminalRestoreModes): added in v0.1.81, remove gate after 2026-11-23.
         "terminal-restore-modes": z.boolean().optional(),
+        // COMPAT(terminalClipboardImage): added in v0.5.1, remove gate after 2027-08-24.
+        terminalClipboardImage: z.boolean().optional(),
         // COMPAT(terminalInputModeReplay): added in v0.2.6, remove gate after 2027-02-02.
         "terminal-input-mode-replay": z.boolean().optional(),
         // COMPAT(terminalSizeOwnership): added in v0.2.6, remove gate after 2027-02-02.
@@ -6079,6 +6094,20 @@ export const CaptureTerminalResponseSchema = z.object({
   }),
 });
 
+export const TerminalClipboardWriteImageResponseSchema = z.object({
+  type: z.literal("terminal.clipboard.write_image.response"),
+  payload: z.object({
+    requestId: z.string(),
+    success: z.boolean(),
+    error: z.string().nullable(),
+    // Set when the host clipboard could not be written (headless Linux, missing
+    // tools) but the image was materialized on the daemon filesystem instead.
+    // The client pastes this path as text so path-aware TUIs attach it; no
+    // \x16 keystroke follows because there is nothing on a clipboard to read.
+    path: z.string().optional(),
+  }),
+});
+
 export const TerminalStreamExitSchema = z.object({
   type: z.literal("terminal_stream_exit"),
   payload: z.object({
@@ -6569,6 +6598,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   SubscribeTerminalResponseSchema,
   KillTerminalResponseSchema,
   CaptureTerminalResponseSchema,
+  TerminalClipboardWriteImageResponseSchema,
   TerminalStreamExitSchema,
   TerminalAttentionRequiredSchema,
   ChatCreateResponseSchema,
@@ -7039,6 +7069,12 @@ export type KillTerminalRequest = z.infer<typeof KillTerminalRequestSchema>;
 export type KillTerminalResponse = z.infer<typeof KillTerminalResponseSchema>;
 export type CaptureTerminalRequest = z.infer<typeof CaptureTerminalRequestSchema>;
 export type CaptureTerminalResponse = z.infer<typeof CaptureTerminalResponseSchema>;
+export type TerminalClipboardWriteImageRequest = z.infer<
+  typeof TerminalClipboardWriteImageRequestSchema
+>;
+export type TerminalClipboardWriteImageResponse = z.infer<
+  typeof TerminalClipboardWriteImageResponseSchema
+>;
 export type TerminalStreamExit = z.infer<typeof TerminalStreamExitSchema>;
 
 // ============================================================================

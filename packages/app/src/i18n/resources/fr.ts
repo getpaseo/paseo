@@ -578,6 +578,7 @@ export const fr: TranslationResources = {
       hostDisconnected: "Hostn'est pas connecté",
       updateHost: "Mettez à jour l’hôte pour utiliser le terminal natif.",
       unableToSubscribe: "Impossible de s'abonner au terminal",
+      pasteImageFailed: "Impossible de coller l’image",
     },
     tabs: {
       loading: "Chargement...",
