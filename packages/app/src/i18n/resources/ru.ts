@@ -10,10 +10,12 @@ export const ru: TranslationResources = {
       cancel: "Отмена",
       close: "Закрыть",
       copy: "Копировать",
+      copyLine: "Копировать строку",
       dismiss: "Отклонить",
       retry: "Повторить",
       search: "Поиск",
       select: "Выбрать",
+      selectAll: "Выбрать все",
     },
     placeholders: {
       search: "Поиск...",
@@ -33,6 +35,7 @@ export const ru: TranslationResources = {
     errors: {
       error: "Ошибка",
       unableToSave: "Не удалось сохранить",
+      unableToCopy: "Не удалось скопировать",
       nameRequired: "Требуется имя",
       daemonUnavailable: "Daemon недоступен",
       daemonClientUnavailable: "Daemon клиента недоступен",
@@ -503,14 +506,23 @@ export const ru: TranslationResources = {
         completed: "Настройка завершена",
         failed: "Настройка не удалась",
         workspace: "Настройка рабочего пространства",
+        blocked: "Настройка заблокирована",
       },
       status: {
         running: "Выполняется",
         completed: "Завершено",
         failed: "Завершено с ошибкой",
         waiting: "Ожидание вывода команд настройки",
+        blocked: "Заблокировано",
       },
       waiting: "Настройка рабочего пространства...",
+      blocked: {
+        title: "Настройка не запускалась",
+        description:
+          "Этот PR поступил из другого репозитория — {{repository}}. Его настройка и скрипты могут выполнить код, который вы не проверяли.",
+        run: "Запустить настройку",
+        runFailed: "Не удалось запустить настройку рабочего пространства",
+      },
       empty: {
         noCommands: "Для этого рабочего пространства не выполнялись команды настройки.",
       },

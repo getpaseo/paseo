@@ -10,10 +10,12 @@ export const ja: TranslationResources = {
       cancel: "キャンセル",
       close: "閉じる",
       copy: "コピー",
+      copyLine: "行をコピー",
       dismiss: "閉じる",
       retry: "再試行",
       search: "検索",
       select: "選択",
+      selectAll: "すべて選択",
     },
     placeholders: {
       search: "検索...",
@@ -33,6 +35,7 @@ export const ja: TranslationResources = {
     errors: {
       error: "エラー",
       unableToSave: "保存できません",
+      unableToCopy: "コピーできません",
       nameRequired: "名前は必須です",
       daemonUnavailable: "デーモンが利用できません",
       daemonClientUnavailable: "デーモンクライアントが利用できません",
@@ -504,14 +507,23 @@ export const ja: TranslationResources = {
         completed: "セットアップ完了",
         failed: "セットアップ失敗",
         workspace: "ワークスペースセットアップ",
+        blocked: "セットアップはブロックされました",
       },
       status: {
         running: "実行中",
         completed: "完了",
         failed: "失敗",
         waiting: "セットアップ出力を待機中",
+        blocked: "ブロック済み",
       },
       waiting: "ワークスペースをセットアップ中...",
+      blocked: {
+        title: "セットアップは実行されませんでした",
+        description:
+          "このPRは別のリポジトリ {{repository}} からのものです。セットアップとスクリプトは未確認のコードを実行する可能性があります。",
+        run: "セットアップを実行",
+        runFailed: "ワークスペースのセットアップに失敗しました",
+      },
       empty: {
         noCommands: "このワークスペースでセットアップコマンドは実行されませんでした。",
       },

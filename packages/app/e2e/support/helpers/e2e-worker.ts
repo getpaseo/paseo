@@ -84,31 +84,33 @@ if (origin === fixtureRemote) {
     process.exit(0);
   }
   if (command === "pr list" || command === "pr view") {
+    const isFork = args.includes("2");
     const pr = {
-      number: 1,
+      number: isFork ? 2 : 1,
       title: "Use pasted PR as start ref",
-      url: "https://github.com/paseo-e2e/local-fixture/pull/1",
+      url: "https://github.com/paseo-e2e/local-fixture/pull/" + (isFork ? 2 : 1),
       state: "OPEN",
       body: null,
       labels: [],
       baseRefName: "main",
-      headRefName: "pr-branch-1",
+      headRefName: isFork ? "pr-branch-2" : "pr-branch-1",
       updatedAt: "2026-01-01T00:00:00Z"
     };
     process.stdout.write(JSON.stringify(command === "pr list" ? [pr] : pr));
     process.exit(0);
   }
   if (command === "api graphql" && args.some((arg) => arg.includes("PullRequestCheckoutTarget"))) {
+    const isFork = args.some((arg) => arg === "number=2");
     process.stdout.write(JSON.stringify({
       data: { repository: { pullRequest: {
-        number: 1,
+        number: isFork ? 2 : 1,
         baseRefName: "main",
-        headRefName: "pr-branch-1",
-        isCrossRepository: false,
-        headRepositoryOwner: { login: "paseo-e2e" },
+        headRefName: isFork ? "pr-branch-2" : "pr-branch-1",
+        isCrossRepository: isFork,
+        headRepositoryOwner: { login: isFork ? "fork-owner" : "paseo-e2e" },
         headRepository: {
-          sshUrl: "git@github.com:paseo-e2e/local-fixture.git",
-          url: fixtureRemote
+          sshUrl: isFork ? "git@github.com:fork-owner/local-fixture.git" : "git@github.com:paseo-e2e/local-fixture.git",
+          url: isFork ? "https://github.com/fork-owner/local-fixture" : fixtureRemote
         }
       } } }
     }));

@@ -10,10 +10,12 @@ export const es: TranslationResources = {
       cancel: "Cancelar",
       close: "Cerrar",
       copy: "Copiar",
+      copyLine: "Copiar línea",
       dismiss: "Despedir",
       retry: "Rever",
       search: "Buscar",
       select: "Seleccionar",
+      selectAll: "Seleccionar todo",
     },
     placeholders: {
       search: "Buscar...",
@@ -33,6 +35,7 @@ export const es: TranslationResources = {
     errors: {
       error: "Error",
       unableToSave: "No se puede guardar",
+      unableToCopy: "No se pudo copiar",
       nameRequired: "El nombre es obligatorio",
       daemonUnavailable: "Daemonno disponible",
       daemonClientUnavailable: "ClienteDaemonno disponible",
@@ -504,14 +507,23 @@ export const es: TranslationResources = {
         completed: "Configuración completada",
         failed: "Error de configuración",
         workspace: "Configuración deWorkspace",
+        blocked: "Configuración bloqueada",
       },
       status: {
         running: "Correr",
         completed: "Terminado",
         failed: "Fallido",
         waiting: "Esperando el resultado de la configuración",
+        blocked: "Bloqueado",
       },
       waiting: "Configurando el espacio de trabajo...",
+      blocked: {
+        title: "No se ejecutó la configuración",
+        description:
+          "Este PR proviene de {{repository}}, un repositorio diferente. Su configuración y scripts podrían ejecutar código que no has revisado.",
+        run: "Ejecutar configuración",
+        runFailed: "No se pudo ejecutar la configuración",
+      },
       empty: {
         noCommands: "No se ejecutó ningún comando de configuración para este espacio de trabajo.",
       },

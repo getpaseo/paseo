@@ -10,10 +10,12 @@ export const ar: TranslationResources = {
       cancel: "يلغي",
       close: "يغلق",
       copy: "ينسخ",
+      copyLine: "نسخ السطر",
       dismiss: "رفض",
       retry: "أعد المحاولة",
       search: "يبحث",
       select: "يختار",
+      selectAll: "تحديد الكل",
     },
     placeholders: {
       search: "يبحث...",
@@ -33,6 +35,7 @@ export const ar: TranslationResources = {
     errors: {
       error: "خطأ",
       unableToSave: "غير قادر على الحفظ",
+      unableToCopy: "تعذر النسخ",
       nameRequired: "الاسم مطلوب",
       daemonUnavailable: "Daemon غير متوفر",
       daemonClientUnavailable: "عميل Daemon غير متوفر",
@@ -500,14 +503,23 @@ export const ar: TranslationResources = {
         completed: "اكتمل الإعداد",
         failed: "فشل الإعداد",
         workspace: "إعداد Workspace",
+        blocked: "تم حظر الإعداد",
       },
       status: {
         running: "جري",
         completed: "مكتمل",
         failed: "فشل",
         waiting: "في انتظار إخراج الإعداد",
+        blocked: "محظور",
       },
       waiting: "جارٍ إعداد مساحة العمل...",
+      blocked: {
+        title: "لم يتم تشغيل الإعداد",
+        description:
+          "يأتي طلب السحب هذا من {{repository}}، وهو مستودع مختلف. قد يشغّل الإعداد والبرامج النصية تعليمات برمجية لم تراجعها.",
+        run: "تشغيل الإعداد",
+        runFailed: "فشل تشغيل إعداد مساحة العمل",
+      },
       empty: {
         noCommands: "لم يتم تشغيل أي أوامر إعداد لمساحة العمل هذه.",
       },

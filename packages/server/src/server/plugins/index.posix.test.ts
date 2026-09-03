@@ -684,6 +684,9 @@ export default function contribute(plugin: unknown) {
     await writeFile(path.join(invalid, "paseo-plugin.json"), JSON.stringify({}));
     const missingEntry = await createPlugin("missing-entry", "export default () => () => {};");
     await rm(path.join(missingEntry, "index.server.ts"));
+    const legacy = await createPlugin("legacy-plugin", "export default () => () => {};");
+    await rm(path.join(legacy, "index.server.ts"));
+    await writeFile(path.join(legacy, "index.ts"), "export default () => () => {};");
     const startupFailure = await createPlugin(
       "startup-failure",
       `export default function contribute(plugin: unknown) { void plugin; throw new Error("startup exploded"); }`,
@@ -695,10 +698,19 @@ export default function contribute(plugin: unknown) {
     await expect(service.installDirectory({ path: missingEntry })).rejects.toThrow(
       "Plugin entry points are missing",
     );
+    await expect(service.installDirectory({ path: legacy })).rejects.toThrow(
+      "This plugin was made for an older version of Paseo and cannot run on Paseo v0.8. Ask its author to update it. Plugin authors can follow the migration guide: https://paseo.sh/docs/plugins/v0.8/migration",
+    );
     await expect(service.installDirectory({ path: startupFailure })).rejects.toThrow(
       "startup exploded",
     );
     expect(service.listPlugins()).toEqual([
+      expect.objectContaining({
+        id: "legacy-plugin",
+        status: "failed",
+        error:
+          "This plugin was made for an older version of Paseo and cannot run on Paseo v0.8. Ask its author to update it. Plugin authors can follow the migration guide: https://paseo.sh/docs/plugins/v0.8/migration",
+      }),
       expect.objectContaining({
         id: "missing-entry",
         status: "failed",

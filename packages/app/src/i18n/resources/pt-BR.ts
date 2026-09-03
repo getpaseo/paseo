@@ -10,10 +10,12 @@ export const ptBR: TranslationResources = {
       cancel: "Cancelar",
       close: "Fechar",
       copy: "Copiar",
+      copyLine: "Copiar linha",
       dismiss: "Dispensar",
       retry: "Tentar novamente",
       search: "Buscar",
       select: "Selecionar",
+      selectAll: "Selecionar tudo",
     },
     placeholders: {
       search: "Buscar...",
@@ -33,6 +35,7 @@ export const ptBR: TranslationResources = {
     errors: {
       error: "Erro",
       unableToSave: "Não foi possível salvar",
+      unableToCopy: "Não foi possível copiar",
       nameRequired: "O nome é obrigatório",
       daemonUnavailable: "Daemon indisponível",
       daemonClientUnavailable: "Cliente do daemon indisponível",
@@ -504,14 +507,23 @@ export const ptBR: TranslationResources = {
         completed: "Configuração concluída",
         failed: "Falha na configuração",
         workspace: "Configuração do workspace",
+        blocked: "Configuração bloqueada",
       },
       status: {
         running: "Em execução",
         completed: "Concluído",
         failed: "Falhou",
         waiting: "Aguardando saída da configuração",
+        blocked: "Bloqueado",
       },
       waiting: "Configurando workspace...",
+      blocked: {
+        title: "A configuração não foi executada",
+        description:
+          "Este PR vem de {{repository}}, um repositório diferente. A configuração e os scripts podem executar código que você não revisou.",
+        run: "Executar configuração",
+        runFailed: "Falha ao executar a configuração do workspace",
+      },
       empty: {
         noCommands: "Nenhum comando de configuração foi executado para este workspace.",
       },

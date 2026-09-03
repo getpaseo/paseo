@@ -10,10 +10,12 @@ export const ko: TranslationResources = {
       cancel: "취소",
       close: "닫기",
       copy: "복사",
+      copyLine: "줄 복사",
       dismiss: "닫기",
       retry: "다시 시도",
       search: "검색",
       select: "선택",
+      selectAll: "모두 선택",
     },
     placeholders: {
       search: "검색...",
@@ -33,6 +35,7 @@ export const ko: TranslationResources = {
     errors: {
       error: "오류",
       unableToSave: "저장할 수 없습니다",
+      unableToCopy: "복사할 수 없습니다",
       nameRequired: "이름을 입력하세요",
       daemonUnavailable: "데몬을 사용할 수 없습니다",
       daemonClientUnavailable: "데몬 클라이언트를 사용할 수 없습니다",
@@ -501,14 +504,23 @@ export const ko: TranslationResources = {
         completed: "설정 완료",
         failed: "설정 실패",
         workspace: "워크스페이스 설정",
+        blocked: "설정 차단됨",
       },
       status: {
         running: "실행 중",
         completed: "완료됨",
         failed: "실패함",
         waiting: "설정 출력을 기다리는 중",
+        blocked: "차단됨",
       },
       waiting: "워크스페이스 설정 중...",
+      blocked: {
+        title: "설정이 실행되지 않았습니다",
+        description:
+          "이 PR은 다른 저장소인 {{repository}}에서 왔습니다. 설정과 스크립트가 검토하지 않은 코드를 실행할 수 있습니다.",
+        run: "설정 실행",
+        runFailed: "워크스페이스 설정 실행 실패",
+      },
       empty: {
         noCommands: "이 워크스페이스에서 실행된 설정 명령이 없습니다.",
       },

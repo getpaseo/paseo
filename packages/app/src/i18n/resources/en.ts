@@ -7,10 +7,12 @@ export const en = {
       cancel: "Cancel",
       close: "Close",
       copy: "Copy",
+      copyLine: "Copy line",
       dismiss: "Dismiss",
       retry: "Retry",
       search: "Search",
       select: "Select",
+      selectAll: "Select all",
     },
     placeholders: {
       search: "Search...",
@@ -30,6 +32,7 @@ export const en = {
     errors: {
       error: "Error",
       unableToSave: "Unable to save",
+      unableToCopy: "Unable to copy",
       nameRequired: "Name is required",
       daemonUnavailable: "Daemon unavailable",
       daemonClientUnavailable: "Daemon client unavailable",
@@ -498,14 +501,23 @@ export const en = {
         completed: "Setup completed",
         failed: "Setup failed",
         workspace: "Workspace setup",
+        blocked: "Setup blocked",
       },
       status: {
         running: "Running",
         completed: "Completed",
         failed: "Failed",
         waiting: "Waiting for setup output",
+        blocked: "Blocked",
       },
       waiting: "Setting up workspace...",
+      blocked: {
+        title: "Setup was not run",
+        description:
+          "This PR comes from {{repository}}, a different repository. Its setup and scripts could run code you have not reviewed.",
+        run: "Run setup",
+        runFailed: "Failed to run workspace setup",
+      },
       empty: {
         noCommands: "No setup commands ran for this workspace.",
       },

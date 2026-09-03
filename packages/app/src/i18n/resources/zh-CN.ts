@@ -10,10 +10,12 @@ export const zhCN: TranslationResources = {
       cancel: "取消",
       close: "关闭",
       copy: "复制",
+      copyLine: "复制行",
       dismiss: "关闭",
       retry: "重试",
       search: "搜索",
       select: "选择",
+      selectAll: "全选",
     },
     placeholders: {
       search: "搜索...",
@@ -33,6 +35,7 @@ export const zhCN: TranslationResources = {
     errors: {
       error: "错误",
       unableToSave: "无法保存",
+      unableToCopy: "无法复制",
       nameRequired: "名称必填",
       daemonUnavailable: "Daemon 不可用",
       daemonClientUnavailable: "Daemon client 不可用",
@@ -500,14 +503,23 @@ export const zhCN: TranslationResources = {
         completed: "Setup 已完成",
         failed: "Setup 失败",
         workspace: "Workspace setup",
+        blocked: "设置已阻止",
       },
       status: {
         running: "正在运行",
         completed: "已完成",
         failed: "失败",
         waiting: "正在等待 setup 输出",
+        blocked: "已阻止",
       },
       waiting: "正在 setup workspace...",
+      blocked: {
+        title: "未运行设置",
+        description:
+          "此 PR 来自另一个仓库 {{repository}}。其设置和脚本可能会运行你尚未审查的代码。",
+        run: "运行设置",
+        runFailed: "运行工作区设置失败",
+      },
       empty: {
         noCommands: "此 workspace 没有运行 setup 命令。",
       },

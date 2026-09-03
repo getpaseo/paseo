@@ -2392,6 +2392,16 @@ export class DaemonClient {
     });
   }
 
+  async runWorkspaceSetup(
+    workspaceId: string,
+    requestId?: string,
+  ): Promise<Extract<SessionOutboundMessage, { type: "workspace.setup.run.response" }>["payload"]> {
+    return this.sendNamespacedCorrelatedSessionRequest<"workspace.setup.run.response">({
+      requestId,
+      message: { type: "workspace.setup.run.request", workspaceId },
+    });
+  }
+
   async fetchAgent(options: FetchAgentOptions): Promise<FetchAgentResult | null>;
   async fetchAgent(agentId: string, requestId?: string): Promise<FetchAgentResult | null>;
   async fetchAgent(

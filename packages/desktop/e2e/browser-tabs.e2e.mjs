@@ -13,6 +13,7 @@ import { experimental_createMCPClient } from "ai";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { chromium } from "playwright";
 import { runAppearanceFontSizeRegression } from "./appearance-font-size.electron.mjs";
+import { runSettingsMemoryRegression } from "./settings-memory.electron.mjs";
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const desktopDir = path.resolve(scriptDir, "..");
@@ -961,6 +962,15 @@ async function main() {
     const page = await waitForAppPage(browser, expoPort);
     const status = await waitForDesktopStatus(page);
 
+    const settingsMemory = await runSettingsMemoryRegression(page);
+    if (process.env.PASEO_DESKTOP_SETTINGS_MEMORY_ONLY === "1") {
+      writeJson(path.join(artifactDir, "result.json"), { settingsMemory });
+      console.log(
+        `Desktop Settings memory regression passed: ${settingsMemory.detachedAfterWarmRound} detached panes after warm and stress rotations.`,
+      );
+      return;
+    }
+
     await runAppearanceFontSizeRegression(page);
 
     const callerAgentId = await createCallerAgent(daemonPort);
@@ -978,7 +988,7 @@ async function main() {
       callerAgentId,
       artifactDir,
     });
-    writeJson(path.join(artifactDir, "result.json"), report);
+    writeJson(path.join(artifactDir, "result.json"), { ...report, settingsMemory });
     console.log(
       `Browser desktop browser E2E passed: WebContents ${report.originalWebContentsId} remained ${report.finalWebContentsId}; viewport, inactive capture, focus continuity, list, snapshot, click, local-page selectors passed.`,
     );
