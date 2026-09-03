@@ -8,12 +8,39 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { hasKeychainIdentity } from "../../electron-builder-signing.cjs";
 
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+const requireFromHere = createRequire(import.meta.url);
+const BUILDER_CONFIG_PATH = join(packageRoot, "electron-builder.config.cjs");
+
+interface BuilderConfig {
+  mac: { hardenedRuntime?: boolean; notarize?: boolean; entitlements?: string };
+  appId: string;
+}
+
+/** The config decides at load time, so each environment needs a fresh load. */
+function loadBuilderConfig(env: Record<string, string | undefined>): BuilderConfig {
+  const previous = process.env;
+  process.env = { ...previous, ...env } as NodeJS.ProcessEnv;
+  for (const key of Object.keys(env)) {
+    if (env[key] === undefined) {
+      delete process.env[key];
+    }
+  }
+  try {
+    delete requireFromHere.cache[requireFromHere.resolve(BUILDER_CONFIG_PATH)];
+    return requireFromHere(BUILDER_CONFIG_PATH) as BuilderConfig;
+  } finally {
+    process.env = previous;
+  }
+}
 
 function writeExecutable(filePath: string, contents: string): void {
   writeFileSync(filePath, contents, "utf8");
@@ -101,6 +128,48 @@ describe("desktop packaging", () => {
     expect(serverPackage).toContain("fs.rmSync('dist/server/skills',{recursive:true,force:true})");
     expect(serverPackage).toContain("fs.cpSync('../../skills','dist/server/skills'");
     expect(runtimeTrace).toContain('"packages/server/dist/server/skills/**"');
+  });
+
+  it("drops the hardened runtime when a build has no signing identity", () => {
+    // An ad-hoc signature has no Team ID, and the hardened runtime's library
+    // validation requires every loaded library to match one. Shipping both
+    // makes the .app die on launch against Electron Framework.
+    const forkCi = loadBuilderConfig({
+      CI: "1",
+      CSC_LINK: undefined,
+      CSC_NAME: undefined,
+      CSC_IDENTITY: undefined,
+    });
+
+    expect(forkCi.mac.hardenedRuntime).toBe(false);
+    expect(forkCi.mac.notarize).toBe(false);
+
+    const optedOut = loadBuilderConfig({
+      CI: undefined,
+      CSC_IDENTITY_AUTO_DISCOVERY: "false",
+      CSC_LINK: undefined,
+      CSC_NAME: undefined,
+      CSC_IDENTITY: undefined,
+    });
+
+    expect(optedOut.mac.hardenedRuntime).toBe(false);
+  });
+
+  it("does not mistake an empty keychain for a signing identity", () => {
+    const env = { CSC_IDENTITY_AUTO_DISCOVERY: undefined };
+    const run = () => "     0 valid identities found";
+
+    expect(hasKeychainIdentity(env, { platform: "darwin", run })).toBe(false);
+  });
+
+  it("keeps the hardened runtime for a signed release build", () => {
+    const releaseCi = loadBuilderConfig({ CI: "1", CSC_LINK: "base64-certificate" });
+
+    expect(releaseCi.mac.hardenedRuntime).toBe(true);
+    expect(releaseCi.mac.notarize).toBe(true);
+    // The signing switch must not disturb the rest of the mac config.
+    expect(releaseCi.mac.entitlements).toBe("build/entitlements.mac.plist");
+    expect(releaseCi.appId).toBe("sh.paseo.desktop");
   });
 
   it("registers Paseo agent links with the operating system", () => {

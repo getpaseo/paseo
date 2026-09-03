@@ -15,7 +15,7 @@
   },
   "main": "dist/main.js",
   "scripts": {
-    "build": "npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.yml",
+    "build": "npm --prefix ../.. run build:server:clean && npm run build:main && electron-builder --config electron-builder.config.cjs",
     "build:main": "tsc -p tsconfig.json",
     "capture-harness": "./capture-harness/run.sh",
     "dev": "./scripts/dev.sh",
@@ -39,6 +39,7 @@
     "@types/ws": "^8.5.14",
     "electron": "41.2.0",
     "electron-builder": "26.8.1",
+    "js-yaml": "^4.1.0",
     "typescript": "5.9.3",
     "unzip-crx-3": "^0.2.0",
     "vitest": "^4.1.6",
