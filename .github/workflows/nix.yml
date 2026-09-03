@@ -19,6 +19,7 @@ on:
       - "packages/relay/**"
       - "packages/cli/**"
       - "scripts/build-daemon-web-ui.mjs"
+      - "scripts/build-android-apk.sh"
       - "scripts/update-nix.sh"
       - "scripts/fix-lockfile.mjs"
       - ".github/workflows/nix.yml"
@@ -45,6 +46,23 @@ jobs:
 
       - name: Update lockfile + Nix hash if stale
         run: ./scripts/update-nix.sh
+
+      # Realizing .#android-release-runner would pull the whole Android
+      # SDK/NDK closure (~7.5 GB), which does not fit a GitHub-hosted runner.
+      # Evaluating it is enough to catch the failure mode that matters:
+      # androidenv rejects unknown build-tools/platform/NDK/CMake versions at
+      # eval time ("The version X is missing in package build-tools"), so SDK
+      # composition regressions fail here without downloading anything.
+      - name: Check Android release runner evaluates
+        run: nix build --dry-run .#android-release-runner
+
+      # writeShellApplication shellchecks the runner script when it builds,
+      # which the eval-only check above skips, so lint the script directly.
+      # It has no shebang because flake.nix splices it into the wrapper.
+      - name: Lint Android release script
+        run: |
+          bash -n scripts/build-android-apk.sh
+          nix run nixpkgs#shellcheck -- --shell=bash scripts/build-android-apk.sh
 
       - name: Build Nix package
         run: nix build .#default -o result
