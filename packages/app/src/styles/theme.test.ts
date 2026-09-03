@@ -94,3 +94,28 @@ describe("Built-in light theme", () => {
     });
   });
 });
+
+describe("Find match colors", () => {
+  it("keeps the DOM marks translucent so the text under them stays readable", () => {
+    expect(lightTheme.colors.findMatch).toBe("rgba(245, 158, 11, 0.4)");
+    expect(lightTheme.colors.findMatchActive).toBe("rgba(249, 115, 22, 0.6)");
+    expect(darkTheme.colors.findMatch).toBe("rgba(251, 191, 36, 0.35)");
+    expect(darkTheme.colors.findMatchActive).toBe("rgba(249, 115, 22, 0.65)");
+  });
+
+  // xterm masks the alpha channel of decoration backgrounds, so the terminal marks are
+  // the same palette entries pre-blended onto the terminal background.
+  it("pre-blends the terminal marks onto the terminal background", () => {
+    expect(lightTheme.colors.terminal.findMatch).toBe("#fbd89d");
+    expect(lightTheme.colors.terminal.findMatchActive).toBe("#fbab73");
+    expect(darkPureBlackTheme.colors.terminal.findMatch).toBe("#58430d");
+    expect(darkPureBlackTheme.colors.terminal.findMatchActive).toBe("#a24b0e");
+  });
+
+  it("gives every built-in theme opaque terminal marks", () => {
+    for (const theme of [lightTheme, darkTheme, darkPureBlackTheme]) {
+      expect(theme.colors.terminal.findMatch).toMatch(/^#[0-9a-f]{6}$/);
+      expect(theme.colors.terminal.findMatchActive).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+});

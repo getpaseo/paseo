@@ -84,6 +84,7 @@ describe("buildBrowserKeyboardPolicy", () => {
       },
       context: {
         commandCenterOpen: false,
+        findOpen: false,
         focusScope: "browser",
         isDesktop: true,
         isMac: false,
@@ -190,6 +191,30 @@ describe("buildBrowserKeyboardPolicy", () => {
       meta: true,
       shift: true,
     });
+  });
+
+  it("keeps find shortcuts out of the guest so the page keeps its own find", () => {
+    const bindings = buildEffectiveBindings({});
+
+    for (const isMac of [true, false]) {
+      const policy = buildBrowserKeyboardPolicy({ bindings, isMac, isDesktop: true });
+      const published = [...policy.prefixes, ...policy.menuPrefixes];
+      const forwardsBare = (code: string) =>
+        published.some(
+          (prefix) =>
+            prefix.code === code &&
+            !prefix.alt &&
+            !prefix.shift &&
+            prefix.meta === isMac &&
+            prefix.control === !isMac,
+        );
+
+      // Cmd+F / Ctrl+F is excluded by focus scope and Cmd+G / Ctrl+G by `find: true`,
+      // which a pane showing a webview can never satisfy. Cmd+Shift+G still crosses,
+      // because there it is the Changes binding rather than find previous.
+      expect(forwardsBare("KeyF")).toBe(false);
+      expect(forwardsBare("KeyG")).toBe(false);
+    }
   });
 
   it("does not publish plain browser keys", () => {

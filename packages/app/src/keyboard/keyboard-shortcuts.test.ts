@@ -39,6 +39,7 @@ function shortcutContext(
     isDesktop: false,
     focusScope: "other",
     commandCenterOpen: false,
+    findOpen: false,
     ...overrides,
   };
 }
@@ -1194,5 +1195,109 @@ describe("direct new-tab target shortcuts", () => {
     expect(
       resolveShortcutKeysForAction("workspace-tab-target-agent", overrides, desktopNonMac),
     ).toEqual([["ctrl", "shift", "H"]]);
+  });
+});
+
+describe("find in pane", () => {
+  const macDesktop = { isMac: true, isDesktop: true } as const;
+  const nonMacDesktop = { isMac: false, isDesktop: true } as const;
+  const cmdF = { key: "f", code: "KeyF", metaKey: true };
+  const cmdShiftG = { key: "g", code: "KeyG", metaKey: true, shiftKey: true };
+
+  it.each(["terminal", "message-input", "editable", "other"] as const)(
+    "opens find with Cmd+F in the %s focus scope",
+    (focusScope) => {
+      expectShortcutResolution({
+        event: cmdF,
+        context: { ...macDesktop, focusScope },
+        action: "find.open",
+      });
+    },
+  );
+
+  it("leaves Cmd+F to the page inside the browser webview", () => {
+    expectNoShortcutResolution({ event: cmdF, context: { ...macDesktop, focusScope: "browser" } });
+  });
+
+  it("steps to the previous match with Cmd+Shift+G while a find bar is open", () => {
+    expectShortcutResolution({
+      event: cmdShiftG,
+      context: { ...macDesktop, focusScope: "other", findOpen: true },
+      action: "find.previous",
+    });
+  });
+
+  it("targets the changes tab with Cmd+Shift+G when no find bar is open", () => {
+    expectShortcutResolution({
+      event: cmdShiftG,
+      context: { ...macDesktop, focusScope: "other", findOpen: false },
+      action: "workspace.tab.target.changes",
+    });
+  });
+
+  it("matches nothing on Ctrl+G with no find bar open", () => {
+    expectNoShortcutResolution({
+      event: { key: "g", code: "KeyG", ctrlKey: true },
+      context: { ...nonMacDesktop, focusScope: "other", findOpen: false },
+    });
+  });
+
+  it("steps to the next match on Ctrl+G while a find bar is open", () => {
+    expectShortcutResolution({
+      event: { key: "g", code: "KeyG", ctrlKey: true },
+      context: { ...nonMacDesktop, focusScope: "terminal", findOpen: true },
+      action: "find.next",
+    });
+  });
+
+  // resolveInitialChordStep takes the first matching single-combo binding in array
+  // order, so find previous only ever beats Changes to ⌘⇧G while it is declared first.
+  it.each([
+    ["find-previous-cmd-shift-g-mac", "workspace-tab-target-changes-cmd-shift-c-mac"],
+    ["find-previous-ctrl-shift-g-non-mac", "workspace-tab-target-changes-ctrl-shift-c-non-mac"],
+  ])("declares %s before %s", (findBindingId, changesBindingId) => {
+    const bindings = buildEffectiveBindings({});
+    const findIndex = bindings.findIndex((binding) => binding.id === findBindingId);
+    const changesIndex = bindings.findIndex((binding) => binding.id === changesBindingId);
+
+    expect(findIndex).toBeGreaterThan(-1);
+    expect(changesIndex).toBeGreaterThan(-1);
+    expect(findIndex).toBeLessThan(changesIndex);
+  });
+
+  it("does not let dictation confirm claim Enter inside the find input", () => {
+    expectNoShortcutResolution({
+      event: { key: "Enter", code: "Enter" },
+      context: { ...macDesktop, focusScope: "editable" },
+    });
+    expectShortcutResolution({
+      event: { key: "Enter", code: "Enter" },
+      context: { ...macDesktop, focusScope: "message-input" },
+      action: "message-input.action",
+      payload: { kind: "dictation-confirm" },
+    });
+  });
+
+  it("lists the three find rows in the general section with labels and notes", () => {
+    const sections = buildKeyboardShortcutHelpSections(macDesktop);
+    const general = sections.find((section) => section.id === "general");
+    const rows = general?.rows.filter((row) => row.id.startsWith("find-")) ?? [];
+
+    expect(rows.map((row) => row.id)).toEqual(["find-in-pane", "find-next", "find-previous"]);
+    expect(rows.map((row) => row.labelKey)).toEqual([
+      "settings.shortcuts.help.findInPane",
+      "settings.shortcuts.help.findNext",
+      "settings.shortcuts.help.findPrevious",
+    ]);
+    expect(rows.map((row) => row.noteKey)).toEqual([
+      undefined,
+      "settings.shortcuts.helpNotes.findWhileOpen",
+      "settings.shortcuts.helpNotes.findWhileOpen",
+    ]);
+    expect(rows.map((row) => row.chord)).toEqual([
+      [["mod", "F"]],
+      [["mod", "G"]],
+      [["mod", "shift", "G"]],
+    ]);
   });
 });

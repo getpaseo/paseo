@@ -69,6 +69,7 @@ import { HighlightedCodeBlock } from "@/components/highlighted-code-block";
 import { MarkdownFenceBlock } from "@/components/markdown/fence";
 import type { MarkdownPhase } from "@/components/markdown/fence/types";
 import { splitMarkdownBlocks } from "@/utils/split-markdown-blocks";
+import { findTextDataSet } from "@/find/transcript/markers";
 import { useRevealedText } from "@/hooks/use-revealed-text";
 import { colorMarkdownLinkChildren } from "@/components/markdown/link-children";
 import { createAssistantMarkdownParser } from "@/utils/assistant-markdown-parser";
@@ -540,7 +541,7 @@ export const UserMessage = memo(function UserMessage({
             </View>
           ) : null}
           {hasText ? (
-            <Text selectable style={userMessageStylesheet.text}>
+            <Text selectable style={userMessageStylesheet.text} dataSet={findTextDataSet}>
               {message}
             </Text>
           ) : null}
@@ -885,9 +886,13 @@ function AssistantMarkdownImage({
     [containerStyle],
   );
 
+  // The image slot contributes no searchable text whichever state it is in: find counts
+  // matches against find/transcript/plain-text.ts, which projects an image token as
+  // nothing. Copying drops the failure string with it, which is right — it is renderer
+  // chrome, not message content.
   if (image.status === "failed") {
     return (
-      <View style={stateFrameStyle}>
+      <View style={stateFrameStyle} dataSet={markdownCopyDataSet.ignore}>
         <Text style={assistantMessageStylesheet.imageErrorText}>{image.message}</Text>
       </View>
     );
@@ -895,7 +900,7 @@ function AssistantMarkdownImage({
 
   if (!binding) {
     return (
-      <View style={stateFrameStyle}>
+      <View style={stateFrameStyle} dataSet={markdownCopyDataSet.ignore}>
         <ThemedLoadingSpinner size="small" uniProps={foregroundMutedColorMapping} />
       </View>
     );
@@ -1380,7 +1385,7 @@ function AssistantMessageBlockContainer({
     [block],
   );
   return (
-    <View style={style} onLayout={isWeb ? handleLayout : undefined}>
+    <View style={style} onLayout={isWeb ? handleLayout : undefined} dataSet={findTextDataSet}>
       {children}
     </View>
   );

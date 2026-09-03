@@ -2,7 +2,11 @@ import type { Ref } from "react";
 import type { ITheme } from "@xterm/xterm";
 import type { TerminalState } from "@getpaseo/protocol/messages";
 import type { TerminalInputModeState } from "@getpaseo/protocol/terminal-input-mode";
-import type { TerminalOutputData } from "../terminal/runtime/terminal-emulator-runtime";
+import type {
+  TerminalFindColors,
+  TerminalFindResults,
+  TerminalOutputData,
+} from "../terminal/runtime/terminal-emulator-runtime";
 import type {
   TerminalLocalFileLinkSource,
   TerminalLocalFileLinkTarget,
@@ -21,6 +25,10 @@ export interface TerminalEmulatorHandle {
   claimSize: () => void;
   showKeyboard: () => void;
   blur: () => void;
+  findNext: (term: string) => void;
+  findPrevious: (term: string) => void;
+  clearFind: () => void;
+  getSelectionText: () => string;
 }
 
 export interface TerminalEmulatorProps {
@@ -30,6 +38,7 @@ export interface TerminalEmulatorProps {
   supportsTerminalInputModeReplay: boolean;
   testId?: string;
   xtermTheme?: ITheme;
+  findColors?: TerminalFindColors;
   scrollbackLines: number;
   fontFamily?: string;
   fontSize?: number;
@@ -65,6 +74,8 @@ export interface TerminalEmulatorProps {
     disposition: "main" | "side",
   ) => Promise<void> | void;
   onRendererReadyChange?: (change: TerminalRendererReadyChange) => void;
+  onFindResultsChange?: (results: TerminalFindResults) => void;
+  onFindBufferChange?: () => void;
   pendingModifiers?: PendingTerminalModifiers;
   focusRequestToken?: number;
   resizeRequestToken?: number;

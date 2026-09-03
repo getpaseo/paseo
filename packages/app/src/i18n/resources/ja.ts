@@ -1783,6 +1783,15 @@ export const ja: TranslationResources = {
     archiveFinishedAction: "完了したサブエージェントをアーカイブ",
     archiveFinishedRetry: "再試行 ({{failed}}/{{total}})",
   },
+  find: {
+    placeholder: "検索",
+    matchPosition: "{{count}} 件中 {{current}} 件目",
+    noResults: "結果がありません",
+    cappedCount: "{{count}} 件以上",
+    previous: "前の一致",
+    next: "次の一致",
+    close: "検索を閉じる",
+  },
   panels: {
     draft: {
       newAgent: "新しいエージェント",
@@ -2220,6 +2229,9 @@ export const ja: TranslationResources = {
         closePane: "ペインを閉じる",
         newTerminal: "新しいターミナル",
         searchFiles: "ファイルを検索",
+        findInPane: "ペイン内を検索",
+        findNext: "次を検索",
+        findPrevious: "前を検索",
         toggleCommandCenter: "コマンドセンターを切り替え",
         showKeyboardShortcuts: "キーボードショートカットを表示",
         toggleLeftSidebar: "左サイドバーを切り替え",
@@ -2239,6 +2251,7 @@ export const ja: TranslationResources = {
         switchProject: "プロジェクトを切り替え",
       },
       helpNotes: {
+        findWhileOpen: "検索バーが開いているときのみ有効です。",
         showKeyboardShortcuts:
           "テキストフィールドまたはターミナルにフォーカスがない場合に利用できます。",
       },
