@@ -177,6 +177,25 @@ describe("daemon web UI route module", () => {
     expect(res.body).not.toContain("evil.test</script>");
   });
 
+  test("appends default port 80 when host header omits port (HTTP)", async () => {
+    const app = createApp({ enabled: true, distDir, publicDir });
+
+    const res = await request(app, "GET", "/", { host: "paseo.example.com" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('"listen":"paseo.example.com:80"');
+    expect(res.body).toContain('"useTls":false');
+  });
+
+  test("preserves explicit port in host header", async () => {
+    const app = createApp({ enabled: true, distDir, publicDir });
+
+    const res = await request(app, "GET", "/", { host: "paseo.example.com:8080" });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('"listen":"paseo.example.com:8080"');
+  });
+
   test("falls back to index.html for SPA deep links", async () => {
     const app = createApp({ enabled: true, distDir, publicDir });
 
