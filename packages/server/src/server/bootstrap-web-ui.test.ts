@@ -97,6 +97,24 @@ describe("daemon web UI bootstrap", () => {
         headers: { "x-forwarded-proto": "https" },
       }),
     );
+    const noExplicitPortHttpsHint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: {
+          host: "daemon.example.test",
+          "x-forwarded-proto": "https",
+        },
+      }),
+    );
+    const forwardedHostHttpsHint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: {
+          "x-forwarded-host": "PUBLIC.EXAMPLE.TEST",
+          "x-forwarded-proto": "https",
+        },
+      }),
+    );
 
     expect(httpHint).toEqual({
       listen: `daemon.example.test:${daemonHandle.port}`,
@@ -105,6 +123,16 @@ describe("daemon web UI bootstrap", () => {
     });
     expect(httpsHint).toEqual({
       listen: `daemon.example.test:${daemonHandle.port}`,
+      useTls: true,
+      label: os.hostname(),
+    });
+    expect(noExplicitPortHttpsHint).toEqual({
+      listen: "daemon.example.test:443",
+      useTls: true,
+      label: os.hostname(),
+    });
+    expect(forwardedHostHttpsHint).toEqual({
+      listen: "PUBLIC.EXAMPLE.TEST:443",
       useTls: true,
       label: os.hostname(),
     });
@@ -128,10 +156,96 @@ describe("daemon web UI bootstrap", () => {
         headers: { "x-forwarded-proto": "https" },
       }),
     );
+    const noExplicitPortHttpsHint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: {
+          host: "daemon.example.test",
+          "x-forwarded-host": "attacker.example.test:8443",
+          "x-forwarded-proto": "https",
+        },
+      }),
+    );
 
     expect(httpsHint).toEqual({
       listen: `daemon.example.test:${daemonHandle.port}`,
       useTls: false,
+      label: os.hostname(),
+    });
+    expect(noExplicitPortHttpsHint).toEqual({
+      listen: "daemon.example.test:80",
+      useTls: false,
+      label: os.hostname(),
+    });
+  });
+
+  test.each([
+    {
+      name: "IPv4 HTTP",
+      host: "127.0.0.1",
+      forwardedProto: undefined,
+      expectedListen: "127.0.0.1:80",
+      expectedUseTls: false,
+    },
+    {
+      name: "IPv4 HTTPS",
+      host: "127.0.0.1",
+      forwardedProto: "https",
+      expectedListen: "127.0.0.1:443",
+      expectedUseTls: true,
+    },
+    {
+      name: "IPv4 with an explicit port",
+      host: "127.0.0.1:6767",
+      forwardedProto: "https",
+      expectedListen: "127.0.0.1:6767",
+      expectedUseTls: true,
+    },
+    {
+      name: "IPv6 HTTP",
+      host: "[::1]",
+      forwardedProto: undefined,
+      expectedListen: "[::1]:80",
+      expectedUseTls: false,
+    },
+    {
+      name: "IPv6 HTTPS",
+      host: "[::1]",
+      forwardedProto: "https",
+      expectedListen: "[::1]:443",
+      expectedUseTls: true,
+    },
+    {
+      name: "IPv6 with an explicit port",
+      host: "[::1]:6767",
+      forwardedProto: "https",
+      expectedListen: "[::1]:6767",
+      expectedUseTls: true,
+    },
+  ])("handles $name connection hints", async (testCase) => {
+    const distDir = await createWebUiDist();
+
+    daemonHandle = await createTestPaseoDaemon({
+      mcpEnabled: false,
+      webUi: {
+        enabled: true,
+        distDir,
+      },
+    });
+
+    const hint = readInjectedConnectionHint(
+      await fetchDaemonWebUi({
+        port: daemonHandle.port,
+        headers: {
+          host: testCase.host,
+          ...(testCase.forwardedProto ? { "x-forwarded-proto": testCase.forwardedProto } : {}),
+        },
+      }),
+    );
+
+    expect(hint).toEqual({
+      listen: testCase.expectedListen,
+      useTls: testCase.expectedUseTls,
       label: os.hostname(),
     });
   });
