@@ -1430,7 +1430,8 @@ export class AgentManager {
       refreshConfig,
       agentId,
     );
-    this.paseoToolPolicies.set(agentId, paseoToolPolicy);
+    const hadPreviousPaseoToolPolicy = this.paseoToolPolicies.has(agentId);
+    const previousPaseoToolPolicy = this.paseoToolPolicies.get(agentId);
     const launchContext = await this.buildLaunchContext(
       agentId,
       client,
@@ -1438,18 +1439,22 @@ export class AgentManager {
       paseoToolPolicy,
     );
     const providerLaunchConfig = this.resolveProviderLaunchConfig(launchConfig, launchContext);
+    this.paseoToolPolicies.set(agentId, paseoToolPolicy);
 
-    const session = handle
-      ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
-      : await client.createSession(providerLaunchConfig, launchContext);
-    await this.requireExternalMcpSupport(session, storedConfig);
-
+    let session: AgentSession | undefined;
     let handedToRegistration = false;
+    let replacedExisting = false;
     try {
+      session = handle
+        ? await client.resumeSession(handle, providerLaunchConfig, launchContext)
+        : await client.createSession(providerLaunchConfig, launchContext);
+      await this.requireExternalMcpSupport(session, storedConfig);
+
       this.assertAcceptingAgentRegistrations();
 
       this.cancelRunningProviderSubagents(agentId);
       const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
+      replacedExisting = true;
       try {
         await this.persistSnapshot(closedExisting);
       } finally {
@@ -1480,7 +1485,14 @@ export class AgentManager {
         attention: preservedAttention,
       });
     } finally {
-      if (!handedToRegistration) {
+      if (!replacedExisting) {
+        if (hadPreviousPaseoToolPolicy) {
+          this.paseoToolPolicies.set(agentId, previousPaseoToolPolicy);
+        } else {
+          this.paseoToolPolicies.delete(agentId);
+        }
+      }
+      if (session && !handedToRegistration) {
         await this.closeUnregisteredSession(session);
       }
     }
