@@ -4,10 +4,11 @@ import type {
   ProviderSelectorProvider,
 } from "@/provider-selection/provider-selection";
 import {
+  clampModelBrowserScrolling,
   resolveInitialModelBrowserView,
   resolveModelBrowserAllView,
-  groupProfilesByProviderModel,
   resolveModelBrowserScrolling,
+  groupProfilesByProviderModel,
 } from "./model-browser-view";
 
 function provider(
@@ -232,5 +233,19 @@ describe("model browser all view", () => {
         isSearchFocused: true,
       }),
     ).toEqual({ kind: "noSearchMatches" });
+  });
+});
+
+describe("clampModelBrowserScrolling", () => {
+  it("keeps sheet scrolling inside a bottom sheet", () => {
+    expect(clampModelBrowserScrolling("sheet", true)).toBe("sheet");
+  });
+
+  it("falls back to independent scrolling outside a bottom sheet", () => {
+    expect(clampModelBrowserScrolling("sheet", false)).toBe("independent");
+  });
+
+  it("never promotes an independent list to a sheet scrollable", () => {
+    expect(clampModelBrowserScrolling("independent", true)).toBe("independent");
   });
 });
