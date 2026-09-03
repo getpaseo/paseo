@@ -304,6 +304,8 @@ Absent `paseoTools`, or absent fields within it, means Paseo tools are enabled a
 allowed. `enabled: false` disables the provider's Paseo catalog; `disabledTools` lists exact tool
 IDs to omit. The policy covers the core and browser catalog, not the voice-only `speak` tool.
 Browser tools also require `daemon.browserTools.enabled` and a connected browser host.
+This policy controls the catalog presented to an agent. It is not an authorization boundary for
+agents that can access the host through a shell.
 
 `daemon.mcp.injectIntoAgents` is the global override. When it is `false`, no provider receives
 Paseo tools; otherwise the provider policy applies. Provider and global policy are resolved when a
