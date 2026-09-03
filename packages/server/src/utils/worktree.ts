@@ -212,6 +212,17 @@ export interface CreateWorktreeOptions {
   runSetup: boolean;
   paseoHome?: string;
   worktreesRoot?: string;
+  /**
+   * Return the existing worktree of that slug instead of cutting another one beside it.
+   *
+   * Without it, a caller that names a worktree after the work rather than the run gets
+   * `fix-42`, `fix-42-1`, `fix-42-2` — one fresh copy of the default branch per run, each
+   * blind to what the previous ones changed. With it, everything about that work keeps
+   * iterating on the same branch, which is what naming a worktree after the work meant.
+   *
+   * Only an exact slug match counts; anything else falls through to normal creation.
+   */
+  reuseExisting?: boolean;
 }
 
 export class BranchAlreadyCheckedOutError extends Error {
@@ -1216,7 +1227,17 @@ export const createWorktree = async ({
   runSetup,
   paseoHome,
   worktreesRoot,
+  reuseExisting,
 }: CreateWorktreeOptions): Promise<WorktreeConfig> => {
+  if (reuseExisting) {
+    const existing = await findReusablePaseoWorktree({
+      cwd,
+      worktreeSlug,
+      paseoHome,
+      worktreesRoot,
+    });
+    if (existing) return existing;
+  }
   const sourcePlan = await resolveWorktreeSourcePlan({ cwd, source, desiredSlug: worktreeSlug });
   let worktreePath = join(await getPaseoWorktreesRoot(cwd, paseoHome, worktreesRoot), worktreeSlug);
   mkdirSync(dirname(worktreePath), { recursive: true });
@@ -1274,6 +1295,36 @@ export const createWorktree = async ({
     worktreePath,
   };
 };
+
+/**
+ * The worktree already cut for this slug, if there is one.
+ *
+ * Reads `git worktree list` rather than the filesystem: a leftover directory git no longer
+ * tracks is not a worktree, and handing it back would give an agent a checkout no branch points
+ * at. A slug whose directory was suffixed by an earlier run (`fix-42-1`) is deliberately not
+ * matched — only the canonical path counts.
+ */
+async function findReusablePaseoWorktree(options: {
+  cwd: string;
+  worktreeSlug: string;
+  paseoHome?: string;
+  worktreesRoot?: string;
+}): Promise<WorktreeConfig | undefined> {
+  const expectedPath = normalizePathForOwnership(
+    join(
+      await getPaseoWorktreesRoot(options.cwd, options.paseoHome, options.worktreesRoot),
+      options.worktreeSlug,
+    ),
+  );
+  const worktrees = await listPaseoWorktrees({
+    cwd: options.cwd,
+    ...(options.paseoHome === undefined ? {} : { paseoHome: options.paseoHome }),
+    ...(options.worktreesRoot === undefined ? {} : { worktreesRoot: options.worktreesRoot }),
+  });
+  const match = worktrees.find((worktree) => worktree.path === expectedPath);
+  if (!match?.branchName) return undefined;
+  return { branchName: match.branchName, worktreePath: match.path };
+}
 
 interface ResolveWorktreeSourcePlanOptions {
   cwd: string;

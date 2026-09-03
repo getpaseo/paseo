@@ -29,6 +29,8 @@ export interface CreateWorktreeCoreInput {
   paseoHome?: string;
   worktreesRoot?: string;
   runSetup?: boolean;
+  /** Reuse the worktree of that slug when it exists; see `CreateWorktreeOptions`. */
+  reuseExisting?: boolean;
 }
 
 export interface CreateWorktreeCoreDeps {
@@ -123,6 +125,7 @@ async function createWorktreeCoreWithPriority(
       runSetup: input.runSetup ?? true,
       paseoHome: input.paseoHome,
       worktreesRoot: input.worktreesRoot,
+      ...(input.reuseExisting === undefined ? {} : { reuseExisting: input.reuseExisting }),
     }),
     intent,
     repoRoot,

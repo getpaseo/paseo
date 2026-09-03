@@ -465,6 +465,10 @@ function toCreateAgentWorktree(target: CreateAgentWorktreeTarget | undefined) {
       worktreeName: target.newBranch,
       baseBranch: target.base,
       action: "branch-off" as const,
+      // Hub worktrees are named after the work they serve, so two runs about the same issue
+      // belong in the same one. Suffixing instead would hand each run a fresh copy of the base
+      // branch, blind to what the previous ones changed.
+      reuseExisting: true,
     };
   }
   if (target.mode === "checkout-branch") {
