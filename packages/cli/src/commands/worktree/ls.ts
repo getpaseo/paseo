@@ -1,6 +1,6 @@
 import type { Command } from "commander";
-import { homedir } from "node:os";
 import { basename, join, sep } from "node:path";
+import { resolvePaseoHome } from "@getpaseo/server";
 import type { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import { connectToDaemon, getDaemonHost } from "../../utils/client.js";
 import type { CommandOptions, ListResult, OutputSchema, CommandError } from "../../output/index.js";
@@ -28,7 +28,7 @@ function extractWorktreeName(path: string): string {
 }
 
 export function resolvePaseoHomePath(): string {
-  return process.env.PASEO_HOME ?? join(homedir(), ".paseo");
+  return resolvePaseoHome();
 }
 
 export function resolvePaseoWorktreesDir(): string {

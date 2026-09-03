@@ -1,12 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { resolvePaseoHome } from "@getpaseo/server";
 
-const CLIENT_SESSION_KEY_FILE = join(
-  process.env.PASEO_HOME ?? join(homedir(), ".paseo"),
-  "cli-client-id",
-);
+// Resolved per call: commands such as `daemon pair` set PASEO_HOME at runtime,
+// so a module-load-time path would point at the wrong home.
+function clientIdFilePath(): string {
+  return join(resolvePaseoHome(), "cli-client-id");
+}
 
 let cachedClientId: string | null = null;
 
@@ -24,8 +25,10 @@ export async function getOrCreateCliClientId(): Promise<string> {
     return cachedClientId;
   }
 
+  const clientIdFile = clientIdFilePath();
+
   try {
-    const existing = normalizeClientId(await readFile(CLIENT_SESSION_KEY_FILE, "utf8"));
+    const existing = normalizeClientId(await readFile(clientIdFile, "utf8"));
     if (existing) {
       cachedClientId = existing;
       return existing;
@@ -38,8 +41,8 @@ export async function getOrCreateCliClientId(): Promise<string> {
   }
 
   const nextValue = generateClientId();
-  await mkdir(dirname(CLIENT_SESSION_KEY_FILE), { recursive: true });
-  await writeFile(CLIENT_SESSION_KEY_FILE, nextValue, { mode: 0o600 });
+  await mkdir(dirname(clientIdFile), { recursive: true });
+  await writeFile(clientIdFile, nextValue, { mode: 0o600 });
   cachedClientId = nextValue;
   return nextValue;
 }
