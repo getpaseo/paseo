@@ -230,6 +230,54 @@ describe("OMP agent client and session", () => {
       { type: "assistant_message", text: "fixed", messageId: "omp-assistant-1" },
     ]);
   });
+  test("streams OpenViking context messages as distinct tool-call blocks", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+
+    const openvikingContext = [
+      '<openviking-context source="startup">',
+      '<user-profile uri="viking://user/default/memories/profile.md">',
+      "# Dennys",
+      "- Profession: SWE",
+      "</user-profile>",
+      "</openviking-context>",
+    ].join("\n");
+
+    await omp.runPromptWithCustomMessage(
+      "Hi. Test. Just ack.",
+      {
+        role: "custom",
+        content: openvikingContext,
+        customType: "custom-message",
+        id: "ov-live-1",
+        display: true,
+      },
+      "Ack. Ready.",
+    );
+
+    expect(omp.timeline()).toEqual([
+      { type: "user_message", text: "Hi. Test. Just ack.", messageId: "user-1" },
+      {
+        type: "tool_call",
+        callId: "omp-openviking:ov-live-1",
+        name: "openviking_context",
+        status: "completed",
+        detail: {
+          type: "plain_text",
+          label: "OpenViking · Profile & Memories",
+          text: openvikingContext,
+          icon: "brain",
+        },
+        metadata: {
+          synthetic: true,
+          source: "omp_openviking_context",
+          customType: "custom-message",
+        },
+        error: null,
+      },
+      { type: "assistant_message", text: "Ack. Ready.", messageId: "omp-assistant-1" },
+    ]);
+  });
 
   test("completes a streamed assistant turn when agent_end omits messages", async () => {
     const omp = new OmpHarness();

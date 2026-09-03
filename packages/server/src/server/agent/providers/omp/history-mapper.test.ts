@@ -256,6 +256,103 @@ describe("OMP history mapper", () => {
       },
     ]);
   });
+  test("maps replayed OpenViking and generic custom-message context as synthetic tool-call blocks", async () => {
+    const openvikingContext = [
+      '<openviking-context source="startup">',
+      '<user-profile uri="viking://user/default/memories/profile.md">',
+      "# Dennys",
+      "- Profession: SWE",
+      "</user-profile>",
+      "</openviking-context>",
+    ].join("\n");
+
+    await expect(
+      collectHistory([
+        { role: "user", content: "Hi" },
+        {
+          role: "custom",
+          content: openvikingContext,
+          customType: "custom-message",
+          id: "ov-1",
+          display: true,
+        },
+        {
+          role: "custom",
+          content: "custom prompt injection",
+          customType: "custom-message",
+          id: "custom-1",
+          display: true,
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Ack. Ready." }],
+          responseId: "assistant-1",
+        },
+      ]),
+    ).resolves.toEqual([
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "user_message",
+          text: "Hi",
+        },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "tool_call",
+          callId: "omp-openviking:ov-1",
+          name: "openviking_context",
+          status: "completed",
+          detail: {
+            type: "plain_text",
+            label: "OpenViking · Profile & Memories",
+            text: openvikingContext,
+            icon: "brain",
+          },
+          metadata: {
+            synthetic: true,
+            source: "omp_openviking_context",
+            customType: "custom-message",
+          },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "tool_call",
+          callId: "omp-custom:custom-1",
+          name: "custom_message",
+          status: "completed",
+          detail: {
+            type: "plain_text",
+            label: "Custom Context",
+            text: "custom prompt injection",
+            icon: "sparkles",
+          },
+          metadata: {
+            synthetic: true,
+            source: "omp_custom_message",
+            customType: "custom-message",
+          },
+          error: null,
+        },
+      },
+      {
+        type: "timeline",
+        provider: "omp",
+        item: {
+          type: "assistant_message",
+          text: "Ack. Ready.",
+          messageId: "assistant-1",
+        },
+      },
+    ]);
+  });
 
   test("suppresses replayed raw todo tool calls through the OMP detail hook", async () => {
     await expect(
