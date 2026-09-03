@@ -8,6 +8,7 @@ import {
   createProviderEnv,
   migrateProviderSettings,
   ProviderOverrideSchema,
+  ProviderOverridesSchema,
   resolveProviderLaunch,
   resolveProviderCommandPrefix,
   type ProviderRuntimeSettings,
@@ -268,6 +269,73 @@ describe("createProviderEnv", () => {
 });
 
 describe("ProviderOverrideSchema", () => {
+  test("accepts a remote ACP provider without a local command", () => {
+    const providers = ProviderOverridesSchema.parse({
+      remote: {
+        extends: "acp",
+        label: "Remote agent",
+        transport: {
+          type: "websocket",
+          url: "wss://agents.example.com/acp",
+          bearerTokenEnv: "ACP_ACCESS_TOKEN",
+          cwd: "/workspace/project",
+        },
+        authMethodId: "oauth",
+      },
+    });
+    expect(providers.remote.command).toBeUndefined();
+    expect(providers.remote.transport).toEqual({
+      type: "websocket",
+      url: "wss://agents.example.com/acp",
+      bearerTokenEnv: "ACP_ACCESS_TOKEN",
+      cwd: "/workspace/project",
+    });
+    expect(providers.remote.authMethodId).toBe("oauth");
+  });
+
+  test.each(["https://agents.example.com/acp", "not-a-url"])(
+    "rejects invalid WebSocket endpoint %s",
+    (url) => {
+      expect(
+        ProviderOverrideSchema.safeParse({ transport: { type: "websocket", url } }).success,
+      ).toBe(false);
+    },
+  );
+
+  test("rejects ambiguous local and remote ACP configuration", () => {
+    expect(
+      ProviderOverridesSchema.safeParse({
+        remote: {
+          extends: "acp",
+          label: "Remote agent",
+          command: ["local-agent"],
+          transport: { type: "websocket", url: "wss://agents.example.com/acp" },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("rejects competing bearer-token sources", () => {
+    expect(
+      ProviderOverrideSchema.safeParse({
+        transport: {
+          type: "websocket",
+          url: "wss://agents.example.com/acp",
+          headers: { authorization: "Bearer token" },
+          bearerTokenEnv: "ACP_ACCESS_TOKEN",
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("rejects a remote transport on a non-ACP provider", () => {
+    expect(
+      ProviderOverridesSchema.safeParse({
+        claude: { transport: { type: "websocket", url: "wss://agents.example.com/acp" } },
+      }).success,
+    ).toBe(false);
+  });
+
   test("accepts built-in override fields", () => {
     const parsed = ProviderOverrideSchema.parse({
       command: ["custom-claude", "--json"],

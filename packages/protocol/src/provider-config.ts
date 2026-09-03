@@ -22,8 +22,51 @@ export const ProviderCommandSchema = z.discriminatedUnion("mode", [
   ProviderCommandReplaceSchema,
 ]);
 
+export const ProviderWebSocketTransportSchema = z
+  .object({
+    type: z.literal("websocket"),
+    url: z.string().url(),
+    protocols: z.array(z.string().min(1)).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    bearerTokenEnv: z.string().min(1).optional(),
+    cwd: z.string().min(1).optional(),
+  })
+  .superRefine((transport, ctx) => {
+    let protocol: string;
+    try {
+      protocol = new URL(transport.url).protocol;
+    } catch {
+      return;
+    }
+    if (protocol !== "ws:" && protocol !== "wss:") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["url"],
+        message: "ACP WebSocket URL must use ws:// or wss://.",
+      });
+    }
+    if (
+      transport.bearerTokenEnv &&
+      Object.keys(transport.headers ?? {}).some(
+        (header) => header.toLowerCase() === "authorization",
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["bearerTokenEnv"],
+        message: "Use bearerTokenEnv or an Authorization header, not both.",
+      });
+    }
+  });
+
+export const ProviderTransportSchema = z.discriminatedUnion("type", [
+  ProviderWebSocketTransportSchema,
+]);
+
 export const ProviderRuntimeSettingsSchema = z.object({
   command: ProviderCommandSchema.optional(),
+  transport: ProviderTransportSchema.optional(),
+  authMethodId: z.string().min(1).optional(),
   env: z.record(z.string(), z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
 });
@@ -48,6 +91,8 @@ export const ProviderOverrideSchema = z.object({
   label: z.string().optional(),
   description: z.string().optional(),
   command: z.array(z.string().min(1)).min(1).optional(),
+  transport: ProviderTransportSchema.optional(),
+  authMethodId: z.string().min(1).optional(),
   env: z.record(z.string(), z.string()).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
   models: z.array(ProviderProfileModelSchema).optional(),
@@ -76,6 +121,13 @@ export const ProviderOverridesSchema = z
       }
 
       const isBuiltinProvider = builtinProviderIdSet.has(providerId);
+      if (provider.transport && (isBuiltinProvider || provider.extends !== "acp")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [providerId, "transport"],
+          message: "Remote transport is only supported for custom providers extending acp.",
+        });
+      }
       if (!isBuiltinProvider && !provider.extends) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -100,11 +152,19 @@ export const ProviderOverridesSchema = z
         });
       }
 
-      if (provider.extends === "acp" && !provider.command) {
+      if (provider.extends === "acp" && !provider.command && !provider.transport) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: [providerId, "command"],
-          message: `Provider "${providerId}" extending "acp" must declare command.`,
+          message: `Provider "${providerId}" extending "acp" must declare command or transport.`,
+        });
+      }
+
+      if (provider.extends === "acp" && provider.command && provider.transport) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [providerId, "transport"],
+          message: `Provider "${providerId}" extending "acp" cannot declare both command and transport.`,
         });
       }
     }
@@ -126,6 +186,8 @@ export const AgentProviderRuntimeSettingsMapSchema = z
   });
 
 export type ProviderCommand = z.infer<typeof ProviderCommandSchema>;
+export type ProviderWebSocketTransport = z.infer<typeof ProviderWebSocketTransportSchema>;
+export type ProviderTransport = z.infer<typeof ProviderTransportSchema>;
 export type ProviderRuntimeSettings = z.infer<typeof ProviderRuntimeSettingsSchema>;
 export type ProviderProfileModel = z.infer<typeof ProviderProfileModelSchema>;
 export type ProviderOverride = z.infer<typeof ProviderOverrideSchema>;

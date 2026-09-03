@@ -482,7 +482,82 @@ Required fields for ACP providers:
 
 - `extends: "acp"`
 - `label`
-- `command` — the command to spawn the agent process (must support ACP over stdio)
+- Either `command` (ACP over local stdio) or `transport` (remote WebSocket), never both
+
+### Remote ACP over WebSocket
+
+Connect to an ACP agent hosted on another machine without installing its CLI on
+the Paseo daemon host:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "remote-agent": {
+        "extends": "acp",
+        "label": "Remote Agent",
+        "transport": {
+          "type": "websocket",
+          "url": "wss://agents.example.com/acp",
+          "bearerTokenEnv": "REMOTE_ACP_ACCESS_TOKEN",
+          "cwd": "/workspace/project"
+        }
+      }
+    }
+  }
+}
+```
+
+The endpoint must exchange one ACP JSON-RPC 2.0 object per WebSocket text
+message. This follows the experimental ACP [WebSocket transport proposal](https://agentclientprotocol.com/rfds/streamable-http-websocket-transport),
+not Streamable HTTP/SSE. Use `wss://` outside trusted local development; `ws://`
+is unencrypted. Optional `protocols` selects WebSocket subprotocols, and `headers`
+sets handshake headers. The connection is outbound from the daemon; Paseo does
+not expose a new inbound agent service.
+
+`cwd` is an absolute path on the **agent host** used for session creation,
+resume/load, and scoped session listing. If omitted, Paseo sends the session's
+workspace path unchanged, which requires equivalent paths on both machines.
+Paseo's workspace UI and Git operations remain on the daemon host; this transport
+does not mount or synchronize remote files. Filesystem and terminal callbacks,
+and injected MCP servers, are disabled by default for remote providers so agent
+operations stay remote. Only explicitly enable `params.clientCapabilities` or
+`params.supportsMcpServers` when the corresponding daemon-side resources should
+be shared with the remote agent. Enabling callbacks grants the agent access to
+the daemon host, not to a remote filesystem proxy.
+
+#### Authentication
+
+There are two independent layers:
+
+- **WebSocket endpoint authentication:** `bearerTokenEnv` reads an existing OAuth
+  access token from the daemon environment (or provider `env`) and sends it as
+  `Authorization: Bearer ...`. Obtain and refresh that token using the endpoint's
+  documented OAuth flow. Paseo does not discover OAuth issuers, launch a PKCE
+  login, or refresh tokens. Each new connection reads the current environment;
+  restart the daemon after changing its inherited environment. Do not combine
+  `bearerTokenEnv` with an `Authorization` header or store secrets in URLs.
+- **ACP agent authentication:** optionally set provider-level `authMethodId` to
+  an ID advertised in the agent's `initialize.authMethods`. Paseo calls
+  `authenticate({methodId})` after initialization and before session operations,
+  on both probes and live connections. Under [ACP authentication](https://agentclientprotocol.com/protocol/authentication),
+  the agent owns this flow, including any OAuth interaction. An absent method
+  type is treated as `agent`. Unknown IDs and `terminal`/`env_var` methods are
+  rejected; Paseo cannot run a remote agent's terminal login locally. Omit
+  `authMethodId` for an already-authenticated agent or a bearer-only endpoint.
+
+Remote agent auth must be usable from the server environment. A browser opened
+by an agent runs on its host, not automatically on the Paseo user's device.
+Provider `env` configures the local connection and is not forwarded as remote
+process environment. Endpoint and agent credentials may be different tokens.
+
+Catalog probes and live sessions use the same transport and authentication.
+Connection loss fails in-flight work; prompts are never automatically replayed.
+A later resume opens a fresh connection and uses the agent's advertised session
+load/resume support. Probe sessions are closed when the agent advertises
+`session/close`, and sockets are closed on completion or initialization failure.
+
+### Local ACP capabilities
 
 Paseo tools such as subagent creation come from the shared internal tool catalog. ACP providers receive those tools through the MCP fallback by default because ACP exposes `mcpServers`, not Paseo's native tool catalog. Some ACP adapters cannot create sessions when `mcpServers` is non-empty. Disable injected MCP for those providers with `params.supportsMcpServers: false`:
 
@@ -540,9 +615,15 @@ absolute workspace paths.
 
 Paseo diagnostics for `extends: "acp"` providers report the configured command, resolved launcher binary, version output, ACP `initialize`, ACP `session/new`, model count, modes, and final status.
 
+Remote providers report a redacted endpoint, transport/auth configuration, and
+connection, initialization, session, and cleanup phases instead of local binary
+checks. Header values, bearer tokens, and URL query values are not displayed.
+
 For package-runner commands such as `npx -y @google/gemini-cli --acp`, the version probe keeps the package spec and runs `npx -y @google/gemini-cli --version`. This diagnoses the actual agent package instead of only proving that `npx` exists.
 
-ACP probes use short timeouts and browser-suppression environment variables so agents that enter an auth/browser flow fail as a diagnostic error instead of hanging the provider screen.
+Diagnostic probes use short timeouts. Local probes also set browser-suppression
+environment variables; those variables cannot suppress a browser on a remote
+agent host.
 
 ### Example: Google Gemini CLI
 
@@ -598,11 +679,11 @@ Ref: [Hermes ACP docs](https://hermes-agent.nousresearch.com/docs/user-guide/fea
 
 When you launch an agent with an ACP provider:
 
-1. Paseo spawns the process using the configured `command`
-2. Sends an `initialize` JSON-RPC request over stdin
+1. Paseo spawns the configured `command` or connects to the remote `transport`
+2. Sends an `initialize` JSON-RPC request over the selected transport
 3. The agent responds with its capabilities, available modes, and models
 4. Paseo creates a session and sends prompts through the ACP protocol
-5. The agent streams responses, tool calls, and permission requests back over stdout
+5. The agent streams responses, tool calls, and permission requests back over the same transport
 
 Every ACP provider exposes an **Auto Accept** toggle. Enable it per session to let Paseo approve
 ACP permission requests without surfacing each prompt. If the provider sends no allow option,
@@ -677,19 +758,21 @@ When an `additionalModels` entry has the same `id` as a discovered model, it upd
 
 Every entry under `agents.providers` accepts these fields:
 
-| Field              | Type                      | Required          | Description                                                        |
-| ------------------ | ------------------------- | ----------------- | ------------------------------------------------------------------ |
-| `extends`          | `string`                  | Yes (custom only) | Built-in provider ID to inherit from, or `"acp"`                   |
-| `label`            | `string`                  | Yes (custom only) | Display name in the UI                                             |
-| `description`      | `string`                  | No                | Short description shown in the UI                                  |
-| `command`          | `string[]`                | Yes (ACP only)    | Command to spawn the agent process                                 |
-| `env`              | `Record<string, string>`  | No                | Environment variables to set for the agent process                 |
-| `params`           | `Record<string, unknown>` | No                | Provider-specific options such as `supportsMcpServers: false`      |
-| `models`           | `ProviderProfileModel[]`  | No                | Static model list (overrides runtime discovery)                    |
-| `additionalModels` | `ProviderProfileModel[]`  | No                | Static model additions (merged with runtime discovery or `models`) |
-| `disallowedTools`  | `string[]`                | No                | Tool names to disable for this provider (e.g. `["WebSearch"]`)     |
-| `enabled`          | `boolean`                 | No                | Set to `false` to hide the provider (default: `true`)              |
-| `order`            | `number`                  | No                | Sort order in the provider list                                    |
+| Field              | Type                      | Required              | Description                                                                                             |
+| ------------------ | ------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------- |
+| `extends`          | `string`                  | Yes (custom only)     | Built-in provider ID to inherit from, or `"acp"`                                                        |
+| `label`            | `string`                  | Yes (custom only)     | Display name in the UI                                                                                  |
+| `description`      | `string`                  | No                    | Short description shown in the UI                                                                       |
+| `command`          | `string[]`                | ACP without transport | Command to spawn the local agent process                                                                |
+| `transport`        | `object`                  | ACP without command   | Remote connection: `type: "websocket"`, `url`, optional `headers`, `protocols`, `bearerTokenEnv`, `cwd` |
+| `authMethodId`     | `string`                  | No                    | Advertised agent-managed ACP auth method to invoke                                                      |
+| `env`              | `Record<string, string>`  | No                    | Environment variables to set for the agent process                                                      |
+| `params`           | `Record<string, unknown>` | No                    | Provider-specific options such as `supportsMcpServers: false`                                           |
+| `models`           | `ProviderProfileModel[]`  | No                    | Static model list (overrides runtime discovery)                                                         |
+| `additionalModels` | `ProviderProfileModel[]`  | No                    | Static model additions (merged with runtime discovery or `models`)                                      |
+| `disallowedTools`  | `string[]`                | No                    | Tool names to disable for this provider (e.g. `["WebSearch"]`)                                          |
+| `enabled`          | `boolean`                 | No                    | Set to `false` to hide the provider (default: `true`)                                                   |
+| `order`            | `number`                  | No                    | Sort order in the provider list                                                                         |
 
 ### Model definition
 
@@ -745,7 +828,7 @@ Use `disallowedTools` to disable unsupported tools:
 
 Built-in providers: `claude`, `codex`, `copilot`, `opencode`, `pi`, `omp`
 
-Special value: `acp` — creates a generic ACP provider (requires `command`)
+Special value: `acp` — creates a generic ACP provider (requires `command` or `transport`)
 
 ### Full example
 
