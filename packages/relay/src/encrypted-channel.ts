@@ -33,7 +33,7 @@ export interface TransportMessage {
 
 export interface EncryptedChannelEvents {
   onopen?: () => void;
-  onmessage?: (data: string | ArrayBuffer) => void;
+  onmessage?: (data: string | ArrayBuffer, isBinary?: boolean) => void;
   onclose?: (code: number, reason: string) => void;
   onerror?: (error: Error) => void;
 }
@@ -443,7 +443,9 @@ export class EncryptedChannel {
       if (ciphertext) {
         const plaintextBytes = decrypt(this.sharedKey, ciphertext.data);
         const plaintext = decodePlaintext(plaintextBytes, ciphertext.isBinary);
-        this.events.onmessage?.(plaintext);
+        const isBinary =
+          ciphertext.isBinary === null ? plaintext instanceof ArrayBuffer : ciphertext.isBinary;
+        this.events.onmessage?.(plaintext, isBinary);
       }
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));

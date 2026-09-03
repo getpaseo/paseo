@@ -37,6 +37,7 @@ import {
   truncateUtf8,
 } from "./plugin-tool.js";
 import { PluginSessionSocket } from "./session-socket.js";
+import { terminateWithTreeKill, type ProcessTerminator } from "../../utils/tree-kill.js";
 
 const ENTRY_FILENAME = "index.ts";
 // COMPAT(plugin-index-tsx): added in v0.4, remove after 2027-02-17
@@ -54,11 +55,15 @@ interface PluginOutputStream {
 interface PluginChild {
   connected: boolean;
   killed: boolean;
+  pid?: number;
+  exitCode?: number | null;
+  signalCode?: NodeJS.Signals | null;
   stdout?: PluginOutputStream | null;
   stderr?: PluginOutputStream | null;
   send(message: PluginProcessRequest, callback?: (error: Error | null) => void): boolean;
-  kill(): boolean;
+  kill(signal?: NodeJS.Signals | number): boolean;
   disconnect(): void;
+  once?(event: "exit", listener: () => void): unknown;
   on(event: "message", listener: (message: PluginProcessMessage) => void): this;
   on(event: "close", listener: (code: number | null, signal: NodeJS.Signals | null) => void): this;
 }
@@ -89,11 +94,13 @@ interface LoadedPlugin {
   sessionSocket: PluginSessionSocket;
   sessionClosed: Promise<void>;
   childClosed: Promise<void>;
+  childClosedObserved: () => boolean;
   quarantined: boolean;
 }
 
 interface PluginRuntimeDependencies {
   spawnChild?: () => PluginChild;
+  terminateProcess?: ProcessTerminator;
   sessionHost?: PluginPaseoSessionHost;
   resolveToolContext?: (callerAgentId: string) => Promise<PluginToolCallerContext>;
 }
@@ -211,8 +218,21 @@ function spawnPluginChild(): PluginChild {
 }
 
 function terminatePluginChild(child: PluginChild): void {
-  if (child.connected) child.disconnect();
-  if (!child.killed) child.kill();
+  try {
+    if (child.connected) child.disconnect();
+  } catch {
+    // Cleanup races must not mask the original plugin failure.
+  }
+  if (child.killed) return;
+  try {
+    child.kill();
+  } catch {
+    // Cleanup races must not mask the original plugin failure.
+  }
+}
+
+function canObservePluginExit(child: PluginChild): boolean {
+  return typeof child.pid === "number" || typeof child.once === "function";
 }
 
 function describeError(error: unknown): string {
@@ -252,6 +272,7 @@ export class PluginRuntime {
   private readonly logTails = new Map<string, PluginLogTail>();
   private readonly logger: pino.Logger;
   private readonly spawnChild: () => PluginChild;
+  private readonly terminateProcess: ProcessTerminator;
   private sessionHost: PluginPaseoSessionHost | null;
   private resolveToolContext: ((callerAgentId: string) => Promise<PluginToolCallerContext>) | null;
   private readonly listeners = new Set<(pluginId: string, error?: string) => void>();
@@ -271,6 +292,7 @@ export class PluginRuntime {
   ) {
     this.logger = logger.child({ module: "plugins" });
     this.spawnChild = dependencies.spawnChild ?? spawnPluginChild;
+    this.terminateProcess = dependencies.terminateProcess ?? terminateWithTreeKill;
     this.sessionHost = dependencies.sessionHost ?? null;
     this.resolveToolContext = dependencies.resolveToolContext ?? null;
   }
@@ -474,9 +496,23 @@ export class PluginRuntime {
     });
     const sessionSocket = new PluginSessionSocket(child);
     const pending = new Map<string, PendingInvocation>();
+    let loaded: LoadedPlugin | null = null;
+    let childClosedObserved = false;
     let resolveChildClosed!: () => void;
     const childClosed = new Promise<void>((resolve) => {
-      resolveChildClosed = resolve;
+      resolveChildClosed = () => {
+        if (childClosedObserved) return;
+        childClosedObserved = true;
+        resolve();
+      };
+    });
+    sessionSocket.on("error", (error) => {
+      const reason = `Plugin session transport failed: ${describeError(error)}`;
+      if (loaded) {
+        this.quarantinePlugin(loaded, reason);
+      } else {
+        terminatePluginChild(child);
+      }
     });
     const sessionAttachment = await sessionHost
       .attachPluginSocket(pluginId, sessionSocket)
@@ -484,7 +520,6 @@ export class PluginRuntime {
         terminatePluginChild(child);
         throw error;
       });
-    let loaded: LoadedPlugin | null = null;
     const generation = (this.nextGenerations.get(pluginId) ?? 0) + 1;
     this.nextGenerations.set(pluginId, generation);
     const installationId = randomUUID();
@@ -508,7 +543,15 @@ export class PluginRuntime {
             try {
               message = validatePluginProcessMessage(rawMessage);
             } catch (error) {
-              fail(new Error(`Invalid plugin process message: ${describeError(error)}`));
+              const invalidMessage = new Error(
+                `Invalid plugin process message: ${describeError(error)}`,
+              );
+              if (loaded) {
+                this.quarantinePlugin(loaded, invalidMessage.message);
+              } else {
+                fail(invalidMessage);
+                terminatePluginChild(child);
+              }
               return;
             }
             if (message.type === "paseo_frame") {
@@ -583,6 +626,7 @@ export class PluginRuntime {
       sessionSocket,
       sessionClosed: sessionAttachment.closed,
       childClosed,
+      childClosedObserved: () => childClosedObserved,
       quarantined: false,
     };
     this.logger.info(
@@ -653,24 +697,50 @@ export class PluginRuntime {
 
   private async stopPlugin(loaded: LoadedPlugin): Promise<void> {
     this.appendLog(loaded.id, "stdout", "[paseo] Stopping plugin");
-    if (loaded.child.killed) {
-      loaded.sessionSocket.peerClosed();
-      await Promise.race([
-        loaded.childClosed,
-        loaded.sessionClosed,
-        new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
-      ]);
-      this.appendLog(loaded.id, "stdout", "[paseo] Plugin stopped");
-      return;
-    }
-    if (loaded.child.connected) {
+    if (!loaded.child.killed && loaded.child.connected) {
       await send(loaded.child, { type: "shutdown" }).catch(() => undefined);
     }
     await Promise.race([
       loaded.childClosed,
       new Promise<void>((resolve) => setTimeout(resolve, STOP_TIMEOUT_MS)),
     ]);
-    if (loaded.child.connected || !loaded.child.killed) terminatePluginChild(loaded.child);
+
+    if (!loaded.childClosedObserved() && !loaded.child.killed) {
+      if (canObservePluginExit(loaded.child)) {
+        const result = await this.terminateProcess(loaded.child, {
+          gracefulTimeoutMs: STOP_TIMEOUT_MS,
+          forceTimeoutMs: STOP_TIMEOUT_MS,
+          onForceSignal: () => {
+            this.logger.warn(
+              { pluginId: loaded.id },
+              "Plugin process did not exit after graceful shutdown; forcing termination",
+            );
+          },
+        }).catch((error) => {
+          this.logger.warn(
+            { err: error, pluginId: loaded.id },
+            "Failed to terminate plugin process tree",
+          );
+          return "kill-timeout" as const;
+        });
+        if (result === "kill-timeout") {
+          this.logger.warn({ pluginId: loaded.id }, "Plugin process did not report termination");
+          terminatePluginChild(loaded.child);
+        }
+      } else {
+        // Deterministic fakes and unusual child wrappers may expose neither a
+        // usable PID nor an exit event. Kill the direct child and keep the
+        // closing operation fenced until a real close notification arrives.
+        terminatePluginChild(loaded.child);
+      }
+    }
+
+    // Do not leave callers or concurrency slots waiting for a close event that
+    // a forced or test child can never emit. The child-close promise remains
+    // unresolved so a replacement cannot reuse an unquiesced installation.
+    if (!loaded.childClosedObserved()) {
+      this.rejectPending(loaded, `Plugin stopped: ${loaded.id}`, true);
+    }
     loaded.sessionSocket.peerClosed();
     await Promise.race([
       loaded.sessionClosed,

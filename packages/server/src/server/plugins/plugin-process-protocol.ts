@@ -1,3 +1,5 @@
+import { serialize as serializeV8 } from "node:v8";
+import { Buffer } from "node:buffer";
 import { z } from "zod";
 
 import {
@@ -16,6 +18,7 @@ import {
   assertSupportedJsonSchema,
   assertUtf8ByteLimit,
 } from "./plugin-tool.js";
+import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/transport-limits";
 
 export const MAX_PLUGIN_PROCESS_MESSAGE_BYTES = 4 * 1024 * 1024;
 
@@ -141,7 +144,17 @@ export function validatePluginProcessMessage(message: unknown): PluginProcessMes
 }
 
 function validateProcessEnvelope(message: PluginProcessRequest | PluginProcessMessage): void {
-  if (message.type === "paseo_frame") return;
+  if (message.type === "paseo_frame") {
+    const frameBytes =
+      typeof message.data === "string"
+        ? Buffer.byteLength(message.data, "utf8")
+        : message.data.byteLength;
+    if (frameBytes > MAX_WEBSOCKET_MESSAGE_BYTES) {
+      throw new Error("Plugin session frame exceeds the WebSocket message size limit");
+    }
+    assertSerializedProcessEnvelopeBytes(message);
+    return;
+  }
   let json: string;
   try {
     json = JSON.stringify(message);
@@ -218,6 +231,22 @@ function validateProcessEnvelope(message: PluginProcessRequest | PluginProcessMe
       throw new Error("Plugin tool catalog exceeds the schema byte limit");
     }
     assertPluginToolCatalogBytes(message.catalog, "Plugin tool catalog");
+  }
+}
+
+function assertSerializedProcessEnvelopeBytes(
+  message: PluginProcessRequest | PluginProcessMessage,
+): void {
+  let bytes: number;
+  try {
+    bytes = serializeV8(message).byteLength;
+  } catch (error) {
+    throw new Error(`Plugin process message is not serializable: ${describeError(error)}`, {
+      cause: error,
+    });
+  }
+  if (bytes > MAX_PLUGIN_PROCESS_MESSAGE_BYTES) {
+    throw new Error("Plugin process message exceeds the IPC size limit");
   }
 }
 

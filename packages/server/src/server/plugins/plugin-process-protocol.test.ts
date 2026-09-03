@@ -6,6 +6,7 @@ import {
 } from "./plugin-process-protocol.js";
 import { PLUGIN_TOOL_MAX_ERROR_BYTES } from "./plugin-tool.js";
 import { PLUGIN_TOOL_MAX_CATALOG_BYTES } from "./plugin-tool.js";
+import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/transport-limits";
 
 const callerContext = {
   callerAgentId: "agent-1",
@@ -69,6 +70,16 @@ describe("plugin process tool protocol", () => {
         error: "€".repeat(PLUGIN_TOOL_MAX_ERROR_BYTES),
       }),
     ).toThrow(/byte|limit/i);
+  });
+
+  it("bounds UTF-8 plugin session frames before IPC serialization", () => {
+    expect(() =>
+      validatePluginProcessMessage({
+        type: "paseo_frame",
+        data: "€".repeat(Math.ceil(MAX_WEBSOCKET_MESSAGE_BYTES / 3) + 1),
+        isBinary: false,
+      }),
+    ).toThrow(/WebSocket|byte|limit/i);
   });
 
   it("bounds every catalog field and the serialized metadata aggregate", () => {

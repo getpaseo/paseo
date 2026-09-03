@@ -31,11 +31,7 @@ export function asUint8Array(data: unknown): Uint8Array | null {
     if (typeof Buffer !== "undefined") {
       return new Uint8Array(Buffer.from(data, "utf8"));
     }
-    const out = new Uint8Array(data.length);
-    for (let index = 0; index < data.length; index += 1) {
-      out[index] = data.charCodeAt(index) & 0xff;
-    }
-    return out;
+    return encodeUtf8WithoutPlatformApis(data);
   }
   if (data instanceof Uint8Array) {
     return data;
@@ -50,6 +46,43 @@ export function asUint8Array(data: unknown): Uint8Array | null {
     return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
   }
   return null;
+}
+
+function encodeUtf8WithoutPlatformApis(value: string): Uint8Array {
+  const bytes: number[] = [];
+  for (let index = 0; index < value.length; index += 1) {
+    let codePoint = value.charCodeAt(index);
+    if (codePoint >= 0xd800 && codePoint <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        codePoint = 0x10000 + ((codePoint - 0xd800) << 10) + (next - 0xdc00);
+        index += 1;
+      } else {
+        codePoint = 0xfffd;
+      }
+    } else if (codePoint >= 0xdc00 && codePoint <= 0xdfff) {
+      codePoint = 0xfffd;
+    }
+    if (codePoint <= 0x7f) {
+      bytes.push(codePoint);
+    } else if (codePoint <= 0x7ff) {
+      bytes.push(0xc0 | (codePoint >> 6), 0x80 | (codePoint & 0x3f));
+    } else if (codePoint <= 0xffff) {
+      bytes.push(
+        0xe0 | (codePoint >> 12),
+        0x80 | ((codePoint >> 6) & 0x3f),
+        0x80 | (codePoint & 0x3f),
+      );
+    } else {
+      bytes.push(
+        0xf0 | (codePoint >> 18),
+        0x80 | ((codePoint >> 12) & 0x3f),
+        0x80 | ((codePoint >> 6) & 0x3f),
+        0x80 | (codePoint & 0x3f),
+      );
+    }
+  }
+  return new Uint8Array(bytes);
 }
 
 function isTerminalStreamOpcode(value: number): value is TerminalStreamOpcode {

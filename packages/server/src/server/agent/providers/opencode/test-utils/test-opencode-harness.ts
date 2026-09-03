@@ -169,7 +169,16 @@ export class TestOpenCodeClient {
     null;
   sessionPromptAsyncEvents: unknown[] = [idleEvent()];
   sessionPromptAsyncResponse: OpenCodeResponse = {};
-  sessionStatusResponse: OpenCodeResponse = { data: {} };
+  private configuredSessionStatusResponse: OpenCodeResponse = { data: {} };
+  private sessionStatusResponseWasConfigured = false;
+  private readonly observedSessionStatuses = new Map<string, "idle" | "busy" | "retry">();
+  get sessionStatusResponse(): OpenCodeResponse {
+    return this.configuredSessionStatusResponse;
+  }
+  set sessionStatusResponse(response: OpenCodeResponse) {
+    this.sessionStatusResponseWasConfigured = true;
+    this.configuredSessionStatusResponse = response;
+  }
   sessionStatusImplementation:
     | ((parameters: unknown, options: unknown) => Promise<OpenCodeResponse>)
     | null = null;
@@ -184,8 +193,29 @@ export class TestOpenCodeClient {
   }
 
   emitEvent(event: unknown): void {
+    this.observeSessionStatus(event);
     this.queuedEventStream.emit(event);
     this.eventObserver?.(event);
+  }
+
+  private observeSessionStatus(event: unknown): void {
+    if (this.sessionStatusResponseWasConfigured || !event || typeof event !== "object") return;
+    const record = event as {
+      type?: unknown;
+      properties?: { sessionID?: unknown; status?: { type?: unknown } };
+    };
+    const sessionId =
+      typeof record.properties?.sessionID === "string" ? record.properties.sessionID : null;
+    if (!sessionId) return;
+    // Keep an active status through the rest of a synchronously emitted event
+    // burst. The real event source consumes the burst in order; retaining the
+    // boundary here lets startAutonomousTurn verify the active status before
+    // the buffered terminal event is consumed.
+    if (record.type !== "session.status") return;
+    const status = record.properties?.status?.type;
+    if (status === "idle" || status === "busy" || status === "retry") {
+      this.observedSessionStatuses.set(sessionId, status);
+    }
   }
 
   observeEvents(observer: (event: unknown) => void): void {
@@ -340,9 +370,15 @@ export class TestOpenCodeClient {
         },
         status: async (parameters: unknown, options: unknown) => {
           this.calls.sessionStatus.push(parameters);
-          return this.sessionStatusImplementation
-            ? await this.sessionStatusImplementation(parameters, options)
-            : this.sessionStatusResponse;
+          if (this.sessionStatusImplementation) {
+            return await this.sessionStatusImplementation(parameters, options);
+          }
+          if (this.sessionStatusResponseWasConfigured) return this.sessionStatusResponse;
+          return {
+            data: Object.fromEntries(
+              [...this.observedSessionStatuses].map(([id, type]) => [id, { type }]),
+            ),
+          };
         },
         summarize: async (parameters: unknown) => {
           this.calls.sessionSummarize.push(parameters);

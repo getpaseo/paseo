@@ -183,4 +183,13 @@ describe("daemon-client transport helpers", () => {
     expect(decodeMessageData(bytes.buffer)).toBe("hello");
     expect(decodeMessageData(bytes)).toBe("hello");
   });
+
+  test("uses explicit text metadata for UTF-8 bytes despite their Buffer-like type", () => {
+    const bytes = encodeUtf8String("€");
+    expect(extractRelayMessage({ data: bytes, isBinary: false })).toEqual({
+      data: "€",
+      isBinary: false,
+    });
+    expect(encodeUtf8String("€").byteLength).toBe(3);
+  });
 });

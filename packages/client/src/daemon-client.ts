@@ -151,6 +151,7 @@ import {
   defaultWebSocketFactory,
   describeTransportClose,
   describeTransportError,
+  encodeUtf8String,
   type DaemonTransport,
   type DaemonTransportFactory,
   type WebSocketFactory,
@@ -1024,7 +1025,7 @@ function concatByteChunks(chunks: Uint8Array[], size: number): Uint8Array {
 
 function getTransportFrameSize(frame: string | Uint8Array | ArrayBuffer): number {
   if (typeof frame === "string") {
-    return frame.length;
+    return encodeUtf8String(frame).byteLength;
   }
   return frame.byteLength;
 }
@@ -1032,9 +1033,11 @@ function getTransportFrameSize(frame: string | Uint8Array | ArrayBuffer): number
 function describeInboundTransportFrame(
   frame: unknown,
   rawBytes: Uint8Array | null,
+  isBinary?: boolean,
 ): Record<string, string> {
-  if (typeof frame === "string") {
-    return { kind: "text", size: String(frame.length) };
+  if (isBinary !== true) {
+    const text = typeof frame === "string" ? frame : decodeMessageData(frame);
+    return { kind: "text", size: String(text === null ? 0 : encodeUtf8String(text).byteLength) };
   }
   if (rawBytes) {
     return { kind: "binary", size: String(rawBytes.byteLength) };
@@ -1355,7 +1358,7 @@ export class DaemonClient {
             reasonCode: "transport_error",
           });
         }),
-        transport.onMessage((data) => this.handleTransportMessage(data)),
+        transport.onMessage((data, isBinary) => this.handleTransportMessage(data, isBinary)),
       ];
     } catch (error) {
       this.resetConnectTimeout();
@@ -5684,7 +5687,7 @@ export class DaemonClient {
   private createRequestId(requestId?: string): string {
     if (requestId !== undefined) return requestId;
     const generated = crypto.randomUUID();
-    if (new TextEncoder().encode(generated).byteLength > MAX_DELIVERY_REQUEST_ID_BYTES) {
+    if (encodeUtf8String(generated).byteLength > MAX_DELIVERY_REQUEST_ID_BYTES) {
       throw new Error(
         `Generated request ID exceeds the ${MAX_DELIVERY_REQUEST_ID_BYTES}-byte limit`,
       );
@@ -5807,9 +5810,21 @@ export class DaemonClient {
     this.connectTimeout = null;
   }
 
-  private handleTransportMessage(data: unknown): void {
-    const rawData =
-      data && typeof data === "object" && "data" in data ? (data as { data: unknown }).data : data;
+  private handleTransportMessage(data: unknown, isBinary?: boolean): void {
+    const envelope =
+      data && typeof data === "object" && "data" in data
+        ? (data as { data: unknown; isBinary?: unknown })
+        : null;
+    const rawData = envelope ? envelope.data : data;
+    let explicitBinary: boolean | undefined;
+    if (typeof isBinary === "boolean") {
+      explicitBinary = isBinary;
+    } else if (envelope && typeof envelope.isBinary === "boolean") {
+      explicitBinary = envelope.isBinary;
+    }
+    // Older test and transport adapters did not expose the opcode separately.
+    // Keep their object-type inference only when no authoritative flag exists.
+    const frameIsBinary = explicitBinary ?? typeof rawData !== "string";
 
     if (
       typeof Blob !== "undefined" &&
@@ -5819,7 +5834,7 @@ export class DaemonClient {
       void rawData
         .arrayBuffer()
         .then((buffer) => {
-          this.handleTransportMessage(buffer);
+          this.handleTransportMessage(buffer, frameIsBinary);
           return;
         })
         .catch(() => {
@@ -5828,13 +5843,23 @@ export class DaemonClient {
       return;
     }
 
-    const rawBytes = asUint8Array(rawData);
+    const rawBytes = frameIsBinary ? asUint8Array(rawData) : null;
     const isOpen = this.beginTraceSection(
       "paseo.ws.frame.inbound",
-      describeInboundTransportFrame(rawData, rawBytes),
+      describeInboundTransportFrame(rawData, rawBytes, frameIsBinary),
     );
     try {
-      if (rawBytes && this.tryHandleBinaryFrame(rawBytes)) {
+      if (frameIsBinary) {
+        if (rawBytes && this.tryHandleBinaryFrame(rawBytes)) {
+          return;
+        }
+        // The WebSocket opcode is authoritative. An unknown binary frame is
+        // not a JSON message, even when its bytes happen to be valid UTF-8.
+        this.traceInstant("paseo.ws.message.inbound", {
+          envelopeType: "binary",
+          messageType: "unknown",
+          reason: "unsupported_binary_frame",
+        });
         return;
       }
       const payload = decodeMessageData(rawData);
@@ -5848,7 +5873,7 @@ export class DaemonClient {
   }
 
   private handleJsonPayload(payload: string, rawBytesLength: number | undefined): void {
-    const bytes = rawBytesLength ?? payload.length;
+    const bytes = rawBytesLength ?? encodeUtf8String(payload).byteLength;
     const startMs = perfNow();
     let parsedJson: unknown;
     const parseTraceOpen = this.beginTraceSection("paseo.ws.json.parse", {

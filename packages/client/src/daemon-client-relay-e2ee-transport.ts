@@ -63,11 +63,11 @@ export function createEncryptedTransport(
     emitHandlers(errorHandlers, event);
   };
 
-  const emitMessage = (data: unknown) => {
+  const emitMessage = (data: unknown, isBinary?: boolean) => {
     if (closed) {
       return;
     }
-    emitHandlers(messageHandlers, data, data instanceof ArrayBuffer);
+    emitHandlers(messageHandlers, data, isBinary ?? data instanceof ArrayBuffer);
   };
 
   const relayTransport: RelayTransport = {
@@ -96,7 +96,7 @@ export function createEncryptedTransport(
     try {
       channel = await createClientChannel(relayTransport, daemonPublicKeyB64, {
         onopen: emitOpen,
-        onmessage: (data) => emitMessage(data),
+        onmessage: (data, isBinary) => emitMessage(data, isBinary),
         onclose: (code, reason) => emitClose({ code, reason }),
         onerror: (error) => emitError(error),
       });

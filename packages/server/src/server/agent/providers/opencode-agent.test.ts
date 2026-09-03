@@ -248,6 +248,7 @@ async function createParentSession(
 ): Promise<{
   readonly parent: Awaited<ReturnType<OpenCodeAgentClient["createSession"]>>;
   readonly openCode: TestOpenCodeClient;
+  readonly runtime: TestOpenCodeHarness;
 }> {
   const runtime = new TestOpenCodeHarness();
   const openCode = new TestOpenCodeClient();
@@ -262,7 +263,7 @@ async function createParentSession(
     provider: "opencode",
     cwd: "/workspace/repo",
   });
-  return { parent, openCode };
+  return { parent, openCode, runtime };
 }
 
 function manualCompactEvents({
@@ -3802,6 +3803,37 @@ describe("OpenCode adapter startTurn error handling", () => {
         ),
       ]);
       await expect(session.close()).resolves.toBeUndefined();
+    }
+  });
+
+  test("defers server release until an earlier session abort settles", async () => {
+    const settleInterrupt = createTestDeferred<void>();
+    const {
+      parent: session,
+      openCode,
+      runtime,
+    } = await createParentSession("ses_close_pending_abort", (client) => {
+      client.sessionPromptAsyncEvents = [];
+      client.sessionAbortImplementation = async () => {
+        if (client.calls.sessionAbort.length === 1) await settleInterrupt.promise;
+        return { data: true };
+      };
+    });
+
+    try {
+      await session.startTurn("keep the session busy");
+      const interrupt = session.interrupt();
+      await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(1));
+
+      await session.close();
+      expect(runtime.acquisitions.at(-1)?.releaseCount).toBe(0);
+
+      settleInterrupt.resolve();
+      await interrupt;
+      await vi.waitFor(() => expect(runtime.acquisitions.at(-1)?.releaseCount).toBe(1));
+    } finally {
+      settleInterrupt.resolve();
+      await session.close();
     }
   });
 

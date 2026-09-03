@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { PluginProcessRequest } from "./plugin-process-protocol.js";
-import { PluginSessionSocket } from "./session-socket.js";
+import { MAX_PLUGIN_SESSION_FRAME_BYTES, PluginSessionSocket } from "./session-socket.js";
 
 describe("PluginSessionSocket", () => {
   it("preserves text and binary frame order across IPC", () => {
@@ -22,6 +22,35 @@ describe("PluginSessionSocket", () => {
       { type: "paseo_frame", data: new Uint8Array([1, 2, 3]), isBinary: true },
       { type: "paseo_frame", data: "last", isBinary: false },
     ]);
+  });
+
+  it("settles a send callback and buffered bytes only once", () => {
+    const callback = vi.fn<(error?: Error) => void>();
+    const socket = new PluginSessionSocket({
+      send(_message, sendCallback) {
+        sendCallback?.(null);
+        sendCallback?.(new Error("late callback"));
+        return true;
+      },
+    });
+
+    socket.send("€", callback);
+
+    expect(callback).toHaveBeenCalledOnce();
+    expect(socket.bufferedAmount).toBe(0);
+  });
+
+  it("rejects oversized UTF-8 frames before sending them to the child", () => {
+    const send = vi.fn(() => true);
+    const callback = vi.fn<(error?: Error) => void>();
+    const socket = new PluginSessionSocket({ send });
+
+    socket.send("é".repeat(MAX_PLUGIN_SESSION_FRAME_BYTES), callback);
+
+    expect(send).not.toHaveBeenCalled();
+    expect(callback).toHaveBeenCalledOnce();
+    expect(callback.mock.calls[0]?.[0]?.message).toMatch(/limit/);
+    expect(socket.bufferedAmount).toBe(0);
   });
 
   it("reports bytes queued in child-process IPC for terminal backpressure", () => {

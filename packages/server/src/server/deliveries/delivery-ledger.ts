@@ -36,6 +36,7 @@ const MAX_OWNER_ID_BYTES = 256;
 const MAX_ERROR_BYTES = 16 * 1024;
 const READ_CHUNK_BYTES = 64 * 1024;
 const TRANSIENT_RETRY_COUNT = 3;
+const DEFAULT_CLEANUP_TIMEOUT_MS = 5_000;
 // A zero fallback silently turns every guarded open into a symlink-following
 // open on platforms without O_NOFOLLOW. Delivery persistence is fail-closed.
 const O_NOFOLLOW = (fsConstants as { O_NOFOLLOW?: number }).O_NOFOLLOW;
@@ -75,11 +76,13 @@ export interface DeliveryLedgerGetResult {
 }
 
 export interface DeliveryLedgerDiagnostic {
-  kind: "quarantined";
+  kind: "quarantined" | "cleanup_timeout";
   ownerId: string;
   filePath: string;
   quarantinePath: string;
   reason: string;
+  operation?: "flush" | "removeOwner";
+  timeoutMs?: number;
 }
 
 export interface DeliveryLedgerOptions {
@@ -92,6 +95,7 @@ export interface DeliveryLedgerOptions {
   maxAcknowledgedPayloads?: number;
   maxAcknowledgedPayloadBytes?: number;
   tombstoneRetentionMs?: number;
+  cleanupTimeoutMs?: number;
   onDiagnostic?: (diagnostic: DeliveryLedgerDiagnostic) => void;
   // Short aliases make the quota seam convenient for focused tests and small
   // embedders without changing the durable format.
@@ -111,7 +115,8 @@ type DeliveryLedgerErrorCode =
   | "delivery_payload_unavailable"
   | "delivery_target_required"
   | "delivery_owner_closing"
-  | "delivery_response_too_large";
+  | "delivery_response_too_large"
+  | "delivery_cleanup_timeout";
 
 export class DeliveryLedgerError extends Error {
   constructor(
@@ -573,6 +578,7 @@ export class DeliveryLedger {
   private readonly maxAcknowledgedPayloads: number;
   private readonly maxAcknowledgedPayloadBytes: number;
   private readonly tombstoneRetentionMs: number;
+  private readonly cleanupTimeoutMs: number;
   private readonly onDiagnostic: ((diagnostic: DeliveryLedgerDiagnostic) => void) | null;
 
   constructor(
@@ -611,6 +617,10 @@ export class DeliveryLedger {
     this.tombstoneRetentionMs = nonNegativeInteger(
       options.tombstoneRetentionMs ?? DEFAULT_TOMBSTONE_RETENTION_MS,
       "tombstoneRetentionMs",
+    );
+    this.cleanupTimeoutMs = positiveInteger(
+      options.cleanupTimeoutMs ?? DEFAULT_CLEANUP_TIMEOUT_MS,
+      "cleanupTimeoutMs",
     );
     this.onDiagnostic = options.onDiagnostic ?? null;
   }
@@ -1037,7 +1047,7 @@ export class DeliveryLedger {
   }
 
   /** Remove all state for an installation-scoped principal, even if loading failed. */
-  async removeOwner(ownerId: string): Promise<void> {
+  async removeOwner(ownerId: string, timeoutMs = this.cleanupTimeoutMs): Promise<void> {
     const normalizedOwnerId = validateOwnerId(ownerId);
     const state = this.ownerState(normalizedOwnerId);
     state.closing = true;
@@ -1059,22 +1069,56 @@ export class DeliveryLedger {
       () => undefined,
       () => undefined,
     );
-    await next;
+    const completed = await waitForDeadline(next, timeoutMs);
+    if (!completed) {
+      this.reportCleanupTimeout(normalizedOwnerId, "removeOwner", timeoutMs);
+      throw new DeliveryLedgerError(
+        "delivery_cleanup_timeout",
+        `Timed out removing delivery owner ${normalizedOwnerId}`,
+      );
+    }
   }
 
-  async purgeOwner(ownerId: string): Promise<void> {
-    await this.removeOwner(ownerId);
+  async purgeOwner(ownerId: string, timeoutMs = this.cleanupTimeoutMs): Promise<void> {
+    await this.removeOwner(ownerId, timeoutMs);
   }
 
-  async flush(): Promise<void> {
-    await Promise.all(
-      [...this.owners.values()].map(async (state) => {
-        await state.mutationTail;
-        // Shutdown must not fail because a closed owner retained a historical
-        // load rejection (for example, a quarantined symlinked ledger).
-        await state.loadPromise?.catch(() => undefined);
+  async flush(timeoutMs = this.cleanupTimeoutMs): Promise<void> {
+    const states = [...this.owners.entries()];
+    const pendingOwners = new Set(states.map(([ownerId]) => ownerId));
+    const pending = Promise.all(
+      states.map(async ([ownerId, state]) => {
+        try {
+          await state.mutationTail;
+          // Shutdown must not fail because a closed owner retained a historical
+          // load rejection (for example, a quarantined symlinked ledger).
+          await state.loadPromise?.catch(() => undefined);
+        } finally {
+          pendingOwners.delete(ownerId);
+        }
       }),
     );
+    const completed = await waitForDeadline(pending, timeoutMs);
+    if (completed) return;
+    for (const ownerId of pendingOwners) {
+      this.reportCleanupTimeout(ownerId, "flush", timeoutMs);
+    }
+  }
+
+  private reportCleanupTimeout(
+    ownerId: string,
+    operation: "flush" | "removeOwner",
+    timeoutMs: number,
+  ): void {
+    this.onDiagnostic?.({
+      kind: "cleanup_timeout",
+      ownerId,
+      filePath: deliveryLedgerFilePath(this.baseDir, ownerId),
+      quarantinePath: "",
+      operation,
+      timeoutMs,
+      reason: `Delivery ledger ${operation} exceeded its ${timeoutMs}ms deadline`,
+    });
   }
 
   private ownerState(ownerId: string): OwnerState {
@@ -1681,6 +1725,23 @@ export class DeliveryLedger {
       () => undefined,
     );
     return next;
+  }
+}
+
+async function waitForDeadline<T>(promise: Promise<T>, timeoutMs: number): Promise<boolean> {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0) {
+    throw new Error("timeoutMs must be a non-negative safe integer");
+  }
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

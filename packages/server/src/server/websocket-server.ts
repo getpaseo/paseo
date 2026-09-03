@@ -92,6 +92,7 @@ import {
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/transport-limits";
+import { MAX_DELIVERY_REQUEST_ID_BYTES } from "@getpaseo/protocol/deliveries";
 import type { BrowserAutomationExecuteResponse } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   BrowserAutomationHostCapabilitySchema,
@@ -722,10 +723,7 @@ export class VoiceAssistantWebSocketServer {
       deliveryLedger ??
       new DeliveryLedger(join(paseoHome, "deliveries"), {
         onDiagnostic: (diagnostic) => {
-          this.logger.error(
-            { deliveryLedger: diagnostic },
-            "Quarantined malformed delivery ledger",
-          );
+          this.logger.error({ deliveryLedger: diagnostic }, "Delivery ledger diagnostic");
         },
       });
     this.deliveryDispatchCoordinator = new DeliveryDispatchCoordinator();
@@ -1173,7 +1171,23 @@ export class VoiceAssistantWebSocketServer {
     await Promise.all(cleanupPromises);
     await this.awaitPluginDeliveryCleanupPromises();
     await this.drainPluginDeliveryCleanupRetries();
-    await this.deliveryLedger.flush();
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+    const ledgerFlush = this.deliveryLedger.flush().catch((error) => {
+      this.logger.warn({ err: error }, "Failed to flush delivery ledger during shutdown");
+    });
+    const flushed = await Promise.race([
+      ledgerFlush.then(() => true),
+      new Promise<boolean>((resolve) => {
+        flushTimer = setTimeout(() => resolve(false), PLUGIN_DELIVERY_SHUTDOWN_TIMEOUT_MS);
+      }),
+    ]);
+    if (flushTimer) clearTimeout(flushTimer);
+    if (!flushed) {
+      this.logger.warn(
+        { timeoutMs: PLUGIN_DELIVERY_SHUTDOWN_TIMEOUT_MS },
+        "Delivery ledger flush timed out during shutdown; retaining pending state",
+      );
+    }
     this.providerSnapshotManager.destroy();
     this.checkoutDiffManager.dispose();
     await this.workspaceGitService.dispose();
@@ -1902,7 +1916,8 @@ export class VoiceAssistantWebSocketServer {
   private bindSocketHandlers(ws: WebSocketLike): void {
     ws.on("message", (...args: unknown[]) => {
       const data = args[0] as Buffer | ArrayBuffer | Buffer[] | string;
-      this.handleRawMessage(ws, data);
+      const isBinary = typeof args[1] === "boolean" ? args[1] : undefined;
+      this.handleRawMessage(ws, data, isBinary);
     });
 
     ws.on("close", async (...args: unknown[]) => {
@@ -2484,9 +2499,37 @@ export class VoiceAssistantWebSocketServer {
     }
   }
 
+  private handleBinaryInboundFrame(params: {
+    ws: WebSocketLike;
+    data: Buffer | ArrayBuffer | Buffer[] | string;
+    isBinary?: boolean;
+    buffer: Buffer;
+    activeConnection: SessionConnection | undefined;
+    log: pino.Logger;
+  }): boolean {
+    const { ws, data, isBinary, buffer, activeConnection, log } = params;
+    const frameIsBinary = isBinary ?? typeof data !== "string";
+    if (!frameIsBinary) return false;
+    if (
+      this.maybeHandleBinaryFrame({
+        ws,
+        buffer,
+        activeConnection,
+        log,
+      })
+    ) {
+      return true;
+    }
+    // The WebSocket opcode is authoritative. Do not reinterpret an
+    // unrecognized binary payload as JSON because its bytes decode as text.
+    log.warn({ bytes: buffer.byteLength }, "Rejected unsupported binary WebSocket frame");
+    return true;
+  }
+
   private handleRawMessage(
     ws: WebSocketLike,
     data: Buffer | ArrayBuffer | Buffer[] | string,
+    isBinary?: boolean,
   ): void {
     if (
       this.connectionLifecycle === "stopping" ||
@@ -2516,13 +2559,7 @@ export class VoiceAssistantWebSocketServer {
         }
         return;
       }
-      const binaryHandled = this.maybeHandleBinaryFrame({
-        ws,
-        buffer,
-        activeConnection,
-        log,
-      });
-      if (binaryHandled) {
+      if (this.handleBinaryInboundFrame({ ws, data, isBinary, buffer, activeConnection, log })) {
         return;
       }
 
@@ -3279,7 +3316,7 @@ function extractRequestInfoFromUnknownWsInbound(
   // Session-wrapped messages
   if (record.type === "session" && record.message && typeof record.message === "object") {
     const msg = record.message as { requestId?: unknown; type?: unknown };
-    if (typeof msg.requestId === "string") {
+    if (isSafeCorrelatedRequestId(msg.requestId)) {
       return {
         requestId: msg.requestId,
         ...(typeof msg.type === "string" ? { requestType: msg.type } : {}),
@@ -3288,7 +3325,7 @@ function extractRequestInfoFromUnknownWsInbound(
   }
 
   // Non-session messages (future-proof)
-  if (typeof record.requestId === "string") {
+  if (isSafeCorrelatedRequestId(record.requestId)) {
     return {
       requestId: record.requestId,
       ...(typeof record.type === "string" ? { requestType: record.type } : {}),
@@ -3296,6 +3333,14 @@ function extractRequestInfoFromUnknownWsInbound(
   }
 
   return null;
+}
+
+function isSafeCorrelatedRequestId(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    Buffer.byteLength(value, "utf8") <= MAX_DELIVERY_REQUEST_ID_BYTES
+  );
 }
 
 function isPluginDeliveryCleanupRetry(

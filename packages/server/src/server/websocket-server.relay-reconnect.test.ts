@@ -1176,6 +1176,26 @@ describe("relay external socket reconnect behavior", () => {
     await server.close();
   });
 
+  test("uses the WebSocket binary flag instead of Buffer shape for inbound JSON", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({
+      server,
+      socket,
+      clientId: "cid-binary-flag",
+    });
+
+    const sentBefore = socket.sent.length;
+    const ping = Buffer.from(JSON.stringify({ type: "ping" }));
+    socket.emit("message", ping, true);
+    expect(socket.sent).toHaveLength(sentBefore);
+
+    socket.emit("message", ping, false);
+    expect(sentEnvelopes(socket).slice(sentBefore)).toContainEqual({ type: "pong" });
+
+    await server.close();
+  });
+
   test("routes inbound terminal frames to session.handleBinaryFrame", async () => {
     const server = createServer();
 

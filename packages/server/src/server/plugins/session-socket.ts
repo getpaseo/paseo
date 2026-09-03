@@ -1,4 +1,5 @@
 import { Buffer } from "node:buffer";
+import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/transport-limits";
 import type { PluginProcessRequest } from "./plugin-process-protocol.js";
 
 interface PluginProcessSender {
@@ -17,8 +18,10 @@ function normalizeBinaryFrame(
   return new Uint8Array(data) as Uint8Array<ArrayBuffer>;
 }
 
+export const MAX_PLUGIN_SESSION_FRAME_BYTES = MAX_WEBSOCKET_MESSAGE_BYTES;
+
 function frameByteLength(data: string | Uint8Array): number {
-  return typeof data === "string" ? Buffer.byteLength(data) : data.byteLength;
+  return typeof data === "string" ? Buffer.byteLength(data, "utf8") : data.byteLength;
 }
 
 export class PluginSessionSocket {
@@ -36,23 +39,40 @@ export class PluginSessionSocket {
     }
     const frame = typeof data === "string" ? data : normalizeBinaryFrame(data);
     const byteLength = frameByteLength(frame);
+    if (byteLength > MAX_PLUGIN_SESSION_FRAME_BYTES) {
+      callback?.(
+        new Error(`Plugin session frame exceeds the ${MAX_PLUGIN_SESSION_FRAME_BYTES}-byte limit`),
+      );
+      return;
+    }
     this.bufferedAmount += byteLength;
+    let completed = false;
+    const complete = (error?: Error | null): void => {
+      if (completed) return;
+      completed = true;
+      this.bufferedAmount = Math.max(0, this.bufferedAmount - byteLength);
+      callback?.(error ?? undefined);
+    };
     try {
       this.child.send(
         { type: "paseo_frame", data: frame, isBinary: typeof frame !== "string" },
-        (error) => {
-          this.bufferedAmount = Math.max(0, this.bufferedAmount - byteLength);
-          callback?.(error ?? undefined);
-        },
+        (error) => complete(error),
       );
     } catch (error) {
-      this.bufferedAmount = Math.max(0, this.bufferedAmount - byteLength);
-      callback?.(error instanceof Error ? error : new Error(String(error)));
+      complete(error instanceof Error ? error : new Error(String(error)));
     }
   }
 
   receive(data: string | Uint8Array, isBinary: boolean): void {
     if (this.readyState !== 1) return;
+    if (frameByteLength(data) > MAX_PLUGIN_SESSION_FRAME_BYTES) {
+      this.emit(
+        "error",
+        new Error(`Plugin session frame exceeds the ${MAX_PLUGIN_SESSION_FRAME_BYTES}-byte limit`),
+      );
+      this.peerClosed();
+      return;
+    }
     this.emit("message", data, isBinary);
   }
 

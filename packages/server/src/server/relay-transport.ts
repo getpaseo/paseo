@@ -423,14 +423,15 @@ async function attachEncryptedSocket(
   try {
     const relayTransport = createRelayTransportAdapter(socket, logger);
     const emitter = new EventEmitter();
-    const pendingMessages: Array<string | ArrayBuffer> = [];
+    const pendingMessages: Array<{ data: string | ArrayBuffer; isBinary: boolean }> = [];
     let attached = false;
-    const emitMessage = (data: string | ArrayBuffer) => {
+    const emitMessage = (data: string | ArrayBuffer, isBinary?: boolean) => {
+      const message = { data, isBinary: isBinary ?? data instanceof ArrayBuffer };
       if (attached) {
-        emitter.emit("message", data);
+        emitter.emit("message", message.data, message.isBinary);
         return;
       }
-      pendingMessages.push(data);
+      pendingMessages.push(message);
     };
     const channel = await createDaemonChannel(relayTransport, daemonKeyPair, {
       onmessage: emitMessage,
@@ -449,7 +450,7 @@ async function attachEncryptedSocket(
     await attachSocket(encryptedSocket, metadata);
     attached = true;
     for (const message of pendingMessages) {
-      emitter.emit("message", message);
+      emitter.emit("message", message.data, message.isBinary);
     }
     pendingMessages.length = 0;
   } catch (error) {
@@ -491,7 +492,9 @@ function createRelayTransportAdapter(
   };
 
   socket.on("message", (data, isBinary) => {
-    const binary = isBinary === true;
+    // Modern ws supplies the opcode separately. Older test and relay adapters
+    // may omit it, so retain type inference only at this boundary.
+    const binary = typeof isBinary === "boolean" ? isBinary : typeof data !== "string";
     relayTransport.onmessage?.({ data: normalizeMessageData(data, binary), isBinary: binary });
   });
   socket.on("close", (code, reason) => {
