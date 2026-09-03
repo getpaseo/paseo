@@ -7,7 +7,6 @@ import type {
   DimensionValue,
   NativeSyntheticEvent,
   StyleProp,
-  TextInput,
   TextInputKeyPressEventData,
   ViewStyle,
 } from "react-native";
@@ -43,6 +42,7 @@ import { useKeyboardVisibility } from "@/hooks/use-keyboard-visibility";
 import { useInputFocus } from "@/hooks/use-input-focus";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { AdaptiveTextInput } from "@/components/adaptive-text-input";
+import type { EditingTextInputHandle } from "@/components/ui/text-input";
 export { AdaptiveTextInput, type AdaptiveTextInputProps } from "@/components/adaptive-text-input";
 
 // Horizontal indent token shared by the sheet header (title, back arrow,
@@ -304,7 +304,7 @@ function BottomSheetVisibleContent({ children }: { children: ReactNode }) {
 }
 
 function useHeaderSearchInputFocus(enabled: boolean) {
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<EditingTextInputHandle>(null);
   useInputFocus(inputRef, enabled);
   return inputRef;
 }
