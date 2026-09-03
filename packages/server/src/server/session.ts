@@ -2079,6 +2079,7 @@ export class Session {
           request.targetAgentId === undefined
             ? undefined
             : DeliveryTargetAgentIdSchema.parse(request.targetAgentId);
+        // COMPAT(legacyPullDelivery): added in v0.7.3; remove after 2027-03-31 once client floor >= v0.7.3 and daemon floor >= v0.7.3.
         const messageId =
           request.messageId === undefined
             ? undefined

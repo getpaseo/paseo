@@ -117,6 +117,17 @@ describe("durable delivery protocol", () => {
     });
   });
 
+  test("accepts the old targetless delivery send wire request", () => {
+    const request = DeliveriesSendRequestSchema.parse({
+      type: "deliveries.send.request",
+      requestId: "old-wire-request",
+      deliveryId: "legacy-wire-delivery",
+      payload: { event: "refresh" },
+    });
+
+    expect(request.targetAgentId).toBeUndefined();
+  });
+
   test("validates sequence cursors independently from delivery IDs", () => {
     expect(DeliverySequenceCursorSchema.parse("seq:7")).toBe("seq:7");
     expect(DeliverySequenceCursorSchema.safeParse("delivery-one").success).toBe(false);
@@ -156,7 +167,7 @@ describe("durable delivery protocol", () => {
   });
 
   test("keeps delivery responses below the WebSocket transport maximum", () => {
-    expect(MAX_DELIVERY_RESPONSE_BYTES).toBe(MAX_WEBSOCKET_MESSAGE_BYTES - 1);
+    expect(MAX_DELIVERY_RESPONSE_BYTES).toBe(MAX_WEBSOCKET_MESSAGE_BYTES);
     const legacyRequestId = "x".repeat(MAX_DELIVERY_REQUEST_ID_BYTES + 1);
     expect(
       DeliveriesGetRequestSchema.safeParse({

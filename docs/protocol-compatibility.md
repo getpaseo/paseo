@@ -46,9 +46,14 @@ reject calls against removed generations.
 
 Durable delivery payload compaction is negotiated through `server_info.features.deliveryPayloadTombstones`.
 Only records admitted by a client advertising that capability may lose their acknowledged payload. A
-client without it never receives a payloadless row; the daemon filters older clients from already
-compacted rows. Delivery request IDs remain wire-compatible strings bounded by the complete
-WebSocket frame, while newly generated SDK IDs stay at the 256-byte application limit.
+capable client receives the retained tombstone and repeated acknowledgement is idempotent. A client
+without the capability never receives a payloadless row; the daemon filters older clients from
+already-compacted rows, and an acknowledgement of a known compacted delivery may return
+`delivery_payload_unavailable` because that client's wire contract requires a payload. Delivery
+request IDs remain wire-compatible strings bounded only by the complete accepted WebSocket frame,
+including IDs longer than 256 bytes, while newly generated SDK IDs stay at the 256-byte application
+limit. Correlated responses are sent to the originating socket; when the response or its bounded
+error cannot fit, that socket is closed so the waiter rejects instead of losing the correlation.
 
 Exact-turn cancellation is gated by `server_info.features.exactTurnCancellation`.
 `agentTurnIdentity` only says that snapshots may identify the active turn; it does not
@@ -69,7 +74,7 @@ A shim that exists for old-app or old-daemon support carries a comment naming it
 `rg "COMPAT\("` is the full cleanup backlog, so:
 
 - One tag per shim, at the site that has to be deleted.
-- Give it a name, a version, and a removal condition or date. Six months out is the usual default.
+- Give it a name, an added version, a concrete removal date, and actionable minimum client and daemon floors. Six months out is the usual default.
 - Never bury compatibility in an untagged `??` fallback or an optional-chain tunnel. Untagged back-compat never gets removed, because nobody can find it.
 
 When a tag's condition is met, delete the shim and the tag in the same change.

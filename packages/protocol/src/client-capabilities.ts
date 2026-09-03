@@ -28,13 +28,9 @@ export const CLIENT_CAPS = {
   // reconstructed timeline replay after 2027-02-21 once the client floor supports invalidation.
   timelineReplacementInvalidation: "timeline_replacement_invalidation",
   browserHost: "browser_host",
-  // COMPAT(durableDeliveries): added in v0.7.2. Capable clients may use the
-  // owner-scoped durable delivery ledger. Remove the request gate once the
-  // supported client floor understands the deliveries RPCs.
+  // COMPAT(durableDeliveries): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
   durableDeliveries: "durable_deliveries",
-  // COMPAT(deliveryPayloadTombstones): added in v0.7.3. The daemon may compact
-  // acknowledged delivery payloads only for records admitted by clients that
-  // advertise this capability. Older clients require payloads on the wire.
+  // COMPAT(deliveryPayloadTombstones): added in v0.7.3; remove after 2027-03-31 once client floor >= v0.7.3 and daemon floor >= v0.7.3.
   deliveryPayloadTombstones: "delivery_payload_tombstones",
 } as const;
 

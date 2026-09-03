@@ -92,7 +92,6 @@ import {
 } from "./lifecycle-reasons.js";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/transport-limits";
-import { MAX_DELIVERY_REQUEST_ID_BYTES } from "@getpaseo/protocol/deliveries";
 import type { BrowserAutomationExecuteResponse } from "@getpaseo/protocol/browser-automation/rpc-schemas";
 import {
   BrowserAutomationHostCapabilitySchema,
@@ -1206,11 +1205,7 @@ export class VoiceAssistantWebSocketServer {
   }
 
   private sendMessageToSockets(sockets: Iterable<WebSocketLike>, message: WSOutboundMessage): void {
-    const writableSockets = [...sockets].filter((ws) => this.ensureOutboundCapacity(ws, 0));
-    if (writableSockets.length === 0) {
-      return;
-    }
-
+    const socketList = [...sockets];
     let payload: string;
     try {
       payload = JSON.stringify(message);
@@ -1225,8 +1220,21 @@ export class VoiceAssistantWebSocketServer {
         { bytes: payloadBytes, maxBytes: MAX_WEBSOCKET_MESSAGE_BYTES, messageType: message.type },
         "Rejected oversized outbound WebSocket message",
       );
+      for (const ws of socketList) {
+        if (ws.readyState !== 1) continue;
+        this.closePhysicalSocket({
+          ws,
+          logMessage: "Closing physical WebSocket for oversized outbound message",
+          logFields: {
+            bytes: payloadBytes,
+            maxBytes: MAX_WEBSOCKET_MESSAGE_BYTES,
+            messageType: message.type,
+          },
+        });
+      }
       return;
     }
+    const writableSockets = socketList.filter((ws) => this.ensureOutboundCapacity(ws, 0));
     for (const ws of writableSockets) {
       this.sendFrameToClient(ws, payload, payloadBytes, () => {
         this.runtimeMetrics.recordOutboundMessage(message, ws.bufferedAmount);
@@ -1869,15 +1877,11 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
-        // COMPAT(durableDeliveries): added in v0.7.2, remove after clients
-        // understand the owner-scoped delivery ledger.
+        // COMPAT(durableDeliveries): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
         durableDeliveries: true,
-        // COMPAT(durableDeliveryTargeting): added in v0.7.2; old durable
-        // delivery hosts must not silently downgrade targeted sends to pulls.
+        // COMPAT(durableDeliveryTargeting): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
         durableDeliveryTargeting: true,
-        // COMPAT(deliveryPayloadTombstones): added in v0.7.3; clients must
-        // advertise the matching capability before acknowledged payloads can
-        // be compacted or omitted from their responses.
+        // COMPAT(deliveryPayloadTombstones): added in v0.7.3; remove after 2027-03-31 once client floor >= v0.7.3 and daemon floor >= v0.7.3.
         deliveryPayloadTombstones: true,
       },
     };
@@ -3336,11 +3340,7 @@ function extractRequestInfoFromUnknownWsInbound(
 }
 
 function isSafeCorrelatedRequestId(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    value.length > 0 &&
-    Buffer.byteLength(value, "utf8") <= MAX_DELIVERY_REQUEST_ID_BYTES
-  );
+  return typeof value === "string" && value.length > 0;
 }
 
 function isPluginDeliveryCleanupRetry(

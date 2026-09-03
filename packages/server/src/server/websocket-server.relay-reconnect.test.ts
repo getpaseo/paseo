@@ -594,7 +594,7 @@ describe("relay external socket reconnect behavior", () => {
     expect(asInternals<WebSocketServerInternals>(server).pluginDeliveryCleanupRetries.size).toBe(1);
   });
 
-  test("does not enqueue an oversized outbound WebSocket frame", async () => {
+  test("closes sockets instead of silently dropping an oversized outbound frame", async () => {
     const server = createServer();
     const socket = new MockSocket();
     await attachRelayAndHello({ server, socket, clientId: "outbound-limit" });
@@ -606,6 +606,57 @@ describe("relay external socket reconnect behavior", () => {
     });
 
     expect(socket.sent).toHaveLength(sentBefore);
+    expect(socket.readyState).toBe(3);
+    await server.close();
+  });
+
+  test("correlates a 257-byte request id from an invalid accepted frame", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({ server, socket, clientId: "long-request-id" });
+    const requestId = "x".repeat(257);
+
+    socket.emit(
+      "message",
+      JSON.stringify({
+        type: "session",
+        message: { type: "unknown.request", requestId },
+      }),
+    );
+
+    await vi.waitFor(() => {
+      expect(sentEnvelopes(socket)).toContainEqual({
+        type: "session",
+        message: {
+          type: "rpc_error",
+          payload: expect.objectContaining({
+            requestId,
+            requestType: "unknown.request",
+            code: "unknown_schema",
+          }),
+        },
+      });
+    });
+    await server.close();
+  });
+
+  test("closes the originating socket when a near-frame correlated error cannot fit", async () => {
+    const server = createServer();
+    const socket = new MockSocket();
+    await attachRelayAndHello({ server, socket, clientId: "near-frame-request-id" });
+    const requestId = "x".repeat(MAX_WEBSOCKET_MESSAGE_BYTES - 100);
+    const inbound = JSON.stringify({
+      type: "session",
+      message: { type: "unknown.request", requestId },
+    });
+    expect(Buffer.byteLength(inbound, "utf8")).toBeLessThanOrEqual(MAX_WEBSOCKET_MESSAGE_BYTES);
+
+    socket.emit("message", inbound);
+
+    await vi.waitFor(() => expect(socket.readyState).toBe(3));
+    expect(sentEnvelopes(socket).some((envelope) => envelope.message?.type === "rpc_error")).toBe(
+      false,
+    );
     await server.close();
   });
 

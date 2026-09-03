@@ -5714,16 +5714,14 @@ export class DaemonClient {
   }
 
   private requireDurableDeliveriesSupport(): void {
-    // COMPAT(durableDeliveries): added in v0.7.2; remove after the supported
-    // daemon floor understands the owner-scoped deliveries RPCs.
+    // COMPAT(durableDeliveries): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
     if (this.lastServerInfoMessage?.features?.durableDeliveries !== true) {
       throw new Error("Update the host to use durable deliveries.");
     }
   }
 
   private requireTargetedDeliverySupport(): void {
-    // COMPAT(durableDeliveryTargeting): added in v0.7.2; remove after the
-    // supported daemon floor advertises authoritative target dispatch.
+    // COMPAT(durableDeliveryTargeting): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
     if (this.lastServerInfoMessage?.features?.durableDeliveryTargeting !== true) {
       throw new Error("Update the host to use targeted durable deliveries.");
     }

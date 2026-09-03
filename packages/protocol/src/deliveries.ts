@@ -216,18 +216,15 @@ export type DeliveryMode = z.infer<typeof DeliveryModeSchema>;
 export const DeliveryRecordSchema = z
   .object({
     deliveryId: DeliveryIdSchema,
-    // COMPAT(durableDeliverySequence): old records are assigned a sequence
-    // deterministically while loading.
+    // COMPAT(durableDeliverySequence): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
     sequence: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-    // COMPAT(durableDeliveryTarget): optional for records written by the
-    // initial principal-scoped pull ledger.
+    // COMPAT(durableDeliveryTarget): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
     targetAgentId: DeliveryTargetAgentIdSchema.optional(),
-    // COMPAT(durableDeliveryMessageId): old records use deliveryId implicitly.
+    // COMPAT(durableDeliveryMessageId): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
     messageId: DeliveryMessageIdSchema.optional(),
-    // COMPAT(durableDeliveryState): old records predate native dispatch.
+    // COMPAT(durableDeliveryState): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
     status: DeliveryStatusSchema.optional(),
-    // COMPAT(legacyPullDelivery): version-1 pull records are explicitly
-    // acknowledged pull state after migration; new records are targeted.
+    // COMPAT(legacyPullDelivery): added in v0.7.3; remove after 2027-03-31 once client floor >= v0.7.3 and daemon floor >= v0.7.3.
     deliveryMode: DeliveryModeSchema.optional(),
     // Acknowledged records may be compacted to a tombstone after retention.
     payload: DeliveryPayloadSchema.optional(),
@@ -280,7 +277,7 @@ export const DeliveriesSendRequestSchema = z.object({
   // request IDs that were valid as long as the complete WS frame was bounded.
   requestId: z.string().min(1),
   deliveryId: DeliveryIdSchema.optional(),
-  // COMPAT(durableDeliveryTarget): old pull-only clients may omit this field.
+  // COMPAT(durableDeliveryTarget): added in v0.7.3; remove after 2027-03-31 once client floor >= v0.7.3 and daemon floor >= v0.7.3.
   targetAgentId: DeliveryTargetAgentIdSchema.optional(),
   messageId: DeliveryMessageIdSchema.optional(),
   payload: DeliveryPayloadSchema,

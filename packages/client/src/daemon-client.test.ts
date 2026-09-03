@@ -2581,6 +2581,49 @@ test("text RPCs keep accepting long caller request ids", async () => {
   await expect(responsePromise).resolves.toEqual({ path: "src", entries: [] });
 });
 
+test("durable delivery RPCs preserve caller request ids above 256 bytes", async () => {
+  const mock = createMockTransport();
+  const client = new DaemonClient({
+    url: "ws://test",
+    clientId: "clsk_delivery_request_id",
+    logger: createMockLogger(),
+    reconnect: { enabled: false },
+    transportFactory: () => mock.transport,
+  });
+  clients.push(client);
+
+  const connectPromise = client.connect();
+  mock.triggerOpen({
+    features: {
+      durableDeliveries: true,
+      durableDeliveryTargeting: true,
+      deliveryPayloadTombstones: true,
+    },
+  });
+  await connectPromise;
+
+  const requestId = "x".repeat(257);
+  const responsePromise = client.getDeliveries({ requestId });
+  expect(parseSentFrame(mock.sent[0])).toMatchObject({
+    type: "deliveries.get.request",
+    requestId,
+  });
+
+  mock.triggerMessage(
+    wrapSessionMessage({
+      type: "deliveries.get.response",
+      payload: { requestId, delivery: null, deliveries: [], nextCursor: null },
+    }),
+  );
+
+  await expect(responsePromise).resolves.toEqual({
+    requestId,
+    delivery: null,
+    deliveries: [],
+    nextCursor: null,
+  });
+});
+
 test("normalizes workspace_setup_progress into a workspace-scoped daemon event", async () => {
   const logger = createMockLogger();
   const mock = createMockTransport();

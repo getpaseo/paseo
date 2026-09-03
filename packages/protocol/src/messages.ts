@@ -3524,14 +3524,11 @@ export const ServerInfoStatusPayloadSchema = z
         agentProfiles: z.boolean().optional(),
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: z.boolean().optional(),
-        // COMPAT(durableDeliveries): added in v0.7.2, remove after the
-        // supported clients understand the owner-scoped delivery ledger.
+        // COMPAT(durableDeliveries): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
         durableDeliveries: z.boolean().optional(),
-        // COMPAT(deliveryPayloadTombstones): added in v0.7.3; remove after
-        // supported clients all accept compact acknowledged delivery payloads.
+        // COMPAT(deliveryPayloadTombstones): added in v0.7.3; remove after 2027-03-31 once client floor >= v0.7.3 and daemon floor >= v0.7.3.
         deliveryPayloadTombstones: z.boolean().optional(),
-        // COMPAT(durableDeliveryTargeting): added in v0.7.2; old durable
-        // delivery hosts must not silently downgrade targeted sends to pulls.
+        // COMPAT(durableDeliveryTargeting): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
         durableDeliveryTargeting: z.boolean().optional(),
       })
       .optional(),

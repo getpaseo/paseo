@@ -653,12 +653,7 @@ export class DeliveryLedger {
       input.targetAgentId === undefined
         ? undefined
         : DeliveryTargetAgentIdSchema.parse(input.targetAgentId);
-    if (targetAgentId === undefined) {
-      throw new DeliveryLedgerError(
-        "delivery_target_required",
-        "New durable deliveries require an exact target agent",
-      );
-    }
+    const legacyPull = targetAgentId === undefined;
     const messageId = DeliveryMessageIdSchema.parse(input.messageId ?? deliveryId);
     try {
       assertDeliveryPayload(input.payload, { maxBytes: this.maxPayloadBytes });
@@ -701,19 +696,22 @@ export class DeliveryLedger {
         };
       }
 
+      const createdAt = this.now().toISOString();
       const record = DeliveryRecordSchema.parse({
         deliveryId,
         sequence: state.nextSequence,
-        targetAgentId,
+        ...(targetAgentId === undefined ? {} : { targetAgentId }),
         messageId,
-        status: "recorded",
-        deliveryMode: "targeted",
-        ...(input.payloadTombstoneEligible === true ? { payloadTombstoneEligible: true } : {}),
+        status: legacyPull ? "accepted" : "recorded",
+        deliveryMode: legacyPull ? "legacy_pull" : "targeted",
+        ...(input.payloadTombstoneEligible === true && !legacyPull
+          ? { payloadTombstoneEligible: true }
+          : {}),
         payload,
         payloadFingerprint: fingerprint,
-        createdAt: this.now().toISOString(),
+        createdAt,
         dispatchingAt: null,
-        acceptedAt: null,
+        acceptedAt: legacyPull ? createdAt : null,
         failedAt: null,
         ambiguousAt: null,
         error: null,
@@ -1412,8 +1410,7 @@ export class DeliveryLedger {
     nextSequence: number,
   ): { valid: boolean; index: number } {
     if (cursor === null) return { valid: true, index: -1 };
-    // COMPAT(durableDeliveryCursor): numeric sequence cursors remain readable
-    // during migration, but a cursor is never resolved as a delivery ID.
+    // COMPAT(durableDeliveryCursor): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
     const sequence = parseSequenceCursor(cursor);
     if (sequence === null || sequence >= nextSequence) return { valid: false, index: -1 };
     const exactIndex = records.findIndex((record) => record.sequence === sequence);
@@ -1434,7 +1431,7 @@ export class DeliveryLedger {
     const serialized = JSON.stringify(message);
     return (
       Buffer.byteLength(serialized, "utf8") <=
-      Math.min(maxEncodedBytes, MAX_WEBSOCKET_MESSAGE_BYTES - 1)
+      Math.min(maxEncodedBytes, MAX_WEBSOCKET_MESSAGE_BYTES)
     );
   }
 

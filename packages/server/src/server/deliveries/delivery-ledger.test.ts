@@ -392,11 +392,54 @@ test("persists target and message identity and rejects conflicting retries", asy
   ).rejects.toMatchObject<Partial<DeliveryLedgerError>>({ code: "delivery_id_conflict" });
   await expect(
     ledger.send("owner", { deliveryId: input.deliveryId, payload: input.payload }),
-  ).rejects.toMatchObject<Partial<DeliveryLedgerError>>({ code: "delivery_target_required" });
+  ).rejects.toMatchObject<Partial<DeliveryLedgerError>>({ code: "delivery_id_conflict" });
   expect(created.delivery).toMatchObject({
     targetAgentId: "agent-exact",
     messageId: "message-stable",
     status: "recorded",
+  });
+});
+
+test("accepts targetless old-wire sends as durable acknowledged legacy pulls", async () => {
+  const { home, ledger } = await createLedger();
+  const result = await ledger.send("owner", {
+    deliveryId: "legacy-send",
+    payload: { event: "refresh" },
+  });
+
+  expect(result).toMatchObject({
+    created: true,
+    delivery: {
+      deliveryId: "legacy-send",
+      messageId: "legacy-send",
+      deliveryMode: "legacy_pull",
+      status: "accepted",
+      acceptedAt: expect.any(String),
+      acknowledgedAt: null,
+    },
+  });
+  expect(result.delivery).not.toHaveProperty("targetAgentId");
+  await expect(
+    ledger.send("owner", {
+      deliveryId: "legacy-send",
+      payload: { event: "refresh" },
+    }),
+  ).resolves.toMatchObject({ created: false, delivery: result.delivery });
+
+  const recovered = new DeliveryLedger(home);
+  await expect(recovered.get("owner")).resolves.toMatchObject({
+    deliveries: [
+      {
+        deliveryId: "legacy-send",
+        deliveryMode: "legacy_pull",
+        status: "accepted",
+      },
+    ],
+  });
+  await expect(recovered.acknowledge("owner", "legacy-send")).resolves.toMatchObject({
+    deliveryId: "legacy-send",
+    deliveryMode: "legacy_pull",
+    status: "acknowledged",
   });
 });
 
@@ -828,9 +871,27 @@ test("only capable clients admit payload tombstones and older clients get truthf
   });
   await configured.markDispatching("owner", "capable-client-delivery");
   await configured.markAccepted("owner", "capable-client-delivery");
-  await configured.acknowledge("owner", "capable-client-delivery", {
-    allowPayloadTombstones: true,
+  const firstTombstoneAcknowledgement = await configured.acknowledge(
+    "owner",
+    "capable-client-delivery",
+    {
+      allowPayloadTombstones: true,
+    },
+  );
+  const repeatedTombstoneAcknowledgement = await configured.acknowledge(
+    "owner",
+    "capable-client-delivery",
+    {
+      allowPayloadTombstones: true,
+    },
+  );
+  expect(repeatedTombstoneAcknowledgement).toMatchObject({
+    deliveryId: firstTombstoneAcknowledgement.deliveryId,
+    status: "acknowledged",
+    acknowledgedAt: firstTombstoneAcknowledgement.acknowledgedAt,
+    payloadFingerprint: firstTombstoneAcknowledgement.payloadFingerprint,
   });
+  expect(repeatedTombstoneAcknowledgement).not.toHaveProperty("payload");
 
   await expect(configured.get("owner", { includeAcknowledged: true })).resolves.toMatchObject({
     deliveries: [{ deliveryId: "old-client-delivery", payload: "kept" }],

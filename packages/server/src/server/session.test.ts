@@ -673,6 +673,40 @@ test("keeps compacted deliveries compatible for old clients and exposes tombston
       }),
     });
     expect(capableMessages.at(-1)).not.toHaveProperty("payload.deliveries.0.payload");
+
+    await capableSession.handleMessage({
+      type: "deliveries.acknowledge.request",
+      requestId: "capable-ack-1",
+      deliveryId: "compacted-delivery",
+    });
+    const firstAcknowledgement = capableMessages.at(-1);
+    expect(firstAcknowledgement).toEqual({
+      type: "deliveries.acknowledge.response",
+      payload: expect.objectContaining({
+        requestId: "capable-ack-1",
+        deliveryId: "compacted-delivery",
+        delivery: expect.objectContaining({
+          status: "acknowledged",
+          payloadFingerprint: expect.any(String),
+        }),
+      }),
+    });
+    expect(firstAcknowledgement).not.toHaveProperty("payload.delivery.payload");
+
+    await capableSession.handleMessage({
+      type: "deliveries.acknowledge.request",
+      requestId: "capable-ack-2",
+      deliveryId: "compacted-delivery",
+    });
+    expect(capableMessages.at(-1)).toEqual({
+      type: "deliveries.acknowledge.response",
+      payload: expect.objectContaining({
+        requestId: "capable-ack-2",
+        deliveryId: "compacted-delivery",
+        delivery: expect.objectContaining({ status: "acknowledged" }),
+      }),
+    });
+    expect(capableMessages.at(-1)).not.toHaveProperty("payload.delivery.payload");
   } finally {
     await Promise.all(sessions.map((session) => session.cleanup()));
     rmSync(home, { recursive: true, force: true });
@@ -727,12 +761,14 @@ test("dispatches a targeted delivery through the injected native agent seam", as
   }
 });
 
-test("requires a target for new durable delivery sends", async () => {
+test("accepts an old targetless wire send without native dispatch", async () => {
   const messages: SessionOutboundMessage[] = [];
-  const home = mkdtempSync(join(tmpdir(), "paseo-target-required-delivery-"));
+  const dispatched = vi.fn(async () => ({ outcome: "accepted" as const }));
+  const home = mkdtempSync(join(tmpdir(), "paseo-legacy-pull-delivery-"));
   const session = createSessionForTest({
     paseoHome: home,
     principalId: "owner",
+    deliveryAgentDispatcher: dispatched,
     messages,
     clientCapabilities: { [CLIENT_CAPS.durableDeliveries]: true },
   });
@@ -740,15 +776,21 @@ test("requires a target for new durable delivery sends", async () => {
   try {
     await session.handleMessage({
       type: "deliveries.send.request",
-      requestId: "target-required",
-      deliveryId: "target-required-delivery",
+      requestId: "legacy-pull-send",
+      deliveryId: "legacy-pull-delivery",
       payload: { event: "refresh" },
     });
+    expect(dispatched).not.toHaveBeenCalled();
     expect(messages).toContainEqual({
-      type: "rpc_error",
+      type: "deliveries.send.response",
       payload: expect.objectContaining({
-        requestId: "target-required",
-        code: "delivery_target_required",
+        requestId: "legacy-pull-send",
+        deliveryId: "legacy-pull-delivery",
+        created: true,
+        delivery: expect.objectContaining({
+          deliveryMode: "legacy_pull",
+          status: "accepted",
+        }),
       }),
     });
   } finally {
