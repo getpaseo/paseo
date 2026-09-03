@@ -543,6 +543,22 @@ type ScheduleUpdatePayload = Extract<
   SessionOutboundMessage,
   { type: "schedule/update/response" }
 >["payload"];
+type WatchdogStartPayload = Extract<
+  SessionOutboundMessage,
+  { type: "watchdog.start.response" }
+>["payload"];
+type WatchdogListPayload = Extract<
+  SessionOutboundMessage,
+  { type: "watchdog.list.response" }
+>["payload"];
+type WatchdogInspectPayload = Extract<
+  SessionOutboundMessage,
+  { type: "watchdog.inspect.response" }
+>["payload"];
+type WatchdogCancelPayload = Extract<
+  SessionOutboundMessage,
+  { type: "watchdog.cancel.response" }
+>["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
 
@@ -775,6 +791,24 @@ export interface UpdateScheduleOptions {
   newAgentConfig?: UpdateScheduleNewAgentConfig;
   maxRuns?: number | null;
   expiresAt?: string | null;
+  requestId?: string;
+}
+export interface StartWatchdogOptions {
+  name: string;
+  agentId: string;
+  workspaceId: string;
+  cwd: string;
+  command: string;
+  args?: string[];
+  timeoutMs?: number;
+  requestId?: string;
+}
+export interface ListWatchdogsOptions {
+  agentId?: string;
+  requestId?: string;
+}
+export interface WatchdogByIdOptions {
+  id: string;
   requestId?: string;
 }
 export interface RenameBranchInput {
@@ -5578,6 +5612,54 @@ export class DaemonClient {
     });
   }
 
+  async watchdogStart(options: StartWatchdogOptions): Promise<WatchdogStartPayload> {
+    this.requireDurableCommandsSupport();
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "watchdog.start.request",
+        name: options.name,
+        agentId: options.agentId,
+        workspaceId: options.workspaceId,
+        cwd: options.cwd,
+        command: options.command,
+        args: options.args ?? [],
+        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      },
+      responseType: "watchdog.start.response",
+    });
+  }
+
+  async watchdogList(options: ListWatchdogsOptions = {}): Promise<WatchdogListPayload> {
+    this.requireDurableCommandsSupport();
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: {
+        type: "watchdog.list.request",
+        ...(options.agentId === undefined ? {} : { agentId: options.agentId }),
+      },
+      responseType: "watchdog.list.response",
+    });
+  }
+
+  async watchdogInspect(options: WatchdogByIdOptions): Promise<WatchdogInspectPayload> {
+    this.requireDurableCommandsSupport();
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: { type: "watchdog.inspect.request", jobId: options.id },
+      responseType: "watchdog.inspect.response",
+    });
+  }
+
+  async watchdogCancel(options: WatchdogByIdOptions): Promise<WatchdogCancelPayload> {
+    this.requireDurableCommandsSupport();
+    return this.sendCorrelatedSessionRequest({
+      requestId: options.requestId,
+      message: { type: "watchdog.cancel.request", jobId: options.id },
+      responseType: "watchdog.cancel.response",
+    });
+  }
+
   onTerminalStreamEvent(handler: (event: TerminalStreamEvent) => void): () => void {
     return this.terminalStreams.onEvent(handler);
   }
@@ -5626,6 +5708,13 @@ export class DaemonClient {
     // COMPAT(daemonConfigReload): added in v0.4.0, remove gate after 2027-02-14.
     if (this.lastServerInfoMessage?.features?.daemonConfigReload !== true) {
       throw new Error("Update the host to reload daemon configuration.");
+    }
+  }
+
+  private requireDurableCommandsSupport(): void {
+    // COMPAT(durableCommands): added in v0.6.1, remove gate after 2027-02-26.
+    if (this.lastServerInfoMessage?.features?.durableCommands !== true) {
+      throw new Error("Update the host to use durable commands.");
     }
   }
 

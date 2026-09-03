@@ -54,6 +54,14 @@ $PASEO_HOME/
 │       └── {agentId}.json               # One file per agent
 ├── schedules/
 │   └── {scheduleId}.json                # One file per schedule
+├── watchdogs/
+│   ├── {jobId}.json                     # One file per durable command job
+│   ├── cancellations/{jobId}.json       # Pending cancellation requests
+│   ├── logs/{jobId}.stdout.log          # Captured stdout (bounded)
+│   ├── logs/{jobId}.stderr.log          # Captured stderr (bounded)
+│   ├── results/{jobId}.json             # Worker result payload
+│   ├── requests/{jobId}.json            # Launch request snapshot
+│   └── locks/{jobId}.lock               # Worker ownership lock
 ├── projects/
 │   ├── projects.json                    # Project registry
 │   ├── workspaces.json                  # Workspace registry
@@ -434,6 +442,35 @@ One file per schedule. ID is 8 hex characters.
 | `agentId`      | `string?` (UUID)                       | Agent used for this run |
 | `output`       | `string?`                              | Agent output text       |
 | `error`        | `string?`                              | Error message if failed |
+
+---
+
+## Watchdog Jobs
+
+**Path:** `$PASEO_HOME/watchdogs/{id}.json`
+
+One file per durable background command. Job IDs match `[a-zA-Z0-9_-]+`. Related artifacts live under sibling subdirectories (`logs/`, `results/`, `cancellations/`, `requests/`, `locks/`).
+
+| Field               | Type                                                                                             | Description                                   |
+| ------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------- |
+| `id`                | `string`                                                                                         | Job ID                                        |
+| `name`              | `string`                                                                                         | Human-readable label                          |
+| `agentId`           | `string`                                                                                         | Agent to notify on completion                 |
+| `workspaceId`       | `string`                                                                                         | Owning workspace                              |
+| `cwd`               | `string`                                                                                         | Working directory for the command             |
+| `command`           | `string`                                                                                         | Executable (no shell)                         |
+| `args`              | `string[]`                                                                                       | Command arguments                             |
+| `status`            | `"queued" \| "running" \| "cancelling" \| "completed" \| "failed" \| "cancelled" \| "timed_out"` | Execution state                               |
+| `deliveryStatus`    | `"pending" \| "delivered"`                                                                       | Whether completion was delivered to the agent |
+| `workerPid`         | `number \| null`                                                                                 | Detached worker PID while running             |
+| `result`            | `WatchdogResult \| null`                                                                         | Exit metadata once terminal                   |
+| `timeoutMs`         | `number \| null`                                                                                 | Optional timeout                              |
+| `cancelRequestedAt` | `string \| null` (ISO 8601)                                                                      | When cancellation was requested               |
+| `createdAt`         | `string` (ISO 8601)                                                                              |                                               |
+| `updatedAt`         | `string` (ISO 8601)                                                                              |                                               |
+| `deliveredAt`       | `string \| null` (ISO 8601)                                                                      | When completion was delivered                 |
+
+Job records and cancellation requests are written with mode `0600`. Captured stdout/stderr are bounded (8 MiB each by default); result records may include optional `stdout`/`stderr` `{ bytes, truncated }` metadata. Only a `queued` record with no `locks/{jobId}.lock` may launch on reconcile. If that lock already exists but no result or `workerPid` was persisted (crash after the worker took the fence, before the daemon wrote running state), reconciliation reads the lock metadata: a live lock PID is adopted into the job as `running` with that `workerPid` and left to finish (no relaunch, no failure notification); a dead or corrupt lock with no result marks the job failed for operator inspection and does not start another worker or command. Invalid lock files are quarantined with a `.corrupt-{timestamp}` suffix. If a worker PID disappears without a result file, reconciliation marks the job failed rather than relaunching. Delivered jobs older than the retention window (default 30 days) are pruned together with their logs, results, requests, locks, and cancellation files. Invalid job files are quarantined with a `.corrupt-{timestamp}` suffix.
 
 ---
 

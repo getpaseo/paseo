@@ -147,6 +147,9 @@ import {
 } from "./workspace-registry.js";
 import { CheckoutDiffManager } from "./checkout-diff-manager.js";
 import { ScheduleService } from "./schedule/service.js";
+import { AgentWatchdogNotifier } from "./watchdog/notifier.js";
+import { WatchdogService } from "./watchdog/service.js";
+import { DetachedWatchdogLauncher, FileWatchdogResultReader } from "./watchdog/system.js";
 import { DaemonConfigStore, type MutableDaemonConfig } from "./daemon-config-store.js";
 import { createOrchestrationSkills } from "./orchestration-skills/index.js";
 import { resolveConfigFromPersisted, type CliConfigOverrides } from "./config.js";
@@ -1341,6 +1344,14 @@ export async function createPaseoDaemon(
   );
   logger.info({ elapsed: elapsed() }, "Preparing voice and MCP runtime");
 
+  const watchdogService = new WatchdogService({
+    paseoHome: config.paseoHome,
+    logger,
+    launcher: new DetachedWatchdogLauncher(config.paseoHome),
+    resultReader: new FileWatchdogResultReader(config.paseoHome),
+    notifier: new AgentWatchdogNotifier(config.paseoHome, agentManager, agentStorage, logger),
+  });
+
   const createAgentToolHostDependencies = (
     runtime: PaseoToolRuntimeContext,
   ): PaseoToolHostDependencies => ({
@@ -1349,6 +1360,7 @@ export async function createPaseoDaemon(
     terminalManager,
     getDaemonTcpPort: () => (boundListenTarget?.type === "tcp" ? boundListenTarget.port : null),
     scheduleService,
+    watchdogService,
     providerSnapshotManager,
     daemonConfigStore,
     github,
@@ -1699,9 +1711,14 @@ export async function createPaseoDaemon(
               pluginRuntime,
               orchestrationSkills,
               workspaceLabelService,
+              watchdogService,
             );
             pluginRuntime.bindPaseoSessionHost(wsServer);
             await pluginRuntime.start();
+            // Recovery may load an inactive agent to deliver a completion. Wait until
+            // the runtime MCP URL and WebSocket lifecycle are fully available so the
+            // restored agent gets the same tool configuration as a normal agent.
+            await watchdogService.start();
             wsServer.beginAcceptingConnections();
             relayRuntime = createRelayRuntime({
               config: {
@@ -1745,6 +1762,7 @@ export async function createPaseoDaemon(
       speechService.start();
       scriptHealthMonitor.start();
     } catch (error) {
+      await watchdogService.stop().catch(() => undefined);
       await pluginRuntime.stopAllPlugins().catch(() => undefined);
       await serviceProxy.stopStandalone().catch(() => undefined);
       await agentProviderRuntime.shutdown().catch(() => undefined);
@@ -1764,6 +1782,9 @@ export async function createPaseoDaemon(
     // Freeze both ingress and registration before taking the agent closure snapshot.
     wsServer?.prepareForShutdown();
     agentManager.prepareForShutdown();
+    // Stop completion reconciliation before closing agents so a shutdown cannot
+    // load or notify an agent after the closure snapshot is taken.
+    await watchdogService.stop().catch(() => undefined);
     await closeAllAgents(logger, agentManager);
     await agentManager.flushForShutdown().catch(() => undefined);
     detachAgentStoragePersistence();

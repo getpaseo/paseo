@@ -39,6 +39,7 @@ import { expandUserPath, isSameOrDescendantPath, resolvePathFromBase } from "../
 import type { TerminalManager } from "../../../terminal/terminal-manager.js";
 import type { CreatePaseoWorktreeWorkflowFn } from "../../worktree-session.js";
 import type { ScheduleService } from "../../schedule/service.js";
+import type { WatchdogService } from "../../watchdog/service.js";
 import {
   ScheduleRunSchema,
   ScheduleSummarySchema,
@@ -101,6 +102,7 @@ export interface PaseoToolHostDependencies {
   terminalManager?: TerminalManager | null;
   getDaemonTcpPort?: () => number | null;
   scheduleService?: ScheduleService | null;
+  watchdogService?: WatchdogService | null;
   providerSnapshotManager: ProviderSnapshotManager;
   daemonConfigStore?: Pick<DaemonConfigStore, "get">;
   github?: ForgeService;
@@ -548,6 +550,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
     terminalManager,
     workspaceScripts,
     scheduleService,
+    watchdogService,
     providerSnapshotManager,
     daemonConfigStore,
     callerAgentId,
@@ -2876,6 +2879,183 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       return {
         content: [],
         structuredContent: ensureValidJson(schedule),
+      };
+    },
+  );
+
+  registerTool(
+    "start_watchdog_job",
+    {
+      title: "Start durable background job",
+      description:
+        "Start a long-running command under the Paseo daemon and return immediately. Paseo durably captures logs and resumes this agent when the command finishes. Prefer this over sleep or foreground polling for builds, tests, inference, training, deploys, and CI waits. The command is executed directly without a shell; pass each argument separately and never include secrets in arguments.",
+      inputSchema: {
+        name: z.string().trim().min(1),
+        command: z.string().trim().min(1),
+        args: z.array(z.string()).optional(),
+        cwd: z.string().optional(),
+        timeoutMs: z.number().int().positive().max(2_147_483_647).optional(),
+      },
+      outputSchema: {
+        id: z.string(),
+        name: z.string(),
+        status: z.string(),
+        workerPid: z.number().int().positive().nullable(),
+      },
+    },
+    async ({ name, command, args, cwd, timeoutMs }) => {
+      if (!watchdogService) {
+        throw new Error("Watchdog service is not configured");
+      }
+      if (!callerAgentId) {
+        throw new Error("start_watchdog_job requires an agent-scoped session");
+      }
+      const caller = resolveCallerAgent();
+      if (!caller?.workspaceId) {
+        throw new Error(`Caller agent ${callerAgentId} has no current workspace`);
+      }
+      const job = await watchdogService.register({
+        name,
+        command,
+        args: args ?? [],
+        cwd: resolveScopedCwd(cwd),
+        agentId: callerAgentId,
+        workspaceId: caller.workspaceId,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      });
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          id: job.id,
+          name: job.name,
+          status: job.status,
+          workerPid: job.workerPid,
+        }),
+      };
+    },
+  );
+
+  registerTool(
+    "list_watchdog_jobs",
+    {
+      title: "List durable background jobs",
+      description: "List durable background jobs started by this agent.",
+      inputSchema: {},
+      outputSchema: {
+        jobs: z.array(
+          z.object({
+            id: z.string(),
+            name: z.string(),
+            status: z.string(),
+            deliveryStatus: z.string(),
+            result: z.unknown().nullable(),
+          }),
+        ),
+      },
+    },
+    async () => {
+      if (!watchdogService) {
+        throw new Error("Watchdog service is not configured");
+      }
+      if (!callerAgentId) {
+        throw new Error("list_watchdog_jobs requires an agent-scoped session");
+      }
+      const jobs = await watchdogService.listForAgent(callerAgentId);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          jobs: jobs.map((job) => ({
+            id: job.id,
+            name: job.name,
+            status: job.status,
+            deliveryStatus: job.deliveryStatus,
+            result: job.result,
+          })),
+        }),
+      };
+    },
+  );
+
+  registerTool(
+    "inspect_watchdog_job",
+    {
+      title: "Inspect durable background job",
+      description: "Inspect a durable background job started by this agent.",
+      inputSchema: { id: z.string().trim().min(1) },
+      outputSchema: {
+        id: z.string(),
+        name: z.string(),
+        status: z.string(),
+        deliveryStatus: z.string(),
+        result: z.unknown().nullable(),
+        workerPid: z.number().int().positive().nullable(),
+        timeoutMs: z.number().int().positive().max(2_147_483_647).nullable(),
+        cancelRequestedAt: z.string().nullable(),
+        createdAt: z.string(),
+        updatedAt: z.string(),
+        deliveredAt: z.string().nullable(),
+      },
+    },
+    async ({ id }) => {
+      if (!watchdogService) {
+        throw new Error("Watchdog service is not configured");
+      }
+      if (!callerAgentId) {
+        throw new Error("inspect_watchdog_job requires an agent-scoped session");
+      }
+      const job = await watchdogService.inspect(id);
+      if (job.agentId !== callerAgentId) {
+        throw new Error("inspect_watchdog_job can only inspect jobs started by this agent");
+      }
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          id: job.id,
+          name: job.name,
+          status: job.status,
+          deliveryStatus: job.deliveryStatus,
+          result: job.result,
+          workerPid: job.workerPid,
+          timeoutMs: job.timeoutMs,
+          cancelRequestedAt: job.cancelRequestedAt,
+          createdAt: job.createdAt,
+          updatedAt: job.updatedAt,
+          deliveredAt: job.deliveredAt,
+        }),
+      };
+    },
+  );
+
+  registerTool(
+    "cancel_watchdog_job",
+    {
+      title: "Cancel durable background job",
+      description:
+        "Durably request cancellation of a background job started by this agent. Paseo terminates the command process tree and preserves its logs and cancellation result.",
+      inputSchema: { id: z.string().trim().min(1) },
+      outputSchema: {
+        id: z.string(),
+        status: z.string(),
+      },
+    },
+    async ({ id }) => {
+      if (!watchdogService) {
+        throw new Error("Watchdog service is not configured");
+      }
+      if (!callerAgentId) {
+        throw new Error("cancel_watchdog_job requires an agent-scoped session");
+      }
+      const job = await watchdogService.inspect(id);
+      if (job.agentId !== callerAgentId) {
+        throw new Error("cancel_watchdog_job can only cancel jobs started by this agent");
+      }
+      const cancelled = await watchdogService.cancel(id);
+      return {
+        content: [],
+        structuredContent: ensureValidJson({
+          id: cancelled.id,
+          status: cancelled.status,
+        }),
       };
     },
   );

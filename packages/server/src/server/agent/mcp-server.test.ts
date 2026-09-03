@@ -35,6 +35,7 @@ import type {
   UpdateScheduleInput,
 } from "@getpaseo/protocol/schedule/types";
 import type { ScheduleService } from "../schedule/service.js";
+import type { WatchdogService } from "../watchdog/service.js";
 import type { WorkspaceGitService } from "../workspace-git-service.js";
 import {
   createPaseoWorktree as createPaseoWorktreeService,
@@ -5907,5 +5908,174 @@ describe("agent snapshot MCP serialization", () => {
     expect(content).not.toContain("[User] u2");
     expect(content).not.toContain("second answer");
     expect(content).not.toContain("first answer");
+  });
+});
+
+describe("watchdog MCP tools", () => {
+  const logger = createTestLogger();
+
+  it("starts a durable job scoped to the caller's workspace", async () => {
+    const { agentManager, agentStorage, spies } = createTestDeps();
+    spies.agentManager.getAgent.mockReturnValue({
+      id: "parent-agent",
+      provider: "codex",
+      cwd: REPO_CWD,
+      workspaceId: "workspace-1",
+      lifecycle: "idle",
+      currentModeId: "build",
+      availableModes: [],
+      config: { title: "Parent agent" },
+    } as ManagedAgent);
+    const register = vi.fn(async (input) => ({
+      ...input,
+      id: "watchdog-1",
+      status: "running" as const,
+      deliveryStatus: "pending" as const,
+      workerPid: 4101,
+      result: null,
+      timeoutMs: input.timeoutMs ?? null,
+      cancelRequestedAt: null,
+      createdAt: "2026-08-19T00:00:00.000Z",
+      updatedAt: "2026-08-19T00:00:00.000Z",
+      deliveredAt: null,
+    }));
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      watchdogService: { register } as unknown as WatchdogService,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    const result = await invokeToolWithParsedInput(registeredTool(server, "start_watchdog_job"), {
+      name: "vision tests",
+      command: "npm",
+      args: ["test"],
+      timeoutMs: 60_000,
+    });
+
+    expect(register).toHaveBeenCalledWith({
+      name: "vision tests",
+      command: "npm",
+      args: ["test"],
+      cwd: REPO_CWD,
+      agentId: "parent-agent",
+      workspaceId: "workspace-1",
+      timeoutMs: 60_000,
+    });
+    expect(result.structuredContent).toMatchObject({
+      id: "watchdog-1",
+      status: "running",
+      workerPid: 4101,
+    });
+  });
+
+  it("requires an agent-scoped session", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const register = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      watchdogService: { register } as unknown as WatchdogService,
+      logger,
+    });
+
+    await expect(
+      registeredTool(server, "start_watchdog_job").handler({
+        name: "vision tests",
+        command: "npm",
+        args: ["test"],
+      }),
+    ).rejects.toThrow("start_watchdog_job requires an agent-scoped session");
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it("inspects only a watchdog job owned by the caller", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const inspect = vi.fn(async () => ({
+      id: "watchdog-1",
+      name: "vision tests",
+      agentId: "parent-agent",
+      workspaceId: "workspace-1",
+      cwd: REPO_CWD,
+      command: "npm",
+      args: ["test"],
+      status: "completed" as const,
+      deliveryStatus: "delivered" as const,
+      workerPid: null,
+      result: { exitCode: 0, signal: null, error: null, finishedAt: "2026-08-19T01:00:00.000Z" },
+      timeoutMs: null,
+      cancelRequestedAt: null,
+      createdAt: "2026-08-19T00:00:00.000Z",
+      updatedAt: "2026-08-19T01:00:00.000Z",
+      deliveredAt: "2026-08-19T01:00:00.000Z",
+    }));
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      watchdogService: { inspect } as unknown as WatchdogService,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    const result = await invokeToolWithParsedInput(registeredTool(server, "inspect_watchdog_job"), {
+      id: "watchdog-1",
+    });
+
+    expect(inspect).toHaveBeenCalledWith("watchdog-1");
+    expect(result.structuredContent).toMatchObject({
+      id: "watchdog-1",
+      status: "completed",
+      deliveryStatus: "delivered",
+      result: { exitCode: 0 },
+    });
+  });
+
+  it("cancels only a watchdog job owned by the caller", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const inspect = vi.fn(async () => ({ id: "watchdog-1", agentId: "parent-agent" }));
+    const cancel = vi.fn(async () => ({ id: "watchdog-1", status: "cancelling" }));
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      watchdogService: { inspect, cancel } as unknown as WatchdogService,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    const result = await invokeToolWithParsedInput(registeredTool(server, "cancel_watchdog_job"), {
+      id: "watchdog-1",
+    });
+
+    expect(cancel).toHaveBeenCalledWith("watchdog-1");
+    expect(result.structuredContent).toMatchObject({
+      id: "watchdog-1",
+      status: "cancelling",
+    });
+  });
+
+  it("rejects cancelling another agent's watchdog job", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const inspect = vi.fn(async () => ({ id: "watchdog-1", agentId: "other-agent" }));
+    const cancel = vi.fn();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      watchdogService: { inspect, cancel } as unknown as WatchdogService,
+      callerAgentId: "parent-agent",
+      logger,
+    });
+
+    await expect(
+      invokeToolWithParsedInput(registeredTool(server, "cancel_watchdog_job"), {
+        id: "watchdog-1",
+      }),
+    ).rejects.toThrow("cancel_watchdog_job can only cancel jobs started by this agent");
+    expect(cancel).not.toHaveBeenCalled();
   });
 });
