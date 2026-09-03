@@ -2,6 +2,7 @@ import { forwardRef, useMemo } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
+import { shouldTrackNativePressHighlight } from "./press-highlight-pointer";
 import { resolveHighlightCorners } from "./press-highlight.shape";
 import type { PressHighlightProps } from "./press-highlight.types";
 
@@ -20,6 +21,12 @@ export const PressHighlight = forwardRef<View, PressHighlightProps>(function Pre
         .enabled(disabled !== true && highlightStyle != null)
         .maxDistance(8)
         .shouldCancelWhenOutside(true)
+        .onTouchesDown((event, stateManager) => {
+          if (!shouldTrackNativePressHighlight(event.pointerType)) {
+            highlighted.value = 0;
+            stateManager.fail();
+          }
+        })
         .onBegin(() => {
           highlighted.value = 1;
         })

@@ -8,6 +8,7 @@ import {
   type Ref,
 } from "react";
 import {
+  type GestureResponderEvent,
   Pressable,
   type View,
   type PressableProps,
@@ -69,7 +70,7 @@ function assignRef<T>(ref: Ref<T> | undefined, value: T | null): void {
 }
 
 export const MenuTrigger = forwardRef<View, MenuTriggerProps>(function MenuTrigger(
-  { children, disabled, style, accessibilityState, ...props },
+  { children, disabled, style, accessibilityState, onPressIn, ...props },
   forwardedRef,
 ): ReactElement {
   const ctx = useMenuContext("MenuTrigger");
@@ -82,10 +83,22 @@ export const MenuTrigger = forwardRef<View, MenuTriggerProps>(function MenuTrigg
     [ctx.triggerRef, forwardedRef],
   );
 
-  const handlePress = useCallback(() => {
-    if (disabled) return;
-    ctx.setOpen(!ctx.open);
-  }, [disabled, ctx]);
+  const handlePressIn = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      onPressIn?.(event);
+    },
+    [onPressIn],
+  );
+
+  const handlePress = useCallback(
+    (event: GestureResponderEvent) => {
+      event.stopPropagation();
+      if (disabled) return;
+      ctx.setOpen(!ctx.open);
+    },
+    [disabled, ctx],
+  );
 
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
@@ -121,6 +134,7 @@ export const MenuTrigger = forwardRef<View, MenuTriggerProps>(function MenuTrigg
       collapsable={false}
       disabled={disabled}
       accessibilityState={resolvedAccessibilityState}
+      onPressIn={handlePressIn}
       onPress={handlePress}
       style={pressableStyle}
     >
