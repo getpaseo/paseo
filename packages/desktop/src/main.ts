@@ -105,6 +105,7 @@ import {
   type AgentDeepLinkTarget,
 } from "@getpaseo/protocol/agent-deep-link";
 import { AgentNavigationInbox, parseAgentDeepLinkFromArgv } from "./agent-navigation.js";
+import { readManagedHostRegistry } from "./managed-hosts/registry.js";
 
 const DEV_SERVER_URL = process.env.EXPO_DEV_URL ?? "http://localhost:8081";
 const APP_SCHEME = "paseo";
@@ -130,6 +131,13 @@ const bootstrapComplete = new Promise<void>((resolve) => {
 let bootstrapIsComplete = false;
 
 app.setName(APP_NAME);
+
+ipcMain.handle("paseo:managed-hosts:read", () =>
+  readManagedHostRegistry({
+    env: process.env,
+    homeDirectory: app.getPath("home"),
+  }),
+);
 
 interface AttachedBrowserInput {
   browserId: string;

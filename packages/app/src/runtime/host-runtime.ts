@@ -27,6 +27,10 @@ import {
 } from "@/utils/daemon-endpoints";
 import { resolveAppVersion } from "@/utils/app-version";
 import { ConnectionOfferSchema, type ConnectionOffer } from "@getpaseo/protocol/connection-offer";
+import {
+  ManagedHostRegistrySchema,
+  type ManagedHostRegistry,
+} from "@getpaseo/protocol/managed-hosts";
 import { shouldUseDesktopDaemon } from "@/desktop/daemon/desktop-daemon";
 import { isWeb } from "@/constants/platform";
 import { connectToDaemon } from "@/utils/test-daemon-connection";
@@ -169,6 +173,7 @@ export interface HostRuntimeControllerDeps {
   }>;
   getClientId: () => Promise<string>;
   readInitialConnectionHint?: () => InitialDaemonConnectionHint | null;
+  readManagedHostRegistry?: () => Promise<ManagedHostRegistry | null>;
   mountClientHandlers?: (input: {
     client: DaemonClient;
     host: HostProfile;
@@ -197,6 +202,7 @@ const PROBE_INACTIVE_WHILE_ONLINE_MS = 120_000;
 const ADAPTIVE_SWITCH_THRESHOLD_MS = 40;
 const ADAPTIVE_SWITCH_CONSECUTIVE_PROBES = 3;
 const CONFIGURED_OVERRIDE_BOOTSTRAP_RETRY_MS = 1_000;
+const MANAGED_HOST_BOOTSTRAP_RETRY_MS = 10_000;
 
 function toActiveConnection(connection: HostConnection): ActiveConnection {
   if (connection.type === "directSocket") {
@@ -570,6 +576,14 @@ function createDefaultDeps(): HostRuntimeControllerDeps {
         trace: nativePerformanceTrace,
       }),
     getClientId: () => getOrCreateClientId(),
+    readManagedHostRegistry: async () => {
+      const read = getDesktopHost()?.managedHosts?.read;
+      if (!read) {
+        return null;
+      }
+      const registry = await read();
+      return registry ? ManagedHostRegistrySchema.parse(registry) : null;
+    },
     mountClientHandlers: ({ client, host }) => {
       const unmountServerData = mountServerDataPushRouter({
         client,
@@ -1378,6 +1392,12 @@ interface AgentDirectoryRefreshInput {
   page?: FetchAgentsOptions["page"];
 }
 
+interface ManagedHostBootstrapInput {
+  label: string;
+  endpoint: string;
+  connection: HostConnection;
+}
+
 export class HostRuntimeStore {
   private controllers = new Map<string, HostRuntimeController>();
   private serverListeners = new Map<string, Set<() => void>>();
@@ -1449,6 +1469,7 @@ export class HostRuntimeStore {
     const override = readConfiguredLocalDaemonOverride();
     await this.loadFromStorage();
     this.markHostRegistryLoaded();
+    const hasManagedHosts = await this.startManagedHostBootstrap();
 
     let isE2E: string | null = null;
     try {
@@ -1474,10 +1495,84 @@ export class HostRuntimeStore {
       }
     }
 
+    if (hasManagedHosts) {
+      return;
+    }
+
     if (override) {
       this.bootstrapConfiguredOverride(override);
     } else {
       await this.bootstrapDefaultLocalhost();
+    }
+  }
+
+  private async startManagedHostBootstrap(): Promise<boolean> {
+    const readRegistry = this.deps.readManagedHostRegistry;
+    if (!readRegistry) {
+      return false;
+    }
+
+    let registry: ManagedHostRegistry | null;
+    try {
+      registry = await readRegistry();
+    } catch (error) {
+      console.error("[HostRuntime] Failed to load managed host registry", error);
+      return false;
+    }
+    if (!registry || registry.hosts.length === 0) {
+      return false;
+    }
+
+    let hasValidHost = false;
+    for (const host of registry.hosts) {
+      let endpoint: string;
+      try {
+        endpoint = normalizeHostPort(host.endpoint);
+      } catch (error) {
+        console.error("[HostRuntime] Ignoring invalid managed host endpoint", {
+          endpoint: host.endpoint,
+          error,
+        });
+        continue;
+      }
+      const connection: HostConnection = {
+        id: `direct:${endpoint}`,
+        type: "directTcp",
+        endpoint,
+        useTls: host.useTls,
+        ...(host.password ? { password: host.password } : {}),
+      };
+      hasValidHost = true;
+      void this.bootstrapManagedHost({
+        label: host.label,
+        endpoint,
+        connection,
+      });
+    }
+    return hasValidHost;
+  }
+
+  private async bootstrapManagedHost(input: ManagedHostBootstrapInput): Promise<void> {
+    const { connection, endpoint, label } = input;
+    let attempt = 0;
+    while (!registryHasConnection(this.hosts, connection)) {
+      attempt += 1;
+      try {
+        await this.probeAndUpsertConnection({
+          connection,
+          label,
+          timeoutMs: DEFAULT_LOCALHOST_BOOTSTRAP_TIMEOUT_MS,
+        });
+      } catch (error) {
+        if (attempt === 1 || attempt % 10 === 0) {
+          console.warn("[HostRuntime] managed host bootstrap probe failed", {
+            endpoint,
+            attempt,
+            error,
+          });
+        }
+        await delay(MANAGED_HOST_BOOTSTRAP_RETRY_MS);
+      }
     }
   }
 

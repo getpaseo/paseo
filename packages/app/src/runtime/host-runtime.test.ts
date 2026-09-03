@@ -6,6 +6,7 @@ import type {
   FetchAgentsOptions,
 } from "@getpaseo/client/internal/daemon-client";
 import type { ConnectionOffer } from "@getpaseo/protocol/connection-offer";
+import type { ManagedHostRegistry } from "@getpaseo/protocol/managed-hosts";
 import type { SessionOutboundMessage } from "@getpaseo/protocol/messages";
 import type { AgentPermissionRequest } from "@getpaseo/protocol/agent-types";
 import type { HostConnection, HostProfile } from "@/types/host-connection";
@@ -3522,5 +3523,128 @@ describe("HostRuntimeStore initial connection hint bootstrap", () => {
 
     expect(seenProbes).not.toContainEqual(expect.objectContaining({ endpoint: "metro-host:8081" }));
     expect(store.getHosts()).toHaveLength(0);
+  });
+});
+
+describe("HostRuntimeStore managed host bootstrap", () => {
+  it("automatically enrolls every managed direct connection", async () => {
+    const seenConnections: HostConnection[] = [];
+    const managedHosts: ManagedHostRegistry = {
+      version: 1,
+      hosts: [
+        {
+          label: "Ryzen",
+          endpoint: "ryzen-shine:6767",
+          useTls: false,
+          password: "ryzen-secret",
+        },
+        {
+          label: "Mac mini",
+          endpoint: "mac-demarco-mini:443",
+          useTls: true,
+          password: "mac-secret",
+        },
+      ],
+    };
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ connection }) => {
+          seenConnections.push(connection);
+          if (connection.type !== "directTcp") {
+            throw new Error("expected direct TCP");
+          }
+          return {
+            client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+            serverId: `srv_${connection.endpoint}`,
+            hostname: connection.endpoint.split(":")[0] ?? null,
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+        readInitialConnectionHint: () => null,
+        readManagedHostRegistry: async () => managedHosts,
+      },
+      storage: createMemoryHostRuntimeStorage(),
+    });
+
+    const hostsAdded = onceHostListMatches(store, () => store.getHosts().length === 2);
+    store.boot();
+    await hostsAdded;
+
+    expect(seenConnections).toEqual(
+      expect.arrayContaining([
+        {
+          id: "direct:ryzen-shine:6767",
+          type: "directTcp",
+          endpoint: "ryzen-shine:6767",
+          useTls: false,
+          password: "ryzen-secret",
+        },
+        {
+          id: "direct:mac-demarco-mini:443",
+          type: "directTcp",
+          endpoint: "mac-demarco-mini:443",
+          useTls: true,
+          password: "mac-secret",
+        },
+      ]),
+    );
+    expect(
+      store
+        .getHosts()
+        .map((host) => host.label)
+        .sort(),
+    ).toEqual(["Mac mini", "Ryzen"]);
+
+    store.syncHosts([]);
+  });
+
+  it("keeps the localhost fallback when every managed endpoint is invalid", async () => {
+    const seenEndpoints: string[] = [];
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const store = new HostRuntimeStore({
+      deps: {
+        createClient: () => new FakeDaemonClient() as unknown as DaemonClient,
+        connectToDaemon: async ({ connection }) => {
+          if (connection.type !== "directTcp") {
+            throw new Error("expected direct TCP");
+          }
+          seenEndpoints.push(connection.endpoint);
+          return {
+            client: makeConnectedProbeClient(5) as unknown as DaemonClient,
+            serverId: "srv_localhost",
+            hostname: "localhost",
+          };
+        },
+        getClientId: async () => "cid_test_runtime",
+        readInitialConnectionHint: () => null,
+        readManagedHostRegistry: async () => ({
+          version: 1,
+          hosts: [
+            {
+              label: "Broken",
+              endpoint: "missing-port",
+              useTls: false,
+            },
+          ],
+        }),
+      },
+      storage: createMemoryHostRuntimeStorage(),
+    });
+
+    try {
+      const hostAdded = onceHostListMatches(store, () => store.getHosts().length === 1);
+      store.boot();
+      await hostAdded;
+
+      expect(seenEndpoints).toEqual(["localhost:6767"]);
+      expect(errorSpy).toHaveBeenCalledWith(
+        "[HostRuntime] Ignoring invalid managed host endpoint",
+        expect.objectContaining({ endpoint: "missing-port" }),
+      );
+    } finally {
+      errorSpy.mockRestore();
+      store.syncHosts([]);
+    }
   });
 });

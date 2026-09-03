@@ -158,6 +158,7 @@ import type {
   BrowserAutomationExecuteRequest,
   BrowserAutomationExecuteResponse,
 } from "@getpaseo/protocol/browser-automation/rpc-schemas";
+import { encodeWebSocketBearerProtocol } from "@getpaseo/protocol/websocket-auth";
 
 export interface Logger {
   debug(obj: object, msg?: string): void;
@@ -1205,7 +1206,7 @@ export class DaemonClient {
     } else if (this.config.authHeader) {
       headers.Authorization = this.config.authHeader;
     }
-    const protocols = password ? [`paseo.bearer.${password}`] : undefined;
+    const protocols = password ? [encodeWebSocketBearerProtocol(password)] : undefined;
 
     try {
       // Reconnect can overlap with browser close/error delivery ordering.

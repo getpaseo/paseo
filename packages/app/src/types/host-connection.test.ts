@@ -252,6 +252,43 @@ describe("upsertHostConnectionInProfiles", () => {
   });
 });
 
+describe("upsertHostConnectionInProfiles", () => {
+  it("replaces credentials for the same direct endpoint", () => {
+    const existing: HostProfile = {
+      ...makeHost("srv_managed"),
+      connections: [
+        {
+          id: "direct:ryzen-shine:6767",
+          type: "directTcp",
+          endpoint: "ryzen-shine:6767",
+          password: "old-secret",
+        },
+      ],
+      preferredConnectionId: "direct:ryzen-shine:6767",
+    };
+
+    const updated = upsertHostConnectionInProfiles({
+      profiles: [existing],
+      serverId: "srv_managed",
+      connection: {
+        id: "direct:ryzen-shine:6767",
+        type: "directTcp",
+        endpoint: "ryzen-shine:6767",
+        password: "new-secret",
+      },
+    });
+
+    expect(updated[0]?.connections).toEqual([
+      {
+        id: "direct:ryzen-shine:6767",
+        type: "directTcp",
+        endpoint: "ryzen-shine:6767",
+        password: "new-secret",
+      },
+    ]);
+  });
+});
+
 describe("resolveActiveHostServerId", () => {
   it("uses the selected host when one is set", () => {
     expect(

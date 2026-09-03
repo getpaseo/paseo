@@ -52,6 +52,11 @@ describe("daemon bearer validator", () => {
 
     expect(protocol).toBe("paseo.bearer.secret.with.dots");
     expect(extractWsBearerToken(protocol)).toBe("secret.with.dots");
+    expect(extractWsBearerProtocol("chat, paseo.bearer64.YmFzZTY0Ky89")).toBe(
+      "paseo.bearer64.YmFzZTY0Ky89",
+    );
+    expect(extractWsBearerToken("paseo.bearer64.YmFzZTY0Ky89")).toBe("base64+/=");
+    expect(extractWsBearerToken("paseo.bearer64.not+base64url")).toBeNull();
     expect(extractWsBearerToken("paseo.other.secret")).toBeNull();
   });
 
