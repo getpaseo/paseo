@@ -2533,6 +2533,34 @@ describe("create_agent MCP tool", () => {
     }
   });
 
+  it("rejects a local path that is not an existing directory", async () => {
+    const { agentManager, agentStorage } = createTestDeps();
+    const server = await createAgentMcpServer({
+      agentManager,
+      agentStorage,
+      providerSnapshotManager: createOpenCodeManager().manager,
+      logger,
+    });
+    const tool = registeredTool(server, "create_workspace");
+    const tempDir = await mkdtemp(join(tmpdir(), "paseo-mcp-local-workspace-"));
+    try {
+      const filePath = join(tempDir, "not-a-directory.txt");
+      await writeFile(filePath, "");
+
+      // A caller that cannot see the filesystem — a Live Voice call routing to
+      // another machine — used to get a workspace record pointing at nothing.
+      await expect(
+        tool.handler({ isolation: "local", path: join(tempDir, "no-such-directory") }),
+      ).rejects.toThrow("No such directory");
+
+      await expect(tool.handler({ isolation: "local", path: filePath })).rejects.toThrow(
+        "Not a directory",
+      );
+    } finally {
+      await removeTempDir(tempDir);
+    }
+  });
+
   it("creates a worktree workspace from a project root without a path", async () => {
     const { agentManager, agentStorage } = createTestDeps();
     const project = createPersistedProjectRecord({
