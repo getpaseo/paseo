@@ -1,6 +1,11 @@
 import {
+  createContext,
   useCallback,
+  useContext,
+  useEffect,
+  useId,
   useMemo,
+  useRef,
   useState,
   type PropsWithChildren,
   type ReactElement,
@@ -19,6 +24,9 @@ import { AdaptiveTextInput } from "@/components/adaptive-modal-sheet";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import type { Theme } from "@/styles/theme";
+import { isNative } from "@/constants/platform";
+import { useListSearchHandler } from "@/keyboard/list-search-dispatcher";
+import { getNextActiveIndex } from "@/components/ui/combobox-keyboard";
 import { MenuDepthProvider, useMenuContext } from "./menu-context";
 import { MENU_ITEM_HEIGHT } from "./menu-geometry";
 
@@ -55,6 +63,37 @@ const MENU_ITEM_LINE_HEIGHT = 18;
  */
 const MENU_ROW_GAP = 0;
 
+interface MenuKeyboardItem {
+  isDisabled(): boolean;
+  select(): void;
+}
+
+interface MenuPageKeyboardContextValue {
+  highlightedId: string | null;
+  register(id: string, item: MenuKeyboardItem): () => void;
+}
+
+const MenuPageKeyboardContext = createContext<MenuPageKeyboardContextValue | null>(null);
+
+function useMenuItemKeyboard(isDisabled: boolean, select: () => void): boolean {
+  const keyboardContext = useContext(MenuPageKeyboardContext);
+  const keyboardId = useId();
+  const disabledRef = useRef(isDisabled);
+  const selectRef = useRef(select);
+  disabledRef.current = isDisabled;
+  selectRef.current = select;
+  const register = keyboardContext?.register;
+  useEffect(
+    () =>
+      register?.(keyboardId, {
+        isDisabled: () => disabledRef.current,
+        select: () => selectRef.current(),
+      }),
+    [keyboardId, register],
+  );
+  return keyboardContext?.highlightedId === keyboardId;
+}
+
 /** Action status for menu items with loading/success feedback. */
 export type ActionStatus = "idle" | "pending" | "success";
 
@@ -72,9 +111,49 @@ export type ActionStatus = "idle" | "pending" | "success";
  * It also carries the page's depth, so the two presentations cannot disagree about what a page is.
  */
 export function MenuPage({ depth, children }: PropsWithChildren<{ depth: number }>): ReactElement {
+  const menu = useMenuContext("MenuPage");
+  const itemsRef = useRef(new Map<string, MenuKeyboardItem>());
+  const [highlightedId, setHighlightedId] = useState<string | null>(null);
+  const active = menu.open && depth === menu.path.length;
+  const register = useCallback((id: string, item: MenuKeyboardItem) => {
+    itemsRef.current.set(id, item);
+    return () => {
+      itemsRef.current.delete(id);
+    };
+  }, []);
+  const handleListAction = useCallback(
+    (action: "next" | "previous" | "submit") => {
+      const items = Array.from(itemsRef.current.entries()).filter(([, item]) => !item.isDisabled());
+      if (items.length === 0) return false;
+      const currentIndex = items.findIndex(([id]) => id === highlightedId);
+      if (action === "submit") {
+        items[currentIndex < 0 ? 0 : currentIndex]?.[1].select();
+        return true;
+      }
+      const nextIndex = getNextActiveIndex({
+        currentIndex,
+        itemCount: items.length,
+        key: action === "next" ? "ArrowDown" : "ArrowUp",
+      });
+      setHighlightedId(items[nextIndex]?.[0] ?? null);
+      return true;
+    },
+    [highlightedId],
+  );
+  useListSearchHandler({
+    active: isNative && active,
+    priority: 60 + depth,
+    handle: handleListAction,
+  });
+  useEffect(() => {
+    if (!active) setHighlightedId(null);
+  }, [active]);
+  const keyboardContext = useMemo(() => ({ highlightedId, register }), [highlightedId, register]);
   return (
     <MenuDepthProvider value={depth}>
-      <View style={styles.page}>{children}</View>
+      <MenuPageKeyboardContext.Provider value={keyboardContext}>
+        <View style={styles.page}>{children}</View>
+      </MenuPageKeyboardContext.Provider>
     </MenuDepthProvider>
   );
 }
@@ -294,6 +373,7 @@ export function MenuItem({
     if (isDisabled) return;
     selectItem(onSelect, closeOnSelect);
   }, [isDisabled, selectItem, onSelect, closeOnSelect]);
+  const keyboardHighlighted = useMenuItemKeyboard(Boolean(isDisabled), handleItemPress);
 
   // A row that draws a check has to say so as well: a multi-select page is a list of things that
   // are on or off, and the check is the only thing telling a sighted user which. Rows that answer
@@ -308,16 +388,18 @@ export function MenuItem({
       pressed,
       hovered = false,
       focused = false,
-    }: PressableStateCallbackType & { hovered?: boolean; focused?: boolean }) => [
-      styles.item,
-      active ? styles.itemActive : null,
-      isDisabled ? styles.itemDisabled : null,
-      muted && !isDisabled ? styles.itemMuted : null,
-      hovered && !pressed && !isDisabled ? styles.itemHovered : null,
-      focused && !isDisabled ? styles.itemHovered : null,
-      pressed && !isDisabled ? styles.itemPressed : null,
-    ],
-    [active, isDisabled, muted],
+    }: PressableStateCallbackType & { hovered?: boolean; focused?: boolean }) => {
+      const highlighted = hovered || focused || keyboardHighlighted;
+      return [
+        styles.item,
+        active ? styles.itemActive : null,
+        isDisabled ? styles.itemDisabled : null,
+        muted && !isDisabled ? styles.itemMuted : null,
+        highlighted && !pressed && !isDisabled ? styles.itemHovered : null,
+        pressed && !isDisabled ? styles.itemPressed : null,
+      ];
+    },
+    [active, isDisabled, keyboardHighlighted, muted],
   );
 
   const itemTextStyle = useMemo(

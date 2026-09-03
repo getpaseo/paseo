@@ -47,6 +47,12 @@ import {
 } from "@/stores/keyboard-shortcuts-store";
 import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useKeyboardActionDispatcher } from "@/keyboard/keyboard-action-dispatcher-context";
+import { useListSearchHandler } from "@/keyboard/list-search-dispatcher";
+import {
+  listNavigationDataSet,
+  resolveListSearchKeyAction,
+  type ListSearchKeyEvent,
+} from "@/keyboard/list-search-keys";
 import {
   clearCommandCenterFocusRestoreElement,
   takeCommandCenterFocusRestoreElement,
@@ -237,7 +243,7 @@ interface CommandCenterState {
   fileSearchError: string | null;
   close(): void;
   select(result: CommandCenterResult): void;
-  key(key: string): boolean;
+  key(event: ListSearchKeyEvent): boolean;
 }
 
 function useCommandCenterState(): CommandCenterState {
@@ -316,9 +322,10 @@ function useCommandCenterState(): CommandCenterState {
     [setOpen],
   );
   const key = useCallback(
-    (pressed: string): boolean => {
+    (event: ListSearchKeyEvent): boolean => {
       if (!open) return false;
       const results = projection.selectableResults;
+      const pressed = event.key;
       if (pressed === "Escape") {
         close();
         return true;
@@ -327,16 +334,16 @@ function useCommandCenterState(): CommandCenterState {
         setScope(null);
         return true;
       }
-      if (pressed === "Enter") {
+      const action = resolveListSearchKeyAction(event);
+      if (action === "submit") {
         const selected = results.find((result) => result.id === resolvedActiveId);
         if (!selected) return false;
         select(selected);
         return true;
       }
-      if (pressed !== "ArrowDown" && pressed !== "ArrowUp") return false;
+      if (action !== "next" && action !== "previous") return false;
       if (results.length === 0) return false;
-      const direction = pressed === "ArrowDown" ? "next" : "previous";
-      setActiveId(moveActiveResultId(resolvedActiveId, results, direction));
+      setActiveId(moveActiveResultId(resolvedActiveId, results, action));
       return true;
     },
     [close, open, projection.selectableResults, query, resolvedActiveId, scope, select, setScope],
@@ -701,13 +708,18 @@ export function CommandCenter() {
     scrollEventThrottle: 16,
   };
   const keyPress = useCallback(
-    ({ nativeEvent: { key } }: { nativeEvent: { key: string } }) => state.key(key),
+    ({ nativeEvent: { key } }: { nativeEvent: { key: string } }) => state.key({ key }),
     [state],
   );
-  const submit = useCallback(() => state.key("Enter"), [state]);
+  const submit = useCallback(() => state.key({ key: "Enter" }), [state]);
+  useListSearchHandler({
+    active: isNative && state.open,
+    priority: 100,
+    handle: (_action, event) => state.key(event),
+  });
   const handleWebOverlayKeyDown = useCallback(
     (event: KeyboardEvent) => {
-      if (!state.key(event.key)) return false;
+      if (!state.key(event)) return false;
       event.preventDefault();
       return true;
     },
@@ -781,7 +793,12 @@ export function CommandCenter() {
       <Modal visible transparent animationType="fade" onRequestClose={state.close}>
         <View style={styles.overlay}>
           <Pressable style={styles.backdrop} onPress={state.close} />
-          <View ref={setWebOverlayScope} testID="command-center-panel" style={styles.panel}>
+          <View
+            ref={setWebOverlayScope}
+            dataSet={listNavigationDataSet(state.open)}
+            testID="command-center-panel"
+            style={styles.panel}
+          >
             <View style={[styles.header, styles.searchRow]} testID="command-center-header">
               {state.scope === "files" ? (
                 <ScopeChip label={t("shell.commandCenter.files")} onRemove={state.clearScope} />
