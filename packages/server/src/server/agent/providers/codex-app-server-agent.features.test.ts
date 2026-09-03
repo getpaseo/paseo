@@ -16,21 +16,24 @@ interface CollaborationModeRecord {
   mode?: string | null;
   model?: string | null;
   reasoning_effort?: string | null;
-  developer_instructions?: string | null;
 }
 
 const TEST_COLLABORATION_MODES: CollaborationModeRecord[] = [
   {
     name: "Code",
     mode: "code",
-    developer_instructions: "Built-in code mode",
   },
   {
     name: "Plan",
     mode: "plan",
-    developer_instructions: "Built-in plan mode",
+    reasoning_effort: "medium",
   },
 ];
+
+interface CapturedRequest {
+  method: "thread/start" | "thread/resume" | "turn/start";
+  params: Record<string, unknown>;
+}
 
 type CodexFeaturesTestSession = AgentSession;
 
@@ -69,10 +72,19 @@ function createSessionHarness(
 ): {
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
+  capturedRequests: CapturedRequest[];
 } {
   const config = createConfig(configOverrides);
+  const capturedRequests: CapturedRequest[] = [];
+  const capture = (method: CapturedRequest["method"], result: unknown) => (params: unknown) => {
+    capturedRequests.push({ method, params: params as Record<string, unknown> });
+    return result;
+  };
   const appServer = createFakeCodexAppServer({
     "collaborationMode/list": () => ({ data: TEST_COLLABORATION_MODES }),
+    "thread/start": capture("thread/start", { thread: { id: "thread-1" } }),
+    "thread/resume": capture("thread/resume", {}),
+    "turn/start": capture("turn/start", {}),
   });
   const session = new CodexAppServerAgentSession(
     { ...config, provider: CODEX_PROVIDER },
@@ -80,7 +92,7 @@ function createSessionHarness(
     options.logger ?? createTestLogger(),
     async () => appServer.child,
   ) as CodexFeaturesTestSession;
-  return { session, appServer };
+  return { session, appServer, capturedRequests };
 }
 
 async function createConnectedSession(
@@ -89,6 +101,7 @@ async function createConnectedSession(
 ): Promise<{
   session: CodexFeaturesTestSession;
   appServer: FakeCodexAppServer;
+  capturedRequests: CapturedRequest[];
 }> {
   const harness = createSessionHarness(configOverrides, options);
   await harness.session.connect();
@@ -341,9 +354,68 @@ describe("Codex app-server provider features", () => {
     await session.startTurn("hello");
 
     await expect(appServer.waitForTurnStart()).resolves.toMatchObject({
-      collaborationMode: expect.objectContaining({
+      collaborationMode: {
         mode: "plan",
-      }),
+        settings: expect.objectContaining({
+          developer_instructions: null,
+        }),
+      },
     });
   });
+
+  test.each([
+    {
+      name: "without appended instructions",
+      config: {},
+      expectedThreadInstructions: undefined,
+    },
+    {
+      name: "with systemPrompt",
+      config: { systemPrompt: "Agent instructions." },
+      expectedThreadInstructions: "Agent instructions.",
+    },
+    {
+      name: "with daemonAppendSystemPrompt",
+      config: { daemonAppendSystemPrompt: "Daemon instructions." },
+      expectedThreadInstructions: "Daemon instructions.",
+    },
+    {
+      name: "with both appended instruction sources",
+      config: {
+        systemPrompt: "Agent instructions.",
+        daemonAppendSystemPrompt: "Daemon instructions.",
+      },
+      expectedThreadInstructions: "Agent instructions.\n\nDaemon instructions.",
+    },
+  ])(
+    "keeps built-in plan instructions and sends thread instructions once $name",
+    async ({ config, expectedThreadInstructions }) => {
+      const { session, capturedRequests } = await createConnectedSession(config);
+
+      await session.setFeature?.("plan_mode", true);
+      await session.startTurn("implement the requested change");
+
+      const threadStart = capturedRequests.find((request) => request.method === "thread/start");
+      const turnStart = capturedRequests.find((request) => request.method === "turn/start");
+      expect(threadStart).toBeDefined();
+      expect(turnStart).toBeDefined();
+
+      if (expectedThreadInstructions === undefined) {
+        expect(threadStart?.params).not.toHaveProperty("developerInstructions");
+      } else {
+        expect(threadStart?.params).toMatchObject({
+          developerInstructions: expectedThreadInstructions,
+        });
+      }
+      expect(turnStart?.params).not.toHaveProperty("developerInstructions");
+      expect(turnStart?.params).toMatchObject({
+        collaborationMode: {
+          mode: "plan",
+          settings: expect.objectContaining({
+            developer_instructions: null,
+          }),
+        },
+      });
+    },
+  );
 });
