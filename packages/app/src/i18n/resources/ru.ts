@@ -2155,6 +2155,11 @@ export const ru: TranslationResources = {
       },
       sidebar: {
         title: "Боковая панель",
+        alwaysShowHostLabels: {
+          title: "Всегда показывать метки хоста",
+          description:
+            "Показывать метки хоста, даже когда все видимые рабочие области находятся на этом устройстве",
+        },
         description:
           "Выберите, какие элементы отображаются вверху боковой панели и в каком порядке",
         moveUp: "Переместить вверх",
@@ -2299,6 +2304,15 @@ export const ru: TranslationResources = {
         color: {
           label: "Цвет",
           accessibilityLabel: "Цвет, {{value}}",
+          custom: {
+            action: "Другой…",
+            title: "Пользовательский цвет",
+            submit: "Применить",
+            invalid: "Введите цвет в шестнадцатеричном формате, например #368080.",
+            panelAccessibility: "Насыщенность и яркость",
+            hueAccessibility: "Оттенок",
+            hexAccessibility: "Цвет в шестнадцатеричном формате",
+          },
           options: {
             none: "По умолчанию",
             violet: "Фиолетовый",

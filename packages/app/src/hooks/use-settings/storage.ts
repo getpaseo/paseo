@@ -83,6 +83,7 @@ export interface AppSettings {
   sidebarWorkspaceTrailing: SidebarWorkspaceTrailing;
   sidebarRowItems: SidebarRowItems;
   sidebarChecksDisplay: SidebarChecksDisplay;
+  alwaysShowHostLabels: boolean;
   /** Top-level sidebar rows in display order; empty means the default order, all visible. */
   sidebarNavItems: SidebarNavPreference[];
   autoExpandReasoning: boolean;
@@ -137,6 +138,7 @@ export const DEFAULT_CLIENT_SETTINGS: AppSettings = {
   sidebarWorkspaceTrailing: "diff",
   sidebarRowItems: DEFAULT_SIDEBAR_ROW_ITEMS,
   sidebarChecksDisplay: DEFAULT_SIDEBAR_CHECKS_DISPLAY,
+  alwaysShowHostLabels: false,
   sidebarNavItems: [],
   autoExpandReasoning: false,
   toolCallDetailLevel: "detailed",
@@ -226,6 +228,7 @@ const StoredAppSettingsSchema = z
       .enum(["iconAndText", "icon", "none"])
       .optional()
       .catch(DEFAULT_SIDEBAR_CHECKS_DISPLAY),
+    alwaysShowHostLabels: z.boolean().catch(false),
     sidebarNavItems: z.array(z.object({ key: z.string(), visible: z.boolean() })).catch([]),
     autoExpandReasoning: z.boolean().catch(false),
     toolCallDetailLevel: z

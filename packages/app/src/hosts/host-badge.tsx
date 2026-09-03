@@ -1,7 +1,14 @@
 import { Text, View } from "react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { Server } from "lucide-react-native";
-import { HOST_COLORS, type HostBadgeModel, type HostColor } from "@/hosts/appearance";
+import {
+  HOST_COLORS,
+  isCustomHostColor,
+  type CustomHostColor,
+  type HostBadgeModel,
+  type HostColor,
+  type PresetHostColor,
+} from "@/hosts/appearance";
 import { identityForeground } from "@/styles/identity-colors";
 import type { Theme } from "@/styles/theme";
 
@@ -21,8 +28,8 @@ const mutedMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted })
 //
 // Glyph and label share one color, so a badge reads as one object rather than a colored icon
 // with an unrelated grey word beside it.
-const HOST_ICON_MAPPINGS: Record<HostColor, (theme: Theme) => { color: string }> = (() => {
-  const byColor = {} as Record<HostColor, (theme: Theme) => { color: string }>;
+const HOST_ICON_MAPPINGS: Record<PresetHostColor, (theme: Theme) => { color: string }> = (() => {
+  const byColor = {} as Record<PresetHostColor, (theme: Theme) => { color: string }>;
   for (const color of HOST_COLORS) {
     byColor[color] =
       color === "none"
@@ -31,6 +38,21 @@ const HOST_ICON_MAPPINGS: Record<HostColor, (theme: Theme) => { color: string }>
   }
   return byColor;
 })();
+
+const customIconMappings = new Map<CustomHostColor, (theme: Theme) => { color: string }>();
+
+function hostIconMapping(color: HostColor): (theme: Theme) => { color: string } {
+  if (!isCustomHostColor(color)) {
+    return HOST_ICON_MAPPINGS[color];
+  }
+  const existing = customIconMappings.get(color);
+  if (existing) {
+    return existing;
+  }
+  const mapping = () => ({ color });
+  customIconMappings.set(color, mapping);
+  return mapping;
+}
 
 /**
  * Which machine something lives on, drawn the same way everywhere it appears: a server glyph
@@ -47,7 +69,7 @@ export function HostBadge({ badge }: { badge: HostBadgeModel }) {
       testID={`host-badge-${badge.serverId}`}
       accessibilityLabel={badge.label}
     >
-      <ThemedServer size={HOST_BADGE_ICON_SIZE} uniProps={HOST_ICON_MAPPINGS[badge.color]} />
+      <ThemedServer size={HOST_BADGE_ICON_SIZE} uniProps={hostIconMapping(badge.color)} />
       {badge.showLabel ? (
         <Text style={[styles.label, labelColorStyle(badge.color)]} numberOfLines={1}>
           {badge.label}
@@ -61,6 +83,9 @@ export function HostBadge({ badge }: { badge: HostBadgeModel }) {
 // has to come from a registered style. One entry per host color, picked at render time; a
 // module-level lookup table would read the style proxies before the persisted theme lands.
 function labelColorStyle(color: HostColor) {
+  if (isCustomHostColor(color)) {
+    return { color };
+  }
   switch (color) {
     case "none":
       return null;

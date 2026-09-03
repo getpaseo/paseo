@@ -2095,6 +2095,10 @@ export const zhCN: TranslationResources = {
       },
       sidebar: {
         title: "侧边栏",
+        alwaysShowHostLabels: {
+          title: "始终显示主机标签",
+          description: "即使所有可见工作区都在此设备上，也显示主机标签",
+        },
         description: "选择侧边栏顶部显示的项目及其顺序",
         moveUp: "上移",
         moveDown: "下移",
@@ -2235,6 +2239,15 @@ export const zhCN: TranslationResources = {
         color: {
           label: "颜色",
           accessibilityLabel: "颜色，{{value}}",
+          custom: {
+            action: "自定义…",
+            title: "自定义颜色",
+            submit: "应用",
+            invalid: "输入十六进制颜色，例如 #368080。",
+            panelAccessibility: "饱和度和亮度",
+            hueAccessibility: "色相",
+            hexAccessibility: "十六进制颜色",
+          },
           options: {
             none: "默认",
             violet: "紫罗兰",

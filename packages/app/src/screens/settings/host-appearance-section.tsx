@@ -8,6 +8,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AdaptiveRenameModal } from "@/components/rename-modal";
@@ -17,13 +18,16 @@ import { SettingsSection } from "@/screens/settings/settings-section";
 import {
   HOST_BADGE_DISPLAYS,
   HOST_COLORS,
+  hostColorValue,
+  isCustomHostColor,
   resolveHostBadgeDisplay,
+  type CustomHostColor,
   type HostBadgeDisplay,
   type HostColor,
 } from "@/hosts/appearance";
 import { useLocalDaemonServerIdState } from "@/hooks/use-is-local-daemon";
 import { useHostMutations } from "@/runtime/host-runtime";
-import { identityColor } from "@/styles/identity-colors";
+import { HostCustomColorModal } from "@/screens/settings/host-custom-color-modal";
 import { settingsStyles } from "@/styles/settings";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 import type { HostProfile } from "@/types/host-connection";
@@ -82,7 +86,9 @@ function HostRenameButton({ host }: { host: HostProfile }) {
 }
 
 function colorLabel(t: TFunction, color: HostColor): string {
-  return t(`settings.host.appearance.color.options.${color}`);
+  return isCustomHostColor(color)
+    ? color.toUpperCase()
+    : t(`settings.host.appearance.color.options.${color}`);
 }
 
 function badgeDisplayLabel(t: TFunction, display: HostBadgeDisplay): string {
@@ -90,9 +96,10 @@ function badgeDisplayLabel(t: TFunction, display: HostBadgeDisplay): string {
 }
 
 function ColorSwatch({ color }: { color: HostColor }) {
+  const value = hostColorValue(color);
   const swatchStyle = useMemo(
-    () => [styles.swatch, color === "none" ? null : { backgroundColor: identityColor(color) }],
-    [color],
+    () => [styles.swatch, value ? { backgroundColor: value } : null],
+    [value],
   );
   return <View style={swatchStyle} />;
 }
@@ -104,10 +111,10 @@ function ColorMenuItem({
 }: {
   color: HostColor;
   selected: boolean;
-  onChange: (color: HostColor) => void;
+  onChange: (color: HostColor) => Promise<void>;
 }) {
   const { t } = useTranslation();
-  const handleSelect = useCallback(() => onChange(color), [color, onChange]);
+  const handleSelect = useCallback(() => void onChange(color), [color, onChange]);
   const leading = useMemo(() => <ColorSwatch color={color} />, [color]);
   return (
     <DropdownMenuItem selected={selected} onSelect={handleSelect} leading={leading}>
@@ -116,38 +123,64 @@ function ColorMenuItem({
   );
 }
 
-function ColorRow({ color, onChange }: { color: HostColor; onChange: (color: HostColor) => void }) {
+function ColorRow({
+  color,
+  onChange,
+}: {
+  color: HostColor;
+  onChange: (color: HostColor) => Promise<void>;
+}) {
   const { t } = useTranslation();
+  const [isCustomColorOpen, setIsCustomColorOpen] = useState(false);
   const selectedLabel = colorLabel(t, color);
+  const isCustomColor = isCustomHostColor(color);
+  const openCustomColor = useCallback(() => setIsCustomColorOpen(true), []);
+  const closeCustomColor = useCallback(() => setIsCustomColorOpen(false), []);
+  const submitCustomColor = useCallback(
+    async (customColor: CustomHostColor) => onChange(customColor),
+    [onChange],
+  );
   return (
-    <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
-      <View style={settingsStyles.rowContent}>
-        <Text style={settingsStyles.rowTitle}>{t("settings.host.appearance.color.label")}</Text>
+    <>
+      <View style={[settingsStyles.row, settingsStyles.rowBorder]}>
+        <View style={settingsStyles.rowContent}>
+          <Text style={settingsStyles.rowTitle}>{t("settings.host.appearance.color.label")}</Text>
+        </View>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            style={dropdownTriggerStyle}
+            accessibilityRole="button"
+            accessibilityLabel={t("settings.host.appearance.color.accessibilityLabel", {
+              value: selectedLabel,
+            })}
+          >
+            <ColorSwatch color={color} />
+            <Text style={styles.triggerText}>{selectedLabel}</Text>
+            <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="bottom" align="end" width={200}>
+            {HOST_COLORS.map((option) => (
+              <ColorMenuItem
+                key={option}
+                color={option}
+                selected={option === color}
+                onChange={onChange}
+              />
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem selected={isCustomColor} onSelect={openCustomColor}>
+              {t("settings.host.appearance.color.custom.action")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </View>
-      <DropdownMenu>
-        <DropdownMenuTrigger
-          style={dropdownTriggerStyle}
-          accessibilityRole="button"
-          accessibilityLabel={t("settings.host.appearance.color.accessibilityLabel", {
-            value: selectedLabel,
-          })}
-        >
-          <ColorSwatch color={color} />
-          <Text style={styles.triggerText}>{selectedLabel}</Text>
-          <ThemedChevronDown size={ICON_SIZE.sm} uniProps={mutedColorMapping} />
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="bottom" align="end" width={200}>
-          {HOST_COLORS.map((option) => (
-            <ColorMenuItem
-              key={option}
-              color={option}
-              selected={option === color}
-              onChange={onChange}
-            />
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </View>
+      <HostCustomColorModal
+        visible={isCustomColorOpen}
+        color={color}
+        onClose={closeCustomColor}
+        onSubmit={submitCustomColor}
+      />
+    </>
   );
 }
 

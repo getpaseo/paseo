@@ -483,7 +483,7 @@ describe("shared sidebar workspace model", () => {
 
 describe("shouldShowSidebarHostLabels", () => {
   it("is false with no visible projects", () => {
-    expect(shouldShowSidebarHostLabels([])).toBe(false);
+    expect(shouldShowSidebarHostLabels({ projects: [], alwaysShowHostLabels: false })).toBe(false);
   });
 
   it("is false when every project lives on a single host", () => {
@@ -494,7 +494,15 @@ describe("shouldShowSidebarHostLabels", () => {
       ],
     });
 
-    expect(shouldShowSidebarHostLabels(projects)).toBe(false);
+    expect(shouldShowSidebarHostLabels({ projects, alwaysShowHostLabels: false })).toBe(false);
+  });
+
+  it("is true for a single host when host labels are always enabled", () => {
+    const projects = buildSidebarProjectsFromStructure({
+      projects: [project({ projectKey: "project-a", workspaceKeys: ["ws-1"] })],
+    });
+
+    expect(shouldShowSidebarHostLabels({ projects, alwaysShowHostLabels: true })).toBe(true);
   });
 
   it("is true when projects span separate hosts", () => {
@@ -525,7 +533,7 @@ describe("shouldShowSidebarHostLabels", () => {
       ],
     });
 
-    expect(shouldShowSidebarHostLabels(projects)).toBe(true);
+    expect(shouldShowSidebarHostLabels({ projects, alwaysShowHostLabels: false })).toBe(true);
   });
 
   it("is true for a single project shared across hosts", () => {
@@ -550,7 +558,7 @@ describe("shouldShowSidebarHostLabels", () => {
       ],
     });
 
-    expect(shouldShowSidebarHostLabels(projects)).toBe(true);
+    expect(shouldShowSidebarHostLabels({ projects, alwaysShowHostLabels: false })).toBe(true);
   });
 });
 

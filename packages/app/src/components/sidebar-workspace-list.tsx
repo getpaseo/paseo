@@ -149,7 +149,10 @@ import { OpenInFileManagerMenuItem } from "@/workspace/open-in-file-manager/menu
 import { useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
 import type { HostBadgeModel } from "@/hosts/appearance";
 import { useHostBadges } from "@/hosts/use-host-badges";
-import { useSidebarRowItems } from "@/components/sidebar/display-preferences/model";
+import {
+  useAlwaysShowHostLabels,
+  useSidebarRowItems,
+} from "@/components/sidebar/display-preferences/model";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 
 const workspaceKeyExtractor = (workspace: SidebarWorkspacePlacement) => workspace.workspaceKey;
@@ -1889,12 +1892,14 @@ export function SidebarWorkspaceList({
   const pathname = usePathname();
   const hosts = useHosts();
   const rowItems = useSidebarRowItems();
+  const alwaysShowHostLabels = useAlwaysShowHostLabels();
   // Host badge visibility is a lattice, not three competing switches: this gate is the global
   // "off", `shouldShowSidebarHostLabels` is the automatic "there is only one host so it says
   // nothing", and each host's own `badgeDisplay` decides name vs icon vs hidden. Turning the
   // item off here removes the badge everywhere; leaving it on defers to the per-host setting.
   const hostBadgeByServerId = useHostBadges({
-    enabled: rowItems.host && shouldShowSidebarHostLabels(projects),
+    enabled: rowItems.host && shouldShowSidebarHostLabels({ projects, alwaysShowHostLabels }),
+    alwaysShowHostLabels,
   });
   const serverIds = useMemo(() => hosts.map((host) => host.serverId), [hosts]);
   const supportsMultiplicityByServerId = useHostFeatureMap(serverIds, "workspaceMultiplicity");

@@ -2153,6 +2153,11 @@ export const ptBR: TranslationResources = {
       },
       sidebar: {
         title: "Barra lateral",
+        alwaysShowHostLabels: {
+          title: "Sempre mostrar rótulos do host",
+          description:
+            "Mostra os rótulos do host mesmo quando todos os espaços de trabalho visíveis estão neste dispositivo",
+        },
         description: "Escolha quais itens aparecem no topo da barra lateral e em que ordem",
         moveUp: "Mover para cima",
         moveDown: "Mover para baixo",
@@ -2296,6 +2301,15 @@ export const ptBR: TranslationResources = {
         color: {
           label: "Cor",
           accessibilityLabel: "Cor, {{value}}",
+          custom: {
+            action: "Personalizada…",
+            title: "Cor personalizada",
+            submit: "Aplicar",
+            invalid: "Insira uma cor hexadecimal como #368080.",
+            panelAccessibility: "Saturação e brilho",
+            hueAccessibility: "Matiz",
+            hexAccessibility: "Cor hexadecimal",
+          },
           options: {
             none: "Padrão",
             violet: "Violeta",

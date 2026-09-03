@@ -1598,7 +1598,7 @@ describe("HostRuntimeStore", () => {
     store.syncHosts([]);
   });
 
-  it("records a chosen host color and writes it through to storage", async () => {
+  it("records a custom host color and writes it through to storage", async () => {
     const host = makeHost({ serverId: "srv_appearance", updatedAt: new Date(0).toISOString() });
     const storage = createMemoryHostRuntimeStorage();
     await storage.setItem("@paseo:daemon-registry", JSON.stringify([host]));
@@ -1611,18 +1611,18 @@ describe("HostRuntimeStore", () => {
 
     const hostListChanged = onceHostListMatches(
       store,
-      () => store.getHosts()[0]?.appearance.color === "teal",
+      () => store.getHosts()[0]?.appearance.color === "#123456",
     );
-    await store.setHostColor("srv_appearance", "teal");
+    await store.setHostColor("srv_appearance", "#123456");
     await hostListChanged;
 
     const updated = store.getHosts()[0];
-    expect(updated?.appearance).toEqual({ color: "teal", badgeDisplay: null });
+    expect(updated?.appearance).toEqual({ color: "#123456", badgeDisplay: null });
     expect(updated?.updatedAt).not.toBe(host.updatedAt);
 
     const persisted = await storage.getItem("@paseo:daemon-registry");
     expect(JSON.parse(persisted ?? "[]")[0].appearance).toEqual({
-      color: "teal",
+      color: "#123456",
       badgeDisplay: null,
     });
 

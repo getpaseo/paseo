@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   type HostAppearanceSource,
   defaultHostAppearance,
+  hostColorValue,
+  normalizeCustomHostColor,
   normalizeStoredHostAppearance,
   resolveHostBadgeDisplay,
   selectHostBadges,
@@ -32,6 +34,30 @@ describe("normalizeStoredHostAppearance", () => {
       badgeDisplay: "icon",
     });
   });
+
+  it("normalizes custom hex colors and rejects invalid colors", () => {
+    expect(normalizeStoredHostAppearance({ color: "#A1b2C3" }).color).toBe("#a1b2c3");
+    expect(normalizeStoredHostAppearance({ color: "bad color" }).color).toBe("none");
+  });
+});
+
+describe("custom host colors", () => {
+  it("accepts full, short, and hashless hex input", () => {
+    expect(normalizeCustomHostColor("#12AbEf")).toBe("#12abef");
+    expect(normalizeCustomHostColor("#abc")).toBe("#aabbcc");
+    expect(normalizeCustomHostColor("123456")).toBe("#123456");
+  });
+
+  it("rejects non-hex and alpha colors", () => {
+    expect(normalizeCustomHostColor("blue")).toBeNull();
+    expect(normalizeCustomHostColor("#12345")).toBeNull();
+    expect(normalizeCustomHostColor("#12345678")).toBeNull();
+  });
+
+  it("resolves custom foreground values", () => {
+    expect(hostColorValue("#123456")).toBe("#123456");
+    expect(hostColorValue("none")).toBeNull();
+  });
 });
 
 describe("resolveHostBadgeDisplay", () => {
@@ -58,6 +84,26 @@ describe("resolveHostBadgeDisplay", () => {
       resolveHostBadgeDisplay({
         appearance: { color: "none", badgeDisplay: "hidden" },
         isLocalHost: false,
+      }),
+    ).toBe("hidden");
+  });
+
+  it("names an untouched local host when labels are always enabled", () => {
+    expect(
+      resolveHostBadgeDisplay({
+        appearance: defaultHostAppearance(),
+        isLocalHost: true,
+        alwaysShowHostLabels: true,
+      }),
+    ).toBe("name");
+  });
+
+  it("keeps an explicit hidden choice when labels are always enabled", () => {
+    expect(
+      resolveHostBadgeDisplay({
+        appearance: { color: "none", badgeDisplay: "hidden" },
+        isLocalHost: true,
+        alwaysShowHostLabels: true,
       }),
     ).toBe("hidden");
   });
@@ -139,6 +185,16 @@ describe("selectHostBadges", () => {
     });
     expect(badges.has("alpha")).toBe(false);
     expect(badges.get("beta")?.label).toBe("Beta");
+  });
+
+  it("includes an untouched local host when labels are always enabled", () => {
+    const badges = selectHostBadges({
+      hosts: [host("alpha", "Alpha")],
+      localServerId: "alpha",
+      enabled: true,
+      alwaysShowHostLabels: true,
+    });
+    expect(badges.get("alpha")?.label).toBe("Alpha");
   });
 
   it("omits untouched badges while local-host detection is unresolved", () => {

@@ -2130,6 +2130,10 @@ export const ko: TranslationResources = {
       },
       sidebar: {
         title: "사이드바",
+        alwaysShowHostLabels: {
+          title: "호스트 레이블 항상 표시",
+          description: "표시된 모든 워크스페이스가 이 기기에 있어도 호스트 레이블을 표시합니다",
+        },
         description: "사이드바 상단에 표시할 항목과 순서를 선택하세요",
         moveUp: "위로 이동",
         moveDown: "아래로 이동",
@@ -2271,6 +2275,15 @@ export const ko: TranslationResources = {
         color: {
           label: "색상",
           accessibilityLabel: "색상, {{value}}",
+          custom: {
+            action: "사용자 지정…",
+            title: "사용자 지정 색상",
+            submit: "적용",
+            invalid: "#368080과 같은 16진수 색상을 입력하세요.",
+            panelAccessibility: "채도 및 밝기",
+            hueAccessibility: "색조",
+            hexAccessibility: "16진수 색상",
+          },
           options: {
             none: "기본",
             violet: "보라색",
