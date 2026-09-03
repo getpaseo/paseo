@@ -1,16 +1,29 @@
 import { useCallback, useMemo, type ReactElement } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useMutation } from "@tanstack/react-query";
-import { Globe, Play, Square, SquareTerminal } from "lucide-react-native";
+import { ChevronDown, Globe, Play, Square, SquareTerminal } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useTranslation } from "react-i18next";
 import type { WorkspaceDescriptor } from "@/stores/session-store";
 import { useSessionStore } from "@/stores/session-store";
-import { DropdownMenuLabel } from "@/components/ui/dropdown-menu";
+import { useHostRuntimeSnapshot, type ActiveConnection } from "@/runtime/host-runtime";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/contexts/toast-context";
 import { openServiceUrl } from "@/utils/open-service-url";
+import {
+  resolveWorkspaceLaunchEndpointLink,
+  type WorkspaceScriptLinkKind,
+  type WorkspaceScriptLinkTarget,
+} from "@/utils/workspace-script-links";
+import { useWorkspaceServiceRoutePreferencesStore } from "@/workspace-service-routes/store";
 import type { Theme } from "@/styles/theme";
 
 type WorkspaceLaunches = NonNullable<WorkspaceDescriptor["launches"]>;
@@ -40,6 +53,7 @@ const ThemedPlay = withUnistyles(Play);
 const ThemedSquare = withUnistyles(Square);
 const ThemedSquareTerminal = withUnistyles(SquareTerminal);
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
+const ThemedChevronDown = withUnistyles(ChevronDown);
 
 const playFillTransparent = { fill: "transparent" };
 const pendingAccessibilityState = { busy: true, disabled: true };
@@ -134,35 +148,151 @@ function LaunchActionButton({
   );
 }
 
-function endpointUrl(endpoint: WorkspaceLaunches[number]["endpoints"][number]): string | null {
-  return endpoint.publicProxyUrl ?? endpoint.localProxyUrl ?? endpoint.proxyUrl ?? null;
+function routeLabelKey(
+  kind: WorkspaceScriptLinkKind,
+):
+  | "workspace.scripts.routes.public"
+  | "workspace.scripts.routes.paseo"
+  | "workspace.scripts.routes.direct" {
+  switch (kind) {
+    case "public":
+      return "workspace.scripts.routes.public";
+    case "paseo":
+      return "workspace.scripts.routes.paseo";
+    case "direct":
+      return "workspace.scripts.routes.direct";
+  }
+}
+
+function LaunchEndpointRouteOption({
+  endpoint,
+  selectedKind,
+  target,
+  onSelect,
+}: {
+  endpoint: WorkspaceLaunches[number]["endpoints"][number];
+  selectedKind: WorkspaceScriptLinkKind;
+  target: WorkspaceScriptLinkTarget;
+  onSelect: (kind: WorkspaceScriptLinkKind) => void;
+}): ReactElement {
+  const { t } = useTranslation();
+  const handleSelect = useCallback(() => onSelect(target.kind), [onSelect, target.kind]);
+  return (
+    <DropdownMenuItem
+      testID={`workspace-launches-route-${endpoint.id}-${target.kind}`}
+      selected={target.kind === selectedKind}
+      showSelectedCheck
+      description={target.label}
+      onSelect={handleSelect}
+    >
+      {t(routeLabelKey(target.kind))}
+    </DropdownMenuItem>
+  );
+}
+
+function LaunchEndpointRouteSelector({
+  endpoint,
+  selectedTarget,
+  targets,
+  onSelect,
+}: {
+  endpoint: WorkspaceLaunches[number]["endpoints"][number];
+  selectedTarget: WorkspaceScriptLinkTarget;
+  targets: WorkspaceScriptLinkTarget[];
+  onSelect: (kind: WorkspaceScriptLinkKind) => void;
+}): ReactElement {
+  const { t } = useTranslation();
+  return (
+    <DropdownMenu>
+      <View collapsable={false} style={styles.endpointRouteSelectorFrame}>
+        <DropdownMenuTrigger
+          accessibilityRole="button"
+          accessibilityLabel={t("workspace.scripts.accessibility.chooseUrl", {
+            scriptName: endpoint.hostname,
+          })}
+          testID={`workspace-launches-route-${endpoint.id}`}
+          hitSlop={6}
+          style={styles.endpointRouteTrigger}
+        >
+          {({ hovered }) => (
+            <>
+              <ThemedChevronDown
+                size={14}
+                uniProps={hovered ? foregroundColorMapping : mutedColorMapping}
+                style={styles.endpointRouteChevron}
+              />
+              <Text
+                style={
+                  hovered ? [styles.endpointName, styles.endpointNameActive] : styles.endpointName
+                }
+                numberOfLines={1}
+              >
+                {selectedTarget.label}
+              </Text>
+            </>
+          )}
+        </DropdownMenuTrigger>
+      </View>
+      <DropdownMenuContent side="bottom" align="end" minWidth={220} maxWidth={280}>
+        {targets.map((target) => (
+          <LaunchEndpointRouteOption
+            key={target.kind}
+            endpoint={endpoint}
+            selectedKind={selectedTarget.kind}
+            target={target}
+            onSelect={onSelect}
+          />
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
 }
 
 function LaunchEndpointRow({
+  activeConnection,
   endpoint,
   launchName,
+  preferredRouteKind,
+  onSelectRouteKind,
   onOpenUrlInBrowserTab,
 }: {
+  activeConnection: ActiveConnection | null;
   endpoint: WorkspaceLaunches[number]["endpoints"][number];
   launchName: string;
+  preferredRouteKind: WorkspaceScriptLinkKind | null;
+  onSelectRouteKind: (kind: WorkspaceScriptLinkKind) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
 }): ReactElement {
   const { t } = useTranslation();
   // COMPAT(workspaceLaunchTcpListeners): added in v0.7.0, remove after 2027-02-28 once the
   // supported daemon floor is >= v0.7.0. Older daemons omit the protocol for HTTP endpoints.
   const protocol = endpoint.protocol ?? "http";
-  const url = endpointUrl(endpoint);
+  const endpointLink = resolveWorkspaceLaunchEndpointLink({ endpoint, activeConnection });
+  const selectedTarget =
+    endpointLink.targets.find((target) => target.kind === preferredRouteKind) ??
+    endpointLink.primary;
   const handleOpen = useCallback(() => {
-    if (url) void openServiceUrl(url, { openInApp: onOpenUrlInBrowserTab });
-  }, [onOpenUrlInBrowserTab, url]);
+    if (selectedTarget) {
+      void openServiceUrl(selectedTarget.url, { openInApp: onOpenUrlInBrowserTab });
+    }
+  }, [onOpenUrlInBrowserTab, selectedTarget]);
 
   return (
     <View style={styles.endpointRow}>
       <Text style={styles.endpointPort}>{endpoint.port}</Text>
-      <Text style={styles.endpointName} numberOfLines={1}>
-        {protocol === "tcp" ? "TCP" : endpoint.hostname}
-      </Text>
-      {url ? (
+      {selectedTarget && endpointLink.targets.length > 1 ? (
+        <LaunchEndpointRouteSelector
+          endpoint={endpoint}
+          selectedTarget={selectedTarget}
+          targets={endpointLink.targets}
+          onSelect={onSelectRouteKind}
+        />
+      ) : (
+        <Text style={styles.endpointName} numberOfLines={1}>
+          {selectedTarget?.label ?? (protocol === "tcp" ? "TCP" : endpoint.hostname)}
+        </Text>
+      )}
+      {selectedTarget ? (
         <LaunchActionButton
           accessibilityLabel={t("workspace.launches.accessibility.openService", {
             hostname: endpoint.hostname,
@@ -180,12 +310,15 @@ function LaunchEndpointRow({
 interface LaunchRowProps {
   launch: WorkspaceLaunches[number];
   liveTerminalIdSet: Set<string>;
+  activeConnection: ActiveConnection | null;
   pendingStartLaunchName: string | null;
   pendingStopLaunchName: string | null;
   launchError: WorkspaceLaunchError | null;
   onStart: (launchName: string) => void;
   onStop: (launchName: string) => void;
   onClearLaunchError: (launchName: string) => void;
+  preferredRouteKind: WorkspaceScriptLinkKind | null;
+  onSelectRouteKind: (kind: WorkspaceScriptLinkKind) => void;
   onViewTerminal?: (terminalId: string) => void;
   onOpenUrlInBrowserTab?: (url: string) => void;
 }
@@ -193,12 +326,15 @@ interface LaunchRowProps {
 function LaunchRow({
   launch,
   liveTerminalIdSet,
+  activeConnection,
   pendingStartLaunchName,
   pendingStopLaunchName,
   launchError,
   onStart,
   onStop,
   onClearLaunchError,
+  preferredRouteKind,
+  onSelectRouteKind,
   onViewTerminal,
   onOpenUrlInBrowserTab,
 }: LaunchRowProps): ReactElement {
@@ -318,8 +454,11 @@ function LaunchRow({
           {launch.endpoints.map((endpoint) => (
             <LaunchEndpointRow
               key={endpoint.id}
+              activeConnection={activeConnection}
               endpoint={endpoint}
               launchName={launch.launchName}
+              preferredRouteKind={preferredRouteKind}
+              onSelectRouteKind={onSelectRouteKind}
               onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
             />
           ))}
@@ -344,6 +483,13 @@ export function WorkspaceLaunchesSection({
   const { t } = useTranslation();
   const toast = useToast();
   const client = useSessionStore((state) => state.sessions[serverId]?.client ?? null);
+  const activeConnection = useHostRuntimeSnapshot(serverId)?.activeConnection ?? null;
+  const preferredRouteKind = useWorkspaceServiceRoutePreferencesStore(
+    (state) => state.byServerId[serverId] ?? null,
+  );
+  const setPreferredRoute = useWorkspaceServiceRoutePreferencesStore(
+    (state) => state.setPreferredRoute,
+  );
   const liveTerminalIdSet = useMemo(() => new Set(liveTerminalIds), [liveTerminalIds]);
   const portRangeLaunch =
     launches.find(
@@ -417,6 +563,10 @@ export function WorkspaceLaunchesSection({
     (launchName: string) => stopMutation.mutate(launchName),
     [stopMutation],
   );
+  const handleSelectRouteKind = useCallback(
+    (kind: WorkspaceScriptLinkKind) => setPreferredRoute(serverId, kind),
+    [serverId, setPreferredRoute],
+  );
 
   if (launches.length === 0) {
     return null;
@@ -437,12 +587,15 @@ export function WorkspaceLaunchesSection({
           key={launch.launchName}
           launch={launch}
           liveTerminalIdSet={liveTerminalIdSet}
+          activeConnection={activeConnection}
           pendingStartLaunchName={pendingStartLaunchName}
           pendingStopLaunchName={pendingStopLaunchName}
           launchError={launchErrors[launch.launchName] ?? null}
           onStart={handleStart}
           onStop={handleStop}
           onClearLaunchError={onClearLaunchError}
+          preferredRouteKind={preferredRouteKind}
+          onSelectRouteKind={handleSelectRouteKind}
           onViewTerminal={onViewTerminal}
           onOpenUrlInBrowserTab={onOpenUrlInBrowserTab}
         />
@@ -546,6 +699,23 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foregroundMuted,
     fontSize: theme.fontSize.sm,
     lineHeight: 14,
+  },
+  endpointNameActive: {
+    color: theme.colors.foreground,
+  },
+  endpointRouteSelectorFrame: {
+    flex: 1,
+    minWidth: 0,
+  },
+  endpointRouteTrigger: {
+    flex: 1,
+    minWidth: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: theme.spacing[1],
+  },
+  endpointRouteChevron: {
+    flexShrink: 0,
   },
   tooltipText: {
     color: theme.colors.foreground,
