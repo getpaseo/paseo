@@ -1990,7 +1990,7 @@ describe("notification timeline items", () => {
           event: {
             type: "timeline",
             provider: "pi",
-            item: { type: "notification", text: "Search finished", level: "info" },
+            item: { type: "notification", level: "info", message: "Search finished" },
           },
           timestamp,
         },
@@ -1998,7 +1998,7 @@ describe("notification timeline items", () => {
           event: {
             type: "timeline",
             provider: "pi",
-            item: { type: "notification", text: "Command blocked", level: "warning" },
+            item: { type: "notification", level: "warning", message: "Command blocked" },
           },
           timestamp,
         },
@@ -2006,7 +2006,7 @@ describe("notification timeline items", () => {
           event: {
             type: "timeline",
             provider: "pi",
-            item: { type: "notification", text: "Turn failed", level: "error" },
+            item: { type: "notification", level: "error", message: "Turn failed" },
           },
           timestamp,
         },
@@ -2014,7 +2014,7 @@ describe("notification timeline items", () => {
           event: {
             type: "timeline",
             provider: "pi",
-            item: { type: "notification", text: "No level" },
+            item: { type: "notification", level: "info", message: "Default info" },
           },
           timestamp,
         },
@@ -2024,15 +2024,15 @@ describe("notification timeline items", () => {
 
     expect(
       state.map((item) =>
-        item.kind === "activity_log"
-          ? { kind: item.kind, activityType: item.activityType, message: item.message }
+        item.kind === "notification"
+          ? { kind: item.kind, level: item.level, message: item.message }
           : { kind: item.kind },
       ),
     ).toEqual([
-      { kind: "activity_log", activityType: "info", message: "Search finished" },
-      { kind: "activity_log", activityType: "warning", message: "Command blocked" },
-      { kind: "activity_log", activityType: "error", message: "Turn failed" },
-      { kind: "activity_log", activityType: "info", message: "No level" },
+      { kind: "notification", level: "info", message: "Search finished" },
+      { kind: "notification", level: "warning", message: "Command blocked" },
+      { kind: "notification", level: "error", message: "Turn failed" },
+      { kind: "notification", level: "info", message: "Default info" },
     ]);
   });
 
@@ -2044,7 +2044,7 @@ describe("notification timeline items", () => {
           event: {
             type: "timeline",
             provider: "pi",
-            item: { type: "notification", text: "Command blocked", level: "warning" },
+            item: { type: "notification", level: "warning", message: "Command blocked" },
           },
           timestamp,
         },
@@ -2052,7 +2052,7 @@ describe("notification timeline items", () => {
           event: {
             type: "timeline",
             provider: "pi",
-            item: { type: "notification", text: "Command blocked", level: "error" },
+            item: { type: "notification", level: "error", message: "Command blocked" },
           },
           timestamp,
         },
@@ -2062,13 +2062,13 @@ describe("notification timeline items", () => {
 
     expect(
       state.map((item) =>
-        item.kind === "activity_log"
-          ? { kind: item.kind, activityType: item.activityType, message: item.message }
+        item.kind === "notification"
+          ? { kind: item.kind, level: item.level, message: item.message }
           : { kind: item.kind },
       ),
     ).toEqual([
-      { kind: "activity_log", activityType: "warning", message: "Command blocked" },
-      { kind: "activity_log", activityType: "error", message: "Command blocked" },
+      { kind: "notification", level: "warning", message: "Command blocked" },
+      { kind: "notification", level: "error", message: "Command blocked" },
     ]);
     expect(new Set(state.map((item) => item.id)).size).toBe(state.length);
   });

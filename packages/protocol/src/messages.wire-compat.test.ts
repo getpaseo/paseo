@@ -268,26 +268,17 @@ describe("wire schema compatibility", () => {
     expect(parsed.capabilities.supportsRewindBoth).toBe(false);
   });
 
-  test("notification timeline items parse with optional level", () => {
+  test("notification timeline items parse their level and message", () => {
     expect(
       AgentTimelineItemPayloadSchema.parse({
         type: "notification",
-        text: "Command blocked by user",
         level: "warning",
+        message: "Command blocked by user",
       }),
     ).toEqual({
       type: "notification",
-      text: "Command blocked by user",
       level: "warning",
-    });
-    expect(
-      AgentTimelineItemPayloadSchema.parse({
-        type: "notification",
-        text: "Search finished",
-      }),
-    ).toEqual({
-      type: "notification",
-      text: "Search finished",
+      message: "Command blocked by user",
     });
   });
 });

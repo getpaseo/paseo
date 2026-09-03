@@ -83,7 +83,7 @@ export type StreamItem =
   | ThoughtItem
   | ToolCallItem
   | TodoListItem
-  | ActivityLogItem
+  | NotificationItem
   | CompactionItem
   | PluginTimelineStreamItem;
 
@@ -753,17 +753,16 @@ export function isAgentToolCallItem(item: StreamItem): item is AgentToolCallItem
   return item.kind === "tool_call" && item.payload.source === "agent";
 }
 
-type ActivityLogType = "system" | "info" | "success" | "warning" | "error";
+type NotificationLevel = "info" | "warning" | "error";
 
-export interface ActivityLogItem {
-  kind: "activity_log";
+export interface NotificationItem {
+  kind: "notification";
   id: string;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
-  activityType: ActivityLogType;
+  level: NotificationLevel;
   message: string;
-  metadata?: Record<string, unknown>;
 }
 
 export interface CompactionItem {
@@ -1197,7 +1196,7 @@ function appendAgentToolCall(
   return [...state, item];
 }
 
-function appendActivityLog(state: StreamItem[], entry: ActivityLogItem): StreamItem[] {
+function appendNotification(state: StreamItem[], entry: NotificationItem): StreamItem[] {
   const index = state.findIndex((existing) => existing.id === entry.id);
   if (index >= 0) {
     const next = [...state];
@@ -1423,14 +1422,39 @@ function reduceTimelineCompaction(
   return [...state, compaction];
 }
 
-function toActivityLogType(level: "info" | "warning" | "error" | undefined): ActivityLogType {
-  if (level === "warning") {
-    return "warning";
+function reduceTransformedTimelineItems(
+  state: StreamItem[],
+  event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
+  timestamp: Date,
+  timelineCursor?: TimelinePosition,
+  transformTimelineItem?: TimelineItemTransform,
+  transformedTimelineItems?: InstalledPluginTimelineItem[] | null,
+): StreamItem[] | undefined {
+  const transformed =
+    transformedTimelineItems === undefined
+      ? transformTimelineItem?.(event.item as AgentTimelineItem)
+      : (transformedTimelineItems ?? undefined);
+  if (transformed === undefined) {
+    return undefined;
   }
-  if (level === "error") {
-    return "error";
+
+  const projected = state.slice();
+  for (const pluginItem of transformed) {
+    const identity = `${pluginItem.pluginId}/${pluginItem.kind}/${pluginItem.version}/${JSON.stringify(pluginItem.data)}`;
+    const streamItem: PluginTimelineStreamItem = {
+      kind: "plugin",
+      id: createUniqueTimelineId(projected, "plugin", identity, timestamp),
+      ...(timelineCursor ? { timelineCursor } : {}),
+      ...(event.turnId ? { turnId: event.turnId } : {}),
+      timestamp,
+      pluginId: pluginItem.pluginId,
+      itemKind: pluginItem.kind,
+      version: pluginItem.version,
+      data: pluginItem.data,
+    };
+    projected.push(streamItem);
   }
-  return "info";
+  return finalizeActiveThoughts(projected);
 }
 
 function reduceTimelineEvent(
@@ -1443,30 +1467,19 @@ function reduceTimelineEvent(
   transformTimelineItem?: TimelineItemTransform,
   transformedTimelineItems?: InstalledPluginTimelineItem[] | null,
 ): StreamItem[] {
-  const item = event.item;
-  const transformed =
-    transformedTimelineItems === undefined
-      ? transformTimelineItem?.(item as AgentTimelineItem)
-      : (transformedTimelineItems ?? undefined);
+  const transformed = reduceTransformedTimelineItems(
+    state,
+    event,
+    timestamp,
+    timelineCursor,
+    transformTimelineItem,
+    transformedTimelineItems,
+  );
   if (transformed !== undefined) {
-    const projected = state.slice();
-    for (const pluginItem of transformed) {
-      const identity = `${pluginItem.pluginId}/${pluginItem.kind}/${pluginItem.version}/${JSON.stringify(pluginItem.data)}`;
-      const streamItem: PluginTimelineStreamItem = {
-        kind: "plugin",
-        id: createUniqueTimelineId(projected, "plugin", identity, timestamp),
-        ...(timelineCursor ? { timelineCursor } : {}),
-        ...(event.turnId ? { turnId: event.turnId } : {}),
-        timestamp,
-        pluginId: pluginItem.pluginId,
-        itemKind: pluginItem.kind,
-        version: pluginItem.version,
-        data: pluginItem.data,
-      };
-      projected.push(streamItem);
-    }
-    return finalizeActiveThoughts(projected);
+    return transformed;
   }
+
+  const item = event.item;
   switch (item.type) {
     case "user_message":
       return finalizeActiveThoughts(
@@ -1512,26 +1525,26 @@ function reduceTimelineEvent(
       );
     }
     case "error": {
-      const activity: ActivityLogItem = {
-        kind: "activity_log",
+      const notification: NotificationItem = {
+        kind: "notification",
         id: createUniqueTimelineId(state, "error", item.message ?? "", timestamp),
         ...(timelineCursor ? { timelineCursor } : {}),
         timestamp,
-        activityType: "error",
+        level: "error",
         message: item.message ?? "Unknown error",
       };
-      return finalizeActiveThoughts(appendActivityLog(state, activity));
+      return finalizeActiveThoughts(appendNotification(state, notification));
     }
     case "notification": {
-      const activity: ActivityLogItem = {
-        kind: "activity_log",
-        id: createUniqueTimelineId(state, "notification", item.text ?? "", timestamp),
+      const notification: NotificationItem = {
+        kind: "notification",
+        id: createUniqueTimelineId(state, "notification", item.message, timestamp),
         ...(timelineCursor ? { timelineCursor } : {}),
         timestamp,
-        activityType: toActivityLogType(item.level),
-        message: item.text ?? "",
+        level: item.level,
+        message: item.message,
       };
-      return finalizeActiveThoughts(appendActivityLog(state, activity));
+      return finalizeActiveThoughts(appendNotification(state, notification));
     }
     case "compaction":
       return finalizeActiveThoughts(
@@ -1695,7 +1708,8 @@ function getEventItemKind(
     case "todo":
       return "todo_list";
     case "error":
-      return "activity_log";
+    case "notification":
+      return "notification";
     default:
       return null;
   }

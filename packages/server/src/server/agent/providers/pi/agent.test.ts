@@ -563,9 +563,9 @@ describe("PiRpcAgentSession", () => {
     expect(fakeSession.extensionUiResponses).toEqual([]);
     expect(fakeSession.canceledExtensionUiRequests).toEqual([]);
     expect(events.timelineItems()).toEqual([
-      { type: "notification", text: "Search finished", level: "info" },
-      { type: "notification", text: "Command blocked by user", level: "warning" },
-      { type: "notification", text: "no type" },
+      { type: "notification", level: "info", message: "Search finished" },
+      { type: "notification", level: "warning", message: "Command blocked by user" },
+      { type: "notification", level: "info", message: "no type" },
     ]);
 
     await session.close();
@@ -585,7 +585,7 @@ describe("PiRpcAgentSession", () => {
     });
 
     expect(events.timelineItems()).toEqual([
-      { type: "notification", text: "Turn running notice", level: "error" },
+      { type: "notification", level: "error", message: "Turn running notice" },
     ]);
 
     await session.close();
@@ -1495,7 +1495,10 @@ describe("PiRpcAgentSession", () => {
     const completion = await events.nextTurnCompletion();
     expect(completion).toMatchObject({ type: "turn_completed", turnId });
     expect(events.timelineAndCompletionEvents()).toEqual([
-      { type: "timeline", item: { type: "notification", text: "Plan mode enabled" } },
+      {
+        type: "timeline",
+        item: { type: "notification", level: "info", message: "Plan mode enabled" },
+      },
       { type: "timeline", item: { type: "user_message", text: "/plan on" } },
       { type: "turn_completed" },
     ]);
@@ -1517,7 +1520,7 @@ describe("PiRpcAgentSession", () => {
     await flushTurnScheduling();
     expect(events.turnCompletedEvents()).toHaveLength(0);
     expect(events.timelineItems()).toEqual([
-      { type: "notification", text: "Shown despite turn start" },
+      { type: "notification", level: "info", message: "Shown despite turn start" },
     ]);
 
     fakeSession.finishTurn();

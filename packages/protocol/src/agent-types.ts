@@ -356,9 +356,8 @@ export type AgentTimelineItem =
   | { type: "error"; message: string }
   | {
       type: "notification";
-      text: string;
-      // Provider-side notification level; falls back to "info" when absent.
-      level?: "info" | "warning" | "error";
+      level: "info" | "warning" | "error";
+      message: string;
     }
   | CompactionTimelineItem;
 

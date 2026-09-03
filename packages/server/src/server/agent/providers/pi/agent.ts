@@ -855,11 +855,11 @@ function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function toNotificationLevel(value: unknown): "info" | "warning" | "error" | null {
+function toNotificationLevel(value: unknown): "info" | "warning" | "error" {
   if (value === "info" || value === "warning" || value === "error") {
     return value;
   }
-  return null;
+  return "info";
 }
 
 function parseExtensionMarkerPayload(
@@ -2040,15 +2040,14 @@ export class PiRpcAgentSession implements AgentSession {
       ) {
         return;
       }
-      const level = toNotificationLevel(event.notifyType);
       this.emit({
         type: "timeline",
         provider: this.provider,
         turnId: this.currentTurnIdForEvent(),
         item: {
           type: "notification",
-          text: message,
-          ...(level ? { level } : {}),
+          level: toNotificationLevel(event.notifyType),
+          message,
         },
       });
       return;

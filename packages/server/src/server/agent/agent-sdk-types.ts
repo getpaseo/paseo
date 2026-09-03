@@ -399,8 +399,8 @@ export type AgentTimelineItem =
   | { type: "error"; message: string }
   | {
       type: "notification";
-      text: string;
-      level?: "info" | "warning" | "error";
+      level: "info" | "warning" | "error";
+      message: string;
     }
   | CompactionTimelineItem;
 
