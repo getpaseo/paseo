@@ -35,6 +35,8 @@ export interface PiHistoryMapperHooks {
     result: PiToolResult,
     context: { toolCallId: string },
   ) => ToolCallDetail | null;
+  /** Invoked when a child session file fails to read during subagent replay. */
+  onSubagentReplayError?: (error: unknown, sessionFile: string) => void;
 }
 
 function isTextContentBlock(block: unknown): block is PiTextContent {
@@ -262,7 +264,7 @@ export async function* streamPiHistory(
       yield event;
     }
   }
-  yield* streamPiSubagentHistory(provider, messages);
+  yield* streamPiSubagentHistory(provider, messages, hooks);
 }
 
 function toToolResultTimelineItem(input: {
@@ -298,11 +300,14 @@ const MAX_REPLAYED_SUBAGENT_ROWS = MAX_SUBAGENT_TIMELINE_ROWS;
  * Replay pi-subagents runs recorded in parent history. Each completed
  * `subagent` tool result carries its run payload in `details` with child
  * session files; those replays become provider subagent descriptors plus
- * timeline rows so restored sessions keep their Subagents Track.
+ * timeline rows so restored sessions keep their Subagents Track. Results with
+ * no run payload (details stripped) still get a descriptor backed by the
+ * inline tool output.
  */
 async function* streamPiSubagentHistory(
   provider: string,
   messages: readonly PiAgentMessage[],
+  hooks: PiHistoryMapperHooks,
 ): AsyncGenerator<AgentStreamEvent> {
   for (const message of messages) {
     if (message.role !== "toolResult" || message.toolName !== "subagent") {
@@ -313,15 +318,59 @@ async function* streamPiSubagentHistory(
         ? { content: message.content }
         : { content: message.content, details: message.details },
     );
-    if (!run) {
+    if (run) {
+      const presentation = subagentPresentation(messages, message, run);
+      yield subagentUpsertEvent(provider, presentation, "running", message.toolCallId);
+
+      yield* replaySubagentRows(provider, presentation.descriptorId, run, message, hooks);
+
+      yield subagentUpsertEvent(provider, presentation, presentation.status, message.toolCallId);
       continue;
     }
-    const presentation = subagentPresentation(messages, message, run);
-    yield subagentUpsertEvent(provider, presentation, "running", message.toolCallId);
-
-    yield* replaySubagentRows(provider, presentation.descriptorId, run, message);
-
-    yield subagentUpsertEvent(provider, presentation, presentation.status, message.toolCallId);
+    // No run payload (details stripped by pi-subagents). Still surface the run
+    // as a descriptor backed by the inline output so the track does not lose
+    // subagents that are visible in the transcript.
+    const text = readPiSubagentInlineOutput({
+      content: message.content,
+      ...(message.details === undefined ? {} : { details: message.details }),
+    });
+    if (!text) {
+      continue;
+    }
+    const failed = message.isError === true;
+    yield {
+      type: "provider_subagent",
+      provider,
+      event: {
+        type: "upsert",
+        id: message.toolCallId,
+        title: "Pi subagent",
+        description: null,
+        status: "running",
+        toolCallId: message.toolCallId,
+      },
+    };
+    yield {
+      type: "provider_subagent",
+      provider,
+      event: {
+        type: "timeline",
+        id: message.toolCallId,
+        item: { type: "assistant_message", text },
+      },
+    };
+    yield {
+      type: "provider_subagent",
+      provider,
+      event: {
+        type: "upsert",
+        id: message.toolCallId,
+        title: "Pi subagent",
+        description: null,
+        status: failed ? "failed" : "completed",
+        toolCallId: message.toolCallId,
+      },
+    };
   }
 }
 
@@ -384,6 +433,7 @@ async function* replaySubagentRows(
   descriptorId: string,
   run: { results: Array<{ sessionFile?: string }> },
   message: Extract<PiAgentMessage, { role: "toolResult" }>,
+  hooks: PiHistoryMapperHooks,
 ): AsyncGenerator<AgentStreamEvent> {
   let rows = 0;
   for (const entry of run.results) {
@@ -409,9 +459,10 @@ async function* replaySubagentRows(
           },
         };
       }
-    } catch {
+    } catch (error) {
       // Child transcripts are best-effort replay data; a missing or corrupt
       // file must not fail the whole history stream.
+      hooks.onSubagentReplayError?.(error, entry.sessionFile!);
     }
   }
   if (rows === 0) {

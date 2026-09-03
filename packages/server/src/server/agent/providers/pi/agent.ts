@@ -1459,6 +1459,14 @@ export class PiRpcAgentSession implements AgentSession {
       this.provider,
       await this.runtimeSession.getMessages(),
       this.capturedUserEntries,
+      {
+        onSubagentReplayError: (error, sessionFile) => {
+          this.logger.debug(
+            { err: error, sessionFile },
+            "Failed to read Pi subagent child session",
+          );
+        },
+      },
     );
   }
 
@@ -2223,7 +2231,9 @@ export class PiRpcAgentSession implements AgentSession {
         this.activeToolCalls.set(event.toolCallId, toolCall);
         this.activeAskUserDialog = readActiveAskUserDialog(event.toolName, event.args);
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", null, null);
-        this.handleSubagentStart(event.toolCallId, event.args);
+        if (event.toolName === "subagent") {
+          this.handleSubagentStart(event.toolCallId, event.args);
+        }
         return;
       }
       case "tool_execution_update": {
@@ -2234,7 +2244,9 @@ export class PiRpcAgentSession implements AgentSession {
 
         const partialResult = parseToolResult(event.partialResult);
         this.emitToolCallEvent(event.toolCallId, toolCall, "running", partialResult, null);
-        this.handleSubagentUpdate(event.toolCallId, event.partialResult);
+        if (event.toolName === "subagent") {
+          this.handleSubagentUpdate(event.toolCallId, event.partialResult);
+        }
         return;
       }
       case "tool_execution_end": {
@@ -2433,10 +2445,13 @@ export class PiRpcAgentSession implements AgentSession {
     void this.subagentTracker
       .end(toolCallId, result, isError)
       .then((subagentEvents) => {
-        for (const subagentEvent of subagentEvents) {
+        // null: the tracked call was canceled (interrupt/close) while end() was
+        // reading the child transcript. Emit nothing so the canceled status
+        // sticks instead of resurrecting the run as completed.
+        for (const subagentEvent of subagentEvents ?? []) {
           this.emit(subagentEvent);
         }
-        return subagentEvents.length;
+        return subagentEvents === null ? 0 : subagentEvents.length;
       })
       .catch((error) => {
         this.logger.warn({ err: error }, "Failed to finalize Pi subagent tracking");

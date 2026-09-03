@@ -5,7 +5,6 @@ import {
   MAX_SUBAGENT_TIMELINE_ROWS,
   buildPiSubagentSubtitle,
   piSubagentDescriptorId,
-  piSubagentStatusFromResult,
   piSubagentTimelineEvents,
   readPiSubagentInlineOutput,
   readPiSubagentLaunchArgs,
@@ -42,6 +41,9 @@ type PiSubagentStatus = "running" | "completed" | "failed" | "canceled";
  */
 export class PiSubagentTracker {
   private readonly states = new Map<string, PiSubagentState>();
+  /** Bumped by cancelAll(); tracked tool calls from older generations are stale. */
+  private generation = 0;
+  private readonly generations = new Map<string, number>();
 
   constructor(private readonly logger: Logger) {}
 
@@ -56,6 +58,7 @@ export class PiSubagentTracker {
       description: input.task ?? null,
       reportedStatus: "running",
     });
+    this.generations.set(toolCallId, this.generation);
     return [this.upsert(toolCallId, "running")];
   }
 
@@ -92,13 +95,26 @@ export class PiSubagentTracker {
   /**
    * tool_execution_end for a `subagent` call: replay child transcripts into
    * the subagent timeline and finalize the descriptor status.
+   *
+   * Returns null when the tracked call is stale (canceled by a newer
+   * generation or superseded), in which case the caller must not emit events —
+   * an interrupted run stays canceled instead of resurrecting as completed.
    */
-  async end(toolCallId: string, result: unknown, isError: boolean): Promise<AgentStreamEvent[]> {
+  async end(
+    toolCallId: string,
+    result: unknown,
+    isError: boolean,
+  ): Promise<AgentStreamEvent[] | null> {
     const state = this.states.get(toolCallId);
     if (!state) {
-      return [];
+      return null;
     }
     this.states.delete(toolCallId);
+    const trackedGeneration = this.generations.get(toolCallId) ?? this.generation;
+    this.generations.delete(toolCallId);
+    if (trackedGeneration !== this.generation) {
+      return null;
+    }
 
     const run = readPiSubagentRunPayload(result);
     const descriptorId = piSubagentDescriptorId(toolCallId, run);
@@ -106,16 +122,21 @@ export class PiSubagentTracker {
     if (descriptorId !== toolCallId) {
       // The store keys descriptors by id and has no rename, so close the
       // tool-call-id descriptor opened at start and continue under the
-      // pi-subagents run id.
+      // pi-subagents run id. Open the run-id descriptor before streaming rows
+      // so timeline events always land on a known descriptor.
       events.push({
         type: "provider_subagent",
         provider: PI_PROVIDER,
         event: { type: "remove", id: toolCallId },
       });
+      events.push(this.upsertFor(descriptorId, "running", state, toolCallId));
     }
 
     let rows = 0;
     for (const sessionFile of sessionFilesOf(run)) {
+      if (rows >= MAX_SUBAGENT_TIMELINE_ROWS) {
+        break;
+      }
       try {
         for await (const { item } of streamPiChildSessionItems(sessionFile)) {
           if (rows >= MAX_SUBAGENT_TIMELINE_ROWS) {
@@ -139,31 +160,38 @@ export class PiSubagentTracker {
         );
       }
     }
-    events.push(this.upsertFor(descriptorId, piSubagentStatusFromResult(isError), state));
+    events.push(this.upsertFor(descriptorId, terminalStatus(run, isError), state, toolCallId));
     return events;
   }
 
-  /** Mark every running subagent canceled (turn interrupted or session closing). */
+  /**
+   * Mark every running subagent canceled (turn interrupted or session
+   * closing). In-flight `end()` continuations for this generation are dropped
+   * by the generation check so a canceled run cannot reappear as completed.
+   */
   cancelAll(): AgentStreamEvent[] {
     const events: AgentStreamEvent[] = [];
     for (const [toolCallId, state] of this.states) {
       if (state.reportedStatus === "running") {
-        events.push(this.upsertFor(toolCallId, "canceled", state));
+        events.push(this.upsertFor(toolCallId, "canceled", state, toolCallId));
         state.reportedStatus = "canceled";
       }
     }
     this.states.clear();
+    this.generations.clear();
+    this.generation += 1;
     return events;
   }
 
   private upsert(toolCallId: string, status: PiSubagentStatus): AgentStreamEvent {
-    return this.upsertFor(toolCallId, status, this.states.get(toolCallId)!);
+    return this.upsertFor(toolCallId, status, this.states.get(toolCallId)!, toolCallId);
   }
 
   private upsertFor(
     id: string,
     status: PiSubagentStatus,
     state: PiSubagentState | undefined,
+    toolCallId: string,
   ): AgentStreamEvent {
     return {
       type: "provider_subagent",
@@ -174,11 +202,30 @@ export class PiSubagentTracker {
         title: state?.title ?? DEFAULT_SUBAGENT_TITLE,
         description: state?.description ?? null,
         status,
-        toolCallId: id,
+        toolCallId,
         ...(state?.subtitle ? { subtitle: state.subtitle } : {}),
       },
     };
   }
+}
+
+/**
+ * Terminal status from the tool result error flag combined with the run
+ * payload: pi-subagents can report a failed child (non-zero exit, error field)
+ * even when the tool call itself completed.
+ */
+function terminalStatus(
+  run: PiSubagentRunPayload | null,
+  isError: boolean,
+): "completed" | "failed" {
+  if (isError) {
+    return "failed";
+  }
+  const failed = (run?.results ?? []).some(
+    (entry: PiSubagentResultEntry) =>
+      Boolean(entry.error) || (entry.exitCode !== undefined && entry.exitCode !== 0),
+  );
+  return failed ? "failed" : "completed";
 }
 
 function sessionFilesOf(run: PiSubagentRunPayload | null): string[] {
