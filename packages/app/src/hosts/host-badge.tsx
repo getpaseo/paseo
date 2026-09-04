@@ -49,7 +49,7 @@ export function HostBadge({ badge }: { badge: HostBadgeModel }) {
     >
       <ThemedServer size={HOST_BADGE_ICON_SIZE} uniProps={HOST_ICON_MAPPINGS[badge.color]} />
       {badge.showLabel ? (
-        <Text style={[styles.label, labelColorStyle(badge.color)]} numberOfLines={1}>
+        <Text style={[styles.label, hostLabelColorStyle(badge.color)]} numberOfLines={1}>
           {badge.label}
         </Text>
       ) : null}
@@ -60,7 +60,11 @@ export function HostBadge({ badge }: { badge: HostBadgeModel }) {
 // Text has no `color` prop, so the label cannot ride the icon's uniProps mapping — its color
 // has to come from a registered style. One entry per host color, picked at render time; a
 // module-level lookup table would read the style proxies before the persisted theme lands.
-function labelColorStyle(color: HostColor) {
+//
+// Exported so any other text that names a host — the new-workspace host pill — paints it the
+// same way, in the host's identity foreground, and a host with no color falls back to the
+// caller's own muted style.
+export function hostLabelColorStyle(color: HostColor) {
   switch (color) {
     case "none":
       return null;
