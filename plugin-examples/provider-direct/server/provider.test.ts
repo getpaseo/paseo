@@ -40,7 +40,7 @@ describe("direct provider example", () => {
     await connection.close();
   });
 
-  it("demonstrates settings, commands, persistence, reload, and an ordinary child timeline", async () => {
+  it("demonstrates settings, commands, persistence, and provider-rendered timeline items", async () => {
     const connection = await createDirectExampleProvider().connect({
       versions: [1],
       capabilities: [
@@ -48,7 +48,6 @@ describe("direct provider example", () => {
         "prompt.command",
         "session.configure",
         "session.persistence",
-        "session.reload",
         "session.subsession",
         "timeline.plugin",
       ],
@@ -123,6 +122,13 @@ describe("direct provider example", () => {
         item: expect.objectContaining({ type: "user_message", clientMessageId: "message-1" }),
       }),
     );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline.item",
+        sessionId: "session-complete",
+        item: expect.objectContaining({ type: "plugin", kind: "provider-result" }),
+      }),
+    );
     const child = events.find(
       (event): event is Extract<ProviderEvent, { type: "session.opened" }> =>
         event.type === "session.opened" && event.parentSessionId === "session-complete",
@@ -132,29 +138,10 @@ describe("direct provider example", () => {
       expect.objectContaining({
         type: "timeline.item",
         sessionId: child?.sessionId,
-        item: expect.objectContaining({ type: "plugin", kind: "child-result" }),
+        item: expect.objectContaining({ type: "plugin", kind: "provider-result" }),
       }),
     );
     expect(events).toContainEqual(expect.objectContaining({ type: "session.persistence" }));
-
-    await connection.send({
-      type: "session.reload",
-      requestId: "reload-complete",
-      sessionId: "session-complete",
-      config: {
-        cwd: "/repo",
-        env: {},
-        mcpServers: {},
-        mode: "build",
-        settings: { concise: false },
-        persist: true,
-      },
-    });
-    expect(events).toContainEqual({
-      type: "session.ready",
-      requestId: "reload-complete",
-      sessionId: "session-complete",
-    });
     await connection.close();
   });
 

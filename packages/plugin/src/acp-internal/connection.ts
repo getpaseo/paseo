@@ -55,7 +55,6 @@ const ADAPTER_CAPABILITIES = [
 
 interface AcpBoundarySession {
   runtime: AcpRuntime;
-  config: ProviderSessionConfig;
   capabilities: readonly ProviderCapability[];
   mutationLane: Promise<void>;
 }
@@ -81,7 +80,7 @@ export async function createAcpProviderConnection(
     supportedCapabilities.push("session.list");
   }
   if (probe.agentCapabilities.loadSession) {
-    supportedCapabilities.push("session.persistence", "session.reload");
+    supportedCapabilities.push("session.persistence");
   }
   await probe.close();
   const capabilities = negotiateProviderCapabilities(request.capabilities, supportedCapabilities);
@@ -201,11 +200,6 @@ async function dispatch(input: ProviderInput, state: AcpConnectionState): Promis
     case "session.open":
       await openSession(input, state);
       return;
-    case "session.reload": {
-      const session = requireSession(state, input.sessionId);
-      await mutateSession(session, () => reloadSession(input, session, state));
-      return;
-    }
     case "session.prompt":
       await requireSession(state, input.sessionId).runtime.prompt(input);
       return;
@@ -316,7 +310,6 @@ async function openSession(
     }
     state.sessions.set(input.sessionId, {
       runtime,
-      config: input.config,
       capabilities,
       mutationLane: Promise.resolve(),
     });
@@ -324,64 +317,6 @@ async function openSession(
     await runtime.close();
     throw error;
   }
-}
-
-async function reloadSession(
-  input: Extract<ProviderInput, { type: "session.reload" }>,
-  current: AcpBoundarySession,
-  state: AcpConnectionState,
-): Promise<void> {
-  const previousRuntime = current.runtime;
-  const buffered: ProviderEvent[] = [];
-  let stagedError: Error | null = null;
-  const candidate = await AcpRuntime.start({
-    options: state.options,
-    boundarySessionId: input.sessionId,
-    env: input.config.env,
-    emit: (event) => {
-      try {
-        buffered.push(ProviderEventSchema.parse(event));
-      } catch (error) {
-        stagedError = error instanceof Error ? error : new Error(describeError(error));
-        throw error;
-      }
-    },
-  });
-  let capabilities: readonly ProviderCapability[];
-  try {
-    capabilities = await candidate.open(
-      {
-        type: "session.open",
-        requestId: input.requestId,
-        sessionId: input.sessionId,
-        config: input.config,
-        persistence: nativePersistence(previousRuntime.nativeSessionId),
-        history: "skip",
-      },
-      state.capabilities,
-    );
-    await candidate.drainNotifications();
-    if (stagedError) throw stagedError;
-    if (state.isClosed()) {
-      await candidate.closeSession();
-      return;
-    }
-  } catch (error) {
-    await candidate.close();
-    state.emit({
-      type: "request.failed",
-      requestId: input.requestId,
-      error: { message: describeError(error) },
-    });
-    return;
-  }
-  previousRuntime.replaceEmitter(() => {});
-  current.runtime = candidate;
-  current.config = input.config;
-  current.capabilities = capabilities;
-  candidate.replaceEmitter(state.emit);
-  for (const event of buffered) state.emit(event);
-  await previousRuntime.close();
 }
 
 async function mutateSession(
@@ -517,10 +452,6 @@ class AcpRuntime {
         error: { message: `ACP process exited (${signal ?? code ?? "unknown"})` },
       });
     });
-  }
-
-  replaceEmitter(emit: (event: ProviderEvent) => void): void {
-    this.emit = emit;
   }
 
   async open(

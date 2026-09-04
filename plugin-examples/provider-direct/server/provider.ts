@@ -10,6 +10,7 @@ import {
   type ProviderSessionConfig,
 } from "@getpaseo/plugin/provider";
 import { randomUUID } from "node:crypto";
+import { providerResultKind } from "../shared/provider-result.js";
 
 const CAPABILITIES = [
   "prompt.message",
@@ -19,7 +20,6 @@ const CAPABILITIES = [
   "session.configure",
   "session.list",
   "session.persistence",
-  "session.reload",
   "session.subsession",
   "session.unarchive",
   "timeline.plugin",
@@ -133,9 +133,6 @@ function dispatch(input: ProviderInput, state: ExampleState): void {
     case "session.open":
       openSession(input, state);
       return;
-    case "session.reload":
-      reloadSession(input, state);
-      return;
     case "session.prompt":
       promptSession(input, state);
       return;
@@ -208,39 +205,6 @@ function openSession(
       item: { type: "assistant_message", id: "replayed-1", text: "Restored from persistence" },
     });
   }
-  state.emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
-}
-
-function reloadSession(
-  input: Extract<ProviderInput, { type: "session.reload" }>,
-  state: ExampleState,
-): void {
-  const session = requireSession(state, input.sessionId);
-  if (!input.config.cwd) {
-    state.emit({
-      type: "request.failed",
-      requestId: input.requestId,
-      error: { message: "cwd is required" },
-    });
-    return;
-  }
-  const candidate = { ...session, config: input.config };
-  state.emit({
-    type: "session.opened",
-    requestId: input.requestId,
-    sessionId: input.sessionId,
-    capabilities: state.capabilities,
-    restoration: "core",
-    persistence: candidate.persistence,
-    title: input.config.title,
-    cwd: input.config.cwd,
-  });
-  state.emit({
-    type: "session.config",
-    sessionId: input.sessionId,
-    config: configState(candidate),
-  });
-  state.sessions.set(input.sessionId, candidate);
   state.emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
 }
 
@@ -322,6 +286,18 @@ function promptSession(
     sessionId: input.sessionId,
     item: { type: "assistant_message", id: `assistant-${session.turn}`, text: `Echo: ${text}` },
   });
+  state.emit({
+    type: "timeline.item",
+    sessionId: input.sessionId,
+    item: {
+      type: "plugin",
+      id: `provider-result-${session.turn}`,
+      pluginId: "provider-direct-example",
+      kind: providerResultKind,
+      version: 1,
+      data: { label: "Provider result", detail: `Echoed turn ${session.turn}` },
+    },
+  });
   publishChild(input.sessionId, session.turn, state);
   session.persistence = {
     version: 1,
@@ -354,9 +330,9 @@ function publishChild(parentSessionId: string, turn: number, state: ExampleState
       type: "plugin",
       id: `child-result-${turn}`,
       pluginId: "provider-direct-example",
-      kind: "child-result",
+      kind: providerResultKind,
       version: 1,
-      data: { status: "completed" },
+      data: { label: "Child result", detail: "Completed" },
     },
   });
   state.emit({ type: "session.ready", sessionId });

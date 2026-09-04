@@ -7,14 +7,12 @@ export const PROVIDER_CAPABILITIES = [
   "prompt.message",
   "prompt.command",
   "prompt.image",
-  "prompt.max_thinking_tokens",
   "prompt.output_schema",
   "prompt.steer",
   "session.archive",
   "session.configure",
   "session.list",
   "session.persistence",
-  "session.reload",
   "session.revert.both",
   "session.revert.conversation",
   "session.revert.files",
@@ -102,7 +100,6 @@ export interface ProviderPrompt {
     | { type: "message"; content: ProviderContent[] }
     | { type: "command"; name: string; arguments: string };
   outputSchema?: JsonValue;
-  maxThinkingTokens?: number;
   clearPendingPermissions?: boolean;
 }
 
@@ -221,12 +218,6 @@ export type ProviderInput =
       config: ProviderSessionConfig;
       persistence?: ProviderPersistence;
       history: "replay" | "skip";
-    }
-  | {
-      type: "session.reload";
-      requestId: string;
-      sessionId: string;
-      config: ProviderSessionConfig;
     }
   | { type: "session.prompt"; sessionId: string; prompt: ProviderPrompt }
   | { type: "session.interrupt"; requestId: string; sessionId: string }
@@ -600,7 +591,6 @@ function requiredPromptCapabilities(prompt: ProviderPrompt): readonly ProviderCa
     }
   }
   if (prompt.outputSchema !== undefined) capabilities.push("prompt.output_schema");
-  if (prompt.maxThinkingTokens !== undefined) capabilities.push("prompt.max_thinking_tokens");
   return capabilities;
 }
 
@@ -618,10 +608,6 @@ export function requiredProviderCapabilities(input: ProviderInput): readonly Pro
       if (input.config.toolPolicy) capabilities.push("permission.tool_policy");
       return capabilities;
     }
-    case "session.reload":
-      return input.config.toolPolicy
-        ? ["session.reload", "permission.tool_policy"]
-        : ["session.reload"];
     case "session.prompt":
       return requiredPromptCapabilities(input.prompt);
     case "session.permission":
@@ -851,7 +837,6 @@ const promptSchema = z
       z.object({ type: z.literal("command"), name: idSchema, arguments: z.string() }).strict(),
     ]),
     outputSchema: z.json().optional(),
-    maxThinkingTokens: z.number().int().nonnegative().optional(),
     clearPendingPermissions: z.boolean().optional(),
   })
   .strict();
@@ -885,14 +870,6 @@ export const ProviderInputSchema: z.ZodType<ProviderInput> = z.discriminatedUnio
       config: sessionConfigSchema,
       persistence: persistenceSchema.optional(),
       history: z.enum(["replay", "skip"]),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("session.reload"),
-      requestId: idSchema,
-      sessionId: idSchema,
-      config: sessionConfigSchema,
     })
     .strict(),
   z

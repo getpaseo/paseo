@@ -2,7 +2,7 @@
 title: Plugin reference
 description: Local plugin files, client and server runtimes, platform limits, contributions, RPCs, lifecycle, hosts, and CLI commands.
 nav: Reference
-order: 47
+order: 48
 category: Plugins
 ---
 
@@ -150,6 +150,9 @@ process, credential, and other machine-local work under `server/`. A plugin with
 
 ### Providers
 
+Follow [Build a provider plugin](/docs/plugins/v0.8/providers) for direct and ACP implementations,
+session lifecycle, composer settings, timeline renderers, testing, and distribution.
+
 Call `server.registerProvider()` with a `ProviderRegistration` from
 `@getpaseo/plugin/provider`. Its connection accepts inputs with `send()` and emits complete state
 snapshots through `onEvent()`. `send()` reports acceptance only; prompt disposition, turns,
@@ -162,6 +165,9 @@ effects. Repeat `clientMessageId` on the live user timeline item and publish exa
 Provider settings are toggle/select descriptors that Paseo renders in the composer. Keep
 provider-private JSON under `providerOptions`. Host tools arrive as MCP servers in the complete
 session config.
+
+Paseo refreshes an agent by closing its current provider session and opening it with current
+configuration and persistence. Providers re-read external state during `session.open`.
 
 Use `runAcpProvider()` from `@getpaseo/plugin/acp` to adapt a command-backed ACP. Add transformer
 hooks only for a vendor's discovery, configuration, notification, or tool-call differences.

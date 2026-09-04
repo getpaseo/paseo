@@ -557,79 +557,7 @@ describe("runAcpProvider", () => {
     await connection.close();
   });
 
-  it("keeps the old runtime when a reload transformer stages malformed output", async () => {
-    const harness = connectorHarness({
-      capabilities: { loadSession: true },
-      handleRequest(instance, request) {
-        if (request.method !== "session/load") return false;
-        instance.notify("vendor/malformed", {});
-        instance.respond(request, { sessionId: "candidate", modes: null, configOptions: [] });
-        return true;
-      },
-    });
-    const registration = runAcpProvider({
-      id: "reload-acp",
-      label: "Reload ACP",
-      connector: harness.connector,
-      transformers: [
-        {
-          notification(notification) {
-            if (notification.method !== "vendor/malformed") return null;
-            return {
-              type: "timeline",
-              item: { type: "assistant_message", id: "malformed", text: () => undefined },
-            } as never;
-          },
-        },
-      ],
-    });
-    const connection = await registration.connect({
-      versions: [1],
-      capabilities: ["prompt.message", "session.reload"],
-    });
-    const events: ProviderEvent[] = [];
-    connection.onEvent((event) => events.push(event));
-    await connection.send(openInput());
-    await waitForEvent(events, (event) => event.type === "session.ready");
-
-    await connection.send({
-      type: "session.reload",
-      requestId: "reload-malformed",
-      sessionId: "session-1",
-      config: openInput().config,
-    });
-    await waitForEvent(
-      events,
-      (event) => event.type === "request.failed" && event.requestId === "reload-malformed",
-    );
-    expect(harness.instances[2]).toMatchObject({ readsCanceled: true, writesClosed: true });
-
-    await connection.send({
-      type: "session.prompt",
-      sessionId: "session-1",
-      prompt: {
-        clientMessageId: "old-runtime-prompt",
-        delivery: "auto",
-        input: { type: "message", content: [{ type: "text", text: "still alive" }] },
-      },
-    });
-    await waitForEvent(
-      events,
-      (event) =>
-        event.type === "session.turn" &&
-        event.turnId === "acp:old-runtime-prompt" &&
-        event.state === "completed",
-    );
-    expect(
-      harness.instances[1]!.requests.some((request) => request.method === "session/prompt"),
-    ).toBe(true);
-    expect(
-      harness.instances[2]!.requests.some((request) => request.method === "session/prompt"),
-    ).toBe(false);
-    await connection.close();
-  });
-
-  it("serializes configure/configure and configure/reload mutations", async () => {
+  it("serializes configuration mutations", async () => {
     let releaseMutation: (() => void) | null = null;
     const configOptions = [
       {
@@ -650,7 +578,7 @@ describe("runAcpProvider", () => {
       handleRequest(instance, request) {
         if (request.method !== "session/set_config_option") return false;
         const value = (request.params as { value: string }).value;
-        if (value !== "first" && value !== "before-reload") return false;
+        if (value !== "first") return false;
         releaseMutation = () =>
           instance.respond(request, {
             configOptions: configOptions.map((option) =>
@@ -667,7 +595,7 @@ describe("runAcpProvider", () => {
     });
     const connection = await registration.connect({
       versions: [1],
-      capabilities: ["prompt.message", "session.configure", "session.reload"],
+      capabilities: ["prompt.message", "session.configure"],
     });
     const events: ProviderEvent[] = [];
     connection.onEvent((event) => events.push(event));
@@ -702,34 +630,6 @@ describe("runAcpProvider", () => {
         .map((event) => (event as Extract<ProviderEvent, { type: "request.completed" }>).requestId),
     ).toEqual(["configure-first", "configure-second"]);
 
-    releaseMutation = null;
-    await connection.send({
-      type: "session.configure",
-      requestId: "configure-before-reload",
-      sessionId: "session-1",
-      changes: { model: "before-reload" },
-    });
-    await connection.send({
-      type: "session.reload",
-      requestId: "reload-after-configure",
-      sessionId: "session-1",
-      config: openInput().config,
-    });
-    await expect.poll(() => releaseMutation).toBeTypeOf("function");
-    expect(harness.instances).toHaveLength(2);
-    releaseMutation!();
-    await waitForEvent(
-      events,
-      (event) => event.type === "session.ready" && event.requestId === "reload-after-configure",
-    );
-    const configureIndex = events.findIndex(
-      (event) =>
-        event.type === "request.completed" && event.requestId === "configure-before-reload",
-    );
-    const reloadIndex = events.findIndex(
-      (event) => event.type === "session.ready" && event.requestId === "reload-after-configure",
-    );
-    expect(configureIndex).toBeLessThan(reloadIndex);
     await connection.close();
   });
 
@@ -779,7 +679,6 @@ lines.on("line", (line) => {
       "prompt.image",
       "session.list",
       "session.persistence",
-      "session.reload",
     ]);
 
     expect(connection.capabilities).toEqual([
@@ -787,7 +686,6 @@ lines.on("line", (line) => {
       "prompt.image",
       "session.list",
       "session.persistence",
-      "session.reload",
     ]);
     await connection.close();
   });

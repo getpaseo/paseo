@@ -21,4 +21,22 @@ describe("vendorEditTransformer", () => {
       input: { filePath: "src/app.ts", oldString: "old", newString: "new" },
     });
   });
+
+  it("preserves a vendor edit with a malformed payload", () => {
+    const toolCall = {
+      id: "edit-1",
+      name: "vendor_file_edit",
+      title: "Edit file",
+      status: "completed" as const,
+      input: { path: "src/app.ts", before: "old" },
+      output: null,
+      locations: [],
+    };
+
+    const transformed = vendorEditTransformer.toolCall?.(toolCall, {
+      sessionId: "session-1",
+    });
+
+    expect(transformed).toBe(toolCall);
+  });
 });

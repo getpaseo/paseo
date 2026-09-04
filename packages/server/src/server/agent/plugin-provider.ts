@@ -1076,9 +1076,6 @@ class PluginAgentSession implements AgentSession {
       ...(options.outputSchema === undefined
         ? {}
         : { outputSchema: toJsonValue(options.outputSchema, "output schema") }),
-      ...(options.maxThinkingTokens === undefined
-        ? {}
-        : { maxThinkingTokens: options.maxThinkingTokens }),
     });
     if (result.type === "failed") throw providerError(result.error);
     if (result.type === "turn" || result.type === "steer") return { turnId: result.turnId };
@@ -1100,9 +1097,6 @@ class PluginAgentSession implements AgentSession {
       ...(options.outputSchema === undefined
         ? {}
         : { outputSchema: toJsonValue(options.outputSchema, "output schema") }),
-      ...(options.maxThinkingTokens === undefined
-        ? {}
-        : { maxThinkingTokens: options.maxThinkingTokens }),
       clearPendingPermissions: options.clearPendingPermissions,
     });
     return result.type === "steer" && result.turnId === options.expectedTurnId
