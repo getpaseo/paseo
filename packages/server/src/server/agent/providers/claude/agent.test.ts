@@ -17,7 +17,14 @@ import {
 } from "./agent.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
-import type { AgentSession, AgentTimelineItem, AgentStreamEvent } from "../../agent-sdk-types.js";
+import type {
+  AgentPromptInput,
+  AgentSession,
+  AgentTimelineItem,
+  AgentStreamEvent,
+} from "../../agent-sdk-types.js";
+import type { AgentAttachment } from "@getpaseo/protocol/messages";
+import { renderPromptAttachmentAsText } from "../../prompt-attachments.js";
 
 interface TestClaudeSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
@@ -858,6 +865,69 @@ describe("ClaudeAgentSession features", () => {
     expect(queryMock.applyFlagSettings).toHaveBeenCalledWith({ fastMode: true });
 
     await session.close();
+  });
+
+  async function captureFirstSdkUserMessage(prompt: AgentPromptInput): Promise<SDKUserMessage> {
+    let resolveFirstMessage: ((message: SDKUserMessage) => void) | null = null;
+    const firstMessage = new Promise<SDKUserMessage>((resolve) => {
+      resolveFirstMessage = resolve;
+    });
+    const { queryFactory, queryMock } = createQueryMock();
+    queryFactory.mockImplementation((input: { prompt: AsyncIterable<SDKUserMessage> }) => {
+      void (async () => {
+        for await (const message of input.prompt) {
+          resolveFirstMessage?.(message);
+          break;
+        }
+      })();
+      return queryMock;
+    });
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({ provider: "claude", cwd: process.cwd() });
+    try {
+      await session.startTurn(prompt);
+      return await firstMessage;
+    } finally {
+      await session.close();
+    }
+  }
+
+  const issueAttachment: AgentAttachment = {
+    type: "forge_issue",
+    mimeType: "application/paseo-forge-issue",
+    forge: "github",
+    number: 12,
+    title: "Composer drops the trailing newline",
+    url: "https://example.test/acme/app/issues/12",
+    body: "Steps: type a message ending in a newline and send it.",
+  };
+
+  test("sends a slash command as the last content block when attachments are present", async () => {
+    const message = await captureFirstSdkUserMessage([
+      { type: "text", text: "/review please" },
+      issueAttachment,
+    ]);
+
+    expect(message.message.content).toEqual([
+      { type: "text", text: renderPromptAttachmentAsText(issueAttachment) },
+      { type: "text", text: "/review please" },
+    ]);
+  });
+
+  test("keeps the typed text before attachments when it is not a slash command", async () => {
+    const message = await captureFirstSdkUserMessage([
+      { type: "text", text: "Please look at this issue" },
+      issueAttachment,
+    ]);
+
+    expect(message.message.content).toEqual([
+      { type: "text", text: "Please look at this issue" },
+      { type: "text", text: renderPromptAttachmentAsText(issueAttachment) },
+    ]);
   });
 
   test("maps Ultracode to xhigh effort and Claude ultracode settings", async () => {
