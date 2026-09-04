@@ -32,6 +32,9 @@ export const CLIENT_CAPS = {
   durableDeliveries: "durable_deliveries",
   // COMPAT(deliveryPayloadTombstones): added in v0.7.3; remove after 2027-03-31 once client floor >= v0.7.3 and daemon floor >= v0.7.3.
   deliveryPayloadTombstones: "delivery_payload_tombstones",
+  // COMPAT(pluginCallerHostApis): added in v0.8.0-beta.1; remove after 2027-04-30
+  // once the supported client floor includes caller-scoped plugin host APIs.
+  pluginCallerHostApis: "plugin_caller_host_apis",
 } as const;
 
 export type ClientCapability = (typeof CLIENT_CAPS)[keyof typeof CLIENT_CAPS];

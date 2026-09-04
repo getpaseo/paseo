@@ -694,6 +694,166 @@ export default function contribute(plugin: any) {
     await runtime.stopAll();
   });
 
+  it("binds generic RPC host authority to the selected caller and leaves global RPC unscoped", async () => {
+    const directory = await createPlugin(
+      "caller-rpc",
+      `import { z } from "zod";
+import { defineRpc } from "@getpaseo/plugin/server";
+
+const inspect = defineRpc({
+  name: "inspect",
+  input: z.object({}),
+  output: z.object({ callerAgentId: z.string().nullable(), hasHost: z.boolean() }),
+});
+
+export default function contribute(plugin: any) {
+  plugin.handle(inspect, (_input: unknown, context: any) => ({
+    callerAgentId: context.caller?.callerAgentId ?? null,
+    hasHost: context.host !== null,
+  }));
+  return () => undefined;
+}`,
+    );
+    const authority = {
+      callerAgentId: "agent-selected",
+      agent: {
+        id: "agent-selected",
+        workspaceId: "workspace-selected",
+        provider: "codex",
+        status: "running",
+        createdAt: "2026-09-04T00:00:00.000Z",
+        updatedAt: "2026-09-04T00:00:00.000Z",
+        lastActivityAt: "2026-09-04T00:00:00.000Z",
+        title: null,
+        cwd: "/tmp/workspace-selected",
+        model: "gpt-5",
+        currentModeId: null,
+        thinkingOptionId: null,
+        requiresAttention: false,
+        attentionReason: null,
+        parentAgentId: null,
+        labels: {},
+      },
+      workspace: null,
+      effective: {
+        provider: { known: true, value: "codex" },
+        model: { known: true, value: "gpt-5" },
+        thinking: { known: false },
+        providerSessionId: { known: false },
+      },
+      securityCeiling: {
+        filesystem: "unknown",
+        network: "unknown",
+        approvals: "unknown",
+        unattended: "unknown",
+      },
+    };
+    const runtime = createTestRuntime({
+      resolveToolContext: async (callerAgentId) => ({
+        callerAgentId,
+        agent: authority.agent,
+        workspace: authority.workspace,
+        caller: { ...authority, callerAgentId },
+      }),
+    });
+    await runtime.startPlugin("caller-rpc", directory);
+
+    await expect(
+      runtime.invoke("caller-rpc", "inspect", {}, { callerAgentId: "agent-selected" }),
+    ).resolves.toEqual({ callerAgentId: "agent-selected", hasHost: true });
+    await expect(runtime.invoke("caller-rpc", "inspect", {})).resolves.toEqual({
+      callerAgentId: null,
+      hasHost: false,
+    });
+    await runtime.stopAll();
+  });
+
+  it("routes host capability calls through the invocation-owned process channel", async () => {
+    const directory = await createPlugin(
+      "host-rpc",
+      `import { z } from "zod";
+import { defineRpc } from "@getpaseo/plugin/server";
+
+const send = defineRpc({
+  name: "send",
+  input: z.object({}),
+  output: z.object({ callerAgentId: z.string(), targetAgentId: z.string() }),
+});
+
+export default function contribute(plugin: any) {
+  plugin.handle(send, async (_input: unknown, context: any) => {
+    const delivery = await context.host.deliveries.send({ event: "host-test" });
+    return { callerAgentId: context.caller.callerAgentId, targetAgentId: delivery.targetAgentId };
+  });
+  return () => undefined;
+}`,
+    );
+    const authority = {
+      callerAgentId: "agent-host",
+      agent: {
+        id: "agent-host",
+        workspaceId: "workspace-host",
+        provider: "codex",
+        status: "running",
+        createdAt: "2026-09-04T00:00:00.000Z",
+        updatedAt: "2026-09-04T00:00:00.000Z",
+        lastActivityAt: "2026-09-04T00:00:00.000Z",
+        title: null,
+        cwd: "/tmp/workspace-host",
+        model: "gpt-5",
+        currentModeId: null,
+        thinkingOptionId: null,
+        requiresAttention: false,
+        attentionReason: null,
+        parentAgentId: null,
+        labels: {},
+      },
+      workspace: null,
+      effective: {
+        provider: { known: true, value: "codex" },
+        model: { known: true, value: "gpt-5" },
+        thinking: { known: false },
+        providerSessionId: { known: false },
+      },
+      securityCeiling: {
+        filesystem: "unknown",
+        network: "unknown",
+        approvals: "unknown",
+        unattended: "unknown",
+      },
+    };
+    const baseHost = createTrackedSessionHost().host;
+    const invokePluginHost = vi.fn(
+      async (input: { caller: typeof authority; operation: string }) => {
+        expect(input.operation).toBe("delivery.send");
+        return {
+          deliveryId: "delivery-host",
+          targetAgentId: input.caller.callerAgentId,
+          payload: { event: "host-test" },
+          createdAt: "2026-09-04T00:00:00.000Z",
+          acknowledgedAt: null,
+        };
+      },
+    );
+    const runtime = createTestRuntime({
+      sessionHost: { ...baseHost, invokePluginHost },
+      resolveToolContext: async (callerAgentId) => ({
+        callerAgentId,
+        agent: authority.agent,
+        workspace: authority.workspace,
+        caller: { ...authority, callerAgentId },
+      }),
+    });
+    await runtime.startPlugin("host-rpc", directory);
+
+    await expect(
+      runtime.invoke("host-rpc", "send", {}, { callerAgentId: "agent-host" }),
+    ).resolves.toEqual({ callerAgentId: "agent-host", targetAgentId: "agent-host" });
+    expect(invokePluginHost).toHaveBeenCalledOnce();
+    expect(invokePluginHost.mock.calls[0]?.[0].caller.callerAgentId).toBe("agent-host");
+    await runtime.stopAll();
+  });
+
   it("publishes and invokes model-facing tools with host-owned context", async () => {
     const directory = await createPlugin(
       "model-tools",

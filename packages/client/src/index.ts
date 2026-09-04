@@ -38,6 +38,7 @@ import type {
   SendDeliveryOptions,
   GetDeliveriesOptions,
   GetDeliveriesResult,
+  InvokePluginRpcOptions,
 } from "./daemon-client.js";
 import type { ClientCapability } from "@getpaseo/protocol/client-capabilities";
 import type { DeliveryPayload, DeliveryRecord } from "@getpaseo/protocol/deliveries";
@@ -420,6 +421,7 @@ export type PaseoDelivery = DeliveryRecord;
 export type PaseoDeliveryGetOptions = Omit<GetDeliveriesOptions, "timeout">;
 export type PaseoDeliveryGetResult = GetDeliveriesResult;
 export type PaseoDeliverySendOptions = Omit<SendDeliveryOptions, "timeout">;
+export type PaseoPluginRpcOptions = InvokePluginRpcOptions;
 
 export interface PaseoDeliveryActions {
   /** Persists and dispatches the payload to this exact native agent id. */

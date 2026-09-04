@@ -41,6 +41,7 @@ import type { HubRelationshipManagement } from "./hub/relationship-controller.js
 import { WorkspaceSetupRuntime } from "./workspace-setup-runtime.js";
 import type { HubExecutionAgents } from "./hub/daemon-executions.js";
 import type { AgentProvider } from "./agent/agent-sdk-types.js";
+import type { PluginCallerAuthority } from "@getpaseo/plugin";
 import { ProviderSnapshotManager } from "./agent/provider-snapshot-manager.js";
 import { attachMutableProviderConfigOwner } from "./agent/mutable-provider-config-owner.js";
 import type {
@@ -1060,6 +1061,22 @@ export class VoiceAssistantWebSocketServer {
     return { closed };
   }
 
+  public invokePluginHost(input: {
+    pluginId: string;
+    caller: PluginCallerAuthority;
+    operation: string;
+    input: Record<string, unknown>;
+    signal: AbortSignal;
+  }): Promise<unknown> {
+    for (const connection of this.sessions.values()) {
+      if (connection.lifecycle !== "ephemeral-plugin" || connection.pluginId !== input.pluginId) {
+        continue;
+      }
+      return connection.session.invokePluginHost(input);
+    }
+    throw new Error(`Plugin session is unavailable: ${input.pluginId}`);
+  }
+
   /** Fence plugin delivery before PluginRuntime terminates its process. */
   public beginPluginShutdown(pluginId: string): void {
     const principals = this.pluginDeliveryOwners.get(pluginId);
@@ -1881,6 +1898,8 @@ export class VoiceAssistantWebSocketServer {
         durableDeliveries: true,
         // COMPAT(durableDeliveryTargeting): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
         durableDeliveryTargeting: true,
+        // COMPAT(pluginCallerHostApis): added in v0.8.0-beta.1; remove after 2027-04-30.
+        pluginCallerHostApis: true,
         // COMPAT(deliveryPayloadTombstones): added in v0.7.3; remove after 2027-03-31 once client floor >= v0.7.3 and daemon floor >= v0.7.3.
         deliveryPayloadTombstones: true,
       },

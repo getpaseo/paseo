@@ -1513,6 +1513,16 @@ export const PluginRpcInvokeRequestSchema = z.object({
   pluginId: PluginIdSchema,
   method: z.string().min(1),
   input: z.unknown(),
+  // COMPAT(pluginCallerHostApis): optional so older clients and daemons keep
+  // exchanging global plugin RPCs.
+  callerAgentId: z.string().min(1).nullable().optional(),
+});
+
+export const PluginRpcCancelRequestSchema = z.object({
+  type: z.literal("plugin.rpc.cancel.request"),
+  requestId: z.string().min(1),
+  pluginId: PluginIdSchema,
+  invocationId: z.string().min(1),
 });
 
 export const AgentSkillOperationSchema = z.discriminatedUnion("kind", [
@@ -3073,6 +3083,7 @@ export const SessionInboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableRequestSchema,
   PluginRemoveRequestSchema,
   PluginRpcInvokeRequestSchema,
+  PluginRpcCancelRequestSchema,
   AgentSkillsGetStatusRequestSchema,
   AgentSkillsReconcileRequestSchema,
   AgentSkillsUninstallRequestSchema,
@@ -3530,6 +3541,8 @@ export const ServerInfoStatusPayloadSchema = z
         deliveryPayloadTombstones: z.boolean().optional(),
         // COMPAT(durableDeliveryTargeting): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
         durableDeliveryTargeting: z.boolean().optional(),
+        // COMPAT(pluginCallerHostApis): added in v0.8.0-beta.1; remove after 2027-04-30.
+        pluginCallerHostApis: z.boolean().optional(),
       })
       .optional(),
   })
@@ -6304,6 +6317,11 @@ export const PluginRpcInvokeResponseSchema = z.object({
   }),
 });
 
+export const PluginRpcCancelResponseSchema = z.object({
+  type: z.literal("plugin.rpc.cancel.response"),
+  payload: z.object({ requestId: z.string(), invocationId: z.string(), cancelled: z.boolean() }),
+});
+
 function agentSkillsStatusResponse<const Type extends string>(type: Type) {
   return z.object({
     type: z.literal(type),
@@ -6356,6 +6374,7 @@ export const SessionOutboundMessageSchema = z.discriminatedUnion("type", [
   PluginDisableResponseSchema,
   PluginRemoveResponseSchema,
   PluginRpcInvokeResponseSchema,
+  PluginRpcCancelResponseSchema,
   AgentSkillsGetStatusResponseSchema,
   AgentSkillsReconcileResponseSchema,
   AgentSkillsUninstallResponseSchema,
@@ -7021,6 +7040,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.timelineReplacementInvalidation]: z.boolean().optional(),
       [CLIENT_CAPS.browserHost]: BrowserAutomationHostCapabilitySchema.optional(),
       [CLIENT_CAPS.durableDeliveries]: z.boolean().optional(),
+      [CLIENT_CAPS.pluginCallerHostApis]: z.boolean().optional(),
     })
     .passthrough()
     .optional(),

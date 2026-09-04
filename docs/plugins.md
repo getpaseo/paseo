@@ -207,11 +207,38 @@ export default function contribute(plugin: PluginContext) {
 ```
 
 The handler receives the host-derived `callerAgentId`, immutable agent and workspace snapshots,
-the installation-scoped `paseo` API, an `AbortSignal`, and a bounded best-effort `progress`
-callback. Model input cannot provide or replace these values. The child process validates the Zod
-input and output and accepts JSON-compatible values only. The host applies default and maximum
-timeouts, cancellation, progress, result, error, and concurrency limits; canceling a tool never
-stops the agent.
+the immutable `caller` authority, an invocation-scoped `host` capability, the installation-scoped
+`paseo` API, an `AbortSignal`, and a bounded best-effort `progress` callback. Model input cannot
+provide or replace these values. The child process validates the Zod input and output and accepts
+JSON-compatible values only. The host applies default and maximum timeouts, cancellation,
+progress, result, error, and concurrency limits; canceling a tool never stops the agent.
+
+### Caller-scoped host authority
+
+`context.caller` contains the exact agent selected by the daemon, immutable snapshots of that agent
+and its workspace, effective provider/model/thinking/session facts, and provider-neutral security
+ceilings. Unknown facts use an explicit `{ known: false }` or `unknown` value. Treat unknown as no
+permission.
+
+`context.host` is scoped to the current invocation. A generic RPC receives `caller: null` and
+`host: null` when it has no daemon-selected agent. A selected panel or Command Center agent is
+injected by the app outside plugin input; the daemon resolves that agent again and rejects a
+missing, archived, or changed target.
+
+The host capability exposes only these bounded operations:
+
+- `host.deliveries.send(payload)` always targets the exact caller. `get` and `acknowledge` apply the
+  same target fence and retain acknowledgement tombstone semantics.
+- `host.children.create(options)` creates a child with the caller as parent. Workspace and cwd come
+  from the caller, except for a cwd supplied by an opaque managed worktree returned by this host.
+  Requested model, thinking, tool policy, and security values cannot widen caller authority; an
+  unknown ceiling rejects a permission request.
+- `host.worktrees.create(options)` returns an authoritative workspace, cwd, and opaque ID.
+  `remove(id)` accepts only an ID created by the same plugin session and caller.
+
+Host calls use a fresh process capability for every invocation. The daemon does not keep caller
+identity in global plugin state. Aborting an invocation cancels pending host IPC; unloading a
+plugin rejects calls and drains its process before the installation session is closed.
 
 Tools use the same transport-neutral `PaseoToolCatalog` as MCP, OMP, and OpenCode/native provider
 paths. A tool is published only after its plugin is ready. Stopping or reloading a plugin removes

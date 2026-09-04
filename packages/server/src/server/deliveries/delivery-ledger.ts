@@ -53,6 +53,8 @@ export interface DeliveryLedgerGetOptions {
   maxEncodedBytes?: number;
   /** Only a client advertising deliveryPayloadTombstones may see compacted rows. */
   allowPayloadTombstones?: boolean;
+  /** Exact target fence used by caller-scoped host delivery access. */
+  targetAgentId?: string;
 }
 
 export interface DeliveryLedgerSendInput {
@@ -116,6 +118,7 @@ type DeliveryLedgerErrorCode =
   | "delivery_target_required"
   | "delivery_owner_closing"
   | "delivery_response_too_large"
+  | "delivery_target_mismatch"
   | "delivery_cleanup_timeout";
 
 export class DeliveryLedgerError extends Error {
@@ -436,9 +439,11 @@ function isVisibleDelivery(
   record: LedgerRecord | undefined,
   includeAcknowledged: boolean,
   allowPayloadTombstones: boolean,
+  targetAgentId?: string,
 ): record is LedgerRecord {
   return (
     record !== undefined &&
+    (targetAgentId === undefined || record.targetAgentId === targetAgentId) &&
     (includeAcknowledged || statusOf(record) !== "acknowledged") &&
     (record.payload !== undefined || allowPayloadTombstones)
   );
@@ -449,10 +454,13 @@ function hasVisibleDeliveryAfter(
   startIndex: number,
   includeAcknowledged: boolean,
   allowPayloadTombstones: boolean,
+  targetAgentId?: string,
 ): boolean {
   return records
     .slice(startIndex + 1)
-    .some((record) => isVisibleDelivery(record, includeAcknowledged, allowPayloadTombstones));
+    .some((record) =>
+      isVisibleDelivery(record, includeAcknowledged, allowPayloadTombstones, targetAgentId),
+    );
 }
 
 function isTransientFsError(error: unknown): boolean {
@@ -749,6 +757,7 @@ export class DeliveryLedger {
         requestId,
         maxEncodedBytes,
         allowPayloadTombstones,
+        options.targetAgentId,
       );
     }
 
@@ -765,6 +774,7 @@ export class DeliveryLedger {
       requestId,
       maxEncodedBytes,
       allowPayloadTombstones,
+      options.targetAgentId,
     );
   }
 
@@ -774,11 +784,16 @@ export class DeliveryLedger {
     requestId: string,
     maxEncodedBytes: number,
     allowPayloadTombstones: boolean,
+    targetAgentId?: string,
   ): DeliveryLedgerGetResult {
     const normalizedId = DeliveryIdSchema.parse(deliveryId);
     const delivery = state.records.get(normalizedId);
     const visibleDelivery =
-      delivery && (delivery.payload !== undefined || allowPayloadTombstones) ? delivery : null;
+      delivery &&
+      (targetAgentId === undefined || delivery.targetAgentId === targetAgentId) &&
+      (delivery.payload !== undefined || allowPayloadTombstones)
+        ? delivery
+        : null;
     const result = {
       delivery: visibleDelivery ? cloneDelivery(visibleDelivery) : null,
       deliveries: visibleDelivery ? [cloneDelivery(visibleDelivery)] : [],
@@ -797,6 +812,7 @@ export class DeliveryLedger {
     requestId: string,
     maxEncodedBytes: number,
     allowPayloadTombstones: boolean,
+    targetAgentId?: string,
   ): DeliveryLedgerGetResult {
     const cursorResult = this.findCursor(records, cursor, nextSequence);
     if (!cursorResult.valid) {
@@ -813,13 +829,15 @@ export class DeliveryLedger {
       index += 1
     ) {
       const record = records[index];
-      if (!isVisibleDelivery(record, includeAcknowledged, allowPayloadTombstones)) continue;
+      if (!isVisibleDelivery(record, includeAcknowledged, allowPayloadTombstones, targetAgentId))
+        continue;
       const candidate = eligible.concat({ record, index });
       const hasMoreAfterCandidate = hasVisibleDeliveryAfter(
         records,
         index,
         includeAcknowledged,
         allowPayloadTombstones,
+        targetAgentId,
       );
       const candidateResult: DeliveryLedgerGetResult = {
         delivery: null,
@@ -841,7 +859,13 @@ export class DeliveryLedger {
     const last = eligible.at(-1);
     const hasMore =
       last !== undefined &&
-      hasVisibleDeliveryAfter(records, last.index, includeAcknowledged, allowPayloadTombstones);
+      hasVisibleDeliveryAfter(
+        records,
+        last.index,
+        includeAcknowledged,
+        allowPayloadTombstones,
+        targetAgentId,
+      );
     const result: DeliveryLedgerGetResult = {
       delivery: null,
       deliveries: eligible.map(({ record }) => cloneDelivery(record)),
@@ -854,7 +878,7 @@ export class DeliveryLedger {
   async acknowledge(
     ownerId: string,
     deliveryId: string,
-    options: { allowPayloadTombstones?: boolean } = {},
+    options: { allowPayloadTombstones?: boolean; targetAgentId?: string } = {},
   ): Promise<DeliveryRecord> {
     return this.transition(ownerId, deliveryId, "acknowledged", undefined, options);
   }
@@ -880,7 +904,7 @@ export class DeliveryLedger {
     deliveryId: string,
     status: DeliveryStatus,
     error?: string,
-    options: { allowPayloadTombstones?: boolean } = {},
+    options: { allowPayloadTombstones?: boolean; targetAgentId?: string } = {},
   ): Promise<DeliveryRecord> {
     const normalizedOwnerId = validateOwnerId(ownerId);
     const nextStatus = DeliveryStatusSchema.parse(status);
@@ -896,9 +920,26 @@ export class DeliveryLedger {
     deliveryId: string,
     nextStatus: DeliveryStatus,
     error?: string,
-    options: { allowPayloadTombstones?: boolean } = {},
+    options: { allowPayloadTombstones?: boolean; targetAgentId?: string } = {},
   ): Promise<DeliveryRecord> {
+    const candidate = state.records.get(deliveryId);
+    if (
+      options.targetAgentId !== undefined &&
+      candidate &&
+      candidate.targetAgentId !== options.targetAgentId
+    ) {
+      throw new DeliveryLedgerError(
+        "delivery_target_mismatch",
+        `Delivery ${deliveryId} is not targeted to the authorized agent`,
+      );
+    }
     const existing = this.validateTransition(state, ownerId, deliveryId, nextStatus);
+    if (options.targetAgentId !== undefined && existing.targetAgentId !== options.targetAgentId) {
+      throw new DeliveryLedgerError(
+        "delivery_target_mismatch",
+        `Delivery ${deliveryId} is not targeted to the authorized agent`,
+      );
+    }
     const currentStatus = statusOf(existing);
     if (
       currentStatus === "acknowledged" &&

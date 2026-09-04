@@ -19,6 +19,13 @@ import {
   assertUtf8ByteLimit,
 } from "./plugin-tool.js";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/transport-limits";
+import {
+  assertPluginHostResponse,
+  PluginCallerAuthoritySchema,
+  PluginHostRequestSchema,
+  PluginHostResponseSchema,
+  type PluginHostResponse,
+} from "@getpaseo/protocol/plugin-host";
 
 export const MAX_PLUGIN_PROCESS_MESSAGE_BYTES = 4 * 1024 * 1024;
 
@@ -33,6 +40,9 @@ export const PluginToolCallerContextSchema = z
     callerAgentId: z.string().min(1),
     agent: JsonObjectSchema.nullable(),
     workspace: JsonObjectSchema.nullable(),
+    // COMPAT(pluginCallerHostApis): old already-installed plugin processes
+    // can still receive the legacy context while new invocations always set it.
+    caller: PluginCallerAuthoritySchema.optional(),
   })
   .strict();
 
@@ -53,7 +63,7 @@ export const PluginToolCatalogEntrySchema = z
 export type PluginToolCallerContext = z.infer<typeof PluginToolCallerContextSchema>;
 export type PluginToolCatalogEntry = z.infer<typeof PluginToolCatalogEntrySchema>;
 
-export const PluginProcessRequestSchema = z.discriminatedUnion("type", [
+export const PluginProcessRequestSchema = z.union([
   z
     .object({
       type: z.literal("initialize"),
@@ -70,6 +80,9 @@ export const PluginProcessRequestSchema = z.discriminatedUnion("type", [
       requestId: z.string().min(1),
       method: z.string().min(1),
       input: z.unknown(),
+      context: PluginCallerAuthoritySchema.nullable().optional(),
+      generation: z.number().int().positive().optional(),
+      installationId: z.string().min(1).optional(),
     })
     .strict(),
   z
@@ -79,10 +92,13 @@ export const PluginProcessRequestSchema = z.discriminatedUnion("type", [
       name: z.string().min(1),
       input: z.unknown(),
       context: PluginToolCallerContextSchema,
+      generation: z.number().int().positive().optional(),
+      installationId: z.string().min(1).optional(),
     })
     .strict(),
   z.object({ type: z.literal("tool_cancel"), requestId: z.string().min(1) }).strict(),
   z.object({ type: z.literal("rpc_cancel"), requestId: z.string().min(1) }).strict(),
+  PluginHostResponseSchema,
   z.object({ type: z.literal("shutdown") }).strict(),
   z
     .object({ type: z.literal("paseo_frame"), data: BinaryFrameSchema, isBinary: z.boolean() })
@@ -90,7 +106,7 @@ export const PluginProcessRequestSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("paseo_close") }).strict(),
 ]);
 
-export const PluginProcessMessageSchema = z.discriminatedUnion("type", [
+export const PluginProcessMessageSchema = z.union([
   z
     .object({
       type: z.literal("ready"),
@@ -113,6 +129,8 @@ export const PluginProcessMessageSchema = z.discriminatedUnion("type", [
     .strict(),
   z.object({ type: z.literal("tool_cancel_ack"), requestId: z.string().min(1) }).strict(),
   z.object({ type: z.literal("rpc_cancel_ack"), requestId: z.string().min(1) }).strict(),
+  PluginHostRequestSchema,
+  PluginHostResponseSchema,
   z
     .object({ type: z.literal("tool_result"), requestId: z.string().min(1), output: z.unknown() })
     .strict(),
@@ -136,15 +154,22 @@ export type PluginProcessMessage = z.infer<typeof PluginProcessMessageSchema>;
 export function validatePluginProcessRequest(message: unknown): PluginProcessRequest {
   const parsed = PluginProcessRequestSchema.parse(message);
   validateProcessEnvelope(parsed);
+  if (parsed.type.startsWith("plugin.host.") && "ok" in parsed) {
+    assertPluginHostResponse(parsed as unknown as PluginHostResponse);
+  }
   return parsed;
 }
 
 export function validatePluginProcessMessage(message: unknown): PluginProcessMessage {
   const parsed = PluginProcessMessageSchema.parse(message);
   validateProcessEnvelope(parsed);
+  if (parsed.type.startsWith("plugin.host.") && "ok" in parsed) {
+    assertPluginHostResponse(parsed as unknown as PluginHostResponse);
+  }
   return parsed;
 }
 
+// oxlint-disable-next-line complexity -- every process message family has an explicit size boundary.
 function validateProcessEnvelope(message: PluginProcessRequest | PluginProcessMessage): void {
   if (message.type === "paseo_frame") {
     const frameBytes =
@@ -171,6 +196,33 @@ function validateProcessEnvelope(message: PluginProcessRequest | PluginProcessMe
   if (message.type === "tool_invoke") {
     assertSafeJson(message.input, "Plugin tool input", PLUGIN_TOOL_MAX_RESULT_BYTES);
     assertSafeJson(message.context, "Plugin tool caller context", PLUGIN_TOOL_MAX_RESULT_BYTES);
+  }
+  if (message.type === "invoke" && message.context !== undefined) {
+    assertSafeJson(message.context, "Plugin RPC caller context", PLUGIN_TOOL_MAX_RESULT_BYTES);
+  }
+  if (
+    message.type.startsWith("plugin.host.") &&
+    "result" in message &&
+    message.result !== undefined
+  ) {
+    assertSafeJson(message.result, "Plugin host result", PLUGIN_TOOL_MAX_RESULT_BYTES);
+  }
+  if (message.type.startsWith("plugin.host.") && "payload" in message) {
+    assertSafeJson(message.payload, "Plugin host delivery payload", PLUGIN_TOOL_MAX_RESULT_BYTES);
+  }
+  if (
+    message.type.startsWith("plugin.host.") &&
+    "options" in message &&
+    message.options !== undefined
+  ) {
+    assertSafeJson(message.options, "Plugin host options", PLUGIN_TOOL_MAX_RESULT_BYTES);
+  }
+  if (
+    message.type.startsWith("plugin.host.") &&
+    "error" in message &&
+    message.error !== undefined
+  ) {
+    assertUtf8ByteLimit(message.error, "Plugin host error", PLUGIN_TOOL_MAX_ERROR_BYTES);
   }
   if (message.type === "tool_update") {
     assertSafeJson(message.update, "Plugin tool progress update", PLUGIN_TOOL_MAX_UPDATE_BYTES);

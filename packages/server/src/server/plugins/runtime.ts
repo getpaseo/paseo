@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 import type pino from "pino";
 import type { PluginLogEntry } from "@getpaseo/protocol/messages";
+import type { PluginCallerAuthority } from "@getpaseo/plugin";
+import type { PluginHostRequest } from "@getpaseo/protocol/plugin-host";
 import { compilePlugin } from "./compiler.js";
 import { readPluginManifest } from "./manifest.js";
 import {
@@ -23,6 +25,7 @@ import {
   PLUGIN_TOOL_MAX_CATALOG_SCHEMA_BYTES,
   PLUGIN_TOOL_MAX_CATALOG_TOOLS,
   PLUGIN_TOOL_MAX_DESCRIPTION_BYTES,
+  PLUGIN_TOOL_MAX_ERROR_BYTES,
   PLUGIN_TOOL_MAX_NAME_BYTES,
   PLUGIN_TOOL_MAX_RESULT_BYTES,
   PLUGIN_TOOL_MAX_SCHEMA_BYTES,
@@ -85,6 +88,8 @@ interface PendingInvocation {
   callerSettled: boolean;
   cancellationRequested: boolean;
   onComplete?: () => void;
+  caller: PluginCallerAuthority | null;
+  hostController: AbortController;
 }
 
 interface LoadedPlugin {
@@ -187,6 +192,14 @@ class PluginOutputCapture {
 export interface PluginPaseoSessionHost {
   /** Fence durable delivery dispatch before the plugin process is stopped. */
   beginPluginShutdown?(pluginId: string): void;
+  /** Authorizes an invocation-scoped host request against the live session. */
+  invokePluginHost?(input: {
+    pluginId: string;
+    caller: PluginCallerAuthority;
+    operation: string;
+    input: Record<string, unknown>;
+    signal: AbortSignal;
+  }): Promise<unknown>;
   attachPluginSocket(
     pluginId: string,
     socket: PluginSessionSocket,
@@ -243,6 +256,10 @@ function canObservePluginExit(child: PluginChild): boolean {
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function boundError(error: unknown): string {
+  return truncateUtf8(describeError(error), PLUGIN_TOOL_MAX_ERROR_BYTES);
 }
 
 function pluginInvocationAbortReason(
@@ -395,17 +412,42 @@ export class PluginRuntime {
     pluginId: string,
     method: string,
     input: unknown,
-    options: { timeoutMs?: number; signal?: AbortSignal } = {},
+    options: {
+      timeoutMs?: number;
+      signal?: AbortSignal;
+      /** Resolved by the daemon; never read from plugin RPC input. */
+      callerAgentId?: string | null;
+    } = {},
   ): Promise<unknown> {
     const loaded = this.plugins.get(pluginId);
     if (!loaded) throw new Error(`Plugin is not available: ${pluginId}`);
     if (!loaded.methods.has(method))
       throw new Error(`Plugin ${pluginId} does not contribute RPC ${method}`);
-    return this.invokeChild(loaded, { type: "invoke", method, input }, options.timeoutMs, {
-      signal: options.signal,
-    });
+    let caller: PluginCallerAuthority | null = null;
+    if (options.callerAgentId != null) {
+      if (!this.resolveToolContext) throw new Error("Plugin caller context is unavailable");
+      const context = await this.resolveToolContext(options.callerAgentId);
+      caller = context.caller ?? null;
+      if (!caller || caller.callerAgentId !== options.callerAgentId) {
+        throw new Error("Plugin caller context did not match the requested agent");
+      }
+    }
+    return this.invokeChild(
+      loaded,
+      {
+        type: "invoke",
+        method,
+        input,
+        context: caller,
+        generation: loaded.generation,
+        installationId: loaded.installationId,
+      },
+      options.timeoutMs,
+      { signal: options.signal, caller },
+    );
   }
 
+  // oxlint-disable-next-line complexity -- admission, generation fencing, and cancellation are one transaction.
   async invokeTool(
     pluginId: string,
     name: string,
@@ -470,13 +512,21 @@ export class PluginRuntime {
       if (cancellation) throw cancellation;
       const result = this.invokeChild(
         loaded,
-        { type: "tool_invoke", name, input, context },
+        {
+          type: "tool_invoke",
+          name,
+          input,
+          context,
+          generation: loaded.generation,
+          installationId: loaded.installationId,
+        },
         tool.timeoutMs,
         {
           kind: "tool",
           signal: options.signal,
           onUpdate: options.onUpdate,
           onComplete: release,
+          caller: context.caller ?? null,
         },
       );
       handedOff = true;
@@ -661,6 +711,10 @@ export class PluginRuntime {
   }
 
   private handleChildMessage(loaded: LoadedPlugin, message: PluginProcessMessage): void {
+    if (message.type.startsWith("plugin.host.") && !("ok" in message)) {
+      this.handleHostRequest(loaded, message as PluginHostRequest);
+      return;
+    }
     if (message.type === "tool_update") {
       const pending = loaded.pending.get(message.requestId);
       if (!pending || pending.kind !== "tool" || pending.cancellationRequested) return;
@@ -690,6 +744,77 @@ export class PluginRuntime {
         pending.resolve(message.output);
       else pending.reject(new Error(message.error));
     });
+  }
+
+  private handleHostRequest(loaded: LoadedPlugin, message: PluginHostRequest): void {
+    const pending = loaded.pending.get(message.invocationId);
+    const responseType = message.type.replace(/\.request$/u, ".response") as
+      | "plugin.host.delivery.send.response"
+      | "plugin.host.delivery.get.response"
+      | "plugin.host.delivery.acknowledge.response"
+      | "plugin.host.child.create.response"
+      | "plugin.host.worktree.create.response"
+      | "plugin.host.worktree.remove.response"
+      | "plugin.host.cancel.response";
+    const reply = (result?: unknown, error?: unknown): void => {
+      void send(loaded.child, {
+        type: responseType,
+        requestId: message.requestId,
+        invocationId: message.invocationId,
+        generation: message.generation,
+        installationId: loaded.installationId,
+        ok: error === undefined,
+        ...(error === undefined ? { result } : { error: boundError(error) }),
+      } as PluginProcessRequest).catch((sendError) => {
+        this.quarantinePlugin(loaded, `Plugin host response failed: ${describeError(sendError)}`);
+      });
+    };
+
+    if (message.type === "plugin.host.cancel.request") {
+      if (
+        message.generation !== loaded.generation ||
+        message.installationId !== loaded.installationId
+      ) {
+        reply(undefined, new Error("Plugin host cancellation generation is stale"));
+      } else {
+        pending?.hostController.abort(new Error("Plugin host request cancelled"));
+        reply();
+      }
+      return;
+    }
+    if (!pending || pending.cancellationRequested || !pending.caller) {
+      reply(undefined, new Error("Plugin host invocation is no longer authorized"));
+      return;
+    }
+    if (
+      message.generation !== loaded.generation ||
+      message.installationId !== loaded.installationId
+    ) {
+      reply(undefined, new Error("Plugin host invocation generation is stale"));
+      return;
+    }
+    const host = this.sessionHost?.invokePluginHost;
+    if (!host) {
+      reply(undefined, new Error("Plugin host capability is unavailable"));
+      return;
+    }
+    const operation = message.type.slice("plugin.host.".length, -".request".length);
+    const input = { ...message } as unknown as Record<string, unknown>;
+    delete input.type;
+    delete input.requestId;
+    delete input.invocationId;
+    delete input.generation;
+    delete input.installationId;
+    void host({
+      pluginId: loaded.id,
+      caller: pending.caller,
+      operation,
+      input,
+      signal: pending.hostController.signal,
+    }).then(
+      (result) => reply(result),
+      (error) => reply(undefined, error),
+    );
   }
 
   private handleToolUpdate(
@@ -800,6 +925,7 @@ export class PluginRuntime {
       if (invocation.cancelTimeout) clearTimeout(invocation.cancelTimeout);
       invocation.cancelTimeout = null;
       invocation.cancellationRequested = true;
+      invocation.hostController.abort(new Error(message));
       invocation.cleanup?.();
       if (!invocation.callerSettled) {
         invocation.callerSettled = true;
@@ -832,6 +958,7 @@ export class PluginRuntime {
     invocation.timeout = null;
     invocation.cancelTimeout = null;
     invocation.cleanup?.();
+    invocation.hostController.abort(new Error("Plugin invocation completed"));
     if (settleCaller && !invocation.callerSettled) {
       invocation.callerSettled = true;
       settleCaller();
@@ -847,6 +974,7 @@ export class PluginRuntime {
   ): void {
     if (loaded.pending.get(requestId) !== invocation || invocation.cancellationRequested) return;
     invocation.cancellationRequested = true;
+    invocation.hostController.abort(reason);
     if (invocation.timeout) clearTimeout(invocation.timeout);
     invocation.timeout = null;
     invocation.cleanup?.();
@@ -929,14 +1057,29 @@ export class PluginRuntime {
   private invokeChild(
     loaded: LoadedPlugin,
     request:
-      | { type: "invoke"; method: string; input: unknown }
-      | { type: "tool_invoke"; name: string; input: unknown; context: PluginToolCallerContext },
+      | {
+          type: "invoke";
+          method: string;
+          input: unknown;
+          context: PluginCallerAuthority | null;
+          generation: number;
+          installationId: string;
+        }
+      | {
+          type: "tool_invoke";
+          name: string;
+          input: unknown;
+          context: PluginToolCallerContext;
+          generation: number;
+          installationId: string;
+        },
     timeoutMs: number = REQUEST_TIMEOUT_MS,
     options: {
       kind?: "rpc" | "tool";
       signal?: AbortSignal;
       onUpdate?: (update: unknown) => void;
       onComplete?: () => void;
+      caller?: PluginCallerAuthority | null;
     } = {},
   ): Promise<unknown> {
     const kind = options.kind ?? "rpc";
@@ -964,6 +1107,8 @@ export class PluginRuntime {
         callerSettled: false,
         cancellationRequested: false,
         onComplete: options.onComplete,
+        caller: options.caller ?? null,
+        hostController: new AbortController(),
       };
       pending.cleanup = () => options.signal?.removeEventListener("abort", abort);
       pending.timeout = setTimeout(

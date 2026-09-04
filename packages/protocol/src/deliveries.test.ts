@@ -60,15 +60,17 @@ describe("durable delivery protocol", () => {
         requestId: "request-one",
         includeAcknowledged: false,
         limit: 20,
+        targetAgentId: "agent-one",
       }),
-    ).toMatchObject({ includeAcknowledged: false, limit: 20 });
+    ).toMatchObject({ includeAcknowledged: false, limit: 20, targetAgentId: "agent-one" });
     expect(
       DeliveriesAcknowledgeRequestSchema.parse({
         type: "deliveries.acknowledge.request",
         requestId: "request-two",
         deliveryId: "delivery-one",
+        targetAgentId: "agent-one",
       }),
-    ).toMatchObject({ deliveryId: "delivery-one" });
+    ).toMatchObject({ deliveryId: "delivery-one", targetAgentId: "agent-one" });
     expect(
       DeliveriesSendRequestSchema.safeParse({
         type: "deliveries.send.request",

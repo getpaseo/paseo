@@ -52,7 +52,10 @@ Plugins are trusted owner delegation. Installing a plugin grants its server hand
 available through the installation-scoped `PaseoPluginApi`; the plugin subprocess is not a separate
 permission boundary. Model-facing tool input never supplies caller identity or workspace authority.
 The daemon derives that context from the active agent session and passes immutable snapshots to the
-handler.
+handler. The invocation-scoped `caller` authority is a snapshot. A host call
+re-resolves the live agent and workspace, checks the installation session, and applies the caller's
+provider-neutral security ceiling. Unknown ceiling values deny permission requests. A generic RPC
+without a host-selected agent receives a null caller and no scoped host capability.
 
 Workspace-scoped grants require every resource-bearing operation and outbound observation to enforce the same workspace boundary. File preview currently accepts any daemon-readable regular file, so it must gain resource enforcement before workspace-specific access ships.
 

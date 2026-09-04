@@ -98,4 +98,20 @@ describe("plugin surface host runtime", () => {
     expect(createPluginSurfaceRuntime(null, "same-plugin")).toBeNull();
     expect(otherHost.createWorkspace).not.toHaveBeenCalled();
   });
+
+  it("injects a selected agent scope outside plugin RPC input", async () => {
+    const selected = clientWithWorkspace("workspace-a");
+    const runtime = createPluginSurfaceRuntime(selected.client, "agent-plugin", "agent-a");
+    if (!runtime) throw new Error("Expected selected host runtime");
+
+    await runtime.invoke("refresh", { requestedAgentId: "spoofed" });
+
+    expect(selected.invokePluginRpc).toHaveBeenCalledWith(
+      "agent-plugin",
+      "refresh",
+      { requestedAgentId: "spoofed" },
+      { callerAgentId: "agent-a" },
+    );
+    expect(runtime.callerAgentId).toBe("agent-a");
+  });
 });

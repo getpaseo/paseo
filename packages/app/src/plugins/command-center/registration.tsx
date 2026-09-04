@@ -53,8 +53,8 @@ export function PluginCommandCenterActions() {
     if (!client || !serverId || !stateSource) return [];
     return buildPluginCommandCenterContributions({
       plugins,
-      runtime(pluginId) {
-        const runtime = createPluginSurfaceRuntime(client, pluginId);
+      runtime(pluginId, callerAgentId) {
+        const runtime = createPluginSurfaceRuntime(client, pluginId, callerAgentId);
         if (!runtime) throw new Error("Plugin host is offline");
         return runtime;
       },

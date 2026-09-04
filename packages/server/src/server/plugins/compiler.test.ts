@@ -120,6 +120,66 @@ export default function contribute(plugin: PluginContext) {
 });
 
 describe("plugin contribution targets", () => {
+  it.each([
+    "const alias = plugin;\nalias.addTool({});",
+    "const register = plugin.addTool;\nregister({});",
+    "const { addTool } = plugin;\naddTool({});",
+    "const { addTool: register } = plugin;\nregister({});",
+    'plugin["addTool"]({});',
+  ])(
+    "rejects indirect registration calls that could cross bundle boundaries",
+    async (registration) => {
+      const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+      temporaryDirectories.push(directory);
+      const entryPath = path.join(directory, "index.ts");
+      await writeFile(
+        entryPath,
+        `export default function contribute(plugin) {
+  ${registration}
+  return () => undefined;
+}
+`,
+      );
+
+      await expect(compilePlugin(entryPath)).rejects.toThrow(/direct.*context|default context/i);
+    },
+  );
+
+  it("keeps direct server and client imports aligned with each bundle", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
+    temporaryDirectories.push(directory);
+    const entryPath = path.join(directory, "index.ts");
+    await writeFile(
+      entryPath,
+      `import { surface } from "./main.client";
+import { handler, ping } from "./service.server";
+
+export default function contribute(plugin) {
+  plugin.handle(ping, handler);
+  plugin.addSurface("main", surface);
+  return () => undefined;
+}
+`,
+    );
+    await writeFile(
+      path.join(directory, "main.client.ts"),
+      `export function surface() { return "client-surface"; }
+`,
+    );
+    await writeFile(
+      path.join(directory, "service.server.ts"),
+      `export const ping = { name: "ping", input: {}, output: {} };
+export function handler() { return "server-handler"; }
+`,
+    );
+
+    const { clientBundle, serverBundle } = await compilePlugin(entryPath);
+    expect(clientBundle).toContain("client-surface");
+    expect(clientBundle).not.toContain("server-handler");
+    expect(serverBundle).toContain("server-handler");
+    expect(serverBundle).not.toContain("client-surface");
+  });
+
   it("keeps model-facing tools out of the client bundle", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-compiler-"));
     temporaryDirectories.push(directory);

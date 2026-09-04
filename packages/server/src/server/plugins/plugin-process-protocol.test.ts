@@ -104,4 +104,41 @@ describe("plugin process tool protocol", () => {
       validatePluginProcessMessage({ type: "ready", methods: [], catalog: [entry] }),
     ).toThrow(/description|byte|limit/i);
   });
+
+  it("validates caller-scoped host messages, including dangerous payload keys", () => {
+    const base = {
+      requestId: "host-request",
+      invocationId: "invocation-one",
+      generation: 3,
+      installationId: "installation-one",
+    };
+    expect(
+      validatePluginProcessMessage({
+        ...base,
+        type: "plugin.host.delivery.send.request",
+        payload: { event: "finished" },
+      }),
+    ).toMatchObject({ type: "plugin.host.delivery.send.request" });
+    expect(() =>
+      validatePluginProcessMessage({
+        ...base,
+        type: "plugin.host.delivery.send.request",
+        payload: JSON.parse('{"__proto__":{"unsafe":true}}'),
+      }),
+    ).toThrow(/dangerous key/i);
+    expect(() =>
+      validatePluginProcessMessage({
+        ...base,
+        type: "plugin.host.delivery.send.response",
+        ok: true,
+      }),
+    ).toThrow(/no result/i);
+    expect(() =>
+      validatePluginProcessMessage({
+        ...base,
+        type: "plugin.host.delivery.send.response",
+        ok: false,
+      }),
+    ).toThrow(/no error/i);
+  });
 });

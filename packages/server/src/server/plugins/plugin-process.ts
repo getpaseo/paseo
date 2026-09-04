@@ -1,10 +1,13 @@
 import { createRequire } from "node:module";
 import { Buffer } from "node:buffer";
+import { randomUUID } from "node:crypto";
 import {
   defineAttachmentSource,
   defineRpc,
   defineTool,
   type PluginHandlerContext,
+  type PluginCallerAuthority,
+  type PluginHostCapability,
   type PluginRpcContract,
   type PluginToolContribution,
   type PluginToolHandlerContext,
@@ -65,6 +68,18 @@ const activeTools = new Map<
 const activeRpcs = new Map<
   string,
   { controller: AbortController; done: Promise<void>; cancelAck: Promise<void> | null }
+>();
+const pendingHostRequests = new Map<
+  string,
+  {
+    readonly invocationId: string;
+    readonly generation: number;
+    readonly installationId: string;
+    readonly resolve: (result: unknown) => void;
+    readonly reject: (error: Error) => void;
+    readonly signal: AbortSignal;
+    readonly onAbort: () => void;
+  }
 >();
 let cleanup: (() => void | Promise<void>) | null = null;
 let daemonClient: DaemonClient | null = null;
@@ -222,14 +237,145 @@ function freezeSnapshot<T>(value: T, seen = new WeakSet<object>()): T {
   return Object.freeze(value);
 }
 
+function unknownCallerAuthority(message: PluginToolCallerContext): PluginCallerAuthority {
+  return {
+    callerAgentId: message.callerAgentId,
+    agent: message.agent as unknown as PluginCallerAuthority["agent"],
+    workspace: message.workspace as PluginCallerAuthority["workspace"],
+    effective: {
+      provider: { known: false },
+      model: { known: false },
+      thinking: { known: false },
+      providerSessionId: { known: false },
+    },
+    securityCeiling: {
+      filesystem: "unknown",
+      network: "unknown",
+      approvals: "unknown",
+      unattended: "unknown",
+    },
+  };
+}
+
+function requestHost(
+  operation: string,
+  input: Record<string, unknown>,
+  state: {
+    invocationId: string;
+    generation: number;
+    installationId: string;
+    signal: AbortSignal;
+  },
+): Promise<unknown> {
+  if (stopping) return Promise.reject(new Error("Plugin host is unloading"));
+  const requestId = randomUUID();
+  const request = {
+    ...input,
+    type: `plugin.host.${operation}.request`,
+    requestId,
+    invocationId: state.invocationId,
+    generation: state.generation,
+    installationId: state.installationId,
+  } as PluginProcessMessage;
+  return new Promise((resolve, reject) => {
+    if (state.signal.aborted) {
+      reject(
+        state.signal.reason instanceof Error
+          ? state.signal.reason
+          : new Error("Plugin host invocation cancelled"),
+      );
+      return;
+    }
+    const cancel = (): void => {
+      if (!pendingHostRequests.delete(requestId)) return;
+      state.signal.removeEventListener("abort", cancel);
+      void sendSettled({
+        type: "plugin.host.cancel.request",
+        requestId: `${requestId}:cancel`,
+        invocationId: state.invocationId,
+        generation: state.generation,
+        installationId: state.installationId,
+      }).catch(() => undefined);
+      reject(
+        state.signal.reason instanceof Error
+          ? state.signal.reason
+          : new Error("Plugin host invocation cancelled"),
+      );
+    };
+    pendingHostRequests.set(requestId, {
+      invocationId: state.invocationId,
+      generation: state.generation,
+      installationId: state.installationId,
+      resolve,
+      reject,
+      signal: state.signal,
+      onAbort: cancel,
+    });
+    state.signal.addEventListener("abort", cancel, { once: true });
+    void sendSettled(request).catch((error) => {
+      if (!pendingHostRequests.delete(requestId)) return;
+      state.signal.removeEventListener("abort", cancel);
+      reject(error);
+    });
+  });
+}
+
+function createHostCapability(
+  invocationId: string,
+  generation: number,
+  installationId: string,
+  signal: AbortSignal,
+): PluginHostCapability {
+  const state = { invocationId, generation, installationId, signal };
+  const capability: PluginHostCapability = {
+    deliveries: {
+      send: (payload, options) =>
+        requestHost(
+          "delivery.send",
+          options === undefined ? { payload } : { payload, options },
+          state,
+        ) as Promise<Awaited<ReturnType<PluginHostCapability["deliveries"]["send"]>>>,
+      get: (options) =>
+        requestHost("delivery.get", options === undefined ? {} : { options }, state) as Promise<
+          Awaited<ReturnType<PluginHostCapability["deliveries"]["get"]>>
+        >,
+      acknowledge: (deliveryId) =>
+        requestHost("delivery.acknowledge", { deliveryId }, state) as Promise<
+          Awaited<ReturnType<PluginHostCapability["deliveries"]["acknowledge"]>>
+        >,
+    },
+    children: {
+      create: (options) =>
+        requestHost("child.create", options === undefined ? {} : { options }, state) as Promise<
+          Awaited<ReturnType<PluginHostCapability["children"]["create"]>>
+        >,
+    },
+    worktrees: {
+      create: (options) =>
+        requestHost("worktree.create", options === undefined ? {} : { options }, state) as Promise<
+          Awaited<ReturnType<PluginHostCapability["worktrees"]["create"]>>
+        >,
+      remove: (id) => requestHost("worktree.remove", { id }, state).then(() => undefined),
+    },
+  };
+  // The daemon resolves the caller from the invocation ID. The capability
+  // carries no target input, so a plugin cannot change the target between calls.
+  return freezeSnapshot(capability);
+}
+
 function createToolContext(
   message: PluginToolCallerContext,
   controller: AbortController,
   reportProgress: (update: unknown) => void,
+  invocationId: string,
+  generation: number,
+  installationId: string,
 ): PluginToolHandlerContext {
   if (!paseo) throw new Error("Plugin Paseo API is unavailable");
   return {
     paseo,
+    caller: freezeSnapshot(message.caller ?? unknownCallerAuthority(message)),
+    host: createHostCapability(invocationId, generation, installationId, controller.signal),
     callerAgentId: message.callerAgentId,
     agent: freezeSnapshot(message.agent),
     workspace: freezeSnapshot(message.workspace),
@@ -271,7 +417,14 @@ function invokeTool(message: Extract<PluginProcessRequest, { type: "tool_invoke"
       const input = await registered.definition.input.parseAsync(message.input);
       const output = await registered.handler(
         input,
-        createToolContext(message.context, controller, reportProgress),
+        createToolContext(
+          message.context,
+          controller,
+          reportProgress,
+          message.requestId,
+          message.generation ?? 1,
+          message.installationId ?? "legacy",
+        ),
       );
       const parsedOutput = registered.definition.output
         ? await registered.definition.output.parseAsync(output)
@@ -310,7 +463,20 @@ function invokeRpc(message: Extract<PluginProcessRequest, { type: "invoke" }>): 
     try {
       const input = await registered.contract.input.parseAsync(message.input);
       if (!paseo) throw new Error("Plugin Paseo API is unavailable");
-      const output = await registered.handler(input, { paseo, signal: controller.signal });
+      const caller = message.context ? freezeSnapshot(message.context) : null;
+      const output = await registered.handler(input, {
+        paseo,
+        caller,
+        host: caller
+          ? createHostCapability(
+              message.requestId,
+              message.generation ?? 1,
+              message.installationId ?? "legacy",
+              controller.signal,
+            )
+          : null,
+        signal: controller.signal,
+      });
       const parsedOutput = await registered.contract.output.parseAsync(output);
       await sendSettled({ type: "result", requestId: message.requestId, output: parsedOutput });
     } catch (error) {
@@ -391,6 +557,7 @@ async function shutdown(): Promise<void> {
   process.exit(0);
 }
 
+// oxlint-disable-next-line complexity -- this is the process protocol's exhaustive dispatcher.
 process.on("message", (rawMessage: unknown) => {
   let message: PluginProcessRequest;
   try {
@@ -410,6 +577,26 @@ process.on("message", (rawMessage: unknown) => {
     void shutdown();
     return;
   }
+  if (message.type.startsWith("plugin.host.") && "ok" in message) {
+    const pending = pendingHostRequests.get(message.requestId);
+    if (!pending) return;
+    if (
+      message.invocationId !== pending.invocationId ||
+      message.generation !== pending.generation ||
+      message.installationId !== pending.installationId
+    ) {
+      pendingHostRequests.delete(message.requestId);
+      pending.signal.removeEventListener("abort", pending.onAbort);
+      pending.reject(new Error("Plugin host response belongs to a different invocation"));
+      return;
+    }
+    pendingHostRequests.delete(message.requestId);
+    pending.signal.removeEventListener("abort", pending.onAbort);
+    if (message.ok) pending.resolve(message.result);
+    else pending.reject(new Error(message.error ?? "Plugin host request failed"));
+    return;
+  }
+  if (message.type.startsWith("plugin.host.")) return;
   if (message.type === "tool_cancel") {
     const active = activeTools.get(message.requestId);
     if (!active) {
@@ -444,5 +631,6 @@ process.on("message", (rawMessage: unknown) => {
   }
   if (message.type === "paseo_frame" || message.type === "paseo_close") return;
   if (stopping) return;
-  invokeRpc(message);
+  if ("ok" in message) return;
+  invokeRpc(message as Extract<PluginProcessRequest, { type: "invoke" }>);
 });

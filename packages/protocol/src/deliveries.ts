@@ -292,6 +292,8 @@ export const DeliveriesGetRequestSchema = z.object({
   includeAcknowledged: z.boolean().optional(),
   cursor: DeliveryCursorSchema.optional(),
   limit: z.number().int().positive().max(MAX_DELIVERY_PAGE_SIZE).optional(),
+  // COMPAT(pluginCallerHostApis): optional exact target filter.
+  targetAgentId: DeliveryTargetAgentIdSchema.optional(),
 });
 
 export type DeliveriesGetRequest = z.infer<typeof DeliveriesGetRequestSchema>;
@@ -300,6 +302,8 @@ export const DeliveriesAcknowledgeRequestSchema = z.object({
   type: z.literal("deliveries.acknowledge.request"),
   requestId: z.string().min(1),
   deliveryId: DeliveryIdSchema,
+  // COMPAT(pluginCallerHostApis): optional exact target fence.
+  targetAgentId: DeliveryTargetAgentIdSchema.optional(),
 });
 
 export type DeliveriesAcknowledgeRequest = z.infer<typeof DeliveriesAcknowledgeRequestSchema>;

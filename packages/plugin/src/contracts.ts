@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import type { PaseoPluginApi } from "@getpaseo/client";
 import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { DeliveryPayload, DeliveryRecord } from "@getpaseo/protocol/deliveries";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract } from "./rpc.js";
 
@@ -81,6 +82,108 @@ export interface PluginAgentSnapshot {
   readonly attentionReason: "finished" | "error" | "permission" | null;
   readonly parentAgentId: string | null;
   readonly labels: Readonly<Record<string, string>>;
+}
+
+/** A value is usable for policy decisions only when the daemon proved it. */
+export type PluginKnownValue<T> =
+  | { readonly known: true; readonly value: T }
+  | { readonly known: false };
+
+/** Provider-neutral security levels. `unknown` is the restrictive value. */
+export type PluginFilesystemSecurityCeiling = "none" | "workspace" | "unrestricted" | "unknown";
+export type PluginNetworkSecurityCeiling = "none" | "restricted" | "unrestricted" | "unknown";
+export type PluginApprovalSecurityCeiling = "none" | "interactive" | "preapproved" | "unknown";
+export type PluginUnattendedSecurityCeiling = "forbidden" | "allowed" | "unknown";
+
+export interface PluginSecurityCeiling {
+  readonly filesystem: PluginFilesystemSecurityCeiling;
+  readonly network: PluginNetworkSecurityCeiling;
+  readonly approvals: PluginApprovalSecurityCeiling;
+  readonly unattended: PluginUnattendedSecurityCeiling;
+}
+
+export interface PluginCallerAuthority {
+  readonly callerAgentId: string;
+  readonly agent: PluginAgentSnapshot;
+  readonly workspace: PluginWorkspaceSnapshot | null;
+  readonly effective: {
+    readonly provider: PluginKnownValue<string>;
+    readonly model: PluginKnownValue<string>;
+    readonly thinking: PluginKnownValue<string>;
+    readonly providerSessionId: PluginKnownValue<string>;
+  };
+  readonly securityCeiling: PluginSecurityCeiling;
+}
+
+export interface PluginHostDeliveryGetOptions {
+  readonly deliveryId?: string;
+  readonly includeAcknowledged?: boolean;
+  readonly cursor?: string;
+  readonly limit?: number;
+}
+
+export interface PluginHostDeliverySendOptions {
+  readonly deliveryId?: string;
+  readonly messageId?: string;
+}
+
+export interface PluginHostDeliveryActions {
+  /** The daemon targets this invocation's exact caller agent. */
+  readonly send: (
+    payload: DeliveryPayload,
+    options?: PluginHostDeliverySendOptions,
+  ) => Promise<DeliveryRecord>;
+  readonly get: (options?: PluginHostDeliveryGetOptions) => Promise<{
+    readonly delivery: DeliveryRecord | null;
+    readonly deliveries: DeliveryRecord[];
+    readonly nextCursor: string | null;
+  }>;
+  readonly acknowledge: (deliveryId: string) => Promise<DeliveryRecord>;
+}
+
+export interface PluginHostChildCreateOptions {
+  readonly model?: string;
+  readonly thinking?: string;
+  readonly toolPolicy?: "none" | "readonly" | "standard" | "all";
+  readonly security?: Partial<PluginSecurityCeiling>;
+  readonly title?: string;
+  readonly prompt?: string;
+  readonly worktreeId?: string;
+}
+
+export interface PluginHostedChild {
+  readonly agentId: string;
+  readonly parentAgentId: string;
+  readonly workspaceId: string | null;
+  readonly cwd: string;
+  readonly provider: string;
+  readonly model: string | null;
+  readonly thinking: string | null;
+}
+
+export interface PluginManagedWorktreeCreateOptions {
+  readonly name?: string;
+  readonly branch?: string;
+}
+
+export interface PluginManagedWorktree {
+  /** Opaque to plugins; only the owning plugin session and caller may remove it. */
+  readonly id: string;
+  readonly workspace: PluginWorkspaceSnapshot;
+  readonly cwd: string;
+}
+
+export interface PluginHostCapability {
+  readonly deliveries: PluginHostDeliveryActions;
+  readonly children: {
+    readonly create: (options?: PluginHostChildCreateOptions) => Promise<PluginHostedChild>;
+  };
+  readonly worktrees: {
+    readonly create: (
+      options?: PluginManagedWorktreeCreateOptions,
+    ) => Promise<PluginManagedWorktree>;
+    readonly remove: (id: string) => Promise<void>;
+  };
 }
 
 export type PluginPanelLocation = "workspace" | "explorer";
@@ -282,6 +385,8 @@ export type PluginCommandCenterItemContribution =
 
 export interface PluginHandlerContext {
   paseo: PaseoPluginApi;
+  readonly caller: PluginCallerAuthority | null;
+  readonly host: PluginHostCapability | null;
   readonly signal: AbortSignal;
 }
 
@@ -292,6 +397,8 @@ export interface PluginHandlerContext {
  */
 export interface PluginToolHandlerContext {
   readonly paseo: PaseoPluginApi;
+  readonly caller: PluginCallerAuthority;
+  readonly host: PluginHostCapability;
   readonly callerAgentId: string;
   readonly agent: PluginAgentSnapshot | null;
   readonly workspace: PluginWorkspaceSnapshot | null;

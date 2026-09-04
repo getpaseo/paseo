@@ -4,6 +4,7 @@ import { PluginIdSchema } from "@getpaseo/protocol/messages";
 
 const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
   import type { PaseoPluginApi } from "@getpaseo/client";
+  import type { DeliveryPayload, DeliveryRecord } from "@getpaseo/protocol/deliveries";
   import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 
   export interface PluginRpcContract<
@@ -38,14 +39,100 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
     search: PluginRpcContract;
   }
 
+  export type PluginKnownValue<T> =
+    | { readonly known: true; readonly value: T }
+    | { readonly known: false };
+  export type PluginFilesystemSecurityCeiling = "none" | "workspace" | "unrestricted" | "unknown";
+  export type PluginNetworkSecurityCeiling = "none" | "restricted" | "unrestricted" | "unknown";
+  export type PluginApprovalSecurityCeiling = "none" | "interactive" | "preapproved" | "unknown";
+  export type PluginUnattendedSecurityCeiling = "forbidden" | "allowed" | "unknown";
+  export interface PluginSecurityCeiling {
+    readonly filesystem: PluginFilesystemSecurityCeiling;
+    readonly network: PluginNetworkSecurityCeiling;
+    readonly approvals: PluginApprovalSecurityCeiling;
+    readonly unattended: PluginUnattendedSecurityCeiling;
+  }
+  export interface PluginCallerAuthority {
+    readonly callerAgentId: string;
+    readonly agent: import("@getpaseo/plugin").PluginAgentSnapshot;
+    readonly workspace: import("@getpaseo/plugin").PluginWorkspaceSnapshot | null;
+    readonly effective: {
+      readonly provider: PluginKnownValue<string>;
+      readonly model: PluginKnownValue<string>;
+      readonly thinking: PluginKnownValue<string>;
+      readonly providerSessionId: PluginKnownValue<string>;
+    };
+    readonly securityCeiling: PluginSecurityCeiling;
+  }
+  export interface PluginHostDeliveryGetOptions {
+    readonly deliveryId?: string;
+    readonly includeAcknowledged?: boolean;
+    readonly cursor?: string;
+    readonly limit?: number;
+  }
+  export interface PluginHostDeliverySendOptions {
+    readonly deliveryId?: string;
+    readonly messageId?: string;
+  }
+  export interface PluginHostDeliveryActions {
+    readonly send(payload: DeliveryPayload, options?: PluginHostDeliverySendOptions): Promise<DeliveryRecord>;
+    readonly get(options?: PluginHostDeliveryGetOptions): Promise<{
+      readonly delivery: DeliveryRecord | null;
+      readonly deliveries: DeliveryRecord[];
+      readonly nextCursor: string | null;
+    }>;
+    readonly acknowledge(deliveryId: string): Promise<DeliveryRecord>;
+  }
+  export interface PluginHostChildCreateOptions {
+    readonly model?: string;
+    readonly thinking?: string;
+    readonly toolPolicy?: "none" | "readonly" | "standard" | "all";
+    readonly security?: Partial<PluginSecurityCeiling>;
+    readonly title?: string;
+    readonly prompt?: string;
+    readonly worktreeId?: string;
+  }
+  export interface PluginHostedChild {
+    readonly agentId: string;
+    readonly parentAgentId: string;
+    readonly workspaceId: string | null;
+    readonly cwd: string;
+    readonly provider: string;
+    readonly model: string | null;
+    readonly thinking: string | null;
+  }
+  export interface PluginManagedWorktreeCreateOptions {
+    readonly name?: string;
+    readonly branch?: string;
+  }
+  export interface PluginManagedWorktree {
+    readonly id: string;
+    readonly workspace: import("@getpaseo/plugin").PluginWorkspaceSnapshot;
+    readonly cwd: string;
+  }
+  export interface PluginHostCapability {
+    readonly deliveries: PluginHostDeliveryActions;
+    readonly children: {
+      readonly create(options?: PluginHostChildCreateOptions): Promise<PluginHostedChild>;
+    };
+    readonly worktrees: {
+      readonly create(options?: PluginManagedWorktreeCreateOptions): Promise<PluginManagedWorktree>;
+      readonly remove(id: string): Promise<void>;
+    };
+  }
+
   export interface PluginHandlerContext {
     paseo: PaseoPluginApi;
+    readonly caller: PluginCallerAuthority | null;
+    readonly host: PluginHostCapability | null;
     readonly signal: AbortSignal;
   }
 
   export interface PluginToolHandlerContext {
     readonly paseo: PaseoPluginApi;
     readonly callerAgentId: string;
+    readonly caller: PluginCallerAuthority;
+    readonly host: PluginHostCapability;
     readonly agent: import("@getpaseo/plugin").PluginAgentSnapshot | null;
     readonly workspace: import("@getpaseo/plugin").PluginWorkspaceSnapshot | null;
     readonly signal: AbortSignal;
@@ -136,7 +223,22 @@ declare module "@getpaseo/plugin" {
   import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
   import type {
     PluginAttachmentSourceContribution,
+    PluginCallerAuthority,
     PluginHandlerContext,
+    PluginHostCapability,
+    PluginHostChildCreateOptions,
+    PluginHostDeliveryActions,
+    PluginHostDeliveryGetOptions,
+    PluginHostDeliverySendOptions,
+    PluginHostedChild,
+    PluginKnownValue,
+    PluginManagedWorktree,
+    PluginManagedWorktreeCreateOptions,
+    PluginSecurityCeiling,
+    PluginFilesystemSecurityCeiling,
+    PluginNetworkSecurityCeiling,
+    PluginApprovalSecurityCeiling,
+    PluginUnattendedSecurityCeiling,
     PluginRpcContract,
     PluginToolContribution,
     PluginToolContext,
@@ -151,7 +253,22 @@ declare module "@getpaseo/plugin" {
     type PluginAttachmentItem,
     type PluginAttachmentSearchPayload,
     type PluginAttachmentSourceContribution,
+    type PluginCallerAuthority,
     type PluginHandlerContext,
+    type PluginHostCapability,
+    type PluginHostChildCreateOptions,
+    type PluginHostDeliveryActions,
+    type PluginHostDeliveryGetOptions,
+    type PluginHostDeliverySendOptions,
+    type PluginHostedChild,
+    type PluginKnownValue,
+    type PluginManagedWorktree,
+    type PluginManagedWorktreeCreateOptions,
+    type PluginSecurityCeiling,
+    type PluginFilesystemSecurityCeiling,
+    type PluginNetworkSecurityCeiling,
+    type PluginApprovalSecurityCeiling,
+    type PluginUnattendedSecurityCeiling,
     type PluginRpcContract,
     type PluginToolContribution,
     type PluginToolContext,

@@ -5,6 +5,7 @@ import { join, resolve as resolvePath } from "path";
 import pino from "pino";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
+import type { PluginCallerAuthority } from "@getpaseo/plugin";
 import {
   assertPullRequestAutoMergeDisableReady,
   assertPullRequestAutoMergeEnableReady,
@@ -89,6 +90,10 @@ interface SessionHandlerInternals {
   handleStashSaveRequest(params: unknown): Promise<unknown>;
   handleStashPopRequest(params: unknown): Promise<unknown>;
   createPaseoWorktree(params: unknown): Promise<unknown>;
+  createPaseoWorktreeWorkflow(params: unknown): Promise<unknown>;
+  buildPluginWorkspaceSnapshot(workspace: unknown, agent: unknown): Promise<unknown>;
+  archivePluginManagedWorktree(worktree: unknown): Promise<unknown>;
+  agentUpdates: { forwardLiveAgent(agent: unknown): Promise<void> };
   handleStartWorkspaceScriptRequest(params: unknown): Promise<unknown>;
 }
 
@@ -487,6 +492,304 @@ function createSessionForTest(options: SessionForTestOptions = {}): Session {
   };
   return new Session(sessionOptions);
 }
+
+function createPluginCallerAuthority(): PluginCallerAuthority {
+  return {
+    callerAgentId: "caller-agent",
+    agent: {
+      id: "caller-agent",
+      workspaceId: "source-workspace",
+      provider: "codex",
+      status: "idle",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      lastActivityAt: "2026-01-01T00:00:00.000Z",
+      title: "Caller",
+      cwd: "/repo",
+      model: "caller-model",
+      currentModeId: "default",
+      thinkingOptionId: "caller-thinking",
+      requiresAttention: false,
+      attentionReason: null,
+      parentAgentId: null,
+      labels: {},
+    },
+    workspace: {
+      id: "source-workspace",
+      projectId: "source-project",
+      projectDisplayName: "source-project",
+      projectRootPath: "/repo",
+      directory: "/repo",
+      projectKind: "git",
+      kind: "local_checkout",
+      name: "Source",
+      title: null,
+      status: "done",
+      statusEnteredAt: "2026-01-01T00:00:00.000Z",
+      archivingAt: null,
+      diffStat: null,
+    },
+    effective: {
+      provider: { known: true, value: "codex" },
+      model: { known: true, value: "caller-model" },
+      thinking: { known: true, value: "caller-thinking" },
+      providerSessionId: { known: false },
+    },
+    securityCeiling: {
+      filesystem: "unknown",
+      network: "unknown",
+      approvals: "unknown",
+      unattended: "unknown",
+    },
+  };
+}
+
+function createLivePluginCaller(): Record<string, unknown> {
+  return {
+    id: "caller-agent",
+    provider: "codex",
+    cwd: "/repo",
+    workspaceId: "source-workspace",
+    lifecycle: "idle",
+    config: {
+      provider: "codex",
+      cwd: "/repo",
+      model: "caller-model",
+      thinkingOptionId: "caller-thinking",
+    },
+    runtimeInfo: undefined,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    availableModes: [],
+    features: [],
+    currentModeId: "default",
+    pendingPermissions: new Map(),
+    bufferedPermissionResolutions: new Map(),
+    inFlightPermissionResponses: new Set(),
+    pendingReplacement: false,
+    persistence: null,
+    historyPrimed: true,
+    lastUserMessageAt: null,
+    activeTurnId: null,
+    activeTurnStartedAt: null,
+    attention: { requiresAttention: false },
+    foregroundTurnWaiters: new Set(),
+    finalizedForegroundTurnIds: new Set(),
+    unsubscribeSession: null,
+    labels: {},
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: false,
+    },
+  };
+}
+
+test("plugin host fixes child authority to the live caller and fails closed on unknown security", async () => {
+  const caller = createPluginCallerAuthority();
+  const liveCaller = createLivePluginCaller();
+  const child = {
+    id: "child-agent",
+    provider: "codex",
+    cwd: "/repo",
+    workspaceId: "source-workspace",
+    lifecycle: "idle",
+    config: {
+      provider: "codex",
+      cwd: "/repo",
+      model: "caller-model",
+      thinkingOptionId: "caller-thinking",
+    },
+    runtimeInfo: undefined,
+    createdAt: new Date("2026-01-01T00:00:00.000Z"),
+    updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+    availableModes: [],
+    features: [],
+    currentModeId: null,
+    pendingPermissions: new Map(),
+    bufferedPermissionResolutions: new Map(),
+    inFlightPermissionResponses: new Set(),
+    pendingReplacement: false,
+    persistence: null,
+    historyPrimed: true,
+    lastUserMessageAt: null,
+    activeTurnId: null,
+    activeTurnStartedAt: null,
+    attention: { requiresAttention: false },
+    foregroundTurnWaiters: new Set(),
+    finalizedForegroundTurnIds: new Set(),
+    unsubscribeSession: null,
+    labels: { "paseo.parentAgentId": "caller-agent" },
+    capabilities: {
+      supportsStreaming: true,
+      supportsSessionPersistence: true,
+      supportsDynamicModes: false,
+      supportsMcpServers: false,
+      supportsReasoningStream: false,
+      supportsToolInvocations: false,
+    },
+  };
+  const createAgent = vi.fn(async () => child);
+  const session = createSessionForTest({
+    agentManager: {
+      getAgent: vi.fn(() => liveCaller),
+      createAgent,
+    },
+    workspaceRegistry: {
+      get: vi.fn(async () => ({
+        workspaceId: "source-workspace",
+        projectId: "source-project",
+        cwd: "/repo",
+        archivedAt: null,
+      })),
+      list: vi.fn().mockResolvedValue([]),
+    },
+    projectRegistry: {
+      get: vi.fn(async () => ({ projectId: "source-project", archivedAt: null })),
+    },
+  });
+  const internals = asSessionInternals(session);
+  internals.agentUpdates.forwardLiveAgent = vi.fn(async () => undefined);
+
+  try {
+    const result = await session.invokePluginHost({
+      pluginId: "portable-provider",
+      caller,
+      operation: "child.create",
+      input: { options: { toolPolicy: "none", title: "Child" } },
+      signal: new AbortController().signal,
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "codex",
+        cwd: "/repo",
+        model: "caller-model",
+        thinkingOptionId: "caller-thinking",
+        toolPolicy: { preapproved: [] },
+      }),
+      undefined,
+      expect.objectContaining({
+        workspaceId: "source-workspace",
+        labels: { "paseo.parentAgentId": "caller-agent" },
+      }),
+    );
+    expect(result).toMatchObject({
+      agentId: "child-agent",
+      parentAgentId: "caller-agent",
+      workspaceId: "source-workspace",
+      cwd: "/repo",
+    });
+
+    await expect(
+      session.invokePluginHost({
+        pluginId: "portable-provider",
+        caller,
+        operation: "child.create",
+        input: { options: { security: { filesystem: "workspace" } } },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("security request exceeds");
+    expect(createAgent).toHaveBeenCalledTimes(1);
+  } finally {
+    await session.cleanup();
+  }
+});
+
+test("plugin-managed worktrees are caller-scoped, opaque, and cleaned up on partial failure", async () => {
+  const caller = createPluginCallerAuthority();
+  const liveCaller = createLivePluginCaller();
+  const workflowResult = {
+    workspace: { workspaceId: "managed-workspace", cwd: "/managed-worktree" },
+    worktree: { worktreePath: "/managed-worktree" },
+    repoRoot: "/repo",
+  };
+  const createWorkflow = vi.fn(async () => workflowResult);
+  const archiveWorktree = vi.fn(async () => ({ ok: true as const, message: "" }));
+  const workspaceSnapshot = {
+    ...caller.workspace,
+    id: "managed-workspace",
+    directory: "/managed-worktree",
+  };
+  const session = createSessionForTest({
+    agentManager: { getAgent: vi.fn(() => liveCaller) },
+    workspaceRegistry: {
+      get: vi.fn(async () => ({
+        workspaceId: "source-workspace",
+        projectId: "source-project",
+        cwd: "/repo",
+        archivedAt: null,
+      })),
+      list: vi.fn().mockResolvedValue([]),
+    },
+    projectRegistry: {
+      get: vi.fn(async () => ({ projectId: "source-project", archivedAt: null })),
+    },
+  });
+  const internals = asSessionInternals(session);
+  internals.createPaseoWorktreeWorkflow = createWorkflow;
+  internals.buildPluginWorkspaceSnapshot = vi.fn(async () => workspaceSnapshot);
+  internals.archivePluginManagedWorktree = archiveWorktree;
+
+  try {
+    const created = (await session.invokePluginHost({
+      pluginId: "portable-provider",
+      caller,
+      operation: "worktree.create",
+      input: { options: { name: "portable-child", branch: "portable-child" } },
+      signal: new AbortController().signal,
+    })) as { id: string; cwd: string; workspace: unknown };
+
+    expect(createWorkflow).toHaveBeenCalledWith({
+      cwd: "/repo",
+      projectId: "source-project",
+      worktreeSlug: "portable-child",
+      branchName: "portable-child",
+      runSetup: false,
+    });
+    expect(created).toMatchObject({
+      id: expect.stringMatching(/^managed:/),
+      cwd: "/managed-worktree",
+    });
+    expect(created.id).not.toContain("source-workspace");
+
+    await session.invokePluginHost({
+      pluginId: "portable-provider",
+      caller,
+      operation: "worktree.remove",
+      input: { id: created.id },
+      signal: new AbortController().signal,
+    });
+    expect(archiveWorktree).toHaveBeenCalledWith({
+      pluginId: "portable-provider",
+      callerAgentId: "caller-agent",
+      workspaceId: "managed-workspace",
+      cwd: "/managed-worktree",
+      worktreePath: "/managed-worktree",
+      repoRoot: "/repo",
+    });
+
+    const partialBuild = vi.fn(async () => {
+      throw new Error("snapshot failed");
+    });
+    internals.buildPluginWorkspaceSnapshot = partialBuild;
+    await expect(
+      session.invokePluginHost({
+        pluginId: "portable-provider",
+        caller,
+        operation: "worktree.create",
+        input: { options: { name: "partial" } },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("snapshot failed");
+    expect(archiveWorktree).toHaveBeenCalledTimes(2);
+  } finally {
+    await session.cleanup();
+  }
+});
 
 test("durable deliveries are scoped to the authenticated principal and source", async () => {
   const home = mkdtempSync(join(tmpdir(), "paseo-session-deliveries-"));

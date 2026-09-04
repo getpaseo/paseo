@@ -127,6 +127,7 @@ function createRuntime(pluginId: string) {
   });
   return {
     paseo: createPaseoPluginApi(client),
+    callerAgentId: null,
     invoke: async (method: string, input: unknown) => {
       expect(pluginId).toBe("review");
       expect(method).toBe("review.inspect");

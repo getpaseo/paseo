@@ -44,6 +44,16 @@ generation. The host validates each invoke, update, result, cancellation, and er
 provider session captures the ready catalog; plugin reloads affect new sessions and immediately
 reject calls against removed generations.
 
+Caller-scoped plugin host IPC uses dotted request/response pairs under `plugin.host.*`. Every host
+message carries request, invocation, generation, and installation identity. Schemas are strict and
+the process boundary applies byte, depth, node, and dangerous-key limits to authority, options,
+payloads, results, and errors. The process creates a new capability for each invocation; aborting
+the invocation cancels pending host requests, and an unload rejects them. `plugin.rpc.invoke.request`
+keeps the optional `callerAgentId` selector for newer app clients; the daemon resolves it against
+live state and old peers continue to parse the request without that field. The
+`pluginCallerHostApis` feature gate applies to app-selected caller scopes. A null or omitted
+selector is a global RPC with null caller and null host.
+
 Durable delivery payload compaction is negotiated through `server_info.features.deliveryPayloadTombstones`.
 Only records admitted by a client advertising that capability may lose their acknowledged payload. A
 capable client receives the retained tombstone and repeated acknowledgement is idempotent. A client

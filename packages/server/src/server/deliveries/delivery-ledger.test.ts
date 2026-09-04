@@ -134,6 +134,37 @@ test("acknowledgement is durable and idempotent", async () => {
   await expect(recovered.acknowledge("owner", "delivery-one")).resolves.toEqual(acknowledged);
 });
 
+test("filters and acknowledges only the exact authorized delivery target", async () => {
+  const { ledger } = await createLedger();
+  await ledger.send("owner", {
+    deliveryId: "agent-one-delivery",
+    targetAgentId: "agent-one",
+    payload: { agent: "one" },
+  });
+  await ledger.send("owner", {
+    deliveryId: "agent-two-delivery",
+    targetAgentId: "agent-two",
+    payload: { agent: "two" },
+  });
+  await ledger.markDispatching("owner", "agent-one-delivery");
+  await ledger.markAccepted("owner", "agent-one-delivery");
+
+  await expect(ledger.get("owner", { targetAgentId: "agent-one" })).resolves.toMatchObject({
+    deliveries: [{ deliveryId: "agent-one-delivery" }],
+  });
+  await expect(
+    ledger.get("owner", { deliveryId: "agent-two-delivery", targetAgentId: "agent-one" }),
+  ).resolves.toMatchObject({ delivery: null, deliveries: [] });
+  await expect(
+    ledger.acknowledge("owner", "agent-two-delivery", { targetAgentId: "agent-one" }),
+  ).rejects.toMatchObject({ code: "delivery_target_mismatch" });
+  await expect(
+    ledger.acknowledge("owner", "agent-one-delivery", { targetAgentId: "agent-one" }),
+  ).resolves.toMatchObject({
+    status: "acknowledged",
+  });
+});
+
 test("acknowledgement only transitions accepted deliveries", async () => {
   const { ledger } = await createLedger();
   for (const [deliveryId, status] of [

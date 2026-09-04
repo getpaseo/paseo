@@ -116,9 +116,25 @@ export const lookup = defineTool({
 
 Register the definition with `plugin.addTool(lookup)` in `index.ts`. Tool names are exact global
 names and cannot collide with built-ins, reserved Paseo namespaces, or another plugin. The handler
-gets the daemon-derived caller agent ID, immutable agent/workspace snapshots, an installation-
-scoped Paseo API, an abort signal, and bounded optional progress. The model supplies only the
-validated input; it cannot spoof authority-bearing context.
+gets the daemon-derived caller agent ID, immutable agent/workspace snapshots, an invocation-scoped
+immutable `caller` authority, a caller-scoped `host` capability, an installation-scoped Paseo API,
+an abort signal, and bounded optional progress. The model supplies only the validated input; it
+cannot spoof authority-bearing context.
+
+`caller` records the exact agent and workspace snapshot plus effective provider/model/thinking and
+provider-session facts. Unknown facts are explicit and restrictive. `host` is null for a generic RPC
+without a selected agent and is fresh for every selected invocation. Its bounded operations are:
+
+- `host.deliveries.send(payload)`, which targets the exact caller, plus target-fenced `get` and
+  `acknowledge` with durable tombstones;
+- `host.children.create(options)`, which fixes parent, workspace, and cwd to the caller, allowing an
+  alternate cwd only through an opaque managed worktree and rejecting policy widening;
+- `host.worktrees.create(options)` and `remove(id)`, with authoritative workspace/cwd results and
+  plugin-session and caller ownership checks.
+
+The app injects a selected panel or Command Center agent outside plugin input. The daemon resolves
+the live agent and workspace again before host work. Plugin Paseo remains installation-scoped and
+does not expose an unscoped delivery API.
 
 Paseo publishes tool metadata after the plugin subprocess is ready and shares it through the
 transport-neutral catalog used by MCP, OMP, and OpenCode/native providers. Reload or removal

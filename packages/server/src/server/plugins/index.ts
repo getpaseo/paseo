@@ -27,7 +27,7 @@ interface PluginRuntimePort {
     pluginId: string,
     method: string,
     input: unknown,
-    options?: { timeoutMs?: number; signal?: AbortSignal },
+    options?: { timeoutMs?: number; signal?: AbortSignal; callerAgentId?: string | null },
   ): Promise<unknown>;
   invokeTool?(
     pluginId: string,
@@ -382,7 +382,7 @@ export class PluginService {
     pluginId: string,
     method: string,
     input: unknown,
-    options?: { timeoutMs?: number; signal?: AbortSignal },
+    options?: { timeoutMs?: number; signal?: AbortSignal; callerAgentId?: string | null },
   ): Promise<unknown> {
     return this.runtime.invoke(pluginId, method, input, options);
   }

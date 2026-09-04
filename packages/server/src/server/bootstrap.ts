@@ -229,6 +229,7 @@ import { DaemonExecutions } from "./hub/daemon-executions.js";
 import { PluginService } from "./plugins/index.js";
 import { ManagedPluginSources } from "./plugins/managed-source.js";
 import type { PluginToolCallerContext } from "./plugins/plugin-process-protocol.js";
+import type { PluginCallerAuthority } from "@getpaseo/plugin";
 import { toAgentPayload } from "./agent/agent-projections.js";
 
 const MCP_DEBUG_BATCH_LIMIT = 10;
@@ -243,6 +244,7 @@ function resolvePluginWorkspaceStatus(
   return "done";
 }
 
+// oxlint-disable-next-line complexity -- this assembles the immutable live-agent authority snapshot.
 async function resolvePluginToolCallerContext(input: {
   callerAgentId: string;
   agentManager: AgentManager;
@@ -251,9 +253,25 @@ async function resolvePluginToolCallerContext(input: {
   workspaceGitService: Pick<WorkspaceGitServiceImpl, "peekSnapshot">;
 }): Promise<PluginToolCallerContext> {
   const agent = input.agentManager.getAgent(input.callerAgentId);
-  if (!agent) throw new Error(`Caller agent is not active: ${input.callerAgentId}`);
+  if (!agent || agent.lifecycle === "closed") {
+    throw new Error(`Caller agent is not active: ${input.callerAgentId}`);
+  }
 
   const payload = toAgentPayload(agent);
+  const workspace = await resolvePluginWorkspaceSnapshot({
+    agent,
+    workspaceRegistry: input.workspaceRegistry,
+    projectRegistry: input.projectRegistry,
+    workspaceGitService: input.workspaceGitService,
+  });
+  if (agent.workspaceId && !workspace) {
+    throw new Error(`Caller workspace is not active: ${agent.workspaceId}`);
+  }
+  const effectiveModel = payload.runtimeInfo?.model ?? payload.model;
+  const effectiveThinking =
+    payload.effectiveThinkingOptionId ??
+    payload.runtimeInfo?.thinkingOptionId ??
+    payload.thinkingOptionId;
   const agentSnapshot = {
     id: payload.id,
     workspaceId: payload.workspaceId ?? "",
@@ -261,7 +279,7 @@ async function resolvePluginToolCallerContext(input: {
     status: payload.status,
     createdAt: payload.createdAt,
     updatedAt: payload.updatedAt,
-    lastActivityAt: payload.updatedAt,
+    lastActivityAt: payload.lastUserMessageAt ?? payload.updatedAt,
     title: payload.title,
     cwd: payload.cwd,
     model: payload.model,
@@ -276,12 +294,28 @@ async function resolvePluginToolCallerContext(input: {
   return {
     callerAgentId: input.callerAgentId,
     agent: agentSnapshot,
-    workspace: await resolvePluginWorkspaceSnapshot({
-      agent,
-      workspaceRegistry: input.workspaceRegistry,
-      projectRegistry: input.projectRegistry,
-      workspaceGitService: input.workspaceGitService,
-    }),
+    workspace,
+    caller: {
+      callerAgentId: input.callerAgentId,
+      agent: agentSnapshot as PluginCallerAuthority["agent"],
+      workspace: workspace as PluginCallerAuthority["workspace"],
+      effective: {
+        provider: { known: true, value: payload.runtimeInfo?.provider ?? payload.provider },
+        model: effectiveModel ? { known: true, value: effectiveModel } : { known: false },
+        thinking: effectiveThinking ? { known: true, value: effectiveThinking } : { known: false },
+        providerSessionId: payload.runtimeInfo?.sessionId
+          ? { known: true, value: payload.runtimeInfo.sessionId }
+          : { known: false },
+      },
+      // Provider-neutral policy facts are not available for every provider.
+      // Unknown is deliberately the restrictive member of each lattice.
+      securityCeiling: {
+        filesystem: "unknown",
+        network: "unknown",
+        approvals: "unknown",
+        unattended: "unknown",
+      },
+    },
   };
 }
 
@@ -293,11 +327,12 @@ async function resolvePluginWorkspaceSnapshot(input: {
 }): Promise<Record<string, unknown> | null> {
   if (!input.agent.workspaceId) return null;
   const workspaceRecord = await input.workspaceRegistry.get(input.agent.workspaceId);
-  if (!workspaceRecord) return null;
+  if (!workspaceRecord || workspaceRecord.archivedAt) return null;
   const [project, gitSnapshot] = await Promise.all([
     input.projectRegistry.get(workspaceRecord.projectId),
     Promise.resolve(input.workspaceGitService.peekSnapshot(workspaceRecord.cwd)),
   ]);
+  if (!project || project.archivedAt) return null;
   return {
     id: workspaceRecord.workspaceId,
     projectId: workspaceRecord.projectId,

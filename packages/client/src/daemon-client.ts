@@ -375,6 +375,13 @@ export interface GetDeliveriesOptions {
   timeout?: number;
 }
 
+export interface InvokePluginRpcOptions {
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  /** App surfaces supply this from their selected agent context. */
+  callerAgentId?: string | null;
+}
+
 export type GetDeliveriesResult = Extract<
   SessionOutboundMessage,
   { type: "deliveries.get.response" }
@@ -856,6 +863,7 @@ interface WaitHandle<T> {
 interface WaitOptions {
   skipQueue?: boolean;
   requestId?: string;
+  signal?: AbortSignal;
 }
 
 interface CorrelatedResponseIdentity {
@@ -1710,7 +1718,7 @@ export class DaemonClient {
     message: SessionInboundMessage;
     timeout?: number;
     select: (msg: SessionOutboundMessage) => T | null;
-    options?: { skipQueue?: boolean };
+    options?: { skipQueue?: boolean; signal?: AbortSignal };
   }): Promise<T> {
     const timeout = params.timeout ?? DEFAULT_SESSION_RPC_TIMEOUT_MS;
     const { promise, cancel } = this.waitForWithCancel<RpcWaitResult<T>>(
@@ -1737,7 +1745,9 @@ export class DaemonClient {
     );
 
     try {
-      await this.sendSessionMessageOrThrow(params.message);
+      const sendPromise = this.sendSessionMessageOrThrow(params.message);
+      void sendPromise.catch(() => undefined);
+      await Promise.race([sendPromise, promise.then(() => undefined)]);
     } catch (error) {
       const err = error instanceof Error ? error : new Error(String(error));
       cancel(err);
@@ -1761,7 +1771,7 @@ export class DaemonClient {
     message: SessionInboundMessage;
     timeout?: number;
     responseType: TResponseType;
-    options?: { skipQueue?: boolean };
+    options?: { skipQueue?: boolean; signal?: AbortSignal };
     selectPayload?: (payload: CorrelatedResponsePayload<TResponseType>) => TResult | null;
   }): Promise<TResult> {
     return this.sendRequest({
@@ -1794,6 +1804,7 @@ export class DaemonClient {
     message: { type: SessionInboundMessage["type"] } & Record<string, unknown>;
     responseType: TResponseType;
     timeout?: number;
+    signal?: AbortSignal;
     selectPayload?: (payload: CorrelatedResponsePayload<TResponseType>) => TResult | null;
   }): Promise<TResult> {
     const resolvedRequestId = this.createRequestId(params.requestId);
@@ -1806,7 +1817,7 @@ export class DaemonClient {
       message,
       responseType: params.responseType,
       timeout: params.timeout,
-      options: { skipQueue: true },
+      options: { skipQueue: true, signal: params.signal },
       ...(params.selectPayload ? { selectPayload: params.selectPayload } : {}),
     });
   }
@@ -5164,20 +5175,54 @@ export class DaemonClient {
     return payload.plugin;
   }
 
-  async invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown> {
+  async invokePluginRpc(
+    pluginId: string,
+    method: string,
+    input: unknown,
+    options: InvokePluginRpcOptions = {},
+  ): Promise<unknown> {
+    const supportsCallerHostApis =
+      this.lastServerInfoMessage?.features?.pluginCallerHostApis === true;
+    if (typeof options.callerAgentId === "string" && !supportsCallerHostApis) {
+      throw new Error("Update the host to use caller-scoped plugin APIs.");
+    }
     const requestId = this.createRequestId();
-    const payload = await this.sendCorrelatedSessionRequest({
-      requestId,
-      message: {
-        type: "plugin.rpc.invoke.request",
+    let cancellationSent = false;
+    const cancel = (): void => {
+      if (cancellationSent || !supportsCallerHostApis) return;
+      cancellationSent = true;
+      void this.sendSessionMessageOrThrow(
+        SessionInboundMessageSchema.parse({
+          type: "plugin.rpc.cancel.request",
+          requestId: this.createRequestId(),
+          pluginId,
+          invocationId: requestId,
+        }),
+      ).catch(() => undefined);
+    };
+    options.signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      const payload = await this.sendCorrelatedSessionRequest({
         requestId,
-        pluginId,
-        method,
-        input,
-      },
-      responseType: "plugin.rpc.invoke.response",
-    });
-    return payload.output;
+        message: {
+          type: "plugin.rpc.invoke.request",
+          requestId,
+          pluginId,
+          method,
+          input,
+          ...(options.callerAgentId !== undefined ? { callerAgentId: options.callerAgentId } : {}),
+        },
+        responseType: "plugin.rpc.invoke.response",
+        timeout: options.timeoutMs,
+        signal: options.signal,
+      });
+      return payload.output;
+    } catch (error) {
+      cancel();
+      throw error;
+    } finally {
+      options.signal?.removeEventListener("abort", cancel);
+    }
   }
 
   async respondToPermissionAndWait(
@@ -5758,6 +5803,8 @@ export class DaemonClient {
           [CLIENT_CAPS.compactProviderSnapshots]: true,
           [CLIENT_CAPS.durableDeliveries]: true,
           [CLIENT_CAPS.deliveryPayloadTombstones]: true,
+          // COMPAT(pluginCallerHostApis): added in v0.8.0-beta.1; remove after 2027-04-30.
+          [CLIENT_CAPS.pluginCallerHostApis]: true,
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),
@@ -6425,6 +6472,19 @@ export class DaemonClient {
         }
       });
     };
+
+    if (options?.signal) {
+      const abort = (): void => {
+        options.signal?.removeEventListener("abort", abort);
+        cancel(
+          options.signal?.reason instanceof Error
+            ? options.signal.reason
+            : new Error("Request cancelled"),
+        );
+      };
+      options.signal.addEventListener("abort", abort, { once: true });
+      if (options.signal.aborted) abort();
+    }
 
     return { promise, cancel };
   }

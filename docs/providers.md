@@ -61,6 +61,14 @@ Paseo tools are not implemented as MCP tools internally. They live in a shared t
 
 Tool catalogs are immutable for a provider session. A plugin reload or removal blocks new calls immediately and rejects in-flight calls; providers that cannot refresh their tool list keep the old catalog until the session ends. New sessions capture the next ready catalog.
 
+Portable provider integrations must use the plugin handler's invocation-scoped `caller` and `host`
+capability for caller-dependent work. The host derives the exact agent from the daemon live state;
+provider input cannot select or widen it. Child creation fixes the parent to that caller and uses the
+caller workspace and cwd, with an alternate cwd permitted only for an opaque managed worktree. The
+four security ceiling dimensions are provider-neutral and fail closed when unknown. Keep the
+installation-scoped `paseo` API separate from these host authority methods so durable delivery
+targeting and managed worktree ownership cannot be re-added through an unscoped API.
+
 Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.
 
 Paseo's per-agent and daemon-wide system prompts are appended by its generated Pi integration extension. Paseo deliberately does not pass `--append-system-prompt`, because that flag replaces Pi's automatic `APPEND_SYSTEM.md` discovery instead of composing with it.
