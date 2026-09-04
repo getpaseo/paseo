@@ -40,7 +40,7 @@ const CATALOG_DATA = [
     version: "1.1.2",
     iconId: null,
     installLink: "https://github.com/tucomel/paseo-acp-agy",
-    command: ["npx", "-y", "paseo-acp-agy@latest", "--acp"],
+    command: ["npx", "-y", "paseo-acp-agy@1.1.2", "--acp"],
   },
   {
     id: "auggie",

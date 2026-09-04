@@ -54,7 +54,7 @@ describe("ACP provider catalog", () => {
     expect(findProvider("antigravity")).toMatchObject({
       title: "Google Antigravity",
       version: "1.1.2",
-      command: ["npx", "-y", "paseo-acp-agy@latest", "--acp"],
+      command: ["npx", "-y", "paseo-acp-agy@1.1.2", "--acp"],
     });
   });
 
