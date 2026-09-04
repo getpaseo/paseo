@@ -1,0 +1,58 @@
+# Fork-only. Warns when upstream has moved somewhere that conflicts with the
+# project-grouping feature, so a conflict surfaces on an ordinary morning
+# instead of on the day someone needs a release out.
+name: Upstream drift
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  dry-run-merge:
+    if: github.repository != 'getpaseo/paseo'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: team-main
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/getpaseo/paseo.git
+          git fetch upstream main --quiet
+
+      - name: Report how far behind we are
+        run: |
+          behind=$(git rev-list --count HEAD..upstream/main)
+          echo "team-main is $behind commit(s) behind upstream/main"
+
+      - name: Dry-run merge
+        run: |
+          git config user.name "drift-check"
+          git config user.email "drift-check@localhost"
+          if git merge --no-commit --no-ff upstream/main; then
+            git merge --abort 2>/dev/null || true
+            echo "Clean: upstream/main merges into team-main without conflict."
+            exit 0
+          fi
+          echo "::error::upstream/main no longer merges cleanly into team-main."
+          echo "Conflicting files:"
+          git diff --name-only --diff-filter=U
+          git merge --abort 2>/dev/null || true
+          exit 1
+
+      # The fork's delta against upstream should stay the same feature, give or
+      # take line shifts. A delta that changes shape means a merge rewrote the
+      # feature rather than carrying it, which the dry run above cannot see.
+      - name: Publish the fork delta
+        if: always()
+        run: git diff upstream/main...HEAD > fork-delta.patch
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: fork-delta
+          path: fork-delta.patch
+          retention-days: 90
