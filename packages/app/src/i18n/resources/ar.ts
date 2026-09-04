@@ -10,10 +10,12 @@ export const ar: TranslationResources = {
       cancel: "يلغي",
       close: "يغلق",
       copy: "ينسخ",
+      copyLine: "نسخ السطر",
       dismiss: "رفض",
       retry: "أعد المحاولة",
       search: "يبحث",
       select: "يختار",
+      selectAll: "تحديد الكل",
     },
     placeholders: {
       search: "يبحث...",
@@ -33,6 +35,7 @@ export const ar: TranslationResources = {
     errors: {
       error: "خطأ",
       unableToSave: "غير قادر على الحفظ",
+      unableToCopy: "تعذر النسخ",
       nameRequired: "الاسم مطلوب",
       daemonUnavailable: "Daemon غير متوفر",
       daemonClientUnavailable: "عميل Daemon غير متوفر",
@@ -65,7 +68,7 @@ export const ar: TranslationResources = {
       agents: "الوكلاء",
       newAgent: "وكيل جديد",
       open: "فتح {{name}}",
-      openInSidePanel: "فتح {{name}} في اللوحة الجانبية",
+      openInSidePane: "فتح {{name}} في اللوحة الجانبية",
       openInFocusedPane: "فتح {{name}} في الجزء النشط",
       addProject: "إضافة مشروع",
       home: "بيت",
@@ -203,6 +206,7 @@ export const ar: TranslationResources = {
     empty: "ابدأ الدردشة مع هذا الوكيل...",
     scrollToBottom: "قم بالتمرير إلى الأسفل",
     historyLoadFailed: "تعذر تحميل سجل الوكيل",
+    messageCapped: "تم اقتطاع هذه الرسالة ({{bytes}} بايت).",
     permission: {
       plan: "يخطط",
       required: "الإذن مطلوب",
@@ -285,6 +289,7 @@ export const ar: TranslationResources = {
       zoomIn: "تكبير",
       zoomOut: "تصغير",
       resetZoom: "إعادة تعيين العرض",
+      fullscreen: "ملء الشاشة",
       viewSource: "عرض المصدر",
       viewDiagram: "عرض المخطط",
     },
@@ -345,7 +350,6 @@ export const ar: TranslationResources = {
         added: "أُضيفت",
         started: "بدأت",
         completed: "اكتملت",
-        reopened: "أُعيد فتحها",
       },
     },
     compaction: {
@@ -357,7 +361,13 @@ export const ar: TranslationResources = {
     },
   },
   importSession: {
+    chooseHostTitle: en.importSession.chooseHostTitle,
     title: "جلسة الاستيراد",
+    searchPlaceholder: "البحث في الجلسات...",
+    scope: {
+      host: "الجلسات على {{host}}",
+      workspace: "مساحة العمل هذه",
+    },
     filters: {
       all: "الجميع",
     },
@@ -366,12 +376,13 @@ export const ar: TranslationResources = {
       updateHost: "قم بتحديث المضيف لاستيراد الجلسات.",
       noProviders: "لم يتم تمكين أي موفري خدمات قابلين للاستيراد.",
       loading: "جارٍ تحميل الجلسات الأخيرة...",
-      failedAll: "تعذر تحميل الجلسات الأخيرة.",
-      failedProviders: "تعذر تحميل جلسات العمل لـ{{providers}}.",
+      failedProvider: "تعذر تحميل جلسات {{provider}}",
       failedImport: "تعذر استيراد الجلسة المحددة.",
     },
     actions: {
       refresh: "تحديث الجلسات",
+      showAll: "عرض الكل",
+      loadMore: "تحميل المزيد",
     },
     preview: {
       untitledSession: "جلسة بلا عنوان",
@@ -379,6 +390,7 @@ export const ar: TranslationResources = {
     },
     empty: {
       noRecent: "لا توجد جلسات حديثة لاستيرادها.",
+      noMatches: "لا توجد جلسات تطابق بحثك.",
       alreadyImported: "تم بالفعل استيراد كافة الجلسات الأخيرة.",
       noProviderSessions: "لم يتم العثور على جلسات{{provider}}.",
     },
@@ -416,6 +428,8 @@ export const ar: TranslationResources = {
     },
     fileActions: {
       openFile: "افتح الملف",
+      openIn: "فتح في {{target}}",
+      openToSide: "فتح إلى الجانب",
       copyPath: "نسخ المسار",
       copyRelativePath: "نسخ المسار النسبي",
       revealIn: "إظهار في {{target}}",
@@ -489,14 +503,23 @@ export const ar: TranslationResources = {
         completed: "اكتمل الإعداد",
         failed: "فشل الإعداد",
         workspace: "إعداد Workspace",
+        blocked: "تم حظر الإعداد",
       },
       status: {
         running: "جري",
         completed: "مكتمل",
         failed: "فشل",
         waiting: "في انتظار إخراج الإعداد",
+        blocked: "محظور",
       },
       waiting: "جارٍ إعداد مساحة العمل...",
+      blocked: {
+        title: "لم يتم تشغيل الإعداد",
+        description:
+          "يأتي طلب السحب هذا من {{repository}}، وهو مستودع مختلف. قد يشغّل الإعداد والبرامج النصية تعليمات برمجية لم تراجعها.",
+        run: "تشغيل الإعداد",
+        runFailed: "فشل تشغيل إعداد مساحة العمل",
+      },
       empty: {
         noCommands: "لم يتم تشغيل أي أوامر إعداد لمساحة العمل هذه.",
       },
@@ -582,6 +605,7 @@ export const ar: TranslationResources = {
         closeLeft: "بالقرب من اليسار",
         closeRight: "قريب من اليمين",
         closeOthers: "أغلق علامات التبويب الأخرى",
+        moveToMain: "Move to main panel",
         reloadAgent: "إعادة تحميل الوكيل",
         reloadAgentTooltip: "قم بإعادة تحميل الوكيل لتحديث المهارات أو MCPs أو حالة تسجيل الدخول.",
         close: "يغلق",
@@ -607,7 +631,7 @@ export const ar: TranslationResources = {
         terminalProfilesMenu: "Terminal profiles",
         editTerminalProfiles: "Edit profiles",
       },
-      sidePanel: {
+      explorerSidebar: {
         open: "افتح اللوحة الجانبية",
         close: "إغلاق اللوحة الجانبية",
         toggle: "تبديل اللوحة الجانبية",
@@ -853,6 +877,7 @@ export const ar: TranslationResources = {
       },
       diff: {
         openChangesTab: "فتح علامة تبويب التغييرات",
+        openDiffTab: "فتح علامة تبويب الفرق",
         closeChangesTab: "إغلاق علامة تبويب التغييرات",
         binaryFile: "ملف ثنائي",
         tooLarge: "الفرق كبير جدًا بحيث لا يمكن عرضه",
@@ -863,6 +888,7 @@ export const ar: TranslationResources = {
         switchToUnified: "التبديل إلى الفرق الموحد",
         switchToSplit: "التبديل إلى الفرق جنبًا إلى جنب",
         options: "خيارات الفرق",
+        inlineDiff: "فرق مضمّن",
         hideWhitespace: "إخفاء المسافة البيضاء",
         showWhitespace: "إظهار المسافة البيضاء",
         scrollLongLines: "قم بتمرير الخطوط الطويلة",
@@ -936,6 +962,16 @@ export const ar: TranslationResources = {
         accessibility: {
           pullRequest: "سحب الطلب #{{number}}",
           pullRequest_mr: "طلب دمج !{{number}}",
+          checkStatus: {
+            passed: "ناجح",
+            failed: "فاشل",
+            warning: "تحذير",
+            actionRequired: "إجراء مطلوب",
+            manual: "يدوي",
+            pending: "قيد الانتظار",
+            skipped: "تم التخطي",
+            cancelled: "تم الإلغاء",
+          },
         },
         states: {
           draft: "مسودة",
@@ -1067,7 +1103,6 @@ export const ar: TranslationResources = {
       addProject: "إضافة مشروع",
       newWorkspace: "مساحة عمل جديدة",
       hosts: "المضيفون",
-      home: "بيت",
       settings: "إعدادات",
       closeSidebar: "إغلاق الشريط الجانبي",
     },
@@ -1084,6 +1119,7 @@ export const ar: TranslationResources = {
     },
     sections: {
       sessions: "السجل",
+      search: "بحث",
       schedules: "الجداول",
     },
     worktreeSetup: {
@@ -1125,6 +1161,14 @@ export const ar: TranslationResources = {
         serviceRunning: "الخدمة {{name}} قيد التشغيل",
         serviceUnhealthy: "الخدمة {{name}} غير سليمة",
         creating: "جارٍ الإنشاء...",
+      },
+      checks: {
+        passed: "ناجحة: {{count}}",
+        failed: "فاشلة: {{count}}",
+        warning: "تحذيرات: {{count}}",
+        actionRequired: "إجراء مطلوب: {{count}}",
+        manual: "يدوية: {{count}}",
+        pending: "قيد الانتظار: {{count}}",
       },
       actions: {
         menu: "إجراءات Workspace",
@@ -1211,6 +1255,12 @@ export const ar: TranslationResources = {
     },
   },
   desktop: {
+    windowControls: {
+      minimize: "تصغير النافذة",
+      maximize: "تكبير النافذة",
+      restore: "استعادة النافذة",
+      close: "إغلاق النافذة",
+    },
     quitting: {
       title: "جارٍ إنهاء Paseo...",
       detail: "إيقاف البرنامج الخفي المحلي.",
@@ -1529,6 +1579,10 @@ export const ar: TranslationResources = {
         title: "اتصال مباشر",
         description: "الشبكة المحلية أو VPN.",
       },
+      remoteSsh: {
+        title: "SSH عن بُعد",
+        description: "الاتصال عبر عميل SSH لسطح المكتب.",
+      },
       scanQr: {
         title: "مسح رمز QR",
         description: "اتصال التتابع المشفر.",
@@ -1579,6 +1633,23 @@ export const ar: TranslationResources = {
         unableToConnect:
           "غير قادر على الاتصال. تحقق من المضيف /port ومن إمكانية الوصول إلى البرنامج الخفي.",
         details: "التفاصيل:{{detail}}",
+      },
+    },
+    remoteSsh: {
+      title: "SSH عن بُعد",
+      helper: "الاتصال بخادم Paseo يعمل على المضيف البعيد.",
+      fields: {
+        target: "مضيف SSH",
+      },
+      actions: {
+        cancel: "إلغاء",
+        connect: "اتصال",
+        connecting: "جارٍ الاتصال...",
+      },
+      errors: {
+        targetRequired: "مضيف SSH مطلوب",
+        invalidTarget: "أدخل مضيف ssh:// صالحًا",
+        failedToConnect: "تعذر الاتصال عبر SSH. {{detail}}",
       },
     },
     link: {
@@ -1744,6 +1815,7 @@ export const ar: TranslationResources = {
     },
     diff: {
       changesLabel: "التغييرات",
+      diffLabel: "الفرق",
       changesSubtitle: "فروقات شجرة العمل",
       commitSubtitle: "فروقات الالتزام",
       uncommittedSubtitle: "تغييرات غير ملتزم بها",
@@ -1838,6 +1910,7 @@ export const ar: TranslationResources = {
     sections: {
       general: "عام",
       appearance: "مظهر",
+      layout: en.settings.sections.layout,
       editor: "المحرر",
       shortcuts: "الاختصارات",
       integrations: "التكامل",
@@ -1846,6 +1919,7 @@ export const ar: TranslationResources = {
       diagnostics: "التشخيص",
       about: "عن",
     },
+    layout: en.settings.layout,
     editor: {
       title: "المحرر",
       vimKeybindings: "اختصارات Vim",
@@ -1934,11 +2008,6 @@ export const ar: TranslationResources = {
         label: "التمرير Terminal",
         description: "يتم الاحتفاظ بالخطوط في المخزن المؤقت الطرفي المدمج",
         accessibilityLabel: "خطوط التمرير Terminal",
-      },
-      sidePanelRouting: {
-        label: "فتح علامات التبويب المساعدة في اللوحة الجانبية",
-        description:
-          "تفتح روابط الملفات وطلبات السحب وتقدم الإعداد بجوار عملك بدلاً من الجزء المركّز عليه",
       },
       autoExpandReasoning: {
         label: "عرض التفكير دائماً",
@@ -2048,6 +2117,12 @@ export const ar: TranslationResources = {
         title: "مخطط المحادثة",
         description: "عرض مخطط للتنقل بين المطالبات",
       },
+      sidebar: {
+        title: "الشريط الجانبي",
+        description: "اختر العناصر التي تظهر أعلى الشريط الجانبي وترتيبها",
+        moveUp: "نقل لأعلى",
+        moveDown: "نقل لأسفل",
+      },
       fonts: {
         title: "الخطوط",
         systemDefault: "الافتراضي للنظام",
@@ -2134,7 +2209,6 @@ export const ar: TranslationResources = {
         toggleBothSidebars: "تبديل كلا الشريطين الجانبيين",
         toggleSettings: "تبديل الإعدادات",
         toggleFocusMode: "تبديل وضع التركيز",
-        toggleExplorerPaneMaximization: "تبديل تكبير اللوحة الجانبية",
         cycleTheme: "موضوع الدورة",
         focusMessageInput: "التركيز على إدخال الرسالة",
         cycleAgentMode: "تبديل وضع الوكيل",
@@ -2218,6 +2292,7 @@ export const ar: TranslationResources = {
       badges: {
         relay: "تتابع",
         local: "محلي",
+        remoteSsh: "SSH عن بُعد",
       },
       connections: {
         title: "اتصالات",

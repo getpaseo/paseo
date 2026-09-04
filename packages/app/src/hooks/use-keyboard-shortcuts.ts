@@ -32,6 +32,8 @@ import { isNative } from "@/constants/platform";
 import { keyboardShortcutsAvailable } from "@/keyboard/availability";
 import { getDesktopHost, isElectronRuntime } from "@/desktop/host";
 import { isImeComposingKeyboardEvent } from "@/utils/keyboard-ime";
+import { buildOpenProjectRoute } from "@/utils/host-routes";
+import { hasActiveWebOverlay } from "@/lib/overlay-root";
 import {
   type ActiveWorkspaceSelection,
   navigateToLastWorkspace,
@@ -179,7 +181,11 @@ export function useKeyboardShortcuts({
           navigateToWorkspace({ serverId: action.serverId, workspaceId: action.workspaceId });
           return true;
         case "navigate-last-workspace":
-          return navigateToLastWorkspace();
+          if (navigateToLastWorkspace()) {
+            return true;
+          }
+          router.replace(buildOpenProjectRoute());
+          return true;
         case "router-replace":
           router.replace(action.route as Parameters<typeof router.replace>[0]);
           return true;
@@ -330,6 +336,14 @@ export function useKeyboardShortcuts({
       }
 
       const key = event.key ?? "";
+      if (
+        key === "Escape" &&
+        pathname.startsWith("/settings") &&
+        !isMobile &&
+        hasActiveWebOverlay()
+      ) {
+        return;
+      }
       if (key === badgeModifierKey && !event.shiftKey) {
         setBadgeModifierDown(true);
       }

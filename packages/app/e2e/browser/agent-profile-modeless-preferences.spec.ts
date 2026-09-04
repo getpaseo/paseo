@@ -103,6 +103,18 @@ async function readProviderModePreference(page: Page, provider: string): Promise
   );
 }
 
+async function readProviderFeaturePreferences(page: Page, provider: string): Promise<unknown> {
+  return page.evaluate(
+    ({ preferencesKey, providerId }) => {
+      const raw = localStorage.getItem(preferencesKey);
+      if (!raw) return null;
+      const preferences = JSON.parse(raw) as FormPreferences;
+      return preferences.providerPreferences?.[providerId]?.featureValues ?? null;
+    },
+    { preferencesKey: CREATE_AGENT_PREFERENCES_KEY, providerId: provider },
+  );
+}
+
 test.describe("Agent profiles repair modeless provider preferences", () => {
   test.describe.configure({ timeout: 240_000 });
 
@@ -207,6 +219,9 @@ test.describe("Agent profiles repair modeless provider preferences", () => {
 
       await openModelPicker(page);
       await applyProfileFromPicker(page, "Fast profile");
+      await expect
+        .poll(() => readProviderFeaturePreferences(page, featureProviderId), { timeout: 10_000 })
+        .toEqual({ fast_mode: true });
       await submitNewWorkspacePrompt(page, "Create an agent with profile features.");
 
       const createAgentRequest = await createAgentRecorder.waitForRequest();

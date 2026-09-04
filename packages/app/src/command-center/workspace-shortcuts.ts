@@ -31,9 +31,10 @@ export function resolveWorkspaceCommandCenterShortcuts({
       resolveShortcutKeysForAction("workspace-tab-close-current", overrides, platform) ?? undefined,
     closePane:
       resolveShortcutKeysForAction("workspace-pane-close", overrides, platform) ?? undefined,
-    togglePaneMaximization:
-      resolveShortcutKeysForAction("workspace-explorer-maximize", overrides, platform) ?? undefined,
-    toggleSidePanel:
+    toggleFocusMode: resolveShortcutKeysForAction("toggle-focus", overrides, platform) ?? undefined,
+    toggleExplorerSidebar:
       resolveShortcutKeysForAction("toggle-right-sidebar", overrides, platform) ?? undefined,
+    // Workspace management shortcuts
+    pinWorkspace: resolveShortcutKeysForAction("pin-workspace", overrides, platform) ?? undefined,
   };
 }

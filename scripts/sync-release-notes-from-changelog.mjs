@@ -2,13 +2,13 @@ import { execFileSync as nodeExecFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { parseChangelogEntries } from "./changelog-utils.mjs";
+import { getGitHubRelease } from "./github-release.mjs";
 import {
   getReleaseInfoFromSourceTag,
   normalizeReleaseTag,
   parseReleaseVersion,
 } from "./release-version-utils.mjs";
-
-const headingPattern = /^##\s+\[?([^\]\s]+)\]?\s*-\s*([0-9]{4}-[0-9]{2}-[0-9]{2})\s*$/;
 
 function usageAndExit(code = 1) {
   const usage = `
@@ -17,7 +17,7 @@ Usage: node scripts/sync-release-notes-from-changelog.mjs [options]
 Options:
   --repo <owner/repo>       Repository slug. Defaults to $GITHUB_REPOSITORY.
   --tag <tag>               Release tag (e.g. v0.1.14). Defaults to latest changelog entry.
-  --create-if-missing       Create release if it does not already exist.
+  --create-if-missing       Create a draft release if it does not already exist.
 `;
   process.stderr.write(usage.trimStart());
   process.stderr.write("\n");
@@ -68,63 +68,17 @@ function parseArgs(argv) {
 }
 
 function parseChangelog(changelogText) {
-  const lines = changelogText.split(/\r?\n/);
-  const headings = [];
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const match = line.match(headingPattern);
-    if (!match) {
-      continue;
+  return parseChangelogEntries(changelogText).map((entry) => {
+    const notesParts = [`## ${entry.version} - ${entry.date}`];
+    if (entry.bodyLines.length > 0) {
+      notesParts.push("", ...entry.bodyLines);
     }
 
-    headings.push({
-      version: match[1],
-      date: match[2],
-      headingLineIndex: index,
-    });
-  }
-
-  if (headings.length === 0) {
-    throw new Error(
-      "No release headings found in CHANGELOG.md. Expected headings like `## 0.1.14 - 2026-02-19`.",
-    );
-  }
-
-  return headings.map((heading, index) => {
-    const nextHeading = headings[index + 1];
-    const bodyStart = heading.headingLineIndex + 1;
-    const bodyEnd = nextHeading ? nextHeading.headingLineIndex : lines.length;
-
-    const bodyLines = lines.slice(bodyStart, bodyEnd);
-    while (bodyLines.length > 0 && bodyLines[0].trim() === "") {
-      bodyLines.shift();
-    }
-    while (bodyLines.length > 0 && bodyLines[bodyLines.length - 1].trim() === "") {
-      bodyLines.pop();
-    }
-
-    const notesParts = [`## ${heading.version} - ${heading.date}`];
-    if (bodyLines.length > 0) {
-      notesParts.push("", ...bodyLines);
-    }
-
-    return Object.assign({}, heading, {
-      tag: `v${heading.version}`,
+    return Object.assign({}, entry, {
+      tag: `v${entry.version}`,
       notes: `${notesParts.join("\n").trim()}\n`,
     });
   });
-}
-
-function getRelease(tag, repo, execFileSync = nodeExecFileSync) {
-  try {
-    const output = execFileSync("gh", ["api", `repos/${repo}/releases/tags/${tag}`], {
-      encoding: "utf8",
-    });
-    return JSON.parse(output);
-  } catch {
-    return null;
-  }
 }
 
 function runGh(args, execFileSync = nodeExecFileSync) {
@@ -153,6 +107,11 @@ function exposeGitHubContributorMentions(notes) {
 
 export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
   const execFileSync = deps.execFileSync ?? nodeExecFileSync;
+  const sleepSync =
+    deps.sleepSync ??
+    ((milliseconds) => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+    });
   const args = parseArgs(argv);
   const changelogPath = path.resolve("CHANGELOG.md");
   const changelogText = readFileSync(changelogPath, "utf8");
@@ -186,11 +145,12 @@ export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
     "--notes-file",
     notesPath,
     "--verify-tag",
+    "--draft",
     ...(parseReleaseVersion(releaseInfo.version).isPrerelease ? ["--prerelease"] : []),
   ];
 
   try {
-    const release = getRelease(targetTag, args.repo, execFileSync);
+    const release = getGitHubRelease(args.repo, targetTag, execFileSync);
     if (release) {
       updateReleaseNotes({ releaseId: release.id, repo: args.repo, notesPath }, execFileSync);
       console.log(`Updated release notes for ${targetTag}.`);
@@ -206,12 +166,11 @@ export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
 
     try {
       runGh(createArgs, execFileSync);
-      console.log(`Created release ${targetTag} with changelog notes.`);
     } catch (createError) {
       console.warn(
         `Release creation failed for ${targetTag}; attempting edit in case another workflow created it concurrently.`,
       );
-      const raceRelease = getRelease(targetTag, args.repo, execFileSync);
+      const raceRelease = getGitHubRelease(args.repo, targetTag, execFileSync);
       if (!raceRelease) {
         throw createError;
       }
@@ -221,7 +180,22 @@ export function syncReleaseNotes(argv = process.argv.slice(2), deps = {}) {
       if (createError instanceof Error) {
         console.warn(createError.message);
       }
+      return;
     }
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const createdRelease = getGitHubRelease(args.repo, targetTag, execFileSync);
+      if (createdRelease) {
+        updateReleaseNotes(
+          { releaseId: createdRelease.id, repo: args.repo, notesPath },
+          execFileSync,
+        );
+        console.log(`Created release ${targetTag} with changelog notes.`);
+        return;
+      }
+      sleepSync(1_000);
+    }
+    throw new Error(`Created release ${targetTag} could not be resolved.`);
   } finally {
     rmSync(tempDir, { force: true, recursive: true });
   }

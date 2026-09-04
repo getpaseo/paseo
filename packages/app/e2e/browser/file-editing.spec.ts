@@ -9,6 +9,8 @@ import {
 import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import { openAgentRoute, seedMockAgentWorkspace } from "../support/helpers/mock-agent";
 
+const APP_SETTINGS_KEY = "@paseo:app-settings";
+
 const RED_PIXEL = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=",
   "base64",
@@ -218,6 +220,12 @@ test.describe("CodeMirror workspace file editing", () => {
   });
 
   test("clicking the editor focuses its pane beside an agent", async ({ page }) => {
+    await page.addInitScript((settingsKey) => {
+      localStorage.setItem(
+        settingsKey,
+        JSON.stringify({ openInSidePane: { explorerFiles: true } }),
+      );
+    }, APP_SETTINGS_KEY);
     const target = "target.ts:42";
     const session = await seedAgentWithFileLink({
       target,
@@ -530,6 +538,16 @@ test.describe("CodeMirror workspace file editing", () => {
     await openWorkspaceFile(page, "pixel.png");
     const image = visibleFilePane.locator("img");
     await expect(image).toBeVisible();
+    const imageCanvas = page.getByTestId("image-file-preview-canvas");
+    await expect(imageCanvas).toBeVisible();
+    await imageCanvas.hover();
+    const transformedContent = imageCanvas.locator(":scope > div").first();
+    const fittedImageBox = await transformedContent.boundingBox();
+    expect(fittedImageBox).not.toBeNull();
+    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
+    await expect
+      .poll(async () => (await transformedContent.boundingBox())?.width ?? 0)
+      .toBeGreaterThan(fittedImageBox!.width * 1.2);
     const initialSource = await image.getAttribute("src");
     await writeFile(imagePath, BLUE_PIXEL);
     await expect.poll(() => image.getAttribute("src")).not.toBe(initialSource);

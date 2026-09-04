@@ -9,6 +9,8 @@ interface DocumentFileHeaderProps {
   mode: DiffDocumentProps["mode"];
   onToggleFile: (path: string) => void;
   onSelectPath: (path: string) => void;
+  canvasRendered?: boolean;
+  onActiveChange?: (active: boolean) => void;
 }
 
 export const DocumentFileHeader = memo(function DocumentFileHeader({
@@ -17,6 +19,8 @@ export const DocumentFileHeader = memo(function DocumentFileHeader({
   mode,
   onToggleFile,
   onSelectPath,
+  canvasRendered = false,
+  onActiveChange,
 }: DocumentFileHeaderProps) {
   const activate = useCallback(
     (path: string) => {
@@ -37,6 +41,7 @@ export const DocumentFileHeader = memo(function DocumentFileHeader({
       onActivate={activate}
       onSelect={onSelectPath}
       onOpenFile={working?.onOpenFile}
+      onOpenToSide={working?.onOpenToSide}
       onAddToChat={working?.onAddToChat}
       onCopyPath={working?.onCopyPath}
       onCopyRelativePath={working?.onCopyRelativePath}
@@ -46,6 +51,8 @@ export const DocumentFileHeader = memo(function DocumentFileHeader({
       onDuplicate={working?.onDuplicate}
       onRevert={working?.onRevert}
       testID={`diff-file-${file.fileIndex}`}
+      canvasRendered={canvasRendered}
+      onActiveChange={onActiveChange}
     />
   );
 }, documentFileHeaderPropsEqual);
@@ -60,6 +67,7 @@ function documentFileHeaderPropsEqual(
     previous.mode.onFilePress === next.mode.onFilePress &&
     previous.mode.workspaceFileDragScope === next.mode.workspaceFileDragScope &&
     previous.mode.onOpenFile === next.mode.onOpenFile &&
+    previous.mode.onOpenToSide === next.mode.onOpenToSide &&
     previous.mode.onAddToChat === next.mode.onAddToChat &&
     previous.mode.onCopyPath === next.mode.onCopyPath &&
     previous.mode.onCopyRelativePath === next.mode.onCopyRelativePath &&
@@ -82,6 +90,8 @@ function documentFileHeaderIdentityMatches(
     (previous.selectedPath === previous.file.path) !== (next.selectedPath === next.file.path) ||
     previous.onToggleFile !== next.onToggleFile ||
     previous.onSelectPath !== next.onSelectPath ||
+    previous.canvasRendered !== next.canvasRendered ||
+    previous.onActiveChange !== next.onActiveChange ||
     previous.mode.kind !== next.mode.kind
   );
 }

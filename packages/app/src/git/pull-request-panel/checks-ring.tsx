@@ -1,7 +1,7 @@
 import Svg, { Circle } from "react-native-svg";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import type { Theme } from "@/styles/theme";
-import type { CheckStatus } from "./check-status";
+import type { CheckPresentation } from "@/git/check-presentation";
 import type { ChecksSummary } from "./checks-summary";
 
 /**
@@ -18,20 +18,23 @@ const SEGMENT_GAP = 2;
 /** Floor for a segment, so one failure among twenty checks is still a visible mark. */
 const MIN_SEGMENT = 1.5;
 
-type ChecksPalette = Record<CheckStatus, string> & { track: string };
+type ChecksPalette = Record<CheckPresentation, string> & { track: string };
 
 const paletteMapping = (theme: Theme): { palette: ChecksPalette } => ({
   palette: {
+    actionRequired: theme.colors.statusWarning,
+    warning: theme.colors.statusWarning,
     failure: theme.colors.statusDanger,
     pending: theme.colors.statusWarning,
+    manual: theme.colors.foregroundMuted,
     success: theme.colors.statusSuccess,
-    skipped: theme.colors.foregroundExtraMuted,
+    ignored: theme.colors.foregroundExtraMuted,
     track: theme.colors.surface3,
   },
 });
 
 interface RingSegment {
-  status: CheckStatus;
+  status: CheckPresentation;
   /** Painted arc length. */
   dash: number;
   /** Distance from twelve o'clock to where this segment starts. */

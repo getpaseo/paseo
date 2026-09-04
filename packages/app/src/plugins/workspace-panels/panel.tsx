@@ -12,12 +12,13 @@ import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import invariant from "tiny-invariant";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { usePaneContext } from "@/panels/pane-context";
-import type { PanelDescriptor, PanelRegistration } from "@/panels/panel-registry";
+import { definePanel, type PanelDescriptor } from "@/panels/panel-registry";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import { useWorkspaceExists } from "@/stores/session-store-hooks";
 import type { Theme } from "@/styles/theme";
 import { normalizeWorkspaceOpaqueId } from "@/utils/workspace-identity";
+import { usePluginHostNavigation } from "../host-navigation";
 import { createPluginClientStateSource } from "../client-state/source";
 import { toPluginTheme } from "../theme";
 import { resolvePluginIcon } from "../icons";
@@ -63,6 +64,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
   const host = useMemo(() => ({ id: serverId, label: hostLabel }), [hostLabel, serverId]);
   const layout = useMemo(() => ({ compact, platform: resolvePlatform() }), [compact]);
   const stateSource = useMemo(() => createPluginClientStateSource(serverId), [serverId]);
+  const navigation = usePluginHostNavigation(serverId);
 
   if (!plugin || !contribution || !workspaceExists) {
     return <PluginPanelUnavailable />;
@@ -79,6 +81,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
       theme,
       host,
       layout,
+      navigation,
       workspaceId,
     };
     const Component = contribution.Component;
@@ -90,6 +93,7 @@ function PluginPanelBody({ theme }: { theme: PluginTheme }) {
       theme,
       host,
       layout,
+      navigation,
       workspaceId,
       agentId: target.agentId,
     };
@@ -159,12 +163,10 @@ function usePluginPanelDescriptor(
   };
 }
 
-export const pluginPanelRegistration: PanelRegistration<"plugin"> = {
-  kind: "plugin",
-  resourceKey: (target) => `${target.pluginId}:${target.panelId}:${target.context}`,
+export const pluginPanelRegistration = definePanel("plugin", {
   component: PluginPanel,
   useDescriptor: usePluginPanelDescriptor,
-};
+});
 
 const styles = StyleSheet.create((theme) => ({
   unavailable: {

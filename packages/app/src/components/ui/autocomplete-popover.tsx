@@ -1,7 +1,21 @@
-import { useEffect, useMemo, useState, type ReactElement, type RefObject } from "react";
-import { Keyboard, View, useWindowDimensions } from "react-native";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactElement,
+  type RefObject,
+} from "react";
+import { View, useWindowDimensions } from "react-native";
 import { Portal } from "@gorhom/portal";
-import Animated, { useAnimatedStyle, useSharedValue } from "react-native-reanimated";
+import Animated, {
+  useAnimatedReaction,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
+import { scheduleOnRN } from "react-native-worklets";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet } from "react-native-unistyles";
 import { Autocomplete, type AutocompleteOption } from "@/components/ui/autocomplete";
 import {
@@ -63,77 +77,80 @@ export function AutocompletePopover({
   // React Compiler memoizes effect captures by reading SharedValue.value during render.
   const [relativeAnchorRect, setRelativeAnchorRect] = useState<RelativeAnchorRect | null>(null);
   const windowDimensions = useWindowDimensions();
+  const safeAreaInsets = useSafeAreaInsets();
   const portalHostName = useFloatingPanelPortalHostName();
-  const { shift } = useKeyboardShift();
-  const openShift = useSharedValue(0);
+  const { shift, isMoving } = useKeyboardShift();
+  const measuredShift = useSharedValue(0);
+  const measurementGeneration = useRef(0);
+  const canMeasure = visible && (options.length === 0 || selectedIndex >= 0);
+
+  const remeasure = useCallback(() => {
+    if (!canMeasure) return;
+    const anchorElement = anchorRef.current;
+    if (!anchorElement) return;
+    const generation = measurementGeneration.current;
+    void Promise.all([
+      measureElement(anchorElement),
+      measureFloatingPanelPortalHost(portalHostName),
+    ]).then(([anchorRect, hostRect]) => {
+      if (generation !== measurementGeneration.current || !hostRect) return undefined;
+      setRelativeAnchorRect({
+        x: anchorRect.x - hostRect.x,
+        y: anchorRect.y - hostRect.y,
+        width: anchorRect.width,
+        hostHeight: hostRect.height,
+      });
+      measuredShift.value = shift.value;
+      return undefined;
+    });
+  }, [anchorRef, canMeasure, measuredShift, portalHostName, shift]);
 
   useEffect(() => {
-    if (!visible || (options.length > 0 && selectedIndex < 0)) {
+    measurementGeneration.current += 1;
+    if (!canMeasure) {
       setRelativeAnchorRect(null);
       return;
     }
 
-    let cancelled = false;
-    const remeasure = () => {
-      const anchorElement = anchorRef.current;
-      if (!anchorElement) return;
-      void Promise.all([
-        measureElement(anchorElement),
-        measureFloatingPanelPortalHost(portalHostName),
-      ]).then(([anchorRect, hostRect]) => {
-        if (cancelled || !hostRect) return undefined;
-        setRelativeAnchorRect({
-          x: anchorRect.x - hostRect.x,
-          y: anchorRect.y - hostRect.y,
-          width: anchorRect.width,
-          hostHeight: hostRect.height,
-        });
-        openShift.value = shift.value;
-        return undefined;
-      });
-    };
-
     remeasure();
     const raf = requestAnimationFrame(remeasure);
-    const subscriptions = (["keyboardDidShow", "keyboardDidHide"] as const).map((event) =>
-      Keyboard.addListener(event, () => requestAnimationFrame(remeasure)),
-    );
 
     return () => {
-      cancelled = true;
+      measurementGeneration.current += 1;
       cancelAnimationFrame(raf);
-      for (const sub of subscriptions) sub.remove();
     };
-  }, [
-    visible,
-    options.length,
-    selectedIndex,
-    anchorRef,
-    portalHostName,
-    openShift,
-    shift,
-    windowDimensions.width,
-    windowDimensions.height,
-  ]);
+  }, [canMeasure, remeasure, windowDimensions.width, windowDimensions.height]);
+
+  useAnimatedReaction(
+    () => isMoving.value,
+    (moving, wasMoving) => {
+      if (wasMoving && !moving) {
+        scheduleOnRN(remeasure);
+      }
+    },
+    [isMoving, remeasure],
+  );
 
   const baseStyle = useMemo(() => {
     if (!relativeAnchorRect) return null;
     return inlineUnistylesStyle({
       position: "absolute" as const,
-      bottom: relativeAnchorRect.hostHeight - relativeAnchorRect.y + OFFSET_FROM_ANCHOR,
       left: relativeAnchorRect.x,
       width: relativeAnchorRect.width,
     });
   }, [relativeAnchorRect]);
 
-  const animatedTransformStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: openShift.value - shift.value }],
-  }));
-
-  const composedStyle = useMemo(
-    () => [baseStyle, animatedTransformStyle],
-    [baseStyle, animatedTransformStyle],
-  );
+  const anchorY = relativeAnchorRect?.y ?? 0;
+  const baseBottom = relativeAnchorRect
+    ? relativeAnchorRect.hostHeight - relativeAnchorRect.y + OFFSET_FROM_ANCHOR
+    : 0;
+  const keyboardLayoutStyle = useAnimatedStyle(() => {
+    const shiftDelta = shift.value - measuredShift.value;
+    return {
+      bottom: baseBottom + shiftDelta,
+      maxHeight: Math.max(0, anchorY - shiftDelta - safeAreaInsets.top - OFFSET_FROM_ANCHOR * 2),
+    };
+  }, [anchorY, baseBottom, safeAreaInsets.top]);
 
   if (!visible || !relativeAnchorRect || !baseStyle) return null;
   if (options.length > 0 && selectedIndex < 0) return null;
@@ -141,7 +158,10 @@ export function AutocompletePopover({
   return (
     <Portal hostName={portalHostName}>
       <View style={styles.overlay} pointerEvents="box-none">
-        <Animated.View testID="composer-autocomplete-popover" style={composedStyle}>
+        <Animated.View
+          testID="composer-autocomplete-popover"
+          style={[baseStyle, keyboardLayoutStyle]}
+        >
           <Autocomplete
             options={options}
             selectedIndex={selectedIndex}
