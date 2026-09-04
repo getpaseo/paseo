@@ -32,6 +32,14 @@ steps:
 
 Field-by-field detail is in the [configuration reference](/docs/hub/configuration/hub-yml).
 
+## Choose and qualify the event in Hub
+
+In **Triggers**, create or edit a trigger and use **When this happens** to search for an event. Integration icons identify the provider. GitHub offers issue and pull-request creation, new comments, label additions, and native webhook events. Linear offers issue scope entry, assignment, and new comments.
+
+For **GitHub issue label added** or **GitHub pull request label added**, enter an **Added label**, such as `ready-for-agent`, to run only when that label is added. Leave it blank to accept any added label. This qualifier writes the event's `filters.label`; it does not match labels already on the item. Use YAML for additional filters such as `labels`, which requires every listed label to be present.
+
+The added-label qualifier carries over between the two label-added events and clears when you choose a different event kind. Changing providers clears the selected connection so you can choose one belonging to the new provider. Configure **Who can invoke it** separately: the event qualifier and the audience must both match.
+
 ## Choose the agent in Hub
 
 When you create or edit a trigger in the Hub dashboard, choose the daemon and enter its working directory first. Hub then asks that daemon for its available providers, models, execution modes, and thinking options. The suggested model and mode are the daemon's defaults.
