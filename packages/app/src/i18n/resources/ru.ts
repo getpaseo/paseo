@@ -1166,6 +1166,8 @@ export const ru: TranslationResources = {
         moveUp: "Переместить вверх",
         moveDown: "Переместить вниз",
         createConfirm: "Создать группу",
+        addToGroupConfirm: "Добавить в группу",
+        groupedMembers: "В других группах",
         creating: "Создание...",
         name: "Название группы",
         rename: "Переименовать группу",

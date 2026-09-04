@@ -1157,6 +1157,8 @@ export const ko: TranslationResources = {
         moveUp: "위로 이동",
         moveDown: "아래로 이동",
         createConfirm: "그룹 만들기",
+        addToGroupConfirm: "그룹에 추가",
+        groupedMembers: "다른 그룹에 있음",
         creating: "생성하는 중...",
         name: "그룹 이름",
         rename: "그룹 이름 변경",

@@ -1,12 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { openProjectGroupCreateForm } from "./create-form-model";
+import {
+  openProjectGroupCreateForm,
+  partitionProjectGroupCreateMembers,
+} from "./create-form-model";
 import type { ProjectGroupOutcome } from "./index";
 
 const MEMBERS = [
-  { viewKey: "a", name: "Alpha" },
-  { viewKey: "b", name: "Beta" },
-  { viewKey: "c", name: "Gamma" },
+  { viewKey: "a", name: "Alpha", group: null },
+  { viewKey: "b", name: "Beta", group: null },
+  { viewKey: "c", name: "Gamma", group: "Client X" },
 ];
+
+const KNOWN_GROUPS = [{ key: "client x", name: "Client X" }];
 
 function applied(): Promise<ProjectGroupOutcome> {
   return Promise.resolve({ kind: "applied", serverIds: ["host-1"] });
@@ -20,6 +25,7 @@ describe("openProjectGroupCreateForm", () => {
   it("preselects only the view keys that belong to a known member", () => {
     const form = openProjectGroupCreateForm({
       members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
       preselectedViewKeys: ["a", "unknown"],
       submit: applied,
       describeOutcome,
@@ -30,6 +36,7 @@ describe("openProjectGroupCreateForm", () => {
   it("toggles a member on and off", () => {
     const form = openProjectGroupCreateForm({
       members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
       preselectedViewKeys: [],
       submit: applied,
       describeOutcome,
@@ -43,6 +50,7 @@ describe("openProjectGroupCreateForm", () => {
   it("ignores toggling a view key that is not a known member", () => {
     const form = openProjectGroupCreateForm({
       members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
       preselectedViewKeys: [],
       submit: applied,
       describeOutcome,
@@ -54,6 +62,7 @@ describe("openProjectGroupCreateForm", () => {
   it("can submit only once a name is set and at least one member is selected", () => {
     const form = openProjectGroupCreateForm({
       members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
       preselectedViewKeys: [],
       submit: applied,
       describeOutcome,
@@ -74,6 +83,7 @@ describe("openProjectGroupCreateForm", () => {
   it("returns a referentially stable snapshot between changes", () => {
     const form = openProjectGroupCreateForm({
       members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
       preselectedViewKeys: [],
       submit: applied,
       describeOutcome,
@@ -90,6 +100,7 @@ describe("openProjectGroupCreateForm", () => {
     let calls = 0;
     const form = openProjectGroupCreateForm({
       members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
       preselectedViewKeys: [],
       submit: () => {
         calls += 1;
@@ -104,6 +115,7 @@ describe("openProjectGroupCreateForm", () => {
   it("sets an error from a non-applied outcome and resolves false", async () => {
     const form = openProjectGroupCreateForm({
       members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
       preselectedViewKeys: ["a"],
       submit: () => Promise.resolve({ kind: "failed", serverIds: ["host-1"] }),
       describeOutcome,
@@ -118,6 +130,7 @@ describe("openProjectGroupCreateForm", () => {
   it("resolves true and clears pending on an applied outcome", async () => {
     const form = openProjectGroupCreateForm({
       members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
       preselectedViewKeys: ["a"],
       submit: applied,
       describeOutcome,
@@ -134,6 +147,7 @@ describe("openProjectGroupCreateForm", () => {
     let resolveFirst: (() => void) | undefined;
     const form = openProjectGroupCreateForm({
       members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
       preselectedViewKeys: ["a"],
       submit: () => {
         calls += 1;
@@ -160,6 +174,7 @@ describe("openProjectGroupCreateForm", () => {
     const calls: Array<{ viewKeys: string[]; group: string }> = [];
     const form = openProjectGroupCreateForm({
       members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
       preselectedViewKeys: [],
       submit: (submitInput) => {
         calls.push(submitInput);
@@ -174,5 +189,46 @@ describe("openProjectGroupCreateForm", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.group).toBe("Client X");
     expect(new Set(calls[0]?.viewKeys)).toEqual(new Set(["a", "b"]));
+  });
+
+  it("reports the known group a typed name lands in, matched by key", () => {
+    const form = openProjectGroupCreateForm({
+      members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
+      preselectedViewKeys: [],
+      submit: applied,
+      describeOutcome,
+    });
+    expect(form.getState().existingGroup).toBeNull();
+    form.setName("  client x ");
+    expect(form.getState().existingGroup).toEqual({ key: "client x", name: "Client X" });
+    form.setName("Client Y");
+    expect(form.getState().existingGroup).toBeNull();
+  });
+
+  it("submits the existing group's spelling when the typed name matches it", async () => {
+    const calls: Array<{ viewKeys: string[]; group: string }> = [];
+    const form = openProjectGroupCreateForm({
+      members: MEMBERS,
+      knownGroups: KNOWN_GROUPS,
+      preselectedViewKeys: ["a"],
+      submit: (submitInput) => {
+        calls.push(submitInput);
+        return applied();
+      },
+      describeOutcome,
+    });
+    form.setName("CLIENT X");
+    await form.submit();
+    expect(calls[0]?.group).toBe("Client X");
+  });
+});
+
+describe("partitionProjectGroupCreateMembers", () => {
+  it("lists ungrouped members first and grouped members apart, keeping order within each", () => {
+    expect(partitionProjectGroupCreateMembers(MEMBERS)).toEqual({
+      ungrouped: [MEMBERS[0], MEMBERS[1]],
+      grouped: [MEMBERS[2]],
+    });
   });
 });

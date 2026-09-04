@@ -70,6 +70,7 @@ export type { AgentProviderDefinition };
 export { AGENT_PROVIDER_DEFINITIONS, getAgentProviderDefinition };
 
 export interface ProviderDefinition extends AgentProviderDefinition {
+  iconSvg?: string;
   enabled: boolean;
   /**
    * The id of another *registered* provider this one extends (e.g. a Z.AI

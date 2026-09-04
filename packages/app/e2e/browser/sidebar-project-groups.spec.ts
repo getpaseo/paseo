@@ -23,6 +23,13 @@ async function attachSidebarScreenshot(page: Page, name: string) {
   await test.info().attach(name, { path, contentType: "image/png" });
 }
 
+/** The whole page, for surfaces such as a modal sheet that render outside the sidebar. */
+async function attachPageScreenshot(page: Page, name: string) {
+  const path = test.info().outputPath(`${name}.png`);
+  await page.screenshot({ path });
+  await test.info().attach(name, { path, contentType: "image/png" });
+}
+
 // Scoped to the section wrappers rather than the lists: a non-scrolling web DraggableList does
 // not put its testID in the DOM, and the wrappers are what say which section a row is in.
 async function expectProjectInGroup(page: Page, groupKey: string, projectViewKey: string) {
@@ -127,6 +134,65 @@ test.describe("Project groups", () => {
         await page.getByTestId("project-group-picker-none").click();
         await expectProjectUngrouped(page, first.projectKey);
         await expectProjectInGroup(page, RENAMED_GROUP_KEY, second.projectKey);
+      });
+
+      await test.step("the new-group sheet sets grouped projects apart and joins an existing name", async () => {
+        await openGroupPicker(page, first.projectKey);
+        await page.getByTestId("project-group-picker-create").click();
+        await expect(page.getByTestId("project-group-create-input")).toBeVisible();
+
+        // The opener is ungrouped, so it lists in the open part and arrives ticked.
+        await expect(
+          page.getByTestId(`project-group-create-member-${first.projectKey}`),
+        ).toHaveAttribute("aria-checked", "true");
+
+        // The grouped project sits behind a closed section that names its group.
+        const toggle = page.getByTestId("project-group-create-grouped-toggle");
+        await expect(toggle).toHaveAttribute("aria-expanded", "false");
+        await expect(
+          page.getByTestId(`project-group-create-member-${second.projectKey}`),
+        ).toHaveCount(0);
+        await toggle.click();
+        await expect(toggle).toHaveAttribute("aria-expanded", "true");
+        await expect(
+          page.getByTestId(`project-group-create-member-${second.projectKey}`),
+        ).toBeVisible();
+        await expect(
+          page.getByTestId(`project-group-create-member-group-${second.projectKey}`),
+        ).toHaveText(RENAMED_GROUP_NAME);
+
+        // A name that matches a known group, whatever its casing, joins it and says so.
+        const confirm = page.getByTestId("project-group-create-confirm");
+        await expect(confirm).toHaveText("Create group");
+        await page.getByTestId("project-group-create-input").fill(RENAMED_GROUP_NAME.toLowerCase());
+        await expect(confirm).toHaveText("Add to group");
+        await attachPageScreenshot(page, "create-sheet-grouped-section");
+
+        await confirm.click();
+        await expectProjectInGroup(page, RENAMED_GROUP_KEY, first.projectKey);
+        await expectProjectInGroup(page, RENAMED_GROUP_KEY, second.projectKey);
+        // The join wrote the group's own spelling, not the lowercase one typed.
+        await expect(
+          page.getByTestId(`sidebar-project-group-header-${RENAMED_GROUP_KEY}`),
+        ).toContainText(RENAMED_GROUP_NAME);
+        await expect(page.getByTestId("sidebar-ungrouped-project-list")).toHaveCount(0);
+      });
+
+      await test.step("the sheet opens its grouped section when the opener is already grouped", async () => {
+        await openGroupPicker(page, first.projectKey);
+        await page.getByTestId("project-group-picker-create").click();
+        await expect(page.getByTestId("project-group-create-input")).toBeVisible();
+        // Every project is grouped and the opener is one of them: closing the section would
+        // hide the row that arrived ticked.
+        await expect(page.getByTestId("project-group-create-grouped-toggle")).toHaveAttribute(
+          "aria-expanded",
+          "true",
+        );
+        await expect(
+          page.getByTestId(`project-group-create-member-${first.projectKey}`),
+        ).toHaveAttribute("aria-checked", "true");
+        await page.getByTestId("project-group-create-cancel").click();
+        await expect(page.getByTestId("project-group-create-input")).toHaveCount(0);
       });
 
       await test.step("ungrouping from the header removes the last member and the header", async () => {
