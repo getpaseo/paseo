@@ -408,11 +408,12 @@ export function WorkspaceDraftAgentTab({
     (state) => state.consumePending,
   );
   const autoSubmitConfig = resolveAutoSubmitConfig(pendingAutoSubmit);
+  // Any active attempt for this draft restores the creating state, whether or not
+  // the one-shot pending submission is still here. Without this, a remount while
+  // the create request is in flight shows an empty, unlocked draft, and sending
+  // the prompt again creates a second agent.
   const initialCreateAttempt = useMemo<DraftCreateAttempt | null>(() => {
-    if (!pendingAutoSubmit || !pendingCreateAttempt) {
-      return null;
-    }
-    if (pendingAutoSubmit.clientMessageId !== pendingCreateAttempt.clientMessageId) {
+    if (!pendingCreateAttempt) {
       return null;
     }
     return {
@@ -426,7 +427,7 @@ export function WorkspaceDraftAgentTab({
         ? { attachments: pendingCreateAttempt.attachments }
         : {}),
     };
-  }, [pendingAutoSubmit, pendingCreateAttempt]);
+  }, [pendingCreateAttempt]);
   const allowsEmptyAutoSubmit = pendingAutoSubmit?.allowEmptyText === true;
   const isCompactFormFactor = useIsCompactFormFactor();
   const { onLayout: onInputAreaLayout, isBelow: isCompactComposerLayout } = useContainerWidthBelow(
