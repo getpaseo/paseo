@@ -2,7 +2,7 @@
 title: Plugin reference
 description: Local plugin files, client and server runtimes, platform limits, contributions, RPCs, lifecycle, hosts, and CLI commands.
 nav: Reference
-order: 47
+order: 48
 category: Plugins
 ---
 
@@ -142,7 +142,42 @@ Center callbacks can only open surfaces and panels registered by the same plugin
 
 ### Server runtime
 
-Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`, and `zod` to server code. Backend contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem, process, credential, and other machine-local work under `server/`. A plugin without `index.server.ts` starts no subprocess.
+Paseo provides `@getpaseo/plugin`, `@getpaseo/plugin/server`,
+`@getpaseo/plugin/provider`, `@getpaseo/plugin/acp`, and `zod` to server code. Backend
+contributions run in a daemon subprocess with Node access to the host machine. Keep filesystem,
+process, credential, and other machine-local work under `server/`. A plugin without
+`index.server.ts` starts no subprocess.
+
+### Providers
+
+Follow [Build a provider plugin](/docs/plugins/v0.8/providers) for direct and ACP implementations,
+session lifecycle, composer settings, timeline renderers, testing, and distribution.
+
+Call `server.registerProvider()` with a `ProviderRegistration` from
+`@getpaseo/plugin/provider`. Its connection accepts inputs with `send()` and emits complete state
+snapshots through `onEvent()`. `send()` reports acceptance only; prompt disposition, turns,
+configuration, persistence, permissions, and failures are events.
+
+Use the single `session.prompt` input for messages, structured commands, steering, and command side
+effects. Repeat `clientMessageId` on the live user timeline item and publish exactly one matching
+`session.prompt_result`. Publish provider-created children as sessions with `parentSessionId`.
+
+Provider settings are toggle/select descriptors that Paseo renders in the composer. Keep
+provider-private JSON under `providerOptions`. Host tools arrive as MCP servers in the complete
+session config.
+
+Paseo refreshes an agent by closing its current provider session and opening it with current
+configuration and persistence. Providers re-read external state during `session.open`.
+
+Use `runAcpProvider()` from `@getpaseo/plugin/acp` to adapt a command-backed ACP. Add transformer
+hooks only for a vendor's discovery, configuration, notification, or tool-call differences.
+
+`ProviderRegistration.icon` is a file path relative to the plugin directory, such as `icon.svg`.
+It must resolve inside that directory to a regular SVG file no larger than 64 KiB. The SVG must be
+self-contained: scripts, styles, `foreignObject`, event-handler attributes, JavaScript URLs, and
+external `href` or `xlink:href` references are rejected. Fragment references such as `#mark` are
+allowed. Paseo reads and sanitizes the file when the plugin starts; the string is never an inline
+SVG or URL.
 
 ## Entry point and cleanup
 

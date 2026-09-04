@@ -155,6 +155,59 @@ function createPluginSelectivePausedRuntime(pausedPluginId: string) {
 }
 
 describe("PluginService", () => {
+  it("resolves a provider icon path to sanitized inline SVG", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "provider-icon",
+      `export default function contribute(server) {
+  server.registerProvider({
+    id: "plugin-agent",
+    label: "Plugin agent",
+    icon: "icon.svg",
+    async connect() { throw new Error("not opened by this test"); },
+  });
+  return () => {};
+}`,
+    );
+    const iconSvg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
+    await writeFile(path.join(directory, "icon.svg"), iconSvg);
+    const service = createService(home);
+
+    await service.start();
+    await service.installDirectory({ path: directory });
+
+    expect(service.getProviderRegistrations()).toMatchObject([
+      { id: "plugin-agent", icon: iconSvg },
+    ]);
+  });
+
+  it("publishes provider registrations only while their plugin is running", async () => {
+    const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
+    roots.push(home);
+    const directory = await createPlugin(
+      "provider-lifecycle",
+      `export default function contribute(server) {
+  server.registerProvider({
+    id: "plugin-agent",
+    label: "Plugin agent",
+    async connect() { throw new Error("not opened by this test"); },
+  });
+  return () => {};
+}`,
+    );
+    const service = createService(home);
+
+    await service.start();
+    await service.installDirectory({ path: directory });
+    expect(service.getProviderRegistrations()).toMatchObject([
+      { id: "plugin-agent", label: "Plugin agent" },
+    ]);
+
+    await service.disablePlugin("provider-lifecycle");
+    expect(service.getProviderRegistrations()).toEqual([]);
+  });
+
   it("retains logs when disabled and clears them only when removed", async () => {
     const home = await mkdtemp(path.join(tmpdir(), "paseo-plugin-home-"));
     roots.push(home);

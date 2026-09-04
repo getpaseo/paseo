@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { describe, expect, test, vi } from "vitest";
+import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
@@ -105,6 +106,29 @@ async function runTestCatalogActivities(
 }
 
 describe("ProviderSnapshotManager public surface", () => {
+  test("carries a plugin provider icon in snapshot metadata", () => {
+    const iconSvg = '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" /></svg>';
+    const registration: ProviderRegistration = {
+      id: "icon-provider",
+      label: "Icon Provider",
+      icon: iconSvg,
+      async connect() {
+        throw new Error("not opened by this test");
+      },
+    };
+    const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+
+    try {
+      manager.replacePluginProviders([registration]);
+
+      expect(manager.getSnapshot("/tmp/project")).toContainEqual(
+        expect.objectContaining({ provider: "icon-provider", iconSvg }),
+      );
+    } finally {
+      manager.destroy();
+    }
+  });
+
   test("validates complete Hub agent configurations through the current provider contract", async () => {
     const manager = new ProviderSnapshotManager({
       logger: createTestLogger(),
@@ -1704,6 +1728,55 @@ describe("ProviderSnapshotManager cwd routing", () => {
       const cwds = listener.mock.calls.map((call) => call[1]);
       expect(cwds).toContain(GLOBAL_PROVIDER_SNAPSHOT_KEY);
     } finally {
+      manager.destroy();
+    }
+  });
+
+  test("registers and unregisters plugin providers without rebuilding built-in clients", async () => {
+    let listener: ((event: ProviderEvent) => void) | null = null;
+    const registration: ProviderRegistration = {
+      id: "plugin-provider",
+      label: "Plugin provider",
+      async connect() {
+        return {
+          version: 1,
+          capabilities: [],
+          async send(input) {
+            if (input.type !== "catalog") return;
+            listener?.({
+              type: "catalog",
+              requestId: input.requestId,
+              catalog: { models: [{ id: "plugin-model", label: "Plugin model" }], modes: [] },
+            });
+          },
+          onEvent(nextListener) {
+            listener = nextListener;
+            return () => {
+              if (listener === nextListener) listener = null;
+            };
+          },
+          async close() {},
+        };
+      },
+    };
+    const manager = new ProviderSnapshotManager({ logger: createTestLogger() });
+    try {
+      const state = manager.replacePluginProviders([registration]);
+      expect(state.clients[registration.id]?.provider).toBe(registration.id);
+      await expect(
+        manager.getProvider({ provider: registration.id, wait: true }),
+      ).resolves.toMatchObject({
+        provider: registration.id,
+        source: "custom",
+        status: "ready",
+        models: [{ provider: registration.id, id: "plugin-model" }],
+      });
+
+      const withoutPlugin = manager.replacePluginProviders([]);
+      expect(manager.hasProvider(registration.id)).toBe(false);
+      expect(withoutPlugin.clients[registration.id]).toBeUndefined();
+    } finally {
+      await manager.shutdown();
       manager.destroy();
     }
   });

@@ -4,11 +4,18 @@ import { PassThrough } from "node:stream";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
+import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentStreamEvent } from "../agent/agent-sdk-types.js";
+import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
 import { PluginRuntime } from "./runtime.js";
 import type { PluginSessionSocket } from "./session-socket.js";
 
 const temporaryDirectories: string[] = [];
+
+function hasCompletedAgentTurn(events: readonly AgentStreamEvent[]): boolean {
+  return events.some((event) => event.type === "turn_completed");
+}
 
 async function createPlugin(id: string, source: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
@@ -18,7 +25,20 @@ async function createPlugin(id: string, source: string): Promise<string> {
   return directory;
 }
 
-function createReloadChild(name: string, events: string[], methods: string[] = []) {
+async function readTextIfPresent(filePath: string): Promise<string | null> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function createReloadChild(
+  name: string,
+  events: string[],
+  methods: string[] = [],
+  providers: Array<{ id: string; label: string }> = [],
+) {
   const listeners = new Map<string, Array<(message: never) => void>>();
   const emit = (event: string, message: unknown) => {
     for (const listener of listeners.get(event) ?? []) listener(message as never);
@@ -32,7 +52,7 @@ function createReloadChild(name: string, events: string[], methods: string[] = [
       callback?.(null);
       if (message.type === "initialize") {
         events.push(`start:${name}`);
-        queueMicrotask(() => emit("message", { type: "ready", methods }));
+        queueMicrotask(() => emit("message", { type: "ready", methods, providers }));
       }
       if (message.type === "shutdown") {
         events.push(`shutdown:${name}`);
@@ -58,6 +78,9 @@ function createReloadChild(name: string, events: string[], methods: string[] = [
       registered.push(listener);
       listeners.set(event, registered);
       return this;
+    },
+    emitMessage(message: unknown) {
+      emit("message", message);
     },
   };
 }
@@ -140,6 +163,42 @@ function lifecycleMessages(runtime: PluginRuntime): string[] {
     .sort();
 }
 
+function hasCompletedTurn(events: readonly ProviderEvent[]): boolean {
+  return events.some((event) => event.type === "session.turn" && event.state === "completed");
+}
+
+function hasReadyRequest(events: readonly ProviderEvent[], requestId: string): boolean {
+  return events.some((event) => event.type === "session.ready" && event.requestId === requestId);
+}
+
+function runtimeFailure(events: readonly ProviderEvent[]): ProviderEvent | undefined {
+  return events.find((event) => event.type === "session.runtime_failed");
+}
+
+function providerCloseCount(
+  messages: readonly { type: string; connectionId?: string }[],
+  connectionId: string | undefined,
+): number {
+  return messages.filter(
+    (message) => message.type === "provider.close" && message.connectionId === connectionId,
+  ).length;
+}
+
+function hasMessageType(messages: readonly { type: string }[], type: string): boolean {
+  return messages.some((message) => message.type === type);
+}
+
+function adaptRuntimeProvider(
+  runtime: PluginRuntime,
+  pluginId: string,
+  metadata: { id: string; label: string; description?: string; icon?: string },
+): ProviderRegistration {
+  return {
+    ...metadata,
+    connect: (request) => runtime.connectProvider(pluginId, metadata.id, request),
+  };
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
@@ -147,6 +206,523 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("runs the direct example through the existing AgentClient path", async () => {
+    const pluginId = "provider-direct-example";
+    const directory = fileURLToPath(
+      new URL("../../../../../plugin-examples/provider-direct/", import.meta.url),
+    );
+    const runtime = createTestRuntime();
+    await runtime.startPlugin(pluginId, directory);
+    const [metadata] = runtime.getProviderRegistrations(pluginId);
+    expect(metadata).toBeDefined();
+    const adapters = new PluginAgentClientRegistry(pino({ level: "silent" }));
+    adapters.replace([adaptRuntimeProvider(runtime, pluginId, metadata!)]);
+    const client = adapters.clients()[metadata!.id];
+
+    const session = await client!.createSession({ provider: metadata!.id, cwd: directory });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await expect(session.startTurn("hello", { clientMessageId: "direct-client" })).resolves.toEqual(
+      { turnId: "turn-1" },
+    );
+    await expect.poll(() => hasCompletedAgentTurn(events)).toBe(true);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: {
+          type: "assistant_message",
+          id: undefined,
+          messageId: "assistant-1",
+          text: "Echo: hello",
+        },
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({ type: "timeline" }),
+      }),
+    );
+
+    await session.close();
+    await adapters.shutdown();
+    await runtime.stopAll();
+  });
+
+  it("runs a provider connection through the real plugin subprocess boundary", async () => {
+    const directory = await createPlugin(
+      "provider-round-trip",
+      `import type { PluginServerContext } from "@getpaseo/plugin";
+import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
+
+const provider: ProviderRegistration = {
+  id: "direct-example",
+  label: "Direct example",
+  icon: "icon.svg",
+  async connect(request) {
+    const listeners = new Set<(event: ProviderEvent) => void>();
+    const emit = (event: ProviderEvent) => {
+      for (const listener of listeners) listener(event);
+    };
+    return {
+      version: request.versions[0] ?? 1,
+      capabilities: request.capabilities,
+      async send(input) {
+        if (input.type === "session.open") {
+          emit({
+            type: "session.opened",
+            requestId: input.requestId,
+            sessionId: input.sessionId,
+            capabilities: request.capabilities,
+            restoration: "core",
+            persistence: { version: 1, data: { resume: "native-1" } },
+            cwd: input.config.cwd,
+            futureField: "ignored by this protocol version",
+          } as ProviderEvent);
+          emit({
+            type: "session.config",
+            sessionId: input.sessionId,
+            config: {
+              model: "example-1",
+              models: [{ id: "example-1", label: "Example 1" }],
+              modes: [],
+              thinkingOptions: [],
+              settings: [
+                { type: "toggle", id: "concise", label: "Concise", value: true },
+              ],
+            },
+          });
+          emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+          return;
+        }
+        if (input.type !== "session.prompt") return;
+        if (input.prompt.input.type === "command") {
+          emit({
+            type: "session.prompt_result",
+            sessionId: input.sessionId,
+            clientMessageId: input.prompt.clientMessageId,
+            result: { type: "completed" },
+          });
+          return;
+        }
+        emit({
+          type: "timeline.item",
+          sessionId: input.sessionId,
+          item: {
+            type: "user_message",
+            id: "user-1",
+            text: "hello",
+            clientMessageId: input.prompt.clientMessageId,
+          },
+        });
+        emit({
+          type: "session.prompt_result",
+          sessionId: input.sessionId,
+          clientMessageId: input.prompt.clientMessageId,
+          result: { type: "turn", turnId: "turn-1" },
+        });
+        emit({
+          type: "session.opened",
+          sessionId: "child-1",
+          parentSessionId: input.sessionId,
+          capabilities: [],
+          restoration: "parent",
+          cwd: "/repo",
+        });
+        emit({
+          type: "timeline.item",
+          sessionId: "child-1",
+          item: {
+            type: "plugin",
+            id: "review-1",
+            pluginId: "provider-round-trip",
+            kind: "review",
+            version: 1,
+            data: { verdict: "ship" },
+          },
+        });
+      },
+      onEvent(listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      async close() {},
+    };
+  },
+};
+
+export default function contribute(server: PluginServerContext) {
+  server.registerProvider(provider);
+  return () => {};
+}`,
+    );
+    const runtime = createTestRuntime();
+    await runtime.startPlugin("provider-round-trip", directory);
+
+    const [registration] = runtime.getProviderRegistrations("provider-round-trip");
+    expect(registration).toMatchObject({
+      id: "direct-example",
+      label: "Direct example",
+      iconPath: "icon.svg",
+    });
+    const connection = await runtime.connectProvider("provider-round-trip", "direct-example", {
+      versions: [1],
+      capabilities: [
+        "prompt.message",
+        "prompt.command",
+        "session.configure",
+        "session.persistence",
+        "session.subsession",
+        "timeline.plugin",
+        "future.capability",
+      ],
+    });
+    expect(connection.capabilities).not.toContain("future.capability");
+    const events: ProviderEvent[] = [];
+    const unsubscribe = connection.onEvent((event) => events.push(event));
+
+    await connection.send({
+      type: "session.open",
+      requestId: "open-1",
+      sessionId: "root-1",
+      config: {
+        cwd: "/repo",
+        env: {},
+        mcpServers: {},
+        settings: {},
+        persist: true,
+      },
+      history: "replay",
+    });
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "root-1",
+      prompt: {
+        clientMessageId: "client-1",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "hello" }] },
+      },
+    });
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "root-1",
+      prompt: {
+        clientMessageId: "client-2",
+        delivery: "auto",
+        input: { type: "command", name: "compact", arguments: "" },
+      },
+    });
+
+    await expect.poll(() => events.length).toBe(8);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session.prompt_result",
+        clientMessageId: "client-1",
+        result: { type: "turn", turnId: "turn-1" },
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session.prompt_result",
+        clientMessageId: "client-2",
+        result: { type: "completed" },
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session.opened",
+        sessionId: "child-1",
+        parentSessionId: "root-1",
+      }),
+    );
+    expect(events.find((event) => event.type === "session.opened")).not.toHaveProperty(
+      "futureField",
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline.item",
+        sessionId: "child-1",
+        item: expect.objectContaining({ type: "plugin", pluginId: "provider-round-trip" }),
+      }),
+    );
+
+    unsubscribe();
+    await connection.close();
+    await runtime.stopAll();
+  });
+
+  it("adapts an ACP command and example transformer through the AgentClient path", async () => {
+    const transformerPath = fileURLToPath(
+      new URL(
+        "../../../../../plugin-examples/provider-acp-transformer/server/vendor-edit.ts",
+        import.meta.url,
+      ),
+    );
+    const directory = await createPlugin(
+      "provider-acp-round-trip",
+      `import type { PluginServerContext } from "@getpaseo/plugin";
+import { runAcpProvider } from "@getpaseo/plugin/acp";
+import { vendorEditTransformer } from "./server/vendor-edit.js";
+
+export default function contribute(server: PluginServerContext) {
+  server.registerProvider(runAcpProvider({
+    id: "acp-example",
+    label: "ACP example",
+    command: [process.execPath, __ACP_COMMAND__],
+    transformers: [vendorEditTransformer],
+  }));
+  return () => {};
+}`,
+    );
+    await mkdir(path.join(directory, "server"));
+    await writeFile(
+      path.join(directory, "server/vendor-edit.ts"),
+      await readFile(transformerPath, "utf8"),
+      "utf8",
+    );
+    const agentPath = path.join(directory, "fake-acp.cjs");
+    await writeFile(
+      agentPath,
+      `const readline = require("node:readline");
+const lines = readline.createInterface({ input: process.stdin });
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+lines.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: message.params.protocolVersion, agentCapabilities: {} } });
+  } else if (message.method === "session/new") {
+    send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "native-1", modes: null, configOptions: [] } });
+  } else if (message.method === "session/prompt") {
+    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "native-1", update: { sessionUpdate: "tool_call", toolCallId: "edit-1", name: "vendor_file_edit", title: "Vendor edit", status: "completed", rawInput: { path: "/tmp/example.ts", before: "old", after: "new" } } } });
+    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "native-1", update: { sessionUpdate: "agent_message_chunk", messageId: "assistant-1", content: { type: "text", text: "ACP says hi" } } } });
+    send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
+  } else if (message.method === "session/close" || message.method === "session/cancel") {
+    send({ jsonrpc: "2.0", id: message.id, result: {} });
+  }
+});`,
+      "utf8",
+    );
+    const pluginPath = path.join(directory, "index.server.ts");
+    const pluginSource = (await readFile(pluginPath, "utf8")).replace(
+      "__ACP_COMMAND__",
+      JSON.stringify(agentPath),
+    );
+    await writeFile(pluginPath, pluginSource, "utf8");
+
+    const runtime = createTestRuntime();
+    await runtime.startPlugin("provider-acp-round-trip", directory);
+    const connection = await runtime.connectProvider("provider-acp-round-trip", "acp-example", {
+      versions: [1],
+      capabilities: ["prompt.message", "session.persistence"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+
+    await connection.send({
+      type: "session.open",
+      requestId: "open-acp",
+      sessionId: "paseo-1",
+      config: { cwd: directory, env: {}, mcpServers: {}, settings: {}, persist: true },
+      history: "skip",
+    });
+    await expect.poll(() => hasReadyRequest(events, "open-acp")).toBe(true);
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "paseo-1",
+      prompt: {
+        clientMessageId: "client-acp",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "hello" }] },
+      },
+    });
+
+    await expect.poll(() => hasCompletedTurn(events)).toBe(true);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "session.prompt_result",
+        clientMessageId: "client-acp",
+        result: { type: "turn", turnId: "acp:client-acp" },
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline.item",
+        item: expect.objectContaining({
+          type: "assistant_message",
+          id: "assistant-1",
+          text: "ACP says hi",
+        }),
+      }),
+    );
+
+    await connection.close();
+    const [metadata] = runtime.getProviderRegistrations("provider-acp-round-trip");
+    const adapters = new PluginAgentClientRegistry(pino({ level: "silent" }));
+    adapters.replace([adaptRuntimeProvider(runtime, "provider-acp-round-trip", metadata!)]);
+    const client = adapters.clients()[metadata!.id];
+    const session = await client!.createSession({ provider: metadata!.id, cwd: directory });
+    const agentEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => agentEvents.push(event));
+    await expect(
+      session.startTurn("hello", { clientMessageId: "agent-client-acp" }),
+    ).resolves.toEqual({ turnId: "acp:agent-client-acp" });
+    await expect.poll(() => hasCompletedAgentTurn(agentEvents)).toBe(true);
+    expect(agentEvents).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({ type: "assistant_message", text: "ACP says hi" }),
+      }),
+    );
+    expect(agentEvents).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "edit-1",
+          detail: {
+            type: "edit",
+            filePath: "/tmp/example.ts",
+            oldString: "old",
+            newString: "new",
+            unifiedDiff: undefined,
+          },
+        }),
+      }),
+    );
+    await session.close();
+    await adapters.shutdown();
+    await runtime.stopAll();
+  });
+
+  it("rejects a malformed provider event from a real plugin subprocess", async () => {
+    const directory = await createPlugin(
+      "malicious-provider",
+      `import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
+let connectionId = "";
+process.on("message", (message: unknown) => {
+  const value = message as { type?: string; connectionId?: string };
+  if (value.type === "provider.connect") connectionId = value.connectionId ?? "";
+});
+const provider: ProviderRegistration = {
+  id: "malicious",
+  label: "Malicious",
+  async connect(request) {
+    const listeners = new Set<(event: ProviderEvent) => void>();
+    const emit = (event: ProviderEvent) => { for (const listener of listeners) listener(event); };
+    return {
+      version: request.versions[0] ?? 1,
+      capabilities: ["prompt.message"],
+      async send(input) {
+        if (input.type === "session.open") {
+          emit({ type: "session.opened", requestId: input.requestId, sessionId: input.sessionId, capabilities: ["prompt.message"], restoration: "core", cwd: input.config.cwd });
+          emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        } else if (input.type === "session.prompt") {
+          process.send?.({ type: "provider.event", connectionId, event: { type: "invented.event", sessionId: input.sessionId } });
+        }
+      },
+      onEvent(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+      async close() {},
+    };
+  },
+};
+export default function contribute(server: any) { server.registerProvider(provider); return () => undefined; }`,
+    );
+    const runtime = createTestRuntime();
+    await runtime.startPlugin("malicious-provider", directory);
+    const connection = await runtime.connectProvider("malicious-provider", "malicious", {
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send({
+      type: "session.open",
+      requestId: "open-malicious",
+      sessionId: "root-malicious",
+      config: { cwd: "/repo", env: {}, mcpServers: {}, settings: {}, persist: true },
+      history: "skip",
+    });
+
+    await expect(
+      connection.send({
+        type: "session.prompt",
+        sessionId: "root-malicious",
+        prompt: {
+          clientMessageId: "malformed-now",
+          delivery: "auto",
+          input: { type: "message", content: [{ type: "text", text: "break transport" }] },
+        },
+      }),
+    ).rejects.toThrow("invalid message");
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "session.runtime_failed", sessionId: "root-malicious" }),
+    );
+    expect(runtime.catalog()).toHaveLength(1);
+    await runtime.stopAll();
+  });
+
+  it("emits runtime failure for live sessions when a real plugin process dies", async () => {
+    const directory = await createPlugin(
+      "dying-provider",
+      `import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
+const provider: ProviderRegistration = {
+  id: "dying",
+  label: "Dying",
+  async connect(request) {
+    const listeners = new Set<(event: ProviderEvent) => void>();
+    const emit = (event: ProviderEvent) => { for (const listener of listeners) listener(event); };
+    return {
+      version: request.versions[0] ?? 1,
+      capabilities: ["prompt.message"],
+      async send(input) {
+        if (input.type === "session.open") {
+          emit({ type: "session.opened", requestId: input.requestId, sessionId: input.sessionId, capabilities: ["prompt.message"], restoration: "core", cwd: input.config.cwd });
+          emit({ type: "session.ready", requestId: input.requestId, sessionId: input.sessionId });
+        }
+        if (input.type === "session.prompt") setTimeout(() => process.exit(17), 10);
+      },
+      onEvent(listener) { listeners.add(listener); return () => listeners.delete(listener); },
+      async close() {},
+    };
+  },
+};
+export default function contribute(server: any) { server.registerProvider(provider); return () => undefined; }`,
+    );
+    const runtime = createTestRuntime();
+    await runtime.startPlugin("dying-provider", directory);
+    const connection = await runtime.connectProvider("dying-provider", "dying", {
+      versions: [1],
+      capabilities: ["prompt.message"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send({
+      type: "session.open",
+      requestId: "open-dying",
+      sessionId: "root-dying",
+      config: { cwd: "/repo", env: {}, mcpServers: {}, settings: {}, persist: true },
+      history: "skip",
+    });
+    await connection.send({
+      type: "session.prompt",
+      sessionId: "root-dying",
+      prompt: {
+        clientMessageId: "die-now",
+        delivery: "auto",
+        input: { type: "message", content: [{ type: "text", text: "bye" }] },
+      },
+    });
+
+    await expect
+      .poll(() => runtimeFailure(events))
+      .toMatchObject({
+        type: "session.runtime_failed",
+        sessionId: "root-dying",
+        error: { message: "Plugin process exited: dying-provider" },
+      });
+    await runtime.stopAll();
+  });
+
   it("records host-owned plugin lifecycle events", async () => {
     const directory = await createPlugin(
       "lifecycle",
@@ -382,38 +958,298 @@ export default function contribute(plugin: unknown) {
     await rm(cleanupFile, { force: true });
   });
 
-  it("does not kill a healthy child while its graceful cleanup is still running", async () => {
+  it("closes a provider connection that resolves during plugin shutdown", async () => {
+    const suffix = `${process.pid}-${Date.now()}`;
+    const startedFile = path.join(tmpdir(), `paseo-provider-connect-started-${suffix}`);
+    const closedFile = path.join(tmpdir(), `paseo-provider-connect-closed-${suffix}`);
+    const directory = await createPlugin(
+      "shutdown-connect",
+      `import { writeFile } from "node:fs/promises";
+import type { ProviderRegistration } from "@getpaseo/plugin/provider";
+
+const provider: ProviderRegistration = {
+  id: "delayed",
+  label: "Delayed",
+  async connect() {
+    await writeFile(${JSON.stringify(startedFile)}, "started");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return {
+      version: 1,
+      capabilities: [],
+      async send() {},
+      onEvent() { return () => undefined; },
+      async close() { await writeFile(${JSON.stringify(closedFile)}, "closed"); },
+    };
+  },
+};
+
+export default function contribute(server: { registerProvider(provider: ProviderRegistration): void }) {
+  server.registerProvider(provider);
+  return () => undefined;
+}`,
+    );
+    const runtime = createTestRuntime();
+    await runtime.startPlugin("shutdown-connect", directory);
+    const pending = runtime.connectProvider("shutdown-connect", "delayed", {
+      versions: [1],
+      capabilities: [],
+    });
+    await expect.poll(() => readTextIfPresent(startedFile)).toBe("started");
+
+    const stopping = runtime.stopPluginById("shutdown-connect");
+    await expect(pending).rejects.toThrow("Plugin stopped: shutdown-connect");
+    await stopping;
+
+    await expect(readFile(closedFile, "utf8")).resolves.toBe("closed");
+    await Promise.all([rm(startedFile, { force: true }), rm(closedFile, { force: true })]);
+  });
+
+  it("closes a provider connection that arrives after negotiation timed out", async () => {
+    const directory = await createPlugin(
+      "late-provider",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild(
+      "late-provider",
+      [],
+      [],
+      [{ id: "provider", label: "Provider" }],
+    );
+    const sent: Array<{ type: string; connectionId?: string }> = [];
+    const originalSend = child.send.bind(child);
+    child.send = (message, callback) => {
+      sent.push(message);
+      if (message.type === "provider.connect") {
+        callback?.(null);
+        return true;
+      }
+      return originalSend(message, callback);
+    };
+    const runtime = createTestRuntime({ spawnChild: () => child });
+    await runtime.startPlugin("late-provider", directory);
+    vi.useFakeTimers();
+    try {
+      const rejected = expect(
+        runtime.connectProvider("late-provider", "provider", {
+          versions: [1],
+          capabilities: [],
+        }),
+      ).rejects.toThrow("timed out");
+      await vi.advanceTimersByTimeAsync(30_000);
+      await rejected;
+      const connectionId = sent.find(
+        (message) => message.type === "provider.connect",
+      )?.connectionId;
+      expect(
+        sent.filter(
+          (message) => message.type === "provider.close" && message.connectionId === connectionId,
+        ),
+      ).toHaveLength(1);
+
+      child.emitMessage({
+        type: "provider.connected",
+        connectionId,
+        version: 1,
+        capabilities: [],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(
+        sent.filter(
+          (message) => message.type === "provider.close" && message.connectionId === connectionId,
+        ),
+      ).toHaveLength(2);
+      child.emitMessage({ type: "provider.closed", connectionId });
+    } finally {
+      await runtime.stopAll();
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes child-side state after invalid provider negotiation", async () => {
+    const directory = await createPlugin(
+      "invalid-provider",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild(
+      "invalid-provider",
+      [],
+      [],
+      [{ id: "provider", label: "Provider" }],
+    );
+    const sent: Array<{ type: string; connectionId?: string }> = [];
+    const originalSend = child.send.bind(child);
+    child.send = (message, callback) => {
+      sent.push(message);
+      if (message.type === "provider.connect") {
+        callback?.(null);
+        queueMicrotask(() =>
+          child.emitMessage({
+            type: "provider.connected",
+            connectionId: message.connectionId,
+            version: 2,
+            capabilities: [],
+          }),
+        );
+        return true;
+      }
+      return originalSend(message, callback);
+    };
+    const runtime = createTestRuntime({ spawnChild: () => child });
+    await runtime.startPlugin("invalid-provider", directory);
+
+    await expect(
+      runtime.connectProvider("invalid-provider", "provider", {
+        versions: [1],
+        capabilities: [],
+      }),
+    ).rejects.toThrow("unoffered version");
+    const connectionId = sent.find((message) => message.type === "provider.connect")?.connectionId;
+    await expect.poll(() => sent).toContainEqual({ type: "provider.close", connectionId });
+    child.emitMessage({ type: "provider.closed", connectionId });
+    await runtime.stopAll();
+  });
+
+  it("closes a late connection after the child rejected its negotiation", async () => {
+    const directory = await createPlugin(
+      "rejected-provider",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild(
+      "rejected-provider",
+      [],
+      [],
+      [{ id: "provider", label: "Provider" }],
+    );
+    const sent: Array<{ type: string; connectionId?: string }> = [];
+    const originalSend = child.send.bind(child);
+    child.send = (message, callback) => {
+      sent.push(message);
+      if (message.type === "provider.connect") {
+        callback?.(null);
+        queueMicrotask(() =>
+          child.emitMessage({
+            type: "provider.connect_failed",
+            connectionId: message.connectionId,
+            error: "provider rejected connection",
+          }),
+        );
+        return true;
+      }
+      return originalSend(message, callback);
+    };
+    const runtime = createTestRuntime({ spawnChild: () => child });
+    await runtime.startPlugin("rejected-provider", directory);
+
+    await expect(
+      runtime.connectProvider("rejected-provider", "provider", {
+        versions: [1],
+        capabilities: [],
+      }),
+    ).rejects.toThrow("provider rejected connection");
+    const connectionId = sent.find((message) => message.type === "provider.connect")?.connectionId;
+    const closesBeforeLateSuccess = providerCloseCount(sent, connectionId);
+
+    child.emitMessage({
+      type: "provider.connected",
+      connectionId,
+      version: 1,
+      capabilities: [],
+    });
+
+    await expect
+      .poll(() => providerCloseCount(sent, connectionId))
+      .toBe(closesBeforeLateSuccess + 1);
+    child.emitMessage({ type: "provider.closed", connectionId });
+    await runtime.stopAll();
+  });
+
+  it("closes a late connection after plugin shutdown cancels negotiation", async () => {
+    const directory = await createPlugin(
+      "canceled-provider",
+      `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild(
+      "canceled-provider",
+      [],
+      [],
+      [{ id: "provider", label: "Provider" }],
+    );
+    const sent: Array<{ type: string; connectionId?: string }> = [];
+    const originalSend = child.send.bind(child);
+    child.send = (message, callback) => {
+      sent.push(message);
+      if (message.type === "provider.connect" || message.type === "shutdown") {
+        callback?.(null);
+        return true;
+      }
+      return originalSend(message, callback);
+    };
+    const runtime = createTestRuntime({ spawnChild: () => child });
+    await runtime.startPlugin("canceled-provider", directory);
+    const pending = runtime.connectProvider("canceled-provider", "provider", {
+      versions: [1],
+      capabilities: [],
+    });
+    await expect.poll(() => hasMessageType(sent, "provider.connect")).toBe(true);
+    const connectionId = sent.find((message) => message.type === "provider.connect")?.connectionId;
+    const rejection = pending.then(
+      () => null,
+      (error: unknown) => error,
+    );
+    const stopping = runtime.stopPluginById("canceled-provider");
+    try {
+      await expect.poll(() => providerCloseCount(sent, connectionId)).toBe(1);
+      await expect(rejection).resolves.toMatchObject({
+        message: "Plugin stopped: canceled-provider",
+      });
+      const closesBeforeLateSuccess = providerCloseCount(sent, connectionId);
+      child.emitMessage({
+        type: "provider.connected",
+        connectionId,
+        version: 1,
+        capabilities: [],
+      });
+      await expect
+        .poll(() => providerCloseCount(sent, connectionId))
+        .toBe(closesBeforeLateSuccess + 1);
+    } finally {
+      child.kill();
+      await stopping;
+    }
+  });
+
+  it("escalates a plugin that ignores graceful shutdown from TERM to KILL", async () => {
     vi.useFakeTimers();
     try {
       const directory = await createPlugin(
         "held-cleanup",
         `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
       );
-      const events: string[] = [];
-      const child = createReloadChild("held-cleanup", events);
+      const child = createReloadChild("held-cleanup", []);
       const originalSend = child.send.bind(child);
-      let releaseCleanup = () => undefined;
       child.send = (message, callback) => {
         if (message.type !== "shutdown") return originalSend(message, callback);
         callback?.(null);
-        events.push("shutdown:held-cleanup");
-        releaseCleanup = () => {
-          child.connected = false;
-          child.kill();
-          child.killed = false;
-        };
+        return true;
+      };
+      const signals: Array<NodeJS.Signals | undefined> = [];
+      const originalKill = child.kill.bind(child);
+      child.kill = (signal?: NodeJS.Signals) => {
+        signals.push(signal);
+        if (signal === "SIGKILL") return originalKill();
+        child.killed = true;
         return true;
       };
       const runtime = createTestRuntime({ spawnChild: () => child });
       await runtime.startPlugin("held-cleanup", directory);
 
       const stopping = runtime.stopPluginById("held-cleanup");
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(child.killed).toBe(false);
-
-      releaseCleanup();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(signals).toEqual(["SIGTERM"]);
+      await vi.advanceTimersByTimeAsync(2_000);
       await stopping;
-      expect(events).toContain("shutdown:held-cleanup");
+      expect(signals).toEqual(["SIGTERM", "SIGKILL"]);
     } finally {
       vi.useRealTimers();
     }
