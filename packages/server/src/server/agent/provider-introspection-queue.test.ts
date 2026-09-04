@@ -200,28 +200,31 @@ test("a failed draft session does not wedge or poison later identical requests",
   expect(createCalls).toBe(2);
 });
 
-test("releases the provider queue when a timed-out snapshot never settles", async () => {
+test("waits for registered timeout cleanup before releasing the provider queue", async () => {
   vi.useFakeTimers();
   const catalogStarted = deferred<void>();
   const catalogAborted = deferred<void>();
+  const cleanupAllowed = deferred<void>();
   const draftStarted = deferred<void>();
+  let catalogActive = false;
   let createSessionCalls = 0;
   const client = createClient({
     async fetchCatalog(_options, context) {
       if (!context) throw new Error("missing refresh context");
+      catalogActive = true;
       catalogStarted.resolve();
+      context.registerAbortCleanup(async () => {
+        catalogAborted.resolve();
+        await cleanupAllowed.promise;
+        catalogActive = false;
+      });
       return await new Promise<never>(() => {
-        context.signal.addEventListener(
-          "abort",
-          () => {
-            catalogAborted.resolve();
-          },
-          { once: true },
-        );
+        context.signal.addEventListener("abort", () => undefined, { once: true });
       });
     },
     async createSession(config) {
       createSessionCalls += 1;
+      expect(catalogActive).toBe(false);
       draftStarted.resolve();
       return createSession(config);
     },
@@ -256,6 +259,9 @@ test("releases the provider queue when a timed-out snapshot never settles", asyn
 
     await vi.advanceTimersByTimeAsync(100);
     await catalogAborted.promise;
+    expect(createSessionCalls).toBe(0);
+
+    cleanupAllowed.resolve();
     await draftStarted.promise;
 
     await expect(snapshot).resolves.toMatchObject({
