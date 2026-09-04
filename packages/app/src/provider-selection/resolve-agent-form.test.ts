@@ -1037,6 +1037,101 @@ describe("resolveAgentForm", () => {
 
       expect(next.form.thinkingOptionId).toBe("low");
     });
+
+    it("commits a provider picked while probing with an empty model when no catalog is present", () => {
+      const state = makeState();
+      const next = resolveAgentForm(state, {
+        type: "SET_PROVIDER_AND_MODEL_FROM_USER",
+        provider: "codex",
+        modelId: "",
+        providerDef: TEST_CODEX_DEFINITION,
+        providerModels: null,
+      });
+
+      expect(next.form.provider).toBe("codex");
+      expect(next.form.model).toBe("");
+      expect(next.userModified.provider).toBe(true);
+      expect(next.userModified.model).toBe(true);
+    });
+  });
+
+  describe("RECONCILE_RESOLVED_PROVIDER", () => {
+    it("backfills the default model and thinking when the committed provider becomes ready", () => {
+      const state = makeState({ provider: "codex", model: "", modeId: "auto" });
+      const next = resolveAgentForm(state, {
+        type: "RECONCILE_RESOLVED_PROVIDER",
+        provider: "codex",
+        providerModels: CODEX_MODELS,
+      });
+
+      expect(next.form.model).toBe("gpt-5.3-codex");
+      expect(next.form.thinkingOptionId).toBe("xhigh");
+      expect(next.userModified.model).toBe(false);
+    });
+
+    it("is idempotent: a second reconcile after the model is filled returns state unchanged", () => {
+      const state = makeState({ provider: "codex", model: "", modeId: "auto" });
+      const filled = resolveAgentForm(state, {
+        type: "RECONCILE_RESOLVED_PROVIDER",
+        provider: "codex",
+        providerModels: CODEX_MODELS,
+      });
+      const again = resolveAgentForm(filled, {
+        type: "RECONCILE_RESOLVED_PROVIDER",
+        provider: "codex",
+        providerModels: CODEX_MODELS,
+      });
+
+      expect(again).toBe(filled);
+    });
+
+    it("does not override a user-chosen model", () => {
+      const state = makeState(
+        { provider: "codex", model: "gpt-5.4-codex" },
+        { provider: true, model: true },
+      );
+      const next = resolveAgentForm(state, {
+        type: "RECONCILE_RESOLVED_PROVIDER",
+        provider: "codex",
+        providerModels: CODEX_MODELS,
+      });
+
+      expect(next).toBe(state);
+      expect(next.form.model).toBe("gpt-5.4-codex");
+    });
+
+    it("is a no-op when the resolved catalog is empty", () => {
+      const state = makeState({ provider: "codex", model: "" });
+      const next = resolveAgentForm(state, {
+        type: "RECONCILE_RESOLVED_PROVIDER",
+        provider: "codex",
+        providerModels: [],
+      });
+
+      expect(next).toBe(state);
+    });
+
+    it("is a no-op when the reconciled provider is not the committed provider", () => {
+      const state = makeState({ provider: "claude", model: "" });
+      const next = resolveAgentForm(state, {
+        type: "RECONCILE_RESOLVED_PROVIDER",
+        provider: "codex",
+        providerModels: CODEX_MODELS,
+      });
+
+      expect(next).toBe(state);
+    });
+
+    it("backfills after a pick-while-probing left model empty despite userModified.model", () => {
+      const state = makeState({ provider: "codex", model: "" }, { provider: true, model: true });
+      const next = resolveAgentForm(state, {
+        type: "RECONCILE_RESOLVED_PROVIDER",
+        provider: "codex",
+        providerModels: CODEX_MODELS,
+      });
+
+      expect(next.form.model).toBe("gpt-5.3-codex");
+    });
   });
 
   describe("SET_MODE_FROM_USER", () => {

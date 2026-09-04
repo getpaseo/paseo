@@ -1585,6 +1585,7 @@ export const ja: TranslationResources = {
       noModelAvailable: "選択したプロバイダーで利用可能なモデルがありません",
       workspaceDirectoryNotFound: "ワークスペースディレクトリが見つかりません",
       hostDisconnected: "ホストが接続されていません",
+      providerNotSelected: "プロバイダーを選択してください",
     },
   },
   pairing: {

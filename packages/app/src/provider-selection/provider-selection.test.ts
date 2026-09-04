@@ -391,6 +391,28 @@ describe("combined model selector data", () => {
     ).toEqual({ ok: true });
   });
 
+  it("reports a provider-worded reason when no provider is committed", () => {
+    expect(
+      resolveSubmissionReadiness({
+        text: "hello",
+        allowsEmptyAutoSubmit: false,
+        providerCount: 1,
+        selection: {
+          provider: null,
+          modelId: "",
+          availableModels: [],
+          isModelLoading: false,
+        },
+        autoSubmitConfig: null,
+        workspaceDirectory: "/repo",
+        hasClient: true,
+      }),
+    ).toEqual({
+      ok: false,
+      reason: i18n.t("providerSelection.readiness.providerNotSelected"),
+    });
+  });
+
   it("uses the active app language for utility labels", async () => {
     await i18n.changeLanguage("zh-CN");
     try {

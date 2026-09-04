@@ -1580,6 +1580,7 @@ export const ko: TranslationResources = {
       noModelAvailable: "선택한 프로바이더에 사용 가능한 모델이 없습니다",
       workspaceDirectoryNotFound: "워크스페이스 디렉터리를 찾을 수 없습니다",
       hostDisconnected: "호스트가 연결되어 있지 않습니다",
+      providerNotSelected: "프로바이더를 선택하세요",
     },
   },
   pairing: {

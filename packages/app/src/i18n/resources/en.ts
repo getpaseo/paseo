@@ -1580,6 +1580,7 @@ export const en = {
       noModelAvailable: "No model is available for the selected provider",
       workspaceDirectoryNotFound: "Workspace directory not found",
       hostDisconnected: "Host is not connected",
+      providerNotSelected: "Select a provider",
     },
   },
   pairing: {

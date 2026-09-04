@@ -1597,6 +1597,7 @@ export const ru: TranslationResources = {
       noModelAvailable: "Для выбранного провайдера нет доступных моделей.",
       workspaceDirectoryNotFound: "Каталог рабочего пространства не найден",
       hostDisconnected: "Хост не подключён",
+      providerNotSelected: "Выберите провайдера",
     },
   },
   pairing: {

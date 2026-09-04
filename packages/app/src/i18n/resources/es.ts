@@ -1614,6 +1614,7 @@ export const es: TranslationResources = {
       noModelAvailable: "No hay ningún modelo disponible para el proveedor seleccionado",
       workspaceDirectoryNotFound: "DirectorioWorkspaceno encontrado",
       hostDisconnected: "Hostno está conectado",
+      providerNotSelected: "Selecciona un proveedor",
     },
   },
   pairing: {
