@@ -1,7 +1,5 @@
 const VOICE_PROMPT_BLOCK_START = "<paseo_voice_mode>";
 const VOICE_PROMPT_BLOCK_END = "</paseo_voice_mode>";
-const SPOKEN_INPUT_ENVELOPE =
-  /^<spoken-input>\s*([\s\S]*?)\s*<\/spoken-input>\s*(?:<instruction>[\s\S]*<\/instruction>)?\s*$/;
 
 const VOICE_AGENT_SYSTEM_INSTRUCTION = [
   "Paseo voice mode is now on.",
@@ -57,11 +55,6 @@ export function buildVoiceModeSystemPrompt(existing: string | undefined, enabled
 
 export function wrapSpokenInput(text: string): string {
   return `<spoken-input>\n${text}\n</spoken-input>\n<instruction>This message was spoken by the user. Respond using the speak tool only, not normal messages, because the user may not be looking at the chat.</instruction>`;
-}
-
-export function extractSpokenInputTranscript(text: string): string | null {
-  const match = text.trim().match(SPOKEN_INPUT_ENVELOPE);
-  return match ? match[1].trim() : null;
 }
 
 export function buildVoiceAgentMcpServerConfig(params: {

@@ -19,6 +19,7 @@ import {
   type FileTransferFrame,
 } from "@getpaseo/protocol/binary-frames/index";
 import { Session } from "./session.js";
+import { wrapSpokenInput } from "@server/server/voice-config.js";
 import { OWNER_PERMISSIONS, type DaemonPermission } from "./authorization/index.js";
 import { DownloadTokenStore } from "./file-download/token-store.js";
 import { StructuredAgentFallbackError } from "./agent/agent-response-loop.js";
@@ -100,6 +101,46 @@ function createBinaryMessageHandler(
     binaryMessages.push(frame);
   };
 }
+
+test("spoken input keeps provider instructions out of the submitted timeline prompt", async () => {
+  const agentId = "11111111-1111-4111-8111-111111111111";
+  const streamAgent = vi.fn(() =>
+    (async function* emptyAgentStream() {
+      yield* [];
+    })(),
+  );
+  const session = createSessionForTest({
+    agentManager: {
+      getAgent: vi.fn(() => ({
+        id: agentId,
+        provider: "codex",
+        lifecycle: "idle",
+        persistence: { sessionId: "provider-session-1" },
+      })),
+      waitForAgentClose: vi.fn(async () => {}),
+      tryRunOutOfBand: vi.fn(() => false),
+      hasInFlightRun: vi.fn(() => false),
+      streamAgent,
+    },
+  });
+
+  await expect(
+    asSessionInternals(session).handleSendAgentMessage(
+      agentId,
+      "显示测试。",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { spokenInput: true },
+    ),
+  ).resolves.toEqual({ ok: true });
+
+  expect(streamAgent).toHaveBeenCalledWith(agentId, wrapSpokenInput("显示测试。"), {
+    clientMessageId: expect.any(String),
+    timelinePrompt: "显示测试。",
+  });
+});
 
 test("interruptAgentIfRunning rejects when graceful cancellation is refused", async () => {
   const agentId = "11111111-1111-4111-8111-111111111111";

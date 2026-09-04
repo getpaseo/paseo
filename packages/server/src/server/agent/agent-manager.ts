@@ -112,6 +112,34 @@ function submittedPromptText(prompt: AgentPromptInput): string {
     .trim();
 }
 
+export interface AgentManagerRunOptions extends AgentRunOptions {
+  /** User-visible prompt when the provider prompt contains internal control context. */
+  timelinePrompt?: AgentPromptInput;
+}
+
+export interface AgentManagerSteerOptions extends AgentSteerOptions {
+  timelinePrompt?: AgentPromptInput;
+}
+
+function timelinePrompt(
+  prompt: AgentPromptInput,
+  options?: AgentManagerRunOptions,
+): AgentPromptInput {
+  return options?.timelinePrompt ?? prompt;
+}
+
+function providerRunOptions(options?: AgentManagerRunOptions): AgentRunOptions | undefined {
+  if (!options) return undefined;
+  const { timelinePrompt: _, ...providerOptions } = options;
+  return providerOptions;
+}
+
+function providerSteerOptions(options?: AgentManagerSteerOptions): AgentSteerOptions | undefined {
+  if (!options) return undefined;
+  const { timelinePrompt: _, ...providerOptions } = options;
+  return providerOptions;
+}
+
 export class AgentManagerShuttingDownError extends Error {
   constructor() {
     super("Agent manager is shutting down");
@@ -313,7 +341,7 @@ export type ActiveTurnSteerDispatchResult =
   | { status: "inactive" | "steered" }
   | { status: "replaced"; iterator: AsyncGenerator<AgentStreamEvent> };
 
-function stripSteerOptions(options?: AgentSteerOptions): AgentRunOptions | undefined {
+function stripSteerOptions(options?: AgentManagerSteerOptions): AgentManagerRunOptions | undefined {
   if (!options) return undefined;
   const { clearPendingPermissions: _, ...runOptions } = options;
   return runOptions;
@@ -2110,7 +2138,7 @@ export class AgentManager {
   async runAgent(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentRunOptions,
+    options?: AgentManagerRunOptions,
   ): Promise<AgentRunResult> {
     const events = this.streamAgent(agentId, prompt, options);
     const timeline: AgentTimelineItem[] = [];
@@ -2153,14 +2181,18 @@ export class AgentManager {
    * emitted by the handler flow through dispatchStream so they persist and
    * broadcast like normal timeline events.
    */
-  tryRunOutOfBand(agentId: string, prompt: AgentPromptInput, options?: AgentRunOptions): boolean {
+  tryRunOutOfBand(
+    agentId: string,
+    prompt: AgentPromptInput,
+    options?: AgentManagerRunOptions,
+  ): boolean {
     const agent = this.requireSessionAgent(agentId);
     const handler = agent.session.tryHandleOutOfBand?.(prompt);
     if (!handler) {
       return false;
     }
     if (options?.clientMessageId) {
-      this.recordSubmittedPrompt(agent, prompt, options.clientMessageId);
+      this.recordSubmittedPrompt(agent, timelinePrompt(prompt, options), options.clientMessageId);
       this.emitState(agent);
     }
     const dispatch = (event: AgentStreamEvent): void => {
@@ -2233,11 +2265,11 @@ export class AgentManager {
     agentId: string;
     pendingRun: PendingForegroundRun;
     prompt: AgentPromptInput;
-    options?: AgentRunOptions;
+    options?: AgentManagerRunOptions;
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
-      const result = await agent.session.startTurn(prompt, options);
+      const result = await agent.session.startTurn(prompt, providerRunOptions(options));
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
       }
@@ -2263,7 +2295,7 @@ export class AgentManager {
   streamAgent(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentRunOptions,
+    options?: AgentManagerRunOptions,
   ): AsyncGenerator<AgentStreamEvent> {
     const existingAgent = this.requireSessionAgent(agentId);
     this.logger.trace(
@@ -2338,14 +2370,19 @@ export class AgentManager {
           )
         : undefined;
       if (options?.clientMessageId) {
-        this.recordSubmittedPrompt(agent, prompt, options.clientMessageId, {
-          messageId: options.clientMessageId,
-          turnId,
-          providerMessageId:
-            stagedSubmittedPromptEcho?.item.type === "user_message"
-              ? stagedSubmittedPromptEcho.item.messageId
-              : undefined,
-        });
+        this.recordSubmittedPrompt(
+          agent,
+          timelinePrompt(prompt, options),
+          options.clientMessageId,
+          {
+            messageId: options.clientMessageId,
+            turnId,
+            providerMessageId:
+              stagedSubmittedPromptEcho?.item.type === "user_message"
+                ? stagedSubmittedPromptEcho.item.messageId
+                : undefined,
+          },
+        );
       }
       for (const stagedEvent of pendingRun.stagedEvents.splice(0)) {
         const isAcceptedTurnStart =
@@ -2460,7 +2497,7 @@ export class AgentManager {
   async replaceAgentRun(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentRunOptions,
+    options?: AgentManagerRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     const snapshot = this.requireAgent(agentId);
     if (
@@ -2492,7 +2529,7 @@ export class AgentManager {
   async steerAgentRun(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentSteerOptions,
+    options?: AgentManagerSteerOptions,
   ): Promise<SteerResult> {
     const agent = this.requireSessionAgent(agentId);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
@@ -2501,11 +2538,11 @@ export class AgentManager {
     }
     const result = await this.runSteerAdmission(agent, expectedTurnId, async () => {
       const admission = await agent.session.steerActiveTurn!(prompt, {
-        ...options,
+        ...providerSteerOptions(options),
         expectedTurnId,
       });
       if (admission.status === "accepted") {
-        await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+        await this.recordAcceptedSteer(agent, prompt, options, expectedTurnId);
       }
       return admission;
     });
@@ -2520,7 +2557,7 @@ export class AgentManager {
   async steerOrReplaceActiveTurn(
     agentId: string,
     prompt: AgentPromptInput,
-    options?: AgentSteerOptions,
+    options?: AgentManagerSteerOptions,
   ): Promise<ActiveTurnSteerDispatchResult> {
     const agent = this.requireSessionAgent(agentId);
     const expectedTurnId = agent.activeForegroundTurnId ?? agent.activeTurnId;
@@ -2531,11 +2568,11 @@ export class AgentManager {
     const result = agent.session.steerActiveTurn
       ? await this.runSteerAdmission(agent, expectedTurnId, async () => {
           const admission = await agent.session.steerActiveTurn!(prompt, {
-            ...options,
+            ...providerSteerOptions(options),
             expectedTurnId,
           });
           if (admission.status === "accepted") {
-            await this.recordAcceptedSteer(agent, prompt, options?.clientMessageId, expectedTurnId);
+            await this.recordAcceptedSteer(agent, prompt, options, expectedTurnId);
           }
           return admission;
         })
@@ -2615,7 +2652,7 @@ export class AgentManager {
     agent: ActiveManagedAgent,
     expectedTurnId: string,
     prompt: AgentPromptInput,
-    options?: AgentRunOptions,
+    options?: AgentManagerRunOptions,
   ): Promise<AsyncGenerator<AgentStreamEvent>> {
     this.assertSteerAdmissionOwnsTurn(agent, expectedTurnId);
     agent.pendingReplacement = true;
@@ -2638,14 +2675,14 @@ export class AgentManager {
   private async recordAcceptedSteer(
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
-    clientMessageId: string | undefined,
+    options: AgentManagerSteerOptions | undefined,
     expectedTurnId: string,
   ): Promise<void> {
-    if (!clientMessageId) {
+    if (!options?.clientMessageId) {
       return;
     }
-    this.recordSubmittedPrompt(agent, prompt, clientMessageId, {
-      messageId: clientMessageId,
+    this.recordSubmittedPrompt(agent, timelinePrompt(prompt, options), options.clientMessageId, {
+      messageId: options.clientMessageId,
       turnId: expectedTurnId,
     });
     this.emitState(agent);

@@ -3495,8 +3495,10 @@ export class Session {
       }`,
     );
 
-    const promptText = options?.spokenInput ? wrapSpokenInput(text) : text;
+    const isSpokenInput = options?.spokenInput === true;
+    const promptText = isSpokenInput ? wrapSpokenInput(text) : text;
     const prompt = buildAgentPrompt(promptText, images, attachments);
+    const submittedMessageId = messageId ?? (isSpokenInput ? uuidv4() : undefined);
 
     try {
       await sendPromptToAgent({
@@ -3504,7 +3506,8 @@ export class Session {
         agentStorage: this.agentStorage,
         agentId,
         prompt,
-        messageId,
+        messageId: submittedMessageId,
+        timelinePrompt: isSpokenInput ? text : undefined,
         runOptions,
         // A typed or spoken message from the human answers any permission the
         // agent is blocked on.

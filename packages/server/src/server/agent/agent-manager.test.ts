@@ -11,6 +11,7 @@ import {
   AgentManagerShuttingDownError,
   commandMayHaveChangedExternalState,
   type AgentManagerEvent,
+  type AgentManagerRunOptions,
   type ManagedAgent,
 } from "./agent-manager.js";
 import { AgentStorage } from "./agent-storage.js";
@@ -9668,7 +9669,7 @@ test("provider user_message is recorded from the live stream", async () => {
   expect(userMessages[0].text).toBe("continuation prompt");
 });
 
-test("canonical submitted prompt keeps wire identity while rewind resolves provider identity", async () => {
+test("canonical submitted prompt can differ from the provider prompt while keeping wire identity", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-submitted-prompt-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
@@ -9680,12 +9681,14 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       supportsRewindFiles: true,
     };
     readonly rewindMessageIds: string[] = [];
+    readonly receivedTurns: Array<{ prompt: AgentPromptInput; options?: AgentRunOptions }> = [];
     interruptCount = 0;
 
     override async startTurn(
       prompt: AgentPromptInput,
       options?: AgentRunOptions,
     ): Promise<{ turnId: string }> {
+      this.receivedTurns.push({ prompt, options });
       const turnId = "turn-submitted-user-message";
       const text = typeof prompt === "string" ? prompt : "";
       setTimeout(async () => {
@@ -9770,10 +9773,25 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       workspaceId: undefined,
     });
 
-    const run = manager.runAgent(snapshot.id, "hello from composer", {
+    const providerPrompt = [
+      "<spoken-input>",
+      "hello from voice mode",
+      "</spoken-input>",
+      "<instruction>Respond using the speak tool only.</instruction>",
+    ].join("\n");
+    const runOptions: AgentManagerRunOptions = {
       clientMessageId: "msg-client-1",
-    });
+      timelinePrompt: "hello from voice mode",
+    };
+    const run = manager.runAgent(snapshot.id, providerPrompt, runOptions);
     await manager.waitForAgentRunStart(snapshot.id);
+
+    expect(client.session?.receivedTurns).toEqual([
+      {
+        prompt: providerPrompt,
+        options: { clientMessageId: "msg-client-1" },
+      },
+    ]);
 
     await expect(manager.rewind(snapshot.id, "msg-client-1", "files")).rejects.toThrow(
       "Cannot rewind before the provider acknowledges the submitted prompt",
@@ -9788,7 +9806,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
       {
         type: "user_message",
         seq: 1,
-        text: "hello from composer",
+        text: "hello from voice mode",
         clientMessageId: "msg-client-1",
         messageId: "msg-client-1",
       },
@@ -9805,7 +9823,7 @@ test("canonical submitted prompt keeps wire identity while rewind resolves provi
         turnId: "turn-submitted-user-message",
         item: {
           type: "user_message",
-          text: "hello from composer",
+          text: "hello from voice mode",
           messageId: "msg-client-1",
           clientMessageId: "msg-client-1",
         },
