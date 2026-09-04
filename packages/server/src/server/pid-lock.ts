@@ -39,6 +39,7 @@ export class PidLockError extends Error {
 // Stale recovery is for abandoned locks, so keep this well above ordinary event-loop stalls.
 const PID_LOCK_STALE_MS = 5 * 60_000;
 const PID_LOCK_HEARTBEAT_INTERVAL_MS = 30_000;
+const PID_LOCK_UNSEEN_OWNER_GRACE_MS = 2 * PID_LOCK_HEARTBEAT_INTERVAL_MS;
 const PID_LOCK_READ_RETRY_ATTEMPTS = 10;
 const PID_LOCK_READ_RETRY_DELAY_MS = 50;
 
@@ -59,6 +60,18 @@ async function isPidLockFresh(pidPath: string): Promise<boolean> {
   try {
     const lockStat = await stat(pidPath);
     return lockStat.mtimeMs >= Date.now() - PID_LOCK_STALE_MS;
+  } catch {
+    return false;
+  }
+}
+
+async function hasRecentPidLockHeartbeat(pidPath: string, lock: PidLockInfo): Promise<boolean> {
+  if (lock.heartbeat !== true) {
+    return false;
+  }
+  try {
+    const lockStat = await stat(pidPath);
+    return lockStat.mtimeMs >= Date.now() - PID_LOCK_UNSEEN_OWNER_GRACE_MS;
   } catch {
     return false;
   }
@@ -120,6 +133,12 @@ async function clearExistingPidLock(
   if (existingLock.pid === lockOwnerPid && lockOwnerRunning) {
     await touchPidLockFile(pidPath);
     return "already_owned";
+  }
+
+  // A process in another PID namespace cannot signal the lock owner even though both processes
+  // share PASEO_HOME. A recent heartbeat is the cross-namespace proof that the owner is alive.
+  if (!lockOwnerRunning && (await hasRecentPidLockHeartbeat(pidPath, existingLock))) {
+    throw createLockHeldError(existingLock);
   }
 
   if (lockOwnerRunning) {
@@ -358,6 +377,9 @@ export async function isLocked(
     return { locked: false };
   }
   if (!isPidRunning(info.pid)) {
+    if (await hasRecentPidLockHeartbeat(getPidFilePath(paseoHome), info)) {
+      return { locked: true, info };
+    }
     return { locked: false, info };
   }
   return { locked: true, info };
