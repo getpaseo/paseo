@@ -1056,12 +1056,6 @@ export const ko: TranslationResources = {
     display: {
       trigger: "표시 설정",
       heading: "표시",
-      grouping: {
-        label: "그룹화",
-        project: "프로젝트",
-        status: "상태",
-        labels: "레이블",
-      },
       titleSource: {
         label: "제목",
         title: "제목",

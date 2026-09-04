@@ -1,5 +1,15 @@
 import { router } from "expo-router";
-import { FolderPlus, GitBranch, Import, Server, Settings, X } from "lucide-react-native";
+import {
+  CircleDashed,
+  Folder,
+  FolderPlus,
+  GitBranch,
+  Import,
+  Search,
+  Server,
+  Settings,
+  X,
+} from "lucide-react-native";
 import { useTranslation } from "react-i18next";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
@@ -41,9 +51,14 @@ import type { PinnedSidebarGroups } from "@/hooks/use-sidebar-pins";
 import { RetainedPanelActivity } from "@/components/retained-panel";
 import type { SidebarWorkspaceGroup } from "@/components/sidebar/sidebar-labels";
 import type { SidebarProjectIconTarget } from "@/utils/sidebar-project-row-model";
-import { type SidebarGroupMode, useSidebarViewStore } from "@/stores/sidebar-view-store";
+import {
+  nextSidebarGroupMode,
+  type SidebarGroupMode,
+  useSidebarViewStore,
+} from "@/stores/sidebar-view-store";
 import { useHosts } from "@/runtime/host-runtime";
 import { usePanelStore } from "@/stores/panel-store";
+import { useKeyboardShortcutsStore } from "@/stores/keyboard-shortcuts-store";
 import { useOwnsWindowChromeCorner, WindowChromeSafeArea } from "@/utils/desktop-window";
 import { useCloseAgentListGesture } from "@/mobile-panels/gestures";
 import { MobilePanelOverlay } from "@/mobile-panels/presentation";
@@ -805,6 +820,8 @@ function WorkspacesSectionHeader() {
     <View style={styles.workspacesSectionHeader}>
       <Text style={styles.workspacesSectionTitle}>Workspaces</Text>
       <View style={styles.workspacesSectionActions}>
+        <SidebarSearchAction />
+        <SidebarGroupingToggle />
         <Tooltip delayDuration={300}>
           <TooltipTrigger asChild>
             <View>
@@ -817,6 +834,103 @@ function WorkspacesSectionHeader() {
         </Tooltip>
       </View>
     </View>
+  );
+}
+
+function workspacesSectionActionStyle({
+  hovered = false,
+  pressed,
+}: PressableStateCallbackType & { hovered?: boolean }) {
+  return [
+    styles.workspacesSectionAction,
+    (hovered || pressed) && styles.workspacesSectionActionHighlighted,
+  ];
+}
+
+function WorkspacesSectionIconAction({
+  icon: Icon,
+  label,
+  onPress,
+  testID,
+  iconTestID,
+  shortcutKeys,
+  accessibilityLabel = label,
+}: {
+  icon: typeof FolderPlus;
+  label: string;
+  onPress: () => void;
+  testID: string;
+  iconTestID?: string;
+  shortcutKeys?: ReturnType<typeof useShortcutKeys>;
+  accessibilityLabel?: string;
+}) {
+  const { theme } = useUnistyles();
+  return (
+    <Tooltip delayDuration={300}>
+      <TooltipTrigger asChild>
+        <Pressable
+          style={workspacesSectionActionStyle}
+          testID={testID}
+          accessible
+          accessibilityLabel={accessibilityLabel}
+          accessibilityRole="button"
+          onPress={onPress}
+        >
+          {({ hovered, pressed }) => (
+            <Icon
+              size={14}
+              color={hovered || pressed ? theme.colors.foreground : theme.colors.foregroundMuted}
+              testID={iconTestID}
+            />
+          )}
+        </Pressable>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="center" offset={8}>
+        <IconTooltipContent label={label} shortcutKeys={shortcutKeys} />
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function SidebarSearchAction() {
+  const { t } = useTranslation();
+  const shortcutKeys = useShortcutKeys("toggle-command-center");
+  const setCommandCenterOpen = useKeyboardShortcutsStore((state) => state.setCommandCenterOpen);
+  const handlePress = useCallback(() => setCommandCenterOpen(true), [setCommandCenterOpen]);
+
+  return (
+    <WorkspacesSectionIconAction
+      icon={Search}
+      label={t("sidebar.sections.search")}
+      accessibilityLabel="Open command center"
+      onPress={handlePress}
+      testID="sidebar-command-center-search"
+      shortcutKeys={shortcutKeys}
+    />
+  );
+}
+
+function SidebarGroupingToggle() {
+  const { t } = useTranslation();
+  const groupMode = useSidebarViewStore((state) => state.groupMode);
+  const setGroupMode = useSidebarViewStore((state) => state.setGroupMode);
+  const targetMode = nextSidebarGroupMode(groupMode);
+  const label = t(
+    targetMode === "project"
+      ? "shell.commandCenter.groupByProject"
+      : "shell.commandCenter.groupByStatus",
+  );
+  const Icon = targetMode === "project" ? Folder : CircleDashed;
+  const handlePress = useCallback(() => setGroupMode(targetMode), [setGroupMode, targetMode]);
+
+  return (
+    <WorkspacesSectionIconAction
+      icon={Icon}
+      label={label}
+      onPress={handlePress}
+      testID="sidebar-grouping-toggle"
+      iconTestID={`sidebar-grouping-toggle-icon-${targetMode}`}
+    />
   );
 }
 
@@ -869,6 +983,16 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: "row",
     alignItems: "center",
     gap: theme.spacing[1],
+  },
+  workspacesSectionAction: {
+    width: 28,
+    height: 28,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: theme.borderRadius.md,
+  },
+  workspacesSectionActionHighlighted: {
+    backgroundColor: theme.colors.surfaceSidebarHover,
   },
   sidebarContent: {
     flex: 1,

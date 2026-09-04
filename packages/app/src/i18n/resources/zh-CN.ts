@@ -1041,12 +1041,6 @@ export const zhCN: TranslationResources = {
     display: {
       trigger: "显示偏好",
       heading: "显示",
-      grouping: {
-        label: "分组",
-        project: "项目",
-        status: "状态",
-        labels: "标签",
-      },
       titleSource: {
         label: "标题",
         title: "标题",

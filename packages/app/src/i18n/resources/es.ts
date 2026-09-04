@@ -1083,12 +1083,6 @@ export const es: TranslationResources = {
     display: {
       trigger: "Preferencias de visualización",
       heading: "Visualización",
-      grouping: {
-        label: "Agrupación",
-        project: "Proyecto",
-        status: "Estado",
-        labels: "Etiquetas",
-      },
       titleSource: {
         label: "Título",
         title: "Título",

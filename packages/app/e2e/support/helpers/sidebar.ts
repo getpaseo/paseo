@@ -196,8 +196,17 @@ export async function closeSidebarDisplayPreferences(page: Page): Promise<void> 
 }
 
 export async function selectSidebarStatusGrouping(page: Page): Promise<void> {
-  await openSidebarDisplayPage(page, "sidebar-display-grouping");
-  await page.getByTestId("sidebar-grouping-status").click();
+  const toggle = page.getByTestId("sidebar-grouping-toggle");
+  await expect(toggle).toBeVisible({ timeout: 30_000 });
+  await expect(toggle).toHaveAttribute("aria-label", "Group by status");
+  await expect(
+    toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-status"]'),
+  ).toBeVisible();
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-label", "Group by project");
+  await expect(
+    toggle.locator('svg[data-testid="sidebar-grouping-toggle-icon-project"]'),
+  ).toBeVisible();
 }
 
 export async function openMobileAgentSidebar(page: Page): Promise<void> {
