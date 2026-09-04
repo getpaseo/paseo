@@ -69,7 +69,7 @@ export async function runProviderRefreshWithDeadline<T>(
   }, options.timeoutMs);
 
   try {
-    const result = await options.operation(context);
+    const result = await raceProviderRefreshAbort(controller.signal, options.operation(context));
     if (timeoutError) throw timeoutError;
     return result;
   } catch (error) {

@@ -835,6 +835,12 @@ export interface RetiredInternalAgent {
   lastMessage: string | null;
 }
 
+function resolveProviderIntrospectionQueue(
+  queue: ProviderIntrospectionQueue | undefined,
+): ProviderIntrospectionQueue {
+  return queue ?? new ProviderIntrospectionQueue();
+}
+
 export class AgentManager {
   private readonly pluginLifecycle: PluginLifecycle | undefined;
   private readonly retiredInternalAgents = new Map<
@@ -896,8 +902,9 @@ export class AgentManager {
     this.pluginLifecycle = options.pluginLifecycle;
     this.pluginAgentTools = options.pluginAgentTools;
     this.timelineStore = options.timelineStore ?? new InMemoryAgentTimelineStore();
-    this.providerIntrospectionQueue =
-      options.providerIntrospectionQueue ?? new ProviderIntrospectionQueue();
+    this.providerIntrospectionQueue = resolveProviderIntrospectionQueue(
+      options.providerIntrospectionQueue,
+    );
     this.idFactory = options.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
