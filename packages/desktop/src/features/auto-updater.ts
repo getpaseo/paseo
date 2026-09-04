@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { app } from "electron";
 import { UUID } from "builder-util-runtime";
+import log from "electron-log/main";
 import { autoUpdater } from "electron-updater";
 import {
   createAppUpdateService,
@@ -98,6 +99,7 @@ export function shouldInstallAppUpdateOnQuit(input: {
 
 class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
+  private targetVersion: string | null = null;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     autoUpdater.autoDownload = true;
@@ -133,10 +135,16 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     };
 
     autoUpdater.on("update-available", (info) => {
-      input.onUpdateAvailable(info as RuntimeUpdateInfo);
+      const updateInfo = info as RuntimeUpdateInfo;
+      this.targetVersion = updateInfo.version;
+      log.info("[auto-updater] update available", { targetVersion: updateInfo.version });
+      input.onUpdateAvailable(updateInfo);
     });
     autoUpdater.on("update-downloaded", (info) => {
-      input.onUpdateDownloaded(info as RuntimeUpdateInfo);
+      const updateInfo = info as RuntimeUpdateInfo;
+      this.targetVersion = updateInfo.version;
+      log.info("[auto-updater] update downloaded", { targetVersion: updateInfo.version });
+      input.onUpdateDownloaded(updateInfo);
     });
     autoUpdater.on("error", (error) => {
       if (isUpdateChannelNotPublished(error)) return;
@@ -159,11 +167,17 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   }
 
   downloadUpdate(): Promise<unknown> {
+    log.info("[auto-updater] download requested", { targetVersion: this.targetVersion });
     return autoUpdater.downloadUpdate();
   }
 
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
     autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
+    log.info("[auto-updater] quitAndInstall requested", {
+      targetVersion: this.targetVersion,
+      isSilent,
+      isForceRunAfter,
+    });
     autoUpdater.quitAndInstall(isSilent, isForceRunAfter);
   }
 }
@@ -197,7 +211,22 @@ export async function checkForAppUpdate({
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
 }): Promise<AppUpdateCheckResult> {
-  return appUpdateService.checkForAppUpdate({ currentVersion, releaseChannel, intent });
+  log.info("[auto-updater] check started", { currentVersion, releaseChannel, intent });
+  const result = await appUpdateService.checkForAppUpdate({
+    currentVersion,
+    releaseChannel,
+    intent,
+  });
+  log.info("[auto-updater] check completed", {
+    currentVersion,
+    targetVersion: result.latestVersion,
+    releaseChannel,
+    intent,
+    hasUpdate: result.hasUpdate,
+    readyToInstall: result.readyToInstall,
+    errorMessage: result.errorMessage,
+  });
+  return result;
 }
 
 export async function downloadAndInstallUpdate(

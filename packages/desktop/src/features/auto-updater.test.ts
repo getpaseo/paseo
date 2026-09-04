@@ -4,9 +4,10 @@ import path from "node:path";
 import { UUID } from "builder-util-runtime";
 import { describe, expect, it, vi } from "vitest";
 
-const { autoUpdaterMock } = vi.hoisted(() => {
+const { autoUpdaterMock, logInfo } = vi.hoisted(() => {
   const handlers = new Map<string, (value: unknown) => void>();
   return {
+    logInfo: vi.fn(),
     autoUpdaterMock: {
       handlers,
       logger: {
@@ -36,9 +37,16 @@ vi.mock("electron-updater", () => ({
   autoUpdater: autoUpdaterMock,
 }));
 
+vi.mock("electron-log/main", () => ({
+  default: {
+    info: logInfo,
+  },
+}));
+
 import {
   bucketFromStagingUserId,
   checkForAppUpdate,
+  downloadAndInstallUpdate,
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
@@ -94,6 +102,39 @@ describe("checkForAppUpdate", () => {
     expect(result.errorMessage).toBe("network down");
     expect(consoleError).toHaveBeenCalled();
     consoleError.mockRestore();
+  });
+
+  it("logs the update handoff with current and target versions", async () => {
+    const updateInfo = { version: "1.2.4" };
+    autoUpdaterMock.checkForUpdates.mockResolvedValue({
+      isUpdateAvailable: true,
+      updateInfo,
+    });
+
+    await checkForAppUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    autoUpdaterMock.handlers.get("update-downloaded")?.(updateInfo);
+    await downloadAndInstallUpdate({
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+    });
+
+    expect(logInfo).toHaveBeenCalledWith("[auto-updater] check started", {
+      currentVersion: "1.2.3",
+      releaseChannel: "stable",
+      intent: "manual",
+    });
+    expect(logInfo).toHaveBeenCalledWith("[auto-updater] update downloaded", {
+      targetVersion: "1.2.4",
+    });
+    expect(logInfo).toHaveBeenCalledWith("[auto-updater] quitAndInstall requested", {
+      targetVersion: "1.2.4",
+      isSilent: false,
+      isForceRunAfter: true,
+    });
   });
 });
 
