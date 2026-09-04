@@ -34,17 +34,18 @@ const CATALOG_ICON_SVGS = new Map(
 );
 
 const catalogIconComponents = new Map<string, ProviderIconComponent>();
+const snapshotIconComponents = new Map<string, { svg: string; component: ProviderIconComponent }>();
 
-function createCatalogIcon(provider: string, iconSvg: string): ProviderIconComponent {
-  const CatalogProviderIcon: ProviderIconComponent = ({ size, color }) =>
+function createSvgIcon(provider: string, iconSvg: string): ProviderIconComponent {
+  const SvgProviderIcon: ProviderIconComponent = ({ size, color }) =>
     createElement(SvgXml, {
       xml: iconSvg,
       width: size,
       height: size,
       color,
     });
-  CatalogProviderIcon.displayName = `CatalogProviderIcon(${provider})`;
-  return CatalogProviderIcon;
+  SvgProviderIcon.displayName = `SvgProviderIcon(${provider})`;
+  return SvgProviderIcon;
 }
 
 function getCatalogProviderIcon(provider: string): ProviderIconComponent {
@@ -56,18 +57,29 @@ function getCatalogProviderIcon(provider: string): ProviderIconComponent {
   if (!iconSvg) {
     return Bot;
   }
-  const icon = createCatalogIcon(provider, iconSvg);
+  const icon = createSvgIcon(provider, iconSvg);
   catalogIconComponents.set(provider, icon);
   return icon;
 }
 
-export function getProviderIcon(provider: string): ProviderIconComponent {
-  const name = resolveProviderIconName(provider);
+function getSnapshotProviderIcon(provider: string, svg: string): ProviderIconComponent {
+  const cached = snapshotIconComponents.get(provider);
+  if (cached?.svg === svg) return cached.component;
+  const component = createSvgIcon(provider, svg);
+  snapshotIconComponents.set(provider, { svg, component });
+  return component;
+}
+
+export function getProviderIcon(provider: string, serverId?: string | null): ProviderIconComponent {
+  const name = resolveProviderIconName(provider, serverId);
   if (name.kind === "builtin") {
     return BUILTIN_PROVIDER_ICONS[name.id];
   }
   if (name.kind === "catalog") {
     return getCatalogProviderIcon(name.id);
+  }
+  if (name.kind === "svg") {
+    return getSnapshotProviderIcon(`${serverId}:${provider}`, name.svg);
   }
   return Bot;
 }

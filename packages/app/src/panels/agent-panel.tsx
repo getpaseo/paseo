@@ -362,7 +362,7 @@ function useAgentPanelDescriptor(
   );
   const provider = descriptorState.provider;
   const label = resolveWorkspaceAgentTabLabel(descriptorState.title);
-  const icon = getProviderIcon(provider);
+  const icon = getProviderIcon(provider, context.serverId);
 
   return {
     label: label ?? "",
