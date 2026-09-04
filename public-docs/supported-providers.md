@@ -41,6 +41,7 @@ Pick any of these from the in-app provider catalog. Each entry is a one-click in
 - [fast-agent](https://fast-agent.ai/acp/), multi-provider coding agent.
 - [Gajae Code](https://gajae-code.com), subscription-based coding agent with plan-before-mutation workflows.
 - [Gemini CLI](https://geminicli.com), Google's official Gemini CLI.
+- [Google Antigravity](https://github.com/tucomel/paseo-acp-agy), Google Antigravity ACP adapter for autonomous coding.
 - [GitHub Copilot](https://github.com/features/copilot/cli/), GitHub's AI pair programmer via ACP.
 - [GLM Agent](https://github.com/stefandevo/glm-acp-agent), Zhipu AI's GLM coding agent.
 - [goose](https://block.github.io/goose/), Block's local open-source AI agent.

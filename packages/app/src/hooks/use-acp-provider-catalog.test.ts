@@ -50,6 +50,14 @@ describe("ACP provider catalog", () => {
     expect(findProvider("traecli").command).toEqual(["traecli", "acp", "serve"]);
   });
 
+  it("offers Google Antigravity through its npm package", () => {
+    expect(findProvider("antigravity")).toMatchObject({
+      title: "Google Antigravity",
+      version: "1.1.2",
+      command: ["npx", "-y", "paseo-acp-agy@latest", "--acp"],
+    });
+  });
+
   it("offers MiniMax Code through its pinned public ACP package", () => {
     expect(findProvider("minimax-code")).toMatchObject({
       title: "MiniMax Code",
