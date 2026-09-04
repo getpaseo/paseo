@@ -2175,8 +2175,28 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
     this.pendingPermissions.clear();
 
-    if (this.activeForegroundTurnId) {
+    const turnId = this.activeForegroundTurnId;
+    if (!turnId) {
+      return;
+    }
+
+    try {
       await this.connection.cancel({ sessionId: this.sessionId });
+    } finally {
+      // session/cancel is acknowledged before the in-flight prompt() settles, and
+      // some agents never resolve it with stopReason "cancelled" at all. Settle the
+      // turn ourselves so a replacement turn can start instead of tripping the
+      // "A foreground turn is already active" guard in startTurn. A late prompt
+      // settlement for this turn is dropped by finishTurn's stale-turn guard.
+      if (this.activeForegroundTurnId === turnId) {
+        this.synthesizeCanceledToolCalls();
+        this.finishTurn({
+          type: "turn_canceled",
+          provider: this.provider,
+          reason: "Interrupted",
+          turnId,
+        });
+      }
     }
   }
 
@@ -2939,6 +2959,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   private finishTurn(
     event: Extract<AgentStreamEvent, { type: "turn_completed" | "turn_failed" | "turn_canceled" }>,
   ): void {
+    // A turn can settle from more than one source: the prompt() response, the
+    // child-exit handler, and interrupt()'s synthetic cancel. Once a turn is no
+    // longer active, drop the late arrival so it can't emit a duplicate terminal
+    // event or clear a newer turn that has already started.
+    if (this.activeForegroundTurnId !== event.turnId) {
+      return;
+    }
     this.deliverTranslatedEvents(this.flushPendingUserMessage());
     this.activeForegroundTurnId = null;
     this.fallbackAssistantMessageId = null;
