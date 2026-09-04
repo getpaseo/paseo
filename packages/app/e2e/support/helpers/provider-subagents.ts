@@ -37,22 +37,23 @@ async function attachScreenshot(page: Page, testInfo: TestInfo, name: string): P
   await testInfo.attach(name, { path, contentType: "image/png" });
 }
 
-async function selectOnlySubagent(
-  page: Page,
-  label: string,
-  ownerPanel?: Locator,
-  beforeSelect?: () => Promise<void>,
-): Promise<void> {
-  if (ownerPanel) {
-    await ownerPanel.getByTestId("subagents-track-header").click();
-    await expect(page.getByTestId("subagents-track-header-panel")).toBeVisible();
-  } else {
-    await openSubagentsTrack(page);
-  }
+async function expectOnlySubagent(page: Page, label: string): Promise<Locator> {
   const rows = page.locator('[data-testid^="subagents-track-row-"]');
   await expect(rows).toHaveCount(1);
-  await beforeSelect?.();
-  await page.getByRole("button", { name: label, exact: true }).click();
+  const row = page.getByRole("button", { name: label, exact: true });
+  await expect(row).toBeVisible();
+  return row;
+}
+
+async function selectOnlyRootSubagent(page: Page, label: string): Promise<void> {
+  await openSubagentsTrack(page);
+  const row = await expectOnlySubagent(page, label);
+  await row.click();
+}
+
+async function openOwnedSubagents(page: Page, ownerPanel: Locator): Promise<void> {
+  await ownerPanel.getByTestId("subagents-track-header").click();
+  await expect(page.getByTestId("subagents-track-header-panel")).toBeVisible();
 }
 
 export async function expectNestedProviderSubagentOwnership(
@@ -60,13 +61,14 @@ export async function expectNestedProviderSubagentOwnership(
   testInfo: TestInfo,
 ): Promise<void> {
   await expect(page.getByText("Task notification", { exact: true })).toHaveCount(0);
-  await selectOnlySubagent(page, "direct_owner");
+  await selectOnlyRootSubagent(page, "direct_owner");
   const directPanel = page.getByTestId("provider-subagent-panel");
   await expect(directPanel).toBeVisible();
 
-  await selectOnlySubagent(page, "nested_owner", directPanel, () =>
-    attachScreenshot(page, testInfo, "nested-ownership-after-tree"),
-  );
+  await openOwnedSubagents(page, directPanel);
+  const nestedRow = await expectOnlySubagent(page, "nested_owner");
+  await attachScreenshot(page, testInfo, "nested-ownership-after-tree");
+  await nestedRow.click();
 
   const nestedPanel = page.locator('[data-testid="provider-subagent-panel"]:visible');
   await expect(nestedPanel.getByText("Task notification", { exact: true })).toBeVisible();
