@@ -1407,30 +1407,40 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
-  test("loads archived Codex history without resuming the native thread", async () => {
+  test("reads archived Codex history without resuming an unarchived native thread", async () => {
     const threadRequests: string[] = [];
     const appServer = createFakeCodexAppServer({
+      "collaborationMode/list": () => {
+        threadRequests.push("collaborationMode/list");
+        return { data: [] };
+      },
+      "skills/list": () => {
+        threadRequests.push("skills/list");
+        return { data: [] };
+      },
       "thread/loaded/list": () => {
         threadRequests.push("thread/loaded/list");
         return { data: [] };
       },
       "thread/resume": () => {
         threadRequests.push("thread/resume");
-        return Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id")));
+        return { thread: { id: "archived-thread-id" } };
       },
       "thread/read": () => {
         threadRequests.push("thread/read");
         return { thread: { turns: [] } };
       },
     });
+    const killSpy = vi.spyOn(appServer.child, "kill");
     const provider = createProviderWithFakeAppServer(appServer);
 
-    const session = await provider.resumeSession(archivedThreadHandle(), undefined, undefined, {
-      purpose: "history",
+    await expect(provider.readSessionHistory(archivedThreadHandle())).resolves.toEqual({
+      events: [],
+      coverage: { kind: "complete" },
     });
 
-    expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume", "thread/read"]);
-    await session.close();
+    expect(threadRequests).toEqual(["thread/read"]);
+    expect(killSpy).toHaveBeenCalledWith("SIGTERM");
     appServer.assertNoErrors();
   });
 
@@ -1498,9 +1508,9 @@ describe("Codex app-server provider", () => {
     const killSpy = vi.spyOn(appServer.child, "kill");
     const provider = createProviderWithFakeAppServer(appServer);
 
-    await expect(
-      provider.resumeSession(archivedThreadHandle(), undefined, undefined, { purpose: "history" }),
-    ).rejects.toThrow("thread history is unavailable");
+    await expect(provider.readSessionHistory(archivedThreadHandle())).rejects.toThrow(
+      "thread history is unavailable",
+    );
 
     expect(killSpy).toHaveBeenCalledWith("SIGTERM");
     appServer.assertNoErrors();
@@ -3905,6 +3915,175 @@ describe("Codex app-server provider", () => {
       index: 0,
       turnId: "native-turn-1",
     });
+  });
+
+  test("loads independent persisted sub-agent histories with bounded deterministic concurrency", async () => {
+    const session = createSession();
+    const childThreadIds = Array.from({ length: 10 }, (_, index) => `child-thread-${index}`);
+    const childStartedItems = childThreadIds.map((childThreadId, index) => ({
+      type: "subAgentActivity",
+      id: `child-started-${index}`,
+      kind: "started",
+      agentThreadId: childThreadId,
+      agentPath: `/root/child-${index}`,
+    }));
+    const childReadGates = new Map(childThreadIds.map((threadId) => [threadId, deferred<void>()]));
+    const requestedChildThreadIds = new Set<string>();
+    let activeChildReads = 0;
+    let peakChildReads = 0;
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId === "test-thread") {
+          return {
+            thread: {
+              turns: [
+                {
+                  items: childStartedItems,
+                },
+              ],
+            },
+          };
+        }
+        if (!threadId) {
+          throw new Error("Expected a child thread id");
+        }
+
+        const gate = childReadGates.get(threadId);
+        if (!gate) {
+          throw new Error(`Unexpected child thread id: ${threadId}`);
+        }
+        requestedChildThreadIds.add(threadId);
+        activeChildReads += 1;
+        peakChildReads = Math.max(peakChildReads, activeChildReads);
+        try {
+          await gate.promise;
+          return {
+            thread: {
+              turns: [
+                {
+                  items: [
+                    {
+                      type: "agentMessage",
+                      id: `message-${threadId}`,
+                      text: `History from ${threadId}`,
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+        } finally {
+          activeChildReads -= 1;
+        }
+      }),
+    };
+
+    const historyLoad = asInternals(session).loadPersistedHistory();
+    try {
+      await vi.waitFor(() => {
+        expect(peakChildReads).toBe(8);
+        expect(requestedChildThreadIds.size).toBe(8);
+      });
+      for (const threadId of childThreadIds.slice(0, 8).toReversed()) {
+        childReadGates.get(threadId)?.resolve(undefined);
+      }
+      await vi.waitFor(() => {
+        expect(requestedChildThreadIds.size).toBe(10);
+      });
+      for (const threadId of childThreadIds.slice(8).toReversed()) {
+        childReadGates.get(threadId)?.resolve(undefined);
+      }
+      await historyLoad;
+    } finally {
+      for (const gate of childReadGates.values()) {
+        gate.resolve(undefined);
+      }
+    }
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+    const childTimelineOrder = history.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "timeline" ? [event.event.id] : [],
+    );
+
+    expect(peakChildReads).toBe(8);
+    expect(requestedChildThreadIds).toEqual(new Set(childThreadIds));
+    expect(activeChildReads).toBe(0);
+    expect(childTimelineOrder).toEqual(childThreadIds);
+  });
+
+  test("isolates a failed persisted sub-agent history read", async () => {
+    const session = createSession();
+    const requestedChildThreadIds: string[] = [];
+    const childStartedItems = ["failing-child", "successful-child"].map((childThreadId) => ({
+      type: "subAgentActivity",
+      id: `started-${childThreadId}`,
+      kind: "started",
+      agentThreadId: childThreadId,
+      agentPath: `/root/${childThreadId}`,
+    }));
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        if (threadId === "test-thread") {
+          return {
+            thread: {
+              turns: [
+                {
+                  items: childStartedItems,
+                },
+              ],
+            },
+          };
+        }
+        if (!threadId) {
+          throw new Error("Expected a child thread id");
+        }
+        requestedChildThreadIds.push(threadId);
+        if (threadId === "failing-child") {
+          throw new Error("child history unavailable");
+        }
+        return {
+          thread: {
+            turns: [
+              {
+                items: [
+                  {
+                    type: "agentMessage",
+                    id: "successful-child-message",
+                    text: "Successful child history",
+                  },
+                ],
+              },
+            ],
+          },
+        };
+      }),
+    };
+
+    await expect(asInternals(session).loadPersistedHistory()).resolves.toBeUndefined();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+    expect(requestedChildThreadIds).toEqual(["failing-child", "successful-child"]);
+    expect(
+      history.flatMap((event) =>
+        event.type === "provider_subagent" && event.event.type === "timeline"
+          ? [event.event.id]
+          : [],
+      ),
+    ).toEqual(["successful-child"]);
   });
 
   test("loads mixed legacy and MultiAgentV2 sub-agent history", async () => {

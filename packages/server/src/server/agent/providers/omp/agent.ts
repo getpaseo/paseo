@@ -9,6 +9,8 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentFeature,
+  type AgentHistoryReadContext,
+  type AgentHistoryReadResult,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -2306,6 +2308,42 @@ export class OmpAgentClient implements AgentClient {
     } catch (error) {
       await runtimeSession.close().catch(() => undefined);
       throw error;
+    }
+  }
+
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const sessionFile = handle.nativeHandle;
+    if (!sessionFile) {
+      throw new Error("OMP history read requires a native session file handle");
+    }
+
+    const persistenceMetadata = parsePersistenceMetadata(handle.metadata);
+    const cwd = context?.cwd ?? persistenceMetadata.cwd ?? process.cwd();
+    const runtimeSession = await this.runtime.startSession({
+      cwd,
+      protocolMode: "rpc-ui",
+      env: context?.env,
+      session: sessionFile,
+    });
+    try {
+      const state = await runtimeSession.getState();
+      const events: AgentStreamEvent[] = [];
+      for await (const event of streamOmpHistory({
+        sessionFile: state.sessionFile ?? sessionFile,
+        runtimeSession,
+        provider: this.provider,
+      })) {
+        events.push(event);
+      }
+      for (const item of mapOmpTodoState(state)) {
+        events.push({ type: "timeline", provider: this.provider, item });
+      }
+      return { events, coverage: { kind: "complete" } };
+    } finally {
+      await runtimeSession.close();
     }
   }
 

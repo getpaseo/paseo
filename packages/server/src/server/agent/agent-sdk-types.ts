@@ -634,18 +634,33 @@ export interface AgentLaunchContext {
   paseoTools?: PaseoToolCatalog;
 }
 
+/**
+ * Narrow context for read-only provider history access. It intentionally omits
+ * interactive configuration such as MCP servers, native Paseo tools, prompts,
+ * modes, models, and feature flags.
+ */
+export interface AgentHistoryReadContext {
+  cwd: string;
+  agentId?: string;
+  env?: Record<string, string>;
+}
+
+/**
+ * Complete provider history returned by the dedicated read-only path.
+ * The coverage envelope leaves room for a future paged result without
+ * coupling archived reads to a live provider session.
+ */
+export interface AgentHistoryReadResult {
+  events: AgentStreamEvent[];
+  coverage: { kind: "complete" };
+}
+
 export interface AgentCreateSessionOptions {
   /**
    * Whether the provider should leave a durable native session behind.
    * Defaults to true. Providers that cannot honor false should no-op.
    */
   persistSession?: boolean;
-}
-
-/** Runtime-only intent for a persisted-session resume. Never persist this option. */
-export interface AgentResumeSessionOptions {
-  /** Defaults to interactive. History loading may be read-only for archived native sessions. */
-  purpose?: "interactive" | "history";
 }
 
 /**
@@ -745,8 +760,15 @@ export interface AgentClient {
     handle: AgentPersistenceHandle,
     overrides?: Partial<AgentSessionConfig>,
     launchContext?: AgentLaunchContext,
-    options?: AgentResumeSessionOptions,
   ): Promise<AgentSession>;
+  /**
+   * Read persisted provider history without leaving an interactive runtime open.
+   * Implementations own and close any temporary resources before this resolves or rejects.
+   */
+  readSessionHistory?(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult>;
   /**
    * Discover models and modes together. Implementations may use one upstream
    * process, separate upstream calls, static modes, or private helpers; callers

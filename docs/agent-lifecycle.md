@@ -109,17 +109,25 @@ History navigation preserves the selected agent as an explicit recovery target. 
 and its workspace are archived, the workspace recovery action restores the workspace and unarchives
 the selected agent as one user action. Other archived agents in the restored workspace remain
 recoverable from History. Opening one pins its tab and renders the archived-agent callout. Authoritative
-timeline catch-up may load provider history with a runtime-only `history` resume purpose, which must
-leave both Paseo's `archivedAt` and the provider's native archive state unchanged. **Unarchive** remains
-the only transition back to an interactive runtime: it runs the provider's native unarchive hook
-(including Codex `thread/unarchive`) before the normal agent resume and timeline hydration flow. A
-provider session can be archived outside Paseo while its Paseo agent remains active. Interactive
-resume repairs that drift through the provider's native unarchive hook; history resume does not.
+timeline catch-up uses the provider's dedicated history-read operation, which materializes history
+without registering an interactive runtime and must leave both Paseo's `archivedAt` and the provider's
+native archive state unchanged. The result hydrates only the retained in-memory timeline; it does not
+seed or commit a durable timeline cache. **Unarchive** remains the only transition back to an interactive
+runtime: it runs the provider's native unarchive hook (including Codex `thread/unarchive`) before the
+normal agent resume and timeline hydration flow. A provider session can also be archived outside
+Paseo while its Paseo agent remains active. Interactive resume repairs that drift through the
+provider's native unarchive path; dedicated history reads never do.
+
+Closed history snapshots retain visibility metadata such as the persisted `internal` flag. Public
+timeline and provider-subagent reads must apply the same visibility boundary to a history snapshot as
+they do to a live agent, including when a concurrent unarchive promotes that snapshot to a live
+runtime.
 
 Provider session connection owns every process it spawns until the session is registered with
-`AgentManager`. If initialization, persisted-session resume, or initial history hydration fails,
-`connect()` must dispose that process before rethrowing; the manager cannot clean up a session it never
-received.
+`AgentManager`. Dedicated history reads own their temporary process for the entire operation and close
+it before resolving or rejecting. If initialization or persisted-session resume fails, the provider
+must also dispose the unregistered process before rethrowing; the manager cannot clean up a session it
+never received.
 
 ## Tabs vs archive
 

@@ -421,6 +421,10 @@ interface AgentClient {
   fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog>;
   isAvailable(): Promise<boolean>;
   // Optional:
+  readSessionHistory(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult>;
   listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]>;
@@ -469,6 +473,8 @@ interface AgentSession {
 ```
 
 `setMode` and `setThinkingOption` may return an `AgentProviderNotice` when the provider knows the change needs user-facing context. For example, providers that stage changes until the next turn should return an `info` notice while a turn is already running. The app renders the notice generically as a toast; provider-specific lifecycle behavior stays in the provider implementation.
+
+Persistent providers should implement `readSessionHistory` as a distinct read contract rather than forwarding to the public interactive `resumeSession` path. It returns events with explicit coverage; current readers return `{ kind: "complete" }`, leaving the result shape extensible without adding pagination here. Its narrow `AgentHistoryReadContext` exposes only the working directory, provider environment, and agent identity; interactive configuration such as MCP servers, native Paseo tools, prompts, modes, models, and feature flags is deliberately unavailable. Prefer direct transcript files or provider SDK history endpoints. If the provider requires a temporary runtime, start only the minimum history runtime, avoid interactive subscriptions, host-tool/MCP setup, prompts, aborts, or native archive mutations, and close the runtime before the method resolves or rejects. Tests must cover both successful and failed reads and assert resource release; providers with native archive state must also prove that history reads leave it unchanged.
 
 ### Steps
 

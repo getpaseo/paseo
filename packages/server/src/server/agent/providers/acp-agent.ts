@@ -65,6 +65,8 @@ import {
   type AgentClient,
   type AgentCreateConfigUnattendedInput,
   type AgentFeature,
+  type AgentHistoryReadContext,
+  type AgentHistoryReadResult,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -856,37 +858,52 @@ export class ACPAgentClient implements AgentClient {
     this.extensionCommandsParser = options.extensionCommandsParser;
   }
 
+  protected createSessionInstance(
+    ...args: ConstructorParameters<typeof ACPAgentSession>
+  ): ACPAgentSession {
+    return new ACPAgentSession(...args);
+  }
+
+  private sessionOptions(
+    launchContext: AgentLaunchContext | undefined,
+    handle?: AgentPersistenceHandle,
+  ): ACPAgentSessionOptions {
+    return {
+      provider: this.provider,
+      logger: this.logger,
+      runtimeSettings: this.runtimeSettings,
+      defaultCommand: this.defaultCommand,
+      defaultModes: this.defaultModes,
+      modelTransformer: this.modelTransformer,
+      sessionResponseTransformer: this.sessionResponseTransformer,
+      configOptionsTransformer: this.configOptionsTransformer,
+      configFeatureOptions: this.configFeatureOptions,
+      clientCapabilities: this.clientCapabilities,
+      clientCapabilityMeta: this.clientCapabilityMeta,
+      modeIdTransformer: this.modeIdTransformer,
+      toolSnapshotTransformer: this.toolSnapshotTransformer,
+      providerModeWriter: this.providerModeWriter,
+      beforeModeWriter: this.beforeModeWriter,
+      thinkingOptionWriter: this.thinkingOptionWriter,
+      capabilities: this.capabilities,
+      handle,
+      agentId: launchContext?.agentId,
+      launchEnv: launchContext?.env,
+      extensionCommandsParser: this.extensionCommandsParser,
+      waitForInitialCommands: this.waitForInitialCommands,
+      initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
+      terminateProcess: this.terminateProcess,
+    };
+  }
+
   async createSession(
     config: AgentSessionConfig,
     launchContext?: AgentLaunchContext,
   ): Promise<AgentSession> {
     this.assertProvider(config);
-    const session = new ACPAgentSession(
+    const session = this.createSessionInstance(
       { ...config, provider: this.provider },
-      {
-        provider: this.provider,
-        logger: this.logger,
-        runtimeSettings: this.runtimeSettings,
-        defaultCommand: this.defaultCommand,
-        defaultModes: this.defaultModes,
-        modelTransformer: this.modelTransformer,
-        sessionResponseTransformer: this.sessionResponseTransformer,
-        configOptionsTransformer: this.configOptionsTransformer,
-        configFeatureOptions: this.configFeatureOptions,
-        clientCapabilities: this.clientCapabilities,
-        clientCapabilityMeta: this.clientCapabilityMeta,
-        modeIdTransformer: this.modeIdTransformer,
-        toolSnapshotTransformer: this.toolSnapshotTransformer,
-        providerModeWriter: this.providerModeWriter,
-        beforeModeWriter: this.beforeModeWriter,
-        thinkingOptionWriter: this.thinkingOptionWriter,
-        capabilities: this.capabilities,
-        agentId: launchContext?.agentId,
-        launchEnv: launchContext?.env,
-        extensionCommandsParser: this.extensionCommandsParser,
-        waitForInitialCommands: this.waitForInitialCommands,
-        initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
-      },
+      this.sessionOptions(launchContext),
     );
     await session.initializeNewSession();
     return session;
@@ -913,33 +930,42 @@ export class ACPAgentClient implements AgentClient {
       provider: this.provider,
       cwd,
     };
-    const session = new ACPAgentSession(mergedConfig, {
-      provider: this.provider,
-      logger: this.logger,
-      runtimeSettings: this.runtimeSettings,
-      defaultCommand: this.defaultCommand,
-      defaultModes: this.defaultModes,
-      modelTransformer: this.modelTransformer,
-      sessionResponseTransformer: this.sessionResponseTransformer,
-      configOptionsTransformer: this.configOptionsTransformer,
-      configFeatureOptions: this.configFeatureOptions,
-      clientCapabilities: this.clientCapabilities,
-      clientCapabilityMeta: this.clientCapabilityMeta,
-      modeIdTransformer: this.modeIdTransformer,
-      toolSnapshotTransformer: this.toolSnapshotTransformer,
-      providerModeWriter: this.providerModeWriter,
-      beforeModeWriter: this.beforeModeWriter,
-      thinkingOptionWriter: this.thinkingOptionWriter,
-      capabilities: this.capabilities,
-      handle,
-      agentId: launchContext?.agentId,
-      launchEnv: launchContext?.env,
-      extensionCommandsParser: this.extensionCommandsParser,
-      waitForInitialCommands: this.waitForInitialCommands,
-      initialCommandsWaitTimeoutMs: this.initialCommandsWaitTimeoutMs,
-    });
+    const session = this.createSessionInstance(
+      mergedConfig,
+      this.sessionOptions(launchContext, handle),
+    );
     await session.initializeResumedSession();
     return session;
+  }
+
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    if (handle.provider !== this.provider) {
+      throw new Error(`Cannot read ${handle.provider} history with ${this.provider} provider`);
+    }
+
+    const storedConfig = coerceSessionConfigMetadata(handle.metadata);
+    const cwd = context?.cwd ?? storedConfig.cwd;
+    if (!cwd) {
+      throw new Error(`${this.provider} history read requires the original working directory`);
+    }
+
+    const session = this.createSessionInstance(
+      { provider: this.provider, cwd },
+      this.sessionOptions(context, handle),
+    );
+    try {
+      await session.initializeHistorySession();
+      const events: AgentStreamEvent[] = [];
+      for await (const event of session.streamHistory()) {
+        events.push(event);
+      }
+      return { events, coverage: { kind: "complete" } };
+    } finally {
+      await session.close();
+    }
   }
 
   async fetchCatalog(
@@ -1530,41 +1556,11 @@ export class ACPAgentSession implements AgentSession, ACPClient {
    */
   async initializeResumedSession(): Promise<void> {
     try {
-      const handle = this.initialHandle;
-      if (!handle) {
-        throw new Error("Resume requested without persistence handle");
-      }
-
-      const spawned = await this.spawnProcess();
-      this.child = spawned.child;
-      this.connection = spawned.connection;
-      this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
-      this.sessionId = handle.sessionId;
-      this.bootstrapThreadEventPending = true;
-
-      const sessionCapabilities = this.agentCapabilities?.sessionCapabilities;
+      const { handle, sessionCapabilities } = await this.initializePersistedProcess();
       if (this.agentCapabilities?.loadSession) {
-        this.replayingHistory = true;
-        const response = await this.runACPRequest(() =>
-          this.connection!.loadSession({
-            sessionId: handle.sessionId,
-            cwd: this.config.cwd,
-            mcpServers: this.acpMcpServers(),
-          }),
-        );
-        this.deliverTranslatedEvents(this.flushPendingUserMessage());
-        this.replayingHistory = false;
-        this.historyPending = this.persistedHistory.length > 0;
-        this.applySessionState(response);
+        await this.loadPersistedSession(handle);
       } else if (sessionCapabilities?.resume) {
-        const response = await this.runACPRequest(() =>
-          this.connection!.unstable_resumeSession({
-            sessionId: handle.sessionId,
-            cwd: this.config.cwd,
-            mcpServers: this.acpMcpServers(),
-          }),
-        );
-        this.applySessionState(response);
+        await this.resumePersistedSession(handle);
       } else {
         throw new Error(`${this.provider} does not support ACP session resume`);
       }
@@ -1573,6 +1569,75 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
     }
+  }
+
+  async initializeHistorySession(): Promise<void> {
+    try {
+      const { handle } = await this.initializePersistedProcess();
+      if (this.agentCapabilities?.loadSession) {
+        await this.loadPersistedSession(handle, []);
+      } else {
+        throw new Error(`${this.provider} does not support ACP session/load history reads`);
+      }
+    } catch (error) {
+      await this.closeAfterInitializationFailure(error);
+    }
+  }
+
+  private async initializePersistedProcess(): Promise<{
+    handle: AgentPersistenceHandle;
+    sessionCapabilities: ACPAgentCapabilities["sessionCapabilities"];
+  }> {
+    const handle = this.initialHandle;
+    if (!handle) {
+      throw new Error("Persisted session requested without persistence handle");
+    }
+
+    const spawned = await this.spawnProcess();
+    this.child = spawned.child;
+    this.connection = spawned.connection;
+    this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
+    this.sessionId = handle.sessionId;
+    this.bootstrapThreadEventPending = true;
+    return {
+      handle,
+      sessionCapabilities: this.agentCapabilities?.sessionCapabilities,
+    };
+  }
+
+  private async loadPersistedSession(
+    handle: AgentPersistenceHandle,
+    mcpServers: McpServer[] = this.acpMcpServers(),
+  ): Promise<void> {
+    this.replayingHistory = true;
+    try {
+      const response = await this.runACPRequest(() =>
+        this.connection!.loadSession({
+          sessionId: handle.sessionId,
+          cwd: this.config.cwd,
+          mcpServers,
+        }),
+      );
+      this.deliverTranslatedEvents(this.flushPendingUserMessage());
+      this.historyPending = this.persistedHistory.length > 0;
+      this.applySessionState(response);
+    } finally {
+      this.replayingHistory = false;
+    }
+  }
+
+  private async resumePersistedSession(
+    handle: AgentPersistenceHandle,
+    mcpServers: McpServer[] = this.acpMcpServers(),
+  ): Promise<void> {
+    const response = await this.runACPRequest(() =>
+      this.connection!.unstable_resumeSession({
+        sessionId: handle.sessionId,
+        cwd: this.config.cwd,
+        mcpServers,
+      }),
+    );
+    this.applySessionState(response);
   }
 
   private async closeAfterInitializationFailure(error: unknown): Promise<never> {

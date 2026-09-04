@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   openSync,
+  readFileSync,
   readSync,
   rmSync,
   writeFileSync,
@@ -1916,6 +1917,117 @@ describe("PiRpcAgentSession steering", () => {
 });
 
 describe("PiRpcAgentClient", () => {
+  test("reads history directly from JSONL without launching a Pi runtime", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-history-read-"));
+    onTestFinished(() => rmSync(root, { recursive: true, force: true }));
+    const sessionFile = path.join(root, "session.jsonl");
+    writeFileSync(
+      sessionFile,
+      [
+        JSON.stringify({
+          type: "session",
+          version: 3,
+          id: "pi-history-session",
+          cwd: "/workspace/project",
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-user-1",
+          parentId: "pi-history-session",
+          message: { role: "user", content: "first prompt" },
+        }),
+        "{malformed-jsonl-entry",
+        JSON.stringify({
+          type: "message",
+          id: "entry-stale-branch",
+          parentId: "entry-user-1",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "stale branch response" }],
+            responseId: "assistant-stale-branch",
+          },
+        }),
+        JSON.stringify({
+          type: "message",
+          id: "entry-assistant-1",
+          parentId: "entry-user-1",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "history response" }],
+            responseId: "assistant-history-1",
+          },
+        }),
+        JSON.stringify({
+          type: "custom_message",
+          id: "entry-custom-1",
+          parentId: "entry-assistant-1",
+          customType: "extension-output",
+          content: "persisted extension output",
+          display: true,
+        }),
+        JSON.stringify({
+          type: "session_info",
+          id: "session-info-after-history",
+          name: "Archived history",
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const before = readFileSync(sessionFile, "utf8");
+    const pi = new FakePi();
+    const client = createClient(pi);
+
+    const history = await client.readSessionHistory({
+      provider: "pi",
+      sessionId: "pi-history-session",
+      nativeHandle: sessionFile,
+      metadata: { cwd: "/workspace/project" },
+    });
+
+    expect(history).toEqual({
+      events: [
+        {
+          type: "timeline",
+          provider: "pi",
+          item: { type: "user_message", text: "first prompt", messageId: "entry-user-1" },
+        },
+        {
+          type: "timeline",
+          provider: "pi",
+          item: {
+            type: "assistant_message",
+            text: "history response",
+            messageId: "assistant-history-1",
+          },
+        },
+        {
+          type: "timeline",
+          provider: "pi",
+          item: { type: "assistant_message", text: "persisted extension output" },
+        },
+      ],
+      coverage: { kind: "complete" },
+    });
+    expect(pi.recordedLaunches).toEqual([]);
+    expect(readFileSync(sessionFile, "utf8")).toBe(before);
+  });
+
+  test("returns empty history for a missing Pi transcript without launching a runtime", async () => {
+    const pi = new FakePi();
+    const client = createClient(pi);
+
+    await expect(
+      client.readSessionHistory({
+        provider: "pi",
+        sessionId: "pi-history-session",
+        nativeHandle: path.join(tmpdir(), "missing-pi-history-session.jsonl"),
+        metadata: { cwd: "/workspace/project" },
+      }),
+    ).resolves.toEqual({ events: [], coverage: { kind: "complete" } });
+
+    expect(pi.recordedLaunches).toEqual([]);
+  });
+
   test("lists JSONL persisted sessions from configured provider params", async () => {
     const root = mkdtempSync(path.join(tmpdir(), "paseo-pi-sessions-"));
     const cwd = path.join(root, "workspace");

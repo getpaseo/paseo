@@ -3476,6 +3476,116 @@ describe("ACPAgentSession initialization cleanup", () => {
   });
 });
 
+describe("ACPAgentClient history cleanup", () => {
+  function createHistoryClient(args: {
+    child: ChildProcessWithoutNullStreams;
+    loadSession?: ReturnType<typeof vi.fn>;
+    unstableResumeSession?: ReturnType<typeof vi.fn>;
+    capabilities?: AgentCapabilityFlags;
+    terminator: FakeTerminator;
+  }): ACPAgentClient {
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override createSessionInstance(
+        ...sessionArgs: ConstructorParameters<typeof ACPAgentSession>
+      ): ACPAgentSession {
+        return new (class extends ACPAgentSession {
+          protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+            return {
+              child: args.child,
+              connection: {
+                prompt: vi.fn(),
+                loadSession: args.loadSession,
+                unstable_resumeSession: args.unstableResumeSession,
+              } as unknown as ClientSideConnection,
+              initialize: {
+                agentCapabilities: args.capabilities ?? { loadSession: true },
+              },
+            } as SpawnedACPProcess;
+          }
+        })(...sessionArgs);
+      }
+    }
+
+    return new TestACPAgentClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      defaultModes: [],
+      terminateProcess: args.terminator.terminate,
+    });
+  }
+
+  const handle: AgentPersistenceHandle = {
+    provider: "claude-acp",
+    sessionId: "session-history",
+    metadata: {
+      cwd: "/tmp/paseo-acp-history",
+      mcpServers: {
+        paseo: { type: "http", url: "http://127.0.0.1:6767/mcp/agents" },
+      },
+    },
+  };
+
+  test("terminates the temporary process after a successful history read", async () => {
+    const child = createProbeChildStub();
+    const terminator = new FakeTerminator();
+    const loadSession = vi.fn().mockResolvedValue({
+      sessionId: "session-history",
+      modes: null,
+      models: null,
+      configOptions: [],
+    });
+    const client = createHistoryClient({ child, loadSession, terminator });
+
+    await expect(client.readSessionHistory(handle)).resolves.toEqual({
+      events: [],
+      coverage: { kind: "complete" },
+    });
+
+    expect(loadSession).toHaveBeenCalledWith({
+      sessionId: "session-history",
+      cwd: "/tmp/paseo-acp-history",
+      mcpServers: [],
+    });
+    expect(terminator.terminated).toEqual([child]);
+  });
+
+  test("rejects a resume-only history read without invoking interactive resume", async () => {
+    const child = createProbeChildStub();
+    const terminator = new FakeTerminator();
+    const unstableResumeSession = vi.fn().mockResolvedValue({
+      sessionId: "session-history",
+      modes: null,
+      models: null,
+      configOptions: [],
+    });
+    const client = createHistoryClient({
+      child,
+      unstableResumeSession,
+      capabilities: { sessionCapabilities: { resume: {} } },
+      terminator,
+    });
+
+    await expect(client.readSessionHistory(handle)).rejects.toThrow(
+      "claude-acp does not support ACP session/load history reads",
+    );
+
+    expect(unstableResumeSession).not.toHaveBeenCalled();
+    expect(terminator.terminated).toEqual([child]);
+  });
+
+  test("terminates the temporary process when history loading fails", async () => {
+    const child = createProbeChildStub();
+    const terminator = new FakeTerminator();
+    const loadSession = vi.fn().mockRejectedValue(new Error("session/load failed"));
+    const client = createHistoryClient({ child, loadSession, terminator });
+
+    await expect(client.readSessionHistory(handle)).rejects.toThrow("session/load failed");
+
+    expect(terminator.terminated).toEqual([child]);
+  });
+});
+
 describe("ACPAgentClient probe cleanup", () => {
   afterEach(() => {
     vi.restoreAllMocks();

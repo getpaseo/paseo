@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve as resolvePath } from "node:path";
 import type { Logger } from "pino";
@@ -10,6 +11,8 @@ import {
   type AgentCapabilityFlags,
   type AgentClient,
   type AgentFeature,
+  type AgentHistoryReadContext,
+  type AgentHistoryReadResult,
   type AgentLaunchContext,
   type AgentMetadata,
   type AgentMode,
@@ -508,6 +511,104 @@ function buildResumeConfig(
       systemPrompt: overrideConfig.systemPrompt ?? metadata.systemPrompt,
     },
   };
+}
+
+interface PiPersistedSessionEntry {
+  type?: string;
+  id?: string;
+  parentId?: string | null;
+  message?: unknown;
+  content?: unknown;
+}
+
+function isPiAgentMessage(value: unknown): value is PiAgentMessage {
+  if (!isRecord(value) || typeof value.role !== "string") {
+    return false;
+  }
+  return ["user", "custom", "assistant", "toolResult", "bashExecution"].includes(value.role);
+}
+
+function isPiCustomMessageContent(
+  value: unknown,
+): value is Extract<PiAgentMessage, { role: "custom" }>["content"] {
+  return typeof value === "string" || Array.isArray(value);
+}
+
+async function readPersistedPiHistory(sessionFile: string): Promise<{
+  messages: PiAgentMessage[];
+  userEntries: PiCapturedUserMessageEntry[];
+}> {
+  let content: string;
+  try {
+    content = await readFile(sessionFile, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { messages: [], userEntries: [] };
+    }
+    throw error;
+  }
+
+  const entries = content.split(/\r?\n/).flatMap((line): PiPersistedSessionEntry[] => {
+    if (!line.trim()) {
+      return [];
+    }
+    try {
+      const entry = JSON.parse(line) as unknown;
+      return isRecord(entry) ? [entry as PiPersistedSessionEntry] : [];
+    } catch {
+      return [];
+    }
+  });
+  const activeEntries = selectActivePiEntryChain(entries);
+  const messages: PiAgentMessage[] = [];
+  const userEntries: PiCapturedUserMessageEntry[] = [];
+  for (const entry of activeEntries) {
+    let message: PiAgentMessage | null = null;
+    if (entry.type === "message" && isPiAgentMessage(entry.message)) {
+      message = entry.message;
+    } else if (entry.type === "custom_message" && isPiCustomMessageContent(entry.content)) {
+      message = { role: "custom", content: entry.content };
+    }
+    if (!message) {
+      continue;
+    }
+    messages.push(message);
+    if (message.role === "user" && entry.id) {
+      const text = getUserMessageText(message.content);
+      if (text) {
+        userEntries.push({ id: entry.id, text });
+      }
+    }
+  }
+  return { messages, userEntries };
+}
+
+function selectActivePiEntryChain(
+  entries: readonly PiPersistedSessionEntry[],
+): PiPersistedSessionEntry[] {
+  const indexedEntries = entries.filter(
+    (entry): entry is PiPersistedSessionEntry & { id: string } => typeof entry.id === "string",
+  );
+  if (!indexedEntries.some((entry) => typeof entry.parentId === "string")) {
+    return [...entries];
+  }
+
+  const byId = new Map(indexedEntries.map((entry) => [entry.id, entry]));
+  const parentIds = new Set(
+    indexedEntries.flatMap((entry) => (typeof entry.parentId === "string" ? [entry.parentId] : [])),
+  );
+  const branchEntries = indexedEntries.filter(
+    (entry) => typeof entry.parentId === "string" || parentIds.has(entry.id),
+  );
+  let current = branchEntries.findLast((entry) => !parentIds.has(entry.id)) ?? branchEntries.at(-1);
+  const chain: PiPersistedSessionEntry[] = [];
+  const seen = new Set<string>();
+  while (current && !seen.has(current.id)) {
+    chain.push(current);
+    seen.add(current.id);
+    current = typeof current.parentId === "string" ? byId.get(current.parentId) : undefined;
+  }
+  return chain.toReversed();
 }
 
 function buildResumeStartInput(input: {
@@ -2640,6 +2741,23 @@ export class PiRpcAgentClient implements AgentClient {
       paseoExtension?.cleanup();
       throw error;
     }
+  }
+
+  async readSessionHistory(
+    handle: AgentPersistenceHandle,
+    _context?: AgentHistoryReadContext,
+  ): Promise<AgentHistoryReadResult> {
+    const sessionFile = handle.nativeHandle;
+    if (!sessionFile) {
+      throw new Error("Pi history read requires a native session file handle");
+    }
+
+    const { messages, userEntries } = await readPersistedPiHistory(sessionFile);
+    const events: AgentStreamEvent[] = [];
+    for await (const event of streamPiHistory(this.provider, messages, userEntries)) {
+      events.push(event);
+    }
+    return { events, coverage: { kind: "complete" } };
   }
 
   async fetchCatalog(
