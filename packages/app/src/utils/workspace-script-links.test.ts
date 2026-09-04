@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { WorkspaceScriptPayload } from "@getpaseo/protocol/messages";
+import {
+  WorkspaceScriptPayloadSchema,
+  type WorkspaceScriptPayload,
+} from "@getpaseo/protocol/messages";
 import type { ActiveConnection } from "@/runtime/host-runtime";
 import {
   resolveWorkspaceScriptLink,
@@ -207,6 +210,39 @@ describe("resolveWorkspaceScriptLink", () => {
 });
 
 describe("resolveWorkspaceScriptQuickLinks", () => {
+  it.each([
+    "https://web--feature--paseo.services.example.com",
+    "http://web--feature--paseo.localhost:6767",
+    "http://localhost:3000",
+  ])("drops cross-origin and unparseable links received from a daemon for %s", (baseUrl) => {
+    const script = WorkspaceScriptPayloadSchema.parse({
+      ...runningService,
+      links: [
+        { label: "Admin", path: "/admin?next=https://example.com#settings" },
+        { label: "Escape", path: "/\t//evil.example" },
+        { label: "Port", path: "/\t/localhost:3001/" },
+        { label: "Invalid host", path: "/\t/[" },
+        { label: "Invalid authority", path: "/\t/" },
+        { label: "Encoded path", path: "/%2f%2fevil.example" },
+      ],
+    });
+
+    expect(resolveWorkspaceScriptQuickLinks({ baseUrl, links: script.links })).toEqual([
+      {
+        key: '["Admin","/admin?next=https://example.com#settings",0]',
+        label: "Admin",
+        path: "/admin?next=https://example.com#settings",
+        url: baseUrl + "/admin?next=https://example.com#settings",
+      },
+      {
+        key: '["Encoded path","/%2f%2fevil.example",0]',
+        label: "Encoded path",
+        path: "/%2f%2fevil.example",
+        url: baseUrl + "/%2f%2fevil.example",
+      },
+    ]);
+  });
+
   it("returns no quick links when none are configured", () => {
     expect(
       resolveWorkspaceScriptQuickLinks({
@@ -227,11 +263,13 @@ describe("resolveWorkspaceScriptQuickLinks", () => {
       }),
     ).toEqual([
       {
+        key: '["Admin","/admin",0]',
         label: "Admin",
         path: "/admin",
         url: "https://web--feature--paseo.services.example.com/admin",
       },
       {
+        key: '["GraphQL","/api/graphql?studio=1",0]',
         label: "GraphQL",
         path: "/api/graphql?studio=1",
         url: "https://web--feature--paseo.services.example.com/api/graphql?studio=1",
@@ -249,8 +287,13 @@ describe("resolveWorkspaceScriptQuickLinks", () => {
         ],
       }),
     ).toEqual([
-      { label: "Admin", path: "/admin", url: "http://localhost:3000/admin" },
-      { label: "Site", path: "/", url: "http://localhost:3000/" },
+      {
+        key: '["Admin","/admin",0]',
+        label: "Admin",
+        path: "/admin",
+        url: "http://localhost:3000/admin",
+      },
+      { key: '["Site","/",0]', label: "Site", path: "/", url: "http://localhost:3000/" },
     ]);
   });
 });

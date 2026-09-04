@@ -586,7 +586,7 @@ function ScriptRow({
           </View>
           {quickLinks.map((link, index) => (
             <ServiceQuickLinkRow
-              key={`${link.label}:${link.path}`}
+              key={link.key}
               index={index}
               link={link}
               scriptName={script.scriptName}

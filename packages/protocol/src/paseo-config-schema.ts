@@ -49,7 +49,10 @@ function normalizeServiceLinks(links: unknown): PaseoServiceLink[] {
   const validLinks: PaseoServiceLink[] = [];
   for (const link of links) {
     const parsed = PaseoServiceLinkSchema.safeParse(link);
-    if (parsed.success) validLinks.push(parsed.data);
+    if (!parsed.success) continue;
+    // URL parsing strips tabs and newlines. Keep this stricter check outside the wire schema.
+    if (/\p{Cc}/u.test(parsed.data.path)) continue;
+    validLinks.push(parsed.data);
   }
   return validLinks;
 }

@@ -16,6 +16,7 @@ export interface ResolvedWorkspaceScriptLink {
 }
 
 export interface WorkspaceScriptQuickLinkTarget extends PaseoServiceLink {
+  key: string;
   url: string;
 }
 
@@ -99,9 +100,31 @@ export function resolveWorkspaceScriptQuickLinks(input: {
   baseUrl: string;
   links: WorkspaceScriptPayload["links"];
 }): WorkspaceScriptQuickLinkTarget[] {
-  return (input.links ?? []).map((link) => ({
-    label: link.label,
-    path: link.path,
-    url: new URL(link.path, input.baseUrl).toString(),
-  }));
+  const links = input.links ?? [];
+  if (links.length === 0) return [];
+
+  const baseUrl = new URL(input.baseUrl);
+  const targets: WorkspaceScriptQuickLinkTarget[] = [];
+  const occurrences = new Map<string, number>();
+  for (const link of links) {
+    let url: URL;
+    try {
+      url = new URL(link.path, baseUrl);
+    } catch (error) {
+      if (error instanceof TypeError) continue;
+      throw error;
+    }
+    if (url.origin !== baseUrl.origin) continue;
+
+    const identity = JSON.stringify([link.label, link.path]);
+    const occurrence = occurrences.get(identity) ?? 0;
+    occurrences.set(identity, occurrence + 1);
+    targets.push({
+      key: JSON.stringify([link.label, link.path, occurrence]),
+      label: link.label,
+      path: link.path,
+      url: url.toString(),
+    });
+  }
+  return targets;
 }

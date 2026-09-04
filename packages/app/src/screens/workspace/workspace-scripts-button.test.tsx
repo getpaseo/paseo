@@ -341,6 +341,7 @@ describe("WorkspaceScriptsButton", () => {
   afterEach(() => {
     current?.unmount();
     current = null;
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -559,6 +560,45 @@ describe("WorkspaceScriptsButton", () => {
       expect(link?.querySelector('[data-icon="Eye"]')).not.toBeNull();
       expect(link?.querySelector('[data-icon="ExternalLink"]')).not.toBeNull();
     }
+  });
+
+  it("preserves duplicate quick-link rows when links are reordered or removed", async () => {
+    const consoleError = vi.spyOn(console, "error");
+    const admin = { label: "Admin", path: "/admin" };
+    const graphQL = { label: "GraphQL", path: "/api/graphql" };
+    const service = script({
+      scriptName: "dev",
+      type: "service",
+      lifecycle: "running",
+      port: 3000,
+      proxyUrl: "http://dev--proj--repo.localhost:6767",
+      links: [admin, graphQL, admin],
+    });
+    current = renderScripts([service]);
+
+    const row = requireRow("dev");
+    const originalLinks = Array.from(
+      row.querySelectorAll('[data-testid^="workspace-scripts-link-dev-"]'),
+    );
+    expect(originalLinks.map((link) => link.textContent)).toEqual([
+      "Admin /admin",
+      "GraphQL /api/graphql",
+      "Admin /admin",
+    ]);
+
+    await current.rerender([{ ...service, links: [graphQL, admin, admin] }]);
+    let links = Array.from(row.querySelectorAll('[data-testid^="workspace-scripts-link-dev-"]'));
+    expect(links).toHaveLength(3);
+    expect(links[0]).toBe(originalLinks[1]);
+    expect(links[1]).toBe(originalLinks[0]);
+    expect(links[2]).toBe(originalLinks[2]);
+
+    await current.rerender([{ ...service, links: [admin, graphQL] }]);
+    links = Array.from(row.querySelectorAll('[data-testid^="workspace-scripts-link-dev-"]'));
+    expect(links).toHaveLength(2);
+    expect(links[0]).toBe(originalLinks[0]);
+    expect(links[1]).toBe(originalLinks[1]);
+    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it("stops a running script through its terminal", async () => {
