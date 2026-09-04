@@ -278,6 +278,7 @@ function toTaskNotificationToolCall(
     synthetic: true,
     source: "claude_task_notification",
     ...(envelope.taskId ? { taskId: envelope.taskId } : {}),
+    ...(envelope.toolUseId ? { toolUseId: envelope.toolUseId } : {}),
     ...(envelope.status ? { status: envelope.status } : {}),
     ...(envelope.outputFile ? { outputFile: envelope.outputFile } : {}),
   };

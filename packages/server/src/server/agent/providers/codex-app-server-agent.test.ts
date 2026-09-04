@@ -3266,6 +3266,22 @@ describe("Codex app-server provider", () => {
       turn: { status: "completed" },
     });
 
+    const providerSubagents = events.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+    );
+    expect(providerSubagents).toContainEqual(
+      expect.objectContaining({
+        id: "child-thread-root",
+        parentSubagentId: null,
+      }),
+    );
+    expect(providerSubagents).toContainEqual(
+      expect.objectContaining({
+        id: "grandchild-thread",
+        parentSubagentId: "child-thread-root",
+      }),
+    );
+
     const beforeParentCompletes = events
       .filter((event) => event.type === "timeline" && event.item.type === "tool_call")
       .map((event) => event.item);
@@ -4083,6 +4099,59 @@ describe("Codex app-server provider", () => {
         detail: { type: "sub_agent", log: "[Assistant] Legacy findings after resume." },
       },
     });
+  });
+
+  test("restores nested MultiAgentV2 ownership from persisted child threads", async () => {
+    const session = createSession();
+    const childrenByThreadId = new Map([
+      ["test-thread", { id: "persisted-child", path: "/root/persisted-child" }],
+      ["persisted-child", { id: "persisted-grandchild", path: "/root/persisted-child/grandchild" }],
+    ]);
+    session.client = {
+      request: vi.fn(async (method: string, params: unknown) => {
+        if (method !== "thread/read") {
+          return {};
+        }
+        const threadId = (params as { threadId?: string }).threadId;
+        const child = threadId ? childrenByThreadId.get(threadId) : undefined;
+        return {
+          thread: {
+            turns: child
+              ? [
+                  {
+                    items: [
+                      {
+                        type: "subAgentActivity",
+                        id: `spawn-${child.id}`,
+                        kind: "started",
+                        agentThreadId: child.id,
+                        agentPath: child.path,
+                      },
+                    ],
+                  },
+                ]
+              : [],
+          },
+        };
+      }),
+    };
+
+    await asInternals(session).loadPersistedHistory();
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+    const upserts = history.flatMap((event) =>
+      event.type === "provider_subagent" && event.event.type === "upsert" ? [event.event] : [],
+    );
+    expect(upserts).toEqual([
+      expect.objectContaining({ id: "persisted-child", parentSubagentId: null }),
+      expect.objectContaining({
+        id: "persisted-grandchild",
+        parentSubagentId: "persisted-child",
+      }),
+    ]);
   });
 
   test("coalesces persisted MultiAgentV2 activity for one child into one terminal card", async () => {

@@ -26,7 +26,7 @@ const cases: ProviderSubagentCase[] = [
     provider: "claude",
     sentinel: "CLAUDE_CHILD_SENTINEL",
     expectedName: "sentinel_child",
-    providerConfig: { model: "opus" },
+    providerConfig: { model: "claude-sonnet-5" },
     prompt:
       'Use Claude Code\'s native Task tool exactly once. Set its subagent_type input to "Explore" and its name input to "sentinel_child". Ask it to reply with exactly CLAUDE_CHILD_SENTINEL and do nothing else. Wait for it, then reply ROOT_DONE. Do not use Paseo tools.',
   },
@@ -146,4 +146,73 @@ test.describe("real provider subagent timelines", () => {
       }
     });
   }
+});
+
+test.describe("real Claude nested subagent ownership", () => {
+  test.setTimeout(600_000);
+
+  test("keeps a grandchild and its background notification with their direct owners", async ({
+    page,
+  }, testInfo) => {
+    const cwd = realpathSync(mkdtempSync(path.join(tmpdir(), "paseo-claude-nested-ui-")));
+    let handle: AgentHandle | undefined;
+    const prompt =
+      "You are ROOT_OWNER. Use Claude Code's native Agent tool exactly once, never Paseo tools. " +
+      "Name the agent direct_owner and give it this complete task: You are DIRECT_OWNER. Use " +
+      "Claude Code's native Agent tool exactly once. Name that agent nested_owner and give it " +
+      "this complete task: You are NESTED_OWNER. Use Bash exactly once to run `sleep 2; printf " +
+      "'NESTED_BACKGROUND_SENTINEL\\n'` with run_in_background true. Wait for the background " +
+      "command's completion notification, then reply exactly NESTED_DONE. Wait for nested_owner " +
+      "to finish, then reply exactly DIRECT_DONE. Wait for direct_owner to finish, then reply " +
+      "exactly ROOT_DONE.";
+
+    try {
+      handle = await launchAgent({
+        page,
+        provider: "claude",
+        cwd,
+        mode: "full-access",
+        providerConfig: { model: "claude-sonnet-5" },
+      });
+      await sendMessage(handle, prompt);
+      await expect(
+        page.getByTestId("assistant-message").filter({ hasText: "ROOT_DONE" }).last(),
+      ).toBeVisible({ timeout: 120_000 });
+
+      await expect(page.getByText("Task notification", { exact: true })).toHaveCount(0);
+      await openSubagentsTrack(page);
+      const rootRows = page.locator('[data-testid^="subagents-track-row-"]');
+      await expect(rootRows).toHaveCount(1);
+      await expect(rootRows.first()).toContainText("direct_owner");
+      await rootRows.first().click();
+
+      const directPanel = page.getByTestId("provider-subagent-panel");
+      await expect(directPanel).toBeVisible();
+      await directPanel.getByTestId("subagents-track-header").click();
+      const nestedRows = page.locator('[data-testid^="subagents-track-row-"]');
+      await expect(nestedRows).toHaveCount(1);
+      await expect(nestedRows.first()).toContainText("nested_owner");
+
+      const hierarchyScreenshot = testInfo.outputPath("claude-nested-ownership-after-tree.png");
+      await page.screenshot({ path: hierarchyScreenshot });
+      await testInfo.attach("Claude nested ownership after: tree", {
+        path: hierarchyScreenshot,
+        contentType: "image/png",
+      });
+
+      await nestedRows.first().click();
+      const nestedPanel = page.locator('[data-testid="provider-subagent-panel"]:visible');
+      await expect(nestedPanel.getByText("Task notification", { exact: true })).toBeVisible();
+      await expect(nestedPanel).toContainText("NESTED_BACKGROUND_SENTINEL");
+
+      const timelineScreenshot = testInfo.outputPath("claude-nested-ownership-after-timeline.png");
+      await page.screenshot({ path: timelineScreenshot });
+      await testInfo.attach("Claude nested ownership after: timeline", {
+        path: timelineScreenshot,
+        contentType: "image/png",
+      });
+    } finally {
+      await cleanupRewindFlow({ handle, cwd });
+    }
+  });
 });

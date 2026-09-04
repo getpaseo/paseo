@@ -95,17 +95,25 @@ describe("observeReplaySubagents", () => {
     });
   });
 
-  it("replays only this session's own children, not their descendants", () => {
-    // Claude Code writes every descendant into the same subagents/ directory. A grandchild's
-    // toolUseId names a Task call made inside its parent's session, so nothing here can resolve
-    // it: it would replay as an extra row the live stream never showed, with no Task card and no
-    // outcome. One recorded session showed 10 subagents live and 22 on reopen.
+  it("replays descendants beneath the sidechain that declared their Task", () => {
+    const nestedToolUseId = "toolu_012rzYnFZA";
     const observations = observeReplaySubagents({
       subagents: [
-        { agentId: AGENT_ID, meta: { toolUseId: TOOL_USE_ID, spawnDepth: 1 }, entries: [] },
+        {
+          agentId: AGENT_ID,
+          meta: { toolUseId: TOOL_USE_ID, spawnDepth: 1 },
+          entries: [],
+          parentFacts: {
+            toolCalls: new Map([
+              [nestedToolUseId, { title: "Explore", description: "Nested audit" }],
+            ]),
+            linksByAgentId: new Map(),
+            outcomesByToolCallId: new Map([[nestedToolUseId, { failed: false }]]),
+          },
+        },
         {
           agentId: "a6acb4b898",
-          meta: { toolUseId: "toolu_012rzYnFZA", agentType: "Explore", spawnDepth: 2 },
+          meta: { toolUseId: nestedToolUseId, agentType: "Explore", spawnDepth: 2 },
           entries: [],
         },
       ],
@@ -113,7 +121,13 @@ describe("observeReplaySubagents", () => {
       convertEntry: () => [],
     });
 
-    expect([...new Set(observations.map((observation) => observation.id))]).toEqual([TOOL_USE_ID]);
+    expect(observations).toContainEqual(
+      expect.objectContaining({
+        kind: "declared",
+        id: nestedToolUseId,
+        parentSubagentId: TOOL_USE_ID,
+      }),
+    );
   });
 
   it("keeps a subagent recorded before spawnDepth existed", () => {
