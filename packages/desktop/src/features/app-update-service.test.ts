@@ -27,9 +27,10 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
   } | null = null;
   checkCount = 0;
   downloadCallCount = 0;
+  requestedDownloadVersions: string[] = [];
   downloadedVersions: string[] = [];
   installedVersions: string[] = [];
-  installModes: Array<{ isSilent: boolean; isForceRunAfter: boolean }> = [];
+  installModes: Array<{ targetVersion: string; isSilent: boolean; isForceRunAfter: boolean }> = [];
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     this.configuration = input;
@@ -130,8 +131,9 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     return { ...result, isUpdateAvailable };
   }
 
-  async downloadUpdate(): Promise<void> {
+  async downloadUpdate(targetVersion: string): Promise<void> {
     this.downloadCallCount += 1;
+    this.requestedDownloadVersions.push(targetVersion);
     if (this.activeDownload) {
       return this.activeDownload.promise;
     }
@@ -140,10 +142,10 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     }
   }
 
-  quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
+  quitAndInstall(targetVersion: string, isSilent: boolean, isForceRunAfter: boolean): void {
     if (this.downloadedUpdate) {
       this.installedVersions.push(this.downloadedUpdate.version);
-      this.installModes.push({ isSilent, isForceRunAfter });
+      this.installModes.push({ targetVersion, isSilent, isForceRunAfter });
     }
   }
 }
@@ -387,7 +389,9 @@ describe("app update service", () => {
 
     expect(installed).toBe(true);
     expect(runtime.installedVersions).toEqual(["1.2.5"]);
-    expect(runtime.installModes).toEqual([{ isSilent: true, isForceRunAfter: false }]);
+    expect(runtime.installModes).toEqual([
+      { targetVersion: "1.2.5", isSilent: true, isForceRunAfter: false },
+    ]);
   });
 
   it("does not install an older download while its replacement is still rolling out", async () => {
@@ -491,7 +495,9 @@ describe("app update service", () => {
 
     expect(result.installed).toBe(true);
     expect(runtime.installedVersions).toEqual(["1.2.5"]);
-    expect(runtime.installModes).toEqual([{ isSilent: false, isForceRunAfter: true }]);
+    expect(runtime.installModes).toEqual([
+      { targetVersion: "1.2.5", isSilent: false, isForceRunAfter: true },
+    ]);
   });
 
   it("waits for a stale active download before downloading and installing the rechecked version", async () => {
@@ -518,6 +524,7 @@ describe("app update service", () => {
 
     expect(result.installed).toBe(true);
     expect(runtime.downloadedVersions).toEqual(["1.2.4", "1.2.5"]);
+    expect(runtime.requestedDownloadVersions).toEqual(["1.2.5"]);
     expect(runtime.installedVersions).toEqual(["1.2.5"]);
   });
 

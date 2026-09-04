@@ -44,8 +44,8 @@ export interface AppUpdateRuntimeConfiguration {
 export interface AppUpdateRuntime {
   configure(input: AppUpdateRuntimeConfiguration): void;
   checkForUpdates(): Promise<RuntimeUpdateCheckResult | null>;
-  downloadUpdate(): Promise<unknown>;
-  quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void;
+  downloadUpdate(targetVersion: string): Promise<unknown>;
+  quitAndInstall(targetVersion: string, isSilent: boolean, isForceRunAfter: boolean): void;
 }
 
 export interface AppUpdateService {
@@ -101,15 +101,17 @@ function buildCheckResult(input: {
 async function performQuitAndInstall(
   runtime: AppUpdateRuntime,
   {
+    targetVersion,
     onBeforeQuit,
     restart,
   }: {
+    targetVersion: string;
     onBeforeQuit?: () => Promise<void>;
     restart: boolean;
   },
 ): Promise<void> {
   if (onBeforeQuit) await onBeforeQuit();
-  runtime.quitAndInstall(/* isSilent */ !restart, /* isForceRunAfter */ restart);
+  runtime.quitAndInstall(targetVersion, /* isSilent */ !restart, /* isForceRunAfter */ restart);
 }
 
 function getErrorMessage(error: unknown): string {
@@ -356,7 +358,7 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
       const attemptedVersion: string = preparingUpdateVersion ?? readyVersion;
       preparingUpdateVersion ??= readyVersion;
       try {
-        await deps.runtime.downloadUpdate();
+        await deps.runtime.downloadUpdate(attemptedVersion);
       } catch (error) {
         if (
           attemptedVersion !== readyVersion &&
@@ -406,7 +408,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
     }
 
     if (isReadyToInstallVersion(readyVersion)) {
-      await performQuitAndInstall(deps.runtime, { onBeforeQuit, restart });
+      await performQuitAndInstall(deps.runtime, {
+        targetVersion: readyVersion,
+        onBeforeQuit,
+        restart,
+      });
       return {
         installed: true,
         version: readyVersion,
@@ -426,7 +432,11 @@ export function createAppUpdateService(deps: AppUpdateServiceDeps): AppUpdateSer
           message: "A newer update was found and will be installed later.",
         };
       }
-      await performQuitAndInstall(deps.runtime, { onBeforeQuit, restart });
+      await performQuitAndInstall(deps.runtime, {
+        targetVersion: readyVersion,
+        onBeforeQuit,
+        restart,
+      });
 
       return {
         installed: true,

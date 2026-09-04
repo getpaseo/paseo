@@ -52,6 +52,31 @@ describe("desktop updater diagnostics", () => {
     expect(diagnostics.state?.modifiedAt).not.toBeNull();
   });
 
+  it("keeps readable ShipIt evidence when another file cannot be read", () => {
+    testDirectory = mkdtempSync(path.join(tmpdir(), "paseo-updater-diagnostics-"));
+    const shipItDirectory = path.join(testDirectory, "sh.paseo.desktop.ShipIt");
+    mkdirSync(path.join(shipItDirectory, "ShipIt_stdout.log"), { recursive: true });
+    writeFileSync(path.join(shipItDirectory, "ShipIt_stderr.log"), "installer evidence\n");
+
+    const diagnostics = collectDesktopUpdaterDiagnostics({
+      platform: "darwin",
+      currentVersion: "0.7.0",
+      cachePath: testDirectory,
+      readBundleVersion: () => null,
+    });
+
+    expect(diagnostics.stdout).toMatchObject({
+      exists: true,
+      contents: "",
+      error: expect.any(String),
+    });
+    expect(diagnostics.stderr).toMatchObject({
+      exists: true,
+      contents: "installer evidence",
+      error: null,
+    });
+  });
+
   it("does not look for ShipIt files outside macOS", () => {
     const diagnostics = collectDesktopUpdaterDiagnostics({
       platform: "linux",

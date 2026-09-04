@@ -36,6 +36,51 @@ let cachedStagingUserIdPromise: Promise<string> | null = null;
 
 const UPDATE_CHANNEL_NOT_PUBLISHED_CODE = "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND";
 
+interface AppUpdateLogSink {
+  info(message: string, details: Record<string, unknown>): void;
+}
+
+export function createAppUpdateLifecycleLogger(logger: AppUpdateLogSink) {
+  return {
+    checkStarted(details: {
+      currentVersion: string;
+      releaseChannel: AppReleaseChannel;
+      intent: AppUpdateCheckIntent;
+    }): void {
+      logger.info("[auto-updater] check started", details);
+    },
+    checkCompleted(details: {
+      currentVersion: string;
+      targetVersion: string;
+      releaseChannel: AppReleaseChannel;
+      intent: AppUpdateCheckIntent;
+      hasUpdate: boolean;
+      readyToInstall: boolean;
+      errorMessage: string | null;
+    }): void {
+      logger.info("[auto-updater] check completed", details);
+    },
+    updateAvailable(targetVersion: string): void {
+      logger.info("[auto-updater] update available", { targetVersion });
+    },
+    updateDownloaded(targetVersion: string): void {
+      logger.info("[auto-updater] update downloaded", { targetVersion });
+    },
+    downloadRequested(targetVersion: string): void {
+      logger.info("[auto-updater] download requested", { targetVersion });
+    },
+    quitAndInstallRequested(details: {
+      targetVersion: string;
+      isSilent: boolean;
+      isForceRunAfter: boolean;
+    }): void {
+      logger.info("[auto-updater] quitAndInstall requested", details);
+    },
+  };
+}
+
+const updateLifecycleLog = createAppUpdateLifecycleLogger(log);
+
 function isUpdateChannelNotPublished(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -99,7 +144,6 @@ export function shouldInstallAppUpdateOnQuit(input: {
 
 class ElectronAppUpdateRuntime implements AppUpdateRuntime {
   private configured = false;
-  private targetVersion: string | null = null;
 
   configure(input: AppUpdateRuntimeConfiguration): void {
     autoUpdater.autoDownload = true;
@@ -136,14 +180,12 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
 
     autoUpdater.on("update-available", (info) => {
       const updateInfo = info as RuntimeUpdateInfo;
-      this.targetVersion = updateInfo.version;
-      log.info("[auto-updater] update available", { targetVersion: updateInfo.version });
+      updateLifecycleLog.updateAvailable(updateInfo.version);
       input.onUpdateAvailable(updateInfo);
     });
     autoUpdater.on("update-downloaded", (info) => {
       const updateInfo = info as RuntimeUpdateInfo;
-      this.targetVersion = updateInfo.version;
-      log.info("[auto-updater] update downloaded", { targetVersion: updateInfo.version });
+      updateLifecycleLog.updateDownloaded(updateInfo.version);
       input.onUpdateDownloaded(updateInfo);
     });
     autoUpdater.on("error", (error) => {
@@ -166,15 +208,15 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     }
   }
 
-  downloadUpdate(): Promise<unknown> {
-    log.info("[auto-updater] download requested", { targetVersion: this.targetVersion });
+  downloadUpdate(targetVersion: string): Promise<unknown> {
+    updateLifecycleLog.downloadRequested(targetVersion);
     return autoUpdater.downloadUpdate();
   }
 
-  quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
+  quitAndInstall(targetVersion: string, isSilent: boolean, isForceRunAfter: boolean): void {
     autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
-    log.info("[auto-updater] quitAndInstall requested", {
-      targetVersion: this.targetVersion,
+    updateLifecycleLog.quitAndInstallRequested({
+      targetVersion,
       isSilent,
       isForceRunAfter,
     });
@@ -211,13 +253,13 @@ export async function checkForAppUpdate({
   releaseChannel: AppReleaseChannel;
   intent: AppUpdateCheckIntent;
 }): Promise<AppUpdateCheckResult> {
-  log.info("[auto-updater] check started", { currentVersion, releaseChannel, intent });
+  updateLifecycleLog.checkStarted({ currentVersion, releaseChannel, intent });
   const result = await appUpdateService.checkForAppUpdate({
     currentVersion,
     releaseChannel,
     intent,
   });
-  log.info("[auto-updater] check completed", {
+  updateLifecycleLog.checkCompleted({
     currentVersion,
     targetVersion: result.latestVersion,
     releaseChannel,

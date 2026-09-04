@@ -4,10 +4,9 @@ import path from "node:path";
 import { UUID } from "builder-util-runtime";
 import { describe, expect, it, vi } from "vitest";
 
-const { autoUpdaterMock, logInfo } = vi.hoisted(() => {
+const { autoUpdaterMock } = vi.hoisted(() => {
   const handlers = new Map<string, (value: unknown) => void>();
   return {
-    logInfo: vi.fn(),
     autoUpdaterMock: {
       handlers,
       logger: {
@@ -37,16 +36,10 @@ vi.mock("electron-updater", () => ({
   autoUpdater: autoUpdaterMock,
 }));
 
-vi.mock("electron-log/main", () => ({
-  default: {
-    info: logInfo,
-  },
-}));
-
 import {
   bucketFromStagingUserId,
   checkForAppUpdate,
-  downloadAndInstallUpdate,
+  createAppUpdateLifecycleLogger,
   resolveStagingUserId,
   rolloutManifestSchema,
   shouldAdmitToRollout,
@@ -104,34 +97,45 @@ describe("checkForAppUpdate", () => {
     consoleError.mockRestore();
   });
 
-  it("logs the update handoff with current and target versions", async () => {
-    const updateInfo = { version: "1.2.4" };
-    autoUpdaterMock.checkForUpdates.mockResolvedValue({
-      isUpdateAvailable: true,
-      updateInfo,
-    });
+  it("logs the update handoff with current and selected target versions", () => {
+    const info = vi.fn();
+    const lifecycleLog = createAppUpdateLifecycleLogger({ info });
 
-    await checkForAppUpdate({
+    lifecycleLog.checkStarted({
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       intent: "manual",
     });
-    autoUpdaterMock.handlers.get("update-downloaded")?.(updateInfo);
-    await downloadAndInstallUpdate({
+    lifecycleLog.checkCompleted({
       currentVersion: "1.2.3",
+      targetVersion: "1.2.5",
       releaseChannel: "stable",
+      intent: "manual",
+      hasUpdate: true,
+      readyToInstall: true,
+      errorMessage: null,
+    });
+    lifecycleLog.updateDownloaded("1.2.4");
+    lifecycleLog.downloadRequested("1.2.5");
+    lifecycleLog.quitAndInstallRequested({
+      targetVersion: "1.2.5",
+      isSilent: false,
+      isForceRunAfter: true,
     });
 
-    expect(logInfo).toHaveBeenCalledWith("[auto-updater] check started", {
+    expect(info).toHaveBeenCalledWith("[auto-updater] check started", {
       currentVersion: "1.2.3",
       releaseChannel: "stable",
       intent: "manual",
     });
-    expect(logInfo).toHaveBeenCalledWith("[auto-updater] update downloaded", {
+    expect(info).toHaveBeenCalledWith("[auto-updater] update downloaded", {
       targetVersion: "1.2.4",
     });
-    expect(logInfo).toHaveBeenCalledWith("[auto-updater] quitAndInstall requested", {
-      targetVersion: "1.2.4",
+    expect(info).toHaveBeenCalledWith("[auto-updater] download requested", {
+      targetVersion: "1.2.5",
+    });
+    expect(info).toHaveBeenCalledWith("[auto-updater] quitAndInstall requested", {
+      targetVersion: "1.2.5",
       isSilent: false,
       isForceRunAfter: true,
     });

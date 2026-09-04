@@ -117,6 +117,7 @@ function formatUpdaterFileSection(
     { label: "Path", value: file.path || "unknown" },
     { label: "Modified", value: file.modifiedAt ?? "unknown" },
   ]);
+  if (file.error) return `${header}\n  Error: ${file.error}`;
   if (!file.exists) return `${header}\n  File not found`;
   if (!file.contents) return `${header}\n  No contents found`;
   return `${header}\n${indentBlock(file.contents)}`;

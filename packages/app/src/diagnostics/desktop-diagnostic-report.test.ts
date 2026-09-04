@@ -35,18 +35,21 @@ function makeSources(): DesktopDiagnosticSources {
         exists: true,
         modifiedAt: "2026-09-04T11:22:19.000Z",
         contents: '{"launchAfterInstallation":true}',
+        error: null,
       },
       stdout: {
         path: "/cache/sh.paseo.desktop.ShipIt/ShipIt_stdout.log",
         exists: false,
         modifiedAt: null,
         contents: "",
+        error: null,
       },
       stderr: {
         path: "/cache/sh.paseo.desktop.ShipIt/ShipIt_stderr.log",
         exists: true,
         modifiedAt: "2026-09-01T08:39:20.000Z",
         contents: "Installation completed successfully",
+        error: null,
       },
     }),
   };

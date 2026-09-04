@@ -39,6 +39,7 @@ export interface DesktopUpdaterDiagnosticFile {
   exists: boolean;
   modifiedAt: string | null;
   contents: string;
+  error: string | null;
 }
 
 export interface DesktopUpdaterDiagnostics {
@@ -150,6 +151,7 @@ function parseDesktopUpdaterDiagnosticFile(raw: unknown): DesktopUpdaterDiagnost
     exists: raw.exists === true,
     modifiedAt: toStringOrNull(raw.modifiedAt),
     contents: typeof raw.contents === "string" ? raw.contents : "",
+    error: toStringOrNull(raw.error),
   };
 }
 

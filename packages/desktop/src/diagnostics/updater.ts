@@ -13,6 +13,7 @@ export interface DesktopUpdaterDiagnosticFile {
   exists: boolean;
   modifiedAt: string | null;
   contents: string;
+  error: string | null;
 }
 
 export interface DesktopUpdaterDiagnostics {
@@ -71,17 +72,26 @@ export function getDesktopUpdaterDiagnostics(): DesktopUpdaterDiagnostics {
 }
 
 function readDiagnosticFile(filePath: string, tail = false): DesktopUpdaterDiagnosticFile {
+  let exists = false;
+  let modifiedAt: string | null = null;
   try {
-    const modifiedAt = statSync(filePath).mtime.toISOString();
+    modifiedAt = statSync(filePath).mtime.toISOString();
+    exists = true;
     const contents = tail
       ? tailFile(filePath, SHIPIT_LOG_TAIL_LINES, { throwOnReadError: true })
       : readFileSync(filePath, "utf8");
-    return { path: filePath, exists: true, modifiedAt, contents };
+    return { path: filePath, exists, modifiedAt, contents, error: null };
   } catch (error) {
     if (isMissingFileError(error)) {
-      return { path: filePath, exists: false, modifiedAt: null, contents: "" };
+      return { path: filePath, exists: false, modifiedAt: null, contents: "", error: null };
     }
-    throw error;
+    return {
+      path: filePath,
+      exists,
+      modifiedAt,
+      contents: "",
+      error: error instanceof Error ? error.message : String(error),
+    };
   }
 }
 
