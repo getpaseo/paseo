@@ -139,6 +139,16 @@ export function runPluginClientBundle(
       if (!contribution.title.trim()) throw new Error(`Sidebar item ${normalizedId} has no title`);
       if (!contribution.icon.trim()) throw new Error(`Sidebar item ${normalizedId} has no icon`);
       resolvePluginIcon(contribution.icon.trim());
+      const badge = contribution.badge;
+      if (
+        badge !== undefined &&
+        (typeof badge !== "object" ||
+          badge === null ||
+          typeof badge.getSnapshot !== "function" ||
+          typeof badge.subscribe !== "function")
+      ) {
+        throw new Error(`Sidebar item ${normalizedId} has an invalid badge source`);
+      }
       sidebarItemIds.add(normalizedId);
       return register(
         collector.sidebarItems,
@@ -147,6 +157,7 @@ export function runPluginClientBundle(
           title: contribution.title.trim(),
           icon: contribution.icon.trim(),
           surface: requireId(contribution.surface, "sidebar surface id"),
+          ...(badge ? { badge } : {}),
         },
         () => sidebarItemIds.delete(normalizedId),
       );
