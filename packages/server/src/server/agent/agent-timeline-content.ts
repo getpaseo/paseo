@@ -1,5 +1,6 @@
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 import type { JsonValue } from "@getpaseo/protocol/agent-types";
+import { extractSpokenInputTranscript } from "../voice-config.js";
 
 const TOOL_CALL_CONTENT_MAX_LENGTH = 64 * 1024;
 export const PLUGIN_TIMELINE_DATA_MAX_BYTES = 64 * 1024;
@@ -33,6 +34,14 @@ function limitFailedShellError(item: AgentTimelineItem): AgentTimelineItem {
   };
 }
 
+function unwrapSpokenInput(item: AgentTimelineItem): AgentTimelineItem {
+  if (item.type !== "user_message") {
+    return item;
+  }
+  const transcript = extractSpokenInputTranscript(item.text);
+  return transcript === null ? item : { ...item, text: transcript };
+}
+
 function limitPlainText(item: AgentTimelineItem): AgentTimelineItem {
   if (
     item.type !== "tool_call" ||
@@ -52,6 +61,7 @@ function limitPlainText(item: AgentTimelineItem): AgentTimelineItem {
 }
 
 export function limitAgentTimelineItemContent(item: AgentTimelineItem): AgentTimelineItem {
+  item = unwrapSpokenInput(item);
   item = limitFailedShellError(item);
   item = limitPlainText(item);
   if (

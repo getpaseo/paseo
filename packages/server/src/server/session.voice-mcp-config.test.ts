@@ -3,8 +3,24 @@ import { describe, expect, test } from "vitest";
 import {
   buildVoiceAgentMcpServerConfig,
   buildVoiceModeSystemPrompt,
+  extractSpokenInputTranscript,
   stripVoiceModeSystemPrompt,
+  wrapSpokenInput,
 } from "./voice-config.js";
+
+describe("spoken input prompts", () => {
+  test("keeps voice instructions in the agent prompt while exposing the transcript separately", () => {
+    const prompt = wrapSpokenInput("Please check the build");
+
+    expect(prompt).toContain("<spoken-input>\nPlease check the build\n</spoken-input>");
+    expect(prompt).toContain("Respond using the speak tool only");
+    expect(extractSpokenInputTranscript(prompt)).toBe("Please check the build");
+  });
+
+  test("does not treat ordinary user text as a spoken input envelope", () => {
+    expect(extractSpokenInputTranscript("Document the <spoken-input> tag")).toBeNull();
+  });
+});
 
 describe("voice MCP stdio config", () => {
   test("builds stdio MCP config for voice agent", () => {
