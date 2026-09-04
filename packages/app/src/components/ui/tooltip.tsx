@@ -65,21 +65,51 @@ function useTooltipContext(componentName: string): TooltipContextValue {
 // Track the last input modality on web so TooltipTrigger can ignore focus
 // events that weren't keyboard-driven. Native has no equivalent scenario.
 let lastInputWasKeyboard = false;
-if (isWeb && typeof window !== "undefined") {
-  const markKeyboard = () => {
-    lastInputWasKeyboard = true;
-  };
-  const markPointer = () => {
-    lastInputWasKeyboard = false;
-  };
-  window.addEventListener("keydown", markKeyboard, true);
-  window.addEventListener("mousedown", markPointer, true);
-  window.addEventListener("pointerdown", markPointer, true);
-  window.addEventListener("touchstart", markPointer, true);
+let modalityTrackedWindow: unknown = null;
+
+function markKeyboardInput(): void {
+  lastInputWasKeyboard = true;
+}
+
+function markPointerInput(): void {
+  lastInputWasKeyboard = false;
+}
+
+// Attached from a mounted Tooltip rather than at import time so the module can
+// load before a DOM exists, and so the listeners always follow the current window.
+function trackInputModality(): void {
+  if (!isWeb || typeof window === "undefined" || modalityTrackedWindow === window) return;
+  modalityTrackedWindow = window;
+  window.addEventListener("keydown", markKeyboardInput, true);
+  window.addEventListener("mousedown", markPointerInput, true);
+  window.addEventListener("pointerdown", markPointerInput, true);
+  window.addEventListener("touchstart", markPointerInput, true);
 }
 
 function shouldOpenOnFocus(): boolean {
   return !isWeb || lastInputWasKeyboard;
+}
+
+function resolveEventTargetNode(event: unknown): Node | null {
+  if (typeof Node === "undefined" || typeof event !== "object" || event === null) return null;
+  const target: unknown = Reflect.get(event, "target");
+  return target instanceof Node ? target : null;
+}
+
+// React dispatches synthetic events along the React tree, not the DOM tree, so
+// an overlay that portals out of a trigger's DOM subtree still runs these
+// handlers — the composer's model combobox renders inside its own tooltip
+// trigger. Only react to events that actually landed on the trigger: otherwise
+// opening that combobox from a keyboard shortcut focuses the overlay and shows
+// the tooltip, and the overlay unmounts while focused so the balancing blur
+// never arrives and the tooltip is stranded on screen.
+function isEventOnTrigger(event: unknown, trigger: View | null): boolean {
+  if (!isWeb || typeof Node === "undefined") return true;
+  const triggerNode: unknown = trigger;
+  if (!(triggerNode instanceof Node)) return true;
+  const target = resolveEventTargetNode(event);
+  if (target === null) return true;
+  return triggerNode === target || triggerNode.contains(target);
 }
 
 function isCallable(fn: unknown): fn is (...args: unknown[]) => void {
@@ -250,6 +280,18 @@ export function Tooltip({
   const isCompact = useIsCompactFormFactor();
   const enabled = isCompact ? enabledOnMobile : enabledOnDesktop;
 
+  useEffect(() => {
+    trackInputModality();
+  }, []);
+
+  // A disabled tooltip is a closed tooltip. Callers disable a tooltip while the
+  // control it describes owns the screen (its menu is open); leaving `open` set
+  // would re-show the tooltip the moment the tooltip is enabled again, even
+  // though the pointer has long since moved on.
+  useEffect(() => {
+    if (!enabled && isOpen) setIsOpen(false);
+  }, [enabled, isOpen, setIsOpen]);
+
   const value = useMemo<TooltipContextValue>(
     () => ({
       open: isOpen,
@@ -317,17 +359,19 @@ export function TooltipTrigger({
   const handleHoverIn = useCallback(
     (e?: unknown) => {
       if (isCallable(onHoverIn)) onHoverIn(e);
+      if (!isEventOnTrigger(e, ctx.triggerRef.current)) return;
       scheduleOpen();
     },
-    [onHoverIn, scheduleOpen],
+    [ctx.triggerRef, onHoverIn, scheduleOpen],
   );
 
   const handleHoverOut = useCallback(
     (e?: unknown) => {
       if (isCallable(onHoverOut)) onHoverOut(e);
+      if (!isEventOnTrigger(e, ctx.triggerRef.current)) return;
       close();
     },
-    [onHoverOut, close],
+    [ctx.triggerRef, onHoverOut, close],
   );
 
   const handleFocus = useCallback(
@@ -335,6 +379,7 @@ export function TooltipTrigger({
       if (isCallable(onFocus)) onFocus(e);
       if (!ctx.enabled || disabled) return;
       if (!shouldOpenOnFocus()) return;
+      if (!isEventOnTrigger(e, ctx.triggerRef.current)) return;
       clearOpenTimer();
       ctx.setOpen(true);
     },
@@ -344,9 +389,10 @@ export function TooltipTrigger({
   const handleBlur = useCallback(
     (e: unknown) => {
       if (isCallable(onBlur)) onBlur(e);
+      if (!isEventOnTrigger(e, ctx.triggerRef.current)) return;
       close();
     },
-    [close, onBlur],
+    [close, ctx.triggerRef, onBlur],
   );
 
   const handlePress = useCallback(

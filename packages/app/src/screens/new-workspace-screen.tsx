@@ -23,6 +23,7 @@ import { Combobox, ComboboxItem } from "@/components/ui/combobox";
 import type { ComboboxOption as ComboboxOptionType, ComboboxProps } from "@/components/ui/combobox";
 import { ComboboxTrigger } from "@/components/ui/combobox-trigger";
 import { Shortcut } from "@/components/ui/shortcut";
+import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { TitlebarDragRegion } from "@/components/desktop/titlebar-drag-region";
 import { SidebarMenuToggle } from "@/components/headers/menu-header";
@@ -203,9 +204,85 @@ const metaChevron = <MetaChevron />;
 
 // Stable reference so the keyboard-action handler doesn't re-register each render.
 const PROJECT_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.project.pick"];
+const ISOLATION_TOGGLE_ACTIONS: readonly KeyboardActionId[] = ["workspace.isolation.toggle"];
+const REF_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.ref.pick"];
+const HOST_PICK_ACTIONS: readonly KeyboardActionId[] = ["workspace.host.pick"];
 // Height of a single picker-trigger badge. The Base-row spacer reserves exactly
 // this so toggling Isolation to Local hides the row without shifting the form.
 const BADGE_HEIGHT = 28;
+
+function useNewWorkspaceControlShortcuts(input: {
+  isPending: boolean;
+  projectCount: number;
+  hostCount: number;
+  canCreateWorktree: boolean;
+  showRefPicker: boolean;
+  selectedSourceDirectory: string | null;
+  openProjectPicker: () => void;
+  toggleIsolation: () => void;
+  openRefPicker: () => void;
+  openHostPicker: () => void;
+}) {
+  const {
+    isPending,
+    projectCount,
+    hostCount,
+    canCreateWorktree,
+    showRefPicker,
+    selectedSourceDirectory,
+    openProjectPicker,
+    toggleIsolation,
+    openRefPicker,
+    openHostPicker,
+  } = input;
+  const handleProjectPick = useCallback(() => {
+    openProjectPicker();
+    return true;
+  }, [openProjectPicker]);
+  useKeyboardActionHandler({
+    handlerId: "new-workspace-project-pick",
+    actions: PROJECT_PICK_ACTIONS,
+    enabled: projectCount > 0 && !isPending,
+    priority: 0,
+    handle: handleProjectPick,
+  });
+
+  const handleIsolationToggle = useCallback(() => {
+    toggleIsolation();
+    return true;
+  }, [toggleIsolation]);
+  useKeyboardActionHandler({
+    handlerId: "new-workspace-isolation-toggle",
+    actions: ISOLATION_TOGGLE_ACTIONS,
+    enabled: canCreateWorktree && !isPending,
+    priority: 0,
+    handle: handleIsolationToggle,
+  });
+
+  const handleRefPick = useCallback(() => {
+    openRefPicker();
+    return true;
+  }, [openRefPicker]);
+  useKeyboardActionHandler({
+    handlerId: "new-workspace-ref-pick",
+    actions: REF_PICK_ACTIONS,
+    enabled: showRefPicker && selectedSourceDirectory !== null && !isPending,
+    priority: 0,
+    handle: handleRefPick,
+  });
+
+  const handleHostPick = useCallback(() => {
+    openHostPicker();
+    return true;
+  }, [openHostPicker]);
+  useKeyboardActionHandler({
+    handlerId: "new-workspace-host-pick",
+    actions: HOST_PICK_ACTIONS,
+    enabled: hostCount > 1 && !isPending,
+    priority: 0,
+    handle: handleHostPick,
+  });
+}
 
 function RefPickerBadgeContent({
   selectedItem,
@@ -269,6 +346,8 @@ function RefPickerTrigger({
           style={badgePressableStyle}
           accessibilityRole="button"
           accessibilityLabel={accessibilityLabel}
+          shortcutActionId="select-starting-ref"
+          showShortcutHint={!disabled}
         >
           <RefPickerBadgeContent
             selectedItem={selectedItem}
@@ -322,6 +401,8 @@ function ProjectPickerTrigger({
           style={badgePressableStyle}
           accessibilityRole="button"
           accessibilityLabel="Workspace project"
+          shortcutActionId="switch-project"
+          showShortcutHint={!disabled}
         >
           <View style={styles.badgeIconBox}>
             {projectViewKey ? (
@@ -652,6 +733,8 @@ function IsolationPickerTrigger({
           style={badgePressableStyle}
           accessibilityRole="button"
           accessibilityLabel="Workspace isolation"
+          shortcutActionId="toggle-workspace-isolation"
+          showShortcutHint={!disabled}
         >
           <View style={styles.badgeIconBox}>
             {isolation === "worktree" ? (
@@ -1441,6 +1524,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
           </TooltipContent>
         </Tooltip>
       </HostPicker>
+      <ShortcutHint actionId="select-host" enabled={!isPending} />
     </View>
   ) : null;
 
@@ -1848,29 +1932,32 @@ export function NewWorkspaceScreen({
     setProjectPickerOpen(true);
   }, []);
 
-  // Cmd/Ctrl+P opens the project picker with its search focused so the user can
-  // switch projects from the keyboard. Registered only while this screen is
-  // mounted, so the shortcut doesn't swallow the browser's native print
-  // elsewhere; gated on having projects to pick.
-  const handleProjectPick = useCallback(() => {
-    openProjectPicker();
-    return true;
-  }, [openProjectPicker]);
-  useKeyboardActionHandler({
-    handlerId: "new-workspace-project-pick",
-    actions: PROJECT_PICK_ACTIONS,
-    enabled: projectPickerOptions.length > 0,
-    priority: 0,
-    handle: handleProjectPick,
-  });
-
   const openIsolationPicker = useCallback(() => {
     setIsolationPickerOpen(true);
   }, []);
 
+  // Isolation is binary, so the keyboard action flips it in place instead of
+  // opening the picker. Pointer users still get the picker from the trigger.
+  const toggleIsolation = useCallback(() => {
+    setIsolation(effectiveIsolation === "worktree" ? "local" : "worktree");
+  }, [effectiveIsolation, setIsolation]);
+
   const handleIsolationPickerOpenChange = useCallback((nextOpen: boolean) => {
     setIsolationPickerOpen(nextOpen);
   }, []);
+
+  useNewWorkspaceControlShortcuts({
+    isPending,
+    projectCount: projectPickerOptions.length,
+    hostCount: allHosts.length,
+    canCreateWorktree,
+    showRefPicker,
+    selectedSourceDirectory,
+    openProjectPicker,
+    toggleIsolation,
+    openRefPicker: openPicker,
+    openHostPicker,
+  });
 
   // "New worktree" is omitted entirely (not disabled) when the project isn't a
   // git checkout, since worktree isolation is impossible there.

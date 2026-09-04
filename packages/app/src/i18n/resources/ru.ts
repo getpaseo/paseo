@@ -2257,6 +2257,10 @@ export const ru: TranslationResources = {
         queueMessage: "Поставить сообщение в очередь",
         muteUnmuteVoiceMode: "Выключить/включить звук в голосовом режиме",
         switchProject: "Сменить проект",
+        toggleWorkspaceIsolation: "Переключить изоляцию рабочего пространства",
+        selectHost: "Выбрать хост",
+        toggleFastMode: "Переключить быстрый режим",
+        togglePlanMode: "Переключить режим планирования",
       },
       helpNotes: {
         showKeyboardShortcuts: "Доступно, когда фокус находится не в текстовом поле или терминале.",

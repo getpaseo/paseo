@@ -288,3 +288,35 @@ New status pills use `<StatusBadge>`. Identity, shortcut, and interactive link b
 | Trigger-anchored menu                               | `packages/app/src/components/ui/dropdown-menu.tsx` (used in `sidebar-workspace-list.tsx`, theme picker)                                                                                                                                                                                                  |
 | Right-click / long-press menu                       | `packages/app/src/components/ui/context-menu.tsx` (used in `sidebar-workspace-list.tsx`)                                                                                                                                                                                                                 |
 | Headers (back, screen, menu)                        | `packages/app/src/components/headers/back-header.tsx`, `screen-header.tsx`, `menu-header.tsx`                                                                                                                                                                                                            |
+
+## 15. Keyboard control hints
+
+Desktop control surfaces with registered shortcuts use
+`packages/app/src/components/ui/shortcut-hint.tsx`. Holding `Alt` briefly
+reveals compact symbolic chords such as `⌥M` or `⌥E` as absolute
+callouts anchored just below their controls, so labels remain visible and the
+controls do not reflow. The callout uses the tooltip surface tokens (popover
+background, accent border, `shadow.md`). The action still routes through the normal keyboard
+shortcut registry and dispatcher; screens and active composers register scoped
+handlers for the controls they own.
+
+Chord policy for these controls: a plain `Alt+<mnemonic>`, no Mod and no Shift.
+Alt is the only modifier with a full run of free mnemonic letters — `Mod+B` and
+`Mod+E` are the sidebars, `Mod+A` is Select All, and on macOS `Cmd+H`/`Cmd+M`
+are Hide/Minimize — and holding the same key that fires the chord is what
+reveals the hints. Because Alt behaves identically everywhere, these bindings
+need no mac/non-mac split, unlike most of the table.
+
+Bind Alt chords by physical key, not character: macOS rewrites `event.key` when
+Option is held (`Option+E` is `´`, not `e`), so `matchesKeyOrCode` in
+`keyboard-shortcuts.ts` falls back to `event.code` for any Alt binding. A new
+Alt chord that matches on `event.key` will silently never fire on macOS.
+
+On browser web, `Alt` is also the workspace-index jump modifier, so holding it
+reveals the sidebar number badges alongside the control hints. The two remain
+separate state — they just share a trigger key on that runtime.
+
+Control hints and sidebar workspace-number hints are separate state. The sidebar
+reveals the modifier that actually jumps to a workspace on that runtime, while
+control hints always reveal for `Alt`. Do not make a new control
+subscribe to the sidebar hint state.

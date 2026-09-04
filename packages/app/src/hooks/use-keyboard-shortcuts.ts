@@ -12,6 +12,7 @@ import {
   resolveKeyboardShortcut,
   buildEffectiveBindings,
   getWorkspaceIndexJumpModifierKey,
+  isShortcutModifierDown,
 } from "@/keyboard/keyboard-shortcuts";
 import { resolveKeyboardFocusScope } from "@/keyboard/focus-scope";
 import {
@@ -122,6 +123,9 @@ export function useKeyboardShortcuts({
       { isMac, isDesktop: isDesktopApp },
       bindings,
     );
+    // Every prompt-control chord is a plain Alt chord, so Alt is what reveals
+    // the control hints — the key you hold is the key you press with.
+    const controlShortcutModifierKey = "Alt";
     const setBadgeModifierDown = (down: boolean) => {
       const state = useKeyboardShortcutsStore.getState();
       if (isDesktopApp) {
@@ -347,11 +351,18 @@ export function useKeyboardShortcuts({
       if (key === badgeModifierKey && !event.shiftKey) {
         setBadgeModifierDown(true);
       }
+      if (key === controlShortcutModifierKey && !event.shiftKey) {
+        useKeyboardShortcutsStore.getState().setControlShortcutModifierDown(true);
+      }
       if (key === "Shift") {
+        // Shift+Mod chords are not workspace jumps, so hide the sidebar number
+        // badges. No control chord uses Shift either, so hide those too.
         const state = useKeyboardShortcutsStore.getState();
         if (state.altDown || state.cmdOrCtrlDown) {
-          state.resetModifiers();
+          state.setAltDown(false);
+          state.setCmdOrCtrlDown(false);
         }
+        state.setControlShortcutModifierDown(false);
       }
 
       const focusScope = resolveKeyboardFocusScope({
@@ -369,6 +380,13 @@ export function useKeyboardShortcuts({
       const key = event.key ?? "";
       if (key === badgeModifierKey) {
         setBadgeModifierDown(false);
+      }
+      if (key === controlShortcutModifierKey) {
+        useKeyboardShortcutsStore.getState().setControlShortcutModifierDown(false);
+      }
+      if (key === "Shift") {
+        setBadgeModifierDown(isShortcutModifierDown(event, badgeModifierKey));
+        useKeyboardShortcutsStore.getState().setControlShortcutModifierDown(event.altKey);
       }
     };
 

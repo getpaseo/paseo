@@ -49,9 +49,17 @@ export type KeyboardActionId =
   | "sidebar.toggle.both"
   | "workspace.new"
   | "workspace.project.pick"
+  | "workspace.isolation.toggle"
+  | "workspace.ref.pick"
+  | "workspace.host.pick"
   | "worktree.new"
   | "workspace.archive"
   | "workspace.pin"
+  | "message-input.model.pick"
+  | "message-input.thinking.pick"
+  | "message-input.mode.pick"
+  | "message-input.fast-mode.toggle"
+  | "message-input.plan-mode.toggle"
   // Command-center only: no keybind, so these are absent from route-shortcut.ts.
   | "workspace.rename"
   | "workspace.setup.show";
@@ -107,9 +115,17 @@ export type KeyboardActionDefinition =
   | { id: "sidebar.toggle.both"; scope: KeyboardActionScope }
   | { id: "workspace.new"; scope: KeyboardActionScope }
   | { id: "workspace.project.pick"; scope: KeyboardActionScope }
+  | { id: "workspace.isolation.toggle"; scope: KeyboardActionScope }
+  | { id: "workspace.ref.pick"; scope: KeyboardActionScope }
+  | { id: "workspace.host.pick"; scope: KeyboardActionScope }
   | { id: "worktree.new"; scope: KeyboardActionScope }
   | { id: "workspace.archive"; scope: KeyboardActionScope }
   | { id: "workspace.pin"; scope: KeyboardActionScope }
+  | { id: "message-input.model.pick"; scope: KeyboardActionScope }
+  | { id: "message-input.thinking.pick"; scope: KeyboardActionScope }
+  | { id: "message-input.mode.pick"; scope: KeyboardActionScope }
+  | { id: "message-input.fast-mode.toggle"; scope: KeyboardActionScope }
+  | { id: "message-input.plan-mode.toggle"; scope: KeyboardActionScope }
   | { id: "workspace.rename"; scope: KeyboardActionScope }
   | { id: "workspace.setup.show"; scope: KeyboardActionScope };
 

@@ -50,11 +50,19 @@ export type KeyboardActionId =
   | "workspace.terminal.new"
   | "workspace.new"
   | "workspace.project.pick"
+  | "workspace.isolation.toggle"
+  | "workspace.ref.pick"
+  | "workspace.host.pick"
   | "worktree.new"
   | "workspace.archive"
   | "workspace.pin"
   | "view.toggle.focus"
   | "theme.cycle"
+  | "message-input.model.pick"
+  | "message-input.thinking.pick"
+  | "message-input.mode.pick"
+  | "message-input.fast-mode.toggle"
+  | "message-input.plan-mode.toggle"
   | "message-input.action";
 
 export type KeyboardShortcutPayload =

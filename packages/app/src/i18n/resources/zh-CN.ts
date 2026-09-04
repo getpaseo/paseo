@@ -2193,6 +2193,10 @@ export const zhCN: TranslationResources = {
         queueMessage: "消息排队",
         muteUnmuteVoiceMode: "静音/取消静音语音模式",
         switchProject: "切换项目",
+        toggleWorkspaceIsolation: "切换工作区隔离",
+        selectHost: "选择主机",
+        toggleFastMode: "切换快速模式",
+        togglePlanMode: "切换计划模式",
       },
       helpNotes: {
         showKeyboardShortcuts: "焦点不在文本输入框或终端内时可用。",

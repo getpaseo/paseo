@@ -2229,6 +2229,10 @@ export const ko: TranslationResources = {
         queueMessage: "메시지 대기열에 추가",
         muteUnmuteVoiceMode: "음성 모드 음소거/해제",
         switchProject: "프로젝트 전환",
+        toggleWorkspaceIsolation: "워크스페이스 격리 토글",
+        selectHost: "호스트 선택",
+        toggleFastMode: "빠른 모드 토글",
+        togglePlanMode: "계획 모드 토글",
       },
       helpNotes: {
         showKeyboardShortcuts: "포커스가 텍스트 필드나 터미널에 있지 않을 때 사용할 수 있습니다.",

@@ -139,6 +139,19 @@ For this case, use `useHoverSafeZone` (`packages/app/src/hooks/use-hover-safe-zo
 
 Don't roll your own. The math is annoying, the edge cases (pointer leaves window, drag in progress, content unmounts) are subtle, and we already paid for the hook.
 
+## Portals inside a hover trigger fire phantom events
+
+React dispatches synthetic events along the **React** tree, not the DOM tree. An overlay that `createPortal`s into `overlay-root` is still a React child of whatever rendered it, so its focus and pointer events run the handlers of every React ancestor — including a hover trigger it visually escaped.
+
+This bites whenever a control that opens a popover sits inside its own `TooltipTrigger`. The composer's model chip is the canonical case: `CombinedModelSelector` renders its `Combobox` inline, so the combobox is a React descendant of the tooltip trigger wrapping the chip.
+
+Two distinct failure shapes, both of which stranded the "Change model" tooltip on screen:
+
+1. **Focus.** Opening the combobox by keyboard shortcut moves focus into the portaled overlay. That focusin reaches the trigger's `onFocus` and opens the tooltip. The overlay then unmounts while still focused, so no balancing blur ever arrives and the tooltip never closes. `TooltipTrigger` now ignores focus/hover events whose `target` is not a real DOM descendant of the trigger.
+2. **Pointer.** `onPointerEnter`/`onPointerLeave` are non-bubbling, so React synthesizes them by walking to the common **fiber** ancestor. Moving the cursor from the trigger into its portaled overlay finds that ancestor _is_ the trigger, so the trigger's `onPointerLeave` never fires — and once the overlay unmounts under the cursor, the next `mouseover` has a null `relatedTarget`, so the leave never arrives at all. A press closes the tooltip, which is why this only shows up when a keyboard shortcut opens the menu with the pointer parked on the trigger. The fix is to disable the tooltip while the menu is open (`enabledOnDesktop={openSelector !== "model"}`); a disabled `Tooltip` force-closes itself.
+
+The general rule: if a trigger contains anything that portals, the trigger cannot trust that every event it receives happened inside it.
+
 ## Pre-PR checklist
 
 Before opening a PR that touches hover:
@@ -151,4 +164,5 @@ Before opening a PR that touches hover:
 - [ ] Visibility on native and compact layouts works without hover (`isHovered || isNative || isCompact`).
 - [ ] A menu opened from the revealed trigger keeps the trigger rendered while it is open, so losing hover can't strand it.
 - [ ] If the revealed content sits in a separate layer (portal, floating panel), `useHoverSafeZone` is wired up.
+- [ ] If the trigger contains a control that portals (a combobox, dropdown, popover), you opened it **by keyboard shortcut** as well as by click, and the hover state cleared afterward.
 - [ ] You opened the dev server, hovered the trigger, and slowly moved the mouse along **every** revealed element — including any visible gaps — without losing hover state.

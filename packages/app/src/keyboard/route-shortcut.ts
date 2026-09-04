@@ -47,6 +47,9 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.tab.target.files": { id: "workspace.tab.target.files", scope: "workspace" },
   "workspace.new": { id: "workspace.new", scope: "sidebar" },
   "workspace.project.pick": { id: "workspace.project.pick", scope: "workspace" },
+  "workspace.isolation.toggle": { id: "workspace.isolation.toggle", scope: "workspace" },
+  "workspace.ref.pick": { id: "workspace.ref.pick", scope: "workspace" },
+  "workspace.host.pick": { id: "workspace.host.pick", scope: "workspace" },
   "workspace.archive": { id: "workspace.archive", scope: "sidebar" },
   "workspace.pin": { id: "workspace.pin", scope: "sidebar" },
   "worktree.new": { id: "worktree.new", scope: "sidebar" },
@@ -65,6 +68,17 @@ const PASSTHROUGH_DISPATCH: Record<string, KeyboardActionDefinition> = {
   "workspace.pane.move-tab.down": { id: "workspace.pane.move-tab.down", scope: "workspace" },
   "workspace.pane.close": { id: "workspace.pane.close", scope: "workspace" },
   "view.toggle.focus": { id: "workspace.focus.toggle", scope: "workspace" },
+  "message-input.model.pick": { id: "message-input.model.pick", scope: "message-input" },
+  "message-input.thinking.pick": { id: "message-input.thinking.pick", scope: "message-input" },
+  "message-input.mode.pick": { id: "message-input.mode.pick", scope: "message-input" },
+  "message-input.fast-mode.toggle": {
+    id: "message-input.fast-mode.toggle",
+    scope: "message-input",
+  },
+  "message-input.plan-mode.toggle": {
+    id: "message-input.plan-mode.toggle",
+    scope: "message-input",
+  },
 };
 
 const SIMPLE_CALLBACKS: Record<string, ShortcutCallbackName> = {

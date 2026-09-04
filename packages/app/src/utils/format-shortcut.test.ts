@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatShortcut } from "./format-shortcut";
+import { formatCompactShortcut, formatShortcut } from "./format-shortcut";
 
 describe("formatShortcut", () => {
   it("uses symbols on macOS", () => {
@@ -17,5 +17,12 @@ describe("formatShortcut", () => {
   it("uses Ctrl+ on non-mac platforms", () => {
     expect(formatShortcut(["mod", "B"], "non-mac")).toBe("Ctrl+B");
     expect(formatShortcut(["mod", "E"], "non-mac")).toBe("Ctrl+E");
+  });
+
+  it("uses compact modifier symbols for control hints", () => {
+    expect(formatCompactShortcut(["mod", "shift", "M"], "non-mac")).toBe("⌃⇧M");
+    expect(formatCompactShortcut(["mod", "alt", "F"], "non-mac")).toBe("⌃⌥F");
+    expect(formatCompactShortcut(["meta", "M"], "non-mac")).toBe("⊞M");
+    expect(formatCompactShortcut(["mod", "shift", "M"], "mac")).toBe("⌘⇧M");
   });
 });

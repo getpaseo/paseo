@@ -163,6 +163,9 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   workspaces: [
     "new-agent",
     "new-workspace",
+    "toggle-workspace-isolation",
+    "select-starting-ref",
+    "select-host",
     "workspace-jump-index",
     "workspace-prev",
     "workspace-next",
@@ -196,6 +199,11 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   "agent-input": [
     "focus-message-input",
     "cycle-agent-mode",
+    "select-model",
+    "select-thinking",
+    "select-agent-mode",
+    "toggle-fast-mode",
+    "toggle-plan-mode",
     "voice-toggle",
     "dictation-toggle",
     "agent-interrupt",
@@ -207,6 +215,9 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "new-agent": "settings.shortcuts.help.openProject",
   "new-workspace": "settings.shortcuts.help.newWorkspace",
   "switch-project": "settings.shortcuts.help.switchProject",
+  "toggle-workspace-isolation": "settings.shortcuts.help.toggleWorkspaceIsolation",
+  "select-starting-ref": "newWorkspace.refPicker.title",
+  "select-host": "settings.shortcuts.help.selectHost",
   "archive-workspace": "settings.shortcuts.help.archiveWorkspace",
   "workspace-tab-new": "settings.shortcuts.help.newTab",
   "workspace-tab-target-agent": "workspace.tabs.actions.newAgent",
@@ -243,6 +254,11 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "cycle-theme": "settings.shortcuts.help.cycleTheme",
   "focus-message-input": "settings.shortcuts.help.focusMessageInput",
   "cycle-agent-mode": "settings.shortcuts.help.cycleAgentMode",
+  "select-model": "modelSelector.selectModel",
+  "select-thinking": "agentControls.thinking.title",
+  "select-agent-mode": "agentControls.mode.title",
+  "toggle-fast-mode": "settings.shortcuts.help.toggleFastMode",
+  "toggle-plan-mode": "settings.shortcuts.help.togglePlanMode",
   "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
@@ -329,6 +345,107 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "search-files",
       section: "general",
       label: "Search files",
+    },
+  },
+
+  // --- New workspace controls ---
+  //
+  // These controls all bind to a plain Alt chord. Alt is the only modifier with
+  // a full run of free mnemonic letters (Mod+B/E/A are already the sidebars and
+  // Select All), it is identical on every platform so there is no mac/non-mac
+  // split, and it doubles as the key that reveals the control hints. macOS
+  // Option+letter matching is handled by matchesKeyOrCode below.
+  {
+    id: "workspace-isolation-toggle-alt-i",
+    action: "workspace.isolation.toggle",
+    combo: "Alt+I",
+    repeat: false,
+    when: { commandCenter: false, terminal: false },
+    help: {
+      id: "toggle-workspace-isolation",
+      section: "workspaces",
+      label: "Toggle workspace isolation",
+    },
+  },
+  {
+    id: "workspace-ref-pick-alt-b",
+    action: "workspace.ref.pick",
+    combo: "Alt+B",
+    when: { commandCenter: false, terminal: false },
+    help: {
+      id: "select-starting-ref",
+      section: "workspaces",
+      label: "Select starting ref",
+    },
+  },
+  {
+    id: "workspace-host-pick-alt-h",
+    action: "workspace.host.pick",
+    combo: "Alt+H",
+    when: { commandCenter: false, terminal: false },
+    help: {
+      id: "select-host",
+      section: "workspaces",
+      label: "Select host",
+    },
+  },
+
+  // --- Composer controls ---
+  {
+    id: "message-input-model-pick-alt-m",
+    action: "message-input.model.pick",
+    combo: "Alt+M",
+    when: { commandCenter: false, terminal: false },
+    help: {
+      id: "select-model",
+      section: "agent-input",
+      label: "Select model",
+    },
+  },
+  {
+    id: "message-input-thinking-pick-alt-e",
+    action: "message-input.thinking.pick",
+    combo: "Alt+E",
+    when: { commandCenter: false, terminal: false },
+    help: {
+      id: "select-thinking",
+      section: "agent-input",
+      label: "Select thinking effort",
+    },
+  },
+  {
+    id: "message-input-mode-pick-alt-a",
+    action: "message-input.mode.pick",
+    combo: "Alt+A",
+    when: { commandCenter: false, terminal: false },
+    help: {
+      id: "select-agent-mode",
+      section: "agent-input",
+      label: "Select agent mode",
+    },
+  },
+  {
+    id: "message-input-fast-mode-toggle-alt-f",
+    action: "message-input.fast-mode.toggle",
+    combo: "Alt+F",
+    repeat: false,
+    when: { commandCenter: false, terminal: false },
+    help: {
+      id: "toggle-fast-mode",
+      section: "agent-input",
+      label: "Toggle fast mode",
+    },
+  },
+  {
+    id: "message-input-plan-mode-toggle-alt-p",
+    action: "message-input.plan-mode.toggle",
+    combo: "Alt+P",
+    repeat: false,
+    when: { commandCenter: false, terminal: false },
+    help: {
+      id: "toggle-plan-mode",
+      section: "agent-input",
+      label: "Toggle plan mode",
     },
   },
 
@@ -1661,6 +1778,22 @@ export function getWorkspaceIndexJumpModifierKey(
   if (combo.ctrl) return "Control";
   if (combo.alt) return "Alt";
   return null;
+}
+
+export function isShortcutModifierDown(
+  event: Pick<KeyboardShortcutInput, "altKey" | "ctrlKey" | "metaKey">,
+  modifierKey: "Alt" | "Meta" | "Control" | null,
+): boolean {
+  switch (modifierKey) {
+    case "Alt":
+      return event.altKey;
+    case "Meta":
+      return event.metaKey;
+    case "Control":
+      return event.ctrlKey;
+    case null:
+      return false;
+  }
 }
 
 export function buildKeyboardShortcutHelpSections(

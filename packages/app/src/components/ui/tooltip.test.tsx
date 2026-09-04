@@ -1,8 +1,9 @@
 import React from "react";
 import { act } from "react";
+import { createPortal } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { JSDOM } from "jsdom";
-import { Pressable, Text } from "react-native";
+import { Pressable, Text, View } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Tooltip, TooltipTrigger } from "./tooltip";
 
@@ -95,6 +96,46 @@ function pressTrigger(): void {
   });
 }
 
+function renderTriggerWithPortaledOverlay(onOpenChange: (open: boolean) => void): void {
+  const portalHost = document.createElement("div");
+  document.body.appendChild(portalHost);
+
+  act(() => {
+    root?.render(
+      <Tooltip onOpenChange={onOpenChange}>
+        <TooltipTrigger asChild triggerRefProp="ref">
+          <View testID="trigger">
+            <Pressable testID="inner">
+              <Text>Opus 5</Text>
+            </Pressable>
+            {createPortal(
+              <button type="button" data-testid="overlay-option">
+                Sonnet 5
+              </button>,
+              portalHost,
+            )}
+          </View>
+        </TooltipTrigger>
+      </Tooltip>,
+    );
+  });
+}
+
+function pressKey(): void {
+  act(() => {
+    window.dispatchEvent(new window.KeyboardEvent("keydown", { key: "m", altKey: true }));
+  });
+}
+
+function focusElement(testID: string): void {
+  const element = document.querySelector(`[data-testid="${testID}"]`);
+  expect(element).not.toBeNull();
+
+  act(() => {
+    element?.dispatchEvent(new window.FocusEvent("focusin", { bubbles: true }));
+  });
+}
+
 describe("TooltipTrigger", () => {
   it("keeps an asChild trigger disabled when the child is disabled", () => {
     const onPress = vi.fn();
@@ -112,5 +153,29 @@ describe("TooltipTrigger", () => {
     pressTrigger();
 
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens on keyboard focus inside the trigger", () => {
+    const onOpenChange = vi.fn();
+
+    renderTriggerWithPortaledOverlay(onOpenChange);
+    pressKey();
+    focusElement("inner");
+
+    expect(onOpenChange).toHaveBeenCalledWith(true);
+  });
+
+  // A combobox rendered inside its own tooltip trigger portals out of the
+  // trigger's DOM subtree but stays a React child, so its focus events still
+  // reach these handlers. Opening it by shortcut used to show the tooltip, and
+  // the overlay unmounts while focused, so the tooltip never got its blur.
+  it("ignores keyboard focus that lands in an overlay portaled out of the trigger", () => {
+    const onOpenChange = vi.fn();
+
+    renderTriggerWithPortaledOverlay(onOpenChange);
+    pressKey();
+    focusElement("overlay-option");
+
+    expect(onOpenChange).not.toHaveBeenCalled();
   });
 });

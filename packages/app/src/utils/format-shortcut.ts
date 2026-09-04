@@ -54,3 +54,18 @@ export function formatShortcut(keys: ShortcutKey[], os: ShortcutOs): string {
     .filter(Boolean)
     .join("+");
 }
+
+export function formatCompactShortcut(keys: ShortcutKey[], os: ShortcutOs): string {
+  const modifierSymbols: Record<string, string> = {
+    mod: os === "mac" ? "⌘" : "⌃",
+    shift: "⇧",
+    alt: "⌥",
+    ctrl: "⌃",
+    meta: os === "mac" ? "⌘" : "⊞",
+  };
+
+  return keys
+    .map((key) => modifierSymbols[key] ?? normalizeKey(key))
+    .filter(Boolean)
+    .join("");
+}

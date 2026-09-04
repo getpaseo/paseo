@@ -6,6 +6,7 @@ import {
   getBindingIdForAction,
   getDefaultKeysForAction,
   getWorkspaceIndexJumpModifierKey,
+  isShortcutModifierDown,
   parseBindingChord,
   resolveKeyboardShortcut,
   resolveShortcutKeysForAction,
@@ -160,6 +161,54 @@ describe("keyboard-shortcuts", () => {
       event: { key: "p", code: "KeyP", ctrlKey: true },
       context: { isMac: false, commandCenterOpen: false, focusScope: "other" },
       action: "command-center.files",
+    },
+    {
+      name: "matches Alt+I to toggle workspace isolation on mac",
+      event: { key: "i", code: "KeyI", altKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+      action: "workspace.isolation.toggle",
+    },
+    {
+      name: "matches Alt+B to select the starting ref on non-mac",
+      event: { key: "b", code: "KeyB", altKey: true },
+      context: { isMac: false, focusScope: "message-input" },
+      action: "workspace.ref.pick",
+    },
+    {
+      name: "matches Alt+M to select the model on mac",
+      event: { key: "µ", code: "KeyM", altKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+      action: "message-input.model.pick",
+    },
+    {
+      name: "matches Alt+E to select thinking effort on non-mac",
+      event: { key: "e", code: "KeyE", altKey: true },
+      context: { isMac: false, focusScope: "message-input" },
+      action: "message-input.thinking.pick",
+    },
+    {
+      name: "matches Alt+A to select agent mode on mac",
+      event: { key: "å", code: "KeyA", altKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+      action: "message-input.mode.pick",
+    },
+    {
+      name: "matches Alt+F to toggle fast mode on non-mac",
+      event: { key: "f", code: "KeyF", altKey: true },
+      context: { isMac: false, focusScope: "message-input" },
+      action: "message-input.fast-mode.toggle",
+    },
+    {
+      name: "matches Alt+H to select the host on mac",
+      event: { key: "˙", code: "KeyH", altKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+      action: "workspace.host.pick",
+    },
+    {
+      name: "matches Alt+P to toggle plan mode on mac",
+      event: { key: "π", code: "KeyP", altKey: true },
+      context: { isMac: true, focusScope: "message-input" },
+      action: "message-input.plan-mode.toggle",
     },
     {
       name: "matches question-mark shortcut to toggle the shortcuts dialog",
@@ -643,6 +692,14 @@ describe("keyboard-shortcut help sections", () => {
         "workspace-pane-split-right": ["mod", "\\"],
         "workspace-pane-close": ["mod", "shift", "W"],
         "cycle-agent-mode": ["shift", "Tab"],
+        "toggle-workspace-isolation": ["alt", "I"],
+        "select-starting-ref": ["alt", "B"],
+        "select-model": ["alt", "M"],
+        "select-thinking": ["alt", "E"],
+        "select-agent-mode": ["alt", "A"],
+        "toggle-fast-mode": ["alt", "F"],
+        "toggle-plan-mode": ["alt", "P"],
+        "select-host": ["alt", "H"],
       },
     },
     {
@@ -1137,7 +1194,6 @@ describe("unassigned shortcuts", () => {
     });
   });
 });
-
 describe("direct new-tab target shortcuts", () => {
   const desktopNonMac = { isMac: false, isDesktop: true };
   const targetCases = [
@@ -1194,5 +1250,32 @@ describe("direct new-tab target shortcuts", () => {
     expect(
       resolveShortcutKeysForAction("workspace-tab-target-agent", overrides, desktopNonMac),
     ).toEqual([["ctrl", "shift", "H"]]);
+  });
+});
+
+describe("isShortcutModifierDown", () => {
+  it("keeps the active modifier held when Shift is released", () => {
+    const shiftRelease = keyboardInput({
+      key: "Shift",
+      altKey: true,
+      ctrlKey: true,
+      metaKey: true,
+    });
+
+    expect(isShortcutModifierDown(shiftRelease, "Alt")).toBe(true);
+    expect(isShortcutModifierDown(shiftRelease, "Meta")).toBe(true);
+    expect(isShortcutModifierDown(shiftRelease, "Control")).toBe(true);
+  });
+
+  it("does not restore a modifier that is no longer held", () => {
+    const shiftRelease = keyboardInput({ key: "Shift" });
+
+    expect(isShortcutModifierDown(shiftRelease, "Alt")).toBe(false);
+    expect(isShortcutModifierDown(shiftRelease, "Meta")).toBe(false);
+    expect(isShortcutModifierDown(shiftRelease, "Control")).toBe(false);
+  });
+
+  it("does not restore badges when the workspace jump shortcut has no modifier", () => {
+    expect(isShortcutModifierDown(keyboardInput({ altKey: true }), null)).toBe(false);
   });
 });

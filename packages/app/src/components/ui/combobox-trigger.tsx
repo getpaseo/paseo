@@ -19,6 +19,7 @@ import {
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ChevronDown } from "lucide-react-native";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { ShortcutHint, type ShortcutHintPlacement } from "@/components/ui/shortcut-hint";
 
 const ThemedChevronDown = withUnistyles(ChevronDown);
 
@@ -38,6 +39,9 @@ interface ComboboxTriggerProps extends Omit<PressableProps, "style" | "children"
   style?: TriggerStyleProp;
   children?: ReactNode;
   chevron?: ReactNode | null;
+  shortcutActionId?: string;
+  shortcutHintPlacement?: ShortcutHintPlacement;
+  showShortcutHint?: boolean;
   // Fill the Pressable's width and use the standard sidebar-row gap, so the
   // trigger reads as a full-width row: the label expands and the chevron pins to
   // the trailing edge. Default (false) keeps the content-width pill used by the
@@ -46,18 +50,30 @@ interface ComboboxTriggerProps extends Omit<PressableProps, "style" | "children"
 }
 
 export const ComboboxTrigger = forwardRef<View, ComboboxTriggerProps>(function ComboboxTrigger(
-  { children, chevron, style, block = false, onFocus, onBlur, ...props },
+  {
+    children,
+    chevron,
+    shortcutActionId,
+    shortcutHintPlacement,
+    showShortcutHint = false,
+    style,
+    block = false,
+    onFocus,
+    onBlur,
+    ...props
+  },
   ref,
 ): ReactElement {
   const [focused, setFocused] = useState(false);
   const pressableStyle = useCallback(
     ({ pressed, hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => {
-      if (typeof style === "function") {
-        return style({ pressed, hovered, focused });
-      }
-      return style;
+      const resolvedStyle =
+        typeof style === "function" ? style({ pressed, hovered, focused }) : style;
+      return shortcutActionId && showShortcutHint
+        ? [resolvedStyle, styles.shortcutOverflow]
+        : resolvedStyle;
     },
-    [focused, style],
+    [focused, shortcutActionId, showShortcutHint, style],
   );
   const handleFocus = useCallback(
     (event: NativeSyntheticEvent<TargetedEvent>) => {
@@ -94,6 +110,13 @@ export const ComboboxTrigger = forwardRef<View, ComboboxTriggerProps>(function C
             </View>
           ))}
       </View>
+      {shortcutActionId ? (
+        <ShortcutHint
+          actionId={shortcutActionId}
+          enabled={showShortcutHint && !props.disabled}
+          placement={shortcutHintPlacement}
+        />
+      ) : null}
     </Pressable>
   );
 });
@@ -114,5 +137,8 @@ const styles = StyleSheet.create((theme) => ({
   chevronContainer: {
     flexShrink: 0,
     transform: [{ translateY: 1 }],
+  },
+  shortcutOverflow: {
+    overflow: "visible",
   },
 }));

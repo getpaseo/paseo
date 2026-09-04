@@ -2219,6 +2219,10 @@ export const ar: TranslationResources = {
         queueMessage: "رسالة قائمة الانتظار",
         muteUnmuteVoiceMode: "كتم وضع الصوت /unmute",
         switchProject: "تبديل المشروع",
+        toggleWorkspaceIsolation: "تبديل عزل مساحة العمل",
+        selectHost: "تحديد المضيف",
+        toggleFastMode: "تبديل الوضع السريع",
+        togglePlanMode: "تبديل وضع الخطة",
       },
       helpNotes: {
         showKeyboardShortcuts: "متاح عندما لا يكون التركيز في حقل نص أو محطة طرفية.",
