@@ -15,8 +15,13 @@ export interface BrowserCaptureRect {
   height: number;
 }
 
+interface BrowserCaptureClipboardPayload<TImage extends BrowserCaptureImage> {
+  text: string | null;
+  image: TImage | null;
+}
+
 interface BrowserCaptureClipboard<TImage extends BrowserCaptureImage> {
-  write(input: { text: string | null; image: TImage | null }): Promise<void>;
+  write(input: BrowserCaptureClipboardPayload<TImage>): Promise<void>;
 }
 
 interface BrowserCaptureDependencies<TImage extends BrowserCaptureImage> {
