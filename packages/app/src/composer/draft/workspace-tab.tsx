@@ -653,6 +653,7 @@ export function WorkspaceDraftAgentTab({
               pendingMessageSubmissions={pendingMessageSubmissions}
               turnPresentation={turnPresentation}
               pendingPermissions={EMPTY_PENDING_PERMISSIONS}
+              isAuthoritativeHistoryReady={false}
               onOpenWorkspaceFile={onOpenWorkspaceFile}
             />
           </View>
