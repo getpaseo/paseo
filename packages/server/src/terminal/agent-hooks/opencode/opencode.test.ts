@@ -48,10 +48,29 @@ describe("OpenCode terminal agent hooks", () => {
     expect(source).toContain('busy: "session.status.busy"');
     expect(source).toContain('retry: "session.status.retry"');
     expect(source).toContain('idle: "session.status.idle"');
-    expect(source).toContain('event?.type === "permission.asked"');
-    expect(source).toContain('event?.type === "permission.replied"');
+    expect(source).toContain('type === "permission.asked"');
+    expect(source).toContain('type === "permission.replied"');
     expect(source).toContain('Bun.spawn(["paseo", "hooks", "opencode", event]');
     expect(source).toContain("PASEO_TERMINAL_ID");
+  });
+
+  it("writes a default definition that loads under OpenCode 1 and 2", () => {
+    const configDir = createTempDir("paseo-opencode-config-generations-");
+    const { configPath } = installAgentHooks(opencodeAgentHookProvider, { configDir });
+    const source = readFileSync(configPath, "utf8");
+
+    // OpenCode 2 requires a default-exported definition object with an id and
+    // setup(), and ignores unknown keys such as the 1.x server entrypoint.
+    expect(source).toContain("export default {");
+    expect(source).toContain('id: "paseo-terminal-activity"');
+    expect(source).toContain("setup(ctx)");
+    expect(source).toContain("ctx.event.subscribe({ signal: controller.signal })");
+    // OpenCode 1 loads object exports through their server() entrypoint and
+    // delivers bus events as { type, properties } payloads.
+    expect(source).toContain("server()");
+    expect(source).toContain("event?.properties?.status?.type");
+    // OpenCode 2 decoded events carry { type, data } payloads.
+    expect(source).toContain("event?.data?.status?.type");
   });
 
   it("uninstalls the OpenCode plugin file", () => {
