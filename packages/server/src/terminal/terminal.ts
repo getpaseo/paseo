@@ -1,5 +1,5 @@
 import * as pty from "node-pty";
-import xterm, { type Terminal as TerminalType } from "@xterm/headless";
+import xterm, { type IBufferLine, type Terminal as TerminalType } from "@xterm/headless";
 import { randomUUID } from "crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir, userInfo } from "node:os";
@@ -51,6 +51,12 @@ export interface TerminalStateSnapshotOptions {
   // can reflow restored content on resize. Gated on a client capability, so old
   // clients never receive the extra fields.
   includeWrapFlags?: boolean;
+  // Include per-cell display widths (TerminalCell.width) so the client can skip
+  // wide-glyph placeholder cells. Gated on a client capability, so old
+  // strict-schema clients never receive the extra field. Defaults to true:
+  // daemon-internal consumers (capture, snapshot rendering) need the width to
+  // filter placeholders; only client-bound snapshots pass false.
+  includeCellWidth?: boolean;
 }
 
 export interface TerminalSubscribeOptions {
@@ -556,16 +562,22 @@ function prependPathEntry(currentPath: string, entry: string): string {
   return [entry, ...entries].join(delimiter);
 }
 
-function extractCell(terminal: TerminalType, row: number, col: number): TerminalCell {
-  const buffer = terminal.buffer.active;
-  const line = buffer.getLine(row);
+function blankTerminalCell(): TerminalCell {
+  return { char: " ", fg: undefined, bg: undefined };
+}
+
+function extractCellFromLine(
+  line: IBufferLine | undefined,
+  col: number,
+  includeCellWidth: boolean,
+): TerminalCell {
   if (!line) {
-    return { char: " ", fg: undefined, bg: undefined };
+    return blankTerminalCell();
   }
 
   const cell = line.getCell(col);
   if (!cell) {
-    return { char: " ", fg: undefined, bg: undefined };
+    return blankTerminalCell();
   }
 
   // Color modes from xterm.js: 0=DEFAULT, 1=16 colors (ANSI), 2=256 colors, 3=RGB
@@ -581,6 +593,10 @@ function extractCell(terminal: TerminalType, row: number, col: number): Terminal
 
   return {
     char: cell.getChars() || " ",
+    // 1 = normal cell, 2 = wide (CJK) glyph, 0 = the placeholder cell that
+    // follows a wide glyph. Renderers use this to skip placeholders instead of
+    // emitting their char as a phantom column.
+    ...(includeCellWidth ? { width: cell.getWidth() } : {}),
     fg,
     bg,
     fgMode: fgMode !== 0 ? fgMode : undefined,
@@ -594,7 +610,16 @@ function extractCell(terminal: TerminalType, row: number, col: number): Terminal
   };
 }
 
-function extractGrid(terminal: TerminalType): TerminalCell[][] {
+function extractCell(
+  terminal: TerminalType,
+  row: number,
+  col: number,
+  includeCellWidth: boolean,
+): TerminalCell {
+  return extractCellFromLine(terminal.buffer.active.getLine(row), col, includeCellWidth);
+}
+
+function extractGrid(terminal: TerminalType, includeCellWidth: boolean): TerminalCell[][] {
   const grid: TerminalCell[][] = [];
   const buffer = terminal.buffer.active;
   // Visible viewport starts at baseY
@@ -603,7 +628,7 @@ function extractGrid(terminal: TerminalType): TerminalCell[][] {
   for (let row = 0; row < terminal.rows; row++) {
     const rowCells: TerminalCell[] = [];
     for (let col = 0; col < terminal.cols; col++) {
-      rowCells.push(extractCell(terminal, baseY + row, col));
+      rowCells.push(extractCell(terminal, baseY + row, col, includeCellWidth));
     }
     grid.push(rowCells);
   }
@@ -613,7 +638,7 @@ function extractGrid(terminal: TerminalType): TerminalCell[][] {
 
 function extractScrollback(
   terminal: TerminalType,
-  options?: { scrollbackLines?: number },
+  options?: TerminalStateSnapshotOptions,
 ): TerminalCell[][] {
   const scrollback: TerminalCell[][] = [];
   const buffer = terminal.buffer.active;
@@ -629,34 +654,7 @@ function extractScrollback(
     const rowCells: TerminalCell[] = [];
     const line = buffer.getLine(row);
     for (let col = 0; col < terminal.cols; col++) {
-      if (line) {
-        const cell = line.getCell(col);
-        if (cell) {
-          const fgModeRaw = cell.getFgColorMode();
-          const bgModeRaw = cell.getBgColorMode();
-          const fgMode = fgModeRaw >> 24;
-          const bgMode = bgModeRaw >> 24;
-          const fg = fgMode !== 0 ? cell.getFgColor() : undefined;
-          const bg = bgMode !== 0 ? cell.getBgColor() : undefined;
-          rowCells.push({
-            char: cell.getChars() || " ",
-            fg,
-            bg,
-            fgMode: fgMode !== 0 ? fgMode : undefined,
-            bgMode: bgMode !== 0 ? bgMode : undefined,
-            bold: cell.isBold() !== 0,
-            italic: cell.isItalic() !== 0,
-            underline: cell.isUnderline() !== 0,
-            dim: cell.isDim() !== 0,
-            inverse: cell.isInverse() !== 0,
-            strikethrough: cell.isStrikethrough() !== 0,
-          });
-        } else {
-          rowCells.push({ char: " ", fg: undefined, bg: undefined });
-        }
-      } else {
-        rowCells.push({ char: " ", fg: undefined, bg: undefined });
-      }
+      rowCells.push(extractCellFromLine(line, col, options?.includeCellWidth ?? true));
     }
     scrollback.push(rowCells);
   }
@@ -1238,12 +1236,14 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
   }
 
   function getState(snapshotOptions?: TerminalStateSnapshotOptions): TerminalState {
+    const includeCellWidth = snapshotOptions?.includeCellWidth ?? true;
     return {
       rows: terminal.rows,
       cols: terminal.cols,
-      grid: extractGrid(terminal),
+      grid: extractGrid(terminal, includeCellWidth),
       scrollback: extractScrollback(terminal, {
         scrollbackLines: snapshotOptions?.scrollbackLines,
+        includeCellWidth,
       }),
       cursor: extractCursorState(terminal),
       ...(title ? { title } : {}),

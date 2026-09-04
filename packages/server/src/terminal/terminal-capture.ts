@@ -15,6 +15,9 @@ export interface CaptureTerminalLinesResult {
 
 function cellsToPlainText(cells: TerminalCell[], options: { stripAnsi: boolean }): string {
   const text = cells
+    // Width-0 cells are wide-glyph placeholders; their column belongs to the
+    // preceding glyph, so their (blank) char must not appear in the text.
+    .filter((cell) => cell.width !== 0)
     .map((cell) => cell.char)
     .join("")
     .trimEnd();

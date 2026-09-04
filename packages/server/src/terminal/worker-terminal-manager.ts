@@ -13,6 +13,7 @@ import type {
   TerminalExitInfo,
   TerminalSession,
   TerminalStateSnapshot,
+  TerminalStateSnapshotOptions,
 } from "./terminal.js";
 import type { CaptureTerminalLinesResult } from "./terminal-capture.js";
 import type {
@@ -48,6 +49,21 @@ function requiredWorkspaceId(workspaceId: string | undefined): string {
 function asRequiredWorkerTerminalInfo(info: WorkerTerminalInfo): RequiredWorkerTerminalInfo {
   requiredWorkspaceId(info.workspaceId);
   return info as RequiredWorkerTerminalInfo;
+}
+
+function omitRowCellWidths(row: TerminalState["grid"][number]): TerminalState["grid"][number] {
+  return row.map(({ width: _width, ...cell }) => cell);
+}
+
+// The cached worker state always carries cell widths; a snapshot requested
+// without them (client lacks the terminalCellWidth capability) strips them so
+// strict-schema clients parse it.
+function omitCellWidths(state: TerminalState): TerminalState {
+  return {
+    ...state,
+    grid: state.grid.map(omitRowCellWidths),
+    scrollback: state.scrollback.map(omitRowCellWidths),
+  };
 }
 
 type TerminalWorkerRequestInput = TerminalWorkerRequest extends infer Request
@@ -341,14 +357,15 @@ export function createWorkerTerminalManager(
       getState(): TerminalState {
         return record.state;
       },
-      getStateSnapshot(options?: { scrollbackLines?: number }): TerminalStateSnapshot {
+      getStateSnapshot(options?: TerminalStateSnapshotOptions): TerminalStateSnapshot {
         const scrollbackLines = options?.scrollbackLines;
         const scrollback =
           typeof scrollbackLines === "number"
             ? record.state.scrollback.slice(-scrollbackLines)
             : record.state.scrollback;
+        const state = { ...record.state, scrollback };
         return {
-          state: { ...record.state, scrollback },
+          state: options?.includeCellWidth === false ? omitCellWidths(state) : state,
           revision: 0,
         };
       },
@@ -736,7 +753,7 @@ export function createWorkerTerminalManager(
 
     async getTerminalState(
       id: string,
-      options?: { scrollbackLines?: number },
+      options?: TerminalStateSnapshotOptions,
     ): Promise<TerminalStateSnapshot | null> {
       const snapshot = (await sendRequest({
         type: "getTerminalState",

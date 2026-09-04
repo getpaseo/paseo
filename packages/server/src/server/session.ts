@@ -992,6 +992,7 @@ export class Session {
       listTerminalWorkspaceRefs: () => this.listActiveWorkspaceRefs(),
       clientSupportsWrapReflow: () =>
         this.clientCapabilities.has(CLIENT_CAPS.terminalReflowableSnapshot),
+      clientSupportsCellWidth: () => this.clientCapabilities.has(CLIENT_CAPS.terminalCellWidth),
       getClientBufferedAmount: () => this.getTransportBufferedAmount(),
     });
     this.agentUpdates = createAgentUpdatesService({

@@ -46,4 +46,51 @@ describe("renderTerminalSnapshotToAnsi", () => {
     expect(ansi).toContain("[?7l");
     expect(ansi).toContain("ABCDEFGHIJ\r\nKLMNOP");
   });
+
+  it("skips wide-glyph placeholder cells so CJK rows replay without phantom columns", () => {
+    // xterm stores a wide glyph like 界 as a width-2 content cell followed by a
+    // width-0 placeholder cell. Emitting the placeholder's char would insert a
+    // column that never existed, shifting the rest of the row right.
+    const state: TerminalState = {
+      rows: 1,
+      cols: 6,
+      scrollback: [],
+      grid: [
+        [
+          { char: "A", width: 1 },
+          { char: "界", width: 2 },
+          { char: " ", width: 0 },
+          { char: "B", width: 1 },
+        ],
+      ],
+      cursor: { row: 0, col: 4 },
+    };
+
+    const ansi = renderTerminalSnapshotToAnsi(state);
+
+    expect(ansi).toContain("A界B");
+    expect(ansi).not.toContain("A界 B");
+  });
+
+  it("does not let a trailing wide-glyph placeholder extend the row", () => {
+    // "界" at the start of an otherwise blank row: the placeholder at col 1 is
+    // not content, so replay must not emit a trailing space after the glyph.
+    const state: TerminalState = {
+      rows: 1,
+      cols: 6,
+      scrollback: [],
+      grid: [
+        [
+          { char: "界", width: 2 },
+          { char: " ", width: 0 },
+        ],
+      ],
+      cursor: { row: 0, col: 2 },
+    };
+
+    const ansi = renderTerminalSnapshotToAnsi(state);
+
+    expect(ansi).toContain("界");
+    expect(ansi).not.toContain("界 ");
+  });
 });

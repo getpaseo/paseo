@@ -190,6 +190,12 @@ function buildRowModel(input: {
 
   for (let col = 0; col < input.cells.length; col += 1) {
     const cell = input.cells[col];
+    // Width-0 cells are wide-glyph placeholders. Normally the loop steps over
+    // them via the wide glyph's cellCount advance, but an orphan placeholder
+    // (no preceding width-2 cell) must not emit its blank char either.
+    if (cell.width === 0) {
+      continue;
+    }
     const text = cell.char || " ";
     const resolvedStyle = input.resolver.resolve(cell);
     const cellCount = terminalCellCount(input.cells, col, text);

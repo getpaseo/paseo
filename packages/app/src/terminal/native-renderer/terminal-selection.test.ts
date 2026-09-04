@@ -64,6 +64,58 @@ describe("native terminal selection", () => {
     });
   });
 
+  it("expands a long-press across a wide glyph without stopping at its placeholder", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 32, scrollbackLines: 20 });
+    await terminal.write("before 中文 after\r\n");
+    // The raw char join includes each wide glyph's width-0 placeholder blank.
+    const row = rowWithText(terminal, "before 中 文  after");
+    const bounds = terminal.getBufferBounds();
+
+    // Long-press on 文 (col 9): the placeholder columns (8 and 10) are part of
+    // the glyphs, not word boundaries, so the whole CJK word is selected.
+    const selection = resolveTerminalWordSelection({
+      terminal,
+      coordinate: { row, col: 9 },
+    });
+
+    expect({
+      selection,
+      text: extractTerminalSelectedText({ terminal, selection }),
+    }).toEqual({
+      selection: {
+        start: { row, col: 7 },
+        end: { row, col: 10 },
+        coordinateEpoch: bounds.coordinateEpoch,
+      },
+      text: "中文",
+    });
+  });
+
+  it("resolves a long-press on a wide glyph's placeholder column to the glyph", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 32, scrollbackLines: 20 });
+    await terminal.write("before 中文 after\r\n");
+    const row = rowWithText(terminal, "before 中 文  after");
+    const bounds = terminal.getBufferBounds();
+
+    // Col 8 is the placeholder half of 中 — the press belongs to the glyph.
+    const selection = resolveTerminalWordSelection({
+      terminal,
+      coordinate: { row, col: 8 },
+    });
+
+    expect({
+      selection,
+      text: extractTerminalSelectedText({ terminal, selection }),
+    }).toEqual({
+      selection: {
+        start: { row, col: 7 },
+        end: { row, col: 10 },
+        coordinateEpoch: bounds.coordinateEpoch,
+      },
+      text: "中文",
+    });
+  });
+
   it("maps screen coordinates through the current visible window", () => {
     expect(
       hitTestTerminalSelectionCell({
@@ -142,6 +194,25 @@ describe("native terminal selection", () => {
         },
       }),
     ).toEqual("beta\ngamma");
+  });
+
+  it("copies wide-glyph rows without the placeholder column", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 16, scrollbackLines: 20 });
+    await terminal.write("A界B\r\n");
+    const bounds = terminal.getBufferBounds();
+    // The raw char join includes the width-0 placeholder blank after 界.
+    const row = rowWithText(terminal, "A界 B");
+
+    expect(
+      extractTerminalSelectedText({
+        terminal,
+        selection: {
+          start: { row, col: 0 },
+          end: { row, col: 3 },
+          coordinateEpoch: bounds.coordinateEpoch,
+        },
+      }),
+    ).toBe("A界B");
   });
 
   it("copies soft-wrapped rows without fake line breaks", async () => {

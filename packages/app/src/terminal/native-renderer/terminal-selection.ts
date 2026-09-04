@@ -1,4 +1,4 @@
-import type { NativeHeadlessTerminal } from "./headless-terminal-state";
+import type { NativeHeadlessTerminal, TerminalCellRow } from "./headless-terminal-state";
 import type { TerminalGridCellMetrics } from "./terminal-grid-metrics";
 
 export interface TerminalBufferCoordinate {
@@ -101,6 +101,22 @@ interface TerminalSelectionState {
 
 const TERMINAL_WORD_SEPARATORS = " ()[]{}',\"`";
 
+// Walks from `fromCol` in `direction` until a separator cell bounds the word.
+// Width-0 cells are wide-glyph placeholders: their column belongs to the
+// preceding glyph and their char is a blank, so they are stepped over rather
+// than read as a word boundary.
+function scanWordBoundary(cells: TerminalCellRow, fromCol: number, direction: -1 | 1): number {
+  let col = fromCol;
+  while (direction < 0 ? col > 0 : col + 1 < cells.length) {
+    const neighbor = cells[col + direction];
+    if (neighbor?.width !== 0 && TERMINAL_WORD_SEPARATORS.includes(neighbor?.char || " ")) {
+      break;
+    }
+    col += direction;
+  }
+  return col;
+}
+
 function compareCoordinates(
   left: TerminalBufferCoordinate,
   right: TerminalBufferCoordinate,
@@ -183,31 +199,23 @@ export function resolveTerminalWordSelection(
   if (!cells || input.coordinate.col < 0 || input.coordinate.col >= cells.length) {
     return null;
   }
-  const target = cells[input.coordinate.col]?.char || " ";
-  if (TERMINAL_WORD_SEPARATORS.includes(target)) {
+  // A press landing on a wide glyph's placeholder half resolves to the glyph's
+  // leading cell — the placeholder column is part of the glyph.
+  let anchorCol = input.coordinate.col;
+  while (anchorCol > 0 && cells[anchorCol]?.width === 0) {
+    anchorCol -= 1;
+  }
+  if (TERMINAL_WORD_SEPARATORS.includes(cells[anchorCol]?.char || " ")) {
     return {
-      start: input.coordinate,
-      end: input.coordinate,
+      start: { row: input.coordinate.row, col: anchorCol },
+      end: { row: input.coordinate.row, col: anchorCol },
       coordinateEpoch: bounds.coordinateEpoch,
     };
   }
 
-  let startCol = input.coordinate.col;
-  let endCol = input.coordinate.col;
-  while (startCol > 0) {
-    const previous = cells[startCol - 1]?.char || " ";
-    if (TERMINAL_WORD_SEPARATORS.includes(previous)) break;
-    startCol -= 1;
-  }
-  while (endCol + 1 < cells.length) {
-    const next = cells[endCol + 1]?.char || " ";
-    if (TERMINAL_WORD_SEPARATORS.includes(next)) break;
-    endCol += 1;
-  }
-
   return {
-    start: { row: input.coordinate.row, col: startCol },
-    end: { row: input.coordinate.row, col: endCol },
+    start: { row: input.coordinate.row, col: scanWordBoundary(cells, anchorCol, -1) },
+    end: { row: input.coordinate.row, col: scanWordBoundary(cells, anchorCol, 1) },
     coordinateEpoch: bounds.coordinateEpoch,
   };
 }
@@ -327,7 +335,12 @@ export function extractTerminalSelectedText(input: TerminalSelectedTextInput): s
     const startCol = startsOnThisRow ? selection.start.col : 0;
     const endCol = endsOnThisRow ? selection.end.col : cells.length - 1;
     const selectedCells = cells.slice(Math.max(0, startCol), Math.max(0, endCol) + 1);
-    const line = selectedCells.map((cell) => cell.char || " ").join("");
+    // Width-0 cells are wide-glyph placeholders; their column belongs to the
+    // preceding glyph, so their (blank) char must not be copied.
+    const line = selectedCells
+      .filter((cell) => cell.width !== 0)
+      .map((cell) => cell.char || " ")
+      .join("");
     if (offset > 0 && window.wrappedRows[offset] !== true) {
       text += "\n";
     }

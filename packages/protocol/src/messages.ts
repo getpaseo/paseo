@@ -5977,6 +5977,13 @@ const TerminalInfoSchema = z.object({
 
 export const TerminalCellSchema = z.object({
   char: z.string(),
+  // Display width in columns (xterm's IBufferCell.getWidth()): 1 for normal
+  // cells, 2 for wide (CJK) glyphs, 0 for the placeholder cell that follows a
+  // wide glyph. Renderers must not emit anything for width-0 cells — their
+  // column is already occupied by the preceding glyph. Optional so snapshots
+  // from old daemons (no width) keep parsing; treat undefined as 1. Daemons
+  // only send it to clients that advertise the `terminalCellWidth` capability.
+  width: z.number().optional(),
   fg: z.number().optional(),
   bg: z.number().optional(),
   fgMode: z.number().optional(),
@@ -7075,6 +7082,7 @@ export const WSHelloMessageSchema = z.object({
       [CLIENT_CAPS.selectiveAgentTimeline]: z.boolean().optional(),
       [CLIENT_CAPS.customModeIcons]: z.boolean().optional(),
       [CLIENT_CAPS.terminalReflowableSnapshot]: z.boolean().optional(),
+      [CLIENT_CAPS.terminalCellWidth]: z.boolean().optional(),
       [CLIENT_CAPS.providerSubagents]: z.boolean().optional(),
       [CLIENT_CAPS.projectUpdates]: z.boolean().optional(),
       [CLIENT_CAPS.compactProviderSnapshots]: z.boolean().optional(),
