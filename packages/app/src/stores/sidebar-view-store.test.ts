@@ -4,6 +4,7 @@ import {
   createSidebarViewStorage,
   hasActiveSidebarLabelFilter,
   migrateSidebarViewState,
+  nextSidebarGroupMode,
   SIDEBAR_UNLABELLED_LABEL_KEY,
   useSidebarViewStore,
 } from "./sidebar-view-store";
@@ -45,6 +46,11 @@ describe("sidebar view store", () => {
       projectFilters: [],
       labelFilter: { labels: [] },
     });
+  });
+
+  it("switches between the two grouping modes", () => {
+    expect(nextSidebarGroupMode("project")).toBe("status");
+    expect(nextSidebarGroupMode("status")).toBe("project");
   });
 
   it("toggles multiple hosts into and out of the filter", () => {

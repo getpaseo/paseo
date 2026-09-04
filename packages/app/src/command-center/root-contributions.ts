@@ -1,4 +1,4 @@
-import type { SidebarGroupMode } from "@/stores/sidebar-view-store";
+import { nextSidebarGroupMode, type SidebarGroupMode } from "@/stores/sidebar-view-store";
 import type { CommandCenterContribution, CommandCenterIcon } from "./contributions";
 
 export interface GroupingCommandCenterSource {
@@ -19,8 +19,7 @@ export interface GroupingCommandCenterSource {
 export function buildGroupingContribution(
   source: GroupingCommandCenterSource,
 ): CommandCenterContribution {
-  // Collapse into nextGroupMode() from sidebar-view-store once #2504 lands.
-  const target: SidebarGroupMode = source.groupMode === "project" ? "status" : "project";
+  const target = nextSidebarGroupMode(source.groupMode);
   return {
     id: "sidebar-grouping",
     group: "actions",

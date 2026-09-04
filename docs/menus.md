@@ -59,8 +59,8 @@ matches:
 
 ```tsx
 <MenuSurface pages={pages} sheetTitle="Display">
-  <MenuSubTrigger id="grouping" value="Project">
-    Grouping
+  <MenuSubTrigger id="titleSource" value="Branch name">
+    Title
   </MenuSubTrigger>
 </MenuSurface>
 ```
@@ -167,7 +167,7 @@ and a column of icons there is decoration competing with the values you actually
 ## When a decision earns a submenu
 
 Put a decision behind a submenu when its options are not the point — the current _value_ is. The
-root row then reads as the answer (`Grouping  Project ›`) and costs one line instead of one line
+root row then reads as the answer (`Title  Branch name ›`) and costs one line instead of one line
 per option. A menu whose every option is on screen at once does not survive its third decision.
 
 Independent toggles stay on their page as a checkmark list. A pick-one group can share that page
