@@ -1,6 +1,6 @@
 {
   "name": "paseo",
-  "version": "0.7.2",
+  "version": "1.0.0",
   "private": true,
   "description": "Paseo: voice-controlled development environment for local AI coding agents",
   "keywords": [

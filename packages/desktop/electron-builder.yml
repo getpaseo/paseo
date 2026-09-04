@@ -31,9 +31,12 @@ extraResources:
     to: app-dist
   - from: assets/editor-targets
     to: editor-target-icons
+# Fork build. The update feed must point at the fork, never upstream: with
+# autoDownload on and allowDowngrade off, an upstream release replaces this
+# build and the project-grouping feature disappears with it.
 publish:
   provider: github
-  owner: getpaseo
+  owner: totally-tim
   repo: paseo
 mac:
   artifactName: "Paseo-${version}-${arch}.${ext}"
