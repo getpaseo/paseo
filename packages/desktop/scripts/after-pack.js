@@ -4,6 +4,16 @@ const path = require("path");
 const { smokePackagedDesktopApp } = require("../e2e/packaged-app-smoke.js");
 
 const EXECUTABLE_NAME = "Paseo";
+const LINUX_REAL_EXECUTABLE_NAME = `${EXECUTABLE_NAME}.bin`;
+const LINUX_LAUNCHER = `#!/bin/sh
+real_executable="\${0}.bin"
+
+if [ -n "\${APPIMAGE:-}" ]; then
+  exec "$real_executable" --no-sandbox "$@"
+fi
+
+exec "$real_executable" "$@"
+`;
 
 // electron-builder arch enum → Node.js arch string
 const ARCH_MAP = { 0: "ia32", 1: "x64", 2: "armv7l", 3: "arm64", 4: "universal" };
@@ -93,6 +103,18 @@ function pruneNativeModules(appOutDir, platform, arch) {
   console.log(`Pruned native modules: ${savedMB} MB removed (${fmtMB(before)} → ${fmtMB(after)})`);
 }
 
+function installLinuxLauncher(appOutDir) {
+  const launcherPath = path.join(appOutDir, EXECUTABLE_NAME);
+  const realExecutablePath = path.join(appOutDir, LINUX_REAL_EXECUTABLE_NAME);
+
+  if (!fs.existsSync(realExecutablePath)) {
+    fs.renameSync(launcherPath, realExecutablePath);
+  }
+
+  fs.writeFileSync(launcherPath, LINUX_LAUNCHER, "utf8");
+  fs.chmodSync(launcherPath, 0o755);
+}
+
 function dirSizeSync(dir) {
   let total = 0;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true, recursive: true })) {
@@ -114,6 +136,10 @@ exports.default = async function afterPack(context) {
   const arch = ARCH_MAP[context.arch] || process.arch;
 
   pruneNativeModules(context.appOutDir, platform, arch);
+
+  if (platform === "linux") {
+    installLinuxLauncher(context.appOutDir);
+  }
 
   if (platform === "linux" || platform === "win32") {
     if (arch !== process.arch) {
