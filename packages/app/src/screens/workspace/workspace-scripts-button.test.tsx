@@ -32,7 +32,6 @@ const {
       foreground: "#fff",
       foregroundMuted: "#aaa",
       surface2: "#222",
-      interactionHighlight: "rgba(255, 255, 255, 0.08)",
       borderAccent: "#444",
       palette: {
         blue: { 500: "#0a84ff" },
@@ -149,23 +148,17 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuItem: ({
     children,
     description,
-    leading,
     onSelect,
     testID,
-    trailing,
   }: {
     children: React.ReactNode;
     description?: string;
-    leading?: React.ReactNode;
     onSelect?: () => void;
     testID?: string;
-    trailing?: React.ReactNode;
   }) => (
     <button type="button" data-testid={testID} onClick={onSelect}>
-      {leading}
       {children}
       {description}
-      {trailing}
     </button>
   ),
   DropdownMenuTrigger: ({
@@ -235,7 +228,6 @@ function script(
     health: input.health ?? null,
     exitCode: input.exitCode ?? null,
     terminalId: input.terminalId ?? null,
-    links: input.links,
   };
 }
 
@@ -341,7 +333,6 @@ describe("WorkspaceScriptsButton", () => {
   afterEach(() => {
     current?.unmount();
     current = null;
-    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -509,96 +500,6 @@ describe("WorkspaceScriptsButton", () => {
     ]);
 
     expect(requireRow("dev").textContent).toContain("dev--proj--repo.services.example.com");
-  });
-
-  it("keeps the legacy root action when no quick links are configured", () => {
-    current = renderScripts([
-      script({
-        scriptName: "dev",
-        type: "service",
-        lifecycle: "running",
-        port: 57483,
-        proxyUrl: "http://dev--proj--repo.localhost:6767",
-        terminalId: "terminal-script-1",
-      }),
-    ]);
-
-    const row = requireRow("dev");
-    const openAction = row.querySelector('[data-testid="workspace-scripts-open-dev"]');
-    expect(openAction).not.toBeNull();
-    expect(openAction?.querySelector('[data-icon="Eye"]')).not.toBeNull();
-    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-0"]')).toBeNull();
-  });
-
-  it("replaces the legacy root action with configured quick links", () => {
-    current = renderScripts([
-      script({
-        scriptName: "dev",
-        type: "service",
-        lifecycle: "running",
-        port: 57483,
-        proxyUrl: "http://dev--proj--repo.localhost:6767",
-        terminalId: "terminal-script-1",
-        links: [
-          { label: "Admin", path: "/admin" },
-          { label: "GraphQL", path: "/api/graphql" },
-        ],
-      }),
-    ]);
-
-    const row = requireRow("dev");
-    expect(row.querySelector('[data-testid="workspace-scripts-open-dev"]')).toBeNull();
-    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-0"]')?.textContent).toBe(
-      "Admin /admin",
-    );
-    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-1"]')?.textContent).toBe(
-      "GraphQL /api/graphql",
-    );
-    expect(row.querySelector('[data-testid="workspace-scripts-link-dev-2"]')).toBeNull();
-    for (let index = 0; index < 2; index += 1) {
-      const link = row.querySelector(`[data-testid="workspace-scripts-link-dev-${index}"]`);
-      expect(link?.querySelector('[data-icon="Eye"]')).not.toBeNull();
-      expect(link?.querySelector('[data-icon="ExternalLink"]')).not.toBeNull();
-    }
-  });
-
-  it("preserves duplicate quick-link rows when links are reordered or removed", async () => {
-    const consoleError = vi.spyOn(console, "error");
-    const admin = { label: "Admin", path: "/admin" };
-    const graphQL = { label: "GraphQL", path: "/api/graphql" };
-    const service = script({
-      scriptName: "dev",
-      type: "service",
-      lifecycle: "running",
-      port: 3000,
-      proxyUrl: "http://dev--proj--repo.localhost:6767",
-      links: [admin, graphQL, admin],
-    });
-    current = renderScripts([service]);
-
-    const row = requireRow("dev");
-    const originalLinks = Array.from(
-      row.querySelectorAll('[data-testid^="workspace-scripts-link-dev-"]'),
-    );
-    expect(originalLinks.map((link) => link.textContent)).toEqual([
-      "Admin /admin",
-      "GraphQL /api/graphql",
-      "Admin /admin",
-    ]);
-
-    await current.rerender([{ ...service, links: [graphQL, admin, admin] }]);
-    let links = Array.from(row.querySelectorAll('[data-testid^="workspace-scripts-link-dev-"]'));
-    expect(links).toHaveLength(3);
-    expect(links[0]).toBe(originalLinks[1]);
-    expect(links[1]).toBe(originalLinks[0]);
-    expect(links[2]).toBe(originalLinks[2]);
-
-    await current.rerender([{ ...service, links: [admin, graphQL] }]);
-    links = Array.from(row.querySelectorAll('[data-testid^="workspace-scripts-link-dev-"]'));
-    expect(links).toHaveLength(2);
-    expect(links[0]).toBe(originalLinks[0]);
-    expect(links[1]).toBe(originalLinks[1]);
-    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it("stops a running script through its terminal", async () => {

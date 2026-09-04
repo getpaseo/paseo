@@ -210,6 +210,32 @@ describe("resolveWorkspaceScriptLink", () => {
 });
 
 describe("resolveWorkspaceScriptQuickLinks", () => {
+  it("keeps distinct keys for duplicate links across reordering, removal, and route changes", () => {
+    const admin = { label: "Admin", path: "/admin" };
+    const graphQL = { label: "GraphQL", path: "/api/graphql" };
+    const original = resolveWorkspaceScriptQuickLinks({
+      baseUrl: "http://localhost:3000",
+      links: [admin, graphQL, admin],
+    });
+    expect(new Set(original.map((link) => link.key)).size).toBe(3);
+
+    const reordered = resolveWorkspaceScriptQuickLinks({
+      baseUrl: "https://web.services.example.com",
+      links: [graphQL, admin, admin],
+    });
+    expect(reordered.map((link) => link.key)).toEqual([
+      original[1].key,
+      original[0].key,
+      original[2].key,
+    ]);
+
+    const remaining = resolveWorkspaceScriptQuickLinks({
+      baseUrl: "https://web.services.example.com",
+      links: [admin, graphQL],
+    });
+    expect(remaining.map((link) => link.key)).toEqual([original[0].key, original[1].key]);
+  });
+
   it.each([
     "https://web--feature--paseo.services.example.com",
     "http://web--feature--paseo.localhost:6767",
