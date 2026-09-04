@@ -49,6 +49,7 @@ import type {
 } from "./agent-sdk-types.js";
 import type { PaseoToolCatalog } from "./tools/types.js";
 import type { ProviderDefinition } from "./provider-registry.js";
+import { wrapSpokenInput } from "@server/server/voice-config.js";
 
 const DESKTOP_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("desktop-client");
 const MOBILE_OPEN_AGENT_TAB_LABEL = getOpenAgentTabLabel("mobile-client");
@@ -9460,6 +9461,135 @@ test("provider close failure still persists and emits a resumable closed agent",
     ).resolves.toMatchObject({ id: created.id, lifecycle: "idle" });
   } finally {
     await manager.closeAgent("00000000-0000-4000-8000-000000000217").catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("hydrateTimeline restores persisted canonical text only for trusted submitted prompts", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-history-canonical-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const clientMessageId = "00000000-0000-4000-8000-000000000301";
+  const transcript = "用语音回答测试成功。";
+  const wrappedPrompt = wrapSpokenInput(transcript);
+  let agentId: string | null = null;
+  let firstManager: AgentManager | null = null;
+  let secondManager: AgentManager | null = null;
+
+  class LiveVoiceSession extends TestAgentSession {
+    override async startTurn(
+      prompt: AgentPromptInput,
+      options?: AgentRunOptions,
+    ): Promise<{ turnId: string }> {
+      const turnId = "voice-turn";
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
+        this.pushEvent({
+          type: "timeline",
+          provider: this.provider,
+          turnId,
+          item: {
+            type: "user_message",
+            text: typeof prompt === "string" ? prompt : "structured",
+            messageId: "provider-voice-message",
+            clientMessageId: options?.clientMessageId,
+          },
+        });
+        this.pushEvent({ type: "turn_completed", provider: this.provider, turnId });
+      }, 0);
+      return { turnId };
+    }
+  }
+
+  class LiveVoiceClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new LiveVoiceSession(config);
+    }
+  }
+
+  class VoiceHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "user_message",
+          text: wrappedPrompt,
+          messageId: "provider-voice-message",
+        },
+      };
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "user_message",
+          text: wrappedPrompt,
+          messageId: "provider-ordinary-message",
+        },
+      };
+    }
+  }
+
+  class VoiceHistoryClient extends TestAgentClient {
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config: AgentSessionConfig,
+    ): Promise<AgentSession> {
+      return new VoiceHistorySession(config);
+    }
+  }
+
+  try {
+    firstManager = new AgentManager({
+      clients: { codex: new LiveVoiceClient() },
+      registry: storage,
+      logger,
+    });
+    const created = await firstManager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    agentId = created.id;
+    await firstManager.runAgent(agentId, wrappedPrompt, {
+      clientMessageId,
+      timelinePrompt: transcript,
+    });
+    await firstManager.closeAgent(agentId);
+
+    expect(await storage.get(agentId)).toMatchObject({
+      submittedPromptTextByClientMessageId: { [clientMessageId]: transcript },
+      submittedClientMessageIdByProviderMessageId: {
+        "provider-voice-message": clientMessageId,
+      },
+    });
+
+    secondManager = new AgentManager({
+      clients: { codex: new VoiceHistoryClient() },
+      registry: storage,
+      logger,
+    });
+    await ensureAgentLoaded(agentId, {
+      agentManager: secondManager,
+      agentStorage: storage,
+      logger,
+    });
+
+    expect(secondManager.getTimeline(agentId)).toEqual([
+      {
+        type: "user_message",
+        text: transcript,
+        messageId: "provider-voice-message",
+      },
+      {
+        type: "user_message",
+        text: wrappedPrompt,
+        messageId: "provider-ordinary-message",
+      },
+    ]);
+  } finally {
+    if (agentId) {
+      await firstManager?.closeAgent(agentId).catch(() => undefined);
+      await secondManager?.closeAgent(agentId).catch(() => undefined);
+    }
     await storage.flush().catch(() => undefined);
     rmSync(workdir, { recursive: true, force: true });
   }

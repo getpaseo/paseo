@@ -419,6 +419,9 @@ interface ManagedAgentBase {
   inFlightPermissionResponses: Set<string>;
   pendingReplacement: boolean;
   persistence: AgentPersistenceHandle | null;
+  /** Canonical user-visible text for trusted submitted prompts, keyed by provider-round-tripped ID. */
+  submittedPromptTextByClientMessageId: Record<string, string>;
+  submittedClientMessageIdByProviderMessageId: Record<string, string>;
   historyPrimed: boolean;
   lastUserMessageAt: Date | null;
   activeTurnId: string | null;
@@ -1269,6 +1272,8 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      submittedPromptTextByClientMessageId?: Record<string, string>;
+      submittedClientMessageIdByProviderMessageId?: Record<string, string>;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1288,6 +1293,8 @@ export class AgentManager {
       labels?: Record<string, string>;
       workspaceId?: string;
       owner?: AgentOwner;
+      submittedPromptTextByClientMessageId?: Record<string, string>;
+      submittedClientMessageIdByProviderMessageId?: Record<string, string>;
     },
     resumeOptions?: AgentResumeSessionOptions,
   ): Promise<ManagedAgent> {
@@ -1511,6 +1518,9 @@ export class AgentManager {
         lastUsage: preservedLastUsage,
         lastError: preservedLastError,
         attention: preservedAttention,
+        submittedPromptTextByClientMessageId: existing.submittedPromptTextByClientMessageId,
+        submittedClientMessageIdByProviderMessageId:
+          existing.submittedClientMessageIdByProviderMessageId,
       });
     } finally {
       if (!replacedExisting) {
@@ -1795,6 +1805,9 @@ export class AgentManager {
         finalizedForegroundTurnIds: new Set(),
         unsubscribeSession: null,
         persistence: record.persistence ?? null,
+        submittedPromptTextByClientMessageId: record.submittedPromptTextByClientMessageId,
+        submittedClientMessageIdByProviderMessageId:
+          record.submittedClientMessageIdByProviderMessageId,
         historyPrimed: true,
         lastUserMessageAt: record.lastUserMessageAt ? new Date(record.lastUserMessageAt) : null,
         lastUsage: undefined,
@@ -2192,6 +2205,7 @@ export class AgentManager {
       return false;
     }
     if (options?.clientMessageId) {
+      this.rememberSubmittedTimelinePrompt(agent, options);
       this.recordSubmittedPrompt(agent, timelinePrompt(prompt, options), options.clientMessageId);
       this.emitState(agent);
     }
@@ -2269,6 +2283,9 @@ export class AgentManager {
   }): Promise<string> {
     const { agent, agentId, pendingRun, prompt, options } = params;
     try {
+      if (this.rememberSubmittedTimelinePrompt(agent, options)) {
+        await this.persistSnapshot(agent);
+      }
       const result = await agent.session.startTurn(prompt, providerRunOptions(options));
       if (pendingRun.settled) {
         throw new Error(`Agent ${agentId} run was canceled before its turn started`);
@@ -2537,6 +2554,9 @@ export class AgentManager {
       return { status: "unavailable" };
     }
     const result = await this.runSteerAdmission(agent, expectedTurnId, async () => {
+      if (this.rememberSubmittedTimelinePrompt(agent, options)) {
+        await this.persistSnapshot(agent);
+      }
       const admission = await agent.session.steerActiveTurn!(prompt, {
         ...providerSteerOptions(options),
         expectedTurnId,
@@ -2567,6 +2587,9 @@ export class AgentManager {
 
     const result = agent.session.steerActiveTurn
       ? await this.runSteerAdmission(agent, expectedTurnId, async () => {
+          if (this.rememberSubmittedTimelinePrompt(agent, options)) {
+            await this.persistSnapshot(agent);
+          }
           const admission = await agent.session.steerActiveTurn!(prompt, {
             ...providerSteerOptions(options),
             expectedTurnId,
@@ -3278,6 +3301,8 @@ export class AgentManager {
       publishWhenReady?: boolean;
       workspaceId?: string;
       owner?: AgentOwner;
+      submittedPromptTextByClientMessageId?: Record<string, string>;
+      submittedClientMessageIdByProviderMessageId?: Record<string, string>;
     },
   ): Promise<ManagedAgent> {
     let registered = false;
@@ -3429,23 +3454,26 @@ export class AgentManager {
           persistence?: AgentPersistenceHandle;
           workspaceId?: string;
           owner?: AgentOwner;
+          submittedPromptTextByClientMessageId?: Record<string, string>;
+          submittedClientMessageIdByProviderMessageId?: Record<string, string>;
         }
       | undefined;
   }): ActiveManagedAgent {
     const { resolvedAgentId, session, config, now, durableTimelineHasRows, options } = params;
+    const registration = options ?? {};
     return {
       id: resolvedAgentId,
       provider: config.provider,
       cwd: config.cwd,
-      workspaceId: options?.workspaceId,
-      owner: options?.owner,
+      workspaceId: registration.workspaceId,
+      owner: registration.owner,
       session,
       capabilities: session.capabilities,
       config,
       runtimeInfo: undefined,
       lifecycle: "initializing",
-      createdAt: options?.createdAt ?? now,
-      updatedAt: options?.updatedAt ?? now,
+      createdAt: registration.createdAt ?? now,
+      updatedAt: registration.updatedAt ?? now,
       availableModes: [],
       currentModeId: null,
       pendingPermissions: new Map<string, AgentPermissionRequest>(),
@@ -3459,16 +3487,22 @@ export class AgentManager {
       finalizedForegroundTurnIds: new Set<string>(),
       unsubscribeSession: null,
       persistence: attachPersistenceCwd(
-        options?.persistence ?? session.describePersistence(),
+        registration.persistence ?? session.describePersistence(),
         config.cwd,
       ),
-      historyPrimed: options?.historyPrimed ?? durableTimelineHasRows,
-      lastUserMessageAt: options?.lastUserMessageAt ?? null,
-      lastUsage: options?.lastUsage,
-      lastError: options?.lastError,
-      attention: resolveInitialAttention(options?.attention),
+      submittedPromptTextByClientMessageId: {
+        ...registration.submittedPromptTextByClientMessageId,
+      },
+      submittedClientMessageIdByProviderMessageId: {
+        ...registration.submittedClientMessageIdByProviderMessageId,
+      },
+      historyPrimed: registration.historyPrimed ?? durableTimelineHasRows,
+      lastUserMessageAt: registration.lastUserMessageAt ?? null,
+      lastUsage: registration.lastUsage,
+      lastError: registration.lastError,
+      attention: resolveInitialAttention(registration.attention),
       internal: config.internal ?? false,
-      labels: options?.labels ?? {},
+      labels: registration.labels ?? {},
     } as ActiveManagedAgent;
   }
 
@@ -3795,7 +3829,10 @@ export class AgentManager {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
         }
-        historyEvents.push(event);
+        historyEvents.push({
+          ...event,
+          item: this.canonicalizeProviderHistoryItem(agent, event.item),
+        });
       } else if (event.type === "provider_subagent") {
         providerSubagentEvents.push(event);
       }
@@ -3866,15 +3903,19 @@ export class AgentManager {
         if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
           continue;
         }
+        const canonicalEvent = {
+          ...event,
+          item: this.canonicalizeProviderHistoryItem(agent, event.item),
+        };
         const row = this.recordTimeline(
           agent.id,
-          event.item,
-          event.timestamp ? { timestamp: event.timestamp } : undefined,
+          canonicalEvent.item,
+          canonicalEvent.timestamp ? { timestamp: canonicalEvent.timestamp } : undefined,
         );
         if (deferredBroadcast) {
-          timelineEvents.push({ event, row });
+          timelineEvents.push({ event: canonicalEvent, row });
         } else if (broadcast) {
-          this.dispatchStream(agent.id, event, {
+          this.dispatchStream(agent.id, canonicalEvent, {
             seq: row.seq,
             epoch: this.timelineStore.getEpoch(agent.id),
             timestamp: row.timestamp,
@@ -4170,7 +4211,13 @@ export class AgentManager {
     options: { fromHistory?: boolean } | undefined;
     flags: StreamEventFlags;
   }): Promise<void> {
-    const { agent, event, options, flags } = params;
+    const { agent, options, flags } = params;
+    const event = options?.fromHistory
+      ? {
+          ...params.event,
+          item: this.canonicalizeProviderHistoryItem(agent, params.event.item),
+        }
+      : params.event;
 
     if (event.item.type === "user_message" && isSystemInjectedEnvelope(event.item.text)) {
       flags.shouldDispatchEvent = false;
@@ -4442,6 +4489,60 @@ export class AgentManager {
     return event;
   }
 
+  private rememberSubmittedTimelinePrompt(
+    agent: ActiveManagedAgent,
+    options?: AgentManagerRunOptions,
+  ): boolean {
+    if (!options?.clientMessageId || options.timelinePrompt === undefined) {
+      return false;
+    }
+    const text = submittedPromptText(options.timelinePrompt);
+    if (agent.submittedPromptTextByClientMessageId[options.clientMessageId] === text) {
+      return false;
+    }
+    agent.submittedPromptTextByClientMessageId = {
+      ...agent.submittedPromptTextByClientMessageId,
+      [options.clientMessageId]: text,
+    };
+    return true;
+  }
+
+  private rememberSubmittedProviderMessage(
+    agent: ActiveManagedAgent,
+    clientMessageId: string,
+    providerMessageId: string,
+  ): void {
+    if (
+      agent.submittedPromptTextByClientMessageId[clientMessageId] === undefined ||
+      agent.submittedClientMessageIdByProviderMessageId[providerMessageId] === clientMessageId
+    ) {
+      return;
+    }
+    agent.submittedClientMessageIdByProviderMessageId = {
+      ...agent.submittedClientMessageIdByProviderMessageId,
+      [providerMessageId]: clientMessageId,
+    };
+    this.enqueueBackgroundPersist(agent);
+  }
+
+  private canonicalizeProviderHistoryItem(
+    agent: ActiveManagedAgent,
+    item: AgentTimelineItem,
+  ): AgentTimelineItem {
+    if (item.type !== "user_message") {
+      return item;
+    }
+    const clientMessageId =
+      item.clientMessageId ??
+      (item.messageId
+        ? agent.submittedClientMessageIdByProviderMessageId[item.messageId]
+        : undefined);
+    const text = clientMessageId
+      ? agent.submittedPromptTextByClientMessageId[clientMessageId]
+      : undefined;
+    return text === undefined ? item : { ...item, text };
+  }
+
   private recordSubmittedPrompt(
     agent: ActiveManagedAgent,
     prompt: AgentPromptInput,
@@ -4480,6 +4581,7 @@ export class AgentManager {
     }
     if (!existing || existing.item.type !== "user_message") return null;
     if (messageId) {
+      this.rememberSubmittedProviderMessage(agent, clientMessageId, messageId);
       const enriched = this.timelineStore.enrichSubmittedUserMessage(
         agent.id,
         clientMessageId,

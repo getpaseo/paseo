@@ -72,6 +72,8 @@ const STORED_AGENT_SCHEMA = z.object({
   requiresAttention: z.boolean().optional(),
   attentionReason: z.enum(["finished", "error", "permission"]).nullable().optional(),
   attentionTimestamp: z.string().nullable().optional(),
+  submittedPromptTextByClientMessageId: z.record(z.string(), z.string()).default({}),
+  submittedClientMessageIdByProviderMessageId: z.record(z.string(), z.string()).default({}),
   internal: z.boolean().optional(),
   archivedAt: z.string().nullable().optional(),
   owner: AgentOwnerSchema.optional(),
