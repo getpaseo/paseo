@@ -510,6 +510,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "find-next",
       section: "general",
       label: "Find next",
+      note: "Only while the find bar is open.",
     },
   },
   {
@@ -521,6 +522,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "find-next",
       section: "general",
       label: "Find next",
+      note: "Only while the find bar is open.",
     },
   },
   {
@@ -532,6 +534,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "find-previous",
       section: "general",
       label: "Find previous",
+      note: "Only while the find bar is open.",
     },
   },
   {
@@ -543,6 +546,7 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "find-previous",
       section: "general",
       label: "Find previous",
+      note: "Only while the find bar is open.",
     },
   },
 
