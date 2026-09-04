@@ -45,7 +45,11 @@ import { GenericACPAgentClient } from "./generic-acp-agent.js";
 import { parseKiroExtensionCommands } from "./kiro-acp-agent.js";
 import { transformPiModels } from "./pi/agent.js";
 import type { AgentStreamEvent } from "../agent-sdk-types.js";
-import type { AgentCapabilityFlags, AgentPersistenceHandle } from "../agent-sdk-types.js";
+import type {
+  AgentCapabilityFlags,
+  AgentPersistenceHandle,
+  ProviderRefreshContext,
+} from "../agent-sdk-types.js";
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { buildStringCommandShellInvocation } from "../../../utils/string-command-shell.js";
 import { asInternals } from "../../test-utils/class-mocks.js";
@@ -3554,6 +3558,69 @@ describe("ACPAgentClient probe cleanup", () => {
     await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-models", force: false });
 
     expect(closeSession).toHaveBeenCalledWith({ sessionId: "catalog-probe-session" });
+    expect(terminator.terminated).toContain(child);
+  });
+
+  test("closes a catalog probe session that finishes being created after refresh aborts", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+    const abort = new AbortController();
+    let resolveNewSession!: (value: {
+      sessionId: string;
+      modes: null;
+      models: null;
+      configOptions: [];
+    }) => void;
+    const newSession = vi.fn(
+      () =>
+        new Promise<{
+          sessionId: string;
+          modes: null;
+          models: null;
+          configOptions: [];
+        }>((resolve) => {
+          resolveNewSession = resolve;
+        }),
+    );
+    const closeSession = vi.fn().mockResolvedValue({});
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: { newSession, unstable_closeSession: closeSession },
+          initialize: { agentCapabilities: { sessionCapabilities: { close: {} } } },
+        } as unknown as SpawnedACPProcess;
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      defaultModes: [],
+      terminateProcess: terminator.terminate,
+    });
+    const context: ProviderRefreshContext = {
+      signal: abort.signal,
+      runActivity: async (_name, operation) => await operation(),
+    };
+    const catalog = client.fetchCatalog(
+      { scope: "workspace", cwd: "/tmp/acp-models", force: false },
+      context,
+    );
+    await vi.waitFor(() => expect(newSession).toHaveBeenCalledOnce());
+
+    abort.abort(new Error("refresh cancelled"));
+    resolveNewSession({
+      sessionId: "late-catalog-probe-session",
+      modes: null,
+      models: null,
+      configOptions: [],
+    });
+
+    await expect(catalog).rejects.toThrow("refresh cancelled");
+    expect(closeSession).toHaveBeenCalledWith({ sessionId: "late-catalog-probe-session" });
     expect(terminator.terminated).toContain(child);
   });
 

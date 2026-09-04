@@ -279,6 +279,7 @@ const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
 const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 2_000;
+const ACP_IMPORT_HISTORY_BUDGET_MS = 5_000;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
   return {
@@ -1024,10 +1025,29 @@ export class ACPAgentClient implements AgentClient {
     const cwd = options.scope === "global" ? homedir() : options.cwd;
     let probe: UninitializedACPProcess | null = null;
     let probeSessionId: string | null = null;
+    let probeSessionPromise: Promise<NewSessionResponse> | null = null;
     let closePromise: Promise<void> | null = null;
     const closeProbe = (): Promise<void> => {
       if (!probe) return Promise.resolve();
-      closePromise ??= this.closeProbe(probe, probeSessionId);
+      closePromise ??= (async () => {
+        if (!probeSessionId && probeSessionPromise) {
+          try {
+            probeSessionId = (
+              await withTimeout(
+                probeSessionPromise,
+                ACP_PROBE_CLOSE_TIMEOUT_MS,
+                `ACP probe session/new cleanup timed out after ${ACP_PROBE_CLOSE_TIMEOUT_MS}ms`,
+              )
+            ).sessionId;
+          } catch (error) {
+            this.logger.debug(
+              { err: error },
+              "ACP probe session/new did not finish during cleanup",
+            );
+          }
+        }
+        await this.closeProbe(probe, probeSessionId);
+      })();
       return closePromise;
     };
     const handleAbort = () => void closeProbe().catch(() => undefined);
@@ -1046,16 +1066,14 @@ export class ACPAgentClient implements AgentClient {
         ),
       );
       probe = initializedProbe;
+      probeSessionPromise = this.runACPRequest(() =>
+        initializedProbe.connection.newSession({
+          cwd,
+          mcpServers: [],
+        }),
+      );
       const response = await runProviderRefreshActivity(context, "session/new", () =>
-        raceProviderRefreshAbort(
-          context?.signal,
-          this.runACPRequest(() =>
-            initializedProbe.connection.newSession({
-              cwd,
-              mcpServers: [],
-            }),
-          ),
-        ),
+        raceProviderRefreshAbort(context?.signal, probeSessionPromise!),
       );
       probeSessionId = response.sessionId;
       const transformed = this.transformSessionResponse(response);
@@ -1142,6 +1160,7 @@ export class ACPAgentClient implements AgentClient {
       const resultLimit = options?.limit ?? Number.POSITIVE_INFINITY;
       const scanLimit = Math.min(options?.scanLimit ?? 500, 500);
       const canLoadHistory = probe.initialize.agentCapabilities.loadSession === true;
+      const historyDeadline = Date.now() + ACP_IMPORT_HISTORY_BUDGET_MS;
       let scanned = 0;
       let cursor: string | null | undefined;
       for (;;) {
@@ -1156,6 +1175,7 @@ export class ACPAgentClient implements AgentClient {
             history,
             session,
             canLoadHistory,
+            historyDeadline,
           );
           if (descriptor) sessions.push(descriptor);
         }
@@ -1175,9 +1195,10 @@ export class ACPAgentClient implements AgentClient {
     history: ACPImportHistoryCollector,
     session: ListSessionsResponse["sessions"][number],
     canLoadHistory: boolean,
+    historyDeadline: number,
   ): Promise<ImportableProviderSession | null> {
     const loadedPreviews = canLoadHistory
-      ? await this.loadImportPromptPreviews(probe, history, session)
+      ? await this.loadImportPromptPreviews(probe, history, session, historyDeadline)
       : null;
     if (loadedPreviews?.hasConversation === false) return null;
     return {
@@ -1194,6 +1215,7 @@ export class ACPAgentClient implements AgentClient {
     probe: SpawnedACPProcess,
     history: ACPImportHistoryCollector,
     session: ListSessionsResponse["sessions"][number],
+    historyDeadline: number,
   ): Promise<ACPImportPromptPreviews | null> {
     const updatedAt = session.updatedAt ?? null;
     const cached = this.importPromptCache.get(session.sessionId);
@@ -1205,6 +1227,10 @@ export class ACPAgentClient implements AgentClient {
       };
     }
 
+    const remainingMs = historyDeadline - Date.now();
+    if (remainingMs <= 0) return null;
+    const loadTimeoutMs = Math.min(ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS, remainingMs);
+
     history.begin(session.sessionId);
     try {
       await withTimeout(
@@ -1215,8 +1241,8 @@ export class ACPAgentClient implements AgentClient {
             mcpServers: [],
           }),
         ),
-        ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS,
-        `ACP import history load timed out after ${ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS}ms`,
+        loadTimeoutMs,
+        `ACP import history load timed out after ${loadTimeoutMs}ms`,
       );
       const previews = history.finish(session.sessionId);
       if (updatedAt !== null) {
@@ -1231,17 +1257,24 @@ export class ACPAgentClient implements AgentClient {
       );
       return null;
     } finally {
-      await this.closeLoadedSession(probe, session.sessionId);
+      await this.closeLoadedSession(probe, session.sessionId, historyDeadline);
     }
   }
 
-  private async closeLoadedSession(probe: SpawnedACPProcess, sessionId: string): Promise<void> {
+  private async closeLoadedSession(
+    probe: SpawnedACPProcess,
+    sessionId: string,
+    historyDeadline: number,
+  ): Promise<void> {
     if (!probe.initialize.agentCapabilities?.sessionCapabilities?.close) return;
+    const remainingMs = historyDeadline - Date.now();
+    if (remainingMs <= 0) return;
+    const closeTimeoutMs = Math.min(ACP_PROBE_CLOSE_TIMEOUT_MS, remainingMs);
     try {
       await withTimeout(
         probe.connection.unstable_closeSession({ sessionId }),
-        ACP_PROBE_CLOSE_TIMEOUT_MS,
-        `ACP loaded session/close timed out after ${ACP_PROBE_CLOSE_TIMEOUT_MS}ms`,
+        closeTimeoutMs,
+        `ACP loaded session/close timed out after ${closeTimeoutMs}ms`,
       );
     } catch (error) {
       this.logger.debug({ err: error, sessionId }, "ACP loaded session close failed");
