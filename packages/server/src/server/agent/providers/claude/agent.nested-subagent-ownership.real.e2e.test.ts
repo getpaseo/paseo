@@ -6,6 +6,7 @@ import pino from "pino";
 import { expect, test } from "vitest";
 
 import type { AgentStreamEvent } from "../../agent-sdk-types.js";
+import { collectSessionTurnEvents } from "../test-utils/session-stream-adapter.js";
 import { ClaudeAgentClient } from "./agent.js";
 
 const ROOT_PROMPT = `You are ROOT_OWNER. Use Claude Code's native Agent tool exactly once, never Paseo tools.
@@ -17,14 +18,6 @@ Wait for nested_owner to finish, then reply exactly DIRECT_DONE.
 
 Wait for direct_owner to finish, then reply exactly ROOT_DONE.`;
 
-function isTerminal(event: AgentStreamEvent): boolean {
-  return (
-    event.type === "turn_completed" ||
-    event.type === "turn_failed" ||
-    event.type === "turn_canceled"
-  );
-}
-
 test("attributes a nested Claude child and its background notification to their direct owners", async () => {
   const cwd = mkdtempSync(path.join(tmpdir(), "paseo-claude-nested-ownership-"));
   const client = new ClaudeAgentClient({ logger: pino({ level: "trace" }) });
@@ -34,27 +27,8 @@ test("attributes a nested Claude child and its background notification to their 
     model: "claude-sonnet-5",
     modeId: "bypassPermissions",
   });
-  const events: AgentStreamEvent[] = [];
-
   try {
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(
-        () => reject(new Error("Timed out waiting for nested Claude reproduction")),
-        300_000,
-      );
-      const unsubscribe = session.subscribe((event) => {
-        events.push(event);
-        if (!isTerminal(event)) return;
-        clearTimeout(timeout);
-        unsubscribe();
-        resolve();
-      });
-      void session.startTurn(ROOT_PROMPT).catch((error) => {
-        clearTimeout(timeout);
-        unsubscribe();
-        reject(error);
-      });
-    });
+    const events = await collectSessionTurnEvents(session, ROOT_PROMPT);
 
     expect(events).toContainEqual(expect.objectContaining({ type: "turn_completed" }));
     expect(
