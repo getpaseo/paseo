@@ -1,114 +1,121 @@
-# Providers
+# Adding a New Provider to Paseo
 
-Paseo has one provider boundary. Core uses `ProviderRegistration` and `ProviderConnection` from
-`@getpaseo/plugin/provider` for built-in and plugin providers. `runAcpProvider()` implements that
-boundary; ACP is not a core interface.
+This guide walks through adding a new agent provider end-to-end. There are two integration patterns, and this doc covers both.
 
-## Connection contract
+## Provider-native session options
 
-`ProviderRegistration.connect()` negotiates one protocol version and an intersection of flat,
-dot-notated capabilities. The returned connection accepts JSON-safe inputs through `send()` and
-publishes events through `onEvent()`.
+`AgentSessionConfig.providerOptions` carries JSON-safe configuration for the selected provider. The
+names and nesting are the provider's native contract; options are not portable between providers.
+Paseo validates the object with the selected provider's strict schema before constructing a session.
+Unknown keys fail with their `providerOptions.*` path. Paseo-owned controls such as cwd, model,
+prompt, environment, session identity, MCP transport, callbacks, and hooks cannot be passed here.
 
-Attach the listener before the first input. `send()` resolves after admission. Prompt, request, and
-turn completion arrive as events. Never return a turn stream or async iterable from this boundary.
+This Paseo version accepts these keys:
 
-Connection capabilities are the provider-wide upper bound. Each `session.opened` event publishes
-the subset supported by that session. Refuse an unnegotiated operation before sending it upstream.
-Do not advertise `permission.tool_policy` unless the provider applies exact MCP grants fail-closed.
+- **Codex:** `approval_policy`, `sandbox_mode`,
+  `sandbox_workspace_write.{writable_roots,network_access,exclude_slash_tmp,exclude_tmpdir_env_var}`,
+  `web_search`, `features.multi_agent_v2`, and `features.network_proxy`. A network proxy object may
+  contain `enabled`, `proxy_url`, `socks_url`, `enable_socks5`, `enable_socks5_udp`,
+  `allow_local_binding`, `allow_upstream_proxy`, `dangerously_allow_all_unix_sockets`,
+  `dangerously_allow_non_loopback_proxy`, `domains`, and `unix_sockets`. See the
+  [Codex configuration reference](https://developers.openai.com/codex/config-reference).
+- **Claude:** `allowedTools`, `disallowedTools`, `additionalDirectories`, `sandbox`, and `settings`.
+  The accepted sandbox fields cover enablement, fail-if-unavailable behavior, excluded and
+  unsandboxed commands, filesystem read/write rules, network domain/socket/local-binding rules,
+  weaker nested sandboxing, ignored violations, and the ripgrep command. `settings` accepts native
+  `permissions.{allow,ask,deny}` and sandbox settings. See the
+  [Claude Agent SDK TypeScript reference](https://platform.claude.com/docs/en/agent-sdk/typescript)
+  and [Claude settings reference](https://code.claude.com/docs/en/settings).
+- **OpenCode:** `permission`, either one `ask`/`allow`/`deny` action or the native per-tool rule
+  object. Supported entries are `read`, `edit`, `glob`, `grep`, `list`, `bash`, `task`,
+  `external_directory`, `todowrite`, `question`, `webfetch`, `websearch`, `codesearch`,
+  `repo_clone`, `repo_overview`, `lsp`, `doom_loop`, and `skill`. See the
+  [OpenCode permissions reference](https://opencode.ai/docs/permissions/). OpenCode permissions are
+  application policy, not an OS sandbox.
 
-## Sessions and prompts
+Each provider definition owns its option schema and exact MCP preapproval mapping. A new provider
+must fail closed for Hub unattended execution until it can approve one exact injected MCP server
+and tool identity without approving native tools.
 
-One connection owns every root and child session. Open a child with `session.opened` and
-`parentSessionId`, then publish its lifecycle and timeline against its own session ID. Core stores it
-as an ordinary child agent. There is no provider-subagent event vocabulary.
+## Two Integration Patterns
 
-All user input uses `session.prompt`:
+### ACP (Agent Client Protocol) -- recommended
 
-- `delivery: "auto"` may start a turn or complete a command side effect;
-- `delivery: "steer"` targets active work and fails when steering is unsupported or no turn is
-  active;
-- `input.type: "command"` preserves the command name and arguments.
+Extend `ACPAgentClient` from `packages/server/src/server/agent/providers/acp-agent.ts`. The base class handles process spawning, stdio transport, session lifecycle, streaming, permissions, and model discovery. You provide configuration (command, modes, capabilities) and optionally override `isAvailable()` for auth checks.
 
-Every accepted prompt emits exactly one `session.prompt_result`. A live user timeline item carries
-the submitted `clientMessageId` so the client can reconcile its optimistic row. Refused steering is
-not retried as a new turn.
+The only built-in ACP provider today is `copilot` (`copilot-acp-agent.ts`). `GenericACPAgentClient` (`generic-acp-agent.ts`) is also ACP-based but is used for user-defined custom providers configured via `extends: "acp"` overrides — see [docs/custom-providers.md](custom-providers.md).
 
-The complete session config crosses the boundary: cwd, environment, composed system prompt, MCP
-servers, tool policy, model, mode, thinking option, settings, provider options, title, and
-persistence intent. Paseo host tools are MCP servers; providers do not receive a second callback
-tool API.
+Copilot custom agents are exposed through ACP session config, not the slash-command list. When custom agents are available, Copilot returns a select config option with `id: "agent"` and `category: "_agent"`; Paseo maps that to the `agent` provider feature. Copilot uses the agent display name as the option value, and the blank value means the default Copilot agent.
 
-`settings` are provider-declared toggle/select values rendered by Paseo in the composer.
-`providerOptions` is opaque JSON passed to the provider. A provider may translate either value
-inside its implementation.
+ACP permission options are rendered as ordered actions and Paseo returns the selected option's exact `optionId`. Agents can therefore encode a single-choice question as multiple options of the same allow kind. Auto-accept does not resolve those chooser requests; they always wait for the user.
 
-## Timeline and persistence
+### Direct
 
-Providers publish complete Paseo timeline items with stable IDs. Reusing an ID replaces the current
-item. Plugin items use the same timeline path and must name the plugin that registered the provider.
+Implement the `AgentClient` and `AgentSession` interfaces from `agent-sdk-types.ts` yourself. This gives full control but requires you to handle process management, streaming, permissions, and session persistence from scratch.
 
-Persistence is versioned opaque JSON. Core stores the latest value and returns it in
-`session.open`. Imports and unprimed sessions replay history as ordinary `timeline.item` events.
+Existing direct providers: `claude` (in `providers/claude/agent.ts`), `codex` (`codex-app-server-agent.ts`), `opencode` (`opencode-agent.ts`), `pi` (`providers/pi/agent.ts`), and `omp` (`providers/omp/agent.ts`). The dev-only `mock` provider (`mock-load-test-agent.ts`) is also direct.
 
-Reload uses `session.reload` on the existing connection and session ID. The provider prepares a
-candidate without retiring the active runtime. Core quarantines candidate events until a matching
-`session.ready(requestId)`, then commits the new config, capabilities, persistence, and history.
-Failure discards candidate events and leaves the prior runtime and config usable. Events from the
-retired runtime must stay suppressed.
+Claude first-party model metadata lives in `packages/server/src/server/agent/providers/claude/model-manifest.ts`. When adding or updating a Claude model, update that manifest only; the model picker thinking options and Claude-specific feature gates are derived from the manifest. Do not add model-specific Claude capability lists in feature code.
 
-Archive and unarchive are provider-wide actions gated by `session.archive` and
-`session.unarchive`. Closing a session only releases its live runtime.
+Paseo tools are not implemented as MCP tools internally. They live in a shared tool catalog under `packages/server/src/server/agent/tools/`; MCP is only the fallback adapter. The daemon resolves `agents.providers.<provider>.paseoTools` by the exact provider ID. The catalog policy belongs to the caller: it filters the tools exposed to the current agent. When that agent calls `create_agent`, the child receives the policy for the child provider ID; the caller's policy is not inherited.
 
-## Plugin providers
+A provider that can register runtime tools directly should set `supportsNativePaseoTools: true` and consume the already-filtered `launchContext.paseoTools` in `createSession`/`resumeSession`. When native tools are present, `AgentManager` strips the internal Paseo MCP server from the provider launch config so the provider does not receive the same tools twice. Providers that only know MCP should keep `supportsMcpServers: true` and let the daemon inject `/mcp/agents`; the MCP server builds the same policy-filtered catalog for that caller. Filtering is enforced at catalog registration in both paths. Browser tools remain subject to the daemon browser-tools setting and browser-host availability.
 
-Register a direct implementation with `server.registerProvider()` from `index.server.ts`. The
-[direct provider example](../plugin-examples/provider-direct/) demonstrates catalog discovery,
-session listing and creation, prompts and commands, settings, persistence and replay, reload,
-archive actions, and a child session with a plugin timeline item.
+Pi is a process-backed provider. Paseo requires the user to have the `pi` binary installed and talks to it through `pi --mode rpc`; the server package does not embed Pi's SDK/runtime packages.
 
-For a command-backed ACP, use `runAcpProvider()` from `@getpaseo/plugin/acp`. Its transformer hooks
-are limited to discovery, configuration, vendor notifications, and merged tool-call snapshots. Do
-not add a generic provider-event transformer. Official ACP SDK types stay inside the adapter.
+Paseo's per-agent and daemon-wide system prompts are appended by its generated Pi integration extension. Paseo deliberately does not pass `--append-system-prompt`, because that flag replaces Pi's automatic `APPEND_SYSTEM.md` discovery instead of composing with it.
 
-The [ACP transformer example](../plugin-examples/provider-acp-transformer/) normalizes a concrete
-vendor-shaped file-edit payload before it becomes a Paseo tool-call item.
+Pi model records expose input capabilities through `model.input`. Only send raw RPC `images` when the current model explicitly includes `"image"` in that list. Text-only Pi/OMP models reject image content and persist the rejected image in JSONL history, so image prompts for those models must be materialized to a local file and passed as a text path hint instead.
 
-## Built-in edge
+Pi MCP support depends on the open-source `pi-mcp-adapter` extension being loaded for the agent cwd. Probe with Pi RPC `get_commands`; the adapter registers an extension command named `mcp` (often with `sourceInfo.source` containing `pi-mcp-adapter`). When Paseo injects MCP servers into Pi, write a per-agent MCP config and pass it with `--mcp-config` instead of modifying user or project MCP files. Because that flag replaces the Pi global config layer, preserve the existing `<Pi agent dir>/mcp.json` in the generated file before overlaying injected servers. For local HTTP servers such as Paseo's own `/mcp/agents` endpoint, explicitly disable adapter OAuth (`auth: false`, `oauth: false`) in the generated config.
 
-Built-in SDK and command implementations remain private to `agent/providers/`. The provider
-registry wraps each implementation with `registerNativeProvider()` and exposes only a
-`ProviderRegistration` to the rest of the daemon. Native history iteration, returned SDK values,
-provider-specific commands, and child notifications are translated inside that edge adapter.
+Pi control-plane RPCs wait 60 seconds by default. Override `params.rpcTimeoutMs` when extension or MCP startup on a slow host needs more time. Timeout errors name the pending RPC phase and report both elapsed time and the configured deadline. This setting does not govern long-running Pi compaction or Pi extension UI results. See [OMP profiles and Pi-compatible forks](custom-providers.md#omp-profiles-and-pi-compatible-forks) for OMP startup and RPC deadlines.
 
-New provider integrations should implement the public boundary directly. Changes to a private
-built-in implementation must keep its translation inside the native registration module.
+Pi import discovery reads Pi's persisted JSONL session files because Pi RPC does not expose a recent-session listing command. Resume and full history hydration still go through `pi --mode rpc` using the session file as `nativeHandle`.
 
-## Provider helper processes
+OMP is a first-class built-in provider, disabled by default. Its launch contract, typed runtime, agent/session behavior, history, permissions, imports, and test fake live under `providers/omp/`; only the provider-neutral JSONL child-process transport is shared with Pi. It launches `omp --mode rpc-ui`, uses OMP's `get_available_commands` RPC for slash-command discovery, bridges OMP `rpc-ui` approval dialogs into Paseo permissions, and imports terminal-started sessions from `~/.omp/agent/sessions` when enabled.
 
-Provider-owned helper processes that can outlive an individual agent session must be recorded in
-the daemon's managed-process registry. Store provider/kind metadata, the PID, launch command/args,
-and process identity captured from the platform process table. Remove the record on normal exit or
-shutdown.
+OMP supports native Paseo host tools. The adapter registers the full caller-scoped Paseo tool catalog directly with OMP, matching providers such as Claude that expose the full catalog through MCP. Serialize every OMP host definition with `loadMode: "essential"` so `create_agent`, `send_agent_prompt`, `wait_for_agent`, and related tools remain direct calls; omitting the field makes OMP mount non-built-in names under `xd://` instead. OMP's provider-managed task subagents are surfaced as Paseo subagents through `child_session` imports; the parent keeps the subagents track while the child runtime stays owned by OMP. Custom OMP profiles should extend `omp`; other Pi-compatible forks can still extend `pi`, override `command`, and set `params.sessionDir` to their JSONL session directory.
 
-If a helper process has a readiness phase, the provider's lifecycle model must own the process
-immediately after `spawn`, before readiness succeeds. Startup timeout, startup exit, and daemon
-shutdown must all clean up through that owned generation. Do not keep a spawned helper only inside
-a readiness promise; that creates a live process outside the manager/reaper contract.
+Pi RPC extension UI dialog requests (`select`, `input`, `editor`, `confirm`) are bridged into Paseo question permissions and answered with `extension_ui_response`. Pi extensions such as `ask_user` may chain dialogs: for example, a `select` can be followed by an optional-comment `input`. When an `ask_user` tool call declares `allowComment: true`, Paseo presents the selection and optional comment as one question permission, answers Pi's initial `select` immediately, then auto-answers the follow-up optional `input` with the comment the user already supplied (or an empty string). Preserve placeholders and optional/skip semantics for standalone optional inputs so the app can still distinguish "skip this optional input" from "cancel the whole dialog." Fire-and-forget extension UI requests such as notifications are intentionally ignored by the provider adapter unless Paseo grows first-class UI for them.
 
-Daemon bootstrap reconciles that ledger in the background, without blocking startup: dead PIDs are
-deleted, PID identity mismatches are deleted without killing anything, only positively matched
-Paseo-owned leftovers are terminated, and a record whose process cannot be inspected is left in
-place for the next reconcile rather than deleted. Do not add broad process-name sweepers for
-provider cleanup; cleanup starts from records Paseo previously wrote.
+OpenCode 1 keeps MCP and process environment outside the session boundary. Paseo shares one OpenCode server for ordinary agents and installs a daemon-owned plugin through `OPENCODE_CONFIG_CONTENT`. The plugin reads the exact agent environment and caller-scoped Paseo tool catalog from the daemon's private loopback bridge for each OpenCode session. Bridge context lives only in daemon memory and is removed when the Paseo session closes. The content-addressed plugin artifact contains no session data or secrets.
 
-## Provider snapshot refresh contract
+An agent with custom environment variables or user-configured MCP servers gets a dedicated OpenCode server. Keep that isolation until OpenCode exposes those values as session-owned configuration. Configure custom MCP with `mcp.add`; do not follow it with `mcp.connect`, which only toggles config-backed servers.
 
-The daemon keeps provider snapshots per resolved working directory, with a separate semantic global
-scope for settings/provider management and requests that do not carry a cwd. Boundary catalog
-requests carry the resolved cwd for workspace scope and omit it for global scope. Providers decide
-what global means for their runtime; do not infer global by comparing a cwd to the user's home
-directory.
+OpenCode owns user message IDs. Do not pass Paseo-generated IDs to OpenCode prompt APIs; let OpenCode create `msg*` IDs and record the user timeline item from the `message.updated` event.
+
+`AgentManager` owns the one canonical timeline row for a foreground prompt carrying a Paseo `clientMessageId`. It records that row when `startTurn` accepts, with the wire `messageId` set to the same value. Provider adapters still emit their native user-message echo with the same `clientMessageId` when available; the manager records its provider identity on the internal row without changing or redispatching the wire item. If an adapter emits the echo before `startTurn` resolves, the manager records the provider identity with the row at acceptance. Provider adapters continue to own externally initiated user rows that have no Paseo client identity. Do not perform global transcript text dedupe.
+
+Active-turn steering is an optional `AgentSession.steerActiveTurn` operation. The manager owns admission against its exact foreground turn, canonical user-message creation, echo reconciliation, and falls back to the normal interrupt-and-replace path only when the adapter reports `unavailable`. An adapter error leaves the steer's fate ambiguous and must surface without an interrupt or retry. Codex calls `turn/steer` with the native expected turn and Paseo client user-message ID. Claude pushes an admitted steer into the exact active SDK query input; isolated control commands remain unavailable. OpenCode calls `session/prompt_async` with an OpenCode-generated message ID; the server queues the prompt while busy and the next LLM call in the same Paseo turn includes it. Pi sends its native `steer` RPC, which queues the message for delivery after the in-flight assistant turn's tool calls. Slash-command inputs report `unavailable` because pi rejects extension commands on the steer path, and echo identity is correlated by message text because pi's steer RPC takes no message ID. A missing session reports `unavailable` and uses the normal interrupt fallback.
+
+A steering adapter also owes its interrupt: stopping a turn must discard the steers the provider has not read yet, or one of them resumes the turn the user just stopped. Codex clears pending input when it aborts a turn; Claude does not, so its adapter cancels the SDK messages it queued before calling `query.interrupt()`. Pi requires `clear_queue` before `abort`; older binaries without that RPC retain their native queue behavior until the pi compatibility floor reaches 0.84.4.
+
+`SteerActiveTurnOptions.clearPendingPermissions` makes permission release part of the provider contract. A provider that accepts such a steer queues it first, denies permissions blocking its delivery, and stops once the steer is read. Steers without the flag leave permissions open. A denied plan remains in the timeline because the pending card was the only other copy of its text.
+
+Rewind accepts the canonical wire `messageId` and resolves it to the provider identity before calling the adapter. A submitted prompt cannot be rewound until its provider echo supplies that identity.
+
+Submitted user-message wire items carry the same Paseo ID in `messageId` and `clientMessageId`. Provider adapters attach `clientMessageId` only to the echo for that foreground submission; provider history and externally initiated user rows do not have a Paseo client ID.
+
+Provider adapters must terminalize every transient timeline row before emitting the turn's terminal event. Codex may omit the completed `contextCompaction` item when a turn ends during compaction, so its adapter closes any pending root compaction before forwarding `turn_completed`, `turn_failed`, or `turn_canceled`. A terminal turn must never leave the client showing an operation as still loading.
+
+Draft metadata lookups should avoid creating provider sessions when the upstream provider has top-level APIs for that metadata. Prefer `AgentClient.fetchCatalog`, `listCommands`, or `listFeatures` over creating a scratch `AgentSession`; scratch sessions can show up as empty native sessions in provider import/history UIs. `fetchCatalog` is the single discovery API for models and modes — provider implementations may use one process, separate upstream calls, or static data internally, but callers outside the provider do not get separate runtime model/mode probes. Draft command listing and scratch-session feature listing require an explicit draft model. Do not resolve a default model through catalog discovery. A client-level `listFeatures` implementation may return features from an incomplete, model-less draft and owns which features are valid in that state.
+
+Provider session import has its own contract. The picker calls `listImportableSessions` and receives rows only: provider handle, cwd, title, prompt previews, and last activity. Import calls `importSession({ providerHandleId, cwd })` for the selected row and must not call listing again. The provider returns the resumed session, storage config, persistence handle, and hydrated timeline for that one native session; `AgentManager.importProviderSession` seeds the daemon timeline and publishes the Paseo agent only after it is ready.
+
+## Provider Helper Processes
+
+Provider-owned helper processes that can outlive an individual agent session must be recorded in the daemon's managed-process registry. Store provider/kind metadata, the PID, launch command/args, and process identity captured from the platform process table. Remove the record on normal exit or shutdown.
+
+If a helper process has a readiness phase, the provider's lifecycle model must own the process immediately after `spawn`, before readiness succeeds. Startup timeout, startup exit, and daemon shutdown must all clean up through that owned generation. Do not keep a spawned helper only inside a readiness promise; that creates a live process outside the manager/reaper contract.
+
+Daemon bootstrap reconciles that ledger in the background, without blocking startup: dead PIDs are deleted, PID identity mismatches are deleted without killing anything, only positively matched Paseo-owned leftovers are terminated, and a record whose process cannot be inspected is left in place for the next reconcile rather than deleted. Do not add broad process-name sweepers for provider cleanup; cleanup starts from records Paseo previously wrote.
+
+---
+
+## Provider Snapshot Refresh Contract
+
+The daemon keeps provider snapshots per resolved working directory, with a separate semantic global scope for settings/provider management and requests that do not carry a cwd. Provider catalog probes receive a discriminated `FetchCatalogOptions`: `{ scope: "global", force }` for global catalog refreshes, or `{ scope: "workspace", cwd, force }` for project-scoped refreshes. Providers decide what global means for their runtime; do not infer global by comparing a cwd to the user's home directory.
 
 `ProviderSnapshotManager` owns one refresh deadline per provider. The deadline starts before the
 availability check and covers that check plus the complete catalog probe. Providers that make
@@ -117,72 +124,414 @@ aborts the shared refresh signal at the deadline. Providers name active catalog 
 finish subprocess, server, or session cleanup before rejecting. Timeout errors list the operations
 that were still active when the deadline expired.
 
-Snapshot reads may probe providers only while the requested cwd scope is cold. Once an entry is
-warm, its `ready`, `error`, or `unavailable` state stays cached until an explicit refresh. Do not add
-TTL revalidation, focus-triggered refreshes, selector-open refreshes, or config-reload refreshes.
-Selector-open refetches may read an already-loading or stale React Query, but they must not force
-provider probing on their own.
+Snapshot reads may probe providers only while the requested cwd scope is cold. Once an entry is warm, its `ready`, `error`, or `unavailable` state stays cached until an explicit refresh. Do not add TTL revalidation, focus-triggered refreshes, selector-open refreshes, or config-reload refreshes. Selector-open refetches may read an already-loading or stale React Query, but they must not force provider probing on their own.
 
-Capable clients receive a compact, content-addressed snapshot. Model rows derive their provider from
-the containing entry and reference snapshot-level thinking sets. The app persists that compact
-shape per server and cwd, then sends its hash on the next pull; an unchanged response carries no
-catalog body. Keep the legacy encoding for clients without the capability. The hash covers the
-complete client-visible compact snapshot, including status and `fetchedAt`, so explicit refreshes
-invalidate it even when the discovered catalog is otherwise equal.
+Capable clients receive a compact, content-addressed snapshot. Model rows derive their provider from the containing entry and reference snapshot-level thinking sets. The app persists that compact shape per server and cwd, then sends its hash on the next pull; an unchanged response carries no catalog body. Keep the legacy encoding for clients without the capability. The hash covers the complete client-visible compact snapshot, including status and `fetchedAt`, so explicit refreshes invalidate it even when the discovered catalog is otherwise equal.
 
-Settings refresh is the user-facing "forget stale provider knowledge everywhere" action. A settings
-refresh clears provider snapshot caches and in-flight loads across all cwd scopes, then immediately
-refreshes only the global snapshot with `force: true`. Workspace snapshots are re-probed lazily on
-the next scoped read; do not fan out a settings refresh across every known workspace.
+Settings refresh is the user-facing "forget stale provider knowledge everywhere" action. A settings refresh clears provider snapshot caches and in-flight loads across all cwd scopes, then immediately refreshes only the global snapshot with `force: true`. Workspace snapshots are re-probed lazily on the next scoped read; do not fan out a settings refresh across every known workspace.
 
-Registry/config replacement may update visible metadata such as label, description, default mode,
-enabled state, and provider membership, but it must not spawn provider processes. If a provider
-needs to be re-probed after a config change, route that through the explicit settings refresh path.
+Registry/config replacement may update visible metadata such as label, description, default mode, enabled state, and provider membership, but it must not spawn provider processes. If a provider needs to be re-probed after a config change, route that through the explicit settings refresh path.
 
-Boundary tests should assert observable behavior: cold reads may call provider availability and
-catalog discovery for that scope; warm reads and registry replacement must not; explicit workspace
-refreshes affect only one cwd; settings refresh wipes all scopes but immediately refreshes only
-global.
+Boundary tests should assert observable behavior: cold reads may call provider availability/model/mode discovery for that scope; warm reads and registry replacement must not; explicit workspace refreshes affect only one cwd; settings refresh wipes all scopes but immediately refreshes only global.
 
-## Provider usage fetchers
+---
 
-Provider plan usage is fetch-on-demand, not a daemon push subscription. The app calls
-`provider.usage.list.request` through React Query when the usage tooltip or Host Usage settings
-screen is shown, and the daemon returns the normalized `ProviderUsage` list directly.
+## Provider Usage Fetchers
 
-To add plan usage for a provider, add
-`packages/server/src/services/quota-fetcher/providers/<provider>.ts` and register it in
-`packages/server/src/services/quota-fetcher/manifest.ts`. The provider file exports only its fetcher
-class; provider auth, endpoint constants, API schemas, and normalization helpers stay private in
-that file. A fetcher owns provider auth/API parsing and returns the generic shape:
+Provider plan usage is fetch-on-demand, not a daemon push subscription. The app calls `provider.usage.list.request` through React Query when the usage tooltip or Host Usage settings screen is shown, and the daemon returns the normalized `ProviderUsage` list directly.
+
+To add plan usage for a provider, add `packages/server/src/services/quota-fetcher/providers/<provider>.ts` and register it in `packages/server/src/services/quota-fetcher/manifest.ts`. The provider file exports only its fetcher class; provider auth, endpoint constants, API schemas, and normalization helpers stay private in that file. A fetcher owns provider auth/API parsing and returns the generic shape:
 
 - `providerId`, `displayName`, `status`, and optional `planLabel`
 - any number of `windows` such as Session, Weekly, or Biweekly
 - optional `balances` for credits, USD, requests, or tokens
 - optional `details` for provider-specific rows
 
-Keep the protocol shape provider-agnostic. Do not add provider-specific renderers for new limit
-windows; labels and generic bars should carry the UI. API responses should be parsed and normalized
-with Zod inside the fetcher, while the protocol boundary stays strict so old/new client
-compatibility is explicit.
+Keep the protocol shape provider-agnostic. Do not add provider-specific renderers for new limit windows; labels and generic bars should carry the UI. API responses should be parsed and normalized with Zod inside the fetcher, while the protocol boundary stays strict so old/new client compatibility is explicit.
 
-Kimi Code usage follows the CLI-managed credential file at `KIMI_CODE_HOME` or
-`~/.kimi-code/credentials/kimi-code.json`; do not probe the legacy `~/.kimi` path as the primary
-source for current Kimi Code installs.
+Kimi Code usage follows the CLI-managed credential file at `KIMI_CODE_HOME` or `~/.kimi-code/credentials/kimi-code.json`; do not probe the legacy `~/.kimi` path as the primary source for current Kimi Code installs.
 
-Cursor usage reads the desktop `state.vscdb` token first, then `cursor-agent`'s
-`~/.config/cursor/auth.json`. Headless hosts only have the CLI file.
+Cursor usage reads the desktop `state.vscdb` token first, then `cursor-agent`'s `~/.config/cursor/auth.json`. Headless hosts only have the CLI file.
 
 ### Usage fetchers are read-only on credentials
 
-A fetcher reads the provider's credential file and never writes it. On a 401 or 403 it returns
-`unavailable` and leaves refresh to the provider's own CLI: redeeming a refresh token in the fetcher
-invalidates the CLI's copy (refresh tokens are single-use), and rewriting the file through the
-fetcher's Zod schema drops any field the schema does not model, corrupting the file for the CLI.
+A fetcher reads the provider's credential file and never writes it. On a 401 or 403 it returns `unavailable` and leaves refresh to the provider's own CLI: redeeming a refresh token in the fetcher invalidates the CLI's copy (refresh tokens are single-use), and rewriting the file through the fetcher's Zod schema drops any field the schema does not model, corrupting the file for the CLI.
+
+---
+
+## ACP Provider Checklist
+
+### 1. Create the provider class
+
+Create `packages/server/src/server/agent/providers/{name}-agent.ts`.
+
+Define capabilities, modes, and a thin subclass of `ACPAgentClient`:
+
+```ts
+import type { Logger } from "pino";
+import type { AgentCapabilityFlags, AgentMode } from "../agent-sdk-types.js";
+import type { ProviderRuntimeSettings } from "../provider-launch-config.js";
+import { ACPAgentClient } from "./acp-agent.js";
+
+const MY_PROVIDER_CAPABILITIES: AgentCapabilityFlags = {
+  supportsStreaming: true,
+  supportsSessionPersistence: true,
+  supportsDynamicModes: true,
+  supportsMcpServers: true,
+  supportsReasoningStream: true,
+  supportsToolInvocations: true,
+};
+
+const MY_PROVIDER_MODES: AgentMode[] = [
+  {
+    id: "default",
+    label: "Default",
+    description: "Standard agent mode",
+  },
+  // Add more modes as needed
+];
+
+type MyProviderClientOptions = {
+  logger: Logger;
+  runtimeSettings?: ProviderRuntimeSettings;
+};
+
+export class MyProviderACPAgentClient extends ACPAgentClient {
+  constructor(options: MyProviderClientOptions) {
+    super({
+      provider: "my-provider", // Must match the ID used everywhere else
+      logger: options.logger,
+      runtimeSettings: options.runtimeSettings,
+      defaultCommand: ["my-agent-binary", "--acp"], // CLI command to spawn
+      defaultModes: MY_PROVIDER_MODES,
+      capabilities: MY_PROVIDER_CAPABILITIES,
+    });
+  }
+
+  // Override isAvailable() if the provider needs specific auth/env vars
+  override async isAvailable(): Promise<boolean> {
+    if (!(await super.isAvailable())) {
+      return false; // Binary not found
+    }
+    return Boolean(process.env["MY_PROVIDER_API_KEY"]);
+  }
+}
+```
+
+The `super.isAvailable()` call checks that the binary from `defaultCommand` is on `$PATH`. Override only to add credential checks on top.
+
+For reference, here is how Copilot does it -- no auth override needed because the CLI handles auth itself:
+
+```ts
+export class CopilotACPAgentClient extends ACPAgentClient {
+  constructor(options: CopilotACPAgentClientOptions) {
+    super({
+      provider: "copilot",
+      logger: options.logger,
+      runtimeSettings: options.runtimeSettings,
+      defaultCommand: ["copilot", "--acp"],
+      defaultModes: COPILOT_MODES,
+      capabilities: COPILOT_CAPABILITIES,
+    });
+  }
+
+  override async isAvailable(): Promise<boolean> {
+    return super.isAvailable();
+  }
+}
+```
+
+### 2. Add to the provider manifest
+
+In `packages/server/src/server/agent/provider-manifest.ts`, add mode definitions with UI metadata (icons, color tiers) and a provider definition entry.
+
+First, define the modes with visual metadata:
+
+```ts
+const MY_PROVIDER_MODES: AgentProviderModeDefinition[] = [
+  {
+    id: "default",
+    label: "Default",
+    description: "Standard agent mode",
+    icon: "ShieldCheck",
+    colorTier: "safe",
+  },
+  {
+    id: "autonomous",
+    label: "Autonomous",
+    description: "Runs without prompting",
+    icon: "ShieldOff",
+    colorTier: "dangerous",
+  },
+];
+```
+
+Available `colorTier` values: `"safe"`, `"moderate"`, `"dangerous"`, `"planning"`.
+Available `icon` values: `"ShieldCheck"`, `"ShieldAlert"`, `"ShieldOff"`.
+
+Then add to the `AGENT_PROVIDER_DEFINITIONS` array:
+
+```ts
+export const AGENT_PROVIDER_DEFINITIONS: AgentProviderDefinition[] = [
+  // ... existing providers ...
+  {
+    id: "my-provider",
+    label: "My Provider",
+    description: "Short description of the provider",
+    defaultModeId: "default",
+    modes: MY_PROVIDER_MODES,
+    // Optional: enable voice
+    voice: {
+      enabled: true,
+      defaultModeId: "default",
+      defaultModel: "some-model",
+    },
+  },
+];
+```
+
+### 3. Add the factory to the provider registry
+
+In `packages/server/src/server/agent/provider-registry.ts`, import your class and add a factory entry to `PROVIDER_CLIENT_FACTORIES`:
+
+```ts
+import { MyProviderACPAgentClient } from "./providers/my-provider-agent.js";
+
+const PROVIDER_CLIENT_FACTORIES: Record<string, ProviderClientFactory> = {
+  // ... existing factories ...
+  "my-provider": (logger, runtimeSettings) =>
+    new MyProviderACPAgentClient({
+      logger,
+      runtimeSettings,
+    }),
+};
+```
+
+The factory is invoked with `(logger, runtimeSettings, options)`; `options.workspaceGitService` is also available if you need it (see the `codex` factory for an example). The registry already passes the per-provider runtime settings slice through, so you don't index into the map yourself.
+
+### 4. Add a provider icon (app)
+
+Create `packages/app/src/components/icons/my-provider-icon.tsx` following the pattern from existing icons (e.g., `claude-icon.tsx`):
+
+```tsx
+import Svg, { Path } from "react-native-svg";
+
+interface MyProviderIconProps {
+  size?: number;
+  color?: string;
+}
+
+export function MyProviderIcon({ size = 16, color = "currentColor" }: MyProviderIconProps) {
+  return (
+    <Svg width={size} height={size} viewBox="0 0 24 24" fill={color}>
+      <Path d="..." />
+    </Svg>
+  );
+}
+```
+
+Then register it in `packages/app/src/components/provider-icons.ts` by adding an entry to the existing `PROVIDER_ICONS` map (which already covers the built-in providers):
+
+```ts
+import { MyProviderIcon } from "@/components/icons/my-provider-icon";
+
+const PROVIDER_ICONS: Record<string, typeof Bot> = {
+  // ... existing entries ...
+  "my-provider": MyProviderIcon as unknown as typeof Bot,
+};
+```
+
+If no icon is registered, `getProviderIcon()` falls back to a generic `Bot` icon from lucide.
+
+### 5. Add E2E test config
+
+In `packages/server/src/server/daemon-e2e/agent-configs.ts`, add your provider:
+
+```ts
+export const agentConfigs = {
+  // ... existing configs ...
+  "my-provider": {
+    provider: "my-provider",
+    model: "default-model-id",
+    modes: {
+      full: "autonomous", // Mode with no permission prompts
+      ask: "default", // Mode that requires permission approval
+    },
+  },
+} as const satisfies Record<string, AgentTestConfig>;
+```
+
+Add an availability check in `isProviderAvailable()`. Note `isCommandAvailable` is async, so all branches `await` it:
+
+```ts
+case "my-provider":
+  return (
+    (await isCommandAvailable("my-agent-binary")) &&
+    Boolean(process.env.MY_PROVIDER_API_KEY)
+  );
+```
+
+Add to the `allProviders` array (current built-ins are `claude`, `codex`, `copilot`, `opencode`, `pi`, `omp`):
+
+```ts
+export const allProviders: AgentProvider[] = [
+  "claude",
+  "codex",
+  "copilot",
+  "opencode",
+  "pi",
+  "my-provider",
+];
+```
+
+### 6. Run typecheck
+
+```bash
+npm run typecheck
+```
+
+This is required after every change per project rules.
+
+---
+
+## Direct Provider Checklist
+
+If your agent does not speak ACP, implement the interfaces from `agent-sdk-types.ts` directly.
+
+### Interfaces to implement
+
+The interfaces below are abridged signatures — read `agent-sdk-types.ts` for the full source of truth (option bag types, generics, etc.).
+
+**`AgentClient`** -- factory for sessions and model/mode listing:
+
+```ts
+interface AgentClient {
+  readonly provider: AgentProvider;
+  readonly capabilities: AgentCapabilityFlags;
+  createSession(
+    config: AgentSessionConfig,
+    launchContext?: AgentLaunchContext,
+    options?: AgentCreateSessionOptions,
+  ): Promise<AgentSession>;
+  resumeSession(
+    handle: AgentPersistenceHandle,
+    overrides?: Partial<AgentSessionConfig>,
+    launchContext?: AgentLaunchContext,
+  ): Promise<AgentSession>;
+  fetchCatalog(options: FetchCatalogOptions): Promise<ProviderCatalog>;
+  isAvailable(): Promise<boolean>;
+  // Optional:
+  listImportableSessions(
+    options?: ListImportableSessionsOptions,
+  ): Promise<ImportableProviderSession[]>;
+  importSession(
+    input: ImportProviderSessionInput,
+    context: ImportProviderSessionContext,
+  ): Promise<ImportedProviderSession>;
+  getDiagnostic?(): Promise<{ diagnostic: string }>;
+}
+```
+
+**`AgentSession`** -- a running agent conversation:
+
+```ts
+interface AgentSession {
+  readonly provider: AgentProvider;
+  readonly id: string | null;
+  readonly capabilities: AgentCapabilityFlags;
+  readonly features?: AgentFeature[];
+  run(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<AgentRunResult>;
+  startTurn(prompt: AgentPromptInput, options?: AgentRunOptions): Promise<{ turnId: string }>;
+  steerActiveTurn?(prompt: AgentPromptInput, options: SteerActiveTurnOptions): Promise<SteerResult>;
+  subscribe(callback: (event: AgentStreamEvent) => void): () => void;
+  streamHistory(): AsyncGenerator<AgentStreamEvent>;
+  getRuntimeInfo(): Promise<AgentRuntimeInfo>;
+  getAvailableModes(): Promise<AgentMode[]>;
+  getCurrentMode(): Promise<string | null>;
+  setMode(modeId: string): Promise<void | AgentProviderNotice>;
+  getPendingPermissions(): AgentPermissionRequest[];
+  respondToPermission(
+    requestId: string,
+    response: AgentPermissionResponse,
+  ): Promise<AgentPermissionResult | void>;
+  describePersistence(): AgentPersistenceHandle | null;
+  interrupt(): Promise<void>;
+  close(): Promise<void>;
+  // Optional:
+  listCommands?(): Promise<AgentSlashCommand[]>;
+  setModel?(modelId: string | null): Promise<void>;
+  setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
+  setFeature?(featureId: string, value: unknown): Promise<void>;
+  tryHandleOutOfBand?(prompt: AgentPromptInput): {
+    run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
+  } | null;
+}
+```
+
+`setMode` and `setThinkingOption` may return an `AgentProviderNotice` when the provider knows the change needs user-facing context. For example, providers that stage changes until the next turn should return an `info` notice while a turn is already running. The app renders the notice generically as a toast; provider-specific lifecycle behavior stays in the provider implementation.
+
+### Steps
+
+1. Create `packages/server/src/server/agent/providers/{name}-agent.ts` implementing both interfaces
+2. Add to the provider manifest (same as ACP step 2 above)
+3. Add factory to the registry (same as ACP step 3 above)
+4. Add icon (same as ACP step 4 above)
+5. Add E2E config (same as ACP step 5 above)
+6. Run typecheck
+
+---
 
 ## Testing
 
-Test boundary behavior with real in-process connections or subprocesses. Cover admission separately
-from completion, capability refusal before upstream I/O, prompt disposition and reconciliation,
-atomic configure, reload commit and failure preservation, retired-event suppression, malformed IPC,
-and process loss. Run only the targeted test file while iterating; see [testing.md](testing.md).
+### Manual testing with the CLI
+
+Start the daemon if not already running, then:
+
+```bash
+# Launch an agent with your provider
+paseo run --provider my-provider
+
+# Launch with a specific model and mode
+paseo run --provider my-provider --model some-model --mode default
+
+# List running agents
+paseo ls -a -g
+
+# Check if the provider reports models
+paseo models --provider my-provider
+```
+
+### E2E test patterns
+
+The E2E configs in `agent-configs.ts` expose two helpers:
+
+- `getFullAccessConfig(provider)` -- returns config for a session with no permission prompts
+- `getAskModeConfig(provider)` -- returns config for a session that triggers permission requests
+
+Tests use `isProviderAvailable(provider)` to skip when the binary or credentials are missing, so CI will not fail for providers that are not installed.
+
+---
+
+## Gotchas
+
+**Mode IDs can be URIs.** ACP providers like Copilot use full URIs as mode IDs (e.g., `"https://agentclientprotocol.com/protocol/session-modes#agent"`). Never assume mode IDs are simple strings. The manifest `defaultModeId` must match exactly.
+
+**Models and modes are discovered dynamically.** ACP providers report available models and modes at runtime via the protocol. The static definitions in `provider-manifest.ts` are used for UI scaffolding (icons, color tiers) but the runtime values from the agent process are the source of truth.
+
+**`AgentProvider` is always `string`.** The type alias is `type AgentProvider = string`. Provider IDs are validated against the manifest at runtime, not at the type level.
+
+**Auth patterns vary.** Some providers need API keys in env vars (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), some use OAuth tokens (`CLAUDE_CODE_OAUTH_TOKEN`), some use auth files (`~/.codex/auth.json`), and some handle auth entirely in their CLI binary (Copilot). Your `isAvailable()` method should check whatever is needed.
+
+**The manifest mode list and the agent class mode list are separate.** The manifest in `provider-manifest.ts` includes UI metadata (`icon`, `colorTier`). The agent class defines modes without UI metadata (just `id`, `label`, `description`). Keep them in sync.
+
+**`defaultCommand` is a tuple.** The first element is the binary name, the rest are default arguments. The base class uses this to find the executable and spawn the process.
+
+**Runtime settings can override the command.** Users can configure custom binary paths or environment variables per provider via `ProviderRuntimeSettings`. Your factory in the registry should pass `runtimeSettings?.["your-provider"]` through to the constructor.
+
+**Session-scoped cancellation needs a stop boundary inside the provider.** Some agents cancel the whole session rather than one turn — OpenCode's `session.abort` is the example. A cancel that is still in flight when the next run starts will kill that replacement run, which is what makes "stop, then immediately prompt again" (`replaceRunning`, `notifyOnFinish` wakes, schedules) flaky. Own this in the provider session, not in `AgentManager`:
+
+- Model the stop as an explicit `stopping` turn-state variant carrying the canceled run's terminal and the cancellation the caller is still owed. Pressing Stop again retries the stop already in progress rather than opening a second one; never fire a detached retry, it will outlive its boundary.
+- **Scope the cancel settlement the way the provider scopes the cancel.** If cancellation is session-scoped, so is its settlement: track it on the session, accumulating every request issued, and let it outlive the stop that issued it. A request still in flight lands on the runner whenever the server gets to it — however many stops have come and gone since. Scoping it to the current stop looks right and quietly drops older requests from the gate. Only the newest may hold the gate closed, since recovering from a failed cancel is what pressing Stop again is for.
+- Gate the operations **the daemon issues** (prompt, slash command, summarize) on both the terminal and cancel settlement. Permission and question responses are not runner operations and must stay outside the gate, or an auto-approve deadlocks the stop. Runs the _provider_ starts on its own — plugin or autonomous wakes — are observed, not gated: the daemon does not choose when they begin, and holding their events back does not protect them from a cancel already in flight, it only hides a run that may already be dead.
+- Fail closed: if the cancel never succeeded you never proved the run stopped, so refuse new runs until the next Stop issues a fresh cancel. `AgentManager` already turns a rejected `interrupt()` into a refused cancel.
+- Suppress the canceled run's residue only until its authoritative terminal. Anything the provider publishes after that terminal is a new run by construction and must take the normal live path — buffering it and replaying it later is how autonomous/plugin wakes get lost.

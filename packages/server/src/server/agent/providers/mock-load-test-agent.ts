@@ -51,7 +51,7 @@ const CAPABILITIES: AgentCapabilityFlags = {
   supportsSessionPersistence: true,
   supportsSessionListing: true,
   supportsDynamicModes: false,
-  supportsMcpServers: true,
+  supportsMcpServers: false,
   supportsReasoningStream: true,
   supportsToolInvocations: true,
   supportsRewindConversation: true,

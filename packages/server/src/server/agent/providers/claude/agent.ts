@@ -80,7 +80,6 @@ import { realClaudeRewindSdk, revertClaudeConversation, revertClaudeFiles } from
 import { normalizeProviderReplayTimestamp } from "../../provider-history-timestamps.js";
 import { claudeProjectDirSync } from "./project-dir.js";
 import { THINKING_APPLIES_NEXT_TURN_NOTICE } from "../../provider-notices.js";
-import { validateProviderOptions } from "../../provider-options.js";
 import {
   isProviderImageMarkdown,
   materializeProviderImage,
@@ -303,9 +302,6 @@ type ClaudeConversationRewindTarget =
   | { kind: "fork"; messageId: string };
 
 const CLAUDE_CAPABILITIES: AgentCapabilityFlags = {
-  supportsImages: true,
-  supportsMaxThinkingTokens: true,
-  supportsSubsessions: true,
   supportsStreaming: true,
   supportsSessionPersistence: true,
   supportsSessionListing: true,
@@ -1677,11 +1673,7 @@ export class ClaudeAgentClient implements AgentClient {
       throw new Error(`ClaudeAgentClient received config for provider '${config.provider}'`);
     }
     const model = config.model?.trim();
-    const providerOptions = validateProviderOptions(
-      config.provider,
-      ClaudeProviderOptionsSchema,
-      config.providerOptions ?? {},
-    );
+    const providerOptions = ClaudeProviderOptionsSchema.parse(config.providerOptions ?? {});
     return {
       ...config,
       provider: "claude",

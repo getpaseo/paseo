@@ -1,14 +1,10 @@
 import type { Logger } from "pino";
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { CallToolResultSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 import {
   addModelVisibleStructuredContent,
   serializePaseoToolInputParameters,
 } from "../../tools/paseo-tool-serialization.js";
 import type { PaseoToolCatalog, PaseoToolResult } from "../../tools/types.js";
-import type { McpServerConfig } from "../../agent-sdk-types.js";
 import type { OmpRuntimeSession } from "./runtime.js";
 import {
   OmpRpcHostToolCallRequestSchema,
@@ -28,18 +24,8 @@ interface PendingOmpHostToolCall {
 
 interface OmpHostToolRouterInput {
   runtimeSession: OmpRuntimeSession;
-  source: OmpHostToolSource;
+  catalog: PaseoToolCatalog;
   logger: Logger;
-}
-
-export interface OmpHostToolSource {
-  definitions: readonly OmpRpcHostToolDefinition[];
-  executeTool(
-    name: string,
-    input: Record<string, unknown>,
-    context: { signal?: AbortSignal; sendUpdate?: (update: PaseoToolResult) => void },
-  ): Promise<PaseoToolResult>;
-  close(): Promise<void>;
 }
 
 const routersByRuntimeSession = new WeakMap<OmpRuntimeSession, OmpHostToolRouter>();
@@ -59,73 +45,18 @@ export function serializeOmpHostTools(catalog: PaseoToolCatalog): OmpRpcHostTool
   });
 }
 
-export function createOmpHostToolSource(catalog: PaseoToolCatalog): OmpHostToolSource {
-  return {
-    definitions: serializeOmpHostTools(catalog),
-    executeTool: async (name, input, context) => await catalog.executeTool(name, input, context),
-    close: async () => undefined,
-  };
-}
-
-export async function connectOmpPaseoMcpTools(
-  config: McpServerConfig | undefined,
-): Promise<OmpHostToolSource | undefined> {
-  if (!config) return undefined;
-  if (config.type !== "http") {
-    throw new Error("OMP supports the injected Paseo MCP server over HTTP only");
-  }
-
-  const client = new Client({ name: "paseo-omp-provider", version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(new URL(config.url), {
-    requestInit: config.headers ? { headers: config.headers } : undefined,
-  });
-  try {
-    await client.connect(transport);
-    const { tools } = await client.listTools();
-    return {
-      definitions: tools.map((tool) => {
-        const definition: OmpRpcHostToolDefinition = {
-          name: tool.name,
-          description: tool.description ?? tool.name,
-          loadMode: "essential",
-          parameters: tool.inputSchema,
-        };
-        if (tool.annotations?.title) definition.label = tool.annotations.title;
-        return definition;
-      }),
-      executeTool: async (name, input, context) => {
-        const rawResult = await client.callTool({ name, arguments: input }, undefined, {
-          signal: context.signal,
-        });
-        const result = CallToolResultSchema.parse(rawResult) as CallToolResult;
-        return {
-          content: result.content.map((item) => ({ ...item })) as PaseoToolResult["content"],
-          ...(result.structuredContent !== undefined
-            ? { structuredContent: result.structuredContent }
-            : {}),
-          ...(result.isError !== undefined ? { isError: result.isError } : {}),
-        };
-      },
-      close: async () => await client.close(),
-    };
-  } catch (error) {
-    await client.close().catch(() => undefined);
-    throw error;
-  }
-}
-
 export async function setOmpHostTools(
   runtimeSession: OmpRuntimeSession,
-  source: OmpHostToolSource,
+  catalog: PaseoToolCatalog,
 ): Promise<string[]> {
-  return await runtimeSession.setHostTools([...source.definitions]);
+  return await runtimeSession.setHostTools(serializeOmpHostTools(catalog));
 }
 
 export function handleOmpHostToolRuntimeEvent(
   event: unknown,
   input: {
     runtimeSession: OmpRuntimeSession;
-    hostTools?: OmpHostToolSource;
+    paseoTools?: PaseoToolCatalog;
     logger: Logger;
   },
 ): boolean {
@@ -175,10 +106,10 @@ export async function waitForOmpHostToolsIdle(runtimeSession: OmpRuntimeSession)
 
 function getRouter(input: {
   runtimeSession: OmpRuntimeSession;
-  hostTools?: OmpHostToolSource;
+  paseoTools?: PaseoToolCatalog;
   logger: Logger;
 }): OmpHostToolRouter | null {
-  if (!input.hostTools) {
+  if (!input.paseoTools) {
     return null;
   }
   const existing = routersByRuntimeSession.get(input.runtimeSession);
@@ -187,7 +118,7 @@ function getRouter(input: {
   }
   const router = new OmpHostToolRouter({
     runtimeSession: input.runtimeSession,
-    source: input.hostTools,
+    catalog: input.paseoTools,
     logger: input.logger,
   });
   routersByRuntimeSession.set(input.runtimeSession, router);
@@ -212,14 +143,14 @@ function isOmpHostToolEventType(type: string): boolean {
 
 class OmpHostToolRouter {
   private readonly runtimeSession: OmpRuntimeSession;
-  private readonly source: OmpHostToolSource;
+  private readonly catalog: PaseoToolCatalog;
   private readonly logger: Logger;
   private readonly pendingCalls = new Map<string, PendingOmpHostToolCall>();
   private readonly idleWaiters = new Set<() => void>();
 
   constructor(input: OmpHostToolRouterInput) {
     this.runtimeSession = input.runtimeSession;
-    this.source = input.source;
+    this.catalog = input.catalog;
     this.logger = input.logger;
   }
 
@@ -262,7 +193,7 @@ class OmpHostToolRouter {
     entry: PendingOmpHostToolCall,
   ): Promise<void> {
     try {
-      const result = await this.source.executeTool(request.toolName, request.arguments, {
+      const result = await this.catalog.executeTool(request.toolName, request.arguments, {
         signal: entry.controller.signal,
         sendUpdate: (update) => {
           if (entry.canceled || entry.controller.signal.aborted) {

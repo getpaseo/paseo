@@ -155,7 +155,6 @@ function mapPiSlashCommands(
 }
 
 const PI_CAPABILITIES: AgentCapabilityFlags = {
-  supportsImages: true,
   supportsStreaming: true,
   supportsSessionPersistence: true,
   supportsSessionListing: true,

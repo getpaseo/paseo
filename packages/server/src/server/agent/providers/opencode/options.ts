@@ -60,7 +60,7 @@ export function buildOpenCodePermissionRules(
     })) ?? [];
   const permission = options?.permission;
   if (typeof permission === "string") {
-    return [{ permission: "*", pattern: "*", action: permission }, ...grants];
+    return [...grants, { permission: "*", pattern: "*", action: permission }];
   }
   if (!permission || typeof permission !== "object" || Array.isArray(permission)) {
     return grants.length > 0 ? grants : undefined;
@@ -74,5 +74,5 @@ export function buildOpenCodePermissionRules(
       typeof action === "string" ? [{ permission: name, pattern, action }] : [],
     );
   });
-  return [...authored, ...grants];
+  return [...grants, ...authored];
 }

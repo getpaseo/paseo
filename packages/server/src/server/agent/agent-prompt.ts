@@ -15,7 +15,12 @@ export type AgentUnarchiveController = Pick<AgentManager, "notifyAgentState" | "
 
 export type AgentRunController = Pick<
   AgentManager,
-  "getAgent" | "hasInFlightRun" | "replaceAgentTurn" | "startAgentTurn" | "steerOrReplaceActiveTurn"
+  | "getAgent"
+  | "tryRunOutOfBand"
+  | "hasInFlightRun"
+  | "replaceAgentRun"
+  | "steerOrReplaceActiveTurn"
+  | "streamAgent"
 >;
 
 export interface StartAgentRunOptions {
@@ -26,27 +31,33 @@ export interface StartAgentRunOptions {
   clearPendingPermissions?: boolean;
 }
 
-export type PromptDispatchDisposition = "completed" | "steered" | "turn_started";
+export type PromptDispatchDisposition = "out_of_band" | "steered" | "turn_started";
 
 async function steerOrReplaceActiveRun(
   agentManager: AgentRunController,
   agentId: string,
   prompt: AgentPromptInput,
   options: StartAgentRunOptions | undefined,
-): Promise<{ disposition: PromptDispatchDisposition } | null> {
-  const delivery = options?.activeTurnBehavior === "steer" ? "steer" : "auto";
-  if (delivery === "auto" && !options?.replaceRunning) {
+): Promise<
+  | { disposition: "steered" }
+  | {
+      disposition: "turn_started";
+      iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>;
+    }
+  | null
+> {
+  if (options?.activeTurnBehavior !== "steer") {
     return null;
   }
-  const steerOptions = options?.clearPendingPermissions
+  const steerOptions = options.clearPendingPermissions
     ? { ...options.runOptions, clearPendingPermissions: true }
-    : options?.runOptions;
-  const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, {
-    ...steerOptions,
-    delivery,
-  });
-  if (result.status !== "inactive") {
-    return { disposition: result.status };
+    : options.runOptions;
+  const result = await agentManager.steerOrReplaceActiveTurn(agentId, prompt, steerOptions);
+  if (result.status === "steered") {
+    return { disposition: "steered" };
+  }
+  if (result.status === "replaced") {
+    return { disposition: "turn_started", iterator: result.iterator };
   }
   return null;
 }
@@ -56,12 +67,15 @@ async function startOrReplaceRun(
   agentId: string,
   prompt: AgentPromptInput,
   options: StartAgentRunOptions | undefined,
-): Promise<{ completed: boolean; replaced: boolean }> {
+): Promise<{
+  iterator: AsyncGenerator<import("./agent-sdk-types.js").AgentStreamEvent>;
+  replaced: boolean;
+}> {
   const replaced = Boolean(options?.replaceRunning && agentManager.hasInFlightRun(agentId));
-  const result = replaced
-    ? await agentManager.replaceAgentTurn(agentId, prompt, options?.runOptions)
-    : await agentManager.startAgentTurn(agentId, prompt, options?.runOptions);
-  return { completed: result.turnId === null, replaced };
+  const iterator = replaced
+    ? await agentManager.replaceAgentRun(agentId, prompt, options?.runOptions)
+    : agentManager.streamAgent(agentId, prompt, options?.runOptions);
+  return { iterator, replaced };
 }
 
 export async function startAgentRun(
@@ -84,9 +98,19 @@ export async function startAgentRun(
     },
     "agent.session.start_stream.request",
   );
-  const activeDisposition = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
-  if (activeDisposition) return activeDisposition;
-  const { completed, replaced } = await startOrReplaceRun(agentManager, agentId, prompt, options);
+  // Out-of-band commands (e.g. /goal pause) must run WITHOUT canceling an
+  // in-flight turn — replaceAgentRun would interrupt the running turn. The
+  // intercept lives at this layer so it covers every prompt entrypoint.
+  if (agentManager.tryRunOutOfBand(agentId, prompt, options?.runOptions)) {
+    return { disposition: "out_of_band" };
+  }
+  const steered = await steerOrReplaceActiveRun(agentManager, agentId, prompt, options);
+  if (steered?.disposition === "steered") {
+    return steered;
+  }
+  const { iterator, replaced } = steered
+    ? { iterator: steered.iterator, replaced: true }
+    : await startOrReplaceRun(agentManager, agentId, prompt, options);
   logger.trace(
     {
       agentId,
@@ -94,9 +118,35 @@ export async function startAgentRun(
       providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
       shouldReplace: replaced,
     },
-    "agent.session.start_stream.accepted",
+    "agent.session.start_stream.iterator_returned",
   );
-  return { disposition: completed ? "completed" : "turn_started" };
+  void (async () => {
+    try {
+      for await (const _ of iterator) {
+        // Events are broadcast via AgentManager subscribers.
+      }
+      logger.trace(
+        {
+          agentId,
+          provider: snapshot?.provider,
+          providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+        },
+        "agent.session.iterator.drained",
+      );
+    } catch (error) {
+      logger.trace(
+        {
+          agentId,
+          provider: snapshot?.provider,
+          providerSessionId: snapshot?.persistence?.sessionId ?? undefined,
+          err: error,
+        },
+        "agent.session.iterator.error",
+      );
+      logger.error({ err: error, agentId }, "Agent stream failed");
+    }
+  })();
+  return { disposition: "turn_started" };
 }
 
 /**

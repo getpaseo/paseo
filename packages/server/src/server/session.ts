@@ -270,6 +270,11 @@ import { runGitCommand } from "../utils/run-git-command.js";
 import { CreateAgentLifecycleDispatch } from "./agent/create-agent-lifecycle-dispatch.js";
 import { resolveWorktreeSourceCwd } from "./workspace-source.js";
 
+type ProviderSubagentManagerEvent = Extract<
+  AgentManagerEvent,
+  { type: "provider_subagent" }
+>["event"];
+
 // TODO: Remove once all app store clients are on >=0.1.45 and understand arbitrary provider strings.
 // Clients before 0.1.45 validate providers with z.enum(["claude", "codex", "opencode"]) and reject
 // the entire session message if they encounter an unknown provider.
@@ -497,8 +502,6 @@ export interface SessionOptions {
     subscribe(listener: (pluginId: string) => void): () => void;
     catalog(): Array<{ id: string; clientBundle: string }>;
     invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
-    getProviderRegistrations(): readonly import("@getpaseo/plugin/provider").ProviderRegistration[];
-    subscribeProviderRegistrations(listener: () => void): () => void;
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
@@ -1710,6 +1713,12 @@ export class Session {
           return;
         }
 
+        if (event.type === "provider_subagent") {
+          this.emitProviderSubagentWorkspaceUpdate(event.event);
+          this.forwardProviderSubagentUpdate(event.event);
+          return;
+        }
+
         if (
           this.voiceSession.isActiveForAgent(event.agentId) &&
           event.event.type === "permission_requested" &&
@@ -1773,6 +1782,24 @@ export class Session {
       },
       { replayState: false },
     );
+  }
+
+  private emitProviderSubagentWorkspaceUpdate(event: ProviderSubagentManagerEvent): void {
+    if (event.type === "timeline") {
+      return;
+    }
+    const parentAgentId =
+      event.type === "upsert" ? event.subagent.parentAgentId : event.parentAgentId;
+    const parent = this.agentManager.getAgent(parentAgentId);
+    if (!parent?.workspaceId) {
+      return;
+    }
+    void this.emitWorkspaceUpdateForWorkspaceId(parent.workspaceId).catch((error) => {
+      this.sessionLogger.error(
+        { err: error, parentAgentId, workspaceId: parent.workspaceId },
+        "Failed to emit provider subagent workspace update",
+      );
+    });
   }
 
   private buildAgentStreamPayload(
@@ -4252,11 +4279,8 @@ export class Session {
             })
           : null;
 
-      if (agent?.session) {
-        const commands = agent.session.commands.map((command) => ({
-          ...command,
-          argumentHint: command.argumentHint ?? "",
-        }));
+      if (agent?.session?.listCommands) {
+        const commands = await agent.session.listCommands();
         this.emit({
           type: "list_commands_response",
           payload: {
@@ -7441,7 +7465,7 @@ export class Session {
         },
         "agent.session.send_agent_message",
       );
-      let dispatchResult: { disposition: "completed" | "steered" | "turn_started" };
+      let dispatchResult: { disposition: "out_of_band" | "steered" | "turn_started" };
       try {
         dispatchResult = await sendPromptToAgent({
           agentManager: this.agentManager,

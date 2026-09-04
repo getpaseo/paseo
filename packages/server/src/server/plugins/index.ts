@@ -390,7 +390,11 @@ export class PluginService {
     try {
       this.publishProviderRegistrations(pluginId);
     } catch (error) {
-      await this.runtime.stopPluginById(pluginId);
+      try {
+        this.removeProviderRegistrations(pluginId);
+      } finally {
+        await this.runtime.stopPluginById(pluginId);
+      }
       throw error;
     }
   }

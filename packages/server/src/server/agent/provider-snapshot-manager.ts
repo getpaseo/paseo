@@ -3,15 +3,17 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 
 import type { Logger } from "pino";
-import type { ProviderRegistration } from "@getpaseo/plugin/provider";
 
 import { expandTilde } from "../../utils/path.js";
+import { withTimeout } from "../../utils/promise-timeout.js";
 import {
   filterSelectableAgentModels,
+  type AgentClient,
   type AgentCreateConfigParent,
   type AgentMode,
   type AgentModelDefinition,
   type AgentProvider,
+  type FetchCatalogOptions,
   type ProviderSnapshotEntry,
 } from "./agent-sdk-types.js";
 import {
@@ -26,24 +28,29 @@ import type {
   AgentProviderRuntimeSettingsMap,
   ProviderOverride,
 } from "./provider-launch-config.js";
-import { buildProviderRegistry, type ProviderDefinition } from "./provider-registry.js";
-import { ProviderRuntime } from "./provider-connection-runtime.js";
+import {
+  buildProviderRegistry,
+  shutdownAgentClients,
+  type ProviderDefinition,
+} from "./provider-registry.js";
 import { BUILTIN_PROVIDER_IDS } from "@getpaseo/protocol/provider-manifest";
 import { applyMutableProviderConfigToOverrides } from "../daemon-config-store.js";
-import { formatProviderDiagnostic } from "./providers/diagnostic-utils.js";
+import {
+  formatProviderDiagnostic,
+  formatProviderDiagnosticError,
+} from "./providers/diagnostic-utils.js";
 import type { MutableDaemonConfig } from "../daemon-config-store.js";
 import type { HubExecutionAgentValidationIssue } from "@getpaseo/protocol/messages";
 import {
   type AgentConfigurationValidationInput,
   validateAgentConfigurationAgainstProvider,
 } from "./agent-configuration-validator.js";
-import {
-  isDefaultAgentCreateConfigUnattended,
-  resolveDefaultAgentCreateConfig,
-} from "./create-agent-mode.js";
+import type { ProviderRegistration } from "@getpaseo/plugin/provider";
+import { PluginAgentClientRegistry } from "./plugin-provider.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
+const DEFAULT_DIAGNOSTIC_TIMEOUT_MS = 120_000;
 const PROVIDER_REFRESH_DEADLINE_ENV = "PASEO_PROVIDER_REFRESH_TIMEOUT_MS";
 export const GLOBAL_PROVIDER_SNAPSHOT_KEY = "paseo:global";
 
@@ -65,6 +72,13 @@ function providerRefreshDeadline(configured: number | undefined): number {
   );
 }
 
+function resolveDiagnosticTimeoutMs(option: number | undefined, refreshTimeoutMs: number): number {
+  if (typeof option === "number" && Number.isFinite(option) && option > 0) {
+    return option;
+  }
+  return Math.max(refreshTimeoutMs, DEFAULT_DIAGNOSTIC_TIMEOUT_MS);
+}
+
 function omitProviderOverrides(
   overrides: Record<string, ProviderOverride> | undefined,
   providers: readonly string[],
@@ -84,10 +98,10 @@ export interface ProviderSnapshotManagerOptions {
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   managedProcesses?: ManagedProcessRegistry;
   isDev?: boolean;
-  extraRegistrations?: readonly ProviderRegistration[];
+  extraClients?: Partial<Record<AgentProvider, AgentClient>>;
   refreshTimeoutMs?: number;
+  diagnosticTimeoutMs?: number;
   openCodeBridge?: OpenCodeBridge;
-  providerRegistrations?: readonly ProviderRegistration[];
 }
 
 interface ProviderSnapshotRefreshOptions {
@@ -109,7 +123,6 @@ interface ProviderSnapshotReadOptions {
 interface ApplyMutableProviderConfigOptions {
   removeProviders?: readonly string[];
   replace?: boolean;
-  providerRegistrations?: readonly ProviderRegistration[];
 }
 
 export interface StagedMutableProviderConfig {
@@ -151,9 +164,15 @@ export interface ProviderDiagnosticResult {
 
 export interface AgentManagerProviderState {
   providerDefinitions: Partial<
-    Record<AgentProvider, Pick<ProviderDefinition, "enabled" | "derivedFromProviderId">>
+    Record<
+      AgentProvider,
+      Pick<
+        ProviderDefinition,
+        "enabled" | "derivedFromProviderId" | "validateOptions" | "applyOptions" | "applyToolPolicy"
+      >
+    >
   >;
-  providers: Partial<Record<AgentProvider, ProviderRuntime>>;
+  clients: Partial<Record<AgentProvider, AgentClient>>;
 }
 
 interface ProviderLoadOptions {
@@ -171,8 +190,7 @@ interface MutableProviderState {
   runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   providerOverrides: Record<string, ProviderOverride> | undefined;
   providerRegistry: Record<AgentProvider, ProviderDefinition>;
-  providerRuntimes: Record<AgentProvider, ProviderRuntime>;
-  providerRegistrations: readonly ProviderRegistration[];
+  providerClients: Record<AgentProvider, AgentClient>;
   snapshots: Map<string, Map<AgentProvider, ProviderSnapshotEntry>>;
   providerLoads: Map<string, Map<AgentProvider, ProviderLoad>>;
 }
@@ -190,34 +208,45 @@ export class ProviderSnapshotManager {
   private readonly events = new EventEmitter();
   private destroyed = false;
   private refreshTimeoutMs: number;
+  private diagnosticTimeoutMs: number;
   private readonly logger: Logger;
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   private readonly managedProcesses?: ManagedProcessRegistry;
   private readonly openCodeBridge?: OpenCodeBridge;
   private readonly isDev: boolean;
-  private readonly extraRegistrations: readonly ProviderRegistration[];
+  private readonly extraClients: Partial<Record<AgentProvider, AgentClient>>;
   private runtimeSettings: AgentProviderRuntimeSettingsMap | undefined;
   private providerOverrides: Record<string, ProviderOverride> | undefined;
   private baseProviderOverrides: Record<string, ProviderOverride> | undefined;
   private providerRegistry: Record<AgentProvider, ProviderDefinition>;
-  private providerRuntimes: Record<AgentProvider, ProviderRuntime>;
-  private providerRegistrations: readonly ProviderRegistration[];
-  private readonly ownedRuntimes = new Set<ProviderRuntime>();
+  private providerClients: Record<AgentProvider, AgentClient>;
+  private readonly ownedClients = new Set<AgentClient>();
+  private readonly pluginProviders: PluginAgentClientRegistry;
 
   constructor(options: ProviderSnapshotManagerOptions) {
     this.logger = options.logger;
+    this.pluginProviders = new PluginAgentClientRegistry(
+      options.logger.child({ module: "plugin-providers" }),
+    );
     this.workspaceGitService = options.workspaceGitService;
     this.managedProcesses = options.managedProcesses;
     this.openCodeBridge = options.openCodeBridge;
     this.isDev = options.isDev === true;
-    this.extraRegistrations = options.extraRegistrations ?? [];
+    this.extraClients = options.extraClients ?? {};
     this.runtimeSettings = options.runtimeSettings;
     this.providerOverrides = options.providerOverrides;
-    this.providerRegistrations = options.providerRegistrations ?? [];
     this.baseProviderOverrides = options.providerOverrides;
     this.refreshTimeoutMs = providerRefreshDeadline(options.refreshTimeoutMs);
+    this.diagnosticTimeoutMs = resolveDiagnosticTimeoutMs(
+      options.diagnosticTimeoutMs,
+      this.refreshTimeoutMs,
+    );
     this.providerRegistry = this.buildRegistry();
-    this.providerRuntimes = {};
+    this.providerClients = {
+      ...this.extraClients,
+      ...this.pluginProviders.clients(),
+    } as Record<AgentProvider, AgentClient>;
+    for (const client of Object.values(this.providerClients)) this.ownedClients.add(client);
   }
 
   getSnapshot(cwd?: string): ProviderSnapshotEntry[] {
@@ -281,28 +310,72 @@ export class ProviderSnapshotManager {
 
   getAgentManagerProviderState(): AgentManagerProviderState {
     const providerDefinitions: AgentManagerProviderState["providerDefinitions"] = {};
-    const providers: AgentManagerProviderState["providers"] = {};
+    const clients: AgentManagerProviderState["clients"] = {};
     for (const [provider, definition] of Object.entries(this.providerRegistry)) {
       providerDefinitions[provider] = {
         enabled: definition.enabled,
         derivedFromProviderId: definition.derivedFromProviderId,
+        validateOptions: definition.validateOptions,
+        applyOptions: definition.applyOptions,
+        applyToolPolicy: definition.applyToolPolicy,
       };
       if (definition.enabled) {
-        providers[provider] = this.ensureRuntime(provider, definition);
+        clients[provider] = this.ensureClient(provider, definition);
       }
     }
-    return { providerDefinitions, providers };
+    for (const [provider, client] of Object.entries(this.extraClients)) {
+      if (client) {
+        clients[provider] = client;
+      }
+    }
+    return { providerDefinitions, clients };
   }
 
-  private ensureRuntime(provider: AgentProvider, definition: ProviderDefinition): ProviderRuntime {
-    const existing = this.providerRuntimes[provider];
+  replacePluginProviders(
+    registrations: readonly ProviderRegistration[],
+  ): AgentManagerProviderState {
+    for (const registration of registrations) {
+      if (
+        (this.providerRegistry[registration.id] || this.extraClients[registration.id]) &&
+        !this.pluginProviders.has(registration.id)
+      ) {
+        throw new Error(
+          `Plugin provider '${registration.id}' conflicts with a configured provider`,
+        );
+      }
+    }
+    this.pluginProviders.replace(registrations);
+    this.providerRegistry = this.buildRegistry();
+    this.providerClients = {
+      ...this.extraClients,
+      ...this.pluginProviders.clients(),
+    } as Record<AgentProvider, AgentClient>;
+    for (const client of Object.values(this.providerClients)) this.ownedClients.add(client);
+
+    for (const cwd of this.snapshots.keys()) {
+      this.providerLoads.delete(cwd);
+      this.snapshots.set(cwd, this.reconcileSnapshotForRegistry(cwd));
+      this.emitChange(cwd);
+      const target =
+        cwd === GLOBAL_PROVIDER_SNAPSHOT_KEY
+          ? createGlobalSnapshotTarget()
+          : createWorkspaceSnapshotTarget(cwd);
+      const providers = this.resolveProvidersToWarm(cwd);
+      if (providers.length > 0) void this.warmUp(target, providers);
+    }
+
+    return this.getAgentManagerProviderState();
+  }
+
+  private ensureClient(provider: AgentProvider, definition: ProviderDefinition): AgentClient {
+    const existing = this.providerClients[provider];
     if (existing) {
       return existing;
     }
-    const runtime = new ProviderRuntime(definition.registration);
-    this.providerRuntimes[provider] = runtime;
-    this.ownedRuntimes.add(runtime);
-    return runtime;
+    const client = definition.createClient(this.logger);
+    this.providerClients[provider] = client;
+    this.ownedClients.add(client);
+    return client;
   }
 
   async listProviders(input: ProviderSnapshotReadOptions = {}): Promise<ProviderSnapshotEntry[]> {
@@ -356,9 +429,11 @@ export class ProviderSnapshotManager {
       ];
     }
 
+    const definition = this.requireProvider(input.provider);
     return validateAgentConfigurationAgainstProvider({
       input,
       provider,
+      validateOptions: definition.validateOptions,
     });
   }
 
@@ -399,8 +474,9 @@ export class ProviderSnapshotManager {
       provider: input.provider,
       wait: true,
     });
+    const definition = this.requireProvider(input.provider);
     const parent = input.parent ? this.resolveParent(input.parent) : null;
-    return resolveDefaultAgentCreateConfig({
+    return definition.resolveCreateConfig({
       provider: input.provider,
       requestedMode: input.requestedMode,
       featureValues: input.featureValues,
@@ -421,14 +497,16 @@ export class ProviderSnapshotManager {
       };
     }
 
-    const entry = await this.refreshDiagnosticSnapshotEntry(provider, definition);
+    const baseDiagnosticPromise = this.getBaseProviderDiagnostic(provider, definition);
+    const snapshotEntryPromise = this.refreshDiagnosticSnapshotEntry(provider, definition);
+    const [baseDiagnostic, entry] = await Promise.all([
+      baseDiagnosticPromise,
+      snapshotEntryPromise,
+    ]);
 
     const modelCount = entry.status === "ready" ? String(entry.models?.length ?? 0) : "—";
     const status = formatProviderStatus(entry);
-    const diagnostic = formatProviderDiagnostic(definition.label ?? provider, [
-      { label: "Models", value: modelCount },
-      { label: "Status", value: status },
-    ]);
+    const diagnostic = `${baseDiagnostic}\n  Models: ${modelCount}\n  Status: ${status}`;
     return { provider, diagnostic };
   }
 
@@ -466,14 +544,14 @@ export class ProviderSnapshotManager {
         this.baseProviderOverrides,
         mutableProviders,
       );
-      if (options.providerRegistrations) {
-        this.providerRegistrations = options.providerRegistrations;
-      }
       // The mutable config is the complete provider source after startup. Keeping
       // startup-derived runtime settings here would retain removed command/env fields.
       if (options.replace) this.runtimeSettings = undefined;
       this.providerRegistry = this.buildRegistry();
-      this.providerRuntimes = {};
+      this.providerClients = {
+        ...this.extraClients,
+        ...this.pluginProviders.clients(),
+      } as Record<AgentProvider, AgentClient>;
 
       for (const cwd of this.snapshots.keys()) {
         this.providerLoads.delete(cwd);
@@ -507,8 +585,7 @@ export class ProviderSnapshotManager {
       runtimeSettings: this.runtimeSettings,
       providerOverrides: this.providerOverrides,
       providerRegistry: this.providerRegistry,
-      providerRuntimes: this.providerRuntimes,
-      providerRegistrations: this.providerRegistrations,
+      providerClients: this.providerClients,
       // Preserve the inner map identities: in-flight refreshes close over them.
       // Staging replaces active maps instead of mutating these originals.
       snapshots: new Map(this.snapshots),
@@ -521,8 +598,7 @@ export class ProviderSnapshotManager {
     this.runtimeSettings = previous.runtimeSettings;
     this.providerOverrides = previous.providerOverrides;
     this.providerRegistry = previous.providerRegistry;
-    this.providerRuntimes = previous.providerRuntimes;
-    this.providerRegistrations = previous.providerRegistrations;
+    this.providerClients = previous.providerClients;
     this.snapshots.clear();
     for (const [cwd, entries] of previous.snapshots) this.snapshots.set(cwd, entries);
     this.providerLoads.clear();
@@ -531,6 +607,7 @@ export class ProviderSnapshotManager {
 
   setRefreshTimeoutMs(refreshTimeoutMs: number | undefined): void {
     this.refreshTimeoutMs = providerRefreshDeadline(refreshTimeoutMs);
+    this.diagnosticTimeoutMs = resolveDiagnosticTimeoutMs(undefined, this.refreshTimeoutMs);
   }
 
   on(event: "change", listener: ProviderSnapshotChangeListener): this {
@@ -544,11 +621,11 @@ export class ProviderSnapshotManager {
   }
 
   async shutdown(): Promise<void> {
-    // Materialize a runtime per enabled provider so provider-owned resources
+    // Materialize a client per enabled provider so provider-owned resources
     // (background processes, sockets, etc.) get a chance to release even when
     // a given provider hasn't been touched yet during this daemon's lifetime.
     this.getAgentManagerProviderState();
-    await Promise.all([...this.ownedRuntimes].map((runtime) => runtime.close()));
+    await shutdownAgentClients(this.ownedClients, this.logger);
   }
 
   destroy(): void {
@@ -566,16 +643,28 @@ export class ProviderSnapshotManager {
       managedProcesses: this.managedProcesses,
       openCodeBridge: this.openCodeBridge,
       isDev: this.isDev,
-      providerRegistrations: this.providerRegistrations,
     });
 
-    for (const registration of this.extraRegistrations) {
-      const provider = registration.id;
+    for (const [provider, definition] of Object.entries(this.pluginProviders.definitions())) {
+      if (registry[provider]) {
+        throw new Error(`Plugin provider '${provider}' conflicts with a configured provider`);
+      }
+      registry[provider] = definition;
+    }
+
+    for (const [provider, client] of Object.entries(this.extraClients) as Array<
+      [AgentProvider, AgentClient]
+    >) {
       const definition = registry[provider];
       if (!definition) continue;
       registry[provider] = {
         ...definition,
-        registration,
+        createClient: () => client,
+        resolveCreateConfig:
+          client.resolveCreateConfig?.bind(client) ?? definition.resolveCreateConfig,
+        isCreateConfigUnattended:
+          client.isCreateConfigUnattended?.bind(client) ?? definition.isCreateConfigUnattended,
+        fetchCatalog: (options, _client, context) => client.fetchCatalog(options, context),
       };
     }
 
@@ -583,14 +672,15 @@ export class ProviderSnapshotManager {
   }
 
   private resolveParent(parent: ManagedAgent): AgentCreateConfigParent {
+    const definition = this.requireProvider(parent.provider);
     return {
       provider: parent.provider,
       modeId: parent.currentModeId,
-      isUnattended: isDefaultAgentCreateConfigUnattended({
+      isUnattended: definition.isCreateConfigUnattended({
         modeId: parent.currentModeId,
         config: parent.config,
         features: parent.features,
-        availableModes: parent.availableModes ?? [],
+        availableModes: parent.availableModes ?? definition.modes ?? [],
       }),
     };
   }
@@ -619,6 +709,14 @@ export class ProviderSnapshotManager {
     throw new Error(`Provider '${entry.provider}' is not available`);
   }
 
+  private requireProvider(provider: AgentProvider): ProviderDefinition {
+    const definition = this.providerRegistry[provider];
+    if (!definition) {
+      throw new Error(`Provider ${provider} is not configured`);
+    }
+    return definition;
+  }
+
   private async refreshDiagnosticSnapshotEntry(
     provider: AgentProvider,
     definition: ProviderDefinition,
@@ -643,7 +741,33 @@ export class ProviderSnapshotManager {
     }
   }
 
+  private async getBaseProviderDiagnostic(
+    provider: AgentProvider,
+    definition: ProviderDefinition,
+  ): Promise<string> {
+    try {
+      const client = this.ensureClient(provider, definition);
+      if (client.getDiagnostic) {
+        return (
+          await withTimeout(
+            client.getDiagnostic(),
+            this.diagnosticTimeoutMs,
+            `Timed out collecting ${definition.label ?? provider} diagnostic after ${
+              this.diagnosticTimeoutMs
+            }ms`,
+          )
+        ).diagnostic;
+      }
+      return formatProviderDiagnostic(definition.label ?? provider, [
+        { label: "Diagnostic", value: "No diagnostic available" },
+      ]);
+    } catch (error) {
+      return formatProviderDiagnosticError(definition.label ?? provider, error);
+    }
+  }
+
   private getProviderSource(provider: AgentProvider): ProviderSnapshotEntry["source"] {
+    if (this.pluginProviders.has(provider)) return "custom";
     const isBuiltin = BUILTIN_PROVIDER_IDS.includes(provider);
     return !isBuiltin && this.providerOverrides?.[provider]?.extends ? "custom" : "builtin";
   }
@@ -839,7 +963,7 @@ export class ProviderSnapshotManager {
     load: ProviderLoad;
     force: boolean;
   }): Promise<void> {
-    const { snapshotCwd, catalogScope, provider, definition, load } = options;
+    const { snapshotCwd, catalogScope, provider, definition, load, force } = options;
     const snapshot = this.getOrCreateSnapshot(snapshotCwd);
     const base = {
       provider,
@@ -863,27 +987,20 @@ export class ProviderSnapshotManager {
         return;
       }
 
-      const runtime = this.ensureRuntime(provider, definition);
+      const client = this.ensureClient(provider, definition);
       const catalog = await runProviderRefreshWithDeadline({
         label: definition.label,
         timeoutMs: this.refreshTimeoutMs,
         operation: async (context) => {
           const available = await context.runActivity("availability", () =>
-            raceProviderRefreshAbort(context.signal, runtime.isAvailable()),
+            raceProviderRefreshAbort(context.signal, client.isAvailable(context.signal)),
           );
           if (!available) {
             return null;
           }
 
-          const providerCatalog = await runtime.catalog(
-            catalogScope.scope === "workspace" ? catalogScope.cwd : undefined,
-            context.signal,
-          );
-          return {
-            models: providerCatalog.models.map((model) => ({ ...model, provider })),
-            modes: [...providerCatalog.modes],
-            defaultModeId: providerCatalog.defaultMode,
-          };
+          const catalogOptions = createFetchCatalogOptions(catalogScope, force);
+          return await definition.fetchCatalog(catalogOptions, client, context);
         },
       });
       if (!catalog) {
@@ -1047,6 +1164,15 @@ function createWorkspaceSnapshotTarget(cwd: string): ProviderSnapshotTarget {
     snapshotCwd,
     catalogScope: { scope: "workspace", cwd: snapshotCwd },
   };
+}
+
+function createFetchCatalogOptions(
+  scope: ProviderCatalogScope,
+  force: boolean,
+): FetchCatalogOptions {
+  return scope.scope === "global"
+    ? { scope: "global", force }
+    : { scope: "workspace", cwd: scope.cwd, force };
 }
 
 export function isGlobalProviderSnapshotKey(cwd: string): boolean {

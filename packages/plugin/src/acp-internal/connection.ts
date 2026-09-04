@@ -39,6 +39,7 @@ import {
   type ProviderConnection,
   type ProviderEvent,
   type ProviderInput,
+  type ProviderPermissionResponse,
   type ProviderPersistence,
   type ProviderSessionConfig,
   type ProviderSetting,
@@ -686,10 +687,17 @@ class AcpRuntime {
   ): void {
     const pending = this.permissions.get(permissionId);
     if (!pending) throw new Error(`Unknown ACP permission: ${permissionId}`);
+    const selected = selectPermissionOption(pending.request.options, response);
+    if (response.selectedActionId !== undefined && !selected) {
+      throw new Error(
+        `ACP permission action '${response.selectedActionId}' does not exist or does not match '${response.behavior}' behavior`,
+      );
+    }
     this.permissions.delete(permissionId);
-    const selected = response.selectedActionId;
     pending.resolve({
-      outcome: selected ? { outcome: "selected", optionId: selected } : { outcome: "cancelled" },
+      outcome: selected
+        ? { outcome: "selected", optionId: selected.optionId }
+        : { outcome: "cancelled" },
     });
     this.emit({
       type: "session.permission_resolved",
@@ -1145,6 +1153,28 @@ class AcpRuntime {
       this.commandWaiter = null;
     });
   }
+}
+
+function selectPermissionOption(
+  options: RequestPermissionRequest["options"],
+  response: ProviderPermissionResponse,
+): RequestPermissionRequest["options"][number] | null {
+  if (response.selectedActionId !== undefined) {
+    return (
+      options.find(
+        (option) =>
+          option.optionId === response.selectedActionId &&
+          permissionOptionBehavior(option) === response.behavior,
+      ) ?? null
+    );
+  }
+  return options.find((option) => permissionOptionBehavior(option) === response.behavior) ?? null;
+}
+
+function permissionOptionBehavior(
+  option: RequestPermissionRequest["options"][number],
+): ProviderPermissionResponse["behavior"] {
+  return option.kind.startsWith("allow") ? "allow" : "deny";
 }
 
 function ownConnectorStream(source: Stream): {

@@ -4,7 +4,6 @@ import {
   AgentSnapshotPayloadSchema,
   AgentTimelineItemPayloadSchema,
   ServerInfoStatusPayloadSchema,
-  SessionInboundMessageSchema,
   SessionOutboundMessageSchema,
   WSHelloMessageSchema,
 } from "./messages.js";
@@ -115,28 +114,6 @@ describe("wire schema compatibility", () => {
       hostname: null,
       version: null,
       features: { agentTurnIdentity: true },
-    });
-  });
-
-  test("disables the legacy provider-subagent store while retaining its request endpoints", () => {
-    expect(
-      ServerInfoStatusPayloadSchema.parse({
-        status: "server_info",
-        serverId: "boundary-daemon",
-        features: { providerSubagents: false, providerBoundarySessions: true },
-      }).features,
-    ).toEqual({ providerSubagents: false, providerBoundarySessions: true });
-
-    expect(
-      SessionInboundMessageSchema.parse({
-        type: "agent.provider_subagents.list.request",
-        parentAgentId: "parent-1",
-        requestId: "request-1",
-      }),
-    ).toEqual({
-      type: "agent.provider_subagents.list.request",
-      parentAgentId: "parent-1",
-      requestId: "request-1",
     });
   });
 

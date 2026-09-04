@@ -127,12 +127,9 @@ export function useSubagentsForParent(params: SelectSubagentsParams): SubagentRo
     (state) => selectSubagentsForParent(state, params, pendingArchiveIds),
     equal,
   );
-  const supported = useSessionStore((state) => {
-    const features = state.sessions[params.serverId]?.serverInfo?.features;
-    // COMPAT(providerBoundarySessions): old daemons publish provider children through the
-    // provider-subagent RPCs. New daemons put them in the ordinary agent store.
-    return features?.providerSubagents === true && features.providerBoundarySessions !== true;
-  });
+  const supported = useSessionStore(
+    (state) => state.sessions[params.serverId]?.serverInfo?.features?.providerSubagents === true,
+  );
   const providerRows = useStoreWithEqualityFn(
     useProviderSubagentStore,
     (state) => selectProviderSubagentsForParent(state, params, supported),

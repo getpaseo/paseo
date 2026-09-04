@@ -98,7 +98,6 @@ import {
   toDiagnosticErrorMessage,
 } from "./diagnostic-utils.js";
 import { runProviderTurn } from "./provider-runner.js";
-import { validateProviderOptions } from "../provider-options.js";
 import { renderPromptAttachmentAsText } from "../prompt-attachments.js";
 import { composeSystemPromptParts } from "../system-prompt.js";
 import { normalizeProviderReplayTimestamp } from "../provider-history-timestamps.js";
@@ -128,9 +127,6 @@ function formatOpenCodeEventStreamDiagnostics(diagnostics: OpenCodeEventStreamDi
 }
 
 const OPENCODE_CAPABILITIES: AgentCapabilityFlags = {
-  supportsImages: true,
-  supportsOutputSchema: true,
-  supportsSubsessions: true,
   supportsStreaming: true,
   supportsSessionPersistence: true,
   supportsSessionListing: true,
@@ -1883,11 +1879,7 @@ export class OpenCodeAgentClient implements AgentClient {
     if (config.provider !== "opencode") {
       throw new Error(`OpenCodeAgentClient received config for provider '${config.provider}'`);
     }
-    const providerOptions = validateProviderOptions(
-      config.provider,
-      OpenCodeProviderOptionsSchema,
-      config.providerOptions ?? {},
-    );
+    const providerOptions = OpenCodeProviderOptionsSchema.parse(config.providerOptions ?? {});
     return normalizeOpenCodeConfig({ ...config, provider: "opencode", providerOptions });
   }
 

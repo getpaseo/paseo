@@ -711,7 +711,6 @@ export class VoiceAssistantWebSocketServer {
       store: this.daemonConfigStore,
       providerSnapshotManager: this.providerSnapshotManager,
       updateProviderRegistry: (state) => this.agentManager.updateProviderRegistry(state),
-      pluginProviders: this.pluginRuntime,
     });
     const unsubscribeChange = this.daemonConfigStore.onChange((config) => {
       this.broadcastDaemonConfigChanged(config);
@@ -1720,10 +1719,7 @@ export class VoiceAssistantWebSocketServer {
         // COMPAT(agentForkContextCursor): added in v0.1.108, remove gate after 2027-01-14.
         agentForkContextCursor: true,
         // COMPAT(providerSubagents): added in v0.1.107, remove gate after 2027-01-12.
-        providerSubagents: false,
-        // COMPAT(providerBoundarySessions): added in v0.8.0, remove the legacy provider-subagent
-        // client path after 2027-09-01 once the supported daemon floor exposes ordinary children.
-        providerBoundarySessions: true,
+        providerSubagents: true,
         // COMPAT(workspacePinning): added in v0.1.107, remove gate after 2027-01-12.
         workspacePinning: true,
         // COMPAT(hubRelationship): added in v0.1.X, drop the gate when floor >= v0.1.X.

@@ -1,4 +1,3 @@
-import type { JsonValue } from "@getpaseo/protocol/agent-types";
 import type { AgentTimelineItem } from "./agent-sdk-types.js";
 
 export interface AgentTimelineRow {
@@ -7,10 +6,6 @@ export interface AgentTimelineRow {
   item: AgentTimelineItem;
   readonly turnId?: string;
   readonly providerMessageId?: string;
-  /** Private provider-boundary identity. Never projected onto the wire. */
-  readonly providerTimelineItemId?: string;
-  /** Private opaque token returned unchanged when reverting from this item. */
-  readonly revertToken?: JsonValue;
 }
 
 export interface AgentTimelineCursor {

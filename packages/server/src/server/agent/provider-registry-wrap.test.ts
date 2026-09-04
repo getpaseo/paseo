@@ -7,7 +7,7 @@ import type {
   AgentStreamEvent,
   AgentRuntimeInfo,
 } from "./agent-sdk-types.js";
-import { wrapNativeSessionProvider } from "./providers/native/provider.js";
+import { wrapSessionProvider } from "./provider-registry.js";
 
 type OptionalAgentSessionMethodName = {
   [K in keyof AgentSession]-?: undefined extends AgentSession[K]
@@ -167,10 +167,10 @@ async function* emptyHistory(): AsyncGenerator<AgentStreamEvent> {
   }
 }
 
-describe("wrapNativeSessionProvider", () => {
+describe("wrapSessionProvider", () => {
   test("forwards every optional AgentSession method", async () => {
     const session = new FakeSession();
-    const wrapped = wrapNativeSessionProvider("custom-claude", session);
+    const wrapped = wrapSessionProvider("custom-claude", session);
 
     await wrapped.listCommands?.();
     await wrapped.setModel?.("sonnet");

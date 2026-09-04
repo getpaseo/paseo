@@ -36,26 +36,11 @@ export class ToolPolicyUnsupportedError extends Error {
   }
 }
 
-export function validateProviderOptions<T>(
+export function validateProviderOptions(
   provider: string,
-  schema: z.ZodType<T>,
-  options: ProviderOptions,
-): T;
-export function validateProviderOptions<T>(
-  provider: string,
-  schema: z.ZodType<T>,
-  options: undefined,
-): undefined;
-export function validateProviderOptions<T>(
-  provider: string,
-  schema: z.ZodType<T>,
+  schema: z.ZodType<ProviderOptions>,
   options: ProviderOptions | undefined,
-): T | undefined;
-export function validateProviderOptions<T>(
-  provider: string,
-  schema: z.ZodType<T>,
-  options: ProviderOptions | undefined,
-): T | undefined {
+): ProviderOptions | undefined {
   if (options === undefined) return undefined;
   const parsed = schema.safeParse(options);
   if (parsed.success) return parsed.data;

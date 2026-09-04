@@ -237,34 +237,6 @@ describe("projectTimelineRows", () => {
     expect(projected[0]?.collapsed).toEqual([]);
     expect(projected[1]?.collapsed).toEqual([]);
   });
-
-  test("collapses provider snapshot revisions to the latest canonical value", () => {
-    const rows: AgentTimelineRow[] = [
-      {
-        seq: 1,
-        timestamp: "2026-02-13T00:00:00.000Z",
-        providerTimelineItemId: "answer-1",
-        item: { type: "assistant_message", text: "draft" },
-      },
-      {
-        seq: 2,
-        timestamp: "2026-02-13T00:00:00.100Z",
-        providerTimelineItemId: "answer-1",
-        item: { type: "assistant_message", text: "final" },
-      },
-    ];
-
-    expect(projectTimelineRows({ rows, mode: "canonical" })).toEqual([
-      {
-        item: { type: "assistant_message", text: "final" },
-        timestamp: "2026-02-13T00:00:00.100Z",
-        seqStart: 1,
-        seqEnd: 2,
-        sourceSeqRanges: [{ startSeq: 1, endSeq: 2 }],
-        collapsed: ["identity"],
-      },
-    ]);
-  });
 });
 
 describe("selectTimelineWindowByProjectedLimit", () => {

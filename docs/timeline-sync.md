@@ -5,8 +5,8 @@ Agent chat delivery has two paths:
 1. **Live stream** — `agent_stream` WebSocket messages for immediacy. These may be delta-shaped lifecycle updates.
 2. **Authoritative history** — `fetch_agent_timeline_request` for correctness. This always returns full projected timeline items, never lifecycle deltas.
 
-The daemon persists canonical rows under `$PASEO_HOME/timelines`. Provider history seeds only an
-unprimed timeline; it is not the durable transcript authority.
+The daemon keeps canonical rows only for its runtime. Provider history is the durable transcript
+authority and repopulates those rows when an agent resumes.
 
 The invariants are:
 

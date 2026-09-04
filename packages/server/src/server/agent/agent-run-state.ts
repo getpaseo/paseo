@@ -17,7 +17,6 @@ export interface PendingForegroundRun {
   start:
     | { status: "pending" }
     | { status: "started"; turnId: string }
-    | { status: "completed" }
     | { status: "failed"; error: string };
   settled: boolean;
   settledPromise: Promise<void>;
@@ -45,9 +44,6 @@ export class AgentRunState {
   private readonly runs = new Map<string, TrackedAgentRun>();
 
   createPendingRun(agentId: string): PendingForegroundRun {
-    if (this.runs.has(agentId)) {
-      throw new Error(`Agent ${agentId} already has an active run`);
-    }
     const pendingRun = createPendingForegroundRun();
     this.runs.set(agentId, pendingRun);
     return pendingRun;

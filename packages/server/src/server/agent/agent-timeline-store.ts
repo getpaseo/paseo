@@ -160,11 +160,7 @@ export class InMemoryAgentTimelineStore {
   }
 
   getItems(agentId: string): AgentTimelineItem[] {
-    return currentRows(this.requireState(agentId).rows).map((row) => row.item);
-  }
-
-  getCurrentRows(agentId: string): AgentTimelineRow[] {
-    return currentRows(this.requireState(agentId).rows).map(cloneRow);
+    return this.requireState(agentId).rows.map((row) => row.item);
   }
 
   getRows(agentId: string): AgentTimelineRow[] {
@@ -268,13 +264,7 @@ export class InMemoryAgentTimelineStore {
   append(
     agentId: string,
     item: AgentTimelineItem,
-    options?: {
-      timestamp?: string;
-      providerMessageId?: string;
-      providerTimelineItemId?: string;
-      revertToken?: AgentTimelineRow["revertToken"];
-      turnId?: string;
-    },
+    options?: { timestamp?: string; providerMessageId?: string; turnId?: string },
   ): AgentTimelineRow {
     const state = this.requireState(agentId);
     const row: AgentTimelineRow = {
@@ -283,53 +273,19 @@ export class InMemoryAgentTimelineStore {
       item,
       ...(options?.turnId ? { turnId: options.turnId } : {}),
       ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
-      ...(options?.providerTimelineItemId
-        ? { providerTimelineItemId: options.providerTimelineItemId }
-        : {}),
-      ...(options && "revertToken" in options ? { revertToken: options.revertToken } : {}),
     };
     state.nextSeq += 1;
     state.rows.push(row);
     return cloneRow(row);
   }
 
-  replace(
-    agentId: string,
-    seq: number,
-    item: AgentTimelineItem,
-    options?: {
-      timestamp?: string;
-      providerMessageId?: string;
-      providerTimelineItemId?: string;
-      revertToken?: AgentTimelineRow["revertToken"];
-      turnId?: string;
-    },
-  ): AgentTimelineRow | null {
-    const state = this.requireState(agentId);
-    const index = state.rows.findIndex((row) => row.seq === seq);
-    const previous = state.rows[index];
-    if (!previous) return null;
-    const row: AgentTimelineRow = {
-      seq: previous.seq,
-      timestamp: options?.timestamp ?? new Date().toISOString(),
-      item,
-      ...(options?.turnId ? { turnId: options.turnId } : {}),
-      ...(options?.providerMessageId ? { providerMessageId: options.providerMessageId } : {}),
-      ...(options?.providerTimelineItemId
-        ? { providerTimelineItemId: options.providerTimelineItemId }
-        : {}),
-      ...(options && "revertToken" in options ? { revertToken: options.revertToken } : {}),
-    };
-    state.rows[index] = row;
-    return cloneRow(row);
-  }
-
   getLastItem(agentId: string): AgentTimelineItem | null {
-    return this.getCurrentRows(agentId).at(-1)?.item ?? null;
+    const state = this.requireState(agentId);
+    return state.rows[state.rows.length - 1]?.item ?? null;
   }
 
   getLastAssistantMessage(agentId: string): string | null {
-    const rows = this.getCurrentRows(agentId);
+    const rows = this.requireState(agentId).rows;
     const chunks: string[] = [];
     for (let i = rows.length - 1; i >= 0; i -= 1) {
       const item = rows[i].item;
@@ -373,24 +329,4 @@ export class InMemoryAgentTimelineStore {
       return row;
     });
   }
-}
-
-function currentRows(rows: readonly AgentTimelineRow[]): AgentTimelineRow[] {
-  const current: AgentTimelineRow[] = [];
-  const indexByProviderId = new Map<string, number>();
-  for (const row of rows) {
-    const providerId = row.providerTimelineItemId;
-    if (!providerId) {
-      current.push(row);
-      continue;
-    }
-    const existingIndex = indexByProviderId.get(providerId);
-    if (existingIndex === undefined) {
-      indexByProviderId.set(providerId, current.length);
-      current.push(row);
-    } else {
-      current[existingIndex] = row;
-    }
-  }
-  return current;
 }

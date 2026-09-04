@@ -4,12 +4,18 @@ import { PassThrough } from "node:stream";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
-import type { ProviderEvent } from "@getpaseo/plugin/provider";
+import type { ProviderEvent, ProviderRegistration } from "@getpaseo/plugin/provider";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { AgentStreamEvent } from "../agent/agent-sdk-types.js";
+import { PluginAgentClientRegistry } from "../agent/plugin-provider.js";
 import { PluginRuntime } from "./runtime.js";
 import type { PluginSessionSocket } from "./session-socket.js";
 
 const temporaryDirectories: string[] = [];
+
+function hasCompletedAgentTurn(events: readonly AgentStreamEvent[]): boolean {
+  return events.some((event) => event.type === "turn_completed");
+}
 
 async function createPlugin(id: string, source: string): Promise<string> {
   const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
@@ -182,6 +188,17 @@ function hasMessageType(messages: readonly { type: string }[], type: string): bo
   return messages.some((message) => message.type === type);
 }
 
+function adaptRuntimeProvider(
+  runtime: PluginRuntime,
+  pluginId: string,
+  metadata: { id: string; label: string; description?: string; icon?: string },
+): ProviderRegistration {
+  return {
+    ...metadata,
+    connect: (request) => runtime.connectProvider(pluginId, metadata.id, request),
+  };
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true })),
@@ -189,6 +206,49 @@ afterEach(async () => {
 });
 
 describe("PluginRuntime", () => {
+  it("runs the direct example through the existing AgentClient path", async () => {
+    const pluginId = "provider-direct-example";
+    const directory = fileURLToPath(
+      new URL("../../../../../plugin-examples/provider-direct/", import.meta.url),
+    );
+    const runtime = createTestRuntime();
+    await runtime.startPlugin(pluginId, directory);
+    const [metadata] = runtime.getProviderRegistrations(pluginId);
+    expect(metadata).toBeDefined();
+    const adapters = new PluginAgentClientRegistry(pino({ level: "silent" }));
+    adapters.replace([adaptRuntimeProvider(runtime, pluginId, metadata!)]);
+    const client = adapters.clients()[metadata!.id];
+
+    const session = await client!.createSession({ provider: metadata!.id, cwd: directory });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    await expect(session.startTurn("hello", { clientMessageId: "direct-client" })).resolves.toEqual(
+      { turnId: "turn-1" },
+    );
+    await expect.poll(() => hasCompletedAgentTurn(events)).toBe(true);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: {
+          type: "assistant_message",
+          id: undefined,
+          messageId: "assistant-1",
+          text: "Echo: hello",
+        },
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "provider_subagent",
+        event: expect.objectContaining({ type: "timeline" }),
+      }),
+    );
+
+    await session.close();
+    await adapters.shutdown();
+    await runtime.stopAll();
+  });
+
   it("runs a provider connection through the real plugin subprocess boundary", async () => {
     const directory = await createPlugin(
       "provider-round-trip",
@@ -386,20 +446,34 @@ export default function contribute(server: PluginServerContext) {
     await runtime.stopAll();
   });
 
-  it("adapts an ACP command behind the provider connection boundary", async () => {
+  it("adapts an ACP command and example transformer through the AgentClient path", async () => {
+    const transformerPath = fileURLToPath(
+      new URL(
+        "../../../../../plugin-examples/provider-acp-transformer/server/vendor-edit.ts",
+        import.meta.url,
+      ),
+    );
     const directory = await createPlugin(
       "provider-acp-round-trip",
       `import type { PluginServerContext } from "@getpaseo/plugin";
 import { runAcpProvider } from "@getpaseo/plugin/acp";
+import { vendorEditTransformer } from "./server/vendor-edit.js";
 
 export default function contribute(server: PluginServerContext) {
   server.registerProvider(runAcpProvider({
     id: "acp-example",
     label: "ACP example",
     command: [process.execPath, ${JSON.stringify(path.join("__PLUGIN_DIR__", "fake-acp.cjs"))}],
+    transformers: [vendorEditTransformer],
   }));
   return () => {};
 }`,
+    );
+    await mkdir(path.join(directory, "server"));
+    await writeFile(
+      path.join(directory, "server/vendor-edit.ts"),
+      await readFile(transformerPath, "utf8"),
+      "utf8",
     );
     const agentPath = path.join(directory, "fake-acp.cjs");
     await writeFile(
@@ -414,6 +488,7 @@ lines.on("line", (line) => {
   } else if (message.method === "session/new") {
     send({ jsonrpc: "2.0", id: message.id, result: { sessionId: "native-1", modes: null, configOptions: [] } });
   } else if (message.method === "session/prompt") {
+    send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "native-1", update: { sessionUpdate: "tool_call", toolCallId: "edit-1", name: "vendor_file_edit", title: "Vendor edit", status: "completed", rawInput: { path: "/tmp/example.ts", before: "old", after: "new" } } } });
     send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "native-1", update: { sessionUpdate: "agent_message_chunk", messageId: "assistant-1", content: { type: "text", text: "ACP says hi" } } } });
     send({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } });
   } else if (message.method === "session/close" || message.method === "session/cancel") {
@@ -473,6 +548,41 @@ lines.on("line", (line) => {
     );
 
     await connection.close();
+    const [metadata] = runtime.getProviderRegistrations("provider-acp-round-trip");
+    const adapters = new PluginAgentClientRegistry(pino({ level: "silent" }));
+    adapters.replace([adaptRuntimeProvider(runtime, "provider-acp-round-trip", metadata!)]);
+    const client = adapters.clients()[metadata!.id];
+    const session = await client!.createSession({ provider: metadata!.id, cwd: directory });
+    const agentEvents: AgentStreamEvent[] = [];
+    session.subscribe((event) => agentEvents.push(event));
+    await expect(
+      session.startTurn("hello", { clientMessageId: "agent-client-acp" }),
+    ).resolves.toEqual({ turnId: "acp:agent-client-acp" });
+    await expect.poll(() => hasCompletedAgentTurn(agentEvents)).toBe(true);
+    expect(agentEvents).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({ type: "assistant_message", text: "ACP says hi" }),
+      }),
+    );
+    expect(agentEvents).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "edit-1",
+          detail: {
+            type: "edit",
+            filePath: "/tmp/example.ts",
+            oldString: "old",
+            newString: "new",
+            unifiedDiff: undefined,
+          },
+        }),
+      }),
+    );
+    await session.close();
+    await adapters.shutdown();
     await runtime.stopAll();
   });
 

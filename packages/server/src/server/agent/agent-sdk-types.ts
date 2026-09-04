@@ -180,15 +180,10 @@ export type AgentFeature = AgentFeatureToggle | AgentFeatureSelect;
 
 export interface AgentCapabilityFlags {
   [capability: string]: boolean | undefined;
-  supportsImages?: boolean;
-  supportsOutputSchema?: boolean;
-  supportsMaxThinkingTokens?: boolean;
-  supportsSubsessions?: boolean;
   supportsStreaming: boolean;
   supportsSessionPersistence: boolean;
   supportsSessionListing?: boolean;
   supportsDynamicModes: boolean;
-  supportsSessionConfigure?: boolean;
   supportsMcpServers: boolean;
   supportsNativePaseoTools?: boolean;
   supportsReasoningStream: boolean;
@@ -696,7 +691,14 @@ export interface AgentSession {
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
-  /** Native-edge command hook. The provider boundary still receives one session.prompt input. */
+  /**
+   * Out-of-band prompt handler. When non-null, the manager runs the returned
+   * handler instead of allocating a turn. The handler emits stream events
+   * directly via the provided `emit` callback, which routes through the
+   * manager's persistence + broadcast pipeline. The active foreground turn
+   * (if any) is left untouched, so this is how mid-turn side-effect commands
+   * (e.g. /goal pause) reach the provider without canceling the running turn.
+   */
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
     run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
   } | null;

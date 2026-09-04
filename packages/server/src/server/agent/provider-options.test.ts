@@ -10,66 +10,12 @@ import {
   OpenCodeProviderOptionsSchema,
 } from "./providers/opencode/options.js";
 import { buildProviderRegistry } from "./provider-registry.js";
-import { ProviderRuntime } from "./provider-connection-runtime.js";
 
 const hubPolicy = {
   preapproved: [{ kind: "mcp" as const, server: "hub", tool: "finish_execution" }],
 };
 
 describe("provider-owned option schemas", () => {
-  test("reports provider option validation through the provider request boundary", async () => {
-    const runtime = new ProviderRuntime(
-      buildProviderRegistry(createTestLogger()).claude.registration,
-    );
-    try {
-      await expect(
-        runtime.openSession({
-          sessionId: "invalid-options",
-          config: {
-            cwd: "/tmp",
-            env: {},
-            mcpServers: {},
-            settings: {},
-            providerOptions: { sandbox: { network: { allowLocalBinding: "yes" } } },
-            persist: false,
-          },
-          history: "skip",
-        }),
-      ).rejects.toThrow(
-        "Invalid providerOptions for 'claude': providerOptions.sandbox.network.allowLocalBinding",
-      );
-    } finally {
-      await runtime.close();
-    }
-  });
-
-  test("keeps the derived provider identity in provider option request failures", async () => {
-    const registration = buildProviderRegistry(createTestLogger(), {
-      providerOverrides: {
-        "custom-claude": { extends: "claude", label: "Custom Claude" },
-      },
-    })["custom-claude"].registration;
-    const runtime = new ProviderRuntime(registration);
-    try {
-      await expect(
-        runtime.openSession({
-          sessionId: "invalid-derived-options",
-          config: {
-            cwd: "/tmp",
-            env: {},
-            mcpServers: {},
-            settings: {},
-            providerOptions: { sandbox: { network: { allowLocalBinding: "yes" } } },
-            persist: false,
-          },
-          history: "skip",
-        }),
-      ).rejects.toThrow("Invalid providerOptions for 'custom-claude'");
-    } finally {
-      await runtime.close();
-    }
-  });
-
   test("accepts Codex native workspace-write and network policy nesting", () => {
     expect(
       CodexProviderOptionsSchema.parse({
@@ -165,30 +111,18 @@ describe("provider-owned option schemas", () => {
 });
 
 describe("exact MCP preapproval mappings", () => {
-  test("unsupported providers do not negotiate exact tool policy", async () => {
-    const registry = buildProviderRegistry(createTestLogger(), { isDev: true });
-    const connection = await registry.mock.registration.connect({
-      versions: [1],
-      capabilities: ["permission.tool_policy"],
-    });
-    expect(connection.capabilities).toEqual([]);
-    await expect(
-      connection.send({
-        type: "session.open",
-        requestId: "policy-refused",
-        sessionId: "policy-refused",
-        config: {
+  test("unsupported providers fail closed with an unattended-execution error", () => {
+    const registry = buildProviderRegistry(createTestLogger());
+    expect(() =>
+      registry.pi.applyToolPolicy(
+        {
+          provider: "pi",
           cwd: "/tmp",
-          env: {},
           mcpServers: { hub: { type: "http", url: "http://127.0.0.1/hub" } },
-          settings: {},
-          toolPolicy: hubPolicy,
-          persist: false,
         },
-        history: "skip",
-      }),
-    ).rejects.toThrow("permission.tool_policy");
-    await connection.close();
+        hubPolicy,
+      ),
+    ).toThrow("cannot preapprove exact MCP tools for unattended execution");
   });
 
   test("Codex enables and approves only the granted server tool", () => {
@@ -227,7 +161,7 @@ describe("exact MCP preapproval mappings", () => {
     });
   });
 
-  test("OpenCode applies exact internal grants after authored ask or deny rules", () => {
+  test("OpenCode keeps authored ask or deny rules after internal grants", () => {
     expect(
       buildOpenCodePermissionRules(
         {
@@ -239,9 +173,9 @@ describe("exact MCP preapproval mappings", () => {
         hubPolicy,
       ),
     ).toEqual([
+      { permission: "hub_finish_execution", pattern: "*", action: "allow" },
       { permission: "hub_finish_execution", pattern: "*", action: "deny" },
       { permission: "bash", pattern: "*", action: "ask" },
-      { permission: "hub_finish_execution", pattern: "*", action: "allow" },
     ]);
   });
 });

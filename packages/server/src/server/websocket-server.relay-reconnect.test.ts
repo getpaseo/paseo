@@ -1010,10 +1010,6 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.pluginLogs).toBe(true);
     expect(serverInfo.features?.["terminal-input-mode-replay"]).toBe(true);
     expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
-    // origin/main clients use this legacy flag alone to decide whether to read the
-    // dedicated provider-subagent store instead of ordinary child agents.
-    expect(serverInfo.features?.providerSubagents).toBe(false);
-    expect(serverInfo.features?.providerBoundarySessions).toBe(true);
     expect(serverInfo.features?.agentTurnIdentity).toBeUndefined();
     expect(serverInfo.permissions).toEqual(DAEMON_PERMISSIONS);
     await server.close();

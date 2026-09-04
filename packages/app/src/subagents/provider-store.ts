@@ -9,9 +9,6 @@ import { applyStreamEvent } from "@/types/stream";
 import type { StreamItem } from "@/types/stream";
 import type { AgentLifecycleStatus } from "@getpaseo/protocol/agent-lifecycle";
 
-// COMPAT(providerBoundarySessions): retained for old daemons that expose provider children through
-// dedicated RPCs. Current daemons publish every provider child as an ordinary agent session.
-
 type ProviderSubagentTimelineItem = Extract<
   Extract<SessionOutboundMessage, { type: "agent.provider_subagents.update" }>["payload"],
   { kind: "timeline" }

@@ -66,8 +66,14 @@ interface ConnectorInstance {
   readsCanceled: boolean;
   writesClosed: boolean;
   closeFromAgent(): void;
+  request(method: string, params: unknown): Promise<unknown>;
   respond(request: AcpRequestMessage, result: unknown): void;
   notify(method: string, params: unknown): void;
+}
+
+interface ConnectorResponse {
+  resolve(value: unknown): void;
+  reject(error: Error): void;
 }
 
 interface ConnectorHarnessOptions {
@@ -133,11 +139,22 @@ function connectorHarness(options?: ConnectorHarnessOptions) {
   const instances: ConnectorInstance[] = [];
   const connector = () => {
     let controller!: ReadableStreamDefaultController<AcpStreamMessage>;
+    let requestSequence = 0;
+    const responses = new Map<number, ConnectorResponse>();
     const instance: ConnectorInstance = {
       requests: [],
       readsCanceled: false,
       writesClosed: false,
       closeFromAgent: () => controller.close(),
+      request: (method, params) => {
+        const response = new Promise<unknown>((resolve, reject) => {
+          requestSequence += 1;
+          responses.set(requestSequence, { resolve, reject });
+          controller.enqueue({ jsonrpc: "2.0", id: requestSequence, method, params });
+        });
+        void response.catch(() => undefined);
+        return response;
+      },
       respond: (request, result) => controller.enqueue({ jsonrpc: "2.0", id: request.id, result }),
       notify: (method, params) => controller.enqueue({ jsonrpc: "2.0", method, params }),
     };
@@ -152,6 +169,22 @@ function connectorHarness(options?: ConnectorHarnessOptions) {
     });
     const writable = new WritableStream<AcpStreamMessage>({
       write(message) {
+        if (!("method" in message)) {
+          if (typeof message.id !== "number") return;
+          const response = responses.get(message.id);
+          if (!response) return;
+          responses.delete(message.id);
+          if ("error" in message) {
+            response.reject(
+              new Error(
+                message.error.data === undefined
+                  ? message.error.message
+                  : `${message.error.message}: ${JSON.stringify(message.error.data)}`,
+              ),
+            );
+          } else response.resolve(message.result);
+          return;
+        }
         receiveConnectorMessage(instance, message, options);
       },
       close() {
@@ -226,6 +259,163 @@ describe("runAcpProvider", () => {
 
     await waitForEvent(events, (event) => event.type === "session.ready");
     expect(connection.capabilities).toEqual(["prompt.message"]);
+    await connection.close();
+  });
+
+  it("maps permission behavior to the first matching ACP option", async () => {
+    const harness = connectorHarness();
+    const registration = runAcpProvider({
+      id: "sdk-acp",
+      label: "SDK ACP",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "permission"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send(openInput());
+    await waitForEvent(events, (event) => event.type === "session.ready");
+
+    const allow = harness.instances[1]!.request("session/request_permission", {
+      sessionId: "connector-session",
+      toolCall: {
+        toolCallId: "tool-allow",
+        title: "Allow tool",
+        kind: "execute",
+        status: "pending",
+        content: [],
+        rawInput: {},
+      },
+      options: [
+        { optionId: "allow-always", name: "Always allow", kind: "allow_always" },
+        { optionId: "allow-once", name: "Allow once", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+    });
+    await waitForEvent(
+      events,
+      (event) =>
+        event.type === "session.permission" && event.request.id === "permission:tool-allow",
+    );
+    await connection.send({
+      type: "session.permission",
+      sessionId: "session-1",
+      permissionId: "permission:tool-allow",
+      response: { behavior: "allow" },
+    });
+    await expect(allow).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "allow-always" },
+    });
+
+    const deny = harness.instances[1]!.request("session/request_permission", {
+      sessionId: "connector-session",
+      toolCall: {
+        toolCallId: "tool-deny",
+        title: "Deny tool",
+        kind: "execute",
+        status: "pending",
+        content: [],
+        rawInput: {},
+      },
+      options: [
+        { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+        { optionId: "reject-always", name: "Always reject", kind: "reject_always" },
+        { optionId: "reject-once", name: "Reject once", kind: "reject_once" },
+      ],
+    });
+    await waitForEvent(
+      events,
+      (event) => event.type === "session.permission" && event.request.id === "permission:tool-deny",
+    );
+    await connection.send({
+      type: "session.permission",
+      sessionId: "session-1",
+      permissionId: "permission:tool-deny",
+      response: { behavior: "deny" },
+    });
+    await expect(deny).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "reject-always" },
+    });
+    await connection.close();
+  });
+
+  it("rejects an explicit ACP permission option with the wrong behavior", async () => {
+    const harness = connectorHarness();
+    const registration = runAcpProvider({
+      id: "sdk-acp",
+      label: "SDK ACP",
+      connector: harness.connector,
+    });
+    const connection = await registration.connect({
+      versions: [1],
+      capabilities: ["prompt.message", "permission"],
+    });
+    const events: ProviderEvent[] = [];
+    connection.onEvent((event) => events.push(event));
+    await connection.send(openInput());
+    await waitForEvent(events, (event) => event.type === "session.ready");
+
+    const permission = harness.instances[1]!.request("session/request_permission", {
+      sessionId: "connector-session",
+      toolCall: {
+        toolCallId: "tool-explicit",
+        title: "Explicit tool",
+        kind: "execute",
+        status: "pending",
+        content: [],
+        rawInput: {},
+      },
+      options: [
+        { optionId: "allow-once", name: "Allow", kind: "allow_once" },
+        { optionId: "reject-once", name: "Reject", kind: "reject_once" },
+      ],
+    });
+    await waitForEvent(
+      events,
+      (event) =>
+        event.type === "session.permission" && event.request.id === "permission:tool-explicit",
+    );
+    await connection.send({
+      type: "session.permission",
+      sessionId: "session-1",
+      permissionId: "permission:tool-explicit",
+      response: { behavior: "allow", selectedActionId: "missing" },
+    });
+    await expect(
+      waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.runtime_failed" && event.error.message.includes("'missing'"),
+      ),
+    ).resolves.toBeDefined();
+
+    await connection.send({
+      type: "session.permission",
+      sessionId: "session-1",
+      permissionId: "permission:tool-explicit",
+      response: { behavior: "allow", selectedActionId: "reject-once" },
+    });
+    await expect(
+      waitForEvent(
+        events,
+        (event) =>
+          event.type === "session.runtime_failed" &&
+          event.error.message.includes("'reject-once'") &&
+          event.error.message.includes("does not match 'allow' behavior"),
+      ),
+    ).resolves.toBeDefined();
+
+    await connection.send({
+      type: "session.permission",
+      sessionId: "session-1",
+      permissionId: "permission:tool-explicit",
+      response: { behavior: "allow", selectedActionId: "allow-once" },
+    });
+    await expect(permission).resolves.toEqual({
+      outcome: { outcome: "selected", optionId: "allow-once" },
+    });
     await connection.close();
   });
 

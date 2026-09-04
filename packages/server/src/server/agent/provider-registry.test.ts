@@ -1,19 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { ToolPolicy } from "@getpaseo/protocol/agent-types";
-import express from "express";
-import {
-  createServer as createHttpServer,
-  type IncomingMessage,
-  type ServerResponse,
-} from "node:http";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { z } from "zod";
 
 import { createTestLogger } from "../../test-utils/test-logger.js";
 import type {
+  AgentClient,
   AgentFeature,
   AgentModelDefinition,
+  AgentMode,
   AgentSessionConfig,
   ProviderCatalog,
 } from "./agent-sdk-types.js";
@@ -65,7 +58,6 @@ const mockState = vi.hoisted(() => {
       }>,
     },
     isCommandAvailable: vi.fn(async (_command: string) => false),
-    resolveCodexDefaultModeId: vi.fn(async () => undefined as string | undefined),
     runtimeModels: new Map<string, AgentModelDefinition[]>(),
     cursorListFeaturesConfigs: [] as AgentSessionConfig[],
     reset() {
@@ -79,8 +71,6 @@ const mockState = vi.hoisted(() => {
       this.constructorArgs.genericAcp = [];
       this.isCommandAvailable.mockReset();
       this.isCommandAvailable.mockImplementation(async (_command: string) => false);
-      this.resolveCodexDefaultModeId.mockReset();
-      this.resolveCodexDefaultModeId.mockImplementation(async () => undefined);
       this.runtimeModels.clear();
       this.cursorListFeaturesConfigs = [];
     },
@@ -126,10 +116,6 @@ vi.mock("./providers/claude/agent.js", async () => {
           models: mockState.runtimeModels.get(this.provider) ?? [],
           modes: [],
         };
-      }
-
-      async resolveDefaultModeId(input: unknown): Promise<string | undefined> {
-        return await mockState.resolveCodexDefaultModeId(input);
       }
 
       resolveConfiguredModel(model: AgentModelDefinition): AgentModelDefinition {
@@ -183,10 +169,6 @@ vi.mock("./providers/codex-app-server-agent.js", () => ({
         models: mockState.runtimeModels.get(this.provider) ?? [],
         modes: [],
       };
-    }
-
-    async resolveDefaultModeId(input: unknown): Promise<string | undefined> {
-      return await mockState.resolveCodexDefaultModeId(input);
     }
 
     async isAvailable(): Promise<boolean> {
@@ -549,85 +531,11 @@ vi.mock("./providers/kimi-acp-agent.js", () => ({
 import {
   AGENT_PROVIDER_DEFINITIONS,
   buildProviderRegistry,
-  type ProviderDefinition,
+  createAllClients,
 } from "./provider-registry.js";
-import { ProviderRuntime } from "./provider-connection-runtime.js";
 import { FakeOmp } from "./providers/omp/test-utils/fake-omp.js";
 
 const logger = createTestLogger();
-
-async function fetchBoundaryCatalog(definition: ProviderDefinition, options: { cwd?: string }) {
-  const runtime = new ProviderRuntime(definition.registration);
-  try {
-    const catalog = await runtime.catalog(options.cwd);
-    expect(catalog.models.every((model) => !("provider" in model))).toBe(true);
-    return {
-      ...catalog,
-      models: catalog.models.map((model) => Object.assign({}, model, { provider: definition.id })),
-    };
-  } finally {
-    await runtime.close();
-  }
-}
-
-async function openBoundarySession(
-  definition: ProviderDefinition,
-  cwd: string,
-  mcpServers: AgentSessionConfig["mcpServers"] = {},
-) {
-  const runtime = new ProviderRuntime(definition.registration);
-  await runtime.openSession({
-    sessionId: "registry-test",
-    config: { cwd, env: {}, mcpServers, settings: {}, persist: false },
-    history: "skip",
-  });
-  return runtime;
-}
-
-async function startOmpMcpTestServer(): Promise<{ url: string; close(): Promise<void> }> {
-  const app = express();
-  app.use(express.json());
-  app.post("/mcp/agents", (request, response) => {
-    void (async () => {
-      const server = new McpServer({ name: "omp-registry-test", version: "1.0.0" });
-      server.registerTool(
-        "create_agent",
-        {
-          description: "Create a Paseo agent.",
-          inputSchema: { prompt: z.string() },
-        },
-        async ({ prompt }) => ({ content: [{ type: "text", text: `created: ${prompt}` }] }),
-      );
-      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-      response.on("close", () => {
-        void transport.close();
-        void server.close();
-      });
-      await server.connect(transport);
-      await transport.handleRequest(
-        request as unknown as IncomingMessage,
-        response as unknown as ServerResponse,
-        request.body,
-      );
-    })().catch((error: unknown) => {
-      if (!response.headersSent) response.status(500).send(String(error));
-    });
-  });
-  const httpServer = createHttpServer(app);
-  await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", resolve));
-  const address = httpServer.address();
-  if (!address || typeof address === "string") throw new Error("OMP MCP test server did not bind");
-  return {
-    url: `http://127.0.0.1:${address.port}/mcp/agents`,
-    close: async () =>
-      await new Promise<void>((resolve, reject) => {
-        httpServer.close((error) => {
-          if (error) reject(error);
-          else resolve();
-        });
-      }),
-  };
-}
 
 beforeEach(() => {
   mockState.reset();
@@ -637,11 +545,6 @@ test("builds registry with no overrides — same as built-in count", () => {
   const registry = buildProviderRegistry(logger);
 
   expect(Object.keys(registry)).toHaveLength(AGENT_PROVIDER_DEFINITIONS.length);
-  expect(registry.codex).not.toHaveProperty("optionsSchema");
-  expect(registry.codex).not.toHaveProperty("validateOptions");
-  expect(registry.codex).not.toHaveProperty("resolveCreateConfig");
-  expect(registry.codex).not.toHaveProperty("isCreateConfigUnattended");
-  expect(registry.codex).not.toHaveProperty("getDiagnostic");
 });
 
 test("includes mock provider only for development builds", () => {
@@ -701,7 +604,6 @@ test("built-in override applies env", () => {
 test("OMP is a disabled built-in backed by the real OMP adapter", async () => {
   const omp = new FakeOmp();
   const registry = buildProviderRegistry(logger, { ompRuntime: omp });
-  const mcp = await startOmpMcpTestServer();
 
   expect(registry.omp).toMatchObject({
     id: "omp",
@@ -709,37 +611,17 @@ test("OMP is a disabled built-in backed by the real OMP adapter", async () => {
     enabled: false,
     derivedFromProviderId: null,
   });
-  expect(registry.omp.registration.id).toBe("omp");
-  const runtime = await openBoundarySession(registry.omp, "/tmp/registry-omp", {
-    paseo: { type: "http", url: mcp.url },
-  });
-  try {
-    expect(omp.recordedLaunches).toEqual([
-      expect.objectContaining({
-        cwd: "/tmp/registry-omp",
-        protocolMode: "rpc-ui",
-        argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "yolo"],
-      }),
-    ]);
-    expect(omp.latestSession().hostToolSetRequests).toEqual([
-      [expect.objectContaining({ name: "create_agent", loadMode: "essential" })],
-    ]);
-    const hostToolResult = omp.latestSession().nextHostToolResult();
-    omp.latestSession().emit({
-      type: "host_tool_call",
-      id: "host-call-1",
-      toolCallId: "tool-call-1",
-      toolName: "create_agent",
-      arguments: { prompt: "from OMP" },
-    });
-    await expect(hostToolResult).resolves.toMatchObject({
-      id: "host-call-1",
-      result: { content: [{ type: "text", text: "created: from OMP" }] },
-    });
-  } finally {
-    await runtime.close();
-    await mcp.close();
-  }
+  const client = registry.omp.createClient(logger);
+  expect(client.provider).toBe("omp");
+  const session = await client.createSession({ provider: "omp", cwd: "/tmp/registry-omp" });
+  expect(omp.recordedLaunches).toEqual([
+    expect.objectContaining({
+      cwd: "/tmp/registry-omp",
+      protocolMode: "rpc-ui",
+      argv: ["omp", "--mode", "rpc-ui", "--approval-mode", "yolo"],
+    }),
+  ]);
+  await session.close();
 });
 
 test("OMP can be enabled without custom provider boilerplate", () => {
@@ -766,7 +648,7 @@ test("new provider extending claude appears in registry", () => {
   expect(registry.zai).toBeDefined();
   expect(registry.zai.label).toBe("ZAI");
   expect(registry.zai.description).toBe("Claude with ZAI defaults");
-  expect(registry.zai.registration.id).toBe("zai");
+  expect(registry.zai.createClient(logger).provider).toBe("zai");
 });
 
 test("built-in OMP override keeps the real OMP adapter enabled and launchable", async () => {
@@ -784,8 +666,9 @@ test("built-in OMP override keeps the real OMP adapter enabled and launchable", 
     },
   });
 
-  const runtime = await openBoundarySession(registry.omp, "/tmp/registry-override");
-  expect(registry.omp.registration.id).toBe("omp");
+  const client = registry.omp.createClient(logger);
+  const session = await client.createSession({ provider: "omp", cwd: "/tmp/registry-override" });
+  expect(client.provider).toBe("omp");
   expect(omp.recordedLaunches[0]?.argv).toEqual([
     "custom-omp",
     "--mode",
@@ -793,7 +676,7 @@ test("built-in OMP override keeps the real OMP adapter enabled and launchable", 
     "--approval-mode",
     "yolo",
   ]);
-  await runtime.close();
+  await session.close();
 });
 
 test("new provider extending acp uses GenericACPAgentClient", () => {
@@ -810,8 +693,17 @@ test("new provider extending acp uses GenericACPAgentClient", () => {
     },
   });
 
-  expect(registry["my-agent"].registration.id).toBe("my-agent");
+  expect(registry["my-agent"].createClient(logger).provider).toBe("my-agent");
   expect(mockState.constructorArgs.genericAcp).toEqual([
+    {
+      command: ["my-agent", "--acp"],
+      env: {
+        ACP_TOKEN: "secret",
+      },
+      providerId: "my-agent",
+      label: "My Agent",
+      providerParams: undefined,
+    },
     {
       command: ["my-agent", "--acp"],
       env: {
@@ -824,7 +716,7 @@ test("new provider extending acp uses GenericACPAgentClient", () => {
   ]);
 });
 
-test("Hub E2E ACP provider negotiates exact grants for its injected MCP server", async () => {
+test("Hub E2E ACP provider applies exact grants for its injected MCP server", () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
       "hub-e2e": {
@@ -834,19 +726,30 @@ test("Hub E2E ACP provider negotiates exact grants for its injected MCP server",
       },
     },
   });
-  const connection = await registry["hub-e2e"].registration.connect({
-    versions: [1],
-    capabilities: ["permission.tool_policy"],
+  const config = {
+    provider: "hub-e2e",
+    cwd: "/tmp/hub-e2e",
+    mcpServers: { hub: { type: "http" as const, url: "http://127.0.0.1/execution" } },
+  };
+  const toolPolicy = {
+    preapproved: [
+      { kind: "mcp" as const, server: "hub", tool: "reply" },
+      { kind: "mcp" as const, server: "hub", tool: "finish_execution" },
+    ],
+  };
+
+  expect(registry["hub-e2e"].applyToolPolicy(config, toolPolicy)).toEqual({
+    ...config,
+    toolPolicy,
   });
-  expect(connection.capabilities).toEqual(["permission.tool_policy"]);
-  await connection.close();
 });
 
 test.each([
   { kind: "mcp", server: "hub", tool: "*" },
   { kind: "mcp", server: "other", tool: "finish_execution" },
-  { kind: "mcp", server: "hub", tool: "bad/tool" },
-])("Hub E2E ACP provider rejects unsupported grant $kind:$server:$tool", async (grant) => {
+  { kind: "mcp", server: "hub", tool: "" },
+  { kind: "native", server: "hub", tool: "Bash" },
+])("Hub E2E ACP provider rejects unsupported grant $kind:$server:$tool", (grant) => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
       "hub-e2e": {
@@ -857,35 +760,14 @@ test.each([
     },
   });
 
-  const connection = await registry["hub-e2e"].registration.connect({
-    versions: [1],
-    capabilities: ["permission.tool_policy"],
-  });
-  const failures: string[] = [];
-  connection.onEvent((event) => {
-    if (event.type === "request.failed") failures.push(event.error.message);
-  });
-  await connection.send({
-    type: "session.open",
-    requestId: "invalid-policy",
-    sessionId: "invalid-policy",
-    config: {
-      cwd: "/tmp/hub-e2e",
-      env: {},
-      mcpServers: { hub: { type: "http", url: "http://127.0.0.1/execution" } },
-      settings: {},
-      toolPolicy: { preapproved: [grant] } as unknown as ToolPolicy,
-      persist: false,
-    },
-    history: "skip",
-  });
-  await expect
-    .poll(() => failures[0])
-    .toMatch(/accepts only exact MCP tool grants for the injected 'hub' server/u);
-  await connection.close();
+  expect(() =>
+    registry["hub-e2e"].applyToolPolicy({ provider: "hub-e2e", cwd: "/tmp/hub-e2e" }, {
+      preapproved: [grant],
+    } as unknown as ToolPolicy),
+  ).toThrow(/accepts only exact MCP tool grants for the injected 'hub' server/u);
 });
 
-test("ordinary custom ACP providers remain fail-closed for exact MCP grants", async () => {
+test("ordinary custom ACP providers remain fail-closed for exact MCP grants", () => {
   const registry = buildProviderRegistry(logger, {
     providerOverrides: {
       "my-agent": {
@@ -896,30 +778,12 @@ test("ordinary custom ACP providers remain fail-closed for exact MCP grants", as
     },
   });
 
-  const connection = await registry["my-agent"].registration.connect({
-    versions: [1],
-    capabilities: ["permission.tool_policy"],
-  });
-  expect(connection.capabilities).toEqual([]);
-  await expect(
-    connection.send({
-      type: "session.open",
-      requestId: "unsupported-policy",
-      sessionId: "unsupported-policy",
-      config: {
-        cwd: "/tmp/my-agent",
-        env: {},
-        mcpServers: {},
-        settings: {},
-        toolPolicy: {
-          preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }],
-        },
-        persist: false,
-      },
-      history: "skip",
-    }),
-  ).rejects.toThrow("permission.tool_policy");
-  await connection.close();
+  expect(() =>
+    registry["my-agent"].applyToolPolicy(
+      { provider: "my-agent", cwd: "/tmp/my-agent" },
+      { preapproved: [{ kind: "mcp", server: "hub", tool: "finish_execution" }] },
+    ),
+  ).toThrow(/cannot preapprove exact MCP tools for unattended execution/u);
 });
 
 test("ACP provider params can disable MCP support", () => {
@@ -936,8 +800,19 @@ test("ACP provider params can disable MCP support", () => {
     },
   });
 
-  expect(registry["no-mcp-acp"].registration.id).toBe("no-mcp-acp");
+  const client = registry["no-mcp-acp"].createClient(logger);
+
+  expect(client.capabilities.supportsMcpServers).toBe(false);
   expect(mockState.constructorArgs.genericAcp).toEqual([
+    {
+      command: ["no-mcp-acp", "serve"],
+      env: undefined,
+      providerId: "no-mcp-acp",
+      label: "No MCP ACP",
+      providerParams: {
+        supportsMcpServers: false,
+      },
+    },
     {
       command: ["no-mcp-acp", "serve"],
       env: undefined,
@@ -964,8 +839,15 @@ test("cursor provider extending acp uses CursorACPAgentClient", () => {
     },
   });
 
-  expect(registry.cursor.registration.id).toBe("cursor");
+  expect(registry.cursor.createClient(logger).provider).toBe("cursor");
   expect(mockState.constructorArgs.cursor).toEqual([
+    {
+      command: ["cursor-agent", "acp"],
+      env: {
+        CURSOR_AGENT_LOG: "debug",
+      },
+      providerParams: undefined,
+    },
     {
       command: ["cursor-agent", "acp"],
       env: {
@@ -975,6 +857,41 @@ test("cursor provider extending acp uses CursorACPAgentClient", () => {
     },
   ]);
   expect(mockState.constructorArgs.genericAcp).toEqual([]);
+});
+
+test("wrapped cursor client lists ACP features through the inner provider", async () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      cursor: {
+        extends: "acp",
+        label: "Cursor",
+        command: ["cursor-agent", "acp"],
+      },
+    },
+  });
+
+  const client = registry.cursor.createClient(logger);
+
+  await expect(
+    client.listFeatures?.({
+      provider: "cursor",
+      cwd: "/tmp/cursor",
+    }),
+  ).resolves.toEqual([
+    {
+      type: "select",
+      id: "fast",
+      label: "Fast",
+      value: "false",
+      options: [{ id: "false", label: "Off" }],
+    },
+  ]);
+  expect(mockState.cursorListFeaturesConfigs).toEqual([
+    {
+      provider: "acp",
+      cwd: "/tmp/cursor",
+    },
+  ]);
 });
 
 test("traecli provider extending acp uses TraeACPAgentClient", () => {
@@ -988,8 +905,13 @@ test("traecli provider extending acp uses TraeACPAgentClient", () => {
     },
   });
 
-  expect(registry.traecli.registration.id).toBe("traecli");
+  expect(registry.traecli.createClient(logger).provider).toBe("traecli");
   expect(mockState.constructorArgs.trae).toEqual([
+    {
+      command: ["traecli", "acp", "serve"],
+      env: undefined,
+      providerParams: undefined,
+    },
     {
       command: ["traecli", "acp", "serve"],
       env: undefined,
@@ -1010,8 +932,13 @@ test("kimi provider extending acp uses KimiACPAgentClient", () => {
     },
   });
 
-  expect(registry.kimi.registration.id).toBe("kimi");
+  expect(registry.kimi.createClient(logger).provider).toBe("kimi");
   expect(mockState.constructorArgs.kimi).toEqual([
+    {
+      command: ["kimi", "acp"],
+      env: undefined,
+      providerParams: undefined,
+    },
     {
       command: ["kimi", "acp"],
       env: undefined,
@@ -1068,8 +995,8 @@ test("enabled: false keeps provider metadata in registry", () => {
   expect(registry.codex.enabled).toBe(true);
 });
 
-test("enabled: false still retains its provider registration", () => {
-  const registry = buildProviderRegistry(logger, {
+test("enabled: false still produces a client (enabled gate is enforced elsewhere)", () => {
+  const clients = createAllClients(logger, {
     providerOverrides: {
       claude: {
         enabled: false,
@@ -1077,9 +1004,9 @@ test("enabled: false still retains its provider registration", () => {
     },
   });
 
-  expect(registry.claude.registration).toBeDefined();
+  expect(clients.claude).toBeDefined();
   expect(mockState.constructorArgs.claude.length).toBeGreaterThan(0);
-  expect(registry.codex.registration).toBeDefined();
+  expect(clients.codex).toBeDefined();
 });
 
 test("provider override command can be PATH-resolved and still report available", async () => {
@@ -1093,9 +1020,7 @@ test("provider override command can be PATH-resolved and still report available"
     },
   });
 
-  const runtime = new ProviderRuntime(registry.claude.registration);
-  await expect(runtime.isAvailable()).resolves.toBe(true);
-  await runtime.close();
+  await expect(registry.claude.createClient(logger).isAvailable()).resolves.toBe(true);
   expect(mockState.isCommandAvailable).toHaveBeenCalledWith("claude");
 });
 
@@ -1194,7 +1119,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.codex, {
+    const { models } = await registry.codex.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1230,7 +1155,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.codex, {
+    const { models } = await registry.codex.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1269,7 +1194,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.codex, {
+    const { models } = await registry.codex.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1304,7 +1229,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.codex, {
+    const { models } = await registry.codex.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1347,7 +1272,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.claude, {
+    const { models } = await registry.claude.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1399,7 +1324,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.claude, {
+    const { models } = await registry.claude.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1449,7 +1374,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.codex, {
+    const { models } = await registry.codex.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1489,7 +1414,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.claude, {
+    const { models } = await registry.claude.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1543,7 +1468,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.claude, {
+    const { models } = await registry.claude.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1583,7 +1508,7 @@ describe("model merging", () => {
     ]);
 
     const registry = buildProviderRegistry(logger);
-    const { models } = await fetchBoundaryCatalog(registry.claude, {
+    const { models } = await registry.claude.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1617,7 +1542,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.claude, {
+    const { models } = await registry.claude.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1638,7 +1563,7 @@ describe("model merging", () => {
     });
   });
 
-  test("built-in boundary catalog honors profile model replacement (issue #579)", async () => {
+  test("built-in createClient().fetchCatalog() honors profile model replacement (issue #579)", async () => {
     mockState.runtimeModels.set("codex", [
       {
         provider: "codex",
@@ -1662,15 +1587,18 @@ describe("model merging", () => {
       },
     });
 
-    const catalog = await fetchBoundaryCatalog(registry.codex, {
+    const client = registry.codex.createClient(logger);
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
       cwd: "/tmp/registry-models",
+      force: false,
     });
 
     expect(catalog.models.map((model) => model.id)).toEqual(["profile-fast"]);
     expect(catalog.models.find((model) => model.isDefault)?.id).toBe("profile-fast");
   });
 
-  test("built-in boundary catalog honors additionalModels default (issue #579)", async () => {
+  test("built-in createClient().fetchCatalog() honors additionalModels default (issue #579)", async () => {
     mockState.runtimeModels.set("claude", [
       {
         provider: "claude",
@@ -1694,8 +1622,11 @@ describe("model merging", () => {
       },
     });
 
-    const catalog = await fetchBoundaryCatalog(registry.claude, {
+    const client = registry.claude.createClient(logger);
+    const catalog = await client.fetchCatalog({
+      scope: "workspace",
       cwd: "/tmp/registry-models",
+      force: false,
     });
 
     const defaultModel = catalog.models.find((model) => model.isDefault) ?? catalog.models[0];
@@ -1719,7 +1650,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.claude, {
+    const { models } = await registry.claude.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1754,7 +1685,7 @@ describe("model merging", () => {
       },
     });
 
-    const { models } = await fetchBoundaryCatalog(registry.claude, {
+    const { models } = await registry.claude.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/registry-models",
       force: false,
@@ -1772,7 +1703,7 @@ describe("fetchCatalog", () => {
     ]);
 
     const registry = buildProviderRegistry(logger);
-    const catalog = await fetchBoundaryCatalog(registry.codex, {
+    const catalog = await registry.codex.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/catalog",
       force: false,
@@ -1796,7 +1727,7 @@ describe("fetchCatalog", () => {
       },
     });
 
-    const catalog = await fetchBoundaryCatalog(registry.codex, {
+    const catalog = await registry.codex.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/catalog",
       force: false,
@@ -1806,18 +1737,27 @@ describe("fetchCatalog", () => {
   });
 
   test("replacement models still resolve the provider's capability-aware default mode", async () => {
-    mockState.resolveCodexDefaultModeId.mockResolvedValue("default");
+    const resolveDefaultModeId = vi.fn(async () => "default");
+    const injectedClient = {
+      provider: "codex",
+      capabilities: {},
+      resolveDefaultModeId,
+      isAvailable: vi.fn(async () => true),
+    } satisfies Partial<AgentClient> as AgentClient;
     const registry = buildProviderRegistry(logger, {
       providerOverrides: {
-        claude: { models: [{ id: "profile-model", label: "Profile Model" }] },
+        codex: { models: [{ id: "profile-model", label: "Profile Model" }] },
       },
     });
 
-    const catalog = await fetchBoundaryCatalog(registry.claude, { cwd: "/tmp/catalog" });
+    const catalog = await registry.codex.fetchCatalog(
+      { scope: "workspace", cwd: "/tmp/catalog", force: false },
+      injectedClient,
+    );
 
-    expect(catalog.defaultMode).toBe("default");
-    expect(mockState.resolveCodexDefaultModeId).toHaveBeenCalledWith({
-      config: { provider: "claude", cwd: "/tmp/catalog" },
+    expect(catalog.defaultModeId).toBe("default");
+    expect(resolveDefaultModeId).toHaveBeenCalledWith({
+      config: { provider: "codex", cwd: "/tmp/catalog" },
     });
   });
 
@@ -1831,7 +1771,7 @@ describe("fetchCatalog", () => {
       },
     });
 
-    const catalog = await fetchBoundaryCatalog(registry.codex, {
+    const catalog = await registry.codex.fetchCatalog({
       scope: "workspace",
       cwd: "/tmp/catalog",
       force: false,
@@ -1844,5 +1784,50 @@ describe("fetchCatalog", () => {
         label: "Additional Label",
       },
     ]);
+  });
+
+  test("uses injected client instead of base client when provided", async () => {
+    const injectedModels: AgentModelDefinition[] = [
+      { provider: "codex", id: "injected-model", label: "Injected Model" },
+    ];
+    const injectedModes: AgentMode[] = [{ id: "agent", label: "Agent" }];
+    const injectedClient = {
+      provider: "codex",
+      capabilities: {},
+      fetchCatalog: vi.fn(async () => ({ models: injectedModels, modes: injectedModes })),
+      isAvailable: vi.fn(async () => true),
+    } satisfies Partial<AgentClient> as AgentClient;
+
+    const registry = buildProviderRegistry(logger);
+    const catalog = await registry.codex.fetchCatalog(
+      { cwd: "/tmp/catalog", force: false },
+      injectedClient,
+    );
+
+    expect(injectedClient.fetchCatalog).toHaveBeenCalledTimes(1);
+    expect(catalog.models.map((model) => model.id)).toEqual(["injected-model"]);
+    expect(catalog.modes).toEqual(injectedModes);
+  });
+
+  test("uses injected client fetchCatalog when available", async () => {
+    const injectedClient = {
+      provider: "codex",
+      capabilities: {},
+      fetchCatalog: vi.fn(async () => ({
+        models: [{ provider: "codex", id: "catalog-model", label: "Catalog Model" }],
+        modes: [{ id: "ask", label: "Ask" }],
+      })),
+      isAvailable: vi.fn(async () => true),
+    } satisfies Partial<AgentClient> as AgentClient;
+
+    const registry = buildProviderRegistry(logger);
+    const catalog = await registry.codex.fetchCatalog(
+      { cwd: "/tmp/catalog", force: false },
+      injectedClient,
+    );
+
+    expect(injectedClient.fetchCatalog).toHaveBeenCalledTimes(1);
+    expect(catalog.models.map((model) => model.id)).toEqual(["catalog-model"]);
+    expect(catalog.modes.map((mode) => mode.id)).toEqual(["ask"]);
   });
 });
