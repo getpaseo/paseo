@@ -73,8 +73,12 @@ function createApp(options: {
   enabled: boolean;
   distDir: string | null;
   publicDir?: string;
+  trustProxy?: boolean;
 }): express.Application {
   const app = express();
+  if (options.trustProxy) {
+    app.set("trust proxy", true);
+  }
   app.use(
     createWebUiMiddleware({
       enabled: options.enabled,
@@ -185,6 +189,19 @@ describe("daemon web UI route module", () => {
     expect(res.status).toBe(200);
     expect(res.body).toContain('"listen":"paseo.example.com:80"');
     expect(res.body).toContain('"useTls":false');
+  });
+
+  test("appends default port 443 when host header omits port (HTTPS via trust proxy)", async () => {
+    const app = createApp({ enabled: true, distDir, publicDir, trustProxy: true });
+
+    const res = await request(app, "GET", "/", {
+      host: "paseo.example.com",
+      "x-forwarded-proto": "https",
+    });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toContain('"listen":"paseo.example.com:443"');
+    expect(res.body).toContain('"useTls":true');
   });
 
   test("preserves explicit port in host header", async () => {
