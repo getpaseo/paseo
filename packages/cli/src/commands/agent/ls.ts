@@ -33,7 +33,23 @@ export interface AgentListItem {
   status: string;
   cwd: string;
   created: string;
+  /** Rendered in JSON and YAML output only; the table stays scannable without it. */
+  labels: Record<string, string>;
 }
+
+export type AgentListSource = Pick<
+  AgentSnapshotPayload,
+  | "id"
+  | "title"
+  | "provider"
+  | "model"
+  | "runtimeInfo"
+  | "effectiveThinkingOptionId"
+  | "status"
+  | "cwd"
+  | "createdAt"
+  | "labels"
+>;
 
 /** Helper to get relative time string */
 function relativeTime(date: Date | string): string {
@@ -88,7 +104,7 @@ export const agentLsSchema: OutputSchema<AgentListItem> = {
 };
 
 /** Transform agent snapshot to AgentListItem */
-function toListItem(agent: AgentSnapshotPayload): AgentListItem {
+export function toAgentListItem(agent: AgentListSource): AgentListItem {
   const model = normalizeModelId(agent.runtimeInfo?.model) ?? normalizeModelId(agent.model);
   return {
     id: agent.id,
@@ -99,6 +115,7 @@ function toListItem(agent: AgentSnapshotPayload): AgentListItem {
     status: agent.status,
     cwd: shortenPath(agent.cwd),
     created: relativeTime(agent.createdAt),
+    labels: { ...agent.labels },
   };
 }
 
@@ -252,7 +269,7 @@ export async function runLsCommand(
       return bTime - aTime;
     });
 
-    const items = agents.map(toListItem);
+    const items = agents.map(toAgentListItem);
 
     return {
       type: "list",
