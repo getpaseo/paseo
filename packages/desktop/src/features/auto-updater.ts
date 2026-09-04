@@ -38,27 +38,28 @@ let cachedStagingUserIdPromise: Promise<string> | null = null;
 const UPDATE_CHANNEL_NOT_PUBLISHED_CODE = "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND";
 
 interface AppUpdateLogSink {
-  info(message: string, details: Record<string, unknown>): void;
+  info(message: string, details: object): void;
+}
+
+interface AppUpdateCheckLogDetails {
+  currentVersion: string;
+  releaseChannel: AppReleaseChannel;
+  intent: AppUpdateCheckIntent;
+}
+
+interface AppUpdateCheckCompletedLogDetails extends AppUpdateCheckLogDetails {
+  targetVersion: string;
+  hasUpdate: boolean;
+  readyToInstall: boolean;
+  errorMessage: string | null;
 }
 
 export function createAppUpdateLifecycleLogger(logger: AppUpdateLogSink) {
   return {
-    checkStarted(details: {
-      currentVersion: string;
-      releaseChannel: AppReleaseChannel;
-      intent: AppUpdateCheckIntent;
-    }): void {
+    checkStarted(details: AppUpdateCheckLogDetails): void {
       logger.info("[auto-updater] check started", details);
     },
-    checkCompleted(details: {
-      currentVersion: string;
-      targetVersion: string;
-      releaseChannel: AppReleaseChannel;
-      intent: AppUpdateCheckIntent;
-      hasUpdate: boolean;
-      readyToInstall: boolean;
-      errorMessage: string | null;
-    }): void {
+    checkCompleted(details: AppUpdateCheckCompletedLogDetails): void {
       logger.info("[auto-updater] check completed", details);
     },
     updateAvailable(targetVersion: string): void {
@@ -70,11 +71,7 @@ export function createAppUpdateLifecycleLogger(logger: AppUpdateLogSink) {
     downloadRequested(targetVersion: string): void {
       logger.info("[auto-updater] download requested", { targetVersion });
     },
-    quitAndInstallRequested(details: {
-      targetVersion: string;
-      isSilent: boolean;
-      isForceRunAfter: boolean;
-    }): void {
+    quitAndInstallRequested(details: AppUpdateInstallRequest): void {
       logger.info("[auto-updater] quitAndInstall requested", details);
     },
   };
