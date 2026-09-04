@@ -23,7 +23,12 @@ import type {
 interface PluginRuntimePort {
   catalog(): Array<{ id: string; clientBundle: string }>;
   toolCatalog?(): PluginToolCatalogEntry[];
-  invoke(pluginId: string, method: string, input: unknown): Promise<unknown>;
+  invoke(
+    pluginId: string,
+    method: string,
+    input: unknown,
+    options?: { timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<unknown>;
   invokeTool?(
     pluginId: string,
     name: string,
@@ -373,8 +378,13 @@ export class PluginService {
     });
   }
 
-  invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown> {
-    return this.runtime.invoke(pluginId, method, input);
+  invokePluginRpc(
+    pluginId: string,
+    method: string,
+    input: unknown,
+    options?: { timeoutMs?: number; signal?: AbortSignal },
+  ): Promise<unknown> {
+    return this.runtime.invoke(pluginId, method, input, options);
   }
 
   async stopAllPlugins(): Promise<void> {

@@ -548,6 +548,7 @@ async function abortOpenCodeSession(params: {
   logger: Logger;
 }): Promise<void> {
   const { client, sessionId, directory, logger } = params;
+  if (typeof client.session.abort !== "function") return;
 
   try {
     const response = await client.session.abort({
@@ -555,13 +556,7 @@ async function abortOpenCodeSession(params: {
       directory,
     });
     if (response.error && !isOpenCodeNotFoundError(response.error)) {
-      logger.warn(
-        {
-          sessionId,
-          error: toDiagnosticErrorMessage(response.error),
-        },
-        "Failed to abort OpenCode session during close",
-      );
+      throw new Error(toDiagnosticErrorMessage(response.error));
     }
   } catch (error) {
     logger.warn(
@@ -571,6 +566,7 @@ async function abortOpenCodeSession(params: {
       },
       "Failed to abort OpenCode session during close",
     );
+    throw error;
   }
 }
 
@@ -3359,7 +3355,6 @@ class OpenCodeAgentSession implements AgentSession {
    * run, and a rejection means we never proved the runner stopped.
    */
   private abortSettlement: Promise<void> = Promise.resolve();
-  private abortSettlementPending = false;
   private externalStatusReconciliationStarted = false;
   private runnerStatusRevision = 0;
   private readonly runningToolCalls = new Map<string, ToolCallTimelineItem>();
@@ -3389,6 +3384,7 @@ class OpenCodeAgentSession implements AgentSession {
   private recoveryAbortController = new AbortController();
   private unsubscribeEvents: (() => void) | null = null;
   private closed = false;
+  private poisonedError: Error | null = null;
   private closePromise: Promise<void> | null = null;
   private readonly persistSession: boolean;
   private deletedFromProvider = false;
@@ -3711,6 +3707,7 @@ class OpenCodeAgentSession implements AgentSession {
     prompt: AgentPromptInput,
     options?: AgentRunOptions,
   ): Promise<{ turnId: string }> {
+    if (this.poisonedError) throw this.poisonedError;
     const start = this.turnCancellationGate.beginStart();
     try {
       await this.turnCancellationGate.waitForQuiescence(start);
@@ -3726,6 +3723,7 @@ class OpenCodeAgentSession implements AgentSession {
       try {
         await this.awaitRunnerQuiescence();
       } catch (error) {
+        this.poisonSession(error);
         this.rethrowRunnerWaitError(error);
       }
       if (this.closed) {
@@ -4590,16 +4588,18 @@ class OpenCodeAgentSession implements AgentSession {
   }
 
   private async startAutonomousTurn(observedRunnerStatusRevision: number): Promise<string | null> {
+    if (this.poisonedError) throw this.poisonedError;
     const start = this.turnCancellationGate.beginStart();
     try {
       try {
         await this.turnCancellationGate.waitForQuiescence(start);
       } catch (error) {
+        this.poisonSession(error);
         this.logger.warn(
           { err: error, sessionId: this.sessionId },
-          "Dropping autonomous OpenCode activity after cancellation failure",
+          "OpenCode session poisoned after cancellation failure",
         );
-        return null;
+        throw error;
       }
       if (this.closed || this.turnState.status !== "idle") {
         return null;
@@ -4716,17 +4716,6 @@ class OpenCodeAgentSession implements AgentSession {
     const stillInFlight = this.abortSettlement.catch(() => undefined);
     const settlement = Promise.all([stillInFlight, abort]).then(() => undefined);
     this.abortSettlement = settlement;
-    this.abortSettlementPending = true;
-    void settlement.then(
-      () => {
-        if (this.abortSettlement === settlement) this.abortSettlementPending = false;
-        return undefined;
-      },
-      () => {
-        if (this.abortSettlement === settlement) this.abortSettlementPending = false;
-        return undefined;
-      },
-    );
     void settlement.catch(() => undefined);
     // Cancellation is acknowledged as soon as an owned abort succeeds, or when
     // the provider publishes the canceled run's terminal.
@@ -5025,7 +5014,6 @@ class OpenCodeAgentSession implements AgentSession {
       // the acquisition fenced until that request and the close abort have
       // both settled; a late request must not land on a successor session.
       const abortsBeforeClose = this.abortSettlement;
-      const hadOutstandingAbort = this.abortSettlementPending;
       const closeAbort = abortOpenCodeSession({
         client: this.client,
         sessionId: this.sessionId,
@@ -5034,8 +5022,8 @@ class OpenCodeAgentSession implements AgentSession {
       });
       const closeAbortOutcome = await withTimeout(
         closeAbort.then(
-          () => "fulfilled" as const,
-          () => "rejected" as const,
+          () => ({ status: "fulfilled" as const }),
+          (error) => ({ status: "rejected" as const, error }),
         ),
         2_000,
         "OpenCode close session.abort",
@@ -5044,9 +5032,16 @@ class OpenCodeAgentSession implements AgentSession {
           { err: error, sessionId: this.sessionId },
           "Timed out forcing OpenCode session abort during close",
         );
-        return "timed-out" as const;
+        return { status: "timed-out" as const, error };
       });
-      const allAbortsSettled = Promise.allSettled([abortsBeforeClose, closeAbort]);
+      const previousAbortOutcome = await withTimeout(
+        abortsBeforeClose.then(
+          () => ({ status: "fulfilled" as const }),
+          (error) => ({ status: "rejected" as const, error }),
+        ),
+        2_000,
+        "OpenCode previous session.abort",
+      ).catch((error) => ({ status: "timed-out" as const, error }));
       const releaseResources = async (): Promise<void> => {
         const releaseBridge = this.releaseBridge;
         this.releaseBridge = null;
@@ -5058,30 +5053,25 @@ class OpenCodeAgentSession implements AgentSession {
           await releaseServer?.();
         }
       };
-      const finishClose = allAbortsSettled.then(([, closeResult]) =>
-        (closeResult.status === "fulfilled"
-          ? this.deleteProviderSessionIfEphemeral()
-          : Promise.resolve()
-        ).finally(releaseResources),
-      );
-
       this.turnState = { status: "idle" };
-      if (hadOutstandingAbort || closeAbortOutcome === "timed-out") {
-        // The bounded close operation can return while a provider request is
-        // stuck. Release is deliberately deferred until the request settles;
-        // if it never does, this session remains quarantined rather than being
-        // reused through its server or bridge binding.
-        void finishClose.catch((error) => {
-          this.logger.warn(
-            { err: error, sessionId: this.sessionId },
-            "Failed to release OpenCode resources after abort settlement",
-          );
-        });
-      } else {
-        await finishClose;
+      const closeFailure =
+        previousAbortOutcome.status === "fulfilled" && closeAbortOutcome.status === "fulfilled"
+          ? null
+          : (("error" in closeAbortOutcome ? closeAbortOutcome.error : undefined) ??
+            ("error" in previousAbortOutcome ? previousAbortOutcome.error : undefined) ??
+            new Error("OpenCode session abort did not settle during close"));
+      if (closeFailure) {
+        this.poisonSession(closeFailure);
+        throw closeFailure;
       }
+      await this.deleteProviderSessionIfEphemeral().finally(releaseResources);
     })();
     return this.closePromise;
+  }
+
+  private poisonSession(error: unknown): void {
+    if (this.poisonedError) return;
+    this.poisonedError = error instanceof Error ? error : new Error(String(error));
   }
 
   private async deleteProviderSessionIfEphemeral(): Promise<void> {

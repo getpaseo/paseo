@@ -250,6 +250,7 @@ function assertLoadedRecordIdentity(
   if (status === "acknowledged" && parsed.acknowledgedAt === null) {
     throw new Error(`Acknowledged delivery ${parsed.deliveryId} has no acknowledgement timestamp`);
   }
+  // COMPAT(durableDeliveryTarget): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
   if (parsed.targetAgentId === undefined && !legacyPull) {
     throw new Error(`Delivery ${parsed.deliveryId} has no target agent`);
   }
@@ -325,6 +326,7 @@ function normalizedLoadedRecordInput(
 
 function normalizeLoadedRecord(value: unknown, options: LoadedRecordOptions): LedgerRecord {
   const parsed = DeliveryRecordSchema.parse(value);
+  // COMPAT(durableDeliveryTarget): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
   const legacyPull =
     parsed.targetAgentId === undefined &&
     (parsed.deliveryMode === "legacy_pull" || options.allowLegacyPull);

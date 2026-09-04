@@ -2685,7 +2685,7 @@ describe("OpenCode adapter startTurn error handling", () => {
 
       expect(openCode.calls.sessionAbort).toHaveLength(0);
     } finally {
-      await session.close();
+      await session.close().catch(() => undefined);
     }
   });
 
@@ -2707,7 +2707,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
       expect(events.map((event) => event.type)).toEqual(["turn_started"]);
     } finally {
-      await session.close();
+      await session.close().catch(() => undefined);
     }
   });
 
@@ -2735,7 +2735,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(openCode.calls.sessionPromptAsync).toHaveLength(1);
       expect(events.map((event) => event.type)).toEqual(["turn_started"]);
     } finally {
-      await session.close();
+      await session.close().catch(() => undefined);
     }
   });
 
@@ -2909,12 +2909,26 @@ describe("OpenCode adapter startTurn error handling", () => {
 
     const interrupt = session.interrupt();
     await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(1));
-    await session.close();
+    await expect(session.close()).rejects.toThrow("OpenCode previous session.abort");
     expect(openCode.calls.sessionAbort).toHaveLength(2);
 
     settleOwnedAbort.resolve();
     await expect(interrupt).rejects.toThrow("late abort failure");
     expect(openCode.calls.sessionAbort).toHaveLength(2);
+  });
+
+  test("propagates a close abort failure and keeps provider resources quarantined", async () => {
+    const {
+      parent: session,
+      openCode,
+      runtime,
+    } = await createParentSession("ses_close_abort_failure");
+    openCode.sessionAbortImplementation = async () => {
+      throw new Error("close abort failed");
+    };
+
+    await expect(session.close()).rejects.toThrow("close abort failed");
+    expect(runtime.acquisitions.at(-1)?.releaseCount).toBe(0);
   });
 
   test("fails closed when the SDK abort throws before returning a promise", async () => {
@@ -2940,7 +2954,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
     } finally {
       sdkClient.session.abort = workingAbort;
-      await session.close();
+      await session.close().catch(() => undefined);
     }
   });
 
@@ -2960,7 +2974,7 @@ describe("OpenCode adapter startTurn error handling", () => {
       expect(openCode.calls.sessionAbort).toHaveLength(2);
       expect(openCode.calls.sessionPromptAsync).toHaveLength(0);
     } finally {
-      await session.close();
+      await session.close().catch(() => undefined);
     }
   });
 
@@ -3825,11 +3839,13 @@ describe("OpenCode adapter startTurn error handling", () => {
       const interrupt = session.interrupt();
       await vi.waitFor(() => expect(openCode.calls.sessionAbort).toHaveLength(1));
 
-      await session.close();
+      const closing = session.close();
+      await new Promise<void>((resolve) => setImmediate(resolve));
       expect(runtime.acquisitions.at(-1)?.releaseCount).toBe(0);
 
       settleInterrupt.resolve();
       await interrupt;
+      await expect(closing).resolves.toBeUndefined();
       await vi.waitFor(() => expect(runtime.acquisitions.at(-1)?.releaseCount).toBe(1));
     } finally {
       settleInterrupt.resolve();

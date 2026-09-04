@@ -282,6 +282,7 @@ export type PluginCommandCenterItemContribution =
 
 export interface PluginHandlerContext {
   paseo: PaseoPluginApi;
+  readonly signal: AbortSignal;
 }
 
 /**

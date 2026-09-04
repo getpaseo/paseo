@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { PluginProcessRequest } from "./plugin-process-protocol.js";
 import { MAX_PLUGIN_SESSION_FRAME_BYTES, PluginSessionSocket } from "./session-socket.js";
+import { PLUGIN_PROCESS_SEND_TIMEOUT_MS } from "./bounded-process-send.js";
 
 describe("PluginSessionSocket", () => {
   it("preserves text and binary frame order across IPC", () => {
@@ -70,5 +71,25 @@ describe("PluginSessionSocket", () => {
     expect(socket.bufferedAmount).toBe(3);
     callbacks[1]?.(null);
     expect(socket.bufferedAmount).toBe(0);
+  });
+
+  it("closes and reports a child IPC send that never acknowledges", async () => {
+    vi.useFakeTimers();
+    try {
+      const errors: Error[] = [];
+      const callback = vi.fn<(error?: Error) => void>();
+      const socket = new PluginSessionSocket({ send: () => true });
+      socket.on("error", (error) => errors.push(error as Error));
+
+      socket.send("hello", callback);
+      await vi.advanceTimersByTimeAsync(PLUGIN_PROCESS_SEND_TIMEOUT_MS);
+
+      expect(socket.readyState).toBe(3);
+      expect(socket.bufferedAmount).toBe(0);
+      expect(errors[0]?.message).toContain("IPC send timed out");
+      expect(callback).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

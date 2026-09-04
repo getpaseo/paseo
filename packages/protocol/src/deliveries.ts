@@ -277,7 +277,7 @@ export const DeliveriesSendRequestSchema = z.object({
   // request IDs that were valid as long as the complete WS frame was bounded.
   requestId: z.string().min(1),
   deliveryId: DeliveryIdSchema.optional(),
-  // COMPAT(durableDeliveryTarget): added in v0.7.3; remove after 2027-03-31 once client floor >= v0.7.3 and daemon floor >= v0.7.3.
+  // COMPAT(durableDeliveryTarget): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
   targetAgentId: DeliveryTargetAgentIdSchema.optional(),
   messageId: DeliveryMessageIdSchema.optional(),
   payload: DeliveryPayloadSchema,

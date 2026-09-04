@@ -3304,6 +3304,7 @@ function getControlRpcLogInfo(
   return null;
 }
 
+// COMPAT(durableDeliveryRequestCorrelation): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
 function extractRequestInfoFromUnknownWsInbound(
   payload: unknown,
 ): { requestId: string; requestType?: string } | null {

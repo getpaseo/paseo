@@ -1,4 +1,5 @@
 import { createRequire } from "node:module";
+import { Buffer } from "node:buffer";
 import {
   defineAttachmentSource,
   defineRpc,
@@ -22,6 +23,7 @@ import {
 import {
   PLUGIN_TOOL_MAX_UPDATE_BYTES,
   PLUGIN_TOOL_MAX_UPDATE_COUNT,
+  PLUGIN_TOOL_MAX_UPDATE_TOTAL_BYTES,
   PLUGIN_TOOL_MAX_ERROR_BYTES,
   PLUGIN_TOOL_MAX_DESCRIPTION_BYTES,
   PLUGIN_TOOL_MAX_NAME_BYTES,
@@ -33,6 +35,7 @@ import {
   truncateUtf8,
 } from "./plugin-tool.js";
 import { isPluginClientOnlySdkSpecifier, isPluginSdkSpecifier } from "./plugin-sdk-specifiers.js";
+import { sendPluginProcessMessage } from "./bounded-process-send.js";
 
 type RpcHandler = (input: unknown, context: PluginHandlerContext) => unknown | Promise<unknown>;
 type ToolHandler = (
@@ -59,25 +62,41 @@ const activeTools = new Map<
   string,
   { controller: AbortController; done: Promise<void>; cancelAck: Promise<void> | null }
 >();
+const activeRpcs = new Map<
+  string,
+  { controller: AbortController; done: Promise<void>; cancelAck: Promise<void> | null }
+>();
 let cleanup: (() => void | Promise<void>) | null = null;
 let daemonClient: DaemonClient | null = null;
 let paseo: PaseoPluginApi | null = null;
 let stopping = false;
 const nodeRequire = createRequire(import.meta.url);
 
+let ipcFailureShutdown: Promise<void> | null = null;
+
 function send(message: PluginProcessMessage): void {
   const validated = validatePluginProcessMessage(message);
-  process.send?.(validated);
+  void sendPluginProcessMessage(process.send?.bind(process), validated).catch((error) => {
+    console.error(`Plugin IPC send failed: ${describeError(error)}`);
+    ipcFailureShutdown ??= shutdown().catch(() => undefined);
+  });
 }
 
 function sendAndWait(message: PluginProcessMessage): Promise<void> {
-  return new Promise((resolve) => {
-    if (!process.send) {
-      resolve();
-      return;
-    }
-    process.send(validatePluginProcessMessage(message), () => resolve());
-  });
+  return sendPluginProcessMessage(
+    process.send?.bind(process),
+    validatePluginProcessMessage(message),
+  );
+}
+
+async function sendSettled(message: PluginProcessMessage): Promise<void> {
+  try {
+    await sendAndWait(message);
+  } catch (error) {
+    console.error(`Plugin IPC send failed: ${describeError(error)}`);
+    ipcFailureShutdown ??= shutdown().catch(() => undefined);
+    throw error;
+  }
 }
 
 function describeError(error: unknown): string {
@@ -231,11 +250,15 @@ function invokeTool(message: Extract<PluginProcessRequest, { type: "tool_invoke"
   }
   const controller = new AbortController();
   let updateCount = 0;
+  let updateBytes = 0;
   const reportProgress = (update: unknown): void => {
     if (updateCount >= PLUGIN_TOOL_MAX_UPDATE_COUNT) return;
     try {
       assertSafeJson(update, "Plugin tool progress update", PLUGIN_TOOL_MAX_UPDATE_BYTES);
+      const bytes = Buffer.byteLength(JSON.stringify(update), "utf8");
+      if (updateBytes + bytes > PLUGIN_TOOL_MAX_UPDATE_TOTAL_BYTES) return;
       updateCount += 1;
+      updateBytes += bytes;
       send({ type: "tool_update", requestId: message.requestId, update });
     } catch (error) {
       // Progress is best effort. The final tool result still has a chance to
@@ -254,14 +277,53 @@ function invokeTool(message: Extract<PluginProcessRequest, { type: "tool_invoke"
         ? await registered.definition.output.parseAsync(output)
         : output;
       assertSafeJson(parsedOutput, "Plugin tool output");
-      send({ type: "tool_result", requestId: message.requestId, output: parsedOutput });
+      await sendSettled({
+        type: "tool_result",
+        requestId: message.requestId,
+        output: parsedOutput,
+      });
     } catch (error) {
-      send({ type: "tool_error", requestId: message.requestId, error: boundError(error) });
+      await sendSettled({
+        type: "tool_error",
+        requestId: message.requestId,
+        error: boundError(error),
+      }).catch(() => undefined);
     } finally {
       activeTools.delete(message.requestId);
     }
   })();
   activeTools.set(message.requestId, { controller, done: run, cancelAck: null });
+}
+
+function invokeRpc(message: Extract<PluginProcessRequest, { type: "invoke" }>): void {
+  const registered = handlers.get(message.method);
+  if (!registered) {
+    send({
+      type: "error",
+      requestId: message.requestId,
+      error: `Unknown RPC method: ${message.method}`,
+    });
+    return;
+  }
+  const controller = new AbortController();
+  const run = (async () => {
+    try {
+      const input = await registered.contract.input.parseAsync(message.input);
+      if (!paseo) throw new Error("Plugin Paseo API is unavailable");
+      const output = await registered.handler(input, { paseo, signal: controller.signal });
+      const parsedOutput = await registered.contract.output.parseAsync(output);
+      await sendSettled({ type: "result", requestId: message.requestId, output: parsedOutput });
+    } catch (error) {
+      await sendSettled({
+        type: "error",
+        requestId: message.requestId,
+        error: boundError(error),
+      }).catch(() => undefined);
+    } finally {
+      activeRpcs.delete(message.requestId);
+    }
+  })();
+  activeRpcs.set(message.requestId, { controller, done: run, cancelAck: null });
 }
 
 async function initialize(message: Extract<PluginProcessRequest, { type: "initialize" }>) {
@@ -300,20 +362,29 @@ async function shutdown(): Promise<void> {
   stopping = true;
   for (const active of activeTools.values())
     active.controller.abort(new Error("Plugin is stopping"));
-  const active = [...activeTools.values()].map(({ done }) => done);
+  for (const active of activeRpcs.values())
+    active.controller.abort(new Error("Plugin is stopping"));
+  const active = [
+    ...[...activeTools.values()].map(({ done }) => done),
+    ...[...activeRpcs.values()].map(({ done }) => done),
+  ];
   await Promise.race([
     Promise.allSettled(active),
     new Promise((resolve) => setTimeout(resolve, 2_000)),
   ]);
   const currentCleanup = cleanup;
   cleanup = null;
-  try {
-    await currentCleanup?.();
-  } catch (error) {
-    console.error("Plugin cleanup failed", error);
-  }
-  await daemonClient?.close().catch(() => undefined);
-  await sendAndWait({ type: "paseo_close" });
+  await Promise.race([
+    Promise.resolve(currentCleanup?.()).catch((error) => {
+      console.error("Plugin cleanup failed", error);
+    }),
+    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+  await Promise.race([
+    daemonClient?.close().catch(() => undefined) ?? Promise.resolve(),
+    new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
+  ]);
+  await sendAndWait({ type: "paseo_close" }).catch(() => undefined);
   daemonClient = null;
   paseo = null;
   process.disconnect?.();
@@ -353,30 +424,25 @@ process.on("message", (rawMessage: unknown) => {
     void active.cancelAck.catch(() => undefined);
     return;
   }
+  if (message.type === "rpc_cancel") {
+    const active = activeRpcs.get(message.requestId);
+    if (!active) {
+      send({ type: "rpc_cancel_ack", requestId: message.requestId });
+      return;
+    }
+    active.controller.abort(new Error("Plugin RPC invocation cancelled"));
+    active.cancelAck ??= active.done.then(
+      () => sendAndWait({ type: "rpc_cancel_ack", requestId: message.requestId }),
+      () => sendAndWait({ type: "rpc_cancel_ack", requestId: message.requestId }),
+    );
+    void active.cancelAck.catch(() => undefined);
+    return;
+  }
   if (message.type === "tool_invoke") {
     if (!stopping) invokeTool(message);
     return;
   }
   if (message.type === "paseo_frame" || message.type === "paseo_close") return;
   if (stopping) return;
-  const registered = handlers.get(message.method);
-  if (!registered) {
-    send({
-      type: "error",
-      requestId: message.requestId,
-      error: `Unknown RPC method: ${message.method}`,
-    });
-    return;
-  }
-  void registered.contract.input
-    .parseAsync(message.input)
-    .then((input) => {
-      if (!paseo) throw new Error("Plugin Paseo API is unavailable");
-      return registered.handler(input, { paseo });
-    })
-    .then((output) => registered.contract.output.parseAsync(output))
-    .then(
-      (output) => send({ type: "result", requestId: message.requestId, output }),
-      (error) => send({ type: "error", requestId: message.requestId, error: boundError(error) }),
-    );
+  invokeRpc(message);
 });

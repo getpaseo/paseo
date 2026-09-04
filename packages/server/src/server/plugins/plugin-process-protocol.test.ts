@@ -43,9 +43,16 @@ describe("plugin process tool protocol", () => {
       type: "tool_cancel",
       requestId: "request-1",
     });
+    expect(validatePluginProcessRequest({ type: "rpc_cancel", requestId: "request-1" })).toEqual({
+      type: "rpc_cancel",
+      requestId: "request-1",
+    });
     expect(
       validatePluginProcessMessage({ type: "tool_cancel_ack", requestId: "request-1" }),
     ).toEqual({ type: "tool_cancel_ack", requestId: "request-1" });
+    expect(
+      validatePluginProcessMessage({ type: "rpc_cancel_ack", requestId: "request-1" }),
+    ).toEqual({ type: "rpc_cancel_ack", requestId: "request-1" });
   });
 
   it("rejects unknown fields and oversized messages", () => {

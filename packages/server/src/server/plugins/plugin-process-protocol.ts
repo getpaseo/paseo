@@ -82,6 +82,7 @@ export const PluginProcessRequestSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   z.object({ type: z.literal("tool_cancel"), requestId: z.string().min(1) }).strict(),
+  z.object({ type: z.literal("rpc_cancel"), requestId: z.string().min(1) }).strict(),
   z.object({ type: z.literal("shutdown") }).strict(),
   z
     .object({ type: z.literal("paseo_frame"), data: BinaryFrameSchema, isBinary: z.boolean() })
@@ -111,6 +112,7 @@ export const PluginProcessMessageSchema = z.discriminatedUnion("type", [
     .object({ type: z.literal("tool_update"), requestId: z.string().min(1), update: z.unknown() })
     .strict(),
   z.object({ type: z.literal("tool_cancel_ack"), requestId: z.string().min(1) }).strict(),
+  z.object({ type: z.literal("rpc_cancel_ack"), requestId: z.string().min(1) }).strict(),
   z
     .object({ type: z.literal("tool_result"), requestId: z.string().min(1), output: z.unknown() })
     .strict(),

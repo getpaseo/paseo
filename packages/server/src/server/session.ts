@@ -566,7 +566,12 @@ export interface SessionOptions {
     removePlugin(pluginId: string): Promise<void>;
     subscribe(listener: (pluginId: string) => void): () => void;
     catalog(): Array<{ id: string; clientBundle: string }>;
-    invokePluginRpc(pluginId: string, method: string, input: unknown): Promise<unknown>;
+    invokePluginRpc(
+      pluginId: string,
+      method: string,
+      input: unknown,
+      options?: { timeoutMs?: number; signal?: AbortSignal },
+    ): Promise<unknown>;
   };
   orchestrationSkills?: import("./orchestration-skills/index.js").OrchestrationSkills;
   mcpBaseUrl?: string | null;
@@ -642,6 +647,7 @@ function parseClientCapabilities(
   return new Set(result);
 }
 
+// COMPAT(durableDeliveryRequestCorrelation): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
 function sessionRequestId(message: SessionInboundMessage): string | null {
   if ("requestId" in message && typeof message.requestId === "string") {
     return message.requestId;
@@ -2075,6 +2081,7 @@ export class Session {
     switch (msg.type) {
       case "deliveries.send.request": {
         const request = DeliveriesSendRequestSchema.parse(msg);
+        // COMPAT(durableDeliveryTarget): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
         const targetAgentId =
           request.targetAgentId === undefined
             ? undefined

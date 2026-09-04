@@ -37,6 +37,7 @@ export interface OpenCodeEventConsumerOptions {
 const WATCHDOG_MS = 30_000;
 const MAX_BACKOFF_MS = 5_000;
 const FAILURE_WARNING_ATTEMPT = 4;
+export const OPENCODE_EVENT_STREAM_CLOSE_TIMEOUT_MS = 1_000;
 
 type OpenCodeEventStreamPhase = "first-record" | "stream";
 type OpenCodeConnectionOutcome = "ended" | "error" | "watchdog";
@@ -86,6 +87,8 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
   private lastError?: string;
   private connected = false;
   private closed = false;
+  private activeIterator: AsyncIterator<GlobalEvent> | null = null;
+  private activeIteratorReturn: Promise<void> | null = null;
 
   constructor(options: OpenCodeEventConsumerOptions) {
     this.client =
@@ -128,7 +131,11 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
     const error = new Error("OpenCode event source closed");
     this.rejectReady(error);
     this.connectionAbort.abort(error);
-    await this.connectionTask.catch(() => undefined);
+    void this.returnActiveIterator();
+    await Promise.race([
+      this.connectionTask.catch(() => undefined),
+      new Promise<void>((resolve) => setTimeout(resolve, OPENCODE_EVENT_STREAM_CLOSE_TIMEOUT_MS)),
+    ]);
   }
 
   private async consume(processExit: Promise<Error>): Promise<void> {
@@ -173,21 +180,31 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
         },
       });
       armWatchdog();
-      for await (const event of result.stream) {
-        if (this.closed) {
-          return { delivered, phase, outcome: "ended" };
+      const iterator = result.stream[Symbol.asyncIterator]();
+      this.activeIterator = iterator;
+      try {
+        for (;;) {
+          const next = await iterator.next();
+          if (next.done) break;
+          const event = next.value;
+          if (this.closed) {
+            return { delivered, phase, outcome: "ended" };
+          }
+          armWatchdog();
+          delivered = true;
+          phase = "stream";
+          this.phase = phase;
+          if (!this.connected && event.payload.type === "server.connected") {
+            this.connected = true;
+            this.resolveReady();
+            continue;
+          }
+          this.logPluginFailure(event);
+          this.publish(event);
         }
-        armWatchdog();
-        delivered = true;
-        phase = "stream";
-        this.phase = phase;
-        if (!this.connected && event.payload.type === "server.connected") {
-          this.connected = true;
-          this.resolveReady();
-          continue;
-        }
-        this.logPluginFailure(event);
-        this.publish(event);
+      } finally {
+        if (this.activeIterator === iterator) this.activeIterator = null;
+        await this.returnIterator(iterator);
       }
       let outcome: OpenCodeConnectionOutcome = "ended";
       if (watchdogPhase) outcome = "watchdog";
@@ -224,6 +241,29 @@ export class OpenCodeEventConsumer implements OpenCodeEventSource {
       },
       "OpenCode plugin failed",
     );
+  }
+
+  private returnActiveIterator(): Promise<void> {
+    const iterator = this.activeIterator;
+    return iterator ? this.returnIterator(iterator) : Promise.resolve();
+  }
+
+  private returnIterator(iterator: AsyncIterator<GlobalEvent>): Promise<void> {
+    if (this.activeIteratorReturn) return this.activeIteratorReturn;
+    let returned: Promise<void>;
+    try {
+      returned = Promise.resolve(iterator.return?.()).then(
+        () => undefined,
+        () => undefined,
+      );
+    } catch {
+      returned = Promise.resolve();
+    }
+    const tracked = returned.finally(() => {
+      if (this.activeIteratorReturn === tracked) this.activeIteratorReturn = null;
+    });
+    this.activeIteratorReturn = tracked;
+    return tracked;
   }
 
   private logConnectionFailure(

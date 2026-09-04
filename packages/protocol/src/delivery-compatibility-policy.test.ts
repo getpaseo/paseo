@@ -21,6 +21,49 @@ const removalDate = /remove after \d{4}-\d{2}-\d{2}/;
 const clientFloor = /client floor >= v\d+\.\d+\.\d+/;
 const daemonFloor = /daemon floor >= v\d+\.\d+\.\d+/;
 
+const knownShimSites = [
+  {
+    relativePath: "packages/protocol/src/deliveries.ts",
+    marker: "targetAgentId: DeliveryTargetAgentIdSchema.optional(),",
+    tag: "durableDeliveryTarget",
+  },
+  {
+    relativePath: "packages/server/src/server/deliveries/delivery-ledger.ts",
+    marker: "if (parsed.targetAgentId === undefined && !legacyPull)",
+    tag: "durableDeliveryTarget",
+  },
+  {
+    relativePath: "packages/server/src/server/deliveries/delivery-ledger.ts",
+    marker: "const legacyPull =",
+    tag: "durableDeliveryTarget",
+  },
+  {
+    relativePath: "packages/server/src/server/session.ts",
+    marker: "const targetAgentId =",
+    tag: "durableDeliveryTarget",
+  },
+  {
+    relativePath: "packages/server/src/server/session.ts",
+    marker: "function sessionRequestId(message: SessionInboundMessage)",
+    tag: "durableDeliveryRequestCorrelation",
+  },
+  {
+    relativePath: "packages/server/src/server/websocket-server.ts",
+    marker: "function extractRequestInfoFromUnknownWsInbound(",
+    tag: "durableDeliveryRequestCorrelation",
+  },
+  {
+    relativePath: "packages/client/src/daemon-client.ts",
+    marker: "function extractCorrelatedResponseIdentity(input: unknown)",
+    tag: "durableDeliveryRequestCorrelation",
+  },
+  {
+    relativePath: "packages/client/src/daemon-client.ts",
+    marker: "private async sendCorrelatedRequest<",
+    tag: "durableDeliveryRequestCorrelation",
+  },
+];
+
 function compatibilityCommentBlocks(source: string): string[] {
   const lines = source.split("\n");
   const blocks: string[] = [];
@@ -57,6 +100,23 @@ describe("delivery compatibility annotations", () => {
       }
     }
 
+    expect(missing).toEqual([]);
+  });
+
+  test("keeps the known acceptance and correlation shims explicitly annotated", async () => {
+    const missing: string[] = [];
+    for (const site of knownShimSites) {
+      const source = await readFile(path.join(repoRoot, site.relativePath), "utf8");
+      const markerIndex = source.indexOf(site.marker);
+      if (markerIndex < 0) {
+        missing.push(`${site.relativePath}: missing marker ${site.marker}`);
+        continue;
+      }
+      const nearby = source.slice(Math.max(0, markerIndex - 600), markerIndex);
+      if (!nearby.includes(`COMPAT(${site.tag}):`)) {
+        missing.push(`${site.relativePath}: ${site.tag} before ${site.marker}`);
+      }
+    }
     expect(missing).toEqual([]);
   });
 });

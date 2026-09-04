@@ -17,6 +17,7 @@ import {
 import { resolveOpenCodeHomeDir } from "./paths.js";
 import {
   OpenCodeEventConsumer,
+  OPENCODE_EVENT_STREAM_CLOSE_TIMEOUT_MS,
   type OpenCodeEventConsumerFactory,
   type OpenCodeEventSource,
 } from "./event-consumer.js";
@@ -623,7 +624,12 @@ export class OpenCodeServerManager implements OpenCodeServerManagerLike {
 
   private async killServerInternal(server: OpenCodeServerGeneration): Promise<void> {
     try {
-      await server.events.close();
+      await Promise.race([
+        server.events.close().catch((error) => {
+          this.logger.warn({ err: error, url: server.url }, "OpenCode event stream close failed");
+        }),
+        new Promise<void>((resolve) => setTimeout(resolve, OPENCODE_EVENT_STREAM_CLOSE_TIMEOUT_MS)),
+      ]);
       if (
         (server.process.exitCode !== null && server.process.exitCode !== undefined) ||
         (server.process.signalCode !== null && server.process.signalCode !== undefined)

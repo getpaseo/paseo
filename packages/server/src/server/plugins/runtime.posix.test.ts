@@ -7,6 +7,8 @@ import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PluginRuntime } from "./runtime.js";
 import type { PluginSessionSocket } from "./session-socket.js";
+import { PLUGIN_TOOL_MAX_UPDATE_COUNT } from "./plugin-tool.js";
+import type { PluginToolCatalogEntry } from "./plugin-process-protocol.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -23,6 +25,7 @@ function createReloadChild(
   events: string[],
   methods: string[] = [],
   deferClose = false,
+  catalog: PluginToolCatalogEntry[] = [],
 ) {
   const listeners = new Map<string, Array<(message: never) => void>>();
   const emit = (event: string, message: unknown) => {
@@ -41,7 +44,18 @@ function createReloadChild(
       callback?.(null);
       if (message.type === "initialize") {
         events.push(`start:${name}`);
-        queueMicrotask(() => emit("message", { type: "ready", methods }));
+        queueMicrotask(() =>
+          emit("message", {
+            type: "ready",
+            methods,
+            catalog: catalog.map((entry) => ({
+              ...entry,
+              pluginId: message.pluginId,
+              generation: message.generation ?? 1,
+              installationId: message.installationId,
+            })),
+          }),
+        );
       }
       if (message.type === "shutdown") {
         events.push(`shutdown:${name}`);
@@ -66,8 +80,22 @@ function createReloadChild(
       return this;
     },
     closeNow,
+    emit,
   };
 }
+
+const fakeToolCatalog: PluginToolCatalogEntry[] = [
+  {
+    pluginId: "fake-tool-runtime",
+    generation: 1,
+    installationId: "fake-installation",
+    name: "acme.wait",
+    title: "Wait",
+    description: "Wait for a result.",
+    inputSchema: { type: "object", properties: {} },
+    timeoutMs: 30_000,
+  },
+];
 
 function createTestRuntime(
   dependencies: NonNullable<ConstructorParameters<typeof PluginRuntime>[2]> = {},
@@ -412,6 +440,37 @@ describe("PluginRuntime", () => {
     await rejection;
   });
 
+  it("cancels non-tool RPCs through the child and passes the abort signal", async () => {
+    const directory = await createPlugin(
+      "rpc-cancellation",
+      `import { z } from "zod";
+import { defineRpc } from "@getpaseo/plugin/server";
+
+const wait = defineRpc({ name: "wait", input: z.object({}), output: z.object({ ok: z.boolean() }) });
+export default function contribute(plugin: any) {
+  plugin.handle(wait, (_input: unknown, context: any) => new Promise((resolve, reject) => {
+    context.signal.addEventListener("abort", () => reject(context.signal.reason), { once: true });
+  }));
+  return () => undefined;
+}`,
+    );
+    const runtime = createTestRuntime();
+    await runtime.startPlugin("rpc-cancellation", directory);
+
+    const controller = new AbortController();
+    const invocation = runtime.invoke(
+      "rpc-cancellation",
+      "wait",
+      {},
+      { signal: controller.signal, timeoutMs: 2_000 },
+    );
+    controller.abort(new Error("rpc caller cancelled"));
+
+    await expect(invocation).rejects.toThrow("rpc caller cancelled");
+    expect(runtime.catalog()).toHaveLength(1);
+    await runtime.stopAll();
+  });
+
   it("waits for asynchronous plugin cleanup before stopping", async () => {
     const cleanupFile = path.join(tmpdir(), `paseo-plugin-cleanup-${Date.now()}`);
     const directory = await createPlugin(
@@ -458,6 +517,31 @@ export default function contribute(plugin: unknown) {
       await stopping;
       expect(child.killed).toBe(true);
       expect(events).toContain("shutdown:held-cleanup");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("kills a child when the shutdown IPC callback hangs", async () => {
+    vi.useFakeTimers();
+    try {
+      const directory = await createPlugin(
+        "hung-shutdown-send",
+        `export default function contribute(plugin: unknown) { void plugin; return () => undefined; }`,
+      );
+      const child = createReloadChild("hung-shutdown-send", []);
+      const originalSend = child.send.bind(child);
+      child.send = (message, callback) => {
+        if (message.type === "shutdown") return true;
+        return originalSend(message, callback);
+      };
+      const runtime = createTestRuntime({ spawnChild: () => child });
+      await runtime.startPlugin("hung-shutdown-send", directory);
+
+      const stopping = runtime.stopPluginById("hung-shutdown-send");
+      await vi.advanceTimersByTimeAsync(3_001);
+      await stopping;
+      expect(child.killed).toBe(true);
     } finally {
       vi.useRealTimers();
     }
@@ -889,6 +973,117 @@ export default function contribute(plugin: any) {
     );
     await vi.waitFor(() => expect(runtime.toolCatalog()).toEqual([]), { timeout: 5_000 });
   }, 8_000);
+
+  it("releases a saturated tool slot once across result, cancel, and child-close races", async () => {
+    const directory = await createPlugin(
+      "fake-tool-runtime",
+      `export default function contribute(plugin: any) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("fake-tool-runtime", [], [], false, fakeToolCatalog);
+    const requestIds: string[] = [];
+    const originalSend = child.send.bind(child);
+    child.send = (message, callback) => {
+      if (message.type === "tool_invoke")
+        requestIds.push((message as { requestId: string }).requestId);
+      return originalSend(message, callback);
+    };
+    const runtime = createTestRuntime({
+      spawnChild: () => child,
+      resolveToolContext: async (callerAgentId) => ({
+        callerAgentId,
+        agent: null,
+        workspace: null,
+      }),
+    });
+    await runtime.startPlugin("fake-tool-runtime", directory);
+
+    const controllers = Array.from({ length: 8 }, () => new AbortController());
+    const calls = controllers.map((controller) =>
+      runtime.invokeTool(
+        "fake-tool-runtime",
+        "acme.wait",
+        {},
+        {
+          callerAgentId: "agent-1",
+          signal: controller.signal,
+        },
+      ),
+    );
+    await vi.waitFor(() => expect(requestIds).toHaveLength(8));
+
+    controllers[0]?.abort(new Error("race cancellation"));
+    child.emit("message", { type: "tool_result", requestId: requestIds[0], output: { ok: true } });
+    child.emit("message", { type: "tool_cancel_ack", requestId: requestIds[0] });
+    await expect(calls[0]).rejects.toThrow("race cancellation");
+
+    const replacement = runtime.invokeTool(
+      "fake-tool-runtime",
+      "acme.wait",
+      {},
+      {
+        callerAgentId: "agent-1",
+      },
+    );
+    const overLimit = runtime.invokeTool(
+      "fake-tool-runtime",
+      "acme.wait",
+      {},
+      {
+        callerAgentId: "agent-1",
+      },
+    );
+    await expect(overLimit).rejects.toThrow("concurrency limit");
+    await vi.waitFor(() => expect(requestIds).toHaveLength(9));
+
+    for (const requestId of requestIds.slice(1)) {
+      child.emit("message", { type: "tool_result", requestId, output: { ok: true } });
+    }
+    await expect(Promise.all([replacement, ...calls.slice(1)])).resolves.toHaveLength(8);
+    await runtime.stopAll();
+  });
+
+  it("quarantines a child that forges more than the host progress bound", async () => {
+    const directory = await createPlugin(
+      "forged-progress",
+      `export default function contribute(plugin: any) { void plugin; return () => undefined; }`,
+    );
+    const child = createReloadChild("forged-progress", [], [], false, fakeToolCatalog);
+    let requestId: string | undefined;
+    const originalSend = child.send.bind(child);
+    child.send = (message, callback) => {
+      if (message.type === "tool_invoke") requestId = (message as { requestId: string }).requestId;
+      return originalSend(message, callback);
+    };
+    const runtime = createTestRuntime({
+      spawnChild: () => child,
+      resolveToolContext: async (callerAgentId) => ({
+        callerAgentId,
+        agent: null,
+        workspace: null,
+      }),
+    });
+    await runtime.startPlugin("forged-progress", directory);
+    const invocation = runtime.invokeTool(
+      "forged-progress",
+      "acme.wait",
+      {},
+      {
+        callerAgentId: "agent-1",
+      },
+    );
+    await vi.waitFor(() => expect(requestId).toEqual(expect.any(String)));
+
+    for (let index = 0; index <= PLUGIN_TOOL_MAX_UPDATE_COUNT; index += 1) {
+      child.emit("message", {
+        type: "tool_update",
+        requestId,
+        update: { index },
+      });
+    }
+
+    await expect(invocation).rejects.toThrow(/progress limit|stopped|exited/i);
+    await vi.waitFor(() => expect(runtime.catalog()).toEqual([]));
+  });
 
   it("does not start a tool after its plugin is stopped while context is resolving", async () => {
     const directory = await createPlugin(

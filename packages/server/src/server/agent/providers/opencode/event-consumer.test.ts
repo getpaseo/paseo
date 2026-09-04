@@ -423,6 +423,46 @@ describe("OpenCodeEventConsumer", () => {
 
     expect(inputs).toEqual([]);
   });
+
+  test("bounds close when an SDK async iterator ignores abort", async () => {
+    vi.useFakeTimers();
+    const iteratorReturn = vi.fn(() => new Promise<never>(() => undefined));
+    const iterator = {
+      next: () => new Promise<never>(() => undefined),
+      return: iteratorReturn,
+    };
+    const client = {
+      global: {
+        event: vi.fn(async () => ({
+          stream: { [Symbol.asyncIterator]: () => iterator },
+        })),
+      },
+    } as never;
+    const consumer = new OpenCodeEventConsumer({
+      serverUrl: "http://127.0.0.1:1",
+      processExit: new Promise<Error>(() => undefined),
+      logger: createRecordingLogger(),
+      createClient: () => client,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(client.global.event).toHaveBeenCalledOnce();
+    const close = consumer.close();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(iteratorReturn).toHaveBeenCalledOnce();
+
+    await vi.advanceTimersByTimeAsync(999);
+    let settled = false;
+    void close.then(() => {
+      settled = true;
+      return undefined;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(close).resolves.toBeUndefined();
+  });
 });
 
 class ControlledTiming implements OpenCodeEventConsumerTiming {

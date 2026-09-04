@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { MAX_WEBSOCKET_MESSAGE_BYTES } from "@getpaseo/protocol/transport-limits";
 import type { PluginProcessRequest } from "./plugin-process-protocol.js";
+import { sendPluginProcessMessage } from "./bounded-process-send.js";
 
 interface PluginProcessSender {
   send(message: PluginProcessRequest, callback?: (error: Error | null) => void): boolean;
@@ -51,16 +52,22 @@ export class PluginSessionSocket {
       if (completed) return;
       completed = true;
       this.bufferedAmount = Math.max(0, this.bufferedAmount - byteLength);
+      if (error) {
+        this.emit("error", error);
+        this.peerClosed();
+      }
       callback?.(error ?? undefined);
     };
-    try {
-      this.child.send(
-        { type: "paseo_frame", data: frame, isBinary: typeof frame !== "string" },
-        (error) => complete(error),
-      );
-    } catch (error) {
-      complete(error instanceof Error ? error : new Error(String(error)));
-    }
+    void sendPluginProcessMessage(
+      this.child.send.bind(this.child),
+      {
+        type: "paseo_frame",
+        data: frame,
+        isBinary: typeof frame !== "string",
+      },
+      undefined,
+      complete,
+    ).catch(() => undefined);
   }
 
   receive(data: string | Uint8Array, isBinary: boolean): void {
@@ -79,11 +86,9 @@ export class PluginSessionSocket {
   close(code?: number, reason?: string): void {
     if (this.readyState === 3) return;
     this.readyState = 3;
-    try {
-      this.child.send({ type: "paseo_close" });
-    } catch {
-      // The child has already gone; local session cleanup still has to run.
-    }
+    void sendPluginProcessMessage(this.child.send.bind(this.child), { type: "paseo_close" }).catch(
+      () => undefined,
+    );
     this.emit("close", code, reason);
   }
 

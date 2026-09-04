@@ -11,7 +11,12 @@ import {
 } from "../services/github-service.js";
 import { PARENT_AGENT_ID_LABEL } from "@getpaseo/protocol/agent-labels";
 import { CLIENT_CAPS } from "@getpaseo/protocol/client-capabilities";
-import type { WorkspaceDescriptorPayload } from "@getpaseo/protocol/messages";
+import {
+  WSSessionOutboundSchema,
+  wrapSessionMessage,
+  type WorkspaceDescriptorPayload,
+} from "@getpaseo/protocol/messages";
+import { MAX_DELIVERY_RESPONSE_BYTES } from "@getpaseo/protocol/transport-limits";
 import {
   decodeFileTransferFrame,
   encodeFileTransferFrame,
@@ -555,6 +560,61 @@ test("durable deliveries are scoped to the authenticated principal and source", 
       otherLedger.get("plugin:calendar", { includeAcknowledged: true }),
     ).resolves.toMatchObject({
       deliveries: [{ deliveryId: "calendar-one", acknowledgedAt: expect.any(String) }],
+    });
+  } finally {
+    await session.cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("near-limit deliveries.get response stays correlated through WS serialization", async () => {
+  const home = mkdtempSync(join(tmpdir(), "paseo-session-deliveries-near-limit-"));
+  const ledger = new DeliveryLedger(home, { maxBytesPerOwner: 4 * 1024 * 1024 });
+  const source = {};
+  const targetedMessages: Array<{ source: object; message: SessionOutboundMessage }> = [];
+  const payload = {
+    first: "x".repeat(15_900),
+    second: "x".repeat(15_900),
+    third: "x".repeat(15_900),
+    fourth: "x".repeat(15_900),
+  };
+  for (let index = 0; index < 16; index += 1) {
+    await ledger.send("owner", {
+      deliveryId: `near-limit-${index}`,
+      targetAgentId: "agent-near-limit",
+      payload,
+    });
+  }
+  const session = createSessionForTest({
+    paseoHome: home,
+    principalId: "owner",
+    deliveryLedger: ledger,
+    clientCapabilities: { [CLIENT_CAPS.durableDeliveries]: true },
+    targetedMessages,
+  });
+
+  try {
+    await session.handleMessage(
+      {
+        type: "deliveries.get.request",
+        requestId: "r".repeat(256),
+        limit: 100,
+      },
+      source,
+    );
+
+    const response = targetedMessages.at(-1);
+    if (!response) throw new Error("Expected a targeted deliveries response");
+    const wire = wrapSessionMessage(response.message);
+    const encoded = JSON.stringify(wire);
+    const encodedBytes = Buffer.byteLength(encoded, "utf8");
+    WSSessionOutboundSchema.parse(wire);
+    expect(encodedBytes).toBeLessThanOrEqual(MAX_DELIVERY_RESPONSE_BYTES);
+    expect(encodedBytes).toBe(1_025_134);
+    expect(response.source).toBe(source);
+    expect(response.message).toMatchObject({
+      type: "deliveries.get.response",
+      payload: { requestId: "r".repeat(256) },
     });
   } finally {
     await session.cleanup();

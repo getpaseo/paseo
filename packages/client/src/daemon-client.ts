@@ -212,6 +212,7 @@ function normalizePassword(value: string | undefined): string | null {
   return value.length > 0 ? value : null;
 }
 
+// COMPAT(durableDeliveryRequestCorrelation): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
 function extractCorrelatedResponseIdentity(input: unknown): CorrelatedResponseIdentity | null {
   if (!input || typeof input !== "object") {
     return null;
@@ -1751,6 +1752,7 @@ export class DaemonClient {
     return result.value;
   }
 
+  // COMPAT(durableDeliveryRequestCorrelation): added in v0.7.2; remove after 2027-03-31 once client floor >= v0.7.2 and daemon floor >= v0.7.2.
   private async sendCorrelatedRequest<
     TResponseType extends CorrelatedResponseType,
     TResult = CorrelatedResponsePayload<TResponseType>,

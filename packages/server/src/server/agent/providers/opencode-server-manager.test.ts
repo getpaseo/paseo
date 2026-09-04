@@ -24,6 +24,7 @@ import {
   type OpenCodePortAllocator,
   type OpenCodeServerProcessSpawner,
 } from "./opencode/server-manager.js";
+import type { OpenCodeEventSource } from "./opencode/event-consumer.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -228,6 +229,25 @@ describe("OpenCodeServerManager generations", () => {
     await manager.shutdown();
 
     expect(runtime.terminatedPorts).toEqual([4402, 4401]);
+  });
+
+  test("terminates the helper even when the event source close never settles", async () => {
+    vi.useFakeTimers();
+    const events: OpenCodeEventSource = {
+      ready: async () => undefined,
+      subscribe: () => () => undefined,
+      close: () => new Promise<void>(() => undefined),
+    };
+    const { manager, runtime } = createTestManager([4403], {
+      createEventSource: (() => events) as unknown as TestEventSourceFactory,
+    });
+
+    await manager.acquireCurrent();
+    const shutdown = manager.shutdown();
+    await vi.advanceTimersByTimeAsync(1_001);
+    await shutdown;
+
+    expect(runtime.terminatedPorts).toEqual([4403]);
   });
 
   test("shutdown still signals a process after an earlier kill signal if it has not exited", async () => {
@@ -487,6 +507,7 @@ function createTestManager(
     opencodeHomeDir?: string;
     logger?: Logger;
     portAllocator?: OpenCodePortAllocator;
+    createEventSource?: TestEventSourceFactory;
   } = {},
 ): {
   manager: OpenCodeServerManager;
@@ -506,10 +527,15 @@ function createTestManager(
       ...(opencodeHomeDir ? { resolveHomeDir: () => opencodeHomeDir } : {}),
       spawnServerProcess: runtime.spawnServerProcess,
       terminateProcess: runtime.terminateProcess,
+      ...(options.createEventSource ? { createEventSource: options.createEventSource } : {}),
     }),
     runtime,
   };
 }
+
+type TestEventSourceFactory = NonNullable<
+  ConstructorParameters<typeof OpenCodeServerManager>[0]["createEventSource"]
+>;
 
 function createCapturingLogger(): { logger: Logger; records: Array<Record<string, unknown>> } {
   const records: Array<Record<string, unknown>> = [];
