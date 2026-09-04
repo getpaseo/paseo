@@ -29,6 +29,9 @@
   </a>
 </p>
 
+> **This is the totally-tim fork of [getpaseo/paseo](https://github.com/getpaseo/paseo).** It adds project groups and a few
+> team-only changes, and syncs upstream weekly. See [docs/fork.md](docs/fork.md) before building or merging.
+
 <p align="center">One interface for Claude Code, Codex, Copilot, OpenCode, and Pi agents.</p>
 
 <p align="center">

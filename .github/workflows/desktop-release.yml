@@ -133,6 +133,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Fork-only. Upstream stamps just the desktop package because its release commit
+      # already bumped every workspace. This fork never commits a bump, so stamp them
+      # all here or the desktop app restarts its own daemon on every launch. docs/fork.md.
+      - name: Stamp workspace versions from tag (fork)
+        shell: bash
+        run: node scripts/fork/stamp-version.mjs "$DESKTOP_VERSION"
+
       - name: Set desktop package version from tag
         shell: bash
         run: |
@@ -244,6 +251,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Fork-only. Upstream stamps just the desktop package because its release commit
+      # already bumped every workspace. This fork never commits a bump, so stamp them
+      # all here or the desktop app restarts its own daemon on every launch. docs/fork.md.
+      - name: Stamp workspace versions from tag (fork)
+        shell: bash
+        run: node scripts/fork/stamp-version.mjs "$DESKTOP_VERSION"
+
       - name: Set desktop package version from tag
         shell: bash
         run: |
@@ -352,6 +366,13 @@ jobs:
         run: node scripts/npm-retry.mjs ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Fork-only. Upstream stamps just the desktop package because its release commit
+      # already bumped every workspace. This fork never commits a bump, so stamp them
+      # all here or the desktop app restarts its own daemon on every launch. docs/fork.md.
+      - name: Stamp workspace versions from tag (fork)
+        shell: bash
+        run: node scripts/fork/stamp-version.mjs "$DESKTOP_VERSION"
 
       - name: Set desktop package version from tag
         shell: bash

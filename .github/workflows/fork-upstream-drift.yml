@@ -1,5 +1,5 @@
 # Fork-only. Warns when upstream has moved somewhere that conflicts with the
-# project-grouping feature, so a conflict surfaces on an ordinary morning
+# fork, so a conflict surfaces on an ordinary morning
 # instead of on the day someone needs a release out.
 name: Upstream drift
 
@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: team-main
+          ref: main
           fetch-depth: 0
 
       - name: Fetch upstream
@@ -26,7 +26,7 @@ jobs:
       - name: Report how far behind we are
         run: |
           behind=$(git rev-list --count HEAD..upstream/main)
-          echo "team-main is $behind commit(s) behind upstream/main"
+          echo "main is $behind commit(s) behind upstream/main"
 
       - name: Dry-run merge
         run: |
@@ -34,10 +34,10 @@ jobs:
           git config user.email "drift-check@localhost"
           if git merge --no-commit --no-ff upstream/main; then
             git merge --abort 2>/dev/null || true
-            echo "Clean: upstream/main merges into team-main without conflict."
+            echo "Clean: upstream/main merges into main without conflict."
             exit 0
           fi
-          echo "::error::upstream/main no longer merges cleanly into team-main."
+          echo "::error::upstream/main no longer merges cleanly into main."
           echo "Conflicting files:"
           git diff --name-only --diff-filter=U
           git merge --abort 2>/dev/null || true
