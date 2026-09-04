@@ -1688,6 +1688,29 @@ describe("capture", () => {
     expect(capture.totalLines).toBeGreaterThan(0);
   }, 15000);
 
+  test("preserves adjacent CJK characters in captured output", async () => {
+    const cwd = tmpCwd();
+    tempDirs.push(cwd);
+    const created = await createTerminalInWorkspace(ctx.client, { cwd });
+    const terminalId = created.terminal!.id;
+
+    await ctx.client.subscribeTerminal(terminalId);
+    ctx.client.sendTerminalInput(terminalId, {
+      type: "input",
+      data: `node -e "process.stdout.write('START\\u4e2d\\u6587END\\n')"\r`,
+    });
+    await waitForTerminalOutput(
+      ctx.client,
+      terminalId,
+      (text) => text.includes("START\u4e2d\u6587END"),
+      15000,
+    );
+
+    const capture = await ctx.client.captureTerminal(terminalId);
+
+    expect(capture.lines).toContain("START\u4e2d\u6587END");
+  }, 15000);
+
   test("captures with start/end line range", async () => {
     const cwd = tmpCwd();
     tempDirs.push(cwd);
