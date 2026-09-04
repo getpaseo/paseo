@@ -954,6 +954,45 @@ describe("OMP active-turn steering", () => {
     ]);
   });
 
+  test("terminal cleanup drops pending no-ID echo resolution", async () => {
+    const omp = new OmpHarness();
+    await omp.start();
+    const runtime = omp.runtime();
+    await omp.startTrackedTurn("work", { clientMessageId: "client-work" });
+    runtime.beginTurn();
+
+    runtime.holdNextBranchMessageResponses();
+    runtime.acceptPromptWithoutId("work");
+    expect(runtime.getBranchMessagesRequestCount).toBe(1);
+    runtime.finishTurn();
+
+    await omp.settleTurnCompletion();
+    await omp.startTrackedTurn("next", { clientMessageId: "client-next" });
+    runtime.beginTurn();
+    runtime.branchMessages = [{ entryId: "entry-next", text: "next" }];
+    runtime.acceptPromptWithoutId("next");
+    await waitForImmediate();
+    expect(userMessages(omp)).toEqual([
+      {
+        type: "user_message",
+        text: "next",
+        messageId: "entry-next",
+        clientMessageId: "client-next",
+      },
+    ]);
+
+    await runtime.releaseHeldBranchMessageResponse(0, [{ entryId: "entry-work", text: "work" }]);
+    expect(userMessages(omp)).toEqual([
+      {
+        type: "user_message",
+        text: "next",
+        messageId: "entry-next",
+        clientMessageId: "client-next",
+      },
+    ]);
+    runtime.finishTurn();
+  });
+
   test("keeps identical steer texts correlated in admission order", async () => {
     const omp = new OmpHarness();
     await omp.start();

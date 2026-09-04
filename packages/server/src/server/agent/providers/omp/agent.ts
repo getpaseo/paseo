@@ -895,6 +895,9 @@ export class OmpAgentSession implements AgentSession {
   // commit their results in message_end arrival order so client/native IDs
   // retain the same FIFO pairing.
   private userEchoResolutionTail: Promise<void> = Promise.resolve();
+  // Terminal cleanup advances the generation and detaches the ordering chain,
+  // so lookups from an earlier turn cannot emit into or block a later turn.
+  private userEchoResolutionGeneration = 0;
 
   constructor(options: OmpAgentSessionOptions) {
     this.runtimeSession = options.runtimeSession;
@@ -1143,6 +1146,8 @@ export class OmpAgentSession implements AgentSession {
   private clearExpectedUserEchoes(): void {
     this.expectedUserEchoes.length = 0;
     this.claimedUserEchoes.clear();
+    this.userEchoResolutionGeneration += 1;
+    this.userEchoResolutionTail = Promise.resolve();
   }
 
   subscribe(callback: (event: AgentStreamEvent) => void): () => void {
@@ -2218,10 +2223,14 @@ export class OmpAgentSession implements AgentSession {
     // native IDs concurrently, then commit results in event arrival order.
     // That preserves FIFO client/native identity pairing even when identical
     // echoes' branch lookups complete out of order.
+    const resolutionGeneration = this.userEchoResolutionGeneration;
     const branchMessages = this.runtimeSession.getBranchMessages();
     this.userEchoResolutionTail = this.userEchoResolutionTail.then(async () => {
       try {
         const messages = await branchMessages;
+        if (this.userEchoResolutionGeneration !== resolutionGeneration) {
+          return undefined;
+        }
         const matches = messages.filter((message) => message.text === text);
         const unemitted = matches.filter(
           (message) => !this.emittedUserMessageIds.has(message.entryId),
@@ -2236,6 +2245,9 @@ export class OmpAgentSession implements AgentSession {
         this.commitExpectedUserEcho(claim);
         emitUserMessage(unemitted[0]?.entryId, claim?.clientMessageId ?? null);
       } catch (error: unknown) {
+        if (this.userEchoResolutionGeneration !== resolutionGeneration) {
+          return undefined;
+        }
         this.logger.debug(
           { err: error, sessionFile: this.state.sessionFile },
           "OMP native user message ID lookup failed",
