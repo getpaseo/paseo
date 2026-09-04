@@ -140,7 +140,11 @@ import { ForgeBrandIcon } from "@/git/forge-icon";
 import { useComposerForgeAutoAttach } from "./forge-auto-attach";
 import { readClipboardImage } from "./clipboard-image";
 import { normalizeNativePastedImages, type NativePastedFile } from "./native-pasted-image";
-import { PluginResourceAttachmentPill, usePluginAttachmentPicker } from "@/plugins";
+import {
+  PluginDraftActionsInline,
+  PluginResourceAttachmentPill,
+  usePluginAttachmentPicker,
+} from "@/plugins";
 import { resolveClientSlashCommand, type ClientSlashCommand } from "@/client-slash-commands";
 import {
   appendWorkspaceFileAttachment,
@@ -1951,21 +1955,24 @@ function ComposerContentImpl({
 
   const rightContent = useMemo(
     () => (
-      <ComposerRightControlsSlot
-        isVoiceModeForAgent={isVoiceModeForAgent}
-        hasAgent={hasAgent}
-        isAgentRunning={isAgentRunning}
-        hasSendableContent={hasSendableContent}
-        isCompact={isCompactLayout}
-        showVoice={mode.showVoice}
-        buttonIconSize={buttonIconSize}
-        handleToggleRealtimeVoice={handleToggleRealtimeVoice}
-        isConnected={isConnected}
-        isVoiceSwitching={isVoiceSwitching}
-        realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
-        voiceToggleKeys={voiceToggleKeys}
-        t={t}
-      />
+      <>
+        <ComposerRightControlsSlot
+          isVoiceModeForAgent={isVoiceModeForAgent}
+          hasAgent={hasAgent}
+          isAgentRunning={isAgentRunning}
+          hasSendableContent={hasSendableContent}
+          isCompact={isCompactLayout}
+          showVoice={mode.showVoice}
+          buttonIconSize={buttonIconSize}
+          handleToggleRealtimeVoice={handleToggleRealtimeVoice}
+          isConnected={isConnected}
+          isVoiceSwitching={isVoiceSwitching}
+          realtimeVoiceButtonStyle={realtimeVoiceButtonStyle}
+          voiceToggleKeys={voiceToggleKeys}
+          t={t}
+        />
+        <PluginDraftActionsInline />
+      </>
     ),
     [
       buttonIconSize,

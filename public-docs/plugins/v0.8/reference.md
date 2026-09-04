@@ -923,6 +923,50 @@ current values with `useWorkspace` and `useAgent`. The plugin owns when the pill
 and text, and the callback. `openPanel(id, { workspaceId, agentId? })` opens or focuses a panel
 registered by the same plugin.
 
+## Draft actions
+
+A draft action contributes a composer button that rewrites the current draft in place. The user
+reviews the replacement before sending; nothing is submitted automatically. Use it for one-shot
+text transforms such as prompt enhancement, formatting, or expanding a template.
+
+```tsx
+import type { PluginClientContext } from "@getpaseo/plugin";
+
+export default function contribute(client: PluginClientContext) {
+  return client.addDraftAction({
+    id: "enhance-prompt",
+    title: "Enhance",
+    icon: "Sparkles",
+    async transform(text) {
+      return `${text.trim()}\n\nPlease cite the files you reference.`;
+    },
+  });
+}
+```
+
+`addDraftAction` fields:
+
+| Field       | Required | Meaning                                                 |
+| ----------- | -------- | ------------------------------------------------------- |
+| `id`        | Yes      | Plugin-local ID. Lowercase letters, digits, and dashes. |
+| `title`     | Yes      | Accessible button label.                                |
+| `icon`      | No       | Lucide icon name; defaults to `Sparkles`.               |
+| `transform` | Yes      | Async callback returning the replacement draft text.    |
+
+The transform receives the current draft text plus a context with `workspaceId` and `agentId` when
+the composer targets an agent. Returning the input unchanged leaves the draft untouched, so a
+no-op result is safe. A non-string return or a thrown error reports through a toast and keeps the
+draft unchanged. When the draft is edited or sent, another action is pressed, the composer locks
+for a submission, or the composer unmounts while a transform is still running, Paseo discards the
+stale result rather than overwriting newer input.
+
+Paseo owns the button, its placement in the composer's right controls, the pending spinner, the
+disabled state for empty drafts, in-flight transforms, and submitting composers, error reporting,
+and teardown when the
+plugin is removed, reloaded, or the host disconnects. `addDraftAction` returns an idempotent
+removal function. The plugin owns the transform — model-backed rewrites should call a typed plugin
+RPC so the request runs on the daemon side.
+
 ## Use the Paseo SDK
 
 Use `usePaseo()` for ordinary Paseo operations from a surface. It borrows the selected host's existing connection; do not create another client.

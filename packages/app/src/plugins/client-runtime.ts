@@ -9,6 +9,7 @@ import { createPluginClientStateSource } from "./client-state/source";
 import type { PluginClientRuntime } from "./evaluate";
 import { createPluginNavigation } from "./navigation";
 import { pluginComposerPillStore } from "./composer-pills/store";
+import { pluginDraftActionStore } from "./draft-actions/store";
 import { createPluginSurfaceRuntime } from "./surface-runtime";
 import type { InstalledPlugin } from "./types";
 
@@ -28,6 +29,9 @@ export function createPluginClientRuntime(
     ...capabilities,
     addComposerPill(contribution) {
       return pluginComposerPillStore.add(installation, contribution);
+    },
+    addDraftAction(contribution) {
+      return pluginDraftActionStore.add(installation, contribution);
     },
     openPanel(panelId, options) {
       openClientPanel({ installation, runtime, state, panelId, options });

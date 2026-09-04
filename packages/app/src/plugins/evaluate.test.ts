@@ -10,6 +10,9 @@ const runtime = {
   addComposerPill() {
     return () => undefined;
   },
+  addDraftAction() {
+    return () => undefined;
+  },
 } as unknown as PluginClientRuntime;
 
 function evaluatePluginClientBundle(id: string, source: string) {
@@ -38,6 +41,7 @@ describe("evaluatePluginClientBundle", () => {
 
   it("returns idempotent removers for every client registration", () => {
     let pillCount = 0;
+    let draftActionCount = 0;
     const plugin = runPluginClientBundle(
       "removals",
       bundle(`
@@ -51,6 +55,7 @@ describe("evaluatePluginClientBundle", () => {
           plugin.addCommandCenterItem({ id: "command", title: "Command", icon: "Blocks", context: "global", onSelect() {} }),
           plugin.addSlashCommand({ name: "review", description: "Review", argumentHint: "", context: "workspace", onSubmit() {} }),
           plugin.addComposerPill({ id: "pill", title: "Pill", workspaceId: "workspace", agentId: "agent", Component, onPress() {} }),
+          plugin.addDraftAction({ id: "enhance", title: "Enhance", async transform(text) { return text; } }),
           plugin.addAttachmentSource({ id: "issues", title: "Issues", icon: "Blocks", pickerTitle: "Attach issue", searchPlaceholder: "Search", search: { name: "issues.search", input: {}, output: {} } }),
           plugin.addTheme({ id: "night", name: "Night", appearance: "dark", colors: { background: "#000", foreground: "#fff", raised: "#111", control: "#222", border: "#333", mutedForeground: "#aaa", ring: "#555" } }),
           plugin.addTimelineTransformer({ id: "transformer", query: { itemType: "tool_call" }, transform() { return { items: [] }; } }),
@@ -63,6 +68,12 @@ describe("evaluatePluginClientBundle", () => {
           pillCount += 1;
           return () => {
             pillCount -= 1;
+          };
+        },
+        addDraftAction() {
+          draftActionCount += 1;
+          return () => {
+            draftActionCount -= 1;
           };
         },
       },
@@ -84,6 +95,7 @@ describe("evaluatePluginClientBundle", () => {
       ].every((items) => items.length === 1),
     ).toBe(true);
     expect(pillCount).toBe(1);
+    expect(draftActionCount).toBe(1);
     for (const remove of removals) {
       remove();
       remove();
@@ -103,6 +115,7 @@ describe("evaluatePluginClientBundle", () => {
       ].every((items) => items.length === 0),
     ).toBe(true);
     expect(pillCount).toBe(0);
+    expect(draftActionCount).toBe(0);
     Reflect.deleteProperty(globalThis, "__pluginRemovals");
   });
 
@@ -312,7 +325,7 @@ describe("evaluatePluginClientBundle", () => {
     const plugin = evaluatePluginClientBundle(
       "review",
       bundle(`
-        if (!plugin.paseo || !plugin.rpc || !plugin.openSurface || !plugin.openPanel || !plugin.addComposerPill) {
+        if (!plugin.paseo || !plugin.rpc || !plugin.openSurface || !plugin.openPanel || !plugin.addComposerPill || !plugin.addDraftAction) {
           throw new Error("missing client runtime");
         }
       `),

@@ -73,7 +73,13 @@ function requireId(value: string, label: string): string {
 
 export type PluginClientRuntime = Pick<
   PluginClientContext,
-  "paseo" | "rpc" | "openSettings" | "openSurface" | "openPanel" | "addComposerPill"
+  | "paseo"
+  | "rpc"
+  | "openSettings"
+  | "openSurface"
+  | "openPanel"
+  | "addComposerPill"
+  | "addDraftAction"
 >;
 
 export function runPluginClientBundle(
@@ -345,6 +351,18 @@ export function runPluginClientBundle(
         if (!active) return;
         active = false;
         removePill();
+        removals.delete(remove);
+      };
+      removals.add(remove);
+      return remove;
+    },
+    addDraftAction(contribution) {
+      const removeAction = runtime.addDraftAction(contribution);
+      let active = true;
+      const remove = () => {
+        if (!active) return;
+        active = false;
+        removeAction();
         removals.delete(remove);
       };
       removals.add(remove);

@@ -37,6 +37,8 @@ export type {
   PluginClientOpenPanelOptions,
   PluginComposerPillContribution,
   PluginComposerPillProps,
+  PluginDraftActionContribution,
+  PluginDraftActionContext,
   PluginServerContribution,
   PluginServerContext,
   PluginGlobalCommandContext,

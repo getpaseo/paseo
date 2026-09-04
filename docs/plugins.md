@@ -1,8 +1,9 @@
 # Plugins
 
 Local plugins contribute daemon RPCs, native app surfaces, workspace panels, Command Center items,
-client slash commands, timeline items, composer pills, app themes, composer attachment sources, and settings screens.
-Paseo executes `index.server.ts` in a subprocess and `index.client.tsx` in every connected app.
+client slash commands, timeline items, composer pills, draft actions, app themes, composer
+attachment sources, and settings screens. Paseo executes `index.server.ts` in a subprocess and
+`index.client.tsx` in every connected app.
 
 > **Trust every plugin you add.** `paseo plugin add` and `paseo plugin install` mean “I trust this codebase.” Plugins are unsandboxed: server code and Git preparation commands run with the daemon user's access on the daemon host, and client contributions run inside Paseo. The repository's dependencies and future updates are part of that trust decision. With `--host`, preparation runs on that remote daemon host.
 
@@ -341,6 +342,37 @@ matching workspace and agent track bar alongside Tasks and Subagents. Paseo owns
 shared chrome, pending state, error reporting, and placement. The component owns its icon and text;
 the callback is client code by construction. Removing the pill, reloading the plugin, disconnecting
 the host, or unloading the app tears down the contribution.
+
+## Contribute draft actions
+
+A draft action is a composer button that rewrites the current draft in place; the user reviews the
+replacement before sending. The plugin supplies only an async `transform(text, context)` — Paseo
+renders the button, tracks pending state, reports transform errors as toasts, disables the
+buttons while the composer is submitting, and discards stale results that resolve after the draft
+changed, another action was pressed, or the composer unmounted.
+
+```tsx
+export function contributeClient(client: PluginClientContext) {
+  return client.addDraftAction({
+    id: "enhance-prompt",
+    title: "Enhance",
+    icon: "Sparkles", // optional, defaults to Sparkles
+    async transform(text, context) {
+      const response = await client.rpc(polishPrompt, {
+        text,
+        agentId: context.agentId,
+      });
+      return response.text;
+    },
+  });
+}
+```
+
+`addDraftAction` returns an idempotent removal function. Buttons appear in the composer's right
+controls for every composer of the host the plugin is installed on; the transform context carries
+`workspaceId` and `agentId` when the composer targets an agent. Returning the input unchanged
+leaves the draft untouched. Removing the action, reloading the plugin, disconnecting the host, or
+unloading the app tears down the contribution.
 
 ## Contribute timeline items
 
