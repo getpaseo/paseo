@@ -480,11 +480,7 @@ function StatusGroupLeadingVisual({
   return <ThemedChevronDown size={14} uniProps={foregroundMutedColorMapping} />;
 }
 
-function StatusGroupIcon({
-  bucket,
-}: {
-  bucket: SidebarWorkspaceGroup["leading"]["bucket"];
-}) {
+function StatusGroupIcon({ bucket }: { bucket: SidebarWorkspaceGroup["leading"]["bucket"] }) {
   switch (bucket) {
     case "needs_input":
       return <ThemedCircleAlert size={14} uniProps={needsInputColorMapping} />;

@@ -1,7 +1,4 @@
-import {
-  buildStatusGroups,
-  type RecentlyDoneRecency,
-} from "@/hooks/sidebar-status-view-model";
+import { buildStatusGroups, type RecentlyDoneRecency } from "@/hooks/sidebar-status-view-model";
 import {
   splitPinnedSidebarGroups,
   type PinnedSidebarGroups,
