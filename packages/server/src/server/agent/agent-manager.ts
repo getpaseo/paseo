@@ -84,6 +84,20 @@ import {
   type ProviderSubagentStoreEvent,
 } from "./provider-subagents/store.js";
 import { withTimeout } from "../../utils/promise-timeout.js";
+import { ProviderIntrospectionQueue } from "./provider-introspection-queue.js";
+
+/**
+ * Listing draft commands spawns a short-lived provider runtime, which costs a
+ * second or two. Composers re-ask on every model, mode, and thinking-option
+ * change, so a short cache keeps those switches from feeling broken.
+ */
+const DRAFT_COMMAND_CACHE_TTL_MS = 60_000;
+const DRAFT_COMMAND_CACHE_MAX_ENTRIES = 64;
+
+interface DraftCommandCacheEntry {
+  commands: AgentSlashCommand[];
+  storedAt: number;
+}
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
@@ -288,6 +302,7 @@ export interface CreateAgentOptions {
 export interface AgentManagerOptions {
   clients?: ProviderClientMap;
   providerDefinitions?: ProviderEnabledMap;
+  providerIntrospectionQueue?: ProviderIntrospectionQueue;
   idFactory?: () => string;
   registry?: AgentStorage;
   onAgentAttention?: AgentAttentionCallback;
@@ -684,8 +699,18 @@ function detachedAgentLabelPatch(labels: Record<string, string>): AgentLabelPatc
   return patch;
 }
 
+function resolveProviderIntrospectionQueue(
+  queue: ProviderIntrospectionQueue | undefined,
+): ProviderIntrospectionQueue {
+  return queue ?? new ProviderIntrospectionQueue();
+}
+
 export class AgentManager {
   private readonly clients = new Map<AgentProvider, AgentClient>();
+  private readonly providerIntrospectionQueue: ProviderIntrospectionQueue;
+  private readonly inFlightDraftCommands = new Map<string, Promise<AgentSlashCommand[]>>();
+  private readonly inFlightDraftFeatures = new Map<string, Promise<AgentFeature[]>>();
+  private readonly draftCommandCache = new Map<string, DraftCommandCacheEntry>();
   private readonly providerEnabled = new Map<AgentProvider, boolean>();
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
@@ -724,6 +749,9 @@ export class AgentManager {
   private acceptingAgentRegistrations = true;
 
   constructor(options: AgentManagerOptions) {
+    this.providerIntrospectionQueue = resolveProviderIntrospectionQueue(
+      options.providerIntrospectionQueue,
+    );
     this.idFactory = options?.idFactory ?? (() => randomUUID());
     this.registry = options?.registry;
     this.durableTimelineStore = options?.durableTimelineStore;
@@ -1046,40 +1074,67 @@ export class AgentManager {
   }
 
   async listDraftCommands(config: AgentSessionConfig): Promise<AgentSlashCommand[]> {
-    const normalizedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
-    const client = this.requireClient(normalizedConfig.provider);
-    if (!normalizedConfig.model) {
-      return [];
+    const requestedConfig = await this.normalizeConfig(config, { resolveDefaultModel: false });
+    const client = this.requireClient(requestedConfig.provider);
+    // Cached under the requested config as well as the resolved one: filling in a
+    // default model costs a catalog fetch, which for some providers is its own
+    // process spawn.
+    const requestedKey = this.buildDraftRequestKey(requestedConfig);
+    const cachedForRequest = this.readCachedDraftCommands(requestedKey);
+    if (cachedForRequest) {
+      return cachedForRequest;
     }
-    const available = await client.isAvailable();
-    if (!available) {
+    const normalizedConfig = await this.resolveDraftModel(requestedConfig);
+    if (!normalizedConfig.model) {
       throw new Error(
-        `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
+        `Provider '${normalizedConfig.provider}' has no models available, so its commands cannot be listed.`,
       );
     }
-
-    if (client.listCommands) {
-      return await client.listCommands(normalizedConfig);
+    const requestKey = this.buildDraftRequestKey(normalizedConfig);
+    const cached = this.readCachedDraftCommands(requestKey);
+    if (cached) {
+      this.writeCachedDraftCommands(requestedKey, cached);
+      return cached;
     }
-
-    const session = await client.createSession(normalizedConfig);
-    try {
-      if (!session.listCommands) {
+    return await this.runDraftRequest(this.inFlightDraftCommands, requestKey, async () => {
+      const available = await client.isAvailable();
+      if (!available) {
         throw new Error(
-          `Provider '${normalizedConfig.provider}' does not support listing commands`,
+          `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
         );
       }
-      return await session.listCommands();
-    } finally {
-      try {
-        await session.close();
-      } catch (error) {
-        this.logger.warn(
-          { err: error, provider: normalizedConfig.provider },
-          "Failed to close draft command listing session",
-        );
-      }
-    }
+
+      const commands = await this.providerIntrospectionQueue.run(
+        normalizedConfig.provider,
+        async () => {
+          if (client.listCommands) {
+            return await client.listCommands(normalizedConfig);
+          }
+
+          const session = await client.createSession(normalizedConfig);
+          try {
+            if (!session.listCommands) {
+              throw new Error(
+                `Provider '${normalizedConfig.provider}' does not support listing commands`,
+              );
+            }
+            return await session.listCommands();
+          } finally {
+            try {
+              await session.close();
+            } catch (error) {
+              this.logger.warn(
+                { err: error, provider: normalizedConfig.provider },
+                "Failed to close draft command listing session",
+              );
+            }
+          }
+        },
+      );
+      this.writeCachedDraftCommands(requestKey, commands);
+      this.writeCachedDraftCommands(requestedKey, commands);
+      return commands;
+    });
   }
 
   async listDraftFeatures(config: AgentSessionConfig): Promise<AgentFeature[]> {
@@ -1088,30 +1143,107 @@ export class AgentManager {
     if (!normalizedConfig.model && !client.listFeatures) {
       return [];
     }
-    const available = await client.isAvailable();
-    if (!available) {
-      throw new Error(
-        `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
-      );
-    }
-
-    if (client.listFeatures) {
-      return await client.listFeatures(normalizedConfig);
-    }
-
-    const session = await client.createSession(normalizedConfig);
-    try {
-      return session.features ?? [];
-    } finally {
-      try {
-        await session.close();
-      } catch (error) {
-        this.logger.warn(
-          { err: error, provider: normalizedConfig.provider },
-          "Failed to close draft feature listing session",
+    const requestKey = this.buildDraftRequestKey(normalizedConfig);
+    return await this.runDraftRequest(this.inFlightDraftFeatures, requestKey, async () => {
+      const available = await client.isAvailable();
+      if (!available) {
+        throw new Error(
+          `Provider '${normalizedConfig.provider}' is not available. Please ensure the CLI is installed.`,
         );
       }
+
+      return await this.providerIntrospectionQueue.run(normalizedConfig.provider, async () => {
+        if (client.listFeatures) {
+          return await client.listFeatures(normalizedConfig);
+        }
+
+        const session = await client.createSession(normalizedConfig);
+        try {
+          return session.features ?? [];
+        } finally {
+          try {
+            await session.close();
+          } catch (error) {
+            this.logger.warn(
+              { err: error, provider: normalizedConfig.provider },
+              "Failed to close draft feature listing session",
+            );
+          }
+        }
+      });
+    });
+  }
+
+  private buildDraftRequestKey(config: AgentSessionConfig): string {
+    return JSON.stringify(config);
+  }
+
+  /**
+   * Draft surfaces send whatever model the composer has resolved, which is empty
+   * while the provider snapshot is still loading or has failed. Falling back to
+   * the provider default keeps a pre-chat composer from silently listing nothing.
+   * The catalog fetch goes through the introspection queue because it can spawn
+   * a provider runtime.
+   */
+  private async resolveDraftModel(config: AgentSessionConfig): Promise<AgentSessionConfig> {
+    if (config.model) {
+      return config;
     }
+    const model = await this.providerIntrospectionQueue.run(config.provider, () =>
+      this.resolveDefaultModelId(config),
+    );
+    return model ? { ...config, model } : config;
+  }
+
+  private readCachedDraftCommands(key: string): AgentSlashCommand[] | null {
+    const entry = this.draftCommandCache.get(key);
+    if (!entry) {
+      return null;
+    }
+    if (Date.now() - entry.storedAt > DRAFT_COMMAND_CACHE_TTL_MS) {
+      this.draftCommandCache.delete(key);
+      return null;
+    }
+    return entry.commands;
+  }
+
+  private writeCachedDraftCommands(key: string, commands: AgentSlashCommand[]): void {
+    if (this.draftCommandCache.size >= DRAFT_COMMAND_CACHE_MAX_ENTRIES) {
+      const oldest = this.draftCommandCache.keys().next();
+      if (!oldest.done) {
+        this.draftCommandCache.delete(oldest.value);
+      }
+    }
+    this.draftCommandCache.set(key, { commands, storedAt: Date.now() });
+  }
+
+  private runDraftRequest<T>(
+    requests: Map<string, Promise<T>>,
+    key: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const existing = requests.get(key);
+    if (existing) {
+      return existing;
+    }
+
+    const request = operation();
+    requests.set(key, request);
+    void request.then(
+      () => {
+        if (requests.get(key) === request) {
+          requests.delete(key);
+        }
+        return undefined;
+      },
+      () => {
+        if (requests.get(key) === request) {
+          requests.delete(key);
+        }
+        return undefined;
+      },
+    );
+    return request;
   }
 
   getAgent(id: string): ManagedAgent | null {

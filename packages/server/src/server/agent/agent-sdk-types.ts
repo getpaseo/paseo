@@ -719,6 +719,8 @@ export interface ProviderRefreshContext {
   readonly signal: AbortSignal;
   /** Track an upstream operation so timeout errors identify the work still pending. */
   runActivity<T>(name: string, operation: () => Promise<T>): Promise<T>;
+  /** Keep the provider lane occupied until abort-triggered resource cleanup finishes. */
+  registerAbortCleanup(cleanup: () => Promise<void>): () => void;
 }
 
 export interface ProviderCatalog {

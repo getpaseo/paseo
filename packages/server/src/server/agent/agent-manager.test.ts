@@ -1809,28 +1809,27 @@ test("normalizeConfig strips legacy 'default' model id", async () => {
   expect(snapshot.config.modeId).toBeUndefined();
 });
 
-test("listDraftCommands returns no commands without guessing a missing model", async () => {
+test("listDraftCommands falls back to the provider default model", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-commands-"));
   const storagePath = join(workdir, "agents");
   const storage = new AgentStorage(storagePath, logger);
+  const draftCommand: AgentSlashCommand = {
+    name: "review",
+    description: "Review changes",
+    argumentHint: "",
+    kind: "command",
+  };
+  class DraftCommandSession extends TestAgentSession {
+    override async listCommands(): Promise<AgentSlashCommand[]> {
+      return [draftCommand];
+    }
+  }
   class DraftCommandClient extends TestAgentClient {
-    fetchCatalogCalls = 0;
-    createSessionCalls = 0;
-    availabilityCalls = 0;
-
-    override async isAvailable(): Promise<boolean> {
-      this.availabilityCalls += 1;
-      return true;
-    }
-
-    override async fetchCatalog() {
-      this.fetchCatalogCalls += 1;
-      return await super.fetchCatalog();
-    }
+    readonly commandConfigs: AgentSessionConfig[] = [];
 
     override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
-      this.createSessionCalls += 1;
-      return await super.createSession(config);
+      this.commandConfigs.push(config);
+      return new DraftCommandSession(config);
     }
   }
   const client = new DraftCommandClient();
@@ -1842,11 +1841,43 @@ test("listDraftCommands returns no commands without guessing a missing model", a
     logger,
   });
 
-  await expect(manager.listDraftCommands({ provider: "codex", cwd: workdir })).resolves.toEqual([]);
+  // A pre-chat composer sends no model until its provider snapshot resolves one.
+  await expect(manager.listDraftCommands({ provider: "codex", cwd: workdir })).resolves.toEqual([
+    draftCommand,
+  ]);
 
-  expect(client.fetchCatalogCalls).toBe(0);
+  expect(client.commandConfigs.map((config) => config.model)).toEqual(["gpt-5.4"]);
+});
+
+test("listDraftCommands reports an error when the provider has no models", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-draft-commands-"));
+  const storagePath = join(workdir, "agents");
+  const storage = new AgentStorage(storagePath, logger);
+  class EmptyCatalogClient extends TestAgentClient {
+    createSessionCalls = 0;
+
+    override async fetchCatalog() {
+      return { models: [], modes: [] };
+    }
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.createSessionCalls += 1;
+      return await super.createSession(config);
+    }
+  }
+  const client = new EmptyCatalogClient();
+  const manager = new AgentManager({
+    clients: {
+      codex: client,
+    },
+    registry: storage,
+    logger,
+  });
+
+  await expect(manager.listDraftCommands({ provider: "codex", cwd: workdir })).rejects.toThrow(
+    "has no models available",
+  );
   expect(client.createSessionCalls).toBe(0);
-  expect(client.availabilityCalls).toBe(0);
 });
 
 test("listDraftCommands uses explicit model config without default model fetching", async () => {

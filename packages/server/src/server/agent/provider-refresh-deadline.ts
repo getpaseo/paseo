@@ -6,6 +6,25 @@ interface RunProviderRefreshOptions<T> {
   operation: (context: ProviderRefreshContext) => Promise<T>;
 }
 
+export const PROVIDER_REFRESH_ABORT_CLEANUP_TIMEOUT_MS = 5_000;
+
+async function waitForAbortCleanups(cleanups: Array<() => Promise<void>>): Promise<void> {
+  if (cleanups.length === 0) return;
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, PROVIDER_REFRESH_ABORT_CLEANUP_TIMEOUT_MS);
+  });
+  try {
+    await Promise.race([
+      Promise.allSettled(cleanups.map((cleanup) => Promise.resolve().then(cleanup))),
+      timeout,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export function runProviderRefreshActivity<T>(
   context: ProviderRefreshContext | undefined,
   name: string,
@@ -37,6 +56,8 @@ export async function runProviderRefreshWithDeadline<T>(
 ): Promise<T> {
   const controller = new AbortController();
   const activityCounts = new Map<string, number>();
+  const abortCleanups = new Set<() => Promise<void>>();
+  let abortCleanup: Promise<void> | undefined;
   let timeoutError: Error | undefined;
 
   const context: ProviderRefreshContext = {
@@ -57,6 +78,10 @@ export async function runProviderRefreshWithDeadline<T>(
         }
       }
     },
+    registerAbortCleanup(cleanup) {
+      abortCleanups.add(cleanup);
+      return () => abortCleanups.delete(cleanup);
+    },
   };
 
   const timer = setTimeout(() => {
@@ -66,13 +91,15 @@ export async function runProviderRefreshWithDeadline<T>(
       `Timed out refreshing ${options.label} after ${options.timeoutMs}ms${suffix}`,
     );
     controller.abort(timeoutError);
+    abortCleanup = waitForAbortCleanups(Array.from(abortCleanups));
   }, options.timeoutMs);
 
   try {
-    const result = await options.operation(context);
+    const result = await raceProviderRefreshAbort(controller.signal, options.operation(context));
     if (timeoutError) throw timeoutError;
     return result;
   } catch (error) {
+    await abortCleanup;
     throw timeoutError ?? error;
   } finally {
     clearTimeout(timer);

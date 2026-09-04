@@ -45,6 +45,7 @@ import {
   type AgentConfigurationValidationInput,
   validateAgentConfigurationAgainstProvider,
 } from "./agent-configuration-validator.js";
+import { ProviderIntrospectionQueue } from "./provider-introspection-queue.js";
 
 const DEFAULT_REFRESH_TIMEOUT_MS = 120_000;
 const MAX_REFRESH_TIMEOUT_MS = 2_147_483_647;
@@ -91,6 +92,7 @@ type ProviderSnapshotChangeListener = (entries: ProviderSnapshotEntry[], cwd: st
 
 export interface ProviderSnapshotManagerOptions {
   logger: Logger;
+  providerIntrospectionQueue?: ProviderIntrospectionQueue;
   runtimeSettings?: AgentProviderRuntimeSettingsMap;
   providerOverrides?: Record<string, ProviderOverride>;
   workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
@@ -208,6 +210,7 @@ export class ProviderSnapshotManager {
   private refreshTimeoutMs: number;
   private diagnosticTimeoutMs: number;
   private readonly logger: Logger;
+  private readonly providerIntrospectionQueue: ProviderIntrospectionQueue;
   private readonly workspaceGitService?: Pick<WorkspaceGitService, "resolveRepoRoot">;
   private readonly managedProcesses?: ManagedProcessRegistry;
   private readonly openCodeBridge?: OpenCodeBridge;
@@ -222,6 +225,8 @@ export class ProviderSnapshotManager {
 
   constructor(options: ProviderSnapshotManagerOptions) {
     this.logger = options.logger;
+    this.providerIntrospectionQueue =
+      options.providerIntrospectionQueue ?? new ProviderIntrospectionQueue();
     this.workspaceGitService = options.workspaceGitService;
     this.managedProcesses = options.managedProcesses;
     this.openCodeBridge = options.openCodeBridge;
@@ -932,21 +937,23 @@ export class ProviderSnapshotManager {
       }
 
       const client = this.ensureClient(provider, definition);
-      const catalog = await runProviderRefreshWithDeadline({
-        label: definition.label,
-        timeoutMs: this.refreshTimeoutMs,
-        operation: async (context) => {
-          const available = await context.runActivity("availability", () =>
-            raceProviderRefreshAbort(context.signal, client.isAvailable(context.signal)),
-          );
-          if (!available) {
-            return null;
-          }
+      const catalog = await this.providerIntrospectionQueue.run(provider, () =>
+        runProviderRefreshWithDeadline({
+          label: definition.label,
+          timeoutMs: this.refreshTimeoutMs,
+          operation: async (context) => {
+            const available = await context.runActivity("availability", () =>
+              raceProviderRefreshAbort(context.signal, client.isAvailable(context.signal)),
+            );
+            if (!available) {
+              return null;
+            }
 
-          const catalogOptions = createFetchCatalogOptions(catalogScope, force);
-          return await definition.fetchCatalog(catalogOptions, client, context);
-        },
-      });
+            const catalogOptions = createFetchCatalogOptions(catalogScope, force);
+            return await definition.fetchCatalog(catalogOptions, client, context);
+          },
+        }),
+      );
       if (!catalog) {
         setEntry({ ...base, status: "unavailable", enabled: true });
         return;
