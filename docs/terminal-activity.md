@@ -65,7 +65,7 @@ Codex hook mapping:
 - `PermissionRequest` → `needs-input`
 - `Stop` → `idle`
 
-OpenCode uses a server plugin instead of command hooks. The plugin listens to OpenCode bus events and emits these Paseo hook events:
+OpenCode uses a server plugin instead of command hooks. Both OpenCode generations read the same global config directory and auto-discover this file, so it default-exports a single definition that serves both: OpenCode 2 loads it as a definition object (`id` + `setup()`, events via `ctx.event.subscribe()` with `{ type, data }` payloads) and ignores the 1.x entrypoint; OpenCode 1 loads the same object through its `server()` entrypoint (bus events as `{ type, properties }` payloads). The plugin emits these Paseo hook events:
 
 - `session.status` with `busy` or `retry` → `running`
 - `session.status` with `idle` → `idle`
