@@ -60,7 +60,7 @@ async function rollbackCodexThread(
   return parseCodexThreadRollbackResponse(await client.request("thread/rollback", params));
 }
 
-export async function revertCodexConversation(input: {
+export interface CodexThreadBranchInput {
   client: CodexRewindClient;
   threadId: string | null;
   messageId: string;
@@ -68,10 +68,18 @@ export async function revertCodexConversation(input: {
   model?: string | null;
   serviceTier?: string | null;
   userMessageTurns: CodexUserMessageTurnIndex;
-  setThreadId: (threadId: string) => void | Promise<void>;
-}): Promise<void> {
+}
+
+/**
+ * Branch the thread at `messageId` and return the new thread id, leaving the
+ * caller's binding untouched. Rewind is this plus a rebind; a fork keeps both
+ * threads live, so it deliberately does not call back into the agent.
+ */
+export async function forkCodexThreadAt(
+  input: CodexThreadBranchInput,
+): Promise<{ providerHandleId: string }> {
   if (!input.threadId) {
-    throw new Error("Codex thread is not ready for rewind");
+    throw new Error("Codex thread is not ready to fork");
   }
 
   const targetTurn = input.userMessageTurns.resolve(input.messageId);
@@ -99,8 +107,7 @@ export async function revertCodexConversation(input: {
       excludeTurns: false,
       persistExtendedHistory: true,
     });
-    await input.setThreadId(forked.thread.id);
-    return;
+    return { providerHandleId: forked.thread.id };
   }
 
   // Fork is non-destructive: the old thread file stays on disk and remains
@@ -113,13 +120,24 @@ export async function revertCodexConversation(input: {
     excludeTurns: false,
     persistExtendedHistory: true,
   });
-  const forkedThreadId = forked.thread.id;
 
   // Codex rollback is chat-only by design. File edits from rewound turns stay
   // on disk; a future file primitive would be a separate capability.
   const rolledBack = await rollbackCodexThread(input.client, {
-    threadId: forkedThreadId,
+    threadId: forked.thread.id,
     numTurns,
   });
-  await input.setThreadId(rolledBack.thread.id);
+  return { providerHandleId: rolledBack.thread.id };
+}
+
+export async function revertCodexConversation(
+  input: CodexThreadBranchInput & {
+    setThreadId: (threadId: string) => void | Promise<void>;
+  },
+): Promise<void> {
+  if (!input.threadId) {
+    throw new Error("Codex thread is not ready for rewind");
+  }
+  const forked = await forkCodexThreadAt(input);
+  await input.setThreadId(forked.providerHandleId);
 }

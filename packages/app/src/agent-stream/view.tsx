@@ -159,6 +159,7 @@ function renderStreamItemWithTurnFooter(input: {
   layoutItem: StreamLayoutItem;
   strategy: TurnContentStrategy;
   supportsTimelineCursor: boolean;
+  canForkNatively: boolean;
   onForkAssistantTurn?: AssistantTurnForkHandler;
 }): ReactNode {
   if (!input.content) {
@@ -173,6 +174,7 @@ function renderStreamItemWithTurnFooter(input: {
       timing={footerHost.timing}
       startIndex={footerHost.startIndex}
       supportsTimelineCursor={input.supportsTimelineCursor}
+      canForkNatively={input.canForkNatively}
       onForkAssistantTurn={input.onForkAssistantTurn}
     />
   ) : null;
@@ -308,6 +310,7 @@ const AGENT_CAPABILITY_FLAG_KEYS: (keyof AgentCapabilityFlags)[] = [
   "supportsRewindConversation",
   "supportsRewindFiles",
   "supportsRewindBoth",
+  "supportsNativeFork",
 ];
 
 const EMPTY_STREAM_HEAD: StreamItem[] = [];
@@ -324,6 +327,10 @@ const GROUPED_TOOL_CALL_DETAIL_MAX_HEIGHT = 200;
 
 function resolveBottomOverlayControlOffset(clearance: number | undefined): number {
   return Math.max(16, clearance ?? 0);
+}
+
+function supportsNativeFork(context: AgentScreenAgent, readOnly: boolean): boolean {
+  return Boolean(context.capabilities?.supportsNativeFork) && !readOnly;
 }
 
 const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamViewProps>(
@@ -503,6 +510,10 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
       handleInlinePathPress({ raw: filePath, path: filePath }, "preferred");
     });
 
+    // Provider-session forking is only meaningful for a live agent that
+    // reports the capability; the summary path covers everything else.
+    const canForkNatively = supportsNativeFork(context, readOnly);
+
     const handleForkAssistantTurn: AssistantTurnForkHandler = useStableEvent(
       async ({ target, boundary }) => {
         await forkAgent({
@@ -511,6 +522,7 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           workspaceId: context.workspaceId,
           target,
           boundary,
+          canForkNatively,
         });
       },
     );
@@ -921,10 +933,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
           layoutItem,
           strategy: streamRenderStrategy,
           supportsTimelineCursor: supportsAgentForkContextCursor,
+          canForkNatively,
           onForkAssistantTurn: readOnly ? undefined : handleForkAssistantTurn,
         });
       },
       [
+        canForkNatively,
         handleForkAssistantTurn,
         readOnly,
         renderStreamItemContent,
@@ -955,11 +969,13 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
             host={bottomTurnFooterHost}
             strategy={streamRenderStrategy}
             supportsTimelineCursor={supportsAgentForkContextCursor}
+            canForkNatively={canForkNatively}
             onForkAssistantTurn={readOnly ? undefined : handleForkAssistantTurn}
             onForkInFlightTurn={readOnly ? undefined : handleForkInFlightTurn}
           />
         ) : null,
       [
+        canForkNatively,
         handleForkAssistantTurn,
         handleForkInFlightTurn,
         readOnly,

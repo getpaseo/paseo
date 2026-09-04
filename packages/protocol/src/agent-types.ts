@@ -151,6 +151,12 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  /**
+   * The provider can fork its own session at a boundary into a second,
+   * independently resumable session. Distinct from rewind, which moves the
+   * existing session rather than branching it.
+   */
+  supportsNativeFork?: boolean;
 }
 
 export interface AgentPersistenceHandle {

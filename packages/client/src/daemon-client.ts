@@ -32,6 +32,7 @@ import type {
   FileWriteResult,
   FetchAgentTimelineResponseMessage,
   AgentForkContextResponseMessage,
+  AgentForkNativeResponseMessage,
   GitSetupOptions,
   CheckoutStatusResponse,
   CheckoutCommit,
@@ -545,6 +546,7 @@ type ScheduleUpdatePayload = Extract<
 >["payload"];
 export type FetchAgentTimelinePayload = FetchAgentTimelineResponseMessage["payload"];
 export type AgentForkContextPayload = AgentForkContextResponseMessage["payload"];
+export type AgentForkNativePayload = AgentForkNativeResponseMessage["payload"];
 
 export type FetchAgentTimelineDirection = FetchAgentTimelinePayload["direction"];
 export type FetchAgentTimelineProjection = FetchAgentTimelinePayload["projection"];
@@ -616,6 +618,16 @@ function normalizeListCommandsOptions(
 export interface AgentForkContextOptions {
   boundaryCursor?: FetchAgentTimelineCursor;
   boundaryMessageId?: string;
+  requestId?: string;
+}
+
+export interface AgentForkNativeOptions {
+  /** Required: both supporting providers fork from persisted session state. */
+  boundaryMessageId: string;
+  /** Defaults to the source agent's workspace. */
+  workspaceId?: string;
+  /** Defaults to the source agent's working directory. */
+  cwd?: string;
   requestId?: string;
 }
 
@@ -3053,6 +3065,50 @@ export class DaemonClient {
 
     if (payload.error) {
       throw new Error(payload.error);
+    }
+
+    return payload;
+  }
+
+  /**
+   * Branch the agent's provider session into a new agent that carries the real
+   * upstream conversation. Only valid when the agent reports
+   * `supportsNativeFork`; otherwise use `buildAgentForkContext`.
+   */
+  async forkAgentNative(
+    agentId: string,
+    options: AgentForkNativeOptions,
+  ): Promise<AgentForkNativePayload> {
+    const resolvedRequestId = this.createRequestId(options.requestId);
+    const message = SessionInboundMessageSchema.parse({
+      type: "agent.fork_native.request",
+      agentId,
+      requestId: resolvedRequestId,
+      boundaryMessageId: options.boundaryMessageId,
+      ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
+      ...(options.cwd ? { cwd: options.cwd } : {}),
+    });
+
+    const payload = await this.sendRequest({
+      requestId: resolvedRequestId,
+      message,
+      // Importing the forked session replays provider history, so this runs
+      // longer than the summary fork's projection.
+      timeout: 60000,
+      options: { skipQueue: true },
+      select: (msg) => {
+        if (msg.type !== "agent.fork_native.response") {
+          return null;
+        }
+        if (msg.payload.requestId !== resolvedRequestId) {
+          return null;
+        }
+        return msg.payload;
+      },
+    });
+
+    if (payload.error || !payload.forkedAgentId) {
+      throw new Error(payload.error ?? "Fork did not return an agent");
     }
 
     return payload;

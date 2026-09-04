@@ -7,15 +7,26 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  type AssistantForkFidelity,
+  resolveForkFidelity,
+  useForkPreferencesStore,
+} from "@/stores/fork-preferences-store";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
 
 export type AssistantForkTarget = "tab" | "workspace";
 
 interface AssistantForkMenuProps {
   onFork: (target: AssistantForkTarget) => Promise<void> | void;
+  /**
+   * The source agent can branch its provider session at this boundary. False
+   * disables the full-history row and pins the fork to the summary path.
+   */
+  canForkNatively?: boolean;
   testID?: string;
 }
 
@@ -26,12 +37,21 @@ const foregroundMutedColorMapping = (theme: Theme) => ({ color: theme.colors.for
 
 export const AssistantForkMenu = memo(function AssistantForkMenu({
   onFork,
+  canForkNatively = false,
   testID = "assistant-fork-menu",
 }: AssistantForkMenuProps) {
   const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const [pendingTarget, setPendingTarget] = useState<AssistantForkTarget | null>(null);
   const isLocked = pendingTarget !== null;
+  const preferredFidelity = useForkPreferencesStore((state) => state.fidelity);
+  const setFidelity = useForkPreferencesStore((state) => state.setFidelity);
+  // The check always sits on the row the fork will actually take, so a `native`
+  // preference reads as `summary` wherever the provider cannot branch.
+  const effectiveFidelity = resolveForkFidelity({
+    preferred: preferredFidelity,
+    canForkNatively,
+  });
 
   const handleOpenChange = useCallback(
     (next: boolean) => {
@@ -53,6 +73,14 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
       }
     },
     [isLocked, onFork],
+  );
+
+  const handleSelectFidelity = useCallback(
+    (fidelity: AssistantForkFidelity) => () => {
+      if (isLocked) return;
+      setFidelity(fidelity);
+    },
+    [isLocked, setFidelity],
   );
 
   const triggerStyle = useCallback(
@@ -97,7 +125,7 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
         </TooltipTrigger>
         {tooltipContent}
       </Tooltip>
-      <DropdownMenuContent align="start" minWidth={220} side="bottom" testID={`${testID}-content`}>
+      <DropdownMenuContent align="start" minWidth={240} side="bottom" testID={`${testID}-content`}>
         <DropdownMenuItem
           closeOnSelect={false}
           disabled={isLocked && pendingTarget !== "tab"}
@@ -117,6 +145,30 @@ export const AssistantForkMenu = memo(function AssistantForkMenu({
           testID={`${testID}-new-workspace`}
         >
           {t("message.actions.forkInNewWorkspace")}
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          closeOnSelect={false}
+          description={
+            canForkNatively ? undefined : t("message.actions.forkFullHistoryUnavailable")
+          }
+          disabled={isLocked || !canForkNatively}
+          onSelect={handleSelectFidelity("native")}
+          selected={effectiveFidelity === "native"}
+          showSelectedCheck
+          testID={`${testID}-fidelity-native`}
+        >
+          {t("message.actions.forkFullHistory")}
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          closeOnSelect={false}
+          disabled={isLocked}
+          onSelect={handleSelectFidelity("summary")}
+          selected={effectiveFidelity === "summary"}
+          showSelectedCheck
+          testID={`${testID}-fidelity-summary`}
+        >
+          {t("message.actions.forkSummary")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

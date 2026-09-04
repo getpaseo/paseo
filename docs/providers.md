@@ -462,11 +462,14 @@ interface AgentSession {
   setModel?(modelId: string | null): Promise<void>;
   setThinkingOption?(thinkingOptionId: string | null): Promise<void | AgentProviderNotice>;
   setFeature?(featureId: string, value: unknown): Promise<void>;
+  forkNativeSession?(input: { messageId?: string }): Promise<{ providerHandleId: string }>;
   tryHandleOutOfBand?(prompt: AgentPromptInput): {
     run(ctx: { emit: (event: AgentStreamEvent) => void }): Promise<void>;
   } | null;
 }
 ```
+
+Implement `forkNativeSession` only if the provider can branch a session into a _second_ session it can resume independently, and set `supportsNativeFork` alongside it. Branching into the same session does not count: Pi navigates a conversation tree but moves one head pointer, so it leaves the capability false and forks through the summary path. The method must not rebind the running session — the source agent keeps working while the branch is imported as a new agent. Rewind is the same primitive plus a rebind, so implement fork first and let `revertConversation` call it (see `providers/claude/rewind.ts`).
 
 `setMode` and `setThinkingOption` may return an `AgentProviderNotice` when the provider knows the change needs user-facing context. For example, providers that stage changes until the next turn should return an `info` notice while a turn is already running. The app renders the notice generically as a toast; provider-specific lifecycle behavior stays in the provider implementation.
 

@@ -27,6 +27,7 @@ const agent = {
     supportsRewindConversation: false,
     supportsRewindFiles: false,
     supportsRewindBoth: false,
+    supportsNativeFork: false,
   },
   currentModeId: null,
   availableModes: [],

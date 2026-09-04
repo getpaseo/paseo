@@ -191,6 +191,7 @@ export interface AgentCapabilityFlags {
   supportsRewindConversation?: boolean;
   supportsRewindFiles?: boolean;
   supportsRewindBoth?: boolean;
+  supportsNativeFork?: boolean;
 }
 
 export interface AgentPersistenceHandle {
@@ -691,6 +692,17 @@ export interface AgentSession {
   revertConversation?(input: { messageId: string }): Promise<void>;
   revertFiles?(input: { messageId: string }): Promise<void>;
   revertBoth?(input: { messageId: string }): Promise<void>;
+  /**
+   * Branch this session at `messageId` (or at the current head when omitted)
+   * into a second session the provider can resume independently, and return
+   * its native handle id. The receiver imports that handle as a new agent.
+   *
+   * Must not mutate this session: the source agent keeps running, and both
+   * branches stay resumable. A provider whose only primitive moves the head
+   * pointer within one session (Pi's tree navigation) does not qualify — it
+   * leaves `supportsNativeFork` false and forks through the summary path.
+   */
+  forkNativeSession?(input: { messageId?: string }): Promise<{ providerHandleId: string }>;
   /**
    * Out-of-band prompt handler. When non-null, the manager runs the returned
    * handler instead of allocating a turn. The handler emits stream events

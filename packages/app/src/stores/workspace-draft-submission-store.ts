@@ -23,6 +23,11 @@ export interface PendingWorkspaceDraftSubmission {
 export interface PendingWorkspaceDraftSetup {
   setup: WorkspaceDraftTabSetup;
   sourceDirectory?: string | null;
+  nativeFork?: {
+    serverId: string;
+    agentId: string;
+    boundaryMessageId: string;
+  };
 }
 
 interface WorkspaceDraftSubmissionState {
@@ -33,6 +38,7 @@ interface WorkspaceDraftSubmissionState {
     draftId: string;
     setup: WorkspaceDraftTabSetup;
     sourceDirectory?: string | null;
+    nativeFork?: PendingWorkspaceDraftSetup["nativeFork"];
   }) => void;
   clearDraftSetup: (input: { draftId: string }) => void;
   consumePending: (input: {
@@ -68,13 +74,17 @@ export const useWorkspaceDraftSubmissionStore = create<WorkspaceDraftSubmissionS
           [submission.draftId]: submission,
         },
       })),
-    setDraftSetup: ({ draftId, setup, sourceDirectory }) => {
+    setDraftSetup: ({ draftId, setup, sourceDirectory, nativeFork }) => {
       const normalizedDraftId = normalizeDraftId(draftId);
       if (!normalizedDraftId) return;
       set((state) => ({
         setupByDraftId: {
           ...state.setupByDraftId,
-          [normalizedDraftId]: { setup, sourceDirectory: sourceDirectory ?? null },
+          [normalizedDraftId]: {
+            setup,
+            sourceDirectory: sourceDirectory ?? null,
+            ...(nativeFork ? { nativeFork } : {}),
+          },
         },
       }));
     },

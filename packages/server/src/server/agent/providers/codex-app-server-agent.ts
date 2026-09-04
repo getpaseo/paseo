@@ -84,7 +84,11 @@ import {
   type CodexThreadRollbackResponse,
   type CodexAppServerTraceContext,
 } from "./codex/app-server-transport.js";
-import { type CodexUserMessageTurnIndex, revertCodexConversation } from "./codex/rewind.js";
+import {
+  type CodexUserMessageTurnIndex,
+  forkCodexThreadAt,
+  revertCodexConversation,
+} from "./codex/rewind.js";
 import {
   materializeProviderImage,
   renderProviderImageOutputAsAssistantMarkdown,
@@ -220,6 +224,7 @@ const CODEX_APP_SERVER_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: true,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsNativeFork: true,
 };
 
 const CODEX_MODES: AgentMode[] = [
@@ -4709,6 +4714,30 @@ export class CodexAppServerAgentSession implements AgentSession {
         this.historyPending = false;
         await this.loadPersistedHistory();
       },
+    });
+  }
+
+  async forkNativeSession(input: { messageId?: string }): Promise<{ providerHandleId: string }> {
+    if (!input.messageId) {
+      throw new Error("Codex requires a turn boundary to fork a thread");
+    }
+    if (!this.client) {
+      throw new Error("Codex client is not initialized");
+    }
+    if (this.currentThreadId) {
+      await this.ensureThreadLoaded();
+    } else {
+      await this.ensureThread();
+    }
+
+    return forkCodexThreadAt({
+      client: this.client,
+      threadId: this.currentThreadId,
+      messageId: input.messageId,
+      cwd: this.config.cwd ?? null,
+      model: this.config.model ?? null,
+      serviceTier: this.serviceTier,
+      userMessageTurns: this.codexUserMessageTurns(),
     });
   }
 

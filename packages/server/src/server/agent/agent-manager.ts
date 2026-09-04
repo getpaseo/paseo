@@ -72,6 +72,7 @@ import {
   type ForegroundTurnWaiter,
   type PendingForegroundRun,
 } from "./agent-run-state.js";
+import { invokeNativeForkCapability, resolveNativeForkMessageId } from "./fork/native-fork.js";
 import { invokeRewindCapability, type RewindMode } from "./rewind/rewind.js";
 import { isSystemInjectedEnvelope } from "./agent-prompt.js";
 import { stripInternalPaseoMcpServer, withRuntimePaseoMcpServer } from "./runtime-mcp-config.js";
@@ -98,6 +99,7 @@ const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsRewindConversation: false,
   supportsRewindFiles: false,
   supportsRewindBoth: false,
+  supportsNativeFork: false,
 };
 
 type TimeoutResult = "completed" | "timed_out";
@@ -2979,6 +2981,58 @@ export class AgentManager {
       throw error;
     } finally {
       this.runs.settleForegroundRun(agentId, lock.token);
+    }
+  }
+
+  /**
+   * Fork a live agent's provider session at `messageId` and import the branch
+   * as a new agent. The source agent is untouched.
+   */
+  async forkNative(
+    agentId: string,
+    input: { messageId: string; workspaceId?: string; cwd?: string },
+  ): Promise<ManagedAgent> {
+    const agent = this.requireSessionAgent(agentId);
+    const workspaceId = input.workspaceId ?? agent.workspaceId;
+    if (!workspaceId) {
+      throw new Error("Cannot fork an agent that does not belong to a workspace");
+    }
+
+    const providerMessageId = resolveNativeForkMessageId(
+      this.timelineStore.getRows(agentId),
+      input.messageId,
+    );
+
+    this.logger.info(
+      { agentId, provider: agent.provider, messageId: input.messageId },
+      "agent.fork_native.start",
+    );
+    try {
+      const forked = await invokeNativeForkCapability(agent.session, {
+        messageId: providerMessageId,
+      });
+      const imported = await this.importProviderSession({
+        provider: agent.provider,
+        providerHandleId: forked.providerHandleId,
+        cwd: input.cwd ?? agent.cwd,
+        workspaceId,
+      });
+      this.logger.info(
+        {
+          agentId,
+          forkedAgentId: imported.id,
+          provider: agent.provider,
+          messageId: input.messageId,
+        },
+        "agent.fork_native.complete",
+      );
+      return imported;
+    } catch (error) {
+      this.logger.warn(
+        { err: error, agentId, provider: agent.provider, messageId: input.messageId },
+        "agent.fork_native.failed",
+      );
+      throw error;
     }
   }
 

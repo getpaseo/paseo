@@ -11,6 +11,27 @@ export const realClaudeRewindSdk: ClaudeRewindSdk = {
   forkSession: claudeForkSession,
 };
 
+/**
+ * Branch the session at `messageId` and return the new session id, leaving the
+ * caller's binding untouched. Rewind is this plus a rebind; a fork keeps both
+ * sessions live, so it deliberately does not call back into the agent.
+ */
+export async function forkClaudeSession(input: {
+  sdk: ClaudeRewindSdk;
+  sessionId: string | null;
+  messageId: string;
+  resolveMessageId?: (messageId: string) => string | Promise<string>;
+}): Promise<{ providerHandleId: string }> {
+  if (!input.sessionId) {
+    throw new Error("Claude session is not ready to fork");
+  }
+  const messageId = (await input.resolveMessageId?.(input.messageId)) ?? input.messageId;
+  const fork = await input.sdk.forkSession(input.sessionId, {
+    upToMessageId: messageId,
+  });
+  return { providerHandleId: fork.sessionId };
+}
+
 export async function revertClaudeConversation(input: {
   sdk: ClaudeRewindSdk;
   sessionId: string | null;
@@ -21,11 +42,8 @@ export async function revertClaudeConversation(input: {
   if (!input.sessionId) {
     throw new Error("Claude session is not ready for rewind");
   }
-  const messageId = (await input.resolveMessageId?.(input.messageId)) ?? input.messageId;
-  const fork = await input.sdk.forkSession(input.sessionId, {
-    upToMessageId: messageId,
-  });
-  input.setSessionId(fork.sessionId);
+  const forked = await forkClaudeSession(input);
+  input.setSessionId(forked.providerHandleId);
 }
 
 export async function revertClaudeFiles(input: {
