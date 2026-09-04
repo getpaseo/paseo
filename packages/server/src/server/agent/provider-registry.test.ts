@@ -57,6 +57,12 @@ const mockState = vi.hoisted(() => {
         providerParams?: unknown;
       }>,
     },
+    genericAcpHooks: [] as Array<{
+      providerId?: string;
+      thinkingOptionWriter: boolean;
+      sessionResponseTransformer: boolean;
+      modelTransformer: boolean;
+    }>,
     isCommandAvailable: vi.fn(async (_command: string) => false),
     runtimeModels: new Map<string, AgentModelDefinition[]>(),
     cursorListFeaturesConfigs: [] as AgentSessionConfig[],
@@ -69,6 +75,7 @@ const mockState = vi.hoisted(() => {
       this.constructorArgs.kimi = [];
       this.constructorArgs.pi = [];
       this.constructorArgs.genericAcp = [];
+      this.genericAcpHooks = [];
       this.isCommandAvailable.mockReset();
       this.isCommandAvailable.mockImplementation(async (_command: string) => false);
       this.runtimeModels.clear();
@@ -305,6 +312,9 @@ vi.mock("./providers/generic-acp-agent.js", () => ({
       providerId?: string;
       label?: string;
       providerParams?: unknown;
+      thinkingOptionWriter?: unknown;
+      sessionResponseTransformer?: unknown;
+      modelTransformer?: unknown;
     }) {
       const providerParams =
         options.providerParams &&
@@ -332,6 +342,12 @@ vi.mock("./providers/generic-acp-agent.js", () => ({
         providerId: options.providerId,
         label: options.label,
         providerParams: options.providerParams,
+      });
+      mockState.genericAcpHooks.push({
+        providerId: options.providerId,
+        thinkingOptionWriter: typeof options.thinkingOptionWriter === "function",
+        sessionResponseTransformer: typeof options.sessionResponseTransformer === "function",
+        modelTransformer: typeof options.modelTransformer === "function",
       });
     }
 
@@ -946,6 +962,35 @@ test("kimi provider extending acp uses KimiACPAgentClient", () => {
     },
   ]);
   expect(mockState.constructorArgs.genericAcp).toEqual([]);
+});
+
+test("grok provider extending acp uses GrokACPAgentClient", () => {
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      grok: {
+        extends: "acp",
+        label: "Grok",
+        command: ["grok", "agent", "stdio"],
+      },
+    },
+  });
+
+  const client = registry.grok.createClient(logger);
+  expect(client.provider).toBe("grok");
+  expect(mockState.genericAcpHooks).toEqual([
+    {
+      providerId: "grok",
+      thinkingOptionWriter: true,
+      sessionResponseTransformer: true,
+      modelTransformer: true,
+    },
+    {
+      providerId: "grok",
+      thinkingOptionWriter: true,
+      sessionResponseTransformer: true,
+      modelTransformer: true,
+    },
+  ]);
 });
 
 test('extends: "acp" without command throws', () => {

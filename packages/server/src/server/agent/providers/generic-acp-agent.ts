@@ -1,7 +1,8 @@
+import type { ClientSideConnection } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
 import { z } from "zod";
 
-import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
+import type { AgentCapabilityFlags, AgentModelDefinition } from "../agent-sdk-types.js";
 import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
 import {
   ACPAgentClient,
@@ -10,6 +11,7 @@ import {
   type ACPConfigFeatureOption,
   DEFAULT_ACP_CAPABILITIES,
   type ACPExtensionCommandsParser,
+  type SessionStateResponse,
 } from "./acp-agent.js";
 import {
   buildBinaryDiagnosticRows,
@@ -51,6 +53,13 @@ interface GenericACPAgentClientOptions {
   configFeatureOptions?: ACPConfigFeatureOption[];
   extensionCommandsParser?: ACPExtensionCommandsParser;
   catalogModelResolver?: ACPCatalogModelResolver;
+  modelTransformer?: (models: AgentModelDefinition[]) => AgentModelDefinition[];
+  sessionResponseTransformer?: (response: SessionStateResponse) => SessionStateResponse;
+  thinkingOptionWriter?: (
+    connection: ClientSideConnection,
+    sessionId: string,
+    thinkingOptionId: string,
+  ) => Promise<void>;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -76,6 +85,9 @@ export class GenericACPAgentClient extends ACPAgentClient {
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
       catalogModelResolver: options.catalogModelResolver,
+      modelTransformer: options.modelTransformer,
+      sessionResponseTransformer: options.sessionResponseTransformer,
+      thinkingOptionWriter: options.thinkingOptionWriter,
     });
 
     this.command = options.command;
