@@ -151,6 +151,35 @@ describe("evaluatePluginClientBundle", () => {
     ]);
   });
 
+  it("keeps a sidebar badge source and rejects a malformed one", () => {
+    const plugin = evaluatePluginClientBundle(
+      "example",
+      bundle(`
+        function Surface() { return null; }
+        plugin.addSurface("main", Surface);
+        plugin.addSidebarItem({
+          id: "main",
+          title: "Example",
+          icon: "Blocks",
+          surface: "main",
+          badge: { getSnapshot() { return 3; }, subscribe() { return () => {}; } },
+        });
+      `),
+    );
+    expect(plugin.sidebarItems[0]?.badge?.getSnapshot()).toBe(3);
+
+    expect(() =>
+      evaluatePluginClientBundle(
+        "example",
+        bundle(`
+          function Surface() { return null; }
+          plugin.addSurface("main", Surface);
+          plugin.addSidebarItem({ id: "main", title: "Example", icon: "Blocks", surface: "main", badge: 3 });
+        `),
+      ),
+    ).toThrow("Sidebar item main has an invalid badge source");
+  });
+
   it("collects a declarative attachment source", () => {
     const plugin = evaluatePluginClientBundle(
       "linear",

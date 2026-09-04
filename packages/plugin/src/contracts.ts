@@ -161,11 +161,22 @@ export interface PluginSurfaceContribution {
   Component: ComponentType<PluginSurfaceProps>;
 }
 
+/**
+ * A count the sidebar row shows next to the item title. Same shape as a
+ * `useSyncExternalStore` source: `getSnapshot` returns the current count or
+ * `null` for no badge, and `subscribe` notifies when it changes.
+ */
+export interface PluginSidebarBadgeSource {
+  getSnapshot(): number | null;
+  subscribe(listener: () => void): () => void;
+}
+
 export interface PluginSidebarContribution {
   id: string;
   title: string;
   icon: string;
   surface: string;
+  badge?: PluginSidebarBadgeSource;
 }
 
 export interface PluginThemeColors {

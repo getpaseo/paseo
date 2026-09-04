@@ -39,6 +39,7 @@ export type {
   PluginIconProps,
   PluginPanelLocation,
   PluginTheme,
+  PluginSidebarBadgeSource,
   PluginSidebarContribution,
   PluginSurfaceContribution,
   PluginSurfaceProps,

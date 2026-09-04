@@ -784,6 +784,53 @@ test("agent handles delegate create, send, timeline refetch, archive, and local 
   await client.close();
 });
 
+test("agent handles answer permissions and clear attention through the existing daemon RPCs", async () => {
+  const { client, ws } = await connectClient();
+  const agent = client.agents.ref("agent_sdk");
+
+  const respondPromise = agent.respondToPermission("perm_1", {
+    behavior: "allow",
+    updatedInput: { answers: { Approach: "Peek modal" } },
+  });
+  const respondRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(respondRequest).toMatchObject({
+    type: "agent_permission_response",
+    agentId: "agent_sdk",
+    requestId: "perm_1",
+  });
+  ws.message(
+    sessionMessage({
+      type: "agent_permission_resolved",
+      payload: {
+        agentId: "agent_sdk",
+        requestId: "perm_1",
+        resolution: { behavior: "allow" },
+      },
+    }),
+  );
+  await expect(respondPromise).resolves.toEqual({
+    agentId: "agent_sdk",
+    requestId: "perm_1",
+    resolution: { behavior: "allow" },
+  });
+
+  const clearPromise = agent.clearAttention();
+  const clearRequest = parseSentSessionMessage(ws.sent.at(-1));
+  expect(clearRequest).toMatchObject({
+    type: "clear_agent_attention",
+    agentId: "agent_sdk",
+  });
+  ws.message(
+    sessionMessage({
+      type: "clear_agent_attention_response",
+      payload: { requestId: clearRequest.requestId, agentId: "agent_sdk", agents: [] },
+    }),
+  );
+  await expect(clearPromise).resolves.toBeUndefined();
+
+  await client.close();
+});
+
 test("agent handles list the session's own commands through the existing daemon RPC", async () => {
   const { client, ws } = await connectClient();
   const agent = client.agents.ref("agent_sdk");

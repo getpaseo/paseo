@@ -52,3 +52,36 @@ describe("groupPluginSidebarContributions", () => {
     ]);
   });
 });
+
+describe("readPluginSidebarBadge", () => {
+  it("sums badge counts across targets and returns null when none contributes", async () => {
+    const { readPluginSidebarBadge } = await import("./sidebar-items");
+    const badge = (count: number | null) => ({
+      getSnapshot: () => count,
+      subscribe: () => () => {},
+    });
+    const target = (count: number | null | undefined) =>
+      ({
+        plugin: { id: "inbox", serverId: "srv" },
+        item: {
+          id: "inbox",
+          title: "Inbox",
+          icon: "Inbox",
+          surface: "board",
+          ...(count === undefined ? {} : { badge: badge(count) }),
+        },
+      }) as never;
+    const group = (targets: unknown[]) =>
+      ({
+        key: "inbox/sidebar/inbox",
+        pluginId: "inbox",
+        contributionId: "inbox",
+        title: "Inbox",
+        icon: "Inbox",
+        targets,
+      }) as never;
+    expect(readPluginSidebarBadge(group([target(2), target(3), target(undefined)]))).toBe(5);
+    expect(readPluginSidebarBadge(group([target(null), target(undefined)]))).toBeNull();
+    expect(readPluginSidebarBadge(group([target(0)]))).toBe(0);
+  });
+});

@@ -6,6 +6,7 @@ import { HEADER_INNER_HEIGHT, HEADER_INNER_HEIGHT_MOBILE } from "@/constants/lay
 import { ICON_SIZE } from "@/styles/theme";
 import type { Theme } from "@/styles/theme";
 import { Shortcut } from "@/components/ui/shortcut";
+import { StatusBadge } from "@/components/ui/status-badge";
 import type { ShortcutKey } from "@/utils/format-shortcut";
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -29,6 +30,8 @@ interface SidebarHeaderRowProps {
    */
   variant?: SidebarHeaderRowVariant;
   shortcutKeys?: ShortcutKey[][] | null;
+  /** A count shown at the trailing edge. Null or zero renders nothing. */
+  badgeCount?: number | null;
 }
 
 export function SidebarHeaderRow({
@@ -41,6 +44,7 @@ export function SidebarHeaderRow({
   accessibilityLabel,
   variant = "header",
   shortcutKeys = null,
+  badgeCount = null,
 }: SidebarHeaderRowProps) {
   const ThemedIcon = useMemo(() => withUnistyles(Icon), [Icon]);
 
@@ -71,10 +75,15 @@ export function SidebarHeaderRow({
           {shortcutKeys && Boolean(state.hovered) ? (
             <Shortcut chord={shortcutKeys} style={styles.shortcut} />
           ) : null}
+          {badgeCount ? (
+            <View style={styles.badge}>
+              <StatusBadge label={String(badgeCount)} />
+            </View>
+          ) : null}
         </>
       );
     },
-    [ThemedIcon, isActive, label, shortcutKeys],
+    [ThemedIcon, badgeCount, isActive, label, shortcutKeys],
   );
 
   return (
@@ -157,6 +166,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.foreground,
   },
   shortcut: {
+    marginLeft: "auto",
+  },
+  badge: {
     marginLeft: "auto",
   },
 }));

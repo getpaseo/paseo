@@ -199,6 +199,7 @@ import { Greeting } from "./client/greeting";
 export default function contribute(client: PluginClientContext) {
   client.addSurface("main", Greeting);
   client.addSidebarItem({ id: "main", title: "Greeting", icon: "MessageCircle", surface: "main" });
+  // Optional: `badge: { getSnapshot, subscribe }` puts a live count on the sidebar row.
   return () => {};
 }
 ```
@@ -420,5 +421,6 @@ preference instead of painting the reserved slot's placeholder colors.
 Existing plugin authors should follow the standalone [v0.8 runtime-entry migration guide](../public-docs/plugins/v0.8/migration.md).
 
 See `plugin-examples/local-plugin` for a native surface, `plugin-examples/linear` for a complete
-attachment-source example, `plugin-examples/timeline-items` for timeline projection, and
-`plugin-examples/catppuccin` for a theme.
+attachment-source example, `plugin-examples/timeline-items` for timeline projection,
+`plugin-examples/catppuccin` for a theme, and `plugin-examples/inbox` (the Kanban board) for a client-only surface that
+reads the agent directory and answers permission requests through `PaseoApi`.
