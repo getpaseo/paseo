@@ -1,7 +1,20 @@
 import type { BrowserElementAttachment } from "@/attachments/types";
+import type { BrowserElementJson, BrowserElementOption } from "@/desktop/browser/element-context";
 
 export type BrowserElementSelection = Omit<BrowserElementAttachment, "formatted" | "comment"> & {
   attributes?: Record<string, string>;
+  runtimeProperties?: {
+    value?: BrowserElementJson;
+    checked?: boolean;
+    disabled?: boolean;
+    placeholder?: string;
+    min?: number;
+    max?: number;
+    step?: number;
+    multiple?: boolean;
+    options?: BrowserElementOption[];
+    hasChildElements?: boolean;
+  };
 };
 
 export type ElementSelectorMode = "annotate" | "screenshot";
@@ -85,6 +98,13 @@ function clearWebviewSelector(webview: ElementSelectorWebview, sessionToken: str
   ).catch(ignoreWebviewJavaScriptError);
 }
 
+export function clearElementSelection(webview: ElementSelectorWebview): void {
+  void executeWebviewJavaScript(
+    webview,
+    "if (window.__paseoSelector) window.__paseoSelector.destroy(); window.__paseoSelectorResult = null;",
+  ).catch(ignoreWebviewJavaScriptError);
+}
+
 function readSelectorInstallation(
   value: unknown,
   sessionToken: string,
@@ -152,7 +172,7 @@ function startSelectorResultPolling(input: {
   };
 }
 
-function buildElementSelectorScript(sessionToken: string): string {
+export function buildElementSelectorScript(sessionToken: string): string {
   const token = JSON.stringify(sessionToken);
   return `
     (function() {
@@ -164,11 +184,10 @@ function buildElementSelectorScript(sessionToken: string): string {
       window.__paseoSelectorResult = null;
       var style = document.createElement('style');
       style.textContent = [
-        '.__paseo-hover { outline: 2px solid #3b82f6 !important; outline-offset: 2px !important; cursor: crosshair !important; }',
-        '.__paseo-select-mode, .__paseo-select-mode * { cursor: crosshair !important; pointer-events: auto !important; user-select: none !important; }',
+        '.__paseo-hover { box-shadow: inset 0 0 0 2px #3b82f6 !important; cursor: crosshair !important; }',
+        '.__paseo-selected { box-shadow: inset 0 0 0 2px #2563eb !important; }',
+        '.__paseo-select-mode, .__paseo-select-mode * { cursor: crosshair !important; user-select: none !important; }',
         '.__paseo-select-mode *, .__paseo-select-mode *::before, .__paseo-select-mode *::after { animation: none !important; transition: none !important; }',
-        '.__paseo-select-mode a, .__paseo-select-mode button, .__paseo-select-mode input, .__paseo-select-mode select, .__paseo-select-mode textarea, .__paseo-select-mode [role="button"], .__paseo-select-mode [onclick] { pointer-events: none !important; }',
-        '.__paseo-select-mode iframe, .__paseo-select-mode video, .__paseo-select-mode audio { pointer-events: none !important; }',
         '.__paseo-hover-label { position: fixed; z-index: 2147483647; pointer-events: none; max-width: 360px; padding: 4px 8px; border-radius: 6px; background: rgba(24,24,27,0.96); color: #fff; font: 500 11px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; box-shadow: 0 2px 10px rgba(0,0,0,0.35); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
         '.__paseo-hover-label .__paseo-tag { color: #93c5fd; }',
         '.__paseo-hover-label .__paseo-id { color: #fca5a5; }',
@@ -183,6 +202,10 @@ function buildElementSelectorScript(sessionToken: string): string {
       hoverLabel.style.display = 'none';
       document.documentElement.appendChild(hoverLabel);
       var last = null;
+      var selected = null;
+      var selecting = false;
+      var touchPointer = null;
+      var suppressNextClick = false;
       function escapeHtml(value) {
         return String(value).replace(/[&<>"]/g, function(ch) {
           return ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : '&quot;';
@@ -221,12 +244,44 @@ function buildElementSelectorScript(sessionToken: string): string {
         hoverLabel.style.top = Math.round(top) + 'px';
         hoverLabel.style.left = Math.round(left) + 'px';
       }
-      function onMove(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (last) last.classList.remove('__paseo-hover');
-        var el = e.target;
-        el.classList.add('__paseo-hover');
+      function isInspectable(el) {
+        if (!el || el.nodeType !== 1 || el === hoverLabel) return false;
+        if (el.classList && (el.classList.contains('__paseo-hover-label') || el.classList.contains('__paseo-selected'))) return false;
+        var rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return false;
+        var className = typeof el.className === 'string' ? el.className : '';
+        var isEmptyBackdrop = /(^|[-_])(overlay|mask|backdrop)([-_]|$)/i.test(className)
+          && rect.width >= window.innerWidth * 0.9
+          && rect.height >= window.innerHeight * 0.9
+          && !(el.innerText || '').trim();
+        if (isEmptyBackdrop) return false;
+        var current = el;
+        while (current && current.nodeType === 1) {
+          var computed = window.getComputedStyle(current);
+          if (computed.display === 'none' || computed.visibility === 'hidden' || computed.visibility === 'collapse' || computed.contentVisibility === 'hidden') return false;
+          var opacity = Number.parseFloat(computed.opacity || '1');
+          if (Number.isFinite(opacity) && opacity <= 0.01) return false;
+          current = current.parentElement;
+        }
+        return true;
+      }
+      function resolveTarget(e) {
+        var candidates = typeof document.elementsFromPoint === 'function'
+          ? document.elementsFromPoint(e.clientX, e.clientY)
+          : [e.target];
+        var fallback = null;
+        for (var i = 0; i < candidates.length; i++) {
+          var candidate = candidates[i];
+          if (!isInspectable(candidate)) continue;
+          if (candidate.tagName !== 'HTML' && candidate.tagName !== 'BODY') return candidate;
+          if (!fallback) fallback = candidate;
+        }
+        return fallback;
+      }
+      function showTarget(el, e) {
+        if (!el) return;
+        if (last && last !== selected) last.classList.remove('__paseo-hover');
+        if (el !== selected) el.classList.add('__paseo-hover');
         last = el;
         try {
           var info = describeElement(el);
@@ -236,6 +291,11 @@ function buildElementSelectorScript(sessionToken: string): string {
         } catch (err) {
           hoverLabel.style.display = 'none';
         }
+      }
+      function onMove(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        showTarget(resolveTarget(e), e);
       }
       function buildSelector(el) {
         if (el.id) return '#' + el.id;
@@ -298,7 +358,7 @@ function buildElementSelectorScript(sessionToken: string): string {
       }
       function getRelevantStyles(el) {
         var cs = window.getComputedStyle(el);
-        var pick = ['display','position','width','height','color','background-color','font-size','font-family','padding','margin','border','flex','grid-template-columns','gap','overflow','opacity','z-index'];
+        var pick = ['display','position','width','height','color','background-color','font-size','font-family','font-weight','padding','margin','border','flex','grid-template-columns','gap','overflow','opacity','z-index'];
         var out = {};
         pick.forEach(function(p) {
           var v = cs.getPropertyValue(p);
@@ -306,12 +366,43 @@ function buildElementSelectorScript(sessionToken: string): string {
         });
         return out;
       }
-      function onClick(e) {
+      function getRuntimeProperties(el) {
+        var out = { hasChildElements: el.children.length > 0 };
+        if ('disabled' in el) out.disabled = Boolean(el.disabled);
+        if ('placeholder' in el && el.placeholder) out.placeholder = String(el.placeholder).substring(0, 500);
+        var inputType = String(el.type || '').toLowerCase();
+        if (inputType === 'checkbox' || inputType === 'radio') out.checked = Boolean(el.checked);
+        if ('value' in el && inputType !== 'password' && inputType !== 'file') {
+          if (el.tagName.toLowerCase() === 'select' && el.multiple) {
+            out.value = Array.prototype.filter.call(el.options, function(option) { return option.selected; }).map(function(option) { return option.value; });
+          } else {
+            out.value = String(el.value).substring(0, 2000);
+          }
+        }
+        ['min', 'max', 'step'].forEach(function(key) {
+          if (!(key in el) || el[key] === '') return;
+          var number = Number(el[key]);
+          if (Number.isFinite(number)) out[key] = number;
+        });
+        if (el.tagName.toLowerCase() === 'select') {
+          out.multiple = Boolean(el.multiple);
+          out.options = Array.prototype.slice.call(el.options, 0, 200).map(function(option) {
+            return { label: String(option.label || option.text).substring(0, 300), value: String(option.value).substring(0, 2000), disabled: Boolean(option.disabled) };
+          });
+        }
+        return out;
+      }
+      async function selectAt(e) {
+        if (selecting) return;
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
-        var el = e.target;
+        var el = resolveTarget(e);
+        if (!el) return;
+        selecting = true;
+        selected = el;
         if (last) last.classList.remove('__paseo-hover');
+        selected.classList.add('__paseo-selected');
         hoverLabel.style.display = 'none';
         var attrs = {};
         for (var i = 0; i < el.attributes.length; i++) {
@@ -326,14 +417,77 @@ function buildElementSelectorScript(sessionToken: string): string {
           url: location.href,
           outerHTML: el.outerHTML.substring(0, 2000),
           computedStyles: getRelevantStyles(el),
+          runtimeProperties: getRuntimeProperties(el),
           __paseoSessionToken: sessionToken,
           boundingRect: { x: Math.round(rect.x), y: Math.round(rect.y), width: Math.round(rect.width), height: Math.round(rect.height) },
           reactSource: getReactSource(el),
           parentChain: getParentChain(el, 5),
           children: getChildSummary(el, 8)
         };
-        destroy();
+        deactivate();
         window.__paseoSelectorResult = result;
+      }
+      function onClick(e) {
+        if (suppressNextClick) {
+          suppressNextClick = false;
+          blockEvent(e);
+          return;
+        }
+        void selectAt(e);
+      }
+      function stopEventPropagation(e) {
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+      }
+      function suppressCompatibilityClick() {
+        var timer = null;
+        function cleanup() {
+          document.removeEventListener('click', suppress, true);
+          if (timer !== null) window.clearTimeout(timer);
+        }
+        function suppress(e) {
+          blockEvent(e);
+          cleanup();
+        }
+        document.addEventListener('click', suppress, true);
+        timer = window.setTimeout(cleanup, 750);
+      }
+      function onPointerDown(e) {
+        if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+          touchPointer = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+          stopEventPropagation(e);
+          showTarget(resolveTarget(e), e);
+          return;
+        }
+        blockEvent(e);
+      }
+      function onPointerMove(e) {
+        if (e.pointerType === 'mouse') {
+          onMove(e);
+          return;
+        }
+        if (!touchPointer || touchPointer.id !== e.pointerId) return;
+        if (Math.abs(e.clientX - touchPointer.x) > 8 || Math.abs(e.clientY - touchPointer.y) > 8) {
+          touchPointer.moved = true;
+        }
+        stopEventPropagation(e);
+        showTarget(resolveTarget(e), e);
+      }
+      function onPointerUp(e) {
+        if (!touchPointer || touchPointer.id !== e.pointerId) return;
+        var shouldSelect = !touchPointer.moved;
+        touchPointer = null;
+        if (shouldSelect) {
+          suppressCompatibilityClick();
+          void selectAt(e);
+          return;
+        }
+        suppressNextClick = true;
+        stopEventPropagation(e);
+      }
+      function onPointerCancel(e) {
+        if (touchPointer && touchPointer.id === e.pointerId) touchPointer = null;
+        stopEventPropagation(e);
       }
       function onKey(e) {
         if (e.key === 'Escape') {
@@ -346,33 +500,35 @@ function buildElementSelectorScript(sessionToken: string): string {
         e.stopPropagation();
         e.stopImmediatePropagation();
       }
-      function destroy() {
-        document.removeEventListener('mousemove', onMove, true);
+      function deactivate() {
         document.removeEventListener('click', onClick, true);
         document.removeEventListener('keydown', onKey, true);
         document.removeEventListener('mousedown', blockEvent, true);
         document.removeEventListener('mouseup', blockEvent, true);
-        document.removeEventListener('pointerdown', blockEvent, true);
-        document.removeEventListener('pointerup', blockEvent, true);
-        document.removeEventListener('touchstart', blockEvent, true);
-        document.removeEventListener('touchend', blockEvent, true);
+        document.removeEventListener('pointerdown', onPointerDown, true);
+        document.removeEventListener('pointermove', onPointerMove, true);
+        document.removeEventListener('pointerup', onPointerUp, true);
+        document.removeEventListener('pointercancel', onPointerCancel, true);
         document.removeEventListener('focus', blockEvent, true);
         document.removeEventListener('submit', blockEvent, true);
         document.documentElement.classList.remove('__paseo-select-mode');
-        if (last) last.classList.remove('__paseo-hover');
+        if (last && last !== selected) last.classList.remove('__paseo-hover');
         if (hoverLabel.parentNode) hoverLabel.parentNode.removeChild(hoverLabel);
+      }
+      function destroy() {
+        deactivate();
+        if (selected) selected.classList.remove('__paseo-selected');
         style.remove();
         window.__paseoSelector = null;
       }
-      document.addEventListener('mousemove', onMove, true);
       document.addEventListener('click', onClick, true);
       document.addEventListener('keydown', onKey, true);
       document.addEventListener('mousedown', blockEvent, true);
       document.addEventListener('mouseup', blockEvent, true);
-      document.addEventListener('pointerdown', blockEvent, true);
-      document.addEventListener('pointerup', blockEvent, true);
-      document.addEventListener('touchstart', blockEvent, true);
-      document.addEventListener('touchend', blockEvent, true);
+      document.addEventListener('pointerdown', onPointerDown, true);
+      document.addEventListener('pointermove', onPointerMove, true);
+      document.addEventListener('pointerup', onPointerUp, true);
+      document.addEventListener('pointercancel', onPointerCancel, true);
       document.addEventListener('focus', blockEvent, true);
       document.addEventListener('submit', blockEvent, true);
       window.__paseoSelector = { destroy: destroy, sessionToken: sessionToken };

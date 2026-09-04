@@ -4,6 +4,10 @@ import type {
   UploadedFileAttachment,
 } from "@getpaseo/protocol/messages";
 import type { PluginResourceComposerAttachment } from "@/plugins/attachments";
+import type {
+  BrowserElementChange,
+  BrowserElementContext,
+} from "@/desktop/browser/element-context";
 
 export type AttachmentStorageType = "web-indexeddb" | "desktop-file" | "native-file";
 
@@ -43,6 +47,8 @@ export interface BrowserElementAttachment {
   } | null;
   parentChain: string[];
   children: string[];
+  elementContext?: BrowserElementContext;
+  requestedChanges?: BrowserElementChange[];
   /** Free-text review note the user wrote about this element, if any. */
   comment?: string;
   /**
