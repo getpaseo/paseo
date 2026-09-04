@@ -1,4 +1,4 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { layeredSettingsStorage } from "@/storage/settings-seed";
 import { readValidatedJson } from "@/storage/validated-storage";
 import {
   FormPreferencesSchema,
@@ -16,7 +16,7 @@ export interface CreateAgentPreferenceStorage {
 export class AsyncStorageCreateAgentPreferenceStorage implements CreateAgentPreferenceStorage {
   async read(): Promise<unknown> {
     return readValidatedJson(
-      AsyncStorage,
+      layeredSettingsStorage,
       CREATE_AGENT_PREFERENCES_STORAGE_KEY,
       StoredFormPreferencesSchema,
     );
@@ -25,9 +25,12 @@ export class AsyncStorageCreateAgentPreferenceStorage implements CreateAgentPref
   async write(preferences: FormPreferences): Promise<void> {
     const result = FormPreferencesSchema.safeParse(preferences);
     if (!result.success) {
-      await AsyncStorage.removeItem(CREATE_AGENT_PREFERENCES_STORAGE_KEY);
+      await layeredSettingsStorage.removeItem(CREATE_AGENT_PREFERENCES_STORAGE_KEY);
       return;
     }
-    await AsyncStorage.setItem(CREATE_AGENT_PREFERENCES_STORAGE_KEY, JSON.stringify(result.data));
+    await layeredSettingsStorage.setItem(
+      CREATE_AGENT_PREFERENCES_STORAGE_KEY,
+      JSON.stringify(result.data),
+    );
   }
 }

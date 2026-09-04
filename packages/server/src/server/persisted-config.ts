@@ -1,5 +1,7 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 
 import {
@@ -234,6 +236,9 @@ export const PersistedConfigSchema = z
     // v1 schema marker
     version: z.literal(1).optional(),
 
+    imports: z.array(z.string().min(1)).optional(),
+    writeTo: z.string().min(1).optional(),
+
     // v1 config layout
     daemon: z
       .object({
@@ -343,6 +348,27 @@ export type PersistedConfig = Omit<PersistedConfigSchemaOutput, "agents"> & {
   };
 };
 
+export interface ConfigStructuralKeys {
+  $schema?: string;
+  version?: 1;
+  imports?: string[];
+  writeTo?: string;
+}
+
+export interface ConfigLayer {
+  path: string;
+  body: PersistedConfig;
+  structural: ConfigStructuralKeys;
+  raw: string;
+}
+
+export interface ConfigStack {
+  rootPath: string;
+  layers: ConfigLayer[];
+  writeTargetPath: string;
+  effective: PersistedConfig;
+}
+
 const CONFIG_FILENAME = "config.json";
 const DEFAULT_PERSISTED_CONFIG = PersistedConfigSchema.parse({
   version: 1,
@@ -366,11 +392,34 @@ interface LoggerLike {
 }
 
 function getConfigPath(paseoHome: string): string {
-  return path.join(paseoHome, CONFIG_FILENAME);
+  return path.resolve(paseoHome, CONFIG_FILENAME);
 }
 
 function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
   return logger?.child({ module: "config" });
+}
+
+export function deepMerge<T extends Record<string, unknown>>(
+  current: T,
+  patch: Record<string, unknown>,
+): T {
+  const next: Record<string, unknown> = { ...current };
+
+  for (const [key, patchValue] of Object.entries(patch)) {
+    if (patchValue === undefined) continue;
+    const currentValue = next[key];
+    if (isRecord(currentValue) && isRecord(patchValue)) {
+      next[key] = deepMerge(currentValue, patchValue);
+      continue;
+    }
+    next[key] = patchValue;
+  }
+
+  return next as T;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // Removed config fields are stripped before parsing so the strict schema does not
@@ -412,34 +461,25 @@ function stripRemovedConfigFields(parsed: unknown): unknown {
   return root;
 }
 
-export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): PersistedConfig {
-  const log = getLogger(logger);
-  const configPath = getConfigPath(paseoHome);
+function formatValidationIssues(error: z.ZodError): string {
+  return error.issues.map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`).join("\n");
+}
 
-  if (!existsSync(configPath)) {
-    try {
-      writePrivateFileAtomicSync(
-        configPath,
-        JSON.stringify(DEFAULT_PERSISTED_CONFIG, null, 2) + "\n",
-      );
-      log?.info(`Initialized config file at ${configPath}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(`[Config] Failed to initialize ${configPath}: ${message}`, { cause: err });
-    }
-  }
+function splitConfig(config: PersistedConfigSchemaOutput): {
+  structural: ConfigStructuralKeys;
+  body: PersistedConfig;
+} {
+  const { $schema, version, imports, writeTo, ...body } = config;
+  const structural: ConfigStructuralKeys = {};
+  if ($schema !== undefined) structural.$schema = $schema;
+  if (version !== undefined) structural.version = version;
+  if (imports !== undefined) structural.imports = imports;
+  if (writeTo !== undefined) structural.writeTo = writeTo;
+  const jsonBody = JSON.parse(JSON.stringify(body)) as PersistedConfig;
+  return { structural, body: jsonBody };
+}
 
-  let raw: string;
-  try {
-    ensurePrivateFile(configPath);
-    raw = readFileSync(configPath, "utf-8");
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Failed to read ${configPath}: ${message}`, {
-      cause: err,
-    });
-  }
-
+function parseConfigFile(raw: string, configPath: string): Omit<ConfigLayer, "path" | "raw"> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -453,14 +493,293 @@ export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): Per
   const migrated = stripRemovedConfigFields(parsed);
   const result = PersistedConfigSchema.safeParse(migrated);
   if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
-    throw new Error(`[Config] Invalid config in ${configPath}:\n${issues}`);
+    throw new Error(
+      `[Config] Invalid config in ${configPath}:\n${formatValidationIssues(result.error)}`,
+    );
+  }
+  return splitConfig(result.data);
+}
+
+function resolveConfigReference(configPath: string, reference: string): string {
+  const expanded = reference.startsWith("~/")
+    ? path.join(homedir(), reference.slice(2))
+    : reference;
+  return path.resolve(path.dirname(configPath), expanded);
+}
+
+interface LoadLayerParams {
+  requestedPath: string;
+  importingPath?: string;
+  ancestry: string[];
+  loadedByPath: Map<string, ConfigLayer>;
+  isRoot: boolean;
+}
+
+function loadLayer(params: LoadLayerParams): { layer: ConfigLayer; layers: ConfigLayer[] } {
+  const requestedPath = path.resolve(params.requestedPath);
+  if (!existsSync(requestedPath)) {
+    if (params.importingPath) {
+      throw new Error(
+        `[Config] Import ${requestedPath} referenced by ${params.importingPath} does not exist`,
+      );
+    }
+    throw new Error(`[Config] Failed to read ${requestedPath}: file does not exist`);
   }
 
-  log?.info(`Loaded from ${configPath}`);
-  return result.data as PersistedConfig;
+  let configPath: string;
+  try {
+    configPath = realpathSync(requestedPath);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`[Config] Failed to resolve ${requestedPath}: ${message}`, { cause: err });
+  }
+
+  const cycleStart = params.ancestry.indexOf(configPath);
+  if (cycleStart !== -1) {
+    const cycle = [...params.ancestry.slice(cycleStart), configPath].join(" -> ");
+    throw new Error(`[Config] Config import cycle: ${cycle}`);
+  }
+
+  const loaded = params.loadedByPath.get(configPath);
+  if (loaded) {
+    return { layer: loaded, layers: [] };
+  }
+
+  let raw: string;
+  try {
+    if (params.isRoot) ensurePrivateFile(configPath);
+    raw = readFileSync(configPath, "utf-8");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`[Config] Failed to read ${configPath}: ${message}`, { cause: err });
+  }
+
+  const parsed = parseConfigFile(raw, configPath);
+  if (!params.isRoot && parsed.structural.writeTo !== undefined) {
+    throw new Error(
+      `[Config] Invalid config in ${configPath}:\n  - writeTo: writeTo is only allowed in the root config file`,
+    );
+  }
+
+  const layer: ConfigLayer = { path: configPath, raw, ...parsed };
+  params.loadedByPath.set(configPath, layer);
+  const ancestry = [...params.ancestry, configPath];
+  const layers: ConfigLayer[] = [];
+  for (const importedPath of layer.structural.imports ?? []) {
+    const imported = loadLayer({
+      requestedPath: resolveConfigReference(configPath, importedPath),
+      importingPath: configPath,
+      ancestry,
+      loadedByPath: params.loadedByPath,
+      isRoot: false,
+    });
+    layers.push(...imported.layers);
+  }
+  layers.push(layer);
+  return { layer, layers };
+}
+
+function validateEffectiveConfig(config: PersistedConfig, context: string): PersistedConfig {
+  const result = PersistedConfigSchema.safeParse(config);
+  if (!result.success) {
+    throw new Error(`[Config] Invalid ${context}:\n${formatValidationIssues(result.error)}`);
+  }
+  return splitConfig(result.data).body;
+}
+
+function mergeLayers(layers: readonly ConfigLayer[], writeTarget?: ConfigLayer): PersistedConfig {
+  let effective: PersistedConfig = {};
+  for (const layer of layers) {
+    const body = writeTarget && layer.path === writeTarget.path ? writeTarget.body : layer.body;
+    effective = deepMerge(effective, body);
+  }
+  return effective;
+}
+
+function initializeRootConfig(configPath: string, logger?: LoggerLike): void {
+  try {
+    writePrivateFileAtomicSync(
+      configPath,
+      JSON.stringify(DEFAULT_PERSISTED_CONFIG, null, 2) + "\n",
+    );
+    logger?.info(`Initialized config file at ${configPath}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`[Config] Failed to initialize ${configPath}: ${message}`, { cause: err });
+  }
+}
+
+export function loadConfigStack(paseoHome: string, logger?: LoggerLike): ConfigStack {
+  const log = getLogger(logger);
+  const requestedRootPath = getConfigPath(paseoHome);
+  if (!existsSync(requestedRootPath)) initializeRootConfig(requestedRootPath, log);
+
+  const loaded = loadLayer({
+    requestedPath: requestedRootPath,
+    ancestry: [],
+    loadedByPath: new Map(),
+    isRoot: true,
+  });
+  const rootPath = loaded.layer.path;
+  const effective = validateEffectiveConfig(mergeLayers(loaded.layers), "merged config");
+
+  const writeTo = loaded.layer.structural.writeTo;
+  const requestedWriteTarget = writeTo ? resolveConfigReference(rootPath, writeTo) : rootPath;
+  const resolvedWriteTarget = existsSync(requestedWriteTarget)
+    ? realpathSync(requestedWriteTarget)
+    : requestedWriteTarget;
+  const writeTarget = loaded.layers.find((layer) => layer.path === resolvedWriteTarget);
+  if (!writeTarget) {
+    throw new Error(
+      `[Config] writeTo in ${rootPath} resolves to ${requestedWriteTarget}, which is not the root config or an imported file`,
+    );
+  }
+
+  log?.info(`Loaded from ${rootPath}`);
+  return {
+    rootPath,
+    layers: loaded.layers,
+    writeTargetPath: writeTarget.path,
+    effective,
+  };
+}
+
+export function loadPersistedConfig(paseoHome: string, logger?: LoggerLike): PersistedConfig {
+  return loadConfigStack(paseoHome, logger).effective;
+}
+
+function deepDiff(
+  desired: Record<string, unknown>,
+  otherLayers: Record<string, unknown>,
+): Record<string, unknown> {
+  const diff: Record<string, unknown> = {};
+  for (const [key, desiredValue] of Object.entries(desired)) {
+    const otherValue = otherLayers[key];
+    if (isDeepStrictEqual(desiredValue, otherValue)) continue;
+    if (isRecord(desiredValue) && isRecord(otherValue)) {
+      const nested = deepDiff(desiredValue, otherValue);
+      if (Object.keys(nested).length > 0) diff[key] = nested;
+      continue;
+    }
+    diff[key] = desiredValue;
+  }
+  return diff;
+}
+
+function collectDifferentPaths(desired: unknown, actual: unknown, prefix: string[] = []): string[] {
+  if (isDeepStrictEqual(desired, actual)) return [];
+  if (!isRecord(desired) || !isRecord(actual)) return [prefix.join(".")];
+
+  const paths: string[] = [];
+  const keys = new Set([...Object.keys(desired), ...Object.keys(actual)]);
+  for (const key of keys) {
+    const nextPrefix = [...prefix, key];
+    const desiredHasKey = Object.hasOwn(desired, key);
+    const actualHasKey = Object.hasOwn(actual, key);
+    if (!desiredHasKey || !actualHasKey) {
+      paths.push(nextPrefix.join("."));
+      continue;
+    }
+    paths.push(...collectDifferentPaths(desired[key], actual[key], nextPrefix));
+  }
+  return paths;
+}
+
+function definesPath(config: PersistedConfig, fieldPath: string): boolean {
+  let current: unknown = config;
+  for (const segment of fieldPath.split(".")) {
+    if (!isRecord(current) || !Object.hasOwn(current, segment)) return false;
+    current = current[segment];
+  }
+  return true;
+}
+
+function findShadowingLayer(stack: ConfigStack, fieldPath: string): ConfigLayer | undefined {
+  for (let index = stack.layers.length - 1; index >= 0; index -= 1) {
+    const layer = stack.layers[index];
+    if (layer.path !== stack.writeTargetPath && definesPath(layer.body, fieldPath)) return layer;
+  }
+  return undefined;
+}
+
+function validateConfigToSave(config: PersistedConfig): PersistedConfigSchemaOutput {
+  const result = PersistedConfigSchema.safeParse(config);
+  if (!result.success) {
+    throw new Error(`[Config] Invalid config to save:\n${formatValidationIssues(result.error)}`);
+  }
+  return result.data;
+}
+
+function writeConfigFile(
+  configPath: string,
+  config: PersistedConfigSchemaOutput,
+  logger?: LoggerLike,
+): void {
+  try {
+    writePrivateFileAtomicSync(configPath, JSON.stringify(config, null, 2) + "\n");
+    logger?.info(`Saved to ${configPath}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`[Config] Failed to write ${configPath}: ${message}`, { cause: err });
+  }
+}
+
+export function saveConfigStack(
+  stack: ConfigStack,
+  config: PersistedConfig,
+  logger?: LoggerLike,
+): void {
+  const desired = splitConfig(validateConfigToSave(config)).body;
+  const writeTarget = stack.layers.find((layer) => layer.path === stack.writeTargetPath);
+  if (!writeTarget) {
+    throw new Error(`[Config] Writable config file ${stack.writeTargetPath} is not in the stack`);
+  }
+
+  const otherLayers = stack.layers.filter((layer) => layer.path !== stack.writeTargetPath);
+  const otherEffective = mergeLayers(otherLayers);
+  const candidateBody = deepDiff(desired, otherEffective) as PersistedConfig;
+  const candidateConfig = validateConfigToSave({
+    ...writeTarget.structural,
+    ...candidateBody,
+  });
+  const candidateLayer: ConfigLayer = {
+    ...writeTarget,
+    body: splitConfig(candidateConfig).body,
+  };
+  const simulated = validateEffectiveConfig(
+    mergeLayers(stack.layers, candidateLayer),
+    "merged config",
+  );
+
+  if (!isDeepStrictEqual(simulated, desired)) {
+    const fieldPaths = collectDifferentPaths(desired, simulated);
+    const issues = fieldPaths.map((fieldPath) => {
+      const shadowingLayer = findShadowingLayer(stack, fieldPath);
+      if (!shadowingLayer) {
+        return `${fieldPath} cannot be represented by the writable config file.`;
+      }
+      return `${fieldPath} is defined in ${shadowingLayer.path}, which overrides the writable config file. Change it there instead.`;
+    });
+    throw new Error(`[Config] Cannot save config:\n  - ${issues.join("\n  - ")}`);
+  }
+
+  writeConfigFile(stack.writeTargetPath, candidateConfig, getLogger(logger));
+}
+
+export function restoreConfigWriteTarget(stack: ConfigStack, logger?: LoggerLike): void {
+  const writeTarget = stack.layers.find((layer) => layer.path === stack.writeTargetPath);
+  if (!writeTarget) {
+    throw new Error(`[Config] Writable config file ${stack.writeTargetPath} is not in the stack`);
+  }
+  try {
+    writePrivateFileAtomicSync(stack.writeTargetPath, writeTarget.raw);
+    getLogger(logger)?.info(`Restored ${stack.writeTargetPath}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`[Config] Failed to restore ${stack.writeTargetPath}: ${message}`, {
+      cause: err,
+    });
+  }
 }
 
 export function savePersistedConfig(
@@ -468,24 +787,10 @@ export function savePersistedConfig(
   config: PersistedConfig,
   logger?: LoggerLike,
 ): void {
-  const log = getLogger(logger);
   const configPath = getConfigPath(paseoHome);
-
-  const result = PersistedConfigSchema.safeParse(config);
-  if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  - ${i.path.join(".")}: ${i.message}`)
-      .join("\n");
-    throw new Error(`[Config] Invalid config to save:\n${issues}`);
+  if (!existsSync(configPath)) {
+    writeConfigFile(configPath, validateConfigToSave(config), getLogger(logger));
+    return;
   }
-
-  try {
-    writePrivateFileAtomicSync(configPath, JSON.stringify(result.data, null, 2) + "\n");
-    log?.info(`Saved to ${configPath}`);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`[Config] Failed to write ${configPath}: ${message}`, {
-      cause: err,
-    });
-  }
+  saveConfigStack(loadConfigStack(paseoHome, logger), config, logger);
 }

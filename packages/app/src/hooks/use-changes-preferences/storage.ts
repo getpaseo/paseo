@@ -67,13 +67,14 @@ export async function loadChangesPreferencesFromStorage(
     };
   }
 
+  // The computed value is deliberately not persisted: writing untouched defaults would pin them
+  // above a seed layer, so a fresh install would ignore its own seeded preferences. The legacy
+  // key is cheap enough to re-read on every load that has nothing stored.
   const legacyWrapLines = await loadLegacyWrapLinesPreference(storage);
-  const next = {
+  return {
     ...DEFAULT_CHANGES_PREFERENCES,
     ...(legacyWrapLines !== null ? { wrapLines: legacyWrapLines } : {}),
   } satisfies ChangesPreferences;
-  await storage.setItem(CHANGES_PREFERENCES_STORAGE_KEY, JSON.stringify(next));
-  return next;
 }
 
 export async function saveChangesPreferences(input: {

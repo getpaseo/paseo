@@ -1,6 +1,10 @@
 import {
+  deepMerge,
+  loadConfigStack,
   loadPersistedConfig,
-  savePersistedConfig,
+  restoreConfigWriteTarget,
+  saveConfigStack,
+  type ConfigStack,
   type PersistedConfig,
 } from "./persisted-config.js";
 import { ProviderOverrideSchema } from "./agent/provider-launch-config.js";
@@ -75,27 +79,6 @@ function getLogger(logger: LoggerLike | undefined): LoggerLike | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function deepMerge<T extends Record<string, unknown>>(
-  current: T,
-  patch: Record<string, unknown>,
-): T {
-  const next: Record<string, unknown> = { ...current };
-
-  for (const [key, patchValue] of Object.entries(patch)) {
-    if (patchValue === undefined) {
-      continue;
-    }
-    const currentValue = next[key];
-    if (isRecord(currentValue) && isRecord(patchValue)) {
-      next[key] = deepMerge(currentValue, patchValue);
-      continue;
-    }
-    next[key] = patchValue;
-  }
-
-  return next as T;
 }
 
 function omitProvidersFromConfig<T extends { providers?: Record<string, unknown> }>(
@@ -381,7 +364,7 @@ export class DaemonConfigStore {
       return this.current;
     }
 
-    const { previous: persistedBeforePatch, knownNext } = this.persistConfig(
+    const { previous: stackBeforePatch, knownNext } = this.persistConfig(
       configPatch,
       removedProviders,
     );
@@ -394,7 +377,7 @@ export class DaemonConfigStore {
       this.applyReplacement(next, { removedProviders });
       this.lastKnownPersisted = knownNext;
     } catch (error) {
-      savePersistedConfig(this.paseoHome, persistedBeforePatch, this.logger);
+      restoreConfigWriteTarget(stackBeforePatch, this.logger);
       throw error;
     }
 
@@ -559,8 +542,8 @@ export class DaemonConfigStore {
   private persistConfig(
     patch: Omit<SupportedMutableConfigPatch, "removeProviders">,
     removeProviders: readonly string[],
-  ): { previous: PersistedConfig; knownNext: PersistedConfig } {
-    const persisted = loadPersistedConfig(this.paseoHome, this.logger);
+  ): { previous: ConfigStack; knownNext: PersistedConfig } {
+    const stack = loadConfigStack(this.paseoHome, this.logger);
     const merge = (source: PersistedConfig) =>
       mergeMutablePatchIntoPersistedConfig({
         persisted: source,
@@ -568,10 +551,10 @@ export class DaemonConfigStore {
         removeProviders,
         persistRelayEnabled: this.relayEnabledMutable,
       });
-    const nextPersisted = merge(persisted);
+    const nextPersisted = merge(stack.effective);
     const knownNext = merge(this.lastKnownPersisted);
-    savePersistedConfig(this.paseoHome, nextPersisted, this.logger);
-    return { previous: persisted, knownNext };
+    saveConfigStack(stack, nextPersisted, this.logger);
+    return { previous: stack, knownNext };
   }
 }
 

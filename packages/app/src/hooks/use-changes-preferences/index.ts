@@ -1,6 +1,6 @@
 import { useCallback } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { layeredSettingsStorage } from "@/storage/settings-seed";
 import {
   CHANGES_PREFERENCES_QUERY_KEY,
   DEFAULT_CHANGES_PREFERENCES,
@@ -12,7 +12,7 @@ import {
 
 export { DEFAULT_CHANGES_PREFERENCES, type ChangesPreferences, type KeyValueStorage };
 
-const productionStorage: KeyValueStorage = AsyncStorage;
+const productionStorage: KeyValueStorage = layeredSettingsStorage;
 
 export function loadChangesPreferencesFromStorage(): Promise<ChangesPreferences> {
   return loadChangesPreferencesFromStoragePure(productionStorage);

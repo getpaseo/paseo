@@ -1,7 +1,7 @@
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
 import { z } from "zod";
 import type { ShortcutOverrides } from "@/keyboard/keyboard-shortcuts";
+import { layeredSettingsStorage } from "@/storage/settings-seed";
 import {
   createShortcutOverrideStore,
   type ShortcutOverrideStore,
@@ -66,8 +66,8 @@ function getStore(queryClient: QueryClient): ShortcutOverrideStore {
       },
     },
     storage: {
-      write: (serialized) => AsyncStorage.setItem(STORAGE_KEY, serialized),
-      remove: () => AsyncStorage.removeItem(STORAGE_KEY),
+      write: (serialized) => layeredSettingsStorage.setItem(STORAGE_KEY, serialized),
+      remove: () => layeredSettingsStorage.removeItem(STORAGE_KEY),
     },
     onError: (err) => {
       console.error("[KeyboardShortcutOverrides] Failed to save overrides:", err);
@@ -80,7 +80,7 @@ function getStore(queryClient: QueryClient): ShortcutOverrideStore {
 async function loadOverridesFromStorage(): Promise<ShortcutOverrides> {
   try {
     return (
-      (await readValidatedJson(AsyncStorage, STORAGE_KEY, ShortcutOverridesSchema)) ??
+      (await readValidatedJson(layeredSettingsStorage, STORAGE_KEY, ShortcutOverridesSchema)) ??
       EMPTY_OVERRIDES
     );
   } catch (err) {

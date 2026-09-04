@@ -1,6 +1,6 @@
 import { useCallback, useMemo } from "react";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { layeredSettingsStorage } from "@/storage/settings-seed";
 import { queryClient as appQueryClient } from "@/data/query-client";
 import type { AppLanguage } from "@/i18n/locales";
 import {
@@ -106,7 +106,7 @@ function pickDefinedAppSettings(updates: Partial<Settings>): Partial<AppSettings
 }
 
 const productionDeps: SettingsDeps = {
-  storage: AsyncStorage,
+  storage: layeredSettingsStorage,
   desktop: {
     isElectron: isElectronRuntime,
     loadDesktopSettings,
@@ -157,7 +157,7 @@ export function useAppSettings(): UseAppSettingsReturn {
     try {
       const next = { ...DEFAULT_CLIENT_SETTINGS };
       queryClient.setQueryData<AppSettings>(APP_SETTINGS_QUERY_KEY, next);
-      await AsyncStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
+      await layeredSettingsStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(next));
     } catch (err) {
       console.error("[AppSettings] Failed to reset settings:", err);
       throw err;

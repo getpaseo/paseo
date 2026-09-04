@@ -389,8 +389,10 @@ async function readAppSettings(
     };
   }
 
+  // Deliberately not persisted: writing untouched defaults would pin them above a seed layer
+  // that has not been read yet, so a fresh install would ignore its own seeded settings.
   const defaultStored = StoredAppSettingsSchema.parse({});
-  return { settings: DEFAULT_CLIENT_SETTINGS, needsWrite: true, stored: defaultStored };
+  return { settings: DEFAULT_CLIENT_SETTINGS, needsWrite: false, stored: defaultStored };
 }
 
 export async function loadSettingsFromStorage(deps: SettingsDeps): Promise<Settings> {
