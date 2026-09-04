@@ -4,6 +4,7 @@ import { buildHostWorkspaceRoute } from "@/utils/host-routes";
 import { expect, test } from "../support/fixtures";
 import { gotoAppShell } from "../support/helpers/app";
 import {
+  addGithubPrFromAttachmentMenu,
   archiveWorkspaceFromDaemon,
   archiveLocalWorkspaceFromDaemon,
   assertNewWorkspaceSidebarAndHeader,
@@ -12,6 +13,7 @@ import {
   createWorktreeViaDaemon,
   delayBrowserAgentCreatedStatus,
   expectComposerGithubAttachmentPill,
+  expectGithubPrCheckout,
   expectNewWorkspaceProjectSelected,
   expectPickerClosed,
   expectPickerOpen,
@@ -21,6 +23,7 @@ import {
   openGlobalNewWorkspaceComposer,
   openBranchPicker,
   openNewWorkspaceComposer,
+  openNewWorktreeComposer,
   openProjectViaDaemon,
   openStartingRefPicker,
   pasteGithubPrUrl,
@@ -973,6 +976,37 @@ test.describe("New workspace flow", () => {
         number: pr.number,
         title: pr.title,
       });
+    } finally {
+      await ghRepo.cleanup();
+    }
+  });
+
+  test("PR added from the attachment menu becomes the starting ref until a branch is chosen", async ({
+    page,
+  }) => {
+    test.skip(!hasGithubAuth(), "Requires GitHub authentication (gh auth login)");
+
+    const ghRepo = await createTempGithubRepo({
+      category: "new-workspace-pr-menu",
+      prs: [{ title: "Attach from menu selects start ref", state: "open" }],
+    });
+    const pr = ghRepo.prs[0]!;
+
+    try {
+      const openedProject = await openProjectViaDaemon(client, pr.localPath);
+      localWorkspaceIds.add(openedProject.workspaceId);
+      await openNewWorktreeComposer(page, openedProject);
+      // The project checkout sits on the PR branch, so that branch is the untouched default.
+      await expectPickerSelected(page, pr.branch);
+
+      await addGithubPrFromAttachmentMenu(page, pr);
+      await expectGithubPrCheckout(page, pr);
+
+      // An explicit branch choice afterwards wins, and the PR stays attached as context.
+      await openStartingRefPicker(page);
+      await searchAndSelectBranchInPicker(page, "main");
+      await expectPickerSelected(page, "main");
+      await expectComposerGithubAttachmentPill(page, { number: pr.number, title: pr.title });
     } finally {
       await ghRepo.cleanup();
     }
