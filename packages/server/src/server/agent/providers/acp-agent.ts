@@ -2945,8 +2945,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
           diagnostic: this.collectDiagnostic(error.message),
         };
         this.settleCommandsReady();
-        // Active prompts already report their own turn-scoped failure. Idle transport
-        // failure is unscoped so AgentManager moves the agent to its error lifecycle.
+        // The active prompt's failure sets AgentManager.lastError before
+        // finalizeForegroundTurn moves it to error. Emitting here as well would
+        // duplicate the error; only idle disconnects need an unscoped failure.
         if (this.sessionId && !this.activeForegroundTurnId) {
           this.pushEvent(this.remoteDisconnectEvent);
         }

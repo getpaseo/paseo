@@ -300,6 +300,54 @@ describe("remote ACP over WebSocket", () => {
     expect(manager.getAgent(agent.id)?.lastError).toContain("Remote ACP WebSocket closed");
   });
 
+  test("keeps a managed agent in error after a foreground disconnect settles", async () => {
+    const remote = await startRemoteAgent({ prompt() {} });
+    const logger = createTestLogger();
+    const client = new GenericACPAgentClient({
+      logger,
+      transport: { type: "websocket", url: remote.url },
+    });
+    const manager = new AgentManager({ clients: { acp: client }, logger });
+    const agent = await manager.createAgent({ provider: "acp", cwd: tmpdir() }, undefined, {
+      workspaceId: undefined,
+    });
+    cleanups.push(() => manager.closeAgent(agent.id));
+
+    const lifecycles: string[] = [];
+    manager.subscribe(
+      (event) => {
+        if (event.type === "agent_state") lifecycles.push(event.agent.lifecycle);
+      },
+      { agentId: agent.id, replayState: false },
+    );
+    const run = expect(manager.runAgent(agent.id, "disconnect")).rejects.toThrow(
+      "Remote ACP WebSocket closed",
+    );
+    await vi.waitFor(() => {
+      expect(remote.requests).toContainEqual(expect.objectContaining({ method: "session/prompt" }));
+      expect(manager.getAgent(agent.id)?.lifecycle).toBe("running");
+    });
+    for (const socket of remote.sockets) socket.terminate();
+    await run;
+
+    expect(manager.getAgent(agent.id)).toMatchObject({
+      lifecycle: "error",
+      lastError: expect.stringContaining("Remote ACP WebSocket closed"),
+      activeForegroundTurnId: null,
+      activeTurnId: null,
+    });
+    expect(manager.hasInFlightRun(agent.id)).toBe(false);
+    expect(lifecycles).toContain("running");
+    expect(lifecycles).not.toContain("idle");
+    expect(lifecycles.at(-1)).toBe("error");
+    const systemErrors = manager.getTimeline(agent.id).filter((item) => {
+      return item.type === "assistant_message" && item.text.includes("[System Error]");
+    });
+    expect(systemErrors).toEqual([
+      expect.objectContaining({ text: expect.stringContaining("Remote ACP WebSocket closed") }),
+    ]);
+  });
+
   test("uses the same authenticated transport for catalog, prompt, resume, and cleanup", async () => {
     const remote = await startRemoteAgent({
       requireAuth: true,
