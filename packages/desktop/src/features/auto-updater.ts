@@ -8,6 +8,7 @@ import { autoUpdater } from "electron-updater";
 import {
   createAppUpdateService,
   type AppUpdateCheckResult,
+  type AppUpdateInstallRequest,
   type AppUpdateInstallResult,
   type AppUpdateRuntime,
   type AppUpdateRuntimeConfiguration,
@@ -213,7 +214,7 @@ class ElectronAppUpdateRuntime implements AppUpdateRuntime {
     return autoUpdater.downloadUpdate();
   }
 
-  quitAndInstall(targetVersion: string, isSilent: boolean, isForceRunAfter: boolean): void {
+  quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest): void {
     autoUpdater.autoRunAppAfterInstall = isForceRunAfter;
     updateLifecycleLog.quitAndInstallRequested({
       targetVersion,

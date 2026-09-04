@@ -41,11 +41,17 @@ export interface AppUpdateRuntimeConfiguration {
   onError(error: unknown): void;
 }
 
+export interface AppUpdateInstallRequest {
+  targetVersion: string;
+  isSilent: boolean;
+  isForceRunAfter: boolean;
+}
+
 export interface AppUpdateRuntime {
   configure(input: AppUpdateRuntimeConfiguration): void;
   checkForUpdates(): Promise<RuntimeUpdateCheckResult | null>;
   downloadUpdate(targetVersion: string): Promise<unknown>;
-  quitAndInstall(targetVersion: string, isSilent: boolean, isForceRunAfter: boolean): void;
+  quitAndInstall(input: AppUpdateInstallRequest): void;
 }
 
 export interface AppUpdateService {
@@ -111,7 +117,11 @@ async function performQuitAndInstall(
   },
 ): Promise<void> {
   if (onBeforeQuit) await onBeforeQuit();
-  runtime.quitAndInstall(targetVersion, /* isSilent */ !restart, /* isForceRunAfter */ restart);
+  runtime.quitAndInstall({
+    targetVersion,
+    isSilent: !restart,
+    isForceRunAfter: restart,
+  });
 }
 
 function getErrorMessage(error: unknown): string {

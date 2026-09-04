@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   createAppUpdateService,
+  type AppUpdateInstallRequest,
   type AppUpdateRuntime,
   type AppUpdateRuntimeConfiguration,
   type RuntimeUpdateInfo,
@@ -142,7 +143,7 @@ class FakeAppUpdateRuntime implements AppUpdateRuntime {
     }
   }
 
-  quitAndInstall(targetVersion: string, isSilent: boolean, isForceRunAfter: boolean): void {
+  quitAndInstall({ targetVersion, isSilent, isForceRunAfter }: AppUpdateInstallRequest): void {
     if (this.downloadedUpdate) {
       this.installedVersions.push(this.downloadedUpdate.version);
       this.installModes.push({ targetVersion, isSilent, isForceRunAfter });
