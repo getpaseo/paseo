@@ -1,4 +1,5 @@
 import type { Logger } from "pino";
+import type { ProviderTransport } from "../provider-launch-config.js";
 
 import type { AgentModelDefinition } from "../agent-sdk-types.js";
 import {
@@ -11,7 +12,9 @@ import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 interface KimiACPAgentClientOptions {
   logger: Logger;
-  command: [string, ...string[]];
+  command?: [string, ...string[]];
+  transport?: ProviderTransport;
+  authMethodId?: string;
   env?: Record<string, string>;
   providerId?: string;
   label?: string;
@@ -87,6 +90,8 @@ export class KimiACPAgentClient extends GenericACPAgentClient {
     super({
       logger: options.logger,
       command: options.command,
+      transport: options.transport,
+      authMethodId: options.authMethodId,
       env: options.env,
       providerId: options.providerId,
       label: options.label,

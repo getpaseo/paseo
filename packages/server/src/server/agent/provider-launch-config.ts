@@ -17,6 +17,7 @@ export {
   type ProviderOverrides,
   type ProviderProfileModel,
   type ProviderRuntimeSettings,
+  type ProviderTransport,
 } from "@getpaseo/protocol/provider-config";
 import {
   ProviderOverrideSchema,

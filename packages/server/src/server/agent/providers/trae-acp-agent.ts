@@ -1,10 +1,13 @@
 import type { Logger } from "pino";
+import type { ProviderTransport } from "../provider-launch-config.js";
 
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 interface TraeACPAgentClientOptions {
   logger: Logger;
-  command: [string, ...string[]];
+  command?: [string, ...string[]];
+  transport?: ProviderTransport;
+  authMethodId?: string;
   env?: Record<string, string>;
   providerId?: string;
   label?: string;
@@ -18,6 +21,8 @@ export class TraeACPAgentClient extends GenericACPAgentClient {
     super({
       logger: options.logger,
       command: options.command,
+      transport: options.transport,
+      authMethodId: options.authMethodId,
       env: options.env,
       providerId: options.providerId,
       label: options.label,

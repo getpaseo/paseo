@@ -259,7 +259,13 @@ function getProviderClientFactory(provider: string): ProviderClientFactory {
 }
 
 function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings | undefined {
-  if (!override?.command && !override?.env && !override?.disallowedTools) {
+  if (
+    !override?.command &&
+    !override?.transport &&
+    !override?.authMethodId &&
+    !override?.env &&
+    !override?.disallowedTools
+  ) {
     return undefined;
   }
 
@@ -270,6 +276,8 @@ function toRuntimeSettings(override?: ProviderOverride): ProviderRuntimeSettings
           argv: override.command,
         }
       : undefined,
+    transport: override.transport,
+    authMethodId: override.authMethodId,
     env: override.env,
     disallowedTools: override.disallowedTools,
   };
@@ -279,12 +287,13 @@ function mergeRuntimeSettings(
   base: ProviderRuntimeSettings | undefined,
   override: ProviderRuntimeSettings | undefined,
 ): ProviderRuntimeSettings | undefined {
-  if (!base && !override) {
-    return undefined;
-  }
+  if (!base) return override;
+  if (!override) return base;
 
   return {
-    command: override?.command ?? base?.command,
+    command: override.command ?? base.command,
+    transport: override.transport ?? base.transport,
+    authMethodId: override.authMethodId ?? base.authMethodId,
     env:
       base?.env || override?.env
         ? {
@@ -751,6 +760,18 @@ function buildResolvedBuiltinProviders(
   return resolvedProviders;
 }
 
+function resolveACPCommand(
+  providerId: string,
+  override: ProviderOverride,
+): [string, ...string[]] | undefined {
+  if (override.command && override.transport) {
+    throw new Error(`ACP provider '${providerId}' cannot declare both command and transport`);
+  }
+  if (override.command && isNonEmptyStringArray(override.command)) return override.command;
+  if (override.transport?.type === "websocket") return undefined;
+  throw new Error(`ACP provider '${providerId}' requires a command or transport`);
+}
+
 function addDerivedProviders(
   resolvedProviders: Map<string, ResolvedProvider>,
   providerOverrides: Record<string, ProviderOverride>,
@@ -766,11 +787,7 @@ function addDerivedProviders(
     }
 
     if (override.extends === "acp") {
-      if (!override.command || !isNonEmptyStringArray(override.command)) {
-        throw new Error(`ACP provider '${providerId}' requires a command`);
-      }
-      // Capture command in const for closure - TypeScript can't track type refinement inside closures
-      const command = override.command;
+      const command = resolveACPCommand(providerId, override);
 
       resolvedProviders.set(providerId, {
         definition: createDerivedDefinition(
@@ -795,6 +812,8 @@ function addDerivedProviders(
           const acpOptions = {
             logger,
             command,
+            transport: override.transport,
+            authMethodId: override.authMethodId,
             env: override.env,
             providerId,
             label: override.label ?? providerId,

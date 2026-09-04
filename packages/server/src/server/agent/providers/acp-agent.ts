@@ -14,6 +14,7 @@ import type {
 import {
   ClientSideConnection,
   PROTOCOL_VERSION,
+  RequestError,
   type AgentCapabilities as ACPAgentCapabilities,
   type Error as ACPError,
   type AnyMessage,
@@ -58,6 +59,8 @@ import {
   type Stream as ACPStream,
 } from "@agentclientprotocol/sdk";
 import type { Logger } from "pino";
+import { WebSocket, type RawData } from "ws";
+import { ProviderWebSocketUrlSchema } from "@getpaseo/protocol/provider-config";
 
 import {
   getAgentStreamEventTurnId,
@@ -108,6 +111,7 @@ import {
 import { importSessionFromPersistence } from "../provider-session-import.js";
 import {
   checkProviderLaunchAvailable,
+  createProviderEnv,
   createProviderEnvSpec,
   resolveProviderLaunch,
   type ProviderRuntimeSettings,
@@ -305,6 +309,176 @@ function normalizeACPIncomingMessage(message: AnyMessage): AnyMessage {
   return message;
 }
 
+export interface ACPWebSocketStreamHandle {
+  stream: ACPStream;
+  ready: Promise<void>;
+  closed: Promise<void>;
+  close(): Promise<void>;
+}
+
+export function createLoggedWebSocketStream(
+  url: string,
+  options: {
+    headers?: Record<string, string>;
+    protocols?: string[];
+    logger: Logger;
+    provider: string;
+    onUnexpectedClose?: (error: Error) => void;
+  },
+): ACPWebSocketStreamHandle {
+  // Validate at the socket boundary too: programmatic providers bypass config parsing.
+  ProviderWebSocketUrlSchema.parse(url);
+  const socket = new WebSocket(url, options.protocols, {
+    headers: options.headers,
+    maxPayload: 16 * 1024 * 1024,
+    handshakeTimeout: 30_000,
+  });
+  let expectedClose = false;
+  let readableController: ReadableStreamDefaultController<AnyMessage> | null = null;
+  let settleReady!: () => void;
+  let rejectReady!: (error: Error) => void;
+  let readySettled = false;
+  let settleClosed!: () => void;
+  let closedSettled = false;
+  let failureNotified = false;
+
+  const ready = new Promise<void>((resolve, reject) => {
+    settleReady = resolve;
+    rejectReady = reject;
+  });
+  void ready.catch(() => undefined);
+  const closed = new Promise<void>((resolve) => {
+    settleClosed = resolve;
+  });
+
+  const closeReadable = () => {
+    try {
+      readableController?.close();
+    } catch (error) {
+      options.logger.warn(
+        { err: error, provider: options.provider },
+        "Failed to close ACP WebSocket readable stream",
+      );
+    }
+    readableController = null;
+  };
+  const failBeforeReady = (error: Error) => {
+    if (readySettled) return;
+    readySettled = true;
+    rejectReady(error);
+  };
+  const notifyUnexpectedClose = (error: Error) => {
+    if (expectedClose || failureNotified) return;
+    failureNotified = true;
+    options.onUnexpectedClose?.(error);
+  };
+
+  socket.once("open", () => {
+    readySettled = true;
+    settleReady();
+  });
+  socket.on("message", (data: RawData, isBinary: boolean) => {
+    if (isBinary) {
+      const error = new Error("Remote ACP endpoint sent a binary WebSocket frame");
+      options.logger.warn({ provider: options.provider }, error.message);
+      notifyUnexpectedClose(error);
+      socket.terminate();
+      return;
+    }
+    try {
+      const message: unknown = JSON.parse(data.toString());
+      if (!isRecord(message) || message.jsonrpc !== "2.0") {
+        throw new Error("ACP WebSocket frame must contain one JSON-RPC 2.0 object");
+      }
+      readableController?.enqueue(normalizeACPIncomingMessage(message as AnyMessage));
+    } catch (error) {
+      options.logger.warn(
+        {
+          err: summarizeMalformedACPStdoutError(error),
+          provider: options.provider,
+        },
+        "Remote ACP endpoint emitted an invalid WebSocket frame",
+      );
+      notifyUnexpectedClose(
+        new Error("Remote ACP endpoint sent an invalid JSON-RPC WebSocket frame"),
+      );
+      socket.terminate();
+    }
+  });
+  socket.once("error", (error) => {
+    failBeforeReady(error);
+  });
+  socket.once("close", (code, reason) => {
+    const suffix = reason.length > 0 ? `: ${reason.toString()}` : "";
+    const error = new Error(`Remote ACP WebSocket closed (${code}${suffix})`);
+    failBeforeReady(error);
+    closeReadable();
+    if (!closedSettled) {
+      closedSettled = true;
+      settleClosed();
+    }
+    notifyUnexpectedClose(error);
+  });
+
+  const stream: ACPStream = {
+    readable: new ReadableStream<AnyMessage>({
+      start(controller) {
+        readableController = controller;
+      },
+      cancel() {
+        // The stream is already closed by cancellation; do not close its controller again.
+        readableController = null;
+        expectedClose = true;
+        socket.close(1000, "ACP stream cancelled");
+      },
+    }),
+    writable: new WritableStream<AnyMessage>({
+      async write(message) {
+        await ready;
+        if (socket.readyState !== WebSocket.OPEN) {
+          throw new Error("Remote ACP WebSocket is not open");
+        }
+        await new Promise<void>((resolve, reject) => {
+          socket.send(JSON.stringify(message), (error) => {
+            if (error) reject(error);
+            else resolve();
+          });
+        });
+      },
+      close() {
+        expectedClose = true;
+        socket.close(1000, "ACP stream closed");
+      },
+      abort() {
+        expectedClose = true;
+        socket.terminate();
+      },
+    }),
+  };
+
+  return {
+    stream,
+    ready,
+    closed,
+    async close() {
+      if (closedSettled) return;
+      expectedClose = true;
+      if (socket.readyState === WebSocket.CLOSED) return;
+      if (socket.readyState === WebSocket.CONNECTING) {
+        socket.terminate();
+      } else {
+        socket.close(1000, "Paseo closed ACP transport");
+      }
+      const timeout = setTimeout(() => socket.terminate(), 2_000);
+      try {
+        await closed;
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+  };
+}
+
 export function createLoggedNdJsonStream(
   output: NodeWritableStream,
   input: NodeReadableStream,
@@ -475,22 +649,241 @@ interface ACPAgentSessionOptions {
 }
 
 export interface SpawnedACPProcess {
-  child: ChildProcessWithoutNullStreams;
+  probeSessionId?: string;
+  child?: ChildProcessWithoutNullStreams;
   connection: ClientSideConnection;
   initialize: InitializeResponse;
   stderrChunks?: string[];
+  close?: () => Promise<void>;
+  diagnostic?: () => string | undefined;
+  failure?: Promise<never>;
 }
 
 type UninitializedACPProcess = Omit<SpawnedACPProcess, "initialize"> & {
   initialize?: InitializeResponse;
 };
 
-interface ACPProcessTransport {
-  child: ChildProcessWithoutNullStreams;
+interface ACPTransport {
+  kind: "stdio" | "websocket";
+  child?: ChildProcessWithoutNullStreams;
   connection: ClientSideConnection;
   stderrChunks: string[];
-  spawnReady: Promise<void>;
-  spawnError: Promise<never>;
+  ready: Promise<void>;
+  failure: Promise<never>;
+  close(): Promise<void>;
+  diagnostic(): string | undefined;
+}
+
+interface CreateACPTransportOptions {
+  provider: string;
+  logger: Logger;
+  runtimeSettings?: ProviderRuntimeSettings;
+  defaultCommand: [string, ...string[]];
+  cwd: string;
+  launchEnv?: Record<string, string>;
+  client: ACPClient;
+  terminateProcess: ProcessTerminator;
+}
+
+async function createACPTransport(options: CreateACPTransportOptions): Promise<ACPTransport> {
+  const remote = options.runtimeSettings?.transport;
+  if (remote?.type === "websocket") {
+    const env = createProviderEnv({
+      runtimeSettings: options.runtimeSettings,
+      overlays: [options.launchEnv],
+    });
+    const headers = { ...remote.headers };
+    if (remote.bearerTokenEnv) {
+      const token = env[remote.bearerTokenEnv];
+      if (!token) {
+        throw new Error(
+          `Remote ACP bearer token environment variable '${remote.bearerTokenEnv}' is not set`,
+        );
+      }
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    let rejectFailure!: (error: Error) => void;
+    let failureSettled = false;
+    let closeError: Error | undefined;
+    const failure = new Promise<never>((_, reject) => {
+      rejectFailure = reject;
+    });
+    void failure.catch(() => undefined);
+    const handle = createLoggedWebSocketStream(remote.url, {
+      headers,
+      protocols: remote.protocols,
+      logger: options.logger,
+      provider: options.provider,
+      onUnexpectedClose(error) {
+        closeError = error;
+        if (!failureSettled) {
+          failureSettled = true;
+          rejectFailure(error);
+        }
+      },
+    });
+    const connection = new ClientSideConnection(() => options.client, handle.stream);
+    return {
+      kind: "websocket",
+      connection,
+      stderrChunks: [],
+      ready: handle.ready,
+      failure,
+      close: () => handle.close(),
+      diagnostic: () => closeError?.message,
+    };
+  }
+
+  const prefix = await resolveProviderLaunch({
+    commandConfig: options.runtimeSettings?.command,
+    defaultBinary: options.defaultCommand[0],
+  });
+  const availability = await checkProviderLaunchAvailable(prefix);
+  if (!availability.available) {
+    throw new Error(`${options.provider} command '${options.defaultCommand[0]}' not found`);
+  }
+  const command = prefix.command;
+  const args = [...prefix.args, ...options.defaultCommand.slice(1)];
+  const child = spawnProcess(command, args, {
+    cwd: options.cwd,
+    ...createProviderEnvSpec({
+      runtimeSettings: options.runtimeSettings,
+      overlays: [options.launchEnv],
+    }),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  assertChildWithPipes(child);
+
+  const stderrChunks: string[] = [];
+  let expectedClose = false;
+  child.stderr.on("data", (chunk: Buffer | string) => {
+    stderrChunks.push(chunk.toString());
+  });
+  let rejectFailure!: (error: Error) => void;
+  let failureSettled = false;
+  const failure = new Promise<never>((_, reject) => {
+    rejectFailure = reject;
+    child.once("error", (error) => {
+      failureSettled = true;
+      const stderr = stderrChunks.join("").trim();
+      reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
+    });
+  });
+  void failure.catch(() => undefined);
+  const ready = new Promise<void>((resolve) => {
+    child.once("spawn", resolve);
+  });
+  child.once("exit", (code, signal) => {
+    if (expectedClose) return;
+    const error = new Error(
+      `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
+    );
+    if (!failureSettled) {
+      failureSettled = true;
+      rejectFailure(error);
+    }
+  });
+
+  const stream = createLoggedNdJsonStream(
+    Writable.toWeb(child.stdin),
+    Readable.toWeb(child.stdout),
+    { logger: options.logger, provider: options.provider },
+  );
+  const connection = new ClientSideConnection(() => options.client, stream);
+  return {
+    kind: "stdio",
+    child,
+    connection,
+    stderrChunks,
+    ready,
+    failure,
+    async close() {
+      expectedClose = true;
+      await terminateChildProcess(child, 2_000, options.terminateProcess);
+    },
+    diagnostic() {
+      return stderrChunks.join("").trim() || undefined;
+    },
+  };
+}
+
+function resolveACPRequestCwd(
+  cwd: string,
+  runtimeSettings: ProviderRuntimeSettings | undefined,
+): string {
+  return runtimeSettings?.transport?.type === "websocket"
+    ? (runtimeSettings.transport.cwd ?? cwd)
+    : cwd;
+}
+
+function requestWithACPTransport<T>(
+  transport: Pick<SpawnedACPProcess, "failure">,
+  request: () => Promise<T>,
+): Promise<T> {
+  return transport.failure ? Promise.race([request(), transport.failure]) : request();
+}
+
+async function authenticateACPConnection(
+  connection: ClientSideConnection,
+  initialize: InitializeResponse,
+  authMethodId: string | undefined,
+): Promise<void> {
+  if (!authMethodId) return;
+  const method = initialize.authMethods?.find((candidate) => candidate.id === authMethodId);
+  if (!method) {
+    const available = initialize.authMethods?.map((candidate) => candidate.id).join(", ") || "none";
+    throw new Error(
+      `ACP authentication method '${authMethodId}' was not advertised (available: ${available})`,
+    );
+  }
+  const methodType = "type" in method ? method.type : "agent";
+  if (methodType !== "agent") {
+    throw new Error(
+      `ACP authentication method '${authMethodId}' uses '${methodType}' authentication; Paseo can only invoke agent-managed authentication on this connection`,
+    );
+  }
+  await connection.authenticate({ methodId: authMethodId });
+}
+
+async function initializeACPTransportConnection(
+  transport: ACPTransport,
+  options: {
+    clientCapabilityMeta?: ACPClientCapabilityMeta;
+    clientCapabilities?: ACPClientCapabilities;
+    authMethodId?: string;
+    timeoutMs?: number;
+  },
+): Promise<InitializeResponse> {
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = options.timeoutMs
+    ? new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => {
+          reject(new Error(`ACP initialize timed out after ${options.timeoutMs}ms`));
+        }, options.timeoutMs);
+      })
+    : null;
+  try {
+    return await Promise.race([
+      (async () => {
+        await transport.ready;
+        const initialize = await transport.connection.initialize({
+          protocolVersion: PROTOCOL_VERSION,
+          clientCapabilities: buildACPClientCapabilities(
+            options.clientCapabilityMeta,
+            options.clientCapabilities,
+          ),
+          clientInfo: { name: "Paseo", version: "dev" },
+        });
+        await authenticateACPConnection(transport.connection, initialize, options.authMethodId);
+        return initialize;
+      })(),
+      transport.failure,
+      ...(timeoutPromise ? [timeoutPromise] : []),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
 }
 
 export interface ACPToolSnapshot {
@@ -974,14 +1367,17 @@ export class ACPAgentClient implements AgentClient {
         raceProviderRefreshAbort(
           context?.signal,
           this.runACPRequest(() =>
-            initializedProbe.connection.newSession({
-              cwd,
-              mcpServers: [],
-            }),
+            requestWithACPTransport(initializedProbe, () =>
+              initializedProbe.connection.newSession({
+                cwd: resolveACPRequestCwd(cwd, this.runtimeSettings),
+                mcpServers: [],
+              }),
+            ),
           ),
         ),
       );
       const transformed = this.transformSessionResponse(response);
+      initializedProbe.probeSessionId = response.sessionId;
       const derivedModels = deriveModelDefinitionsFromACP(
         this.provider,
         transformed.models,
@@ -996,7 +1392,8 @@ export class ACPAgentClient implements AgentClient {
                 sessionId: response.sessionId,
                 models: derivedModels,
                 configOptions: transformed.configOptions,
-                runRequest: (request) => this.runACPRequest(request),
+                runRequest: (request) =>
+                  this.runACPRequest(() => requestWithACPTransport(initializedProbe, request)),
                 transformConfigOptions: (configOptions) =>
                   this.configOptionsTransformer
                     ? this.configOptionsTransformer(configOptions)
@@ -1032,12 +1429,15 @@ export class ACPAgentClient implements AgentClient {
     const probe = await this.spawnProcess(PROBE_ENV);
     try {
       const response = await this.runACPRequest(() =>
-        probe.connection.newSession({
-          cwd: config.cwd,
-          mcpServers: [],
-        }),
+        requestWithACPTransport(probe, () =>
+          probe.connection.newSession({
+            cwd: resolveACPRequestCwd(config.cwd, this.runtimeSettings),
+            mcpServers: [],
+          }),
+        ),
       );
       const transformed = this.transformSessionResponse(response);
+      probe.probeSessionId = response.sessionId;
       return [
         autoAcceptFeature,
         ...deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions),
@@ -1061,7 +1461,14 @@ export class ACPAgentClient implements AgentClient {
       let cursor: string | null | undefined;
       for (;;) {
         const page: ListSessionsResponse = await this.runACPRequest(() =>
-          probe.connection.listSessions(acpSessionListRequest(cursor, options?.cwd)),
+          requestWithACPTransport(probe, () =>
+            probe.connection.listSessions(
+              acpSessionListRequest(
+                cursor,
+                options?.cwd ? resolveACPRequestCwd(options.cwd, this.runtimeSettings) : undefined,
+              ),
+            ),
+          ),
         );
         for (const session of page.sessions) {
           sessions.push({
@@ -1094,6 +1501,9 @@ export class ACPAgentClient implements AgentClient {
   }
 
   async isAvailable(): Promise<boolean> {
+    if (this.runtimeSettings?.transport?.type === "websocket") {
+      return true;
+    }
     try {
       await this.resolveLaunchCommand();
       return true;
@@ -1114,6 +1524,9 @@ export class ACPAgentClient implements AgentClient {
       child: transport.child,
       connection: transport.connection,
       stderrChunks: transport.stderrChunks,
+      close: transport.close,
+      diagnostic: transport.diagnostic,
+      failure: transport.failure,
     };
     options?.onSpawned?.(probe);
     try {
@@ -1125,102 +1538,57 @@ export class ACPAgentClient implements AgentClient {
       probe.initialize = initialize;
       return initializedProbe;
     } catch (error) {
-      await terminateChildProcess(transport.child, 2_000, this.terminateProcess);
+      await transport.close();
       throw error;
     }
   }
 
-  protected async spawnTransport(launchEnv?: Record<string, string>): Promise<ACPProcessTransport> {
-    const { command, args } = await this.resolveLaunchCommand();
-    const child = spawnProcess(command, args, {
+  protected async spawnTransport(launchEnv?: Record<string, string>): Promise<ACPTransport> {
+    return createACPTransport({
+      provider: this.provider,
+      logger: this.logger,
+      runtimeSettings: this.runtimeSettings,
+      defaultCommand: this.defaultCommand,
       cwd: process.cwd(),
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: [launchEnv],
-      }),
-      stdio: ["pipe", "pipe", "pipe"],
+      launchEnv,
+      client: this.buildProbeClient(),
+      terminateProcess: this.terminateProcess,
     });
-    assertChildWithPipes(child);
-
-    const stderrChunks: string[] = [];
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      stderrChunks.push(chunk.toString());
-    });
-
-    const spawnErrorPromise = new Promise<never>((_, reject) => {
-      child.once("error", (error) => {
-        const stderr = stderrChunks.join("").trim();
-        reject(new Error(stderr ? `${String(error)}\n${stderr}` : String(error)));
-      });
-    });
-    const spawnReadyPromise = new Promise<void>((resolve) => {
-      child.once("spawn", () => {
-        resolve();
-      });
-    });
-
-    const stream = createLoggedNdJsonStream(
-      Writable.toWeb(child.stdin),
-      Readable.toWeb(child.stdout),
-      { logger: this.logger, provider: this.provider },
-    );
-    const connection = new ClientSideConnection(() => this.buildProbeClient(), stream);
-
-    return {
-      child,
-      connection,
-      stderrChunks,
-      spawnReady: spawnReadyPromise,
-      spawnError: spawnErrorPromise,
-    };
   }
 
   protected async initializeTransport(
-    transport: ACPProcessTransport,
+    transport: ACPTransport,
     initializeTimeoutMs?: number,
   ): Promise<InitializeResponse> {
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-    const initializeTimeoutPromise = initializeTimeoutMs
-      ? new Promise<never>((_, reject) => {
-          timeout = setTimeout(() => {
-            reject(new Error(`ACP initialize timed out after ${initializeTimeoutMs}ms`));
-          }, initializeTimeoutMs);
-        })
-      : null;
-
-    try {
-      return await this.runACPRequest(() =>
-        Promise.race([
-          transport.connection.initialize({
-            protocolVersion: PROTOCOL_VERSION,
-            clientCapabilities: buildACPClientCapabilities(
-              this.clientCapabilityMeta,
-              this.clientCapabilities,
-            ),
-            clientInfo: { name: "Paseo", version: "dev" },
-          }),
-          transport.spawnError,
-          ...(initializeTimeoutPromise ? [initializeTimeoutPromise] : []),
-        ]),
-      );
-    } finally {
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-    }
+    return this.runACPRequest(() =>
+      initializeACPTransportConnection(transport, {
+        clientCapabilityMeta: this.clientCapabilityMeta,
+        clientCapabilities: this.clientCapabilities,
+        authMethodId: this.runtimeSettings?.authMethodId,
+        timeoutMs: initializeTimeoutMs,
+      }),
+    );
   }
 
   protected buildProbeClient(): ACPClient {
+    const isRemote = this.runtimeSettings?.transport?.type === "websocket";
+    const capabilities = this.clientCapabilities;
     return {
       async requestPermission(): Promise<RequestPermissionResponse> {
         return { outcome: { outcome: "cancelled" } };
       },
       async sessionUpdate(): Promise<void> {},
       async readTextFile(params: ReadTextFileRequest) {
+        if (isRemote && capabilities?.fs?.readTextFile !== true) {
+          throw RequestError.methodNotFound("fs/read_text_file");
+        }
         const content = await fs.readFile(params.path, "utf8");
         return { content };
       },
       async writeTextFile(params: WriteTextFileRequest) {
+        if (isRemote && capabilities?.fs?.writeTextFile !== true) {
+          throw RequestError.methodNotFound("fs/write_text_file");
+        }
         await fs.mkdir(path.dirname(params.path), { recursive: true });
         await fs.writeFile(params.path, params.content, "utf8");
         return {};
@@ -1233,11 +1601,25 @@ export class ACPAgentClient implements AgentClient {
 
   protected async closeProbe(probe: UninitializedACPProcess): Promise<void> {
     try {
-      if (probe.initialize?.agentCapabilities?.sessionCapabilities?.close) {
-        // No active session to close here; ignore capability.
+      if (
+        this.runtimeSettings?.transport?.type === "websocket" &&
+        probe.probeSessionId &&
+        probe.initialize?.agentCapabilities?.sessionCapabilities?.close
+      ) {
+        await withTimeout(
+          requestWithACPTransport(probe, () =>
+            probe.connection.unstable_closeSession({ sessionId: probe.probeSessionId! }),
+          ),
+          2_000,
+          "ACP probe session/close timed out",
+        ).catch(() => undefined);
       }
     } finally {
-      await terminateChildProcess(probe.child, 2_000, this.terminateProcess);
+      if (probe.close) {
+        await probe.close();
+      } else if (probe.child) {
+        await terminateChildProcess(probe.child, 2_000, this.terminateProcess);
+      }
     }
   }
 
@@ -1258,24 +1640,26 @@ export class ACPAgentClient implements AgentClient {
     const rows: DiagnosticEntry[] = [];
     const phaseTimeoutMs = options.phaseTimeoutMs ?? ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS;
     const cwd = options.cwd ?? homedir();
-    let transport: ACPProcessTransport | null = null;
+    let transport: ACPTransport | null = null;
+    let initialize: InitializeResponse | undefined;
+    let probeSessionId: string | undefined;
 
     try {
       const spawnStartedAt = Date.now();
       try {
         transport = await this.spawnTransport(PROBE_ENV);
         await withTimeout(
-          Promise.race([transport.spawnReady, transport.spawnError]),
+          Promise.race([transport.ready, transport.failure]),
           phaseTimeoutMs,
           `ACP spawn timed out after ${phaseTimeoutMs}ms`,
         );
         rows.push({
-          label: "ACP spawn",
+          label: transport.kind === "websocket" ? "ACP connect" : "ACP spawn",
           value: `ok (${formatDurationMs(spawnStartedAt)})`,
         });
       } catch (error) {
         rows.push({
-          label: "ACP spawn",
+          label: transport?.kind === "websocket" ? "ACP connect" : "ACP spawn",
           value: `error: ${toDiagnosticErrorMessage(error)}`,
         });
         return rows;
@@ -1284,7 +1668,7 @@ export class ACPAgentClient implements AgentClient {
 
       const initializeStartedAt = Date.now();
       try {
-        await this.initializeTransport(activeTransport, phaseTimeoutMs);
+        initialize = await this.initializeTransport(activeTransport, phaseTimeoutMs);
         rows.push({
           label: "ACP initialize",
           value: `ok (${formatDurationMs(initializeStartedAt)})`,
@@ -1302,15 +1686,18 @@ export class ACPAgentClient implements AgentClient {
       try {
         const response = await withTimeout(
           this.runACPRequest(() =>
-            activeTransport.connection.newSession({
-              cwd,
-              mcpServers: [],
-            }),
+            requestWithACPTransport(activeTransport, () =>
+              activeTransport.connection.newSession({
+                cwd: resolveACPRequestCwd(cwd, this.runtimeSettings),
+                mcpServers: [],
+              }),
+            ),
           ),
           phaseTimeoutMs,
           `ACP session/new timed out after ${phaseTimeoutMs}ms`,
         );
         const transformed = this.transformSessionResponse(response);
+        probeSessionId = response.sessionId;
         const models = deriveModelDefinitionsFromACP(
           this.provider,
           transformed.models,
@@ -1342,7 +1729,13 @@ export class ACPAgentClient implements AgentClient {
       if (transport) {
         const cleanupStartedAt = Date.now();
         try {
-          await terminateChildProcess(transport.child, 2_000, this.terminateProcess);
+          await this.closeProbe({
+            connection: transport.connection,
+            close: transport.close,
+            failure: transport.failure,
+            initialize,
+            probeSessionId,
+          });
           rows.push({
             label: "ACP cleanup",
             value: `ok (${formatDurationMs(cleanupStartedAt)})`,
@@ -1436,6 +1829,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private readonly config: AgentSessionConfig;
   private child: ChildProcessWithoutNullStreams | null = null;
+  private transportClose: (() => Promise<void>) | null = null;
+  private transportDiagnostic: (() => string | undefined) | null = null;
+  private transportFailure: Promise<never> | null = null;
+  private remoteDisconnectEvent: Extract<AgentStreamEvent, { type: "turn_failed" }> | null = null;
   private connection: ClientSideConnection | null = null;
   private agentCapabilities: ACPAgentCapabilities | null = null;
   private sessionId: string | null = null;
@@ -1502,20 +1899,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   async initializeNewSession(): Promise<void> {
     try {
       const spawned = await this.spawnProcess();
-      this.child = spawned.child;
+      this.child = spawned.child ?? null;
+      this.transportClose = spawned.close ?? null;
+      this.transportDiagnostic = spawned.diagnostic ?? null;
+      this.transportFailure = spawned.failure ?? null;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
 
       const response = await this.runACPRequest(() =>
         this.connection!.newSession({
-          cwd: this.config.cwd,
+          cwd: resolveACPRequestCwd(this.config.cwd, this.runtimeSettings),
           mcpServers: this.acpMcpServers(),
         }),
       );
       this.sessionId = response.sessionId;
       this.bootstrapThreadEventPending = true;
       this.applySessionState(response);
-      await this.applyConfiguredOverrides();
+      await this.runACPRequest(() => this.applyConfiguredOverrides());
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
     }
@@ -1536,7 +1936,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       }
 
       const spawned = await this.spawnProcess();
-      this.child = spawned.child;
+      this.child = spawned.child ?? null;
+      this.transportClose = spawned.close ?? null;
+      this.transportDiagnostic = spawned.diagnostic ?? null;
+      this.transportFailure = spawned.failure ?? null;
       this.connection = spawned.connection;
       this.agentCapabilities = spawned.initialize.agentCapabilities ?? null;
       this.sessionId = handle.sessionId;
@@ -1548,7 +1951,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         const response = await this.runACPRequest(() =>
           this.connection!.loadSession({
             sessionId: handle.sessionId,
-            cwd: this.config.cwd,
+            cwd: resolveACPRequestCwd(this.config.cwd, this.runtimeSettings),
             mcpServers: this.acpMcpServers(),
           }),
         );
@@ -1560,7 +1963,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         const response = await this.runACPRequest(() =>
           this.connection!.unstable_resumeSession({
             sessionId: handle.sessionId,
-            cwd: this.config.cwd,
+            cwd: resolveACPRequestCwd(this.config.cwd, this.runtimeSettings),
             mcpServers: this.acpMcpServers(),
           }),
         );
@@ -1569,7 +1972,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         throw new Error(`${this.provider} does not support ACP session resume`);
       }
 
-      await this.applyConfiguredOverrides();
+      await this.runACPRequest(() => this.applyConfiguredOverrides());
     } catch (error) {
       await this.closeAfterInitializationFailure(error);
     }
@@ -1628,17 +2031,20 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     this.pushEvent({ type: "turn_started", provider: this.provider, turnId });
     this.emitSubmittedUserMessage(prompt, messageId, turnId, options?.clientMessageId);
 
-    void this.connection
-      .prompt({
-        sessionId: this.sessionId,
-        messageId,
-        prompt: toACPContentBlocks(prompt),
-      })
+    const promptRequest = this.connection.prompt({
+      sessionId: this.sessionId,
+      messageId,
+      prompt: toACPContentBlocks(prompt),
+    });
+    void (
+      this.transportFailure ? Promise.race([promptRequest, this.transportFailure]) : promptRequest
+    )
       .then((response) => {
         this.handlePromptResponse(response, turnId);
         return;
       })
       .catch((error) => {
+        this.synthesizeCanceledToolCalls();
         const summary = summarizeACPRequestError(error);
         this.finishTurn({
           type: "turn_failed",
@@ -1661,6 +2067,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
         provider: this.provider,
         sessionId: this.sessionId,
       });
+    }
+    if (!this.closed && this.remoteDisconnectEvent && !this.activeForegroundTurnId) {
+      callback(this.remoteDisconnectEvent);
     }
     return () => {
       this.subscribers.delete(callback);
@@ -1764,7 +2173,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       availableModes: this.availableModes,
       configOptions: this.configOptions,
     });
-    await this.setModeWithSelection({ modeId, selection });
+    await this.runACPRequest(() => this.setModeWithSelection({ modeId, selection }));
   }
 
   // Mode/model selection updates stay after ACP RPC success; this intentionally diverges from Zed's optimistic rollback path (acp.rs:3080-3104).
@@ -1903,7 +2312,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       availableModels: this.availableModels,
       configOptions: this.configOptions,
     });
-    await this.setModelWithSelection({ modelId, selection });
+    await this.runACPRequest(() => this.setModelWithSelection({ modelId, selection }));
   }
 
   private async setModelWithSelection({
@@ -1994,7 +2403,9 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     }
 
     if (this.thinkingOptionWriter) {
-      await this.thinkingOptionWriter(this.connection, this.sessionId, thinkingOptionId);
+      await this.runACPRequest(() =>
+        this.thinkingOptionWriter!(this.connection!, this.sessionId!, thinkingOptionId),
+      );
       this.thinkingOptionId = thinkingOptionId;
       this.pushEvent({
         type: "thinking_option_changed",
@@ -2011,11 +2422,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (!option) {
       throw new Error(`${this.provider} does not expose ACP thought-level selection`);
     }
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: option.id,
-      value: thinkingOptionId,
-    });
+    const response = await this.runACPRequest(() =>
+      this.connection!.setSessionConfigOption({
+        sessionId: this.sessionId!,
+        configId: option.id,
+        value: thinkingOptionId,
+      }),
+    );
     this.thinkingOptionId = this.applyConfigOptionResponse({
       response,
       configId: option.id,
@@ -2061,11 +2474,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
       );
     }
 
-    const response = await this.connection.setSessionConfigOption({
-      sessionId: this.sessionId,
-      configId: option.id,
-      value: requestedValue,
-    });
+    const response = await this.runACPRequest(() =>
+      this.connection!.setSessionConfigOption({
+        sessionId: this.sessionId!,
+        configId: option.id,
+        value: requestedValue,
+      }),
+    );
     const currentValue = this.applyConfigOptionResponse({
       response,
       configId: option.id,
@@ -2197,13 +2612,23 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     if (this.connection && this.sessionId) {
       try {
         if (this.activeForegroundTurnId) {
-          await this.connection.cancel({ sessionId: this.sessionId });
+          await withTimeout(
+            this.runACPRequest(() => this.connection!.cancel({ sessionId: this.sessionId! })),
+            2_000,
+            "ACP cancel timed out during shutdown",
+          );
         }
       } catch {}
 
       try {
         if (this.agentCapabilities?.sessionCapabilities?.close) {
-          await this.connection.unstable_closeSession({ sessionId: this.sessionId });
+          await withTimeout(
+            this.runACPRequest(() =>
+              this.connection!.unstable_closeSession({ sessionId: this.sessionId! }),
+            ),
+            2_000,
+            "ACP closeSession timed out during shutdown",
+          );
         }
       } catch (error) {
         this.logger.debug({ err: error }, "ACP closeSession failed during shutdown");
@@ -2219,13 +2644,18 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     await Promise.all(terminalTerminations);
     this.terminalEntries.clear();
 
-    if (this.child) {
+    if (this.transportClose) {
+      await this.transportClose();
+    } else if (this.child) {
       await this.terminateProcess(this.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
     }
 
     this.subscribers.clear();
     this.connection = null;
     this.child = null;
+    this.transportClose = null;
+    this.transportDiagnostic = null;
+    this.transportFailure = null;
     this.activeForegroundTurnId = null;
   }
 
@@ -2365,6 +2795,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async readTextFile(params: ReadTextFileRequest): Promise<{ content: string }> {
+    this.assertRemoteClientCapability(
+      "fs/read_text_file",
+      this.clientCapabilities?.fs?.readTextFile,
+    );
     const raw = await fs.readFile(params.path, "utf8");
     if (!params.line && !params.limit) {
       return { content: raw };
@@ -2376,12 +2810,17 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async writeTextFile(params: WriteTextFileRequest): Promise<Record<string, never>> {
+    this.assertRemoteClientCapability(
+      "fs/write_text_file",
+      this.clientCapabilities?.fs?.writeTextFile,
+    );
     await fs.mkdir(path.dirname(params.path), { recursive: true });
     await fs.writeFile(params.path, params.content, "utf8");
     return {};
   }
 
   async createTerminal(params: CreateTerminalRequest): Promise<{ terminalId: string }> {
+    this.assertRemoteClientCapability("terminal/create", this.clientCapabilities?.terminal);
     const terminalId = randomUUID();
     const env = Object.fromEntries(
       (params.env ?? []).map((entry: EnvVariable) => [entry.name, entry.value]),
@@ -2441,6 +2880,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async terminalOutput(params: TerminalOutputRequest): Promise<TerminalOutputResponse> {
+    this.assertRemoteClientCapability("terminal/output", this.clientCapabilities?.terminal);
     const entry = this.getTerminalEntry(params.terminalId);
     return {
       output: entry.output,
@@ -2450,11 +2890,13 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async waitForTerminalExit(params: WaitForTerminalExitRequest): Promise<TerminalExit> {
+    this.assertRemoteClientCapability("terminal/wait_for_exit", this.clientCapabilities?.terminal);
     const entry = this.getTerminalEntry(params.terminalId);
     return entry.waitForExit;
   }
 
   async releaseTerminal(params: { sessionId: string; terminalId: string }): Promise<void> {
+    this.assertRemoteClientCapability("terminal/release", this.clientCapabilities?.terminal);
     const entry = this.getTerminalEntry(params.terminalId);
     if (!entry.exit) {
       await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
@@ -2463,6 +2905,7 @@ export class ACPAgentSession implements AgentSession, ACPClient {
   }
 
   async killTerminal(params: KillTerminalRequest): Promise<Record<string, never>> {
+    this.assertRemoteClientCapability("terminal/kill", this.clientCapabilities?.terminal);
     const entry = this.getTerminalEntry(params.terminalId);
     if (!entry.exit) {
       await this.terminateProcess(entry.child, { gracefulTimeoutMs: 2_000, forceTimeoutMs: 2_000 });
@@ -2470,75 +2913,69 @@ export class ACPAgentSession implements AgentSession, ACPClient {
     return {};
   }
 
-  private async spawnProcess(): Promise<SpawnedACPProcess> {
-    const prefix = await resolveProviderLaunch({
-      commandConfig: this.runtimeSettings?.command,
-      defaultBinary: this.defaultCommand[0],
-    });
-    const availability = await checkProviderLaunchAvailable(prefix);
-    if (!availability.available) {
-      throw new Error(`${this.provider} command '${this.defaultCommand[0]}' not found`);
+  private assertRemoteClientCapability(method: string, enabled: boolean | undefined): void {
+    if (this.runtimeSettings?.transport?.type === "websocket" && enabled !== true) {
+      throw RequestError.methodNotFound(method);
     }
+  }
 
-    const command = prefix.command;
-    const args = [...prefix.args, ...this.defaultCommand.slice(1)];
-    const child = spawnProcess(command, args, {
+  protected async spawnProcess(): Promise<SpawnedACPProcess> {
+    const transport = await createACPTransport({
+      provider: this.provider,
+      logger: this.logger,
+      runtimeSettings: this.runtimeSettings,
+      defaultCommand: this.defaultCommand,
       cwd: this.config.cwd,
-      ...createProviderEnvSpec({
-        runtimeSettings: this.runtimeSettings,
-        overlays: [this.launchEnv],
-      }),
-      stdio: ["pipe", "pipe", "pipe"],
+      launchEnv: this.launchEnv,
+      client: this,
+      terminateProcess: this.terminateProcess,
     });
-    assertChildWithPipes(child);
-
-    const stderrChunks: string[] = [];
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      stderrChunks.push(chunk.toString());
-    });
-    child.once("exit", (code, signal) => {
-      if (this.closed) {
-        return;
-      }
-      if (this.activeForegroundTurnId) {
-        this.synthesizeCanceledToolCalls();
-        this.finishTurn({
+    this.child = transport.child ?? null;
+    this.connection = transport.connection;
+    this.transportClose = transport.close;
+    this.transportDiagnostic = transport.diagnostic;
+    this.transportFailure = transport.failure;
+    if (transport.kind === "websocket") {
+      void transport.failure.catch((error: Error) => {
+        if (this.closed) return;
+        this.remoteDisconnectEvent = {
           type: "turn_failed",
           provider: this.provider,
-          error: `ACP agent exited unexpectedly (${code ?? "null"}${signal ? `, ${signal}` : ""})`,
-          diagnostic: stderrChunks.join("").trim() || undefined,
-          turnId: this.activeForegroundTurnId,
-        });
-      }
-    });
-
-    const stream = createLoggedNdJsonStream(
-      Writable.toWeb(child.stdin),
-      Readable.toWeb(child.stdout),
-      { logger: this.logger, provider: this.provider },
-    );
-    const connection = new ClientSideConnection(() => this, stream);
-    // Take ownership before initialize so the outer initialization guard can
-    // close the process even when the ACP handshake itself rejects.
-    this.child = child;
-    this.connection = connection;
+          error: error.message,
+          diagnostic: this.collectDiagnostic(error.message),
+        };
+        this.settleCommandsReady();
+        // The active prompt's failure sets AgentManager.lastError before
+        // finalizeForegroundTurn moves it to error. Emitting here as well would
+        // duplicate the error; only idle disconnects need an unscoped failure.
+        if (this.sessionId && !this.activeForegroundTurnId) {
+          this.pushEvent(this.remoteDisconnectEvent);
+        }
+      });
+    }
     const initialize = await this.runACPRequest(() =>
-      connection.initialize({
-        protocolVersion: PROTOCOL_VERSION,
-        clientCapabilities: buildACPClientCapabilities(
-          this.clientCapabilityMeta,
-          this.clientCapabilities,
-        ),
-        clientInfo: { name: "Paseo", version: "dev" },
+      initializeACPTransportConnection(transport, {
+        clientCapabilityMeta: this.clientCapabilityMeta,
+        clientCapabilities: this.clientCapabilities,
+        authMethodId: this.runtimeSettings?.authMethodId,
       }),
     );
-
-    return { child, connection, initialize };
+    return {
+      child: transport.child,
+      connection: transport.connection,
+      initialize,
+      stderrChunks: transport.stderrChunks,
+      close: transport.close,
+      diagnostic: transport.diagnostic,
+      failure: transport.failure,
+    };
   }
 
   private async runACPRequest<T>(request: () => Promise<T>): Promise<T> {
     try {
-      return await request();
+      return await (this.transportFailure
+        ? Promise.race([request(), this.transportFailure])
+        : request());
     } catch (error) {
       throw toACPRequestError(error);
     }
@@ -2977,6 +3414,10 @@ export class ACPAgentSession implements AgentSession, ACPClient {
 
   private collectDiagnostic(message: string): string | undefined {
     const parts: string[] = [message];
+    const transportDiagnostic = this.transportDiagnostic?.();
+    if (transportDiagnostic) {
+      parts.push(transportDiagnostic);
+    }
     if (this.child?.exitCode != null) {
       parts.push(`exitCode=${this.child.exitCode}`);
     }

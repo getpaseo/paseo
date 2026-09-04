@@ -50,7 +50,9 @@ const mockState = vi.hoisted(() => {
       }>,
       pi: [] as ConstructorEntry[],
       genericAcp: [] as Array<{
-        command: string[];
+        command?: string[];
+        transport?: unknown;
+        authMethodId?: string;
         env?: Record<string, string>;
         providerId?: string;
         label?: string;
@@ -300,7 +302,9 @@ vi.mock("./providers/generic-acp-agent.js", () => ({
     readonly runtimeSettings?: unknown;
 
     constructor(options: {
-      command: string[];
+      command?: string[];
+      transport?: unknown;
+      authMethodId?: string;
       env?: Record<string, string>;
       providerId?: string;
       label?: string;
@@ -320,14 +324,15 @@ vi.mock("./providers/generic-acp-agent.js", () => ({
             : this.capabilities.supportsMcpServers,
       };
       this.runtimeSettings = {
-        command: {
-          mode: "replace",
-          argv: options.command,
-        },
+        command: options.command ? { mode: "replace", argv: options.command } : undefined,
+        transport: options.transport,
+        authMethodId: options.authMethodId,
         env: options.env,
       };
       mockState.constructorArgs.genericAcp.push({
         command: options.command,
+        ...(options.transport ? { transport: options.transport } : {}),
+        ...(options.authMethodId ? { authMethodId: options.authMethodId } : {}),
         env: options.env,
         providerId: options.providerId,
         label: options.label,
@@ -948,7 +953,33 @@ test("kimi provider extending acp uses KimiACPAgentClient", () => {
   expect(mockState.constructorArgs.genericAcp).toEqual([]);
 });
 
-test('extends: "acp" without command throws', () => {
+test("remote ACP provider uses the generic client without a command", () => {
+  const transport = {
+    type: "websocket" as const,
+    url: "wss://agents.example.com/acp",
+    bearerTokenEnv: "ACP_ACCESS_TOKEN",
+    cwd: "/workspace/project",
+  };
+  const registry = buildProviderRegistry(logger, {
+    providerOverrides: {
+      remote: {
+        extends: "acp",
+        label: "Remote agent",
+        transport,
+        authMethodId: "oauth",
+      },
+    },
+  });
+  expect(registry.remote.createClient(logger).provider).toBe("remote");
+  expect(mockState.constructorArgs.genericAcp.at(-1)).toMatchObject({
+    command: undefined,
+    transport,
+    authMethodId: "oauth",
+    providerId: "remote",
+  });
+});
+
+test('extends: "acp" without command or transport throws', () => {
   expect(() =>
     buildProviderRegistry(logger, {
       providerOverrides: {
@@ -958,7 +989,7 @@ test('extends: "acp" without command throws', () => {
         },
       },
     }),
-  ).toThrowError("ACP provider 'my-agent' requires a command");
+  ).toThrowError("ACP provider 'my-agent' requires a command or transport");
 });
 
 test("custom provider without label throws", () => {

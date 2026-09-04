@@ -22,8 +22,61 @@ export const ProviderCommandSchema = z.discriminatedUnion("mode", [
   ProviderCommandReplaceSchema,
 ]);
 
+export const ProviderWebSocketUrlSchema = z
+  .string()
+  .url()
+  .superRefine((value, ctx) => {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return;
+    }
+    if (url.protocol === "wss:") return;
+    // Numeric hosts avoid trusting DNS (including a hosts-file override of localhost).
+    // WHATWG URL parsing canonicalizes IPv4 aliases before this comparison.
+    const isLoopback =
+      /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(url.hostname) || url.hostname === "[::1]";
+    if (url.protocol === "ws:" && isLoopback) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        "ACP WebSocket URLs require wss://, except ws:// on numeric loopback addresses (127.0.0.0/8 or [::1]).",
+    });
+  });
+
+export const ProviderWebSocketTransportSchema = z
+  .object({
+    type: z.literal("websocket"),
+    url: ProviderWebSocketUrlSchema,
+    protocols: z.array(z.string().min(1)).optional(),
+    headers: z.record(z.string(), z.string()).optional(),
+    bearerTokenEnv: z.string().min(1).optional(),
+    cwd: z.string().min(1).optional(),
+  })
+  .superRefine((transport, ctx) => {
+    if (
+      transport.bearerTokenEnv &&
+      Object.keys(transport.headers ?? {}).some(
+        (header) => header.toLowerCase() === "authorization",
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["bearerTokenEnv"],
+        message: "Use bearerTokenEnv or an Authorization header, not both.",
+      });
+    }
+  });
+
+export const ProviderTransportSchema = z.discriminatedUnion("type", [
+  ProviderWebSocketTransportSchema,
+]);
+
 export const ProviderRuntimeSettingsSchema = z.object({
   command: ProviderCommandSchema.optional(),
+  transport: ProviderTransportSchema.optional(),
+  authMethodId: z.string().min(1).optional(),
   env: z.record(z.string(), z.string()).optional(),
   disallowedTools: z.array(z.string()).optional(),
 });
@@ -53,6 +106,8 @@ export const ProviderOverrideSchema = z.object({
   label: z.string().optional(),
   description: z.string().optional(),
   command: z.array(z.string().min(1)).min(1).optional(),
+  transport: ProviderTransportSchema.optional(),
+  authMethodId: z.string().min(1).optional(),
   env: z.record(z.string(), z.string()).optional(),
   params: z.record(z.string(), z.unknown()).optional(),
   models: z.array(ProviderProfileModelSchema).optional(),
@@ -82,6 +137,13 @@ export const ProviderOverridesSchema = z
       }
 
       const isBuiltinProvider = builtinProviderIdSet.has(providerId);
+      if (provider.transport && (isBuiltinProvider || provider.extends !== "acp")) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [providerId, "transport"],
+          message: "Remote transport is only supported for custom providers extending acp.",
+        });
+      }
       if (!isBuiltinProvider && !provider.extends) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -106,11 +168,19 @@ export const ProviderOverridesSchema = z
         });
       }
 
-      if (provider.extends === "acp" && !provider.command) {
+      if (provider.extends === "acp" && !provider.command && !provider.transport) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           path: [providerId, "command"],
-          message: `Provider "${providerId}" extending "acp" must declare command.`,
+          message: `Provider "${providerId}" extending "acp" must declare command or transport.`,
+        });
+      }
+
+      if (provider.extends === "acp" && provider.command && provider.transport) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [providerId, "transport"],
+          message: `Provider "${providerId}" extending "acp" cannot declare both command and transport.`,
         });
       }
     }
@@ -132,6 +202,8 @@ export const AgentProviderRuntimeSettingsMapSchema = z
   });
 
 export type ProviderCommand = z.infer<typeof ProviderCommandSchema>;
+export type ProviderWebSocketTransport = z.infer<typeof ProviderWebSocketTransportSchema>;
+export type ProviderTransport = z.infer<typeof ProviderTransportSchema>;
 export type ProviderRuntimeSettings = z.infer<typeof ProviderRuntimeSettingsSchema>;
 export type ProviderPaseoToolsPolicy = z.infer<typeof ProviderPaseoToolsPolicySchema>;
 export type ProviderProfileModel = z.infer<typeof ProviderProfileModelSchema>;

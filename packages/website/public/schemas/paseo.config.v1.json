@@ -262,6 +262,52 @@
                     },
                     "minItems": 1
                   },
+                  "transport": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "const": "websocket"
+                          },
+                          "url": {
+                            "type": "string",
+                            "format": "uri"
+                          },
+                          "protocols": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "headers": {
+                            "type": "object",
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "additionalProperties": {
+                              "type": "string"
+                            }
+                          },
+                          "bearerTokenEnv": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "cwd": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        },
+                        "required": ["type", "url"]
+                      }
+                    ]
+                  },
+                  "authMethodId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
                   "env": {
                     "type": "object",
                     "additionalProperties": {

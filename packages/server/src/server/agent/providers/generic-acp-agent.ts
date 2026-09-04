@@ -2,7 +2,11 @@ import type { Logger } from "pino";
 import { z } from "zod";
 
 import type { AgentCapabilityFlags } from "../agent-sdk-types.js";
-import { checkProviderLaunchAvailable, resolveProviderLaunch } from "../provider-launch-config.js";
+import {
+  checkProviderLaunchAvailable,
+  resolveProviderLaunch,
+  type ProviderTransport,
+} from "../provider-launch-config.js";
 import {
   ACPAgentClient,
   type ACPCatalogModelResolver,
@@ -39,7 +43,9 @@ type GenericACPProviderParams = z.infer<typeof GenericACPProviderParamsSchema>;
 
 interface GenericACPAgentClientOptions {
   logger: Logger;
-  command: [string, ...string[]];
+  command?: [string, ...string[]];
+  transport?: ProviderTransport;
+  authMethodId?: string;
   env?: Record<string, string>;
   providerId?: string;
   label?: string;
@@ -54,7 +60,8 @@ interface GenericACPAgentClientOptions {
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
-  private readonly command: [string, ...string[]];
+  private readonly command?: [string, ...string[]];
+  private readonly transport?: ProviderTransport;
   private readonly providerId?: string;
   private readonly label?: string;
   private readonly diagnosticPhaseTimeoutMs?: number;
@@ -66,12 +73,14 @@ export class GenericACPAgentClient extends ACPAgentClient {
       logger: options.logger,
       runtimeSettings: {
         env: options.env,
+        transport: options.transport,
+        authMethodId: options.authMethodId,
       },
-      defaultCommand: options.command,
-      capabilities: buildGenericACPCapabilities(providerParams),
+      defaultCommand: options.command ?? ["remote-acp"],
+      capabilities: buildGenericACPCapabilities(providerParams, options.transport),
       waitForInitialCommands: options.waitForInitialCommands,
       initialCommandsWaitTimeoutMs: options.initialCommandsWaitTimeoutMs,
-      clientCapabilities: providerParams.clientCapabilities,
+      clientCapabilities: buildGenericACPClientCapabilities(providerParams, options.transport),
       clientCapabilityMeta: options.clientCapabilityMeta,
       configFeatureOptions: options.configFeatureOptions,
       extensionCommandsParser: options.extensionCommandsParser,
@@ -79,19 +88,16 @@ export class GenericACPAgentClient extends ACPAgentClient {
     });
 
     this.command = options.command;
+    this.transport = options.transport;
     this.providerId = options.providerId;
     this.label = options.label;
     this.diagnosticPhaseTimeoutMs = options.diagnosticPhaseTimeoutMs;
   }
 
-  protected override async resolveLaunchCommand(): Promise<{ command: string; args: string[] }> {
-    return {
-      command: this.command[0],
-      args: this.command.slice(1),
-    };
-  }
-
   override async isAvailable(): Promise<boolean> {
+    if (this.transport?.type === "websocket") {
+      return super.isAvailable();
+    }
     const launch = await this.resolveConfiguredLaunch();
     const availability = await checkProviderLaunchAvailable(launch);
     return availability.available;
@@ -101,8 +107,32 @@ export class GenericACPAgentClient extends ACPAgentClient {
     const providerName = formatProviderName(this.label, this.providerId);
     const entries: DiagnosticEntry[] = [
       { label: "Provider ID", value: this.providerId ?? "unknown" },
-      { label: "Configured command", value: this.command.join(" ") },
     ];
+    if (this.transport?.type === "websocket") {
+      const headerAuth =
+        Object.keys(this.transport.headers ?? {}).length > 0 ? "Custom headers" : "None";
+      entries.push(
+        { label: "Transport", value: "WebSocket" },
+        { label: "Endpoint", value: formatRemoteEndpoint(this.transport.url) },
+        {
+          label: "Transport auth",
+          value: this.transport.bearerTokenEnv
+            ? `Bearer token from ${this.transport.bearerTokenEnv}`
+            : headerAuth,
+        },
+        ...(this.runtimeSettings?.authMethodId
+          ? [{ label: "ACP auth method", value: this.runtimeSettings.authMethodId }]
+          : []),
+        ...(await this.getACPProbeRowsForDiagnostic()),
+      );
+      return { diagnostic: formatProviderDiagnostic(providerName, entries) };
+    }
+
+    if (!this.command) {
+      entries.push({ label: "Configured command", value: "missing" });
+      return { diagnostic: formatProviderDiagnostic(providerName, entries) };
+    }
+    entries.push({ label: "Configured command", value: this.command.join(" ") });
     const versionProbe = buildVersionProbeCommand(this.command);
 
     try {
@@ -139,6 +169,9 @@ export class GenericACPAgentClient extends ACPAgentClient {
   }
 
   private async resolveConfiguredLaunch() {
+    if (!this.command) {
+      throw new Error("ACP command is not configured");
+    }
     return resolveProviderLaunch({
       commandConfig: { mode: "replace", argv: this.command },
       defaultBinary: this.command[0],
@@ -161,10 +194,26 @@ export class GenericACPAgentClient extends ACPAgentClient {
   }
 }
 
-function buildGenericACPCapabilities(params: GenericACPProviderParams): AgentCapabilityFlags {
+function buildGenericACPCapabilities(
+  params: GenericACPProviderParams,
+  transport: ProviderTransport | undefined,
+): AgentCapabilityFlags {
   return {
     ...DEFAULT_ACP_CAPABILITIES,
-    supportsMcpServers: params.supportsMcpServers ?? DEFAULT_ACP_CAPABILITIES.supportsMcpServers,
+    supportsMcpServers:
+      params.supportsMcpServers ??
+      (transport?.type === "websocket" ? false : DEFAULT_ACP_CAPABILITIES.supportsMcpServers),
+  };
+}
+
+function buildGenericACPClientCapabilities(
+  params: GenericACPProviderParams,
+  transport: ProviderTransport | undefined,
+): GenericACPProviderParams["clientCapabilities"] {
+  if (transport?.type !== "websocket") return params.clientCapabilities;
+  return {
+    terminal: false,
+    ...params.clientCapabilities,
   };
 }
 
@@ -189,6 +238,15 @@ function formatProviderName(label: string | undefined, providerId: string | unde
 
 function formatCommand(command: string, args: string[]): string {
   return [command, ...args].join(" ");
+}
+
+function formatRemoteEndpoint(value: string): string {
+  const url = new URL(value);
+  url.username = "";
+  url.password = "";
+  url.search = url.search ? "?redacted" : "";
+  url.hash = "";
+  return url.toString();
 }
 
 export function buildVersionProbeCommand(command: [string, ...string[]]): CommandInvocation {

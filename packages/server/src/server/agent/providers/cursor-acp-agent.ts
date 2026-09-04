@@ -1,11 +1,14 @@
 import type { Logger } from "pino";
+import type { ProviderTransport } from "../provider-launch-config.js";
 
 import type { ACPConfigFeatureOption } from "./acp-agent.js";
 import { GenericACPAgentClient } from "./generic-acp-agent.js";
 
 interface CursorACPAgentClientOptions {
   logger: Logger;
-  command: [string, ...string[]];
+  command?: [string, ...string[]];
+  transport?: ProviderTransport;
+  authMethodId?: string;
   env?: Record<string, string>;
   providerId?: string;
   label?: string;
@@ -31,6 +34,8 @@ export class CursorACPAgentClient extends GenericACPAgentClient {
     super({
       logger: options.logger,
       command: options.command,
+      transport: options.transport,
+      authMethodId: options.authMethodId,
       env: options.env,
       providerId: options.providerId,
       label: options.label,
