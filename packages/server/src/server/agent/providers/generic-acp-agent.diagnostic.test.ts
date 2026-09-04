@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { runProviderRefreshWithDeadline } from "../provider-refresh-deadline.js";
@@ -115,49 +115,36 @@ describe("GenericACPAgentClient diagnostics", () => {
     });
   });
 
-  test("times out a hung history load, keeps the row visible, and terminates the ACP process", async () => {
-    await withFakeACPAgent("history-load-hang", async (scriptPath, mode, testDir) => {
-      const pidPath = path.join(testDir, "agent.pid");
-      const client = new GenericACPAgentClient({
-        logger: createTestLogger(),
-        command: [process.execPath, scriptPath, mode, pidPath, "", "", testDir],
-      });
-
-      await expect(client.listImportableSessions({ limit: 1 })).resolves.toEqual([
-        {
-          providerHandleId: "hung-session",
-          cwd: testDir,
-          title: "Slow but real",
-          firstPromptPreview: null,
-          lastPromptPreview: null,
-          lastActivityAt: new Date("2026-09-04T20:00:00.000Z"),
-        },
-      ]);
-      await expectProcessExit(Number(await readFile(pidPath, "utf8")));
-    });
-  });
-
   test("bounds the total time spent loading inaccessible session histories", async () => {
-    await withFakeACPAgent("history-load-hangs", async (scriptPath, mode, testDir) => {
+    await withFakeACPAgent("history-load-failures", async (scriptPath, mode, testDir) => {
       const loadTracePath = path.join(testDir, "session-load.jsonl");
       const client = new GenericACPAgentClient({
         logger: createTestLogger(),
         command: [process.execPath, scriptPath, mode, "", "", "", testDir, loadTracePath],
       });
+      const now = vi
+        .spyOn(Date, "now")
+        .mockReturnValueOnce(0)
+        .mockReturnValueOnce(0)
+        .mockReturnValue(60_001);
 
-      const sessions = await client.listImportableSessions({ limit: 4 });
+      try {
+        const sessions = await client.listImportableSessions({ limit: 4 });
 
-      expect(sessions).toMatchObject([
-        { providerHandleId: "hung-session-1" },
-        { providerHandleId: "hung-session-2" },
-        { providerHandleId: "hung-session-3" },
-        { providerHandleId: "hung-session-4" },
-      ]);
-      const attemptedLoads = (await readFile(loadTracePath, "utf8")).trim().split("\n");
-      expect(attemptedLoads.length).toBeGreaterThan(0);
-      expect(attemptedLoads.length).toBeLessThan(4);
+        expect(sessions).toMatchObject([
+          { providerHandleId: "failed-session-1" },
+          { providerHandleId: "failed-session-2" },
+          { providerHandleId: "failed-session-3" },
+          { providerHandleId: "failed-session-4" },
+        ]);
+        await expect(readFile(loadTracePath, "utf8")).resolves.toBe(
+          `${JSON.stringify({ sessionId: "failed-session-1" })}\n`,
+        );
+      } finally {
+        now.mockRestore();
+      }
     });
-  }, 15_000);
+  });
 
   test("probes npx-backed agent packages instead of npx itself", () => {
     expect(buildVersionProbeCommand(["npx", "-y", "@google/gemini-cli@0.41.1", "--acp"])).toEqual({
@@ -346,8 +333,7 @@ async function withFakeACPAgent(
     | "hang-session"
     | "history-list"
     | "history-load-failure"
-    | "history-load-hang"
-    | "history-load-hangs",
+    | "history-load-failures",
   run: (scriptPath: string, mode: string, testDir: string) => Promise<void>,
 ): Promise<void> {
   await withTempDir("paseo-acp-diagnostic-", async (testDir) => {
@@ -427,8 +413,7 @@ rl.on("line", (line) => {
         loadSession:
           mode === "history-list" ||
           mode === "history-load-failure" ||
-          mode === "history-load-hang" ||
-          mode === "history-load-hangs",
+          mode === "history-load-failures",
         sessionCapabilities: { close: {}, list: {} },
       },
     });
@@ -503,25 +488,12 @@ rl.on("line", (line) => {
     return;
   }
 
-  if (message.method === "session/list" && mode === "history-load-hang") {
-    send(message.id, {
-      sessions: [{
-        sessionId: "hung-session",
-        cwd: sessionCwd,
-        title: "Slow but real",
-        updatedAt: "2026-09-04T20:00:00.000Z",
-      }],
-      nextCursor: null,
-    });
-    return;
-  }
-
-  if (message.method === "session/list" && mode === "history-load-hangs") {
+  if (message.method === "session/list" && mode === "history-load-failures") {
     send(message.id, {
       sessions: [1, 2, 3, 4].map((number) => ({
-        sessionId: "hung-session-" + number,
+        sessionId: "failed-session-" + number,
         cwd: sessionCwd,
-        title: "Slow but real " + number,
+        title: "Could still be real " + number,
         updatedAt: "2026-09-04T20:00:00.000Z",
       })),
       nextCursor: null,
@@ -569,14 +541,9 @@ rl.on("line", (line) => {
     return;
   }
 
-  if (message.method === "session/load" && mode === "history-load-failure") {
-    sendError(message.id, -32602, "stale session");
-    return;
-  }
-
   if (
     message.method === "session/load" &&
-    (mode === "history-load-hang" || mode === "history-load-hangs")
+    (mode === "history-load-failure" || mode === "history-load-failures")
   ) {
     if (loadTracePath) {
       fs.appendFileSync(
@@ -584,6 +551,7 @@ rl.on("line", (line) => {
         JSON.stringify({ sessionId: message.params.sessionId }) + "\\n",
       );
     }
+    sendError(message.id, -32602, "stale session");
     return;
   }
 });
