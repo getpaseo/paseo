@@ -1080,6 +1080,8 @@ export const en = {
         labels: "Labels",
         diff: "Diff stats",
         timestamp: "Last activity",
+        compactRows: "Compact rows",
+        newWorkspaceRow: "New workspace row",
       },
       recentlyDone: {
         label: "Recently done",

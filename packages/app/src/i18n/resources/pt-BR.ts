@@ -1096,6 +1096,8 @@ export const ptBR: TranslationResources = {
         labels: "Etiquetas",
         diff: "Estatísticas de diff",
         timestamp: "Última atividade",
+        compactRows: "Linhas compactas",
+        newWorkspaceRow: "Linha de novo espaço de trabalho",
       },
       recentlyDone: {
         label: "Concluído há pouco",

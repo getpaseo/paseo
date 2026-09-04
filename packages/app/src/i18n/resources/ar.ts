@@ -1071,6 +1071,8 @@ export const ar: TranslationResources = {
         labels: "التسميات",
         diff: "إحصائيات الفروق",
         timestamp: "آخر نشاط",
+        compactRows: "صفوف مضغوطة",
+        newWorkspaceRow: "صف مساحة عمل جديدة",
       },
       recentlyDone: {
         label: "تم مؤخرًا",

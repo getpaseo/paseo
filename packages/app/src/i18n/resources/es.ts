@@ -1105,6 +1105,8 @@ export const es: TranslationResources = {
         labels: "Etiquetas",
         diff: "Estadísticas de cambios",
         timestamp: "Última actividad",
+        compactRows: "Filas compactas",
+        newWorkspaceRow: "Fila de nuevo espacio de trabajo",
       },
       recentlyDone: {
         label: "Hecho recientemente",

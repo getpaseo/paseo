@@ -1082,6 +1082,8 @@ export const ja: TranslationResources = {
         labels: "ラベル",
         diff: "差分統計",
         timestamp: "最終アクティビティ",
+        compactRows: "コンパクト行",
+        newWorkspaceRow: "新規ワークスペース行",
       },
       recentlyDone: {
         label: "最近完了",
