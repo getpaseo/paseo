@@ -41,6 +41,7 @@ catalog probe. `PASEO_PROVIDER_REFRESH_TIMEOUT_MS` sets it when the config field
 - [Codex with a custom OpenAI-compatible endpoint](#codex-with-a-custom-openai-compatible-endpoint)
 - [Multiple profiles for the same provider](#multiple-profiles-for-the-same-provider)
 - [Custom binary for a provider](#custom-binary-for-a-provider)
+- [Herdr-attached Pi sessions](#herdr-attached-pi-sessions)
 - [Disabling a provider](#disabling-a-provider)
 - [ACP providers](#acp-providers)
 - [Provider override reference](#provider-override-reference)
@@ -362,6 +363,126 @@ Override the command used to launch any provider with the `command` field. This 
 ```
 
 The `command` array completely replaces the default command for that provider. The binary must exist on the system — Paseo checks for its availability and will mark the provider as unavailable if not found.
+
+### Herdr-attached Pi sessions
+
+Enable Herdr on the built-in Pi provider to include its running Pi targets in import discovery:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "pi": {
+        "params": {
+          "herdr": { "enabled": true }
+        }
+      }
+    }
+  }
+}
+```
+
+Paseo runs the `herdr` command and uses its default session. Set `params.herdr.command` to a command array for another binary or wrapper, and set `params.herdr.session` to select a named Herdr session. Imported targets remain Pi agents in Paseo. Prompts and interrupts go through Herdr, while history comes from the native Pi JSONL session. Paseo rejects a saved attachment when its Herdr session, target, Pi session, session file, or working directory no longer matches.
+
+#### Live smoke: disposable Herdr Pi import
+
+Use the live smoke only against a disposable Pi target started inside Herdr. Do not import or prompt a real Firstmate/Pi session.
+
+In the completed MVP live test, the captain imported a disposable Herdr-started Pi session from Paseo mobile. A prompt sent from mobile appeared in the Herdr terminal, and a prompt sent from the terminal synced back to mobile.
+
+`scripts/herdr-pi-live-smoke.sh` prepares a disposable `$PASEO_HOME` with only the built-in Pi provider enabled and Herdr discovery pointed at a named session. It refuses `~/.paseo`, so the helper does not change the user's normal providers.
+
+```bash
+scripts/herdr-pi-live-smoke.sh prepare
+```
+
+Defaults:
+
+- Home: `.dev/herdr-pi-live-smoke-home`
+- Herdr session: `paseo-herdr-live-smoke`
+- Dev daemon listen address: `127.0.0.1:6768`
+
+Override them when needed:
+
+```bash
+scripts/herdr-pi-live-smoke.sh prepare \
+  --home .dev/herdr-pi-live-smoke-home \
+  --herdr-session paseo-herdr-live-smoke \
+  --listen 127.0.0.1:6768
+```
+
+The helper writes this provider shape into the disposable home:
+
+```json
+{
+  "agents": {
+    "providers": {
+      "pi": {
+        "enabled": true,
+        "params": {
+          "herdr": {
+            "enabled": true,
+            "session": "paseo-herdr-live-smoke"
+          }
+        }
+      },
+      "claude": { "enabled": false },
+      "codex": { "enabled": false },
+      "copilot": { "enabled": false },
+      "opencode": { "enabled": false },
+      "omp": { "enabled": false },
+      "mock": { "enabled": false },
+      "mock-slow": { "enabled": false }
+    }
+  }
+}
+```
+
+The helper disables `mock-slow` because its intentionally hanging development probe would add unrelated noise to this focused live test.
+
+Run the smoke:
+
+1. Start a disposable Pi target inside a Herdr session named `paseo-herdr-live-smoke`. Keep it separate from every Firstmate, captain, or normal work session.
+2. Start the dev daemon against the prepared home:
+
+   ```bash
+   scripts/herdr-pi-live-smoke.sh dev-server
+   ```
+
+3. Pair mobile with that dev daemon. Use relay when the phone cannot reach the dev host directly:
+
+   ```bash
+   scripts/herdr-pi-live-smoke.sh pair --relay
+   ```
+
+   For a direct local connection, pair to the daemon endpoint printed by the dev server instead.
+
+4. In mobile, open **Import session** and select the Pi target from the named Herdr session.
+5. Send a distinctive prompt from mobile. It must appear in the Herdr terminal session.
+6. Send a distinctive prompt from the Herdr terminal. It must sync back to mobile.
+7. While a Pi turn is active, interrupt from Paseo. The interruption must route through Herdr and stop the terminal-hosted Pi turn.
+
+Expected startup lines that are not errors:
+
+- Dev daemon worker start banners from the `protocol`, `client`, and `server` watchers.
+- Node debugger output such as `Debugger listening on ws://127.0.0.1:...` from `PASEO_NODE_INSPECT=--inspect=0`.
+- Daemon keypair/server identity load or creation in the disposable home.
+
+With the helper's focused config, unrelated provider probes should not dominate startup. A disabled provider should not appear in the Import picker. Relay disconnect warnings can still appear when mobile changes network path or disconnects; treat them as non-fatal if the direct Pi/Herdr prompt sync continues to pass.
+
+Pass criteria:
+
+- The imported target remains `provider=pi`; Herdr attachment is runtime metadata, not a separate provider.
+- Prompt sends and interrupts route through Herdr to the terminal-hosted Pi process.
+- History hydration comes from the native Pi JSONL session.
+- Mobile-to-terminal and terminal-to-mobile prompt sync both work.
+
+Fail criteria:
+
+- The imported agent is not `provider=pi`.
+- Paseo starts a managed Pi process instead of attaching to the Herdr target.
+- Mobile prompts do not appear in the Herdr terminal, terminal prompts do not appear on mobile, or interrupts do not stop the Herdr-hosted turn.
+- History differs from the native Pi JSONL after import or reload.
 
 ### OMP profiles and Pi-compatible forks
 

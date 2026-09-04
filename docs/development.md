@@ -70,6 +70,10 @@ PASEO_DEV_RESET_HOME=1 npm run dev            # clear and reseed the derived wor
 
 In Paseo-managed worktree services, use the injected service environment rather than hardcoded root checkout ports.
 
+### Herdr-attached Pi live smoke
+
+Use `scripts/herdr-pi-live-smoke.sh` when manually validating that a Pi session started inside Herdr can be imported and controlled from Paseo mobile. The helper prepares a disposable `$PASEO_HOME`, points Pi import discovery at a named Herdr session, and disables unrelated providers only inside that disposable home. The full smoke flow and pass/fail criteria live in [Herdr-attached Pi sessions](custom-providers.md#herdr-attached-pi-sessions).
+
 ### Expo Router
 
 Route ownership, startup restore, and native blank-screen gotchas live in
