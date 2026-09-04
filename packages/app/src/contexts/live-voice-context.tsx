@@ -213,8 +213,9 @@ export function LiveVoiceProvider({ children }: LiveVoiceProviderProps) {
 
     const sync = (): void => {
       const snapshot = runtime.getSnapshot();
-      // Only a live call is worth watching; an idle runtime owns no microphone.
-      const activeServerId = snapshot.phase === "idle" ? null : snapshot.serverId;
+      // Terminal state can stay visible after the call resources are gone.
+      const activeServerId =
+        snapshot.phase === "active" || snapshot.phase === "starting" ? snapshot.serverId : null;
       const client = activeServerId
         ? (useSessionStore.getState().sessions[activeServerId]?.client ?? null)
         : null;

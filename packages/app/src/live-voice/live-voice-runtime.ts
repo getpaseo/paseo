@@ -673,7 +673,10 @@ export function createLiveVoiceRuntime(deps: LiveVoiceRuntimeDeps): LiveVoiceRun
     },
 
     handleConnectionLost(serverId) {
-      if (snapshot.phase === "idle" || snapshot.serverId !== serverId) {
+      if (
+        (snapshot.phase !== "active" && snapshot.phase !== "starting") ||
+        snapshot.serverId !== serverId
+      ) {
         return;
       }
       // Invalidate any in-flight start so its continuation can't revive the call.

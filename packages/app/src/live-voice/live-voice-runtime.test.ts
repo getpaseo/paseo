@@ -563,6 +563,19 @@ describe("live voice runtime", () => {
     expect(harness.lease.current()).toBe("liveVoice");
   });
 
+  it("preserves a terminal error when the host later disconnects", async () => {
+    await harness.runtime.start(SERVER_ID);
+    harness.push({ kind: "error", code: "provider_error", message: "model died", fatal: true });
+
+    harness.runtime.handleConnectionLost(SERVER_ID);
+
+    expect(harness.runtime.getSnapshot()).toMatchObject({
+      phase: "error",
+      error: { code: "provider_error", message: "model died" },
+      closedCause: null,
+    });
+  });
+
   it("does not revive a call when a start resolves after its connection was lost", async () => {
     let resolveNegotiation: (value: {
       liveSessionId: string;
