@@ -350,7 +350,13 @@ remains authoritative during reload.
 
 `agents.metadataGeneration.providers` controls the preferred structured-generation fallback order for daemon-side metadata tasks such as commit messages, PR text, branch names, and generated agent titles. Entries are tried first in the configured order, then Paseo falls through to dynamically discovered defaults and finally the current selection when available.
 
-Local speech model ids are intentionally narrow: STT uses `parakeet-tdt-0.6b-v2-int8`, TTS uses `kokoro-en-v0_19`, and turn detection uses the bundled Silero VAD model.
+Local speech supports the following model ids:
+
+- STT: `parakeet-tdt-0.6b-v2-int8`, `parakeet-tdt-0.6b-v3-int8`, `sense-voice-zh-en-ja-ko-yue-int8`, and `paraformer-zh-2024-03-09-int8`
+- TTS: `kokoro-en-v0_19` and `kokoro-multi-lang-v1_0`
+- Turn detection: the bundled Silero VAD model
+
+English keeps the Parakeet v2 and Kokoro English defaults. Chinese language tags, including regional BCP 47 tags such as `zh-CN`, default to SenseVoice STT and multilingual Kokoro TTS. Explicit model settings still take precedence over language-aware defaults.
 
 Set these to select OpenAI instead of local speech:
 

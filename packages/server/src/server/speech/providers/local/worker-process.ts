@@ -3,7 +3,11 @@ import pino from "pino";
 import type { StreamingTranscriptionSession } from "../../speech-provider.js";
 import type { TurnDetectionSession } from "../../turn-detection-provider.js";
 import { getLocalSpeechModelDir, type LocalSttModelId, type LocalTtsModelId } from "./models.js";
-import { SherpaOfflineRecognizerEngine } from "./sherpa/sherpa-offline-recognizer.js";
+import {
+  SherpaOfflineRecognizerEngine,
+  type SherpaOfflineRecognizerModel,
+} from "./sherpa/sherpa-offline-recognizer.js";
+import { getSherpaOnnxModelSpec } from "./sherpa/model-catalog.js";
 import { SherpaOnnxParakeetSTT } from "./sherpa/sherpa-parakeet-stt.js";
 import { SherpaParakeetRealtimeTranscriptionSession } from "./sherpa/sherpa-parakeet-realtime-session.js";
 import { SherpaOnnxTTS } from "./sherpa/sherpa-tts.js";
@@ -72,6 +76,37 @@ function ttsKey(config: LocalSpeechWorkerConfig): string {
   ].join(":");
 }
 
+function buildSttModelConfig(
+  modelDir: string,
+  modelId: LocalSttModelId,
+): SherpaOfflineRecognizerModel {
+  const spec = getSherpaOnnxModelSpec(modelId);
+
+  switch (spec.sttModelType) {
+    case "nemo_transducer":
+      return {
+        kind: "nemo_transducer",
+        encoder: `${modelDir}/encoder.int8.onnx`,
+        decoder: `${modelDir}/decoder.int8.onnx`,
+        joiner: `${modelDir}/joiner.int8.onnx`,
+        tokens: `${modelDir}/tokens.txt`,
+      };
+    case "sense_voice":
+      return {
+        kind: "sense_voice",
+        model: `${modelDir}/model.int8.onnx`,
+        tokens: `${modelDir}/tokens.txt`,
+        useInverseTextNormalization: true,
+      };
+    case "paraformer":
+      return {
+        kind: "paraformer",
+        model: `${modelDir}/model.int8.onnx`,
+        tokens: `${modelDir}/tokens.txt`,
+      };
+  }
+}
+
 function getSttEngine(
   config: LocalSpeechWorkerConfig,
   model: "voice" | "dictation",
@@ -85,13 +120,7 @@ function getSttEngine(
   const modelDir = getLocalSpeechModelDir(config.modelsDir, modelId);
   const created = new SherpaOfflineRecognizerEngine(
     {
-      model: {
-        kind: "nemo_transducer",
-        encoder: `${modelDir}/encoder.int8.onnx`,
-        decoder: `${modelDir}/decoder.int8.onnx`,
-        joiner: `${modelDir}/joiner.int8.onnx`,
-        tokens: `${modelDir}/tokens.txt`,
-      },
+      model: buildSttModelConfig(modelDir, modelId),
       numThreads: 2,
       debug: 0,
     },

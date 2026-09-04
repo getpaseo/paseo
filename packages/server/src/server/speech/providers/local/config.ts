@@ -13,6 +13,11 @@ import {
   type LocalSttModelId,
   type LocalTtsModelId,
 } from "./models.js";
+import {
+  getDefaultSpeakerId,
+  resolveDefaultSttModelForLanguage,
+  resolveDefaultTtsModelForLanguage,
+} from "./sherpa/model-catalog.js";
 
 export interface LocalSpeechModelConfig {
   dictationStt: LocalSttModelId;
@@ -143,6 +148,12 @@ function buildLocalSpeechResolutionInput(params: {
   includeProviderConfig: boolean;
 }): Record<string, unknown> {
   const { paseoHome, env, persisted, providers, includeProviderConfig } = params;
+
+  // Resolve languages first so we can use them for language-aware model defaults.
+  const languageInput = buildLocalSpeechLanguageResolutionInput({ env, persisted });
+  const dictationLanguage = (languageInput.dictationLanguage as string) ?? DEFAULT_STT_LANGUAGE;
+  const voiceLanguage = (languageInput.voiceLanguage as string) ?? DEFAULT_STT_LANGUAGE;
+
   return {
     includeProviderConfig,
     modelsDir: firstDefinedValue<string>([
@@ -157,7 +168,7 @@ function buildLocalSpeechResolutionInput(params: {
         providers.dictationStt.enabled,
         persisted.features?.dictation?.stt?.model,
       ),
-      DEFAULT_LOCAL_STT_MODEL,
+      resolveDefaultSttModelForLanguage(dictationLanguage),
     ]),
     voiceLocalSttModel: firstDefinedValue<string>([
       env.PASEO_VOICE_LOCAL_STT_MODEL,
@@ -166,7 +177,7 @@ function buildLocalSpeechResolutionInput(params: {
         providers.voiceStt.enabled,
         persisted.features?.voiceMode?.stt?.model,
       ),
-      DEFAULT_LOCAL_STT_MODEL,
+      resolveDefaultSttModelForLanguage(voiceLanguage),
     ]),
     voiceLocalTtsModel: firstDefinedValue<string>([
       env.PASEO_VOICE_LOCAL_TTS_MODEL,
@@ -175,9 +186,9 @@ function buildLocalSpeechResolutionInput(params: {
         providers.voiceTts.enabled,
         persisted.features?.voiceMode?.tts?.model,
       ),
-      DEFAULT_LOCAL_TTS_MODEL,
+      resolveDefaultTtsModelForLanguage(voiceLanguage),
     ]),
-    ...buildLocalSpeechLanguageResolutionInput({ env, persisted }),
+    ...languageInput,
     voiceLocalTtsSpeakerId: firstDefinedValue<string | number>([
       env.PASEO_VOICE_LOCAL_TTS_SPEAKER_ID,
       persisted.features?.voiceMode?.tts?.speakerId,
@@ -201,8 +212,7 @@ export function resolveLocalSpeechConfig(params: {
   );
 
   const resolvedVoiceTtsSpeakerId =
-    parsed.voiceLocalTtsSpeakerId ??
-    (parsed.voiceLocalTtsModel === "kokoro-en-v0_19" ? 0 : undefined);
+    parsed.voiceLocalTtsSpeakerId ?? getDefaultSpeakerId(parsed.voiceLocalTtsModel);
 
   return {
     sttLanguages: {

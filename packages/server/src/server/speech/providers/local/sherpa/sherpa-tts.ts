@@ -4,9 +4,11 @@ import { existsSync } from "node:fs";
 
 import type { SpeechStreamResult, TextToSpeechProvider } from "../../../speech-provider.js";
 import { chunkBuffer, float32ToPcm16le } from "../../../audio.js";
-import { loadSherpaOnnxNode } from "./sherpa-onnx-node-loader.js";
+import { loadSherpaOnnxNode, type SherpaOnnxNodeModule } from "./sherpa-onnx-node-loader.js";
 
-export type SherpaTtsPreset = "kokoro-en-v0_19";
+export type SherpaTtsPreset = "kokoro-en-v0_19" | "kokoro-multi-lang-v1_0";
+
+const MULTI_LANG_LEXICON_FILES = ["lexicon-us-en.txt", "lexicon-zh.txt"];
 
 export interface SherpaTtsConfig {
   preset: SherpaTtsPreset;
@@ -15,6 +17,8 @@ export interface SherpaTtsConfig {
   speed?: number;
   lengthScale?: number;
   numThreads?: number;
+  /** Injectable for tests; defaults to the real native addon loader. */
+  loadSherpaOnnxNode?: () => SherpaOnnxNodeModule;
 }
 
 function assertFileExists(filePath: string, label: string): void {
@@ -45,7 +49,7 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
     this.speakerId = config.speakerId ?? 0;
     this.speed = config.speed ?? 1.0;
 
-    const sherpa = loadSherpaOnnxNode();
+    const sherpa = (config.loadSherpaOnnxNode ?? loadSherpaOnnxNode)();
     if (typeof sherpa.OfflineTts !== "function") {
       throw new Error("sherpa-onnx-node OfflineTts is unavailable");
     }
@@ -60,6 +64,18 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
     assertFileExists(tokensPath, "TTS tokens");
     assertFileExists(dataDir, "TTS espeak-ng dataDir");
 
+    // kokoro-multi-lang-v1_0 requires its lexicon files for correct Chinese/English
+    // text normalization; catalog requiredFiles guarantees they exist after a valid
+    // install, so a missing file here means a corrupt/partial download, not an
+    // intentionally lexicon-less model.
+    const lexiconFiles = MULTI_LANG_LEXICON_FILES.map((f) => `${config.modelDir}/${f}`);
+    if (config.preset === "kokoro-multi-lang-v1_0") {
+      for (const lexiconFile of lexiconFiles) {
+        assertFileExists(lexiconFile, "TTS lexicon");
+      }
+    }
+    const presentLexiconFiles = lexiconFiles.filter((p) => existsSync(p));
+
     const modelConfig = {
       kokoro: {
         model: modelPath,
@@ -67,6 +83,7 @@ export class SherpaOnnxTTS implements TextToSpeechProvider {
         tokens: tokensPath,
         dataDir,
         lengthScale: config.lengthScale ?? 1.0,
+        ...(presentLexiconFiles.length > 0 ? { lexicon: presentLexiconFiles.join(",") } : {}),
       },
     };
 
