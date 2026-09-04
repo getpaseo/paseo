@@ -541,6 +541,10 @@ function ProjectMenuItems({
 }) {
   const { t } = useTranslation();
   const toast = useToast();
+  // `projectPath` comes from `resolveSidebarProjectLocalPath`, so it is the local daemon's
+  // checkout of the project or nothing at all. `settingsTarget` is the first host, which can
+  // be a remote one, so it is not the owner of this path.
+  const localDaemonServerId = useLocalDaemonServerId();
   const handleOpenProjectSettings = useCallback(() => {
     if (!settingsTarget) return;
     router.navigate(buildProjectSettingsRoute(settingsTarget.serverId, settingsTarget.projectId));
@@ -581,6 +585,7 @@ function ProjectMenuItems({
       ) : null}
       <OpenInFileManagerMenuItem
         surface={surface}
+        serverId={localDaemonServerId}
         path={projectPath}
         testID={`sidebar-project-menu-open-folder-${projectViewKey}`}
       />
