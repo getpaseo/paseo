@@ -2202,6 +2202,8 @@ export const ar: TranslationResources = {
         closePane: "إغلاق الجزء",
         newTerminal: "محطة جديدة",
         searchFiles: "البحث في الملفات",
+        historyBack: "الرجوع في السجل",
+        historyForward: "التقدم في السجل",
         toggleCommandCenter: "تبديل مركز القيادة",
         showKeyboardShortcuts: "إظهار اختصارات لوحة المفاتيح",
         toggleLeftSidebar: "تبديل الشريط الجانبي الأيسر",

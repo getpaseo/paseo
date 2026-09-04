@@ -156,6 +156,8 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   general: [
     "toggle-command-center",
     "search-files",
+    "history-back",
+    "history-forward",
     "show-shortcuts",
     "toggle-settings",
     "cycle-theme",
@@ -233,6 +235,8 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "workspace-pane-close": "settings.shortcuts.help.closePane",
   "workspace-terminal-new": "settings.shortcuts.help.newTerminal",
   "search-files": "settings.shortcuts.help.searchFiles",
+  "history-back": "settings.shortcuts.help.historyBack",
+  "history-forward": "settings.shortcuts.help.historyForward",
   "toggle-command-center": "settings.shortcuts.help.toggleCommandCenter",
   "show-shortcuts": "settings.shortcuts.help.showKeyboardShortcuts",
   "toggle-left-sidebar": "settings.shortcuts.help.toggleLeftSidebar",
@@ -329,6 +333,32 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "search-files",
       section: "general",
       label: "Search files",
+    },
+  },
+
+  // --- Route history ---
+  // These ship unassigned because browser/OS history conventions collide with
+  // existing workspace shortcuts and desktop window accelerators.
+  {
+    id: "navigation-history-back",
+    action: "navigation.history.back",
+    combo: "",
+    when: { commandCenter: false },
+    help: {
+      id: "history-back",
+      section: "general",
+      label: "History back",
+    },
+  },
+  {
+    id: "navigation-history-forward",
+    action: "navigation.history.forward",
+    combo: "",
+    when: { commandCenter: false },
+    help: {
+      id: "history-forward",
+      section: "general",
+      label: "History forward",
     },
   },
 

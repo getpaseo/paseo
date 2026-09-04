@@ -2257,6 +2257,8 @@ export const fr: TranslationResources = {
         closePane: "Fermer le volet",
         newTerminal: "Nouvelle borne",
         searchFiles: "Rechercher des fichiers",
+        historyBack: "Reculer dans l’historique",
+        historyForward: "Avancer dans l’historique",
         toggleCommandCenter: "Basculer le centre de commande",
         showKeyboardShortcuts: "Afficher les raccourcis clavier",
         toggleLeftSidebar: "Basculer la barre latérale gauche",
