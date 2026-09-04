@@ -16,6 +16,15 @@ export interface PaneContextValue {
   fileNavigationRevision?: number;
   openTab: (target: WorkspaceTabTarget) => void;
   openPreferredTarget: (target: WorkspaceTabTarget, source: OpenInSidePaneSource) => void;
+  /**
+   * `openPreferredTarget` at the same destination, but claiming a tab of its own instead of the
+   * pane's preview slot. Separate from `openPreferredTarget` so panels that never keep a tab — Changes,
+   * diffs, chat file links — keep using the narrow two-argument contract unchanged.
+   */
+  openPreferredTargetAsNormalTab: (
+    target: WorkspaceTabTarget,
+    source: OpenInSidePaneSource,
+  ) => void;
   openTargetToSide?: (target: WorkspaceTabTarget) => void;
   closeCurrentTab: () => void;
   retargetCurrentTab: (target: WorkspaceTabTarget) => void;

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { usePaneContext } from "@/panels/pane-context";
+import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
+import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
 
 export interface PanelInstanceIdentity {
   serverId: string;
@@ -115,4 +117,12 @@ export function usePublishPanelInstanceAttributes(attributes: PanelInstanceAttri
     setPanelInstanceAttributes(identity, { modified, suspendPendingSave });
     return () => setPanelInstanceAttributes(identity, DEFAULT_ATTRIBUTES);
   }, [modified, serverId, suspendPendingSave, tabId, workspaceId]);
+  // Editing a preview keeps it. Every panel that can be edited publishes `modified` through here,
+  // so this is the one place the promotion has to happen.
+  useEffect(() => {
+    if (!modified) return;
+    const workspaceKey = buildWorkspaceTabPersistenceKey({ serverId, workspaceId });
+    if (!workspaceKey) return;
+    useWorkspaceLayoutStore.getState().setTabPreview(workspaceKey, tabId, false);
+  }, [modified, serverId, tabId, workspaceId]);
 }

@@ -50,6 +50,7 @@ function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
     ...data,
     tooltip: data.label,
     modified: false,
+    preview: false,
     icon: getProviderIcon(row.provider),
   };
 }

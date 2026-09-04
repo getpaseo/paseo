@@ -6,4 +6,6 @@ export interface WorkspaceTabDescriptor {
   kind: WorkspaceTabTarget["kind"];
   target: WorkspaceTabTarget;
   state?: import("@getpaseo/protocol/agent-types").JsonValue;
+  /** Mirrors `WorkspaceTab.preview` so the tab strip can render the slot as provisional. */
+  preview?: boolean;
 }

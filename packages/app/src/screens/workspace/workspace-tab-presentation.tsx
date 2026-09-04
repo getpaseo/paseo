@@ -26,6 +26,8 @@ export interface WorkspaceTabPresentation {
   subtitle: string;
   tooltip: string;
   modified: boolean;
+  /** The pane's reusable slot. Rendered in italics, following the convention set by VS Code. */
+  preview: boolean;
   titleState: "ready" | "loading";
   icon: React.ComponentType<PanelIconProps>;
   statusBucket: SidebarStateBucket | null;
@@ -90,6 +92,7 @@ function WorkspaceTabPresentationResolverInner({
       subtitle: descriptor.subtitle,
       tooltip: descriptor.tooltip,
       modified: attributes.modified,
+      preview: tab.preview === true,
       titleState: descriptor.titleState,
       icon: descriptor.icon,
       statusBucket: descriptor.statusBucket,
@@ -103,6 +106,7 @@ function WorkspaceTabPresentationResolverInner({
       descriptor.titleState,
       tab.key,
       tab.kind,
+      tab.preview,
       attributes.modified,
     ],
   );
@@ -233,7 +237,10 @@ export function WorkspaceTabOptionRow({
                 />
               </View>
               <View style={styles.optionContent}>
-                <Text numberOfLines={1} style={styles.optionLabel}>
+                <Text
+                  numberOfLines={1}
+                  style={[styles.optionLabel, presentation.preview && styles.optionLabelPreview]}
+                >
                   {presentation.titleState === "loading"
                     ? t("workspace.tabs.loading")
                     : presentation.label}
@@ -337,6 +344,9 @@ const styles = StyleSheet.create((theme) => ({
   optionLabel: {
     fontSize: theme.fontSize.base,
     color: theme.colors.foreground,
+  },
+  optionLabelPreview: {
+    fontStyle: "italic",
   },
   optionTrailingSlot: {
     width: 16,

@@ -2006,6 +2006,10 @@ export const ko: TranslationResources = {
           queue: "대기열",
         },
       },
+      previewTabs: {
+        label: "탐색기 미리보기에 탭 재사용",
+        hint: "파일을 더블클릭하면 전용 탭으로 유지됩니다",
+      },
       serviceUrls: {
         label: "서비스 URL",
         description: "실행 중인 스크립트의 URL을 열 위치",

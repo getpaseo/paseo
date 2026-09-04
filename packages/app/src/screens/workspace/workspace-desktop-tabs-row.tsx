@@ -659,6 +659,7 @@ function TabHandleContent({
   tabLabelSkeletonStyle,
   tabLabelStyle,
   modifiedTestId,
+  previewTestId,
 }: {
   presentation: WorkspaceTabPresentation;
   isHighlighted: boolean;
@@ -667,6 +668,7 @@ function TabHandleContent({
   tabLabelSkeletonStyle: React.ComponentProps<typeof View>["style"];
   tabLabelStyle: React.ComponentProps<typeof Text>["style"];
   modifiedTestId: string;
+  previewTestId: string;
 }) {
   const { t } = useTranslation();
   const tabHandleDataSet = useMemo(
@@ -675,7 +677,13 @@ function TabHandleContent({
   );
 
   return (
-    <View style={styles.tabHandle} dataSet={tabHandleDataSet}>
+    <View
+      style={styles.tabHandle}
+      dataSet={tabHandleDataSet}
+      // Additive: the chip keeps its `workspace-tab-<identity>` id either way, so this only says
+      // whether the tab is currently a preview.
+      testID={presentation.preview ? previewTestId : undefined}
+    >
       <View style={styles.tabIcon}>
         <WorkspaceTabIcon presentation={presentation} active={isHighlighted} backdrop={backdrop} />
       </View>
@@ -819,8 +827,12 @@ function TabChip({
     tab.target.kind === "new_tab" ? tab.tabId : buildDeterministicWorkspaceTabId(tab.target);
   const tabLabelSkeletonStyle = styles.tabLabelSkeleton;
   const tabLabelStyle = useMemo(
-    () => [styles.tabLabel, isHighlighted && styles.tabLabelActive],
-    [isHighlighted],
+    () => [
+      styles.tabLabel,
+      isHighlighted && styles.tabLabelActive,
+      presentation.preview && styles.tabLabelPreview,
+    ],
+    [isHighlighted, presentation.preview],
   );
 
   return (
@@ -855,6 +867,7 @@ function TabChip({
                 tabLabelSkeletonStyle={tabLabelSkeletonStyle}
                 tabLabelStyle={tabLabelStyle}
                 modifiedTestId={`workspace-tab-modified-${testIdentity}`}
+                previewTestId={`workspace-tab-preview-${testIdentity}`}
               />
             </ContextMenuTrigger>
           </TooltipTrigger>
@@ -1672,6 +1685,9 @@ const styles = StyleSheet.create((theme) => ({
   },
   tabLabelActive: {
     color: theme.colors.foreground,
+  },
+  tabLabelPreview: {
+    fontStyle: "italic",
   },
   tabTrailingOverlay: {
     position: "absolute",

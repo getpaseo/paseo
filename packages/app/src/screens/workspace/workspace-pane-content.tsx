@@ -32,6 +32,10 @@ export interface BuildWorkspacePaneContentModelInput {
     target: WorkspaceTabDescriptor["target"],
     source: OpenInSidePaneSource,
   ) => void;
+  onOpenPreferredTargetAsNormalTab: (
+    target: WorkspaceTabDescriptor["target"],
+    source: OpenInSidePaneSource,
+  ) => void;
   onOpenTargetToSide?: (target: WorkspaceTabDescriptor["target"]) => void;
   onCloseCurrentTab: () => void;
   onRetargetCurrentTab: (target: WorkspaceTabDescriptor["target"]) => void;
@@ -48,6 +52,7 @@ export function buildWorkspacePaneContentModel({
   fileNavigationRevision,
   onOpenTab,
   onOpenPreferredTarget,
+  onOpenPreferredTargetAsNormalTab,
   onOpenTargetToSide,
   onCloseCurrentTab,
   onRetargetCurrentTab,
@@ -71,6 +76,7 @@ export function buildWorkspacePaneContentModel({
       fileNavigationRevision,
       openTab: onOpenTab,
       openPreferredTarget: onOpenPreferredTarget,
+      openPreferredTargetAsNormalTab: onOpenPreferredTargetAsNormalTab,
       openTargetToSide: onOpenTargetToSide,
       closeCurrentTab: onCloseCurrentTab,
       retargetCurrentTab: onRetargetCurrentTab,
@@ -97,6 +103,9 @@ export function WorkspacePaneContent({
   const { Component, key, paneContextValue } = content;
   const openTab = useStableEvent(paneContextValue.openTab);
   const openPreferredTarget = useStableEvent(paneContextValue.openPreferredTarget);
+  const openPreferredTargetAsNormalTab = useStableEvent(
+    paneContextValue.openPreferredTargetAsNormalTab,
+  );
   const openTargetToSide = useStableEvent(paneContextValue.openTargetToSide ?? (() => undefined));
   const closeCurrentTab = useStableEvent(paneContextValue.closeCurrentTab);
   const retargetCurrentTab = useStableEvent(paneContextValue.retargetCurrentTab);
@@ -114,6 +123,7 @@ export function WorkspacePaneContent({
       fileNavigationRevision: paneContextValue.fileNavigationRevision,
       openTab,
       openPreferredTarget,
+      openPreferredTargetAsNormalTab,
       openTargetToSide: paneContextValue.openTargetToSide ? openTargetToSide : undefined,
       closeCurrentTab,
       retargetCurrentTab,
@@ -127,6 +137,7 @@ export function WorkspacePaneContent({
       openImportSheet,
       openTab,
       openPreferredTarget,
+      openPreferredTargetAsNormalTab,
       openTargetToSide,
       paneContextValue.serverId,
       paneContextValue.fileNavigationRevision,

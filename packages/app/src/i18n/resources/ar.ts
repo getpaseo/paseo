@@ -1995,6 +1995,10 @@ export const ar: TranslationResources = {
           queue: "طابور",
         },
       },
+      previewTabs: {
+        label: "إعادة استخدام تبويب لمعاينات المستكشف",
+        hint: "انقر نقرًا مزدوجًا على ملف للاحتفاظ به في تبويب خاص به",
+      },
       serviceUrls: {
         label: "عناوين URL للخدمة",
         description: "مكان فتح عناوين URL من تشغيل البرامج النصية",
