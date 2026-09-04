@@ -159,6 +159,7 @@ Add quick links for pages you open often:
       "type": "service",
       "command": "npm run dev -- --port $PASEO_PORT",
       "links": [
+        { "label": "Website", "path": "/" },
         { "label": "Admin", "path": "/admin" },
         { "label": "GraphQL", "path": "/api/graphql" }
       ]
