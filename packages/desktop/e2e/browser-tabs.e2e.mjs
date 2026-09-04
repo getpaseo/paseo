@@ -262,6 +262,21 @@ async function waitForGuestSelector(client, browserId) {
   return false;
 }
 
+async function waitForGuestActiveElement(client, browserId, elementId) {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const evaluated = await callBrowserTool(client, "browser_evaluate", {
+      browserId,
+      function: "() => document.activeElement?.id ?? null",
+    });
+    if (JSON.parse(evaluated.resultJson) === elementId) {
+      return true;
+    }
+    await delay(50);
+  }
+  return false;
+}
+
 async function createCallerAgent(daemonPort) {
   const transport = new StreamableHTTPClientTransport(
     new URL(`http://127.0.0.1:${daemonPort}/mcp/agents`),
@@ -492,12 +507,8 @@ async function runRegression({ page, client, serverId, targetUrl, callerAgentId,
   );
 
   await clickGuestElement(page, client, browserId, "#typing-target");
-  const activeGuestElement = await callBrowserTool(client, "browser_evaluate", {
-    browserId,
-    function: "() => document.activeElement?.id ?? null",
-  });
   assert(
-    JSON.parse(activeGuestElement.resultJson) === "typing-target",
+    await waitForGuestActiveElement(client, browserId, "typing-target"),
     "Physical browser click did not focus the guest input",
   );
   const focusedGuest = await page.evaluate(
