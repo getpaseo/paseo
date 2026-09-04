@@ -13,6 +13,7 @@ function project(input: {
 }): HostProjectListItem {
   return {
     ...input,
+    group: null,
     projectKind: "git",
     iconWorkingDir: `/work/${input.projectId}`,
     hosts: [

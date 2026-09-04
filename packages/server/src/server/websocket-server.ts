@@ -316,6 +316,7 @@ function createNoopProjectRegistry(): ProjectRegistry {
       displayName: input.displayName,
       projectKey: input.projectKey ?? null,
       customName: null,
+      group: null,
       customIconRevision: null,
       createdAt: input.timestamp,
       updatedAt: input.timestamp,
@@ -1753,6 +1754,8 @@ export class VoiceAssistantWebSocketServer {
         workspaceScriptManagement: true,
         // COMPAT(projectCustomIcon): added in v0.2.0, remove after 2027-01-20.
         projectCustomIcon: true,
+        // COMPAT(projectGroups): added in v0.7.3, remove gate after 2027-03-02.
+        projectGroups: true,
         // COMPAT(fsEntryOps): added in v0.3.0, remove gate after 2027-02-08.
         fsEntryOps: true,
         // COMPAT(fsEntryDuplicate): added in v0.3.0, remove gate after 2027-02-09.

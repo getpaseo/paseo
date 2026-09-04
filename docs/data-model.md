@@ -451,6 +451,7 @@ Array of project records.
 | `kind`               | `"git" \| "non_git"`        | Mutable Git observation about `rootPath`, never a membership key                                                                           |
 | `displayName`        | `string`                    | Selected-root basename, stable across remote and Git changes                                                                               |
 | `customName`         | `string \| null`            | User-set override layered over `displayName`. Null means "use the derived name".                                                           |
+| `group`              | `string \| null`            | User-set group name; the sidebar nests projects sharing one name under a header. Null means ungrouped. No catalog: set per project.        |
 | `customIconRevision` | `string \| null`            | Identifies the host-local custom icon stored under `projects/icons/`. Null means the icon is discovered by scanning the project directory. |
 | `createdAt`          | `string` (ISO 8601)         |                                                                                                                                            |
 | `updatedAt`          | `string` (ISO 8601)         |                                                                                                                                            |

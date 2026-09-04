@@ -21,6 +21,7 @@ import {
   GitBranch,
   GitPullRequest,
   Globe,
+  Plus,
   Server,
   Settings2,
   Tag,
@@ -58,6 +59,7 @@ import { SIDEBAR_ROW_ITEMS, type SidebarRowItem } from "./row-items";
 import { useWorkspaceLabelProjection } from "@/workspace-labels";
 import { WorkspaceLabelDot } from "@/workspace-labels/swatch";
 import { WorkspaceLabelManagerModal } from "@/workspace-labels/manager-modal";
+import { useProjectGroupCreateModalStore } from "@/project-groups/create-modal-store";
 
 const mutedIconMapping = (theme: Theme) => ({ color: theme.colors.foregroundMuted });
 
@@ -65,10 +67,13 @@ const ThemedSettings2 = withUnistyles(Settings2);
 /** CI's mark: the subject of the checks row, and the shape the icon-only option leaves behind. */
 const ThemedCircleCheck = withUnistyles(CircleCheck);
 const ThemedCircle = withUnistyles(Circle);
+const ThemedPlus = withUnistyles(Plus);
 
 /** Fits the item's 16pt leading slot with a hair of room, matching the trailing check. */
 const OPTION_ICON_SIZE = 14;
 const MENU_WIDTH = 232;
+
+const NEW_GROUP_LEADING = <ThemedPlus size={OPTION_ICON_SIZE} uniProps={mutedIconMapping} />;
 
 /**
  * Unlabelled's stand-in for a color dot: the same circle at the same size, hollow.
@@ -172,6 +177,8 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   const [managerOpen, setManagerOpen] = useState(false);
   const openManager = useCallback(() => setManagerOpen(true), []);
   const closeManager = useCallback(() => setManagerOpen(false), []);
+  const openCreateGroup = useProjectGroupCreateModalStore((state) => state.open);
+  const handleNewGroup = useCallback(() => openCreateGroup([]), [openCreateGroup]);
 
   const triggerStyle = useCallback(
     ({ hovered = false }: PressableStateCallbackType & { hovered?: boolean }) => [
@@ -188,6 +195,8 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
   // catalog only counts hosts that are online, so a host dropping off would otherwise take away
   // the only way back to a filter that is still hiding workspaces.
   const showLabelFilter = labels.length > 0 || hasActiveSidebarLabelFilter(preferences.labelFilter);
+  // Grouping by status has no groups to name one into, so the row only makes sense in project mode.
+  const showNewGroup = preferences.grouping === "project" && allProjects.length > 0;
 
   const pages = useMemo<MenuPageDefinition[]>(() => {
     const definitions: MenuPageDefinition[] = [
@@ -318,6 +327,18 @@ export function SidebarDisplayPreferencesMenu(): ReactElement {
           <MenuSubTrigger id="show" testID="sidebar-display-show">
             {t("sidebar.display.show.label")}
           </MenuSubTrigger>
+          {showNewGroup ? (
+            <>
+              <MenuSeparator />
+              <MenuItem
+                leading={NEW_GROUP_LEADING}
+                onSelect={handleNewGroup}
+                testID="sidebar-display-new-group"
+              >
+                {t("sidebar.display.newGroup")}
+              </MenuItem>
+            </>
+          ) : null}
           {showHostFilter ? (
             <>
               <MenuSeparator />

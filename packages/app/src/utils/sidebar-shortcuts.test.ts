@@ -49,6 +49,7 @@ function project(projectKey: string, workspaces: SidebarWorkspaceEntry[]): Sideb
   return {
     viewKey: projectKey,
     projectName: projectKey,
+    group: null,
     projectKind: "git",
     iconWorkingDir: workspaces[0]?.workspaceDirectory ?? "",
     hosts: [

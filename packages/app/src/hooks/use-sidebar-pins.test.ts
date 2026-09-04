@@ -22,6 +22,7 @@ function project(projectKey: string, workspaces: SidebarWorkspacePlacement[]): S
   return {
     viewKey: projectKey,
     projectName: projectKey,
+    group: null,
     projectKind: "git",
     iconWorkingDir: "",
     hosts: [],

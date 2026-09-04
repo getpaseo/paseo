@@ -35,6 +35,7 @@ export function hostProjectFromRoute(route: HostProjectRouteContext): HostProjec
     viewKey: createProjectViewKey({ kind: "placement", serverId: route.serverId, projectId }),
     projectKey: null,
     projectName: trimOptional(route.displayName) || projectId,
+    group: null,
     projectKind: "unknown",
     iconWorkingDir,
     hosts: [
@@ -73,6 +74,7 @@ export function hostProjectFromWorkspace(input: {
     }),
     projectKey: input.workspace.project?.projectKey ?? null,
     projectName: input.workspace.projectDisplayName || projectId,
+    group: input.workspace.projectGroup ?? null,
     projectKind: input.workspace.projectKind,
     iconWorkingDir,
     hosts: [
