@@ -1150,6 +1150,8 @@ export const ar: TranslationResources = {
         moveUp: "نقل لأعلى",
         moveDown: "نقل لأسفل",
         createConfirm: "إنشاء مجموعة",
+        addToGroupConfirm: "إضافة إلى المجموعة",
+        groupedMembers: "في مجموعات أخرى",
         creating: "جارٍ الإنشاء...",
         name: "اسم المجموعة",
         rename: "إعادة تسمية المجموعة",
