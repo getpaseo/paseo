@@ -277,6 +277,8 @@ export function buildACPClientCapabilities(
 // NO_BROWSER is honored by Gemini CLI; other ACP agents ignore it.
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
+const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
+const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 2_000;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
   return {
@@ -491,6 +493,78 @@ interface ACPProcessTransport {
   stderrChunks: string[];
   spawnReady: Promise<void>;
   spawnError: Promise<never>;
+}
+
+interface ACPImportPromptPreviews {
+  firstPromptPreview: string | null;
+  lastPromptPreview: string | null;
+  hasConversation: boolean;
+}
+
+interface ACPImportPromptCacheEntry extends ACPImportPromptPreviews {
+  updatedAt: string | null;
+}
+
+class ACPImportHistoryCollector {
+  private readonly prompts = new Map<
+    string,
+    {
+      completed: string[];
+      current: { messageId: string | null; text: string } | null;
+      hasConversation: boolean;
+    }
+  >();
+
+  begin(sessionId: string): void {
+    this.prompts.set(sessionId, { completed: [], current: null, hasConversation: false });
+  }
+
+  accept(params: SessionNotification): void {
+    const state = this.prompts.get(params.sessionId);
+    if (!state) return;
+    const update = params.update;
+    if (isACPConversationUpdate(update)) state.hasConversation = true;
+    if (update.sessionUpdate !== "user_message_chunk") {
+      this.flushCurrent(state);
+      return;
+    }
+
+    const text = contentBlockToText(update.content);
+    if (!text) return;
+    const messageId = update.messageId ?? null;
+    if (state.current?.messageId && messageId !== state.current.messageId) {
+      this.flushCurrent(state);
+    }
+    state.current ??= { messageId, text: "" };
+    state.current.text += text;
+  }
+
+  finish(sessionId: string): ACPImportPromptPreviews {
+    const state = this.prompts.get(sessionId);
+    if (!state) {
+      return { firstPromptPreview: null, lastPromptPreview: null, hasConversation: false };
+    }
+    this.flushCurrent(state);
+    this.prompts.delete(sessionId);
+    return {
+      firstPromptPreview: normalizeACPImportPromptPreview(state.completed[0] ?? null),
+      lastPromptPreview: normalizeACPImportPromptPreview(state.completed.at(-1) ?? null),
+      hasConversation: state.hasConversation,
+    };
+  }
+
+  discard(sessionId: string): void {
+    this.prompts.delete(sessionId);
+  }
+
+  private flushCurrent(state: {
+    completed: string[];
+    current: { messageId: string | null; text: string } | null;
+    hasConversation: boolean;
+  }): void {
+    if (state.current?.text.trim()) state.completed.push(state.current.text);
+    state.current = null;
+  }
 }
 
 export interface ACPToolSnapshot {
@@ -826,6 +900,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly waitForInitialCommands: boolean;
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
+  private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -948,10 +1023,11 @@ export class ACPAgentClient implements AgentClient {
   ): Promise<ProviderCatalog> {
     const cwd = options.scope === "global" ? homedir() : options.cwd;
     let probe: UninitializedACPProcess | null = null;
+    let probeSessionId: string | null = null;
     let closePromise: Promise<void> | null = null;
     const closeProbe = (): Promise<void> => {
       if (!probe) return Promise.resolve();
-      closePromise ??= this.closeProbe(probe);
+      closePromise ??= this.closeProbe(probe, probeSessionId);
       return closePromise;
     };
     const handleAbort = () => void closeProbe().catch(() => undefined);
@@ -981,6 +1057,7 @@ export class ACPAgentClient implements AgentClient {
           ),
         ),
       );
+      probeSessionId = response.sessionId;
       const transformed = this.transformSessionResponse(response);
       const derivedModels = deriveModelDefinitionsFromACP(
         this.provider,
@@ -1030,6 +1107,7 @@ export class ACPAgentClient implements AgentClient {
 
     this.assertProvider(config);
     const probe = await this.spawnProcess(PROBE_ENV);
+    let probeSessionId: string | null = null;
     try {
       const response = await this.runACPRequest(() =>
         probe.connection.newSession({
@@ -1037,50 +1115,136 @@ export class ACPAgentClient implements AgentClient {
           mcpServers: [],
         }),
       );
+      probeSessionId = response.sessionId;
       const transformed = this.transformSessionResponse(response);
       return [
         autoAcceptFeature,
         ...deriveFeaturesFromACP(transformed.configOptions, this.configFeatureOptions),
       ];
     } finally {
-      await this.closeProbe(probe);
+      await this.closeProbe(probe, probeSessionId);
     }
   }
 
   async listImportableSessions(
     options?: ListImportableSessionsOptions,
   ): Promise<ImportableProviderSession[]> {
-    const probe = await this.spawnProcess(PROBE_ENV);
+    const history = new ACPImportHistoryCollector();
+    const probe = await this.spawnProcess(PROBE_ENV, {
+      client: this.buildProbeClient((params) => history.accept(params)),
+    });
     try {
       if (!probe.initialize.agentCapabilities?.sessionCapabilities?.list) {
         return [];
       }
 
       const sessions: ImportableProviderSession[] = [];
-      const scanLimit = Math.min(options?.scanLimit ?? options?.limit ?? 500, 500);
+      const resultLimit = options?.limit ?? Number.POSITIVE_INFINITY;
+      const scanLimit = Math.min(options?.scanLimit ?? 500, 500);
+      const canLoadHistory = probe.initialize.agentCapabilities.loadSession === true;
+      let scanned = 0;
       let cursor: string | null | undefined;
       for (;;) {
         const page: ListSessionsResponse = await this.runACPRequest(() =>
           probe.connection.listSessions(acpSessionListRequest(cursor, options?.cwd)),
         );
         for (const session of page.sessions) {
-          sessions.push({
-            providerHandleId: session.sessionId,
-            cwd: session.cwd,
-            title: session.title ?? null,
-            firstPromptPreview: null,
-            lastPromptPreview: null,
-            lastActivityAt: session.updatedAt ? new Date(session.updatedAt) : new Date(0),
-          });
+          if (scanned >= scanLimit || sessions.length >= resultLimit) break;
+          scanned += 1;
+          const descriptor = await this.describeImportableSession(
+            probe,
+            history,
+            session,
+            canLoadHistory,
+          );
+          if (descriptor) sessions.push(descriptor);
         }
         cursor = page.nextCursor ?? null;
         if (!cursor) break;
-        if (sessions.length >= scanLimit) break;
+        if (scanned >= scanLimit || sessions.length >= resultLimit) break;
       }
 
-      return typeof options?.limit === "number" ? sessions.slice(0, options.limit) : sessions;
+      return sessions;
     } finally {
       await this.closeProbe(probe);
+    }
+  }
+
+  private async describeImportableSession(
+    probe: SpawnedACPProcess,
+    history: ACPImportHistoryCollector,
+    session: ListSessionsResponse["sessions"][number],
+    canLoadHistory: boolean,
+  ): Promise<ImportableProviderSession | null> {
+    const loadedPreviews = canLoadHistory
+      ? await this.loadImportPromptPreviews(probe, history, session)
+      : null;
+    if (loadedPreviews?.hasConversation === false) return null;
+    return {
+      providerHandleId: session.sessionId,
+      cwd: session.cwd,
+      title: session.title ?? null,
+      firstPromptPreview: loadedPreviews?.firstPromptPreview ?? null,
+      lastPromptPreview: loadedPreviews?.lastPromptPreview ?? null,
+      lastActivityAt: session.updatedAt ? new Date(session.updatedAt) : new Date(0),
+    };
+  }
+
+  private async loadImportPromptPreviews(
+    probe: SpawnedACPProcess,
+    history: ACPImportHistoryCollector,
+    session: ListSessionsResponse["sessions"][number],
+  ): Promise<ACPImportPromptPreviews | null> {
+    const updatedAt = session.updatedAt ?? null;
+    const cached = this.importPromptCache.get(session.sessionId);
+    if (updatedAt !== null && cached?.updatedAt === updatedAt) {
+      return {
+        firstPromptPreview: cached.firstPromptPreview,
+        lastPromptPreview: cached.lastPromptPreview,
+        hasConversation: cached.hasConversation,
+      };
+    }
+
+    history.begin(session.sessionId);
+    try {
+      await withTimeout(
+        this.runACPRequest(() =>
+          probe.connection.loadSession({
+            sessionId: session.sessionId,
+            cwd: session.cwd,
+            mcpServers: [],
+          }),
+        ),
+        ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS,
+        `ACP import history load timed out after ${ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS}ms`,
+      );
+      const previews = history.finish(session.sessionId);
+      if (updatedAt !== null) {
+        this.importPromptCache.set(session.sessionId, { updatedAt, ...previews });
+      }
+      return previews;
+    } catch (error) {
+      history.discard(session.sessionId);
+      this.logger.debug(
+        { err: error, sessionId: session.sessionId },
+        "ACP import history load failed; keeping the session visible",
+      );
+      return null;
+    } finally {
+      await this.closeLoadedSession(probe, session.sessionId);
+    }
+  }
+
+  private async closeLoadedSession(probe: SpawnedACPProcess, sessionId: string): Promise<void> {
+    if (!probe.initialize.agentCapabilities?.sessionCapabilities?.close) return;
+    try {
+      await withTimeout(
+        probe.connection.unstable_closeSession({ sessionId }),
+        ACP_PROBE_CLOSE_TIMEOUT_MS,
+        `ACP loaded session/close timed out after ${ACP_PROBE_CLOSE_TIMEOUT_MS}ms`,
+      );
+    } catch (error) {
+      this.logger.debug({ err: error, sessionId }, "ACP loaded session close failed");
     }
   }
 
@@ -1107,9 +1271,10 @@ export class ACPAgentClient implements AgentClient {
     options?: {
       initializeTimeoutMs?: number;
       onSpawned?: (probe: UninitializedACPProcess) => void;
+      client?: ACPClient;
     },
   ): Promise<SpawnedACPProcess> {
-    const transport = await this.spawnTransport(launchEnv);
+    const transport = await this.spawnTransport(launchEnv, options?.client);
     const probe: UninitializedACPProcess = {
       child: transport.child,
       connection: transport.connection,
@@ -1130,7 +1295,10 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected async spawnTransport(launchEnv?: Record<string, string>): Promise<ACPProcessTransport> {
+  protected async spawnTransport(
+    launchEnv?: Record<string, string>,
+    client: ACPClient = this.buildProbeClient(),
+  ): Promise<ACPProcessTransport> {
     const { command, args } = await this.resolveLaunchCommand();
     const child = spawnProcess(command, args, {
       cwd: process.cwd(),
@@ -1164,7 +1332,7 @@ export class ACPAgentClient implements AgentClient {
       Readable.toWeb(child.stdout),
       { logger: this.logger, provider: this.provider },
     );
-    const connection = new ClientSideConnection(() => this.buildProbeClient(), stream);
+    const connection = new ClientSideConnection(() => client, stream);
 
     return {
       child,
@@ -1210,12 +1378,16 @@ export class ACPAgentClient implements AgentClient {
     }
   }
 
-  protected buildProbeClient(): ACPClient {
+  protected buildProbeClient(
+    onSessionUpdate?: (params: SessionNotification) => void | Promise<void>,
+  ): ACPClient {
     return {
       async requestPermission(): Promise<RequestPermissionResponse> {
         return { outcome: { outcome: "cancelled" } };
       },
-      async sessionUpdate(): Promise<void> {},
+      async sessionUpdate(params): Promise<void> {
+        await onSessionUpdate?.(params);
+      },
       async readTextFile(params: ReadTextFileRequest) {
         const content = await fs.readFile(params.path, "utf8");
         return { content };
@@ -1231,11 +1403,20 @@ export class ACPAgentClient implements AgentClient {
     };
   }
 
-  protected async closeProbe(probe: UninitializedACPProcess): Promise<void> {
+  protected async closeProbe(
+    probe: UninitializedACPProcess,
+    sessionId: string | null = null,
+  ): Promise<void> {
     try {
-      if (probe.initialize?.agentCapabilities?.sessionCapabilities?.close) {
-        // No active session to close here; ignore capability.
+      if (sessionId && probe.initialize?.agentCapabilities?.sessionCapabilities?.close) {
+        await withTimeout(
+          probe.connection.unstable_closeSession({ sessionId }),
+          ACP_PROBE_CLOSE_TIMEOUT_MS,
+          `ACP probe session/close timed out after ${ACP_PROBE_CLOSE_TIMEOUT_MS}ms`,
+        );
       }
+    } catch (error) {
+      this.logger.debug({ err: error, sessionId }, "ACP probe closeSession failed during cleanup");
     } finally {
       await terminateChildProcess(probe.child, 2_000, this.terminateProcess);
     }
@@ -1259,6 +1440,8 @@ export class ACPAgentClient implements AgentClient {
     const phaseTimeoutMs = options.phaseTimeoutMs ?? ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS;
     const cwd = options.cwd ?? homedir();
     let transport: ACPProcessTransport | null = null;
+    let initialize: InitializeResponse | null = null;
+    let probeSessionId: string | null = null;
 
     try {
       const spawnStartedAt = Date.now();
@@ -1284,7 +1467,7 @@ export class ACPAgentClient implements AgentClient {
 
       const initializeStartedAt = Date.now();
       try {
-        await this.initializeTransport(activeTransport, phaseTimeoutMs);
+        initialize = await this.initializeTransport(activeTransport, phaseTimeoutMs);
         rows.push({
           label: "ACP initialize",
           value: `ok (${formatDurationMs(initializeStartedAt)})`,
@@ -1310,6 +1493,7 @@ export class ACPAgentClient implements AgentClient {
           phaseTimeoutMs,
           `ACP session/new timed out after ${phaseTimeoutMs}ms`,
         );
+        probeSessionId = response.sessionId;
         const transformed = this.transformSessionResponse(response);
         const models = deriveModelDefinitionsFromACP(
           this.provider,
@@ -1342,7 +1526,15 @@ export class ACPAgentClient implements AgentClient {
       if (transport) {
         const cleanupStartedAt = Date.now();
         try {
-          await terminateChildProcess(transport.child, 2_000, this.terminateProcess);
+          await this.closeProbe(
+            {
+              child: transport.child,
+              connection: transport.connection,
+              stderrChunks: transport.stderrChunks,
+              ...(initialize ? { initialize } : {}),
+            },
+            probeSessionId,
+          );
           rows.push({
             label: "ACP cleanup",
             value: `ok (${formatDurationMs(cleanupStartedAt)})`,
@@ -3223,6 +3415,23 @@ function contentBlockToText(content: ContentBlock): string {
     default:
       return "";
   }
+}
+
+function normalizeACPImportPromptPreview(text: string | null): string | null {
+  const normalized = text?.trim().replace(/\s+/g, " ") ?? "";
+  if (!normalized) return null;
+  return normalized.length > 160 ? normalized.slice(0, 160) : normalized;
+}
+
+function isACPConversationUpdate(update: SessionUpdate): boolean {
+  return (
+    update.sessionUpdate === "user_message_chunk" ||
+    update.sessionUpdate === "agent_message_chunk" ||
+    update.sessionUpdate === "agent_thought_chunk" ||
+    update.sessionUpdate === "tool_call" ||
+    update.sessionUpdate === "tool_call_update" ||
+    update.sessionUpdate === "plan"
+  );
 }
 
 function coalesceDefined<T>(next: T | undefined, previous: T | undefined, fallback: T): T {

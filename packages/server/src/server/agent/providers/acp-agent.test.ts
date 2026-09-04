@@ -3516,6 +3516,119 @@ describe("ACPAgentClient probe cleanup", () => {
     expect(child.stdout.destroyed).toBe(true);
     expect(child.stderr.destroyed).toBe(true);
   });
+
+  test("closes the native catalog probe session before terminating its process", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+    const closeSession = vi.fn().mockImplementation(async () => {
+      expect(terminator.terminated).toEqual([]);
+      return {};
+    });
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "catalog-probe-session",
+              modes: null,
+              models: null,
+              configOptions: [],
+            }),
+            unstable_closeSession: closeSession,
+          },
+          initialize: { agentCapabilities: { sessionCapabilities: { close: {} } } },
+        } as unknown as SpawnedACPProcess;
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      defaultModes: [],
+      terminateProcess: terminator.terminate,
+    });
+
+    await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-models", force: false });
+
+    expect(closeSession).toHaveBeenCalledWith({ sessionId: "catalog-probe-session" });
+    expect(terminator.terminated).toContain(child);
+  });
+
+  test("closes the native feature probe session before terminating its process", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+    const closeSession = vi.fn().mockResolvedValue({});
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "feature-probe-session",
+              modes: null,
+              models: null,
+              configOptions: [copilotAgentConfigOption("Probe Agent")],
+            }),
+            unstable_closeSession: closeSession,
+          },
+          initialize: { agentCapabilities: { sessionCapabilities: { close: {} } } },
+        } as unknown as SpawnedACPProcess;
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "copilot",
+      logger: createTestLogger(),
+      defaultCommand: ["copilot", "--acp"],
+      defaultModes: [],
+      configFeatureOptions: [COPILOT_AGENT_FEATURE_OPTION],
+      terminateProcess: terminator.terminate,
+    });
+
+    await client.listFeatures({ provider: "copilot", cwd: "/tmp/acp-features" });
+
+    expect(closeSession).toHaveBeenCalledWith({ sessionId: "feature-probe-session" });
+    expect(terminator.terminated).toContain(child);
+  });
+
+  test("still terminates the probe when native session close fails", async () => {
+    const terminator = new FakeTerminator();
+    const child = createProbeChildStub();
+
+    class TestACPAgentClient extends ACPAgentClient {
+      protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+        return {
+          child,
+          connection: {
+            newSession: vi.fn().mockResolvedValue({
+              sessionId: "catalog-probe-session",
+              modes: null,
+              models: null,
+              configOptions: [],
+            }),
+            unstable_closeSession: vi.fn().mockRejectedValue(new Error("close failed")),
+          },
+          initialize: { agentCapabilities: { sessionCapabilities: { close: {} } } },
+        } as unknown as SpawnedACPProcess;
+      }
+    }
+
+    const client = new TestACPAgentClient({
+      provider: "claude-acp",
+      logger: createTestLogger(),
+      defaultCommand: ["claude", "--acp"],
+      defaultModes: [],
+      terminateProcess: terminator.terminate,
+    });
+
+    await client.fetchCatalog({ scope: "workspace", cwd: "/tmp/acp-models", force: false });
+
+    expect(terminator.terminated).toContain(child);
+  });
 });
 
 describe("ACP session/load invariant — cwd and mcpServers always passed", () => {
