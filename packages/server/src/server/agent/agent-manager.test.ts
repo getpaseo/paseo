@@ -3966,6 +3966,139 @@ test("reloadAgentSession preserves timeline and does not force history replay", 
   expect(afterHydrate).toEqual(beforeReload);
 });
 
+test("reloadAgentSession drains queued provider echoes before preserving prompt provenance", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-reload-prompt-provenance-"));
+  const transcript = "重新加载后仍显示听写。";
+  const wrappedPrompt = wrapSpokenInput(transcript);
+  const clientMessageId = "00000000-0000-4000-8000-000000000302";
+  const providerMessageId = "provider-voice-before-reload";
+  const historyReadStarted = deferred<void>();
+  const allowHistoryRead = deferred<void>();
+  const closedPersistStarted = deferred<void>();
+  const allowClosedPersist = deferred<void>();
+  let blockHistoryRead = false;
+  let blockClosedPersist = false;
+  let closedPersistDidStart = false;
+  let activeSession: TestAgentSession | null = null;
+
+  class BlockingTimelineStore extends RecordingTimelineStore {
+    override async getLastItem(agentId: string): Promise<AgentTimelineItem | null> {
+      if (blockHistoryRead) {
+        blockHistoryRead = false;
+        historyReadStarted.resolve(undefined);
+        await allowHistoryRead.promise;
+      }
+      return await super.getLastItem(agentId);
+    }
+  }
+
+  class BlockingAgentStorage extends AgentStorage {
+    override async applySnapshot(
+      agent: ManagedAgent,
+      options?: { title?: string | null; internal?: boolean },
+    ): Promise<void> {
+      if (blockClosedPersist && agent.lifecycle === "closed") {
+        closedPersistDidStart = true;
+        closedPersistStarted.resolve(undefined);
+        await allowClosedPersist.promise;
+      }
+      await super.applySnapshot(agent, options);
+    }
+  }
+
+  class ReloadHistorySession extends TestAgentSession {
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: this.provider,
+        item: {
+          type: "user_message",
+          text: wrappedPrompt,
+          messageId: providerMessageId,
+        },
+      };
+    }
+  }
+
+  class ReloadHistoryClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      activeSession = new TestAgentSession(config);
+      return activeSession;
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config: AgentSessionConfig,
+    ): Promise<AgentSession> {
+      return new ReloadHistorySession(config);
+    }
+  }
+
+  const storage = new BlockingAgentStorage(join(workdir, "agents"), logger);
+  const manager = new AgentManager({
+    clients: { codex: new ReloadHistoryClient() },
+    registry: storage,
+    durableTimelineStore: new BlockingTimelineStore(),
+    logger,
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  try {
+    await manager.runAgent(snapshot.id, wrappedPrompt, {
+      clientMessageId,
+      timelinePrompt: transcript,
+    });
+    // Empty the live timeline while retaining the persisted provenance so the
+    // first queued event can be held inside its asynchronous history lookup.
+    await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
+
+    blockHistoryRead = true;
+    blockClosedPersist = true;
+    activeSession?.pushEvent({
+      type: "turn_failed",
+      provider: "codex",
+      error: "hold the event queue",
+    });
+    activeSession?.pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "user_message",
+        text: wrappedPrompt,
+        messageId: providerMessageId,
+        clientMessageId,
+      },
+    });
+    await historyReadStarted.promise;
+
+    const reload = manager.reloadAgentSession(snapshot.id);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closedPersistDidStart).toBe(false);
+
+    allowHistoryRead.resolve(undefined);
+    await closedPersistStarted.promise;
+    allowClosedPersist.resolve(undefined);
+    await reload;
+
+    await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      {
+        type: "user_message",
+        text: transcript,
+        messageId: providerMessageId,
+      },
+    ]);
+  } finally {
+    allowHistoryRead.resolve(undefined);
+    allowClosedPersist.resolve(undefined);
+    await manager.closeAgent(snapshot.id).catch(() => undefined);
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
 test("reloadAgentSession clears provider children before rehydrating from disk", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-provider-child-reload-"));
   const storage = new AgentStorage(join(workdir, "agents"), logger);

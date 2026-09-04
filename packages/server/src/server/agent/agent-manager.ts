@@ -1487,6 +1487,11 @@ export class AgentManager {
 
       this.assertAcceptingAgentRegistrations();
 
+      // Provider callbacks are queued asynchronously. Drain them while the old
+      // agent is still registered so submitted-message identity learned from a
+      // final echo is included in the snapshot preserved across reload.
+      await this.drainSessionEvents(agentId);
+      existing = this.requireSessionAgent(agentId);
       this.cancelRunningProviderSubagents(agentId);
       const closedExisting = this.prepareAgentForClosure(existing, "agent reloaded");
       replacedExisting = true;
