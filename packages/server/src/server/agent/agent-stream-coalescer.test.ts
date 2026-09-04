@@ -48,6 +48,7 @@ function timeline(
   options?: {
     provider?: AgentProvider;
     turnId?: string;
+    nativeItemId?: string;
   },
 ): Extract<AgentStreamEvent, { type: "timeline" }> {
   return {
@@ -55,6 +56,7 @@ function timeline(
     item,
     provider: options?.provider ?? "codex",
     ...(options?.turnId !== undefined ? { turnId: options.turnId } : {}),
+    ...(options?.nativeItemId ? { nativeItemId: options.nativeItemId } : {}),
   };
 }
 
@@ -64,6 +66,7 @@ function assistant(
     provider?: AgentProvider;
     turnId?: string;
     messageId?: string;
+    nativeItemId?: string;
   },
 ): Extract<AgentStreamEvent, { type: "timeline" }> {
   return timeline(
@@ -152,6 +155,30 @@ describe("AgentStreamCoalescer", () => {
         agentId: "agent-1",
         item: { type: "assistant_message", text: "hello" },
         provider: "codex",
+      },
+    ]);
+  });
+
+  test("preserves a native identity and does not merge distinct native items", async () => {
+    const { coalescer, flushes } = createHarness();
+
+    coalescer.handle("agent-1", assistant("one", { messageId: "message", nativeItemId: "one" }));
+    coalescer.handle("agent-1", assistant("two", { messageId: "message", nativeItemId: "two" }));
+
+    await vi.advanceTimersByTimeAsync(60);
+
+    expect(flushes).toEqual([
+      {
+        agentId: "agent-1",
+        item: { type: "assistant_message", messageId: "message", text: "one" },
+        provider: "codex",
+        nativeItemId: "one",
+      },
+      {
+        agentId: "agent-1",
+        item: { type: "assistant_message", messageId: "message", text: "two" },
+        provider: "codex",
+        nativeItemId: "two",
       },
     ]);
   });

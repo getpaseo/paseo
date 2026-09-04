@@ -104,6 +104,7 @@ interface CollaborationModeRecord {
 }
 
 interface CodexSessionTestAccess {
+  handleCommandApprovalRequest(params: unknown): Promise<unknown>;
   codexUserMessageTurns(): {
     resolve(messageId: string): { index: number; turnId: string | null } | null;
     count(): number;
@@ -1407,7 +1408,762 @@ describe("Codex app-server provider", () => {
     await session.close();
   });
 
-  test("loads archived Codex history without resuming the native thread", async () => {
+  test("resumes persisted Codex metadata and loads a bounded chronological history page", async () => {
+    const requests: Array<{ method: string; params: unknown }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": (params) => {
+        requests.push({ method: "thread/resume", params });
+        return {};
+      },
+      "thread/turns/list": (params) => {
+        requests.push({ method: "thread/turns/list", params });
+        return {
+          data: [
+            {
+              items: [
+                {
+                  type: "agentMessage",
+                  id: "newer-message",
+                  text: "newer",
+                  timestamp: "2026-08-10T10:01:00.000Z",
+                },
+              ],
+            },
+            {
+              items: [
+                {
+                  type: "agentMessage",
+                  id: "older-message",
+                  text: "older",
+                  timestamp: "2026-08-10T10:00:00.000Z",
+                },
+              ],
+            },
+          ],
+          nextCursor: "older-cursor",
+        };
+      },
+      "thread/read": (params) => {
+        requests.push({ method: "thread/read", params });
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+
+    if (!session.loadHistoryPage) {
+      throw new Error("Codex session did not expose history paging");
+    }
+    const page = await session.loadHistoryPage({ limit: 2 });
+
+    expect(requests).toEqual([
+      {
+        method: "thread/resume",
+        params: { threadId: "persisted-thread", excludeTurns: true },
+      },
+      {
+        method: "thread/turns/list",
+        params: {
+          threadId: "persisted-thread",
+          limit: 2,
+          sortDirection: "desc",
+          itemsView: "full",
+        },
+      },
+    ]);
+    expect(page).toEqual({
+      kind: "page",
+      hasOlder: true,
+      entries: [
+        {
+          item: {
+            type: "assistant_message",
+            messageId: "older-message",
+            text: "older",
+          },
+          timestamp: "2026-08-10T10:00:00.000Z",
+          nativeItemId: "older-message",
+        },
+        {
+          item: {
+            type: "assistant_message",
+            messageId: "newer-message",
+            text: "newer",
+          },
+          timestamp: "2026-08-10T10:01:00.000Z",
+          nativeItemId: "newer-message",
+        },
+      ],
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("aliases a legacy compaction notification to its pageable history turn", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": () => ({
+        data: [
+          {
+            id: "legacy-compact-turn",
+            items: [{ type: "contextCompaction", id: "legacy-compact-item" }],
+          },
+        ],
+        nextCursor: null,
+      }),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    if (!session.loadHistoryPage) {
+      throw new Error("Codex session did not expose history paging");
+    }
+    asInternals(session).handleNotification("thread/compacted", {
+      threadId: "persisted-thread",
+      turnId: "legacy-compact-turn",
+    });
+    const page = await session.loadHistoryPage({ limit: 1 });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "persisted-thread",
+      turn: { status: "completed" },
+    });
+
+    expect(page).toEqual({
+      kind: "page",
+      hasOlder: false,
+      entries: [
+        {
+          item: { type: "compaction", status: "completed" },
+          nativeItemId: "legacy-compact-item",
+          nativeItemAliases: ["codex-context-compaction-turn:legacy-compact-turn"],
+        },
+      ],
+    });
+    expect(events).toContainEqual({
+      type: "timeline",
+      provider: CODEX_PROVIDER,
+      turnId: "legacy-compact-turn",
+      nativeItemId: "codex-context-compaction-turn:legacy-compact-turn",
+      item: { type: "compaction", status: "completed" },
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("tags live delta and legacy tool rows while a history page is loading", async () => {
+    let markPageRequested: () => void;
+    const pageRequested = new Promise<void>((resolve) => {
+      markPageRequested = resolve;
+    });
+    let resolvePage: (value: unknown) => void;
+    const pageResponse = new Promise<unknown>((resolve) => {
+      resolvePage = resolve;
+    });
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": () => {
+        markPageRequested();
+        return pageResponse;
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    if (!session.loadHistoryPage) {
+      throw new Error("Codex session did not expose history paging");
+    }
+    const page = session.loadHistoryPage({ limit: 1 });
+    await pageRequested;
+
+    appServer.says({ threadId: "persisted-thread", itemId: "live-message", text: "live" });
+    appServer.runsLegacyCommand({
+      threadId: "persisted-thread",
+      callId: "live-command",
+      command: "printf live",
+      output: "live",
+    });
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        nativeItemId: "live-message",
+        item: { type: "assistant_message", messageId: "live-message", text: "live" },
+      });
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "timeline",
+          provider: CODEX_PROVIDER,
+          nativeItemId: "live-command",
+          item: expect.objectContaining({ type: "tool_call", callId: "live-command" }),
+        }),
+      );
+    });
+
+    resolvePage({ data: [], nextCursor: null });
+    await page;
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("tags live items before the first pageable tail is installed", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    if (!session.setHistoryReconciliationActive) {
+      throw new Error("Codex session did not expose history reconciliation");
+    }
+    session.setHistoryReconciliationActive(true);
+    appServer.says({
+      threadId: "persisted-thread",
+      itemId: "before-tail-message",
+      text: "before tail",
+    });
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        nativeItemId: "before-tail-message",
+        item: {
+          type: "assistant_message",
+          messageId: "before-tail-message",
+          text: "before tail",
+        },
+      });
+    });
+
+    session.setHistoryReconciliationActive(false);
+    appServer.says({
+      threadId: "persisted-thread",
+      itemId: "after-tail-message",
+      text: "after tail",
+    });
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual({
+        type: "timeline",
+        provider: CODEX_PROVIDER,
+        item: {
+          type: "assistant_message",
+          messageId: "after-tail-message",
+          text: "\n\n---\n\nafter tail",
+        },
+      });
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("imports a pageable Codex session without reading its full history", async () => {
+    const requests: string[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => {
+        requests.push("thread/resume");
+        return {};
+      },
+      "thread/read": () => {
+        requests.push("thread/read");
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+
+    const imported = await provider.importSession(
+      { providerHandleId: "persisted-thread", cwd: "/workspace/project" },
+      {
+        config: createConfig({ cwd: "/workspace/project" }),
+        storedConfig: createConfig({ cwd: "/workspace/project" }),
+      },
+    );
+
+    expect(imported.timeline).toEqual([]);
+    expect(requests).toEqual(["thread/resume"]);
+    appServer.assertNoErrors();
+    await imported.session.close();
+  });
+
+  test("deduplicates an inclusive native page anchor", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": (params) => {
+        const cursor = (params as { cursor?: string }).cursor;
+        if (cursor === "older-cursor") {
+          return {
+            data: [
+              {
+                items: [{ type: "agentMessage", id: "newer-message", text: "newer" }],
+              },
+              {
+                items: [{ type: "agentMessage", id: "older-message", text: "older" }],
+              },
+            ],
+            nextCursor: null,
+          };
+        }
+        return {
+          data: [
+            {
+              items: [{ type: "agentMessage", id: "newer-message", text: "newer" }],
+            },
+          ],
+          nextCursor: "older-cursor",
+        };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+
+    if (!session.loadHistoryPage) {
+      throw new Error("Codex session did not expose history paging");
+    }
+    await session.loadHistoryPage({ limit: 2 });
+    const olderPage = await session.loadHistoryPage({ limit: 2 });
+
+    expect(olderPage).toEqual({
+      kind: "page",
+      hasOlder: false,
+      entries: [
+        {
+          item: { type: "assistant_message", messageId: "older-message", text: "older" },
+          nativeItemId: "older-message",
+        },
+      ],
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("fails rather than looping a repeated native history cursor", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": () => ({
+        data: [
+          {
+            items: [{ type: "agentMessage", id: "message", text: "message" }],
+          },
+        ],
+        nextCursor: "repeated-cursor",
+      }),
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+
+    if (!session.loadHistoryPage) {
+      throw new Error("Codex session did not expose history paging");
+    }
+    await session.loadHistoryPage({ limit: 1 });
+    await expect(session.loadHistoryPage({ limit: 1 })).rejects.toThrow(
+      "repeated a history continuation cursor",
+    );
+
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("keeps paged user-turn indexes chronological for rewind", async () => {
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": (params) => {
+        if ((params as { threadId?: string }).threadId === "forked-thread") {
+          return {
+            data: [
+              {
+                items: [
+                  {
+                    type: "userMessage",
+                    id: "user-b",
+                    content: [{ type: "text", text: "second" }],
+                  },
+                ],
+              },
+              {
+                items: [
+                  {
+                    type: "userMessage",
+                    id: "user-a",
+                    content: [{ type: "text", text: "first" }],
+                  },
+                ],
+              },
+            ],
+            nextCursor: null,
+          };
+        }
+        if ((params as { cursor?: string }).cursor === "older-cursor") {
+          return {
+            data: [
+              {
+                items: [
+                  {
+                    type: "userMessage",
+                    id: "user-b",
+                    content: [{ type: "text", text: "second" }],
+                  },
+                ],
+              },
+              {
+                items: [
+                  {
+                    type: "userMessage",
+                    id: "user-a",
+                    content: [{ type: "text", text: "first" }],
+                  },
+                ],
+              },
+            ],
+            nextCursor: null,
+          };
+        }
+        return {
+          data: [
+            {
+              items: [
+                {
+                  type: "userMessage",
+                  id: "user-d",
+                  content: [{ type: "text", text: "fourth" }],
+                },
+              ],
+            },
+            {
+              items: [
+                {
+                  type: "userMessage",
+                  id: "user-c",
+                  content: [{ type: "text", text: "third" }],
+                },
+              ],
+            },
+          ],
+          nextCursor: "older-cursor",
+        };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+
+    if (!session.loadHistoryPage || !session.revertConversation) {
+      throw new Error("Codex session did not expose paged history rewind");
+    }
+    await session.loadHistoryPage({ limit: 2 });
+    await session.loadHistoryPage({ limit: 2 });
+    await session.revertConversation({ messageId: "user-c" });
+    await session.loadHistoryPage({ limit: 2 });
+    await session.revertConversation({ messageId: "user-b" });
+
+    expect(appServer.recordedRollbacks).toEqual([
+      { threadId: "forked-thread", numTurns: 2 },
+      { threadId: "forked-thread", numTurns: 1 },
+    ]);
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("registers a paged parent subagent without reading the child transcript", async () => {
+    const requests: string[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": () => ({
+        data: [
+          {
+            items: [
+              {
+                type: "subAgentActivity",
+                id: "child-start",
+                kind: "started",
+                agentThreadId: "child-thread",
+                agentPath: "/root/child",
+              },
+            ],
+          },
+        ],
+        nextCursor: null,
+      }),
+      "thread/read": () => {
+        requests.push("thread/read");
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    if (!session.loadHistoryPage) {
+      throw new Error("Codex session did not expose history paging");
+    }
+    await session.loadHistoryPage({ limit: 10 });
+
+    expect(events).toContainEqual({
+      type: "provider_subagent",
+      provider: "codex",
+      event: expect.objectContaining({ type: "upsert", id: "child-thread" }),
+    });
+    expect(requests).toEqual([]);
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("drops paged child descriptors after rewind", async () => {
+    const readRequests: Array<{ threadId?: string; includeTurns?: boolean }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": () => ({
+        data: [
+          {
+            items: [
+              {
+                type: "userMessage",
+                id: "rewind-target",
+                content: [{ type: "text", text: "rewind" }],
+              },
+              {
+                type: "subAgentActivity",
+                id: "child-start",
+                kind: "started",
+                agentThreadId: "child-thread",
+                agentPath: "/root/child",
+              },
+            ],
+          },
+        ],
+        nextCursor: null,
+      }),
+      "thread/read": (params) => {
+        readRequests.push(params as { threadId?: string; includeTurns?: boolean });
+        return { thread: { turns: [] } };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+
+    if (
+      !session.loadHistoryPage ||
+      !session.loadProviderSubagentHistory ||
+      !session.revertConversation
+    ) {
+      throw new Error("Codex session did not expose paged subagent rewind");
+    }
+    await session.loadHistoryPage({ limit: 10 });
+    await session.revertConversation({ messageId: "rewind-target" });
+
+    await expect(session.loadProviderSubagentHistory({ id: "child-thread" })).rejects.toThrow(
+      "Unknown Codex provider subagent 'child-thread'",
+    );
+    expect(readRequests).toEqual([{ threadId: "persisted-thread", includeTurns: false }]);
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("drops in-flight paged child history after rewind", async () => {
+    let markHistoryReadStarted!: () => void;
+    const historyReadStarted = new Promise<void>((resolve) => {
+      markHistoryReadStarted = resolve;
+    });
+    let resolveChildHistory!: (value: unknown) => void;
+    const childHistory = new Promise<unknown>((resolve) => {
+      resolveChildHistory = resolve;
+    });
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": () => ({
+        data: [
+          {
+            items: [
+              {
+                type: "userMessage",
+                id: "rewind-target",
+                content: [{ type: "text", text: "rewind" }],
+              },
+              {
+                type: "subAgentActivity",
+                id: "child-start",
+                kind: "started",
+                agentThreadId: "child-thread",
+                agentPath: "/root/child",
+              },
+            ],
+          },
+        ],
+        nextCursor: null,
+      }),
+      "thread/read": (params) => {
+        if ((params as { threadId?: string }).threadId === "persisted-thread") {
+          return { thread: { turns: [] } };
+        }
+        markHistoryReadStarted();
+        return childHistory;
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    if (
+      !session.loadHistoryPage ||
+      !session.loadProviderSubagentHistory ||
+      !session.revertConversation
+    ) {
+      throw new Error("Codex session did not expose paged subagent rewind");
+    }
+    await session.loadHistoryPage({ limit: 10 });
+    const load = session.loadProviderSubagentHistory({ id: "child-thread" });
+    await historyReadStarted;
+
+    await session.revertConversation({ messageId: "rewind-target" });
+    resolveChildHistory({
+      thread: {
+        turns: [
+          {
+            items: [{ type: "agentMessage", id: "child-message", text: "stale child result" }],
+          },
+        ],
+      },
+    });
+    await load;
+
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "provider_subagent" &&
+          event.event.type === "timeline" &&
+          event.event.id === "child-thread",
+      ),
+    ).toEqual([]);
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("loads a paged provider subagent transcript only on demand", async () => {
+    const readRequests: Array<{ threadId?: string }> = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": () => ({
+        data: [
+          {
+            items: [
+              {
+                type: "subAgentActivity",
+                id: "child-start",
+                kind: "started",
+                agentThreadId: "child-thread",
+                agentPath: "/root/child",
+              },
+            ],
+          },
+        ],
+        nextCursor: null,
+      }),
+      "thread/read": (params) => {
+        readRequests.push(params as { threadId?: string });
+        return {
+          thread: {
+            turns: [
+              {
+                items: [{ type: "agentMessage", id: "child-message", text: "child result" }],
+              },
+            ],
+          },
+        };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    if (!session.loadHistoryPage || !session.loadProviderSubagentHistory) {
+      throw new Error("Codex session did not expose paged subagent history");
+    }
+    await session.loadHistoryPage({ limit: 10 });
+    expect(readRequests).toEqual([]);
+
+    await session.loadProviderSubagentHistory({ id: "child-thread" });
+
+    expect(readRequests).toEqual([{ threadId: "child-thread", includeTurns: true }]);
+    expect(events).toContainEqual({
+      type: "provider_subagent",
+      provider: "codex",
+      event: {
+        type: "timeline",
+        id: "child-thread",
+        item: { type: "assistant_message", messageId: "child-message", text: "child result" },
+      },
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("falls back to complete history only when the first page is unsupported", async () => {
+    const requests: string[] = [];
+    const appServer = createFakeCodexAppServer({
+      "thread/loaded/list": () => ({ data: [] }),
+      "thread/resume": () => ({}),
+      "thread/turns/list": () => {
+        requests.push("thread/turns/list");
+        return { data: [{ summary: "only" }] };
+      },
+      "thread/read": () => {
+        requests.push("thread/read");
+        return {
+          thread: {
+            turns: [
+              {
+                items: [{ type: "agentMessage", id: "legacy-message", text: "legacy" }],
+              },
+            ],
+          },
+        };
+      },
+    });
+    const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession({ sessionId: "persisted-thread" });
+
+    if (!session.loadHistoryPage) {
+      throw new Error("Codex session did not expose history paging");
+    }
+    await expect(session.loadHistoryPage({ limit: 2 })).resolves.toEqual({ kind: "unsupported" });
+
+    const history: AgentStreamEvent[] = [];
+    for await (const event of session.streamHistory()) {
+      history.push(event);
+    }
+
+    expect(requests).toEqual(["thread/turns/list", "thread/read"]);
+    expect(history).toContainEqual({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", messageId: "legacy-message", text: "legacy" },
+      timestamp: undefined,
+    });
+    appServer.assertNoErrors();
+    await session.close();
+  });
+
+  test("defers archived Codex history until an explicit history read", async () => {
     const threadRequests: string[] = [];
     const appServer = createFakeCodexAppServer({
       "thread/loaded/list": () => {
@@ -1429,12 +2185,16 @@ describe("Codex app-server provider", () => {
       purpose: "history",
     });
 
+    expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume"]);
+    for await (const _event of session.streamHistory()) {
+      // The empty history only proves the deferred read completed.
+    }
     expect(threadRequests).toEqual(["thread/loaded/list", "thread/resume", "thread/read"]);
     await session.close();
     appServer.assertNoErrors();
   });
 
-  test("unarchives Codex when an active Paseo agent resumes an archived thread", async () => {
+  test("unarchives Codex without eagerly reading history for an active resume", async () => {
     const threadRequests: string[] = [];
     let resumeAttempts = 0;
     const appServer = createFakeCodexAppServer({
@@ -1468,6 +2228,15 @@ describe("Codex app-server provider", () => {
       "thread/resume",
       "thread/unarchive",
       "thread/resume",
+    ]);
+    for await (const _event of session.streamHistory()) {
+      // The empty history only proves the deferred read completed.
+    }
+    expect(threadRequests).toEqual([
+      "thread/loaded/list",
+      "thread/resume",
+      "thread/unarchive",
+      "thread/resume",
       "thread/read",
     ]);
     await session.close();
@@ -1489,20 +2258,25 @@ describe("Codex app-server provider", () => {
     appServer.assertNoErrors();
   });
 
-  test("closes Codex app-server when archived history hydration fails", async () => {
+  test("propagates archived history hydration failure on an explicit history read", async () => {
     const appServer = createFakeCodexAppServer({
       "thread/resume": () =>
         Promise.reject(new Error(archivedThreadErrorMessage("archived-thread-id"))),
       "thread/read": () => Promise.reject(new Error("thread history is unavailable")),
     });
-    const killSpy = vi.spyOn(appServer.child, "kill");
     const provider = createProviderWithFakeAppServer(appServer);
+    const session = await provider.resumeSession(archivedThreadHandle(), undefined, undefined, {
+      purpose: "history",
+    });
 
-    await expect(
-      provider.resumeSession(archivedThreadHandle(), undefined, undefined, { purpose: "history" }),
-    ).rejects.toThrow("thread history is unavailable");
+    const readHistory = async () => {
+      for await (const _event of session.streamHistory()) {
+        // The test only observes the history-loading boundary.
+      }
+    };
+    await expect(readHistory()).rejects.toThrow("thread history is unavailable");
 
-    expect(killSpy).toHaveBeenCalledWith("SIGTERM");
+    await session.close();
     appServer.assertNoErrors();
   });
 
@@ -4472,6 +5246,71 @@ describe("Codex app-server provider", () => {
     ]);
   });
 
+  test("tags root compaction markers while first-page reconciliation is active", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    session.setHistoryReconciliationActive?.(true);
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "compact-reconcile" },
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "compact-reconcile" },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "compact-reconcile",
+        item: { type: "compaction", status: "loading" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "compact-reconcile",
+        item: { type: "compaction", status: "completed" },
+      },
+    ]);
+  });
+
+  test("tags a denied permission tool row while first-page reconciliation is active", async () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    session.setHistoryReconciliationActive?.(true);
+    const pendingPermission = asInternals(session).handleCommandApprovalRequest({
+      itemId: "native-denied-command",
+      threadId: "test-thread",
+      turnId: "test-turn",
+      command: "echo denied",
+    });
+    await session.respondToPermission("permission-native-denied-command", {
+      behavior: "deny",
+      message: "No",
+    });
+    await pendingPermission;
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "timeline",
+        provider: "codex",
+        nativeItemId: "native-denied-command",
+        item: expect.objectContaining({
+          type: "tool_call",
+          callId: "permission-native-denied-command",
+          status: "failed",
+        }),
+      }),
+    );
+  });
+
   test("completes a pending Codex compaction when its turn ends", async () => {
     const { appServer, session, events, terminalEvent } = await startCompactionTurnTest();
 
@@ -4570,11 +5409,13 @@ describe("Codex app-server provider", () => {
     session.activeForegroundTurnId = null;
     const events: AgentStreamEvent[] = [];
     session.subscribe((event) => events.push(event));
+    session.setHistoryReconciliationActive?.(true);
 
     asInternals(session).handleNotification("thread/compacted", {
       threadId: "test-thread",
       turnId: "legacy-compact-turn",
     });
+    expect(events).toEqual([]);
     asInternals(session).handleNotification("item/completed", {
       threadId: "test-thread",
       item: {
@@ -4588,6 +5429,7 @@ describe("Codex app-server provider", () => {
         type: "timeline",
         provider: "codex",
         turnId: "legacy-compact-turn",
+        nativeItemId: "legacy-compact-item",
         item: {
           type: "compaction",
           status: "completed",
@@ -4610,12 +5452,17 @@ describe("Codex app-server provider", () => {
       threadId: "test-thread",
       turnId: "legacy-compact-turn-2",
     });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { status: "completed" },
+    });
 
-    expect(events).toEqual([
+    expect(events.filter((event) => event.type === "timeline")).toEqual([
       {
         type: "timeline",
         provider: "codex",
         turnId: "legacy-compact-turn-1",
+        nativeItemId: "codex-context-compaction-turn:legacy-compact-turn-1",
         item: {
           type: "compaction",
           status: "completed",
@@ -4625,10 +5472,63 @@ describe("Codex app-server provider", () => {
         type: "timeline",
         provider: "codex",
         turnId: "legacy-compact-turn-2",
+        nativeItemId: "codex-context-compaction-turn:legacy-compact-turn-2",
         item: {
           type: "compaction",
           status: "completed",
         },
+      },
+    ]);
+  });
+
+  test("does not mispair an anonymous compaction notification with a known item", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+    session.setHistoryReconciliationActive?.(true);
+
+    asInternals(session).handleNotification("thread/compacted", {
+      threadId: "test-thread",
+      turnId: "anonymous-before-known-item",
+    });
+    asInternals(session).handleNotification("item/started", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "known-compaction" },
+    });
+    asInternals(session).handleNotification("thread/compacted", {
+      threadId: "test-thread",
+      turnId: "known-compaction-turn",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      threadId: "test-thread",
+      item: { type: "contextCompaction", id: "known-compaction" },
+    });
+    asInternals(session).handleNotification("turn/completed", {
+      threadId: "test-thread",
+      turn: { status: "completed" },
+    });
+
+    expect(events.filter((event) => event.type === "timeline")).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "known-compaction",
+        item: { type: "compaction", status: "loading" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "known-compaction",
+        item: { type: "compaction", status: "completed" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "codex-context-compaction-turn:anonymous-before-known-item",
+        item: { type: "compaction", status: "completed" },
       },
     ]);
   });
@@ -4660,7 +5560,10 @@ describe("Codex app-server provider", () => {
     expect(session.currentThreadId).toBe("archived-thread-id");
     expect(requests).toEqual([
       { method: "thread/loaded/list", params: {} },
-      { method: "thread/resume", params: { threadId: "archived-thread-id" } },
+      {
+        method: "thread/resume",
+        params: { threadId: "archived-thread-id", excludeTurns: true },
+      },
     ]);
   });
 
@@ -5294,6 +6197,7 @@ describe("Codex app-server provider", () => {
 
     try {
       const { turnId } = await session.startTurn("capture a browser screenshot");
+      session.setHistoryReconciliationActive(true);
       appServer.child.stdout.write(
         `${JSON.stringify({
           method: "item/completed",
@@ -5333,6 +6237,7 @@ describe("Codex app-server provider", () => {
           type: "timeline",
           provider: "codex",
           turnId,
+          nativeItemId: "mcp-browser-screenshot",
           item: {
             type: "tool_call",
             callId: "mcp-browser-screenshot",
@@ -5365,6 +6270,7 @@ describe("Codex app-server provider", () => {
           type: "timeline",
           provider: "codex",
           turnId,
+          nativeItemId: "mcp-browser-screenshot:1",
           item: expect.objectContaining({ type: "assistant_message" }),
         },
       ]);
@@ -5617,6 +6523,64 @@ describe("Codex app-server provider", () => {
         provider: "codex",
         turnId: "test-turn",
         item: { type: "reasoning", text: "ing" },
+      },
+    ]);
+  });
+
+  test("tags reasoning deltas while first-page reconciliation is active", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    session.setHistoryReconciliationActive?.(true);
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-reconcile",
+      delta: "Think",
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "reasoning-item-reconcile",
+        item: { type: "reasoning", text: "Think" },
+      },
+    ]);
+  });
+
+  test("tags a completed reasoning suffix while first-page reconciliation is active", () => {
+    const session = createSession();
+    const events: AgentStreamEvent[] = [];
+    session.subscribe((event) => events.push(event));
+
+    session.setHistoryReconciliationActive?.(true);
+    asInternals(session).handleNotification("item/reasoning/summaryTextDelta", {
+      itemId: "reasoning-item-suffix",
+      delta: "Think",
+    });
+    asInternals(session).handleNotification("item/completed", {
+      item: {
+        id: "reasoning-item-suffix",
+        type: "reasoning",
+        summary: ["Thinking!"],
+      },
+    });
+
+    expect(events).toEqual([
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "reasoning-item-suffix",
+        item: { type: "reasoning", text: "Think" },
+      },
+      {
+        type: "timeline",
+        provider: "codex",
+        turnId: "test-turn",
+        nativeItemId: "reasoning-item-suffix",
+        item: { type: "reasoning", text: "ing!" },
       },
     ]);
   });

@@ -276,6 +276,7 @@ export async function sendPromptToAgent(
   await ensureAgentLoaded(params.agentId, {
     agentManager: params.agentManager,
     agentStorage: params.agentStorage,
+    historyIntent: "metadata",
     logger: params.logger,
   });
 

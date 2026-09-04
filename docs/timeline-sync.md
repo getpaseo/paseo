@@ -43,7 +43,12 @@ recovery is complete only when `hasNewer: false`.
 Initialization timeouts guard lack of catch-up progress, not the full multi-page sync. A successful page that queues the next `after` page refreshes the watchdog.
 
 Opening or resuming an agent fetches one bounded latest tail page. Older history remains
-user-driven by scrolling upward.
+user-driven by scrolling upward. Codex reads at most ten full turns per native history page. The
+upstream API has no byte limit, so one unusually large turn can still make a page large.
+
+A bounded tail is not proof that the provider transcript is complete: pageable providers retain
+their native continuation privately and read another bounded page only for upward navigation or an
+operation that explicitly requires complete coverage.
 
 A failed catch-up or subscription reconcile retries on its own, doubling from 1s to a 30s ceiling.
 A fixed 1s retry turned a persistent daemon-side refusal — a Codex thread that already has an active

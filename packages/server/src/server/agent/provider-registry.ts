@@ -454,6 +454,9 @@ export function wrapSessionProvider(provider: AgentProvider, inner: AgentSession
         yield mapStreamEvent(provider, event);
       }
     },
+    loadHistoryPage: inner.loadHistoryPage?.bind(inner),
+    setHistoryReconciliationActive: inner.setHistoryReconciliationActive?.bind(inner),
+    loadProviderSubagentHistory: inner.loadProviderSubagentHistory?.bind(inner),
     getRuntimeInfo: async () => mapRuntimeInfo(provider, await inner.getRuntimeInfo()),
     getAvailableModes: () => inner.getAvailableModes(),
     getCurrentMode: () => inner.getCurrentMode(),

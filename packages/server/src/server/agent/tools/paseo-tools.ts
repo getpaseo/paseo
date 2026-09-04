@@ -3038,6 +3038,7 @@ export function createPaseoToolCatalog(options: PaseoToolHostDependencies): Pase
       await ensureAgentLoaded(agentId, {
         agentManager,
         agentStorage,
+        historyIntent: "complete",
         logger: childLogger,
       });
       const timeline = agentManager.getTimeline(agentId);

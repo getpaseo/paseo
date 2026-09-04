@@ -247,6 +247,28 @@ class TestAgentClient implements AgentClient {
   }
 }
 
+class CreateBackedResumeAgentClient extends TestAgentClient {
+  override async resumeSession(
+    _handle: AgentPersistenceHandle,
+    config?: Partial<AgentSessionConfig>,
+  ): Promise<AgentSession> {
+    this.resumeOverrides.push(config);
+    return this.createSession({
+      ...config,
+      provider: this.provider,
+      cwd: config?.cwd ?? process.cwd(),
+    });
+  }
+}
+
+function resumeAgentWithColdHistory(manager: AgentManager, cwd: string): Promise<ManagedAgent> {
+  return manager.resumeAgentFromPersistence({
+    provider: "codex",
+    sessionId: "paged-history-session",
+    metadata: { cwd },
+  });
+}
+
 class SessionRecordingAgentClient extends TestAgentClient {
   readonly sessions: TestAgentSession[] = [];
 
@@ -10465,4 +10487,1858 @@ test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls"
   await manager.runAgent(snapshot.id, { text: "merge it" });
 
   expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
+});
+
+test("loads a bounded provider history page without replaying the legacy stream", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-history-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const pageRequests: number[] = [];
+  class PagedHistorySession extends TestAgentSession {
+    async loadHistoryPage(input: { limit: number }) {
+      if (!this.id) {
+        throw new Error("missing session identity");
+      }
+      pageRequests.push(input.limit);
+      return {
+        kind: "page" as const,
+        hasOlder: true,
+        entries: [
+          {
+            item: { type: "assistant_message" as const, text: "latest" },
+            nativeItemId: "native-latest",
+          },
+        ],
+      };
+    }
+
+    override async *streamHistory(): AsyncGenerator<AgentStreamEvent> {
+      yield {
+        type: "timeline",
+        provider: "codex",
+        item: { type: "assistant_message", text: "legacy history should not run" },
+      };
+      throw new Error("legacy history should not run");
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new PagedHistorySession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new PagedHistoryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000132",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+
+    expect(pageRequests).toEqual([10]);
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "assistant_message", text: "latest" },
+    ]);
+    expect(manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 1 }).hasOlder).toBe(true);
+    expect(manager.getAgent(snapshot.id)?.historyPrimed).toBe(false);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("only activates first-tail reconciliation when pageable history is unprimed", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-primed-reconciliation-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let pageRequests = 0;
+  class PagedHistorySession extends TestAgentSession {
+    readonly reconciliationStates: boolean[] = [];
+
+    setHistoryReconciliationActive(active: boolean): void {
+      this.reconciliationStates.push(active);
+    }
+
+    async loadHistoryPage() {
+      pageRequests += 1;
+      return { kind: "page" as const, entries: [], hasOlder: false };
+    }
+  }
+  class PrimedPagedHistoryClient extends TestAgentClient {
+    session: PagedHistorySession | null = null;
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      this.session = new PagedHistorySession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+      return this.session;
+    }
+
+    requireSession(): PagedHistorySession {
+      if (!this.session) {
+        throw new Error("expected pageable history session");
+      }
+      return this.session;
+    }
+  }
+  const client = new PrimedPagedHistoryClient();
+  const durableTimelineStore = {
+    async getLatestCommittedSeq(): Promise<number> {
+      return 1;
+    },
+  } as unknown as AgentTimelineStore;
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    durableTimelineStore,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000149",
+  });
+
+  try {
+    const snapshot = await manager.resumeAgentFromPersistence({
+      provider: "codex",
+      sessionId: "primed-pageable-session",
+      metadata: { cwd: workdir },
+    });
+
+    expect(manager.getAgent(snapshot.id)?.historyPrimed).toBe(true);
+    expect(client.requireSession().reconciliationStates).toEqual([]);
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+    expect(pageRequests).toBe(0);
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail", force: true });
+
+    expect(pageRequests).toBe(1);
+    expect(client.requireSession().reconciliationStates).toEqual([true, false]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("deactivates first-tail reconciliation when native paging fails", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-reconciliation-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class PagedHistorySession extends TestAgentSession {
+    readonly reconciliationStates: boolean[] = [];
+
+    setHistoryReconciliationActive(active: boolean): void {
+      this.reconciliationStates.push(active);
+    }
+
+    async loadHistoryPage(): Promise<never> {
+      throw new Error("native history unavailable");
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    session: PagedHistorySession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new PagedHistorySession(config);
+      return this.session;
+    }
+
+    requireSession(): PagedHistorySession {
+      if (!this.session) {
+        throw new Error("expected pageable history session");
+      }
+      return this.session;
+    }
+  }
+  const client = new PagedHistoryClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000150",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+
+    await expect(manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" })).rejects.toThrow(
+      "native history unavailable",
+    );
+
+    expect(client.requireSession().reconciliationStates).toEqual([true, false]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("queues live page overlap until a first pageable tail is installed", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-live-overlap-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class LiveOverlapSession extends TestAgentSession {
+    async loadHistoryPage() {
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        nativeItemId: "native-overlap",
+        item: { type: "assistant_message", text: "overlap" },
+      });
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        nativeItemId: "native-live",
+        item: { type: "user_message", messageId: "live-message", text: "live" },
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: { type: "assistant_message" as const, text: "history" },
+            nativeItemId: "native-history",
+          },
+          {
+            item: { type: "assistant_message" as const, text: "overlap" },
+            nativeItemId: "native-overlap",
+          },
+        ],
+      };
+    }
+  }
+  class LiveOverlapClient extends CreateBackedResumeAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new LiveOverlapSession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new LiveOverlapClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000138",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { agentId: snapshot.id, replayState: false });
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+    await manager.flush();
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "assistant_message", text: "history" },
+      { type: "assistant_message", text: "overlap" },
+      { type: "user_message", messageId: "live-message", text: "live" },
+    ]);
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "agent_stream" &&
+          event.event.type === "timeline" &&
+          event.event.item.type === "user_message",
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        event: expect.objectContaining({
+          item: { type: "user_message", messageId: "live-message", text: "live" },
+        }),
+      }),
+    ]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("keeps committed live assistant and tool rows before a first pageable tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-live-before-tail-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class PagedHistorySession extends TestAgentSession {
+    async loadHistoryPage() {
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: { type: "assistant_message" as const, text: "history" },
+            nativeItemId: "native-history",
+          },
+        ],
+      };
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    session: PagedHistorySession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new PagedHistorySession(config);
+      return this.session;
+    }
+
+    requireSession(): PagedHistorySession {
+      if (!this.session) {
+        throw new Error("expected pageable history session");
+      }
+      return this.session;
+    }
+  }
+  const client = new PagedHistoryClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000143",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    client.requireSession().pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: { type: "assistant_message", text: "live assistant" },
+    });
+    client.requireSession().pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "tool_call",
+        callId: "live-tool",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "shell",
+          command: "echo live",
+          output: "live output",
+          exitCode: 0,
+        },
+      },
+    });
+    await manager.flush();
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "assistant_message", text: "history" },
+      { type: "assistant_message", text: "live assistant" },
+      {
+        type: "tool_call",
+        callId: "live-tool",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "shell",
+          command: "echo live",
+          output: "live output",
+          exitCode: 0,
+        },
+      },
+    ]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("replaces pre-tail live assistant and tool rows represented by the first pageable tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-live-overlap-before-tail-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class PagedHistorySession extends TestAgentSession {
+    async loadHistoryPage() {
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: { type: "assistant_message" as const, text: "history" },
+            nativeItemId: "native-history",
+          },
+          {
+            item: {
+              type: "assistant_message" as const,
+              messageId: "native-live-assistant",
+              text: "complete live assistant",
+            },
+            nativeItemId: "native-live-assistant",
+          },
+          {
+            item: {
+              type: "tool_call" as const,
+              callId: "native-live-tool",
+              name: "shell",
+              status: "completed" as const,
+              error: null,
+              detail: {
+                type: "shell" as const,
+                command: "echo live",
+                output: "complete output",
+                exitCode: 0,
+              },
+            },
+            nativeItemId: "native-live-tool",
+          },
+        ],
+      };
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    session: PagedHistorySession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new PagedHistorySession(config);
+      return this.session;
+    }
+
+    requireSession(): PagedHistorySession {
+      if (!this.session) {
+        throw new Error("expected pageable history session");
+      }
+      return this.session;
+    }
+  }
+  const client = new PagedHistoryClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000145",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    client.requireSession().pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "assistant_message",
+        messageId: "native-live-assistant",
+        text: "partial live assistant",
+      },
+    });
+    client.requireSession().pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "tool_call",
+        callId: "native-live-tool",
+        name: "shell",
+        status: "running",
+        error: null,
+        detail: { type: "shell", command: "echo live" },
+      },
+    });
+    await manager.flush();
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "assistant_message", text: "history" },
+      {
+        type: "assistant_message",
+        messageId: "native-live-assistant",
+        text: "complete live assistant",
+      },
+      {
+        type: "tool_call",
+        callId: "native-live-tool",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "shell",
+          command: "echo live",
+          output: "complete output",
+          exitCode: 0,
+        },
+      },
+    ]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reconciles coalesced pre-tail assistant and tool rows with the first pageable tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-coalesced-first-tail-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class PagedHistorySession extends TestAgentSession {
+    async loadHistoryPage() {
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: {
+              type: "assistant_message" as const,
+              messageId: "native-live-assistant",
+              text: "complete assistant",
+            },
+            nativeItemId: "native-live-assistant",
+          },
+          {
+            item: {
+              type: "tool_call" as const,
+              callId: "native-live-tool",
+              name: "shell",
+              status: "completed" as const,
+              error: null,
+              detail: {
+                type: "shell" as const,
+                command: "echo live",
+                output: "complete output",
+                exitCode: 0,
+              },
+            },
+            nativeItemId: "native-live-tool",
+          },
+        ],
+      };
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    session: PagedHistorySession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new PagedHistorySession(config);
+      return this.session;
+    }
+
+    requireSession(): PagedHistorySession {
+      if (!this.session) {
+        throw new Error("expected pageable history session");
+      }
+      return this.session;
+    }
+  }
+  const client = new PagedHistoryClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000146",
+  });
+
+  vi.useFakeTimers();
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    client.requireSession().pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "assistant_message",
+        messageId: "native-live-assistant",
+        text: "partial assistant",
+      },
+    });
+    client.requireSession().pushEvent({
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "tool_call",
+        callId: "native-live-tool",
+        name: "shell",
+        status: "running",
+        error: null,
+        detail: { type: "shell", command: "echo live" },
+      },
+    });
+    await vi.advanceTimersByTimeAsync(0);
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+    await vi.advanceTimersByTimeAsync(60);
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      {
+        type: "assistant_message",
+        messageId: "native-live-assistant",
+        text: "complete assistant",
+      },
+      {
+        type: "tool_call",
+        callId: "native-live-tool",
+        name: "shell",
+        status: "completed",
+        error: null,
+        detail: {
+          type: "shell",
+          command: "echo live",
+          output: "complete output",
+          exitCode: 0,
+        },
+      },
+    ]);
+  } finally {
+    vi.useRealTimers();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("replaces pre-tail identity-less streams represented by the first pageable tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-reasoning-first-tail-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class PagedHistorySession extends TestAgentSession {
+    private historyReconciliationActive = false;
+
+    setHistoryReconciliationActive(active: boolean): void {
+      this.historyReconciliationActive = active;
+    }
+
+    emitLiveReasoning(): void {
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        ...(this.historyReconciliationActive ? { nativeItemId: "native-reasoning" } : {}),
+        item: { type: "reasoning", text: "partial reasoning" },
+      });
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        ...(this.historyReconciliationActive ? { nativeItemId: "native-reasoning" } : {}),
+        item: { type: "reasoning", text: " suffix" },
+      });
+    }
+
+    emitLiveCompaction(): void {
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        ...(this.historyReconciliationActive ? { nativeItemId: "native-compaction" } : {}),
+        item: { type: "compaction", status: "loading" },
+      });
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        ...(this.historyReconciliationActive ? { nativeItemId: "native-compaction" } : {}),
+        item: { type: "compaction", status: "completed" },
+      });
+    }
+
+    emitLiveMcpImage(): void {
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        ...(this.historyReconciliationActive ? { nativeItemId: "native-mcp-image:1" } : {}),
+        item: { type: "assistant_message", text: "![live image](file:///tmp/live.png)" },
+      });
+    }
+
+    async loadHistoryPage() {
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: { type: "reasoning" as const, text: "complete reasoning suffix" },
+            nativeItemId: "native-reasoning",
+          },
+          {
+            item: { type: "compaction" as const, status: "completed" as const },
+            nativeItemId: "native-compaction",
+          },
+          {
+            item: {
+              type: "assistant_message" as const,
+              text: "![completed image](file:///tmp/completed.png)",
+            },
+            nativeItemId: "native-mcp-image:1",
+          },
+        ],
+      };
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    session: PagedHistorySession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new PagedHistorySession(config);
+      return this.session;
+    }
+
+    requireSession(): PagedHistorySession {
+      if (!this.session) {
+        throw new Error("expected pageable history session");
+      }
+      return this.session;
+    }
+  }
+  const client = new PagedHistoryClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000147",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    client.requireSession().emitLiveReasoning();
+    client.requireSession().emitLiveCompaction();
+    client.requireSession().emitLiveMcpImage();
+    await manager.flush();
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "reasoning", text: "complete reasoning suffix" },
+      { type: "compaction", status: "completed" },
+      { type: "assistant_message", text: "![completed image](file:///tmp/completed.png)" },
+    ]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("reconciles a late-identified legacy compaction with the first pageable tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-legacy-compaction-tail-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class PagedHistorySession extends TestAgentSession {
+    private historyReconciliationActive = false;
+
+    setHistoryReconciliationActive(active: boolean): void {
+      this.historyReconciliationActive = active;
+    }
+
+    emitLegacyCompactionCompletion(): void {
+      // The Codex provider waits for the raw item that follows an anonymous
+      // `thread/compacted` notification, then emits this one identified row.
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        ...(this.historyReconciliationActive ? { nativeItemId: "legacy-compaction" } : {}),
+        item: { type: "compaction", status: "completed" },
+      });
+    }
+
+    async loadHistoryPage() {
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: { type: "compaction" as const, status: "completed" as const },
+            nativeItemId: "legacy-compaction",
+          },
+        ],
+      };
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    session: PagedHistorySession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new PagedHistorySession(config);
+      return this.session;
+    }
+
+    requireSession(): PagedHistorySession {
+      if (!this.session) {
+        throw new Error("expected pageable history session");
+      }
+      return this.session;
+    }
+  }
+  const client = new PagedHistoryClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000153",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    client.requireSession().emitLegacyCompactionCompletion();
+    await manager.flush();
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([{ type: "compaction", status: "completed" }]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("drops a legacy compaction terminal fallback represented by the first pageable tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-legacy-compaction-alias-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class PagedHistorySession extends TestAgentSession {
+    async loadHistoryPage() {
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: { type: "compaction" as const, status: "completed" as const },
+            nativeItemId: "legacy-compaction",
+            nativeItemAliases: ["codex-context-compaction-turn:legacy-turn"],
+          },
+        ],
+      };
+    }
+
+    emitLegacyCompactionTerminalFallback(): void {
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        nativeItemId: "codex-context-compaction-turn:legacy-turn",
+        item: { type: "compaction", status: "completed" },
+      });
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    session: PagedHistorySession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new PagedHistorySession(config);
+      return this.session;
+    }
+
+    requireSession(): PagedHistorySession {
+      if (!this.session) {
+        throw new Error("expected pageable history session");
+      }
+      return this.session;
+    }
+  }
+  const client = new PagedHistoryClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000154",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+
+    // This is the terminal fallback for an earlier `thread/compacted` whose raw
+    // item only arrived in the first history page.
+    client.requireSession().emitLegacyCompactionTerminalFallback();
+    await manager.flush();
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([{ type: "compaction", status: "completed" }]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("drains queued pre-tail events before installing the first pageable tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-first-tail-queue-barrier-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  class PagedHistorySession extends TestAgentSession {
+    private historyReconciliationActive = false;
+
+    setHistoryReconciliationActive(active: boolean): void {
+      this.historyReconciliationActive = active;
+    }
+
+    emitLiveReasoning(): void {
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        ...(this.historyReconciliationActive ? { nativeItemId: "native-reasoning" } : {}),
+        item: { type: "reasoning", text: "partial reasoning" },
+      });
+    }
+
+    async loadHistoryPage() {
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: { type: "reasoning" as const, text: "complete reasoning" },
+            nativeItemId: "native-reasoning",
+          },
+        ],
+      };
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    session: PagedHistorySession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new PagedHistorySession(config);
+      return this.session;
+    }
+
+    requireSession(): PagedHistorySession {
+      if (!this.session) {
+        throw new Error("expected pageable history session");
+      }
+      return this.session;
+    }
+  }
+  const client = new PagedHistoryClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000148",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    const blocker = deferred<void>();
+    const internals = manager as unknown as {
+      sessionEventTails: Map<string, Promise<void>>;
+    };
+    internals.sessionEventTails.set(snapshot.id, blocker.promise);
+    client.requireSession().emitLiveReasoning();
+
+    let historySettled = false;
+    const history = manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" }).then(() => {
+      historySettled = true;
+      return undefined;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(historySettled).toBe(false);
+
+    blocker.resolve();
+    await history;
+    await manager.flush();
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "reasoning", text: "complete reasoning" },
+    ]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("keeps a staged submitted prompt while installing the first pageable tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-submitted-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const pageStarted = deferred<void>();
+  const releasePage = deferred<void>();
+  class PagedSubmittedPromptSession extends TestAgentSession {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsRewindConversation: true,
+    };
+    private readonly turnId = "paged-submitted-turn";
+    readonly rewindMessageIds: string[] = [];
+
+    async loadHistoryPage() {
+      pageStarted.resolve();
+      await releasePage.promise;
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: { type: "assistant_message" as const, text: "history" },
+            nativeItemId: "native-history",
+          },
+          {
+            item: { type: "user_message" as const, messageId: "native-prompt", text: "prompt" },
+            nativeItemId: "native-prompt",
+          },
+        ],
+      };
+    }
+
+    override async startTurn(
+      _prompt: AgentPromptInput,
+      options?: AgentRunOptions,
+    ): Promise<{ turnId: string }> {
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        turnId: this.turnId,
+        nativeItemId: "native-prompt",
+        item: {
+          type: "user_message",
+          messageId: "native-prompt",
+          clientMessageId: options?.clientMessageId,
+          text: "prompt",
+        },
+      });
+      return { turnId: this.turnId };
+    }
+
+    complete(): void {
+      this.pushEvent({ type: "turn_completed", provider: "codex", turnId: this.turnId });
+    }
+
+    async revertConversation(input: { messageId: string }): Promise<void> {
+      this.rewindMessageIds.push(input.messageId);
+    }
+  }
+  class PagedSubmittedPromptClient extends CreateBackedResumeAgentClient {
+    session: PagedSubmittedPromptSession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new PagedSubmittedPromptSession(config);
+      return this.session;
+    }
+
+    requireSession(): PagedSubmittedPromptSession {
+      if (!this.session) {
+        throw new Error("expected paged submitted prompt session");
+      }
+      return this.session;
+    }
+  }
+
+  const client = new PagedSubmittedPromptClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000140",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    const history = manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+    await pageStarted.promise;
+
+    const stream = manager.streamAgent(snapshot.id, "prompt", {
+      clientMessageId: "client-prompt",
+    });
+    await expect(stream.next()).resolves.toMatchObject({
+      done: false,
+      value: { type: "turn_started", provider: "codex", turnId: "paged-submitted-turn" },
+    });
+
+    releasePage.resolve();
+    await history;
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "assistant_message", text: "history" },
+      {
+        type: "user_message",
+        messageId: "client-prompt",
+        clientMessageId: "client-prompt",
+        text: "prompt",
+      },
+    ]);
+
+    client.requireSession().complete();
+    await expect(stream.next()).resolves.toMatchObject({
+      done: false,
+      value: { type: "turn_completed", provider: "codex", turnId: "paged-submitted-turn" },
+    });
+    await manager.rewind(snapshot.id, "client-prompt", "conversation");
+    expect(client.requireSession().rewindMessageIds).toEqual(["native-prompt"]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("keeps a queued submitted prompt while installing the first pageable tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-queued-prompt-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const pageStarted = deferred<void>();
+  const releasePage = deferred<void>();
+  class PagedQueuedPromptSession extends TestAgentSession {
+    private readonly turnId = "paged-queued-turn";
+
+    async loadHistoryPage() {
+      pageStarted.resolve();
+      await releasePage.promise;
+      this.pushEvent({
+        type: "timeline",
+        provider: "codex",
+        turnId: this.turnId,
+        nativeItemId: "native-prompt",
+        item: {
+          type: "user_message",
+          messageId: "native-prompt",
+          clientMessageId: "client-prompt",
+          text: "prompt",
+        },
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: { type: "assistant_message" as const, text: "history" },
+            nativeItemId: "native-history",
+          },
+          {
+            item: { type: "user_message" as const, messageId: "native-prompt", text: "prompt" },
+            nativeItemId: "native-prompt",
+          },
+        ],
+      };
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      return { turnId: this.turnId };
+    }
+
+    complete(): void {
+      this.pushEvent({ type: "turn_completed", provider: "codex", turnId: this.turnId });
+    }
+  }
+  class PagedQueuedPromptClient extends CreateBackedResumeAgentClient {
+    session: PagedQueuedPromptSession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new PagedQueuedPromptSession(config);
+      return this.session;
+    }
+
+    requireSession(): PagedQueuedPromptSession {
+      if (!this.session) {
+        throw new Error("expected paged queued prompt session");
+      }
+      return this.session;
+    }
+  }
+
+  const client = new PagedQueuedPromptClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000141",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    const history = manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+    await pageStarted.promise;
+
+    const stream = manager.streamAgent(snapshot.id, "prompt", {
+      clientMessageId: "client-prompt",
+    });
+    await expect(stream.next()).resolves.toMatchObject({
+      done: false,
+      value: { type: "turn_started", provider: "codex", turnId: "paged-queued-turn" },
+    });
+
+    releasePage.resolve();
+    await history;
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "assistant_message", text: "history" },
+      {
+        type: "user_message",
+        messageId: "client-prompt",
+        clientMessageId: "client-prompt",
+        text: "prompt",
+      },
+    ]);
+
+    client.requireSession().complete();
+    await expect(stream.next()).resolves.toMatchObject({
+      done: false,
+      value: { type: "turn_completed", provider: "codex", turnId: "paged-queued-turn" },
+    });
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("releases a queued paged timeline event to its foreground waiter", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-live-waiter-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const pageStarted = deferred<void>();
+  const releasePage = deferred<void>();
+  class PagedLiveTurnSession extends TestAgentSession {
+    private readonly turnId = "paged-turn";
+
+    async loadHistoryPage() {
+      pageStarted.resolve();
+      await releasePage.promise;
+      return { kind: "page" as const, hasOlder: false, entries: [] };
+    }
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      setTimeout(() => {
+        this.pushEvent({ type: "turn_started", provider: "codex", turnId: this.turnId });
+        this.pushEvent({
+          type: "timeline",
+          provider: "codex",
+          turnId: this.turnId,
+          nativeItemId: "paged-live-item",
+          item: { type: "assistant_message", text: "queued reply" },
+        });
+      }, 0);
+      return { turnId: this.turnId };
+    }
+
+    complete(): void {
+      this.pushEvent({ type: "turn_completed", provider: "codex", turnId: this.turnId });
+    }
+  }
+
+  class PagedLiveTurnClient extends CreateBackedResumeAgentClient {
+    session: PagedLiveTurnSession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new PagedLiveTurnSession(config);
+      return this.session;
+    }
+
+    requireSession(): PagedLiveTurnSession {
+      if (!this.session) {
+        throw new Error("expected paged live session");
+      }
+      return this.session;
+    }
+  }
+
+  const client = new PagedLiveTurnClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000139",
+  });
+
+  vi.useFakeTimers();
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    const history = manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+    await pageStarted.promise;
+
+    const stream = manager.streamAgent(snapshot.id, "hello");
+    await expect(stream.next()).resolves.toMatchObject({
+      done: false,
+      value: { type: "turn_started", provider: "codex", turnId: "paged-turn" },
+    });
+    await vi.advanceTimersByTimeAsync(60);
+
+    const queuedTimeline = stream.next();
+    releasePage.resolve();
+    await history;
+
+    await expect(queuedTimeline).resolves.toMatchObject({
+      done: false,
+      value: {
+        type: "timeline",
+        provider: "codex",
+        turnId: "paged-turn",
+        item: { type: "assistant_message", text: "queued reply" },
+      },
+    });
+
+    client.requireSession().complete();
+    await expect(stream.next()).resolves.toMatchObject({
+      done: false,
+      value: { type: "turn_completed", provider: "codex", turnId: "paged-turn" },
+    });
+  } finally {
+    vi.useRealTimers();
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("starts a fresh pageable tail after closing and resuming a runtime", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-close-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let sessionCount = 0;
+  class FreshPagedSession extends TestAgentSession {
+    private readonly pageText: string;
+
+    constructor(config: AgentSessionConfig) {
+      super(config);
+      sessionCount += 1;
+      this.pageText = `page-${sessionCount}`;
+    }
+
+    async loadHistoryPage() {
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: { type: "assistant_message" as const, text: this.pageText },
+            nativeItemId: this.pageText,
+          },
+        ],
+      };
+    }
+  }
+  class FreshPagedClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new FreshPagedSession(config);
+    }
+
+    override async resumeSession(
+      _handle: AgentPersistenceHandle,
+      config?: Partial<AgentSessionConfig>,
+    ): Promise<AgentSession> {
+      return new FreshPagedSession({
+        provider: "codex",
+        cwd: config?.cwd ?? workdir,
+      });
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new FreshPagedClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000137",
+  });
+
+  try {
+    const created = await resumeAgentWithColdHistory(manager, workdir);
+    await manager.ensureTimelineCoverage(created.id, { intent: "tail" });
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "assistant_message", text: "page-1" },
+    ]);
+
+    await manager.closeAgent(created.id);
+    await ensureAgentLoaded(created.id, {
+      agentManager: manager,
+      agentStorage: storage,
+      historyIntent: "tail",
+      logger,
+    });
+
+    expect(manager.getTimeline(created.id)).toEqual([
+      { type: "assistant_message", text: "page-2" },
+    ]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("prepends a bounded older provider page in the same epoch", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-prepend-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const pages = [
+    {
+      kind: "page" as const,
+      hasOlder: true,
+      entries: [
+        {
+          item: { type: "assistant_message" as const, text: "newer" },
+          nativeItemId: "native-newer",
+        },
+      ],
+    },
+    {
+      kind: "page" as const,
+      hasOlder: false,
+      entries: [
+        {
+          item: { type: "assistant_message" as const, text: "older" },
+          nativeItemId: "native-older",
+        },
+      ],
+    },
+  ];
+  class PagedHistorySession extends TestAgentSession {
+    async loadHistoryPage() {
+      const page = pages.shift();
+      if (!page) {
+        throw new Error("unexpected page request");
+      }
+      return page;
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new PagedHistorySession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new PagedHistoryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000133",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+    const tail = manager.fetchTimeline(snapshot.id, { direction: "tail", limit: 1 });
+    const tailEpoch = tail.epoch;
+    const tailStart = tail.rows[0]?.seq;
+    if (tailStart === undefined) {
+      throw new Error("expected a paged tail row");
+    }
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "older" });
+
+    const older = manager.fetchTimeline(snapshot.id, {
+      direction: "before",
+      cursor: { epoch: tailEpoch, seq: tailStart },
+      limit: 1,
+    });
+    expect(older).toMatchObject({
+      epoch: tailEpoch,
+      hasOlder: false,
+      rows: [{ seq: tailStart - 1, item: { type: "assistant_message", text: "older" } }],
+    });
+    expect(manager.getAgent(snapshot.id)?.historyPrimed).toBe(true);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("shares concurrent older pageable history requests", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-concurrent-older-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const olderPageStarted = deferred<void>();
+  const releaseOlderPage = deferred<void>();
+  let pageRequests = 0;
+  class PagedHistorySession extends TestAgentSession {
+    async loadHistoryPage() {
+      pageRequests += 1;
+      if (pageRequests === 1) {
+        return {
+          kind: "page" as const,
+          hasOlder: true,
+          entries: [
+            {
+              item: { type: "assistant_message" as const, text: "tail" },
+              nativeItemId: "native-tail",
+            },
+          ],
+        };
+      }
+      if (pageRequests === 2) {
+        olderPageStarted.resolve();
+        await releaseOlderPage.promise;
+        return {
+          kind: "page" as const,
+          hasOlder: true,
+          entries: [
+            {
+              item: { type: "assistant_message" as const, text: "older" },
+              nativeItemId: "native-older",
+            },
+          ],
+        };
+      }
+      throw new Error("unexpected additional older page request");
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new PagedHistorySession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new PagedHistoryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000144",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+
+    const first = manager.ensureTimelineCoverage(snapshot.id, { intent: "older" });
+    await olderPageStarted.promise;
+    let secondResolved = false;
+    const second = manager.ensureTimelineCoverage(snapshot.id, { intent: "older" }).then(() => {
+      secondResolved = true;
+      return undefined;
+    });
+    await Promise.resolve();
+    expect(secondResolved).toBe(false);
+    releaseOlderPage.resolve();
+    await Promise.all([first, second]);
+
+    expect(pageRequests).toBe(2);
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "assistant_message", text: "older" },
+      { type: "assistant_message", text: "tail" },
+    ]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("serializes a forced pageable tail behind a complete history load", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-forced-tail-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const firstPageStarted = deferred<void>();
+  const releaseFirstPage = deferred<void>();
+  const secondPageStarted = deferred<void>();
+  const releaseSecondPage = deferred<void>();
+  let activePageRequests = 0;
+  let maxConcurrentPageRequests = 0;
+  let pageRequests = 0;
+  class PagedHistorySession extends TestAgentSession {
+    async loadHistoryPage() {
+      const requestNumber = ++pageRequests;
+      activePageRequests += 1;
+      maxConcurrentPageRequests = Math.max(maxConcurrentPageRequests, activePageRequests);
+      try {
+        if (requestNumber === 1) {
+          firstPageStarted.resolve();
+          await releaseFirstPage.promise;
+        }
+        if (requestNumber === 2) {
+          secondPageStarted.resolve();
+          await releaseSecondPage.promise;
+        }
+        return {
+          kind: "page" as const,
+          hasOlder: requestNumber === 1,
+          entries: [
+            {
+              item: { type: "assistant_message" as const, text: `page-${requestNumber}` },
+              nativeItemId: `native-page-${requestNumber}`,
+            },
+          ],
+        };
+      } finally {
+        activePageRequests -= 1;
+      }
+    }
+  }
+  class PagedHistoryClient extends CreateBackedResumeAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new PagedHistorySession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new PagedHistoryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000151",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    const initialComplete = manager.ensureTimelineCoverage(snapshot.id, { intent: "complete" });
+    await firstPageStarted.promise;
+
+    let forcedTailSettled = false;
+    const forcedTail = manager
+      .ensureTimelineCoverage(snapshot.id, { intent: "tail", force: true })
+      .then(() => {
+        forcedTailSettled = true;
+        return undefined;
+      });
+    await Promise.resolve();
+    expect(forcedTailSettled).toBe(false);
+    expect(maxConcurrentPageRequests).toBe(1);
+
+    releaseFirstPage.resolve();
+    await secondPageStarted.promise;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(maxConcurrentPageRequests).toBe(1);
+    releaseSecondPage.resolve();
+    await Promise.all([initialComplete, forcedTail]);
+
+    expect(pageRequests).toBe(2);
+    expect(maxConcurrentPageRequests).toBe(1);
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "assistant_message", text: "page-2" },
+    ]);
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("shares concurrent provider subagent history loads", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-subagent-history-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let loadCount = 0;
+  const loadStarted = deferred<void>();
+  const releaseLoad = deferred<void>();
+  class PagedSubagentSession extends TestAgentSession {
+    async loadProviderSubagentHistory() {
+      loadCount += 1;
+      loadStarted.resolve();
+      await releaseLoad.promise;
+    }
+  }
+  class PagedSubagentClient extends CreateBackedResumeAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new PagedSubagentSession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new PagedSubagentClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000136",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    const first = manager.ensureProviderSubagentTimelineCoverage(snapshot.id, "child-1");
+    await loadStarted.promise;
+    const second = manager.ensureProviderSubagentTimelineCoverage(snapshot.id, "child-1");
+    releaseLoad.resolve();
+    await Promise.all([first, second]);
+
+    expect(loadCount).toBe(1);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("rewind drops stale timeline and provider subagents before loading a pageable tail", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-rewind-subagents-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let pageCount = 0;
+  class PagedRewindSession extends TestAgentSession {
+    override readonly capabilities = {
+      ...TEST_CAPABILITIES,
+      supportsRewindConversation: true,
+    };
+
+    async loadHistoryPage() {
+      pageCount += 1;
+      if (pageCount === 1) {
+        this.pushEvent({
+          type: "provider_subagent",
+          provider: "codex",
+          event: { type: "upsert", id: "rewound-child", status: "completed" },
+        });
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+      return {
+        kind: "page" as const,
+        hasOlder: false,
+        entries: [
+          {
+            item: {
+              type: "user_message" as const,
+              messageId: "rewind-target",
+              text: `history-${pageCount}`,
+            },
+            nativeItemId: `history-${pageCount}`,
+          },
+        ],
+      };
+    }
+
+    async revertConversation(): Promise<void> {}
+  }
+  class PagedRewindClient extends CreateBackedResumeAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new PagedRewindSession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new PagedRewindClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000142",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+    const events: AgentManagerEvent[] = [];
+    manager.subscribe((event) => events.push(event), { agentId: snapshot.id, replayState: false });
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+    await vi.waitFor(() => {
+      expect(manager.listProviderSubagents(snapshot.id)).toEqual([
+        expect.objectContaining({ id: "rewound-child" }),
+      ]);
+    });
+    await manager.appendTimelineItem(snapshot.id, {
+      type: "user_message",
+      messageId: "stale-client-message",
+      clientMessageId: "stale-client-message",
+      text: "stale submitted prompt",
+    });
+
+    await manager.rewind(snapshot.id, "rewind-target", "conversation");
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "user_message", messageId: "rewind-target", text: "history-2" },
+    ]);
+    expect(manager.listProviderSubagents(snapshot.id)).toEqual([]);
+    expect(events).toContainEqual({
+      type: "provider_subagent",
+      event: {
+        type: "remove",
+        parentAgentId: snapshot.id,
+        subagentId: "rewound-child",
+      },
+    });
+  } finally {
+    await Promise.all(manager.listAgents().map((agent) => manager.closeAgent(agent.id))).catch(
+      () => undefined,
+    );
+    await storage.flush().catch(() => undefined);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("walks pageable history to completion only when explicitly requested", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-complete-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const pages = [
+    {
+      kind: "page" as const,
+      hasOlder: true,
+      entries: [
+        {
+          item: { type: "assistant_message" as const, text: "newer" },
+          nativeItemId: "native-newer",
+        },
+      ],
+    },
+    {
+      kind: "page" as const,
+      hasOlder: false,
+      entries: [
+        {
+          item: { type: "assistant_message" as const, text: "older" },
+          nativeItemId: "native-older",
+        },
+      ],
+    },
+  ];
+  class CompletePagedHistorySession extends TestAgentSession {
+    async loadHistoryPage() {
+      const page = pages.shift();
+      if (!page) {
+        throw new Error("unexpected page request");
+      }
+      return page;
+    }
+  }
+  class CompletePagedHistoryClient extends CreateBackedResumeAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new CompletePagedHistorySession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new CompletePagedHistoryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000135",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "complete" });
+
+    expect(manager.getTimeline(snapshot.id)).toEqual([
+      { type: "assistant_message", text: "older" },
+      { type: "assistant_message", text: "newer" },
+    ]);
+    expect(manager.getAgent(snapshot.id)?.historyPrimed).toBe(true);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("keeps a committed paged tail after a later page failure", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-paged-failure-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let pageAttempts = 0;
+  class FailingPagedHistorySession extends TestAgentSession {
+    async loadHistoryPage() {
+      pageAttempts += 1;
+      if (pageAttempts === 1) {
+        return {
+          kind: "page" as const,
+          hasOlder: true,
+          entries: [
+            {
+              item: { type: "assistant_message" as const, text: "tail" },
+              nativeItemId: "native-tail",
+            },
+          ],
+        };
+      }
+      throw new Error("older page failed");
+    }
+  }
+  class FailingPagedHistoryClient extends CreateBackedResumeAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      return new FailingPagedHistorySession(config);
+    }
+  }
+  const manager = new AgentManager({
+    clients: { codex: new FailingPagedHistoryClient() },
+    registry: storage,
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000134",
+  });
+
+  try {
+    const snapshot = await resumeAgentWithColdHistory(manager, workdir);
+
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+    await expect(manager.ensureTimelineCoverage(snapshot.id, { intent: "older" })).rejects.toThrow(
+      "older page failed",
+    );
+    expect(manager.getTimeline(snapshot.id)).toEqual([{ type: "assistant_message", text: "tail" }]);
+    await manager.ensureTimelineCoverage(snapshot.id, { intent: "tail" });
+    await expect(manager.ensureTimelineCoverage(snapshot.id, { intent: "older" })).rejects.toThrow(
+      "older page failed",
+    );
+    expect(pageAttempts).toBe(2);
+  } finally {
+    rmSync(workdir, { recursive: true, force: true });
+  }
 });
