@@ -1,18 +1,21 @@
 import type { AggregatedAgent } from "@/hooks/use-aggregated-agents";
+import { resolvePaseoWorktreePlacement } from "@/utils/paseo-worktree-path";
 
 /**
- * Derives the project key for grouping agents.
- * For worktrees, returns the parent repo path.
- * For regular repos/directories, returns the cwd.
+ * Derives the project key for grouping agents from a bare cwd.
+ *
+ * This is the last resort. Prefer the daemon's `projectPlacement.projectKey`, which knows
+ * the repo behind a worktree; a worktree path under `<worktreesRoot>/<hash>/<slug>` does
+ * not carry that information, so the best this can do is group by worktree.
+ *
+ * `worktreesRoot` is the daemon's resolved worktrees base root (`server_info.worktreesRoot`).
  */
-export function deriveProjectKey(cwd: string): string {
-  const worktreeMarker = ".paseo/worktrees/";
-  const idx = cwd.indexOf(worktreeMarker);
-  if (idx !== -1) {
-    // Return parent repo path (before .paseo/worktrees/)
-    return cwd.slice(0, idx).replace(/\/$/, "");
+export function deriveProjectKey(cwd: string, worktreesRoot?: string | null): string {
+  const placement = resolvePaseoWorktreePlacement(cwd, worktreesRoot);
+  if (!placement) {
+    return cwd;
   }
-  return cwd;
+  return placement.mainRepoRoot ?? placement.worktreePath;
 }
 
 /**
@@ -250,6 +253,11 @@ interface GroupAgentsOptions {
    * If present and a remote URL is available, agents are grouped by remote.
    */
   getRemoteUrl?: (agent: AggregatedAgent) => string | null;
+  /**
+   * The daemon's resolved worktrees base root (`server_info.worktreesRoot`). Only used for
+   * agents that arrived without a `projectPlacement`.
+   */
+  worktreesRoot?: string | null;
 }
 
 const MAX_INACTIVE_PER_PROJECT = 5;
@@ -304,7 +312,11 @@ function buildProjectActivityMap(
   const projectMap = new Map<string, ProjectActivityBucket>();
   for (const agent of activeAgents) {
     const remoteKey = deriveRemoteProjectKey(options?.getRemoteUrl?.(agent) ?? null);
-    const projectKey = remoteKey ?? deriveProjectKey(agent.cwd);
+    // The daemon resolves worktrees to the repo they were cut from; the cwd cannot.
+    const projectKey =
+      remoteKey ??
+      agent.projectPlacement?.projectKey ??
+      deriveProjectKey(agent.cwd, options?.worktreesRoot);
     const existing = projectMap.get(projectKey) || { trulyActive: [], recentlyActive: [] };
 
     if (isAgentTrulyActive(agent)) {

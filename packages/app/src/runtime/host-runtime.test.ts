@@ -1922,6 +1922,7 @@ describe("HostRuntimeStore", () => {
       serverId: host.serverId,
       hostname: null,
       version: "0.1.96",
+      worktreesRoot: null,
     });
     store.syncHosts([host]);
     await waitForHostOnline(store, host.serverId);
@@ -2000,6 +2001,7 @@ describe("HostRuntimeStore", () => {
       serverId: host.serverId,
       hostname: null,
       version: "0.1.96",
+      worktreesRoot: null,
     });
     sessionStore.setAgents(
       host.serverId,
@@ -2307,6 +2309,7 @@ describe("HostRuntimeStore", () => {
       serverId: host.serverId,
       hostname: null,
       version: "test",
+      worktreesRoot: null,
     });
     await fakeClient.waitForFetches(1);
     await load;
@@ -2613,6 +2616,7 @@ describe("HostRuntimeStore", () => {
       serverId: host.serverId,
       hostname: null,
       version: null,
+      worktreesRoot: null,
       features: { canonicalSubmittedPrompts: true },
     });
     sessionStore.setQueuedMessages(
@@ -2759,6 +2763,7 @@ describe("HostRuntimeStore", () => {
       serverId: host.serverId,
       hostname: null,
       version: "0.1.105",
+      worktreesRoot: null,
       features: { forgeSearch: false },
     });
     sessionStore.setQueuedMessages(

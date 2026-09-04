@@ -3394,6 +3394,15 @@ export const ServerInfoStatusPayloadSchema = z
     permissions: z.array(DaemonPermissionSchema).optional(),
     // COMPAT(desktopManaged): added in v0.1.X, remove optional parsing after 2027-01-16.
     desktopManaged: z.boolean().optional(),
+    // The daemon's resolved Paseo worktrees base root (`worktrees.root`, default
+    // `$PASEO_HOME/worktrees`). Paseo-managed worktrees live at
+    // `<worktreesRoot>/<project-hash>/<slug>`. Clients need it to recognize a worktree
+    // from a bare cwd: the root is configurable and the project hash is one-way, so
+    // there is no path convention to match against. Presence is the capability signal;
+    // no `features` flag pairs with it.
+    // COMPAT(worktreesRoot): added in v0.3.0, remove the legacy `.paseo/worktrees` path
+    // fallback in packages/app/src/utils/paseo-worktree-path.ts after 2027-08-04.
+    worktreesRoot: z.string().optional(),
     capabilities: ServerCapabilitiesFromUnknownSchema.optional(),
     // COMPAT(providersSnapshot): added in v0.1.48, remove gating when all clients use snapshot
     features: z

@@ -21,6 +21,30 @@ describe("collectAgentWorkingDirectorySuggestions", () => {
     expect(results).toEqual(["/Users/me/project-alpha", "/Users/me/project-beta"]);
   });
 
+  it("excludes worktrees under the daemon's configured worktrees root", () => {
+    const results = collectAgentWorkingDirectorySuggestions(
+      [
+        {
+          cwd: "/mnt/scratch/trees/a1b2c3d4/brave-otter",
+          createdAt: new Date("2026-02-12T10:00:00.000Z"),
+        },
+        {
+          cwd: "/Users/me/repo",
+          createdAt: new Date("2026-02-10T10:00:00.000Z"),
+        },
+        {
+          // Only a worktree under the legacy convention, which no longer applies.
+          cwd: "/Users/me/repo/.paseo/worktrees/feature-a",
+          createdAt: new Date("2026-02-11T10:00:00.000Z"),
+        },
+      ],
+      { worktreesRoot: "/mnt/scratch/trees" },
+    );
+
+    expect(results).toEqual(["/Users/me/repo/.paseo/worktrees/feature-a", "/Users/me/repo"]);
+  });
+
+  // COMPAT(worktreesRoot): drop once the daemon floor reports worktreesRoot.
   it("excludes Paseo-owned worktree paths", () => {
     const results = collectAgentWorkingDirectorySuggestions([
       {

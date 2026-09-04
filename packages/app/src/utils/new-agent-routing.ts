@@ -1,4 +1,5 @@
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
+import { resolvePaseoWorktreePlacement } from "@/utils/paseo-worktree-path";
 import {
   parseHostWorkspaceOpenIntentFromPathname,
   parseHostAgentRouteFromPathname,
@@ -38,25 +39,18 @@ export function resolveSelectedAgentForNewAgent(input: {
   return parseHostAgentRouteFromPathname(input.pathname) ?? parseAgentKey(input.selectedAgentId);
 }
 
-function inferMainRepoRootFromPaseoWorktreePath(cwd: string): string | null {
-  const normalizedPath = cwd.replace(/\\/g, "/");
-  const marker = "/.paseo/worktrees";
-  const markerIndex = normalizedPath.indexOf(marker);
-  if (markerIndex <= 0) {
-    return null;
-  }
-  const markerEnd = markerIndex + marker.length;
-  const nextChar = normalizedPath[markerEnd];
-  if (nextChar && nextChar !== "/") {
-    return null;
-  }
-  const inferred = cwd.slice(0, markerIndex).replace(/[\\/]+$/, "");
-  return inferred.trim() ? inferred : null;
-}
-
+/**
+ * Where a "new agent" started from `cwd` should actually run.
+ *
+ * A Paseo-managed worktree routes to the repo it was cut from. Only the daemon knows that
+ * repo — `checkout.mainRepoRoot` is the answer. Under the current
+ * `<worktreesRoot>/<hash>/<slug>` layout the path cannot substitute for it, so without a
+ * checkout the caller stays in `cwd`.
+ */
 export function resolveNewAgentWorkingDir(
   cwd: string,
   checkout: CheckoutStatusPayload | null,
+  options?: { worktreesRoot?: string | null },
 ): string {
   const explicitMainRepoRoot = checkout?.isPaseoOwnedWorktree
     ? checkout.mainRepoRoot?.trim() || null
@@ -65,5 +59,6 @@ export function resolveNewAgentWorkingDir(
     return explicitMainRepoRoot;
   }
 
-  return inferMainRepoRootFromPaseoWorktreePath(cwd) ?? cwd;
+  const inferred = resolvePaseoWorktreePlacement(cwd, options?.worktreesRoot)?.mainRepoRoot;
+  return inferred?.trim() ? inferred : cwd;
 }

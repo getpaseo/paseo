@@ -23,6 +23,7 @@ function initializeSession(serverId: string, features: Record<string, boolean>):
     serverId,
     hostname: null,
     version: "0.2.6",
+    worktreesRoot: null,
     features,
   });
 }

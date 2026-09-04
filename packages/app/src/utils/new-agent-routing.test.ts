@@ -12,6 +12,7 @@ describe("resolveNewAgentWorkingDir", () => {
     expect(resolveNewAgentWorkingDir("/repo/path", null)).toBe("/repo/path");
   });
 
+  // COMPAT(worktreesRoot): drop these two once the daemon floor reports worktreesRoot.
   it("falls back to repo root when checkout metadata is unavailable", () => {
     expect(resolveNewAgentWorkingDir("/repo/.paseo/worktrees/feature", null)).toBe("/repo");
   });
@@ -20,6 +21,35 @@ describe("resolveNewAgentWorkingDir", () => {
     expect(resolveNewAgentWorkingDir("C:\\Users\\me\\repo\\.paseo\\worktrees\\feature", null)).toBe(
       "C:\\Users\\me\\repo",
     );
+  });
+
+  it("stays in the worktree when only the worktrees root is known", () => {
+    const cwd = "/home/me/scratch/trees/a1b2c3d4/brave-otter";
+    expect(resolveNewAgentWorkingDir(cwd, null, { worktreesRoot: "/home/me/scratch/trees" })).toBe(
+      cwd,
+    );
+  });
+
+  it("ignores the legacy convention for a checkout outside the configured root", () => {
+    expect(
+      resolveNewAgentWorkingDir("/repo/.paseo/worktrees/feature", null, {
+        worktreesRoot: "/home/me/scratch/trees",
+      }),
+    ).toBe("/repo/.paseo/worktrees/feature");
+  });
+
+  it("returns the main repo root for a worktree under a custom worktrees root", () => {
+    const checkout = {
+      isPaseoOwnedWorktree: true,
+      worktreeRoot: "/home/me/scratch/trees/a1b2c3d4/brave-otter",
+      mainRepoRoot: "/repo/main",
+    } as unknown as CheckoutStatusPayload;
+
+    expect(
+      resolveNewAgentWorkingDir("/home/me/scratch/trees/a1b2c3d4/brave-otter", checkout, {
+        worktreesRoot: "/home/me/scratch/trees",
+      }),
+    ).toBe("/repo/main");
   });
 
   it("returns the main repo root for paseo-owned worktrees", () => {

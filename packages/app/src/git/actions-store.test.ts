@@ -232,6 +232,7 @@ describe("checkout-git-actions-store", () => {
         serverId,
         hostname: null,
         version: null,
+        worktreesRoot: null,
         features: { [rpc.feature]: true },
       });
 
@@ -262,6 +263,7 @@ describe("checkout-git-actions-store", () => {
         serverId,
         hostname: null,
         version: null,
+        worktreesRoot: null,
         features: { [rpc.feature]: true },
       });
 
@@ -289,6 +291,7 @@ describe("checkout-git-actions-store", () => {
       serverId,
       hostname: null,
       version: null,
+      worktreesRoot: null,
       features: {},
     });
 

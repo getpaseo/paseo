@@ -49,8 +49,11 @@ function upsertAgentDirectoryReplica(
     ...normalized,
     workspaceId: normalized.workspaceId ?? legacyWorkspaceId,
     projectPlacement:
-      resolveProjectPlacement({ projectPlacement: delta.project, cwd: normalized.cwd }) ??
-      previousAgent?.projectPlacement,
+      resolveProjectPlacement({
+        projectPlacement: delta.project,
+        cwd: normalized.cwd,
+        worktreesRoot: session?.serverInfo?.worktreesRoot,
+      }) ?? previousAgent?.projectPlacement,
   };
   const acceptedAgent = upsertAgentReplica(serverId, agent);
   if (acceptedAgent.archivedAt) {
@@ -154,12 +157,15 @@ export function buildAgentDirectoryState(input: {
 } {
   const agents = new Map<string, Agent>();
   const pendingPermissions = new Map<string, PendingPermissionEntry>();
+  const worktreesRoot =
+    useSessionStore.getState().sessions[input.serverId]?.serverInfo?.worktreesRoot;
 
   for (const entry of input.entries) {
     const normalized = normalizeAgentSnapshot(entry.agent, input.serverId);
     const projectPlacement = resolveProjectPlacement({
       projectPlacement: entry.project,
       cwd: normalized.cwd,
+      worktreesRoot,
     });
     const agent: Agent = {
       ...normalized,

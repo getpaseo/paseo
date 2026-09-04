@@ -330,6 +330,22 @@ describe("agent detach RPC", () => {
     expect(parsed.features?.agentDetach).toBe(true);
   });
 
+  test("parses the resolved worktrees root and tolerates daemons that omit it", () => {
+    const withRoot = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+      worktreesRoot: "/mnt/scratch/paseo-trees",
+    });
+    const withoutRoot = parseServerInfoStatusPayload({
+      status: "server_info",
+      serverId: "srv-test",
+    });
+
+    expect(withRoot?.worktreesRoot).toBe("/mnt/scratch/paseo-trees");
+    expect(withoutRoot?.serverId).toBe("srv-test");
+    expect(withoutRoot?.worktreesRoot).toBeUndefined();
+  });
+
   test("parses the workspace-targeted session import feature gate", () => {
     const parsed = parseServerInfoStatusPayload({
       status: "server_info",
