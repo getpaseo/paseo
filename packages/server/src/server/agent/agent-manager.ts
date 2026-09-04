@@ -88,6 +88,7 @@ import { withTimeout } from "../../utils/promise-timeout.js";
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
 const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 90_000;
+const AGGREGATE_IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 8_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
@@ -955,6 +956,10 @@ export class AgentManager {
     );
     const providerResults = await Promise.all(
       providerEntries.map(async ([provider, client]) => {
+        const timeoutMs =
+          providerEntries.length === 1
+            ? IMPORTABLE_SESSION_LIST_TIMEOUT_MS
+            : AGGREGATE_IMPORTABLE_SESSION_LIST_TIMEOUT_MS;
         try {
           const sessions = await withTimeout(
             client.listImportableSessions!({
@@ -963,8 +968,8 @@ export class AgentManager {
               scanLimit: options?.scanLimit,
               cwd: options?.cwd,
             }),
-            IMPORTABLE_SESSION_LIST_TIMEOUT_MS,
-            `Timed out listing importable sessions for provider '${provider}' after ${IMPORTABLE_SESSION_LIST_TIMEOUT_MS}ms`,
+            timeoutMs,
+            `Timed out listing importable sessions for provider '${provider}' after ${timeoutMs}ms`,
           );
           return {
             sessions: sessions

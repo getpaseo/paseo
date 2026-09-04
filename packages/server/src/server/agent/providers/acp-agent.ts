@@ -442,6 +442,7 @@ interface ACPAgentClientOptions {
   waitForInitialCommands?: boolean;
   initialCommandsWaitTimeoutMs?: number;
   terminateProcess?: ProcessTerminator;
+  now?: () => number;
 }
 
 interface ACPAgentSessionOptions {
@@ -902,6 +903,7 @@ export class ACPAgentClient implements AgentClient {
   private readonly initialCommandsWaitTimeoutMs: number;
   private readonly extensionCommandsParser?: ACPExtensionCommandsParser;
   private readonly importPromptCache = new Map<string, ACPImportPromptCacheEntry>();
+  private readonly now: () => number;
   protected readonly terminateProcess: ProcessTerminator;
 
   constructor(options: ACPAgentClientOptions) {
@@ -930,6 +932,7 @@ export class ACPAgentClient implements AgentClient {
     this.waitForInitialCommands = options.waitForInitialCommands ?? false;
     this.initialCommandsWaitTimeoutMs = options.initialCommandsWaitTimeoutMs ?? 1500;
     this.extensionCommandsParser = options.extensionCommandsParser;
+    this.now = options.now ?? Date.now;
   }
 
   async createSession(
@@ -1160,7 +1163,7 @@ export class ACPAgentClient implements AgentClient {
       const resultLimit = options?.limit ?? Number.POSITIVE_INFINITY;
       const scanLimit = Math.min(options?.scanLimit ?? 500, 500);
       const canLoadHistory = probe.initialize.agentCapabilities.loadSession === true;
-      const historyDeadline = Date.now() + ACP_IMPORT_HISTORY_BUDGET_MS;
+      const historyDeadline = this.now() + ACP_IMPORT_HISTORY_BUDGET_MS;
       let scanned = 0;
       let cursor: string | null | undefined;
       for (;;) {
@@ -1227,7 +1230,7 @@ export class ACPAgentClient implements AgentClient {
       };
     }
 
-    const remainingMs = historyDeadline - Date.now();
+    const remainingMs = historyDeadline - this.now();
     if (remainingMs <= 0) return null;
     const loadTimeoutMs = Math.min(ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS, remainingMs);
 
@@ -1267,7 +1270,7 @@ export class ACPAgentClient implements AgentClient {
     historyDeadline: number,
   ): Promise<void> {
     if (!probe.initialize.agentCapabilities?.sessionCapabilities?.close) return;
-    const remainingMs = historyDeadline - Date.now();
+    const remainingMs = historyDeadline - this.now();
     if (remainingMs <= 0) return;
     const closeTimeoutMs = Math.min(ACP_PROBE_CLOSE_TIMEOUT_MS, remainingMs);
     try {

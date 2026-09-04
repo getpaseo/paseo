@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import { createTestLogger } from "../../../test-utils/test-logger.js";
 import { runProviderRefreshWithDeadline } from "../provider-refresh-deadline.js";
@@ -15,6 +15,11 @@ function parseInitializeTrace(content: string): Array<{ clientCapabilities: unkn
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as { clientCapabilities: unknown });
+}
+
+function historyBudgetClock(): () => number {
+  let calls = 0;
+  return () => (calls++ < 2 ? 0 : 60_001);
 }
 
 describe("GenericACPAgentClient diagnostics", () => {
@@ -121,28 +126,20 @@ describe("GenericACPAgentClient diagnostics", () => {
       const client = new GenericACPAgentClient({
         logger: createTestLogger(),
         command: [process.execPath, scriptPath, mode, "", "", "", testDir, loadTracePath],
+        now: historyBudgetClock(),
       });
-      const now = vi
-        .spyOn(Date, "now")
-        .mockReturnValueOnce(0)
-        .mockReturnValueOnce(0)
-        .mockReturnValue(60_001);
 
-      try {
-        const sessions = await client.listImportableSessions({ limit: 4 });
+      const sessions = await client.listImportableSessions({ limit: 4 });
 
-        expect(sessions).toMatchObject([
-          { providerHandleId: "failed-session-1" },
-          { providerHandleId: "failed-session-2" },
-          { providerHandleId: "failed-session-3" },
-          { providerHandleId: "failed-session-4" },
-        ]);
-        await expect(readFile(loadTracePath, "utf8")).resolves.toBe(
-          `${JSON.stringify({ sessionId: "failed-session-1" })}\n`,
-        );
-      } finally {
-        now.mockRestore();
-      }
+      expect(sessions).toMatchObject([
+        { providerHandleId: "failed-session-1" },
+        { providerHandleId: "failed-session-2" },
+        { providerHandleId: "failed-session-3" },
+        { providerHandleId: "failed-session-4" },
+      ]);
+      await expect(readFile(loadTracePath, "utf8")).resolves.toBe(
+        `${JSON.stringify({ sessionId: "failed-session-1" })}\n`,
+      );
     });
   });
 

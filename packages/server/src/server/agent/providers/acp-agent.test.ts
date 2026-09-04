@@ -3696,6 +3696,70 @@ describe("ACPAgentClient probe cleanup", () => {
 
     expect(terminator.terminated).toContain(child);
   });
+
+  test("keeps a session visible and cleans up after its history load times out", async () => {
+    vi.useFakeTimers();
+    try {
+      const terminator = new FakeTerminator();
+      const child = createProbeChildStub();
+      const loadSession = vi.fn(async () => await new Promise(() => undefined));
+
+      class TestACPAgentClient extends ACPAgentClient {
+        protected override async spawnProcess(): Promise<SpawnedACPProcess> {
+          return {
+            child,
+            connection: {
+              listSessions: vi.fn().mockResolvedValue({
+                sessions: [
+                  {
+                    sessionId: "slow-session",
+                    cwd: "/tmp/acp-import",
+                    title: "Slow but real",
+                    updatedAt: "2026-09-04T20:00:00.000Z",
+                  },
+                ],
+                nextCursor: null,
+              }),
+              loadSession,
+              unstable_closeSession: vi.fn().mockResolvedValue({}),
+            },
+            initialize: {
+              agentCapabilities: {
+                loadSession: true,
+                sessionCapabilities: { list: {}, close: {} },
+              },
+            },
+          } as unknown as SpawnedACPProcess;
+        }
+      }
+
+      const client = new TestACPAgentClient({
+        provider: "claude-acp",
+        logger: createTestLogger(),
+        defaultCommand: ["claude", "--acp"],
+        defaultModes: [],
+        terminateProcess: terminator.terminate,
+      });
+      const listing = client.listImportableSessions({ limit: 1 });
+      await vi.waitFor(() => expect(loadSession).toHaveBeenCalledOnce());
+
+      await vi.advanceTimersByTimeAsync(30_000);
+
+      await expect(listing).resolves.toEqual([
+        {
+          providerHandleId: "slow-session",
+          cwd: "/tmp/acp-import",
+          title: "Slow but real",
+          firstPromptPreview: null,
+          lastPromptPreview: null,
+          lastActivityAt: new Date("2026-09-04T20:00:00.000Z"),
+        },
+      ]);
+      expect(terminator.terminated).toContain(child);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("ACP session/load invariant — cwd and mcpServers always passed", () => {

@@ -10157,7 +10157,7 @@ test("listImportableSessions returns healthy rows alongside thrown and timed-out
     });
 
     const resultPromise = manager.listImportableSessions();
-    await vi.advanceTimersByTimeAsync(90_000);
+    await vi.advanceTimersByTimeAsync(8_000);
 
     await expect(resultPromise).resolves.toEqual({
       sessions: [
@@ -10175,7 +10175,37 @@ test("listImportableSessions returns healthy rows alongside thrown and timed-out
         { provider: "codex", message: "codex listing failed" },
         {
           provider: "pi",
-          message: "Timed out listing importable sessions for provider 'pi' after 90000ms",
+          message: "Timed out listing importable sessions for provider 'pi' after 8000ms",
+        },
+      ],
+    });
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("listImportableSessions gives a single requested provider the full listing deadline", async () => {
+  vi.useFakeTimers();
+  try {
+    const hangingClient = new RecordingPersistedAgentsClient("acp");
+    hangingClient.listImportableSessions = async () => await new Promise(() => undefined);
+    const manager = new AgentManager({
+      clients: { acp: hangingClient },
+      providerDefinitions: {
+        acp: { enabled: true, derivedFromProviderId: null },
+      },
+      logger,
+    });
+
+    const resultPromise = manager.listImportableSessions({ providerFilter: new Set(["acp"]) });
+    await vi.advanceTimersByTimeAsync(90_000);
+
+    await expect(resultPromise).resolves.toEqual({
+      sessions: [],
+      providerErrors: [
+        {
+          provider: "acp",
+          message: "Timed out listing importable sessions for provider 'acp' after 90000ms",
         },
       ],
     });
