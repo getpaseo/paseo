@@ -900,10 +900,10 @@ function useCloseTabs(): UseCloseTabsResult {
 /**
  * Which project the workspace belongs to, and which machine it runs on.
  *
- * Compact gets both, on their own line under the workspace name: this header is the only thing on
- * screen that says where the workspace lives, because the sidebar that normally carries the host
- * badge is closed. It still follows the host's own badge setting, so a purely local setup stays
- * quiet. A project name that only repeats the workspace name is dropped on wide, where the two sit
+ * The host badge follows the host's own badge setting and nothing else — not the sidebar's "Show →
+ * Host" preference, and not whether the sidebar is open — so the header says where the workspace
+ * lives on every layout, and a purely local setup stays quiet because the local host defaults to
+ * hidden. A project name that only repeats the workspace name is dropped on wide, where the two sit
  * side by side, and kept on compact, where the line exists for the host anyway.
  */
 function WorkspaceHeaderProjectRow({
@@ -916,13 +916,13 @@ function WorkspaceHeaderProjectRow({
   serverId: string;
 }) {
   const isCompact = useIsCompactFormFactor();
-  const hostBadge = useHostBadges({ enabled: isCompact }).get(serverId) ?? null;
+  const hostBadge = useHostBadges({ enabled: true }).get(serverId) ?? null;
   const showProject = isSubtitleDistinct || isCompact;
   if (!showProject && !hostBadge) {
     return null;
   }
   return (
-    <View style={styles.headerProjectRow}>
+    <View style={styles.headerProjectRow} testID="workspace-header-project-row">
       {showProject ? (
         <Text
           testID="workspace-header-subtitle"
