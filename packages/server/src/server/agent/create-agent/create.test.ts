@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -470,4 +471,231 @@ test("session create keeps an explicit title after the initial prompt settles", 
   } finally {
     await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
   }
+});
+
+test("session create archives the agent when the initial prompt fails to start", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-failed-startup-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentId = randomUUID();
+  const clients = createTestAgentClients({
+    onStartTurn: (prompt) => {
+      if (typeof prompt === "string" && prompt === "trigger opencode startup failure") {
+        throw new Error("OpenCode event stream first record");
+      }
+    },
+  });
+  const agentManager = new AgentManager({
+    clients,
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+  const archiveAgent = vi.spyOn(agentManager, "archiveAgent");
+
+  try {
+    await expect(
+      createAgentCommand(
+        {
+          agentManager,
+          agentStorage: storage,
+          logger,
+          providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+        },
+        {
+          kind: "session",
+          config: { provider: "opencode", cwd: workdir },
+          workspaceId: "ws-failed-startup",
+          initialPrompt: "trigger opencode startup failure",
+          labels: {},
+          provisionalTitle: null,
+          firstAgentContext: { attachments: [] },
+          buildSessionConfig: async (config) => ({ sessionConfig: config }),
+        },
+      ),
+    ).rejects.toThrow("OpenCode event stream first record");
+
+    expect(archiveAgent).toHaveBeenCalledWith(agentId);
+    expect(agentManager.getAgent(agentId)).toBeNull();
+    const record = await storage.get(agentId);
+    expect(record?.archivedAt).toBeDefined();
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+test("session create does not archive the agent when the initial prompt starts", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "create-agent-success-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  const agentId = randomUUID();
+  const agentManager = new AgentManager({
+    clients: createTestAgentClients(),
+    registry: storage,
+    logger,
+    idFactory: () => agentId,
+  });
+  const archiveAgent = vi.spyOn(agentManager, "archiveAgent");
+
+  try {
+    const { snapshot, initialPromptStarted } = await createAgentCommand(
+      {
+        agentManager,
+        agentStorage: storage,
+        logger,
+        providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+      },
+      {
+        kind: "session",
+        config: { provider: "opencode", cwd: workdir },
+        workspaceId: "ws-success",
+        initialPrompt: "hello",
+        labels: {},
+        provisionalTitle: null,
+        firstAgentContext: { attachments: [] },
+        buildSessionConfig: async (config) => ({ sessionConfig: config }),
+      },
+    );
+
+    expect(snapshot.id).toBe(agentId);
+    expect(initialPromptStarted).toBe(true);
+    expect(archiveAgent).not.toHaveBeenCalled();
+    expect(agentManager.getAgent(agentId)).not.toBeNull();
+  } finally {
+    await removeRealAgentManagerWorkdir({ agentManager, storage, workdir });
+  }
+});
+
+test("mcp create with promptFailure return-error returns the initial prompt error without archiving", async () => {
+  const startupError = new Error("OpenCode event stream first record");
+  const snapshot = {
+    id: "agent-2",
+    provider: "opencode",
+    cwd: "/tmp",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createAgent = vi.fn(async () => snapshot);
+  const archiveAgent = vi.fn(async () => ({ archivedAt: new Date().toISOString() }));
+  const streamAgent = vi.fn(() => {
+    throw startupError;
+  });
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent,
+      getAgent: vi.fn(() => snapshot),
+      archiveAgent,
+      streamAgent,
+      tryRunOutOfBand: vi.fn(() => false),
+      hasInFlightRun: vi.fn(() => false),
+      waitForAgentRunStart: vi.fn(async () => undefined),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+  };
+
+  const result = await createAgentCommand(dependencies, {
+    kind: "mcp",
+    provider: "opencode",
+    title: "test",
+    cwd: "/tmp",
+    workspaceId: "ws-return-error",
+    initialPrompt: "hello",
+    background: true,
+    notifyOnFinish: false,
+    promptFailure: "return-error",
+  });
+
+  expect(result.initialPromptStarted).toBe(false);
+  expect(result.initialPromptError).toBe(startupError);
+  expect(archiveAgent).not.toHaveBeenCalled();
+});
+
+test("mcp create with promptFailure log does not archive the agent", async () => {
+  const startupError = new Error("OpenCode event stream first record");
+  const snapshot = {
+    id: "agent-3",
+    provider: "opencode",
+    cwd: "/tmp",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createAgent = vi.fn(async () => snapshot);
+  const archiveAgent = vi.fn(async () => ({ archivedAt: new Date().toISOString() }));
+  const streamAgent = vi.fn(() => {
+    throw startupError;
+  });
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent,
+      getAgent: vi.fn(() => snapshot),
+      archiveAgent,
+      streamAgent,
+      tryRunOutOfBand: vi.fn(() => false),
+      hasInFlightRun: vi.fn(() => false),
+      waitForAgentRunStart: vi.fn(async () => undefined),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+  };
+
+  const result = await createAgentCommand(dependencies, {
+    kind: "mcp",
+    provider: "opencode",
+    title: "test",
+    cwd: "/tmp",
+    workspaceId: "ws-log",
+    initialPrompt: "hello",
+    background: true,
+    notifyOnFinish: false,
+    promptFailure: "log",
+  });
+
+  expect(result.initialPromptStarted).toBe(false);
+  expect(result.initialPromptError).toBeNull();
+  expect(archiveAgent).not.toHaveBeenCalled();
+});
+
+test("initial prompt failure still throws the original error when archive fails", async () => {
+  const startupError = new Error("OpenCode event stream first record");
+  const snapshot = {
+    id: "agent-4",
+    provider: "opencode",
+    cwd: "/tmp",
+    runtimeInfo: null,
+  } as ManagedAgent;
+  const createAgent = vi.fn(async () => snapshot);
+  const archiveAgent = vi.fn(async () => {
+    throw new Error("archive failed");
+  });
+  const streamAgent = vi.fn(() => {
+    throw startupError;
+  });
+  const dependencies: Parameters<typeof createAgentCommand>[0] = {
+    agentManager: {
+      createAgent,
+      getAgent: vi.fn(() => snapshot),
+      archiveAgent,
+      streamAgent,
+      tryRunOutOfBand: vi.fn(() => false),
+      hasInFlightRun: vi.fn(() => false),
+      waitForAgentRunStart: vi.fn(async () => undefined),
+    } as unknown as Parameters<typeof createAgentCommand>[0]["agentManager"],
+    agentStorage: {} as Parameters<typeof createAgentCommand>[0]["agentStorage"],
+    logger: createTestLogger(),
+    providerSnapshotManager: createProviderSnapshotManagerStub().manager,
+  };
+
+  await expect(
+    createAgentCommand(dependencies, {
+      kind: "session",
+      config: { provider: "opencode", cwd: "/tmp" },
+      workspaceId: "ws",
+      initialPrompt: "hello",
+      labels: {},
+      provisionalTitle: null,
+      firstAgentContext: { attachments: [] },
+      buildSessionConfig: async (config) => ({ sessionConfig: config }),
+    }),
+  ).rejects.toThrow("OpenCode event stream first record");
+
+  expect(archiveAgent).toHaveBeenCalledWith("agent-4");
 });

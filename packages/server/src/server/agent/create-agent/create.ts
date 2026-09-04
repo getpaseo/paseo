@@ -196,10 +196,17 @@ export async function createAgentCommand(
     input.onCreated?.({ agentId: snapshot.id, createdWorktree: resolved.createdWorktree ?? null });
   }
   if (resolved.prompt !== undefined) {
-    const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot);
-    initialPromptStarted = sendResult.started;
-    liveSnapshot = sendResult.liveSnapshot;
-    initialPromptError = sendResult.error ?? null;
+    try {
+      const sendResult = await sendInitialPrompt(dependencies, resolved, snapshot);
+      initialPromptStarted = sendResult.started;
+      liveSnapshot = sendResult.liveSnapshot;
+      initialPromptError = sendResult.error ?? null;
+    } catch (error) {
+      if (resolved.promptFailure === "throw") {
+        await archiveCreatedAgentBestEffort(dependencies, snapshot.id);
+      }
+      throw error;
+    }
   }
 
   if (input.kind === "mcp" && input.notifyOnFinish && input.callerAgentId && initialPromptStarted) {
@@ -472,6 +479,25 @@ async function sendInitialPrompt(
     }
     dependencies.logger.error({ err: error, agentId: snapshot.id }, "Failed to run initial prompt");
     return { started: false, liveSnapshot: snapshot };
+  }
+}
+
+async function archiveCreatedAgentBestEffort(
+  dependencies: CreateAgentCommandDependencies,
+  agentId: string,
+): Promise<void> {
+  const liveAgent = dependencies.agentManager.getAgent(agentId);
+  if (!liveAgent) {
+    return;
+  }
+
+  try {
+    await dependencies.agentManager.archiveAgent(agentId);
+  } catch (archiveError) {
+    dependencies.logger.error(
+      { err: archiveError, agentId },
+      "Failed to archive agent after initial prompt startup failure",
+    );
   }
 }
 
