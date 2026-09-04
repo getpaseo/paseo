@@ -61,6 +61,15 @@ function buildDirectServiceUrl(
   }
 }
 
+function isRemoteDirectTcpConnection(activeConnection: ActiveConnection | null): boolean {
+  if (activeConnection?.type !== "directTcp") return false;
+  try {
+    return !isLoopbackHost(parseHostPort(activeConnection.endpoint).host);
+  } catch {
+    return false;
+  }
+}
+
 function addTarget(
   targets: WorkspaceScriptLinkTarget[],
   kind: WorkspaceScriptLinkKind,
@@ -76,8 +85,15 @@ function resolveServiceLinkTargets(input: {
   publicProxyUrl?: string | null;
   proxyUrl?: string | null;
   activeConnection: ActiveConnection | null;
+  includeLocalProxy?: boolean;
 }): WorkspaceScriptLinkTarget[] {
-  const { activeConnection, localProxyUrl: explicitLocalProxyUrl, port, proxyUrl } = input;
+  const {
+    activeConnection,
+    includeLocalProxy = true,
+    localProxyUrl: explicitLocalProxyUrl,
+    port,
+    proxyUrl,
+  } = input;
   // COMPAT(workspaceScriptSplitUrls): added in v0.2.0, remove after 2027-01-21.
   // Old daemons only send proxyUrl, so classify it by reachability.
   const localProxyUrl = explicitLocalProxyUrl ?? (isLocalOnlyUrl(proxyUrl) ? proxyUrl : null);
@@ -85,7 +101,7 @@ function resolveServiceLinkTargets(input: {
 
   const targets: WorkspaceScriptLinkTarget[] = [];
   addTarget(targets, "public", publicProxyUrl);
-  addTarget(targets, "paseo", localProxyUrl);
+  if (includeLocalProxy) addTarget(targets, "paseo", localProxyUrl);
   addTarget(targets, "direct", buildDirectServiceUrl(activeConnection, port));
   return targets;
 }
@@ -113,6 +129,12 @@ export function resolveWorkspaceLaunchEndpointLink(input: {
     return { primary: null, targets: [] };
   }
 
-  const targets = resolveServiceLinkTargets({ ...endpoint, activeConnection });
+  const targets = resolveServiceLinkTargets({
+    ...endpoint,
+    activeConnection,
+    // A .localhost proxy is resolved by the device, not the remote daemon. For a direct
+    // connection to another host, offer only routes reachable from the client device.
+    includeLocalProxy: !isRemoteDirectTcpConnection(activeConnection),
+  });
   return { primary: targets[0] ?? null, targets };
 }

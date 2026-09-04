@@ -220,7 +220,7 @@ describe("resolveWorkspaceScriptLink", () => {
 });
 
 describe("resolveWorkspaceLaunchEndpointLink", () => {
-  it("offers the remote daemon host as a direct route", () => {
+  it("uses the remote daemon host instead of a .localhost proxy", () => {
     expect(
       resolveWorkspaceLaunchEndpointLink({
         endpoint: runningLaunchEndpoint,
@@ -232,16 +232,11 @@ describe("resolveWorkspaceLaunchEndpointLink", () => {
       }),
     ).toEqual({
       primary: {
-        kind: "paseo",
-        label: "launch-dev-p0--feature--paseo.localhost:6767",
-        url: "http://launch-dev-p0--feature--paseo.localhost:6767",
+        kind: "direct",
+        label: "mac-mini.tail123.ts.net:4100",
+        url: "http://mac-mini.tail123.ts.net:4100",
       },
       targets: [
-        {
-          kind: "paseo",
-          label: "launch-dev-p0--feature--paseo.localhost:6767",
-          url: "http://launch-dev-p0--feature--paseo.localhost:6767",
-        },
         {
           kind: "direct",
           label: "mac-mini.tail123.ts.net:4100",
