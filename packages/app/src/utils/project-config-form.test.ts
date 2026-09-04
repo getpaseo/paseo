@@ -189,7 +189,7 @@ describe("applyDraftToConfig", () => {
     const next = applyDraftToConfig({ draft: configToDraft(base), base });
     const web = next.scripts?.web;
     if (!web) throw new Error("expected web script after round-trip");
-    expect((web as Record<string, unknown>).links).toEqual([
+    expect(web.links).toEqual([
       { label: "Admin", path: "/admin" },
       { label: "GraphQL", path: "/api/graphql" },
     ]);
