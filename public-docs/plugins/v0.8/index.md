@@ -231,10 +231,12 @@ Append `:relative/path` when the plugin lives below the repository root. Without
 default branch is tracked; a branch tracks updates, while a tag or commit stays pinned.
 
 ```bash
-paseo plugin status
+paseo plugin ls
 paseo plugin update workspace-plugin
 paseo plugin update --all
 ```
+
+`ls` reports runtime state, source details, and the installed commit without contacting the remote.
 
 Paseo compiles TypeScript itself, so most plugins need no build step. A repository that must
 install a dependency Paseo does not provide, or generate files, declares

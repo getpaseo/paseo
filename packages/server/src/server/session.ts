@@ -1165,11 +1165,20 @@ export class Session {
     return true;
   }
 
+  private supportsTimelineNotifications(source?: object): boolean {
+    return source
+      ? this.supportsForSource(CLIENT_CAPS.timelineNotifications, source)
+      : this.supports(CLIENT_CAPS.timelineNotifications);
+  }
+
   private forwardAgentStream(
     event: Extract<AgentManagerEvent, { type: "agent_stream" }>,
     serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
   ): void {
+    const isNotification =
+      serializedEvent.type === "timeline" && serializedEvent.item.type === "notification";
     if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
+      if (isNotification && !this.supportsTimelineNotifications()) return;
       if (this.usesSelectiveTimelineDelivery() && serializedEvent.type === "attention_required") {
         this.emit({
           type: "agent_attention_required",
@@ -1194,6 +1203,7 @@ export class Session {
     }
 
     for (const [source, capabilities] of this.clientCapabilitiesBySource) {
+      if (isNotification && !capabilities.has(CLIENT_CAPS.timelineNotifications)) continue;
       const supportsSelectiveDelivery = capabilities.has(CLIENT_CAPS.selectiveAgentTimeline);
       if (supportsSelectiveDelivery && serializedEvent.type === "attention_required") {
         this.onMessageToSource(source, {
@@ -1625,6 +1635,57 @@ export class Session {
     }
   }
 
+  private forwardProviderSubagentUpdate(
+    update: Extract<AgentManagerEvent, { type: "provider_subagent" }>["event"],
+  ): void {
+    let message: SessionOutboundMessage;
+    if (update.type === "upsert") {
+      message = {
+        type: "agent.provider_subagents.update",
+        payload: { kind: "upsert", subagent: update.subagent },
+      };
+    } else if (update.type === "timeline") {
+      message = {
+        type: "agent.provider_subagents.update",
+        payload: {
+          kind: "timeline",
+          parentAgentId: update.parentAgentId,
+          subagentId: update.subagentId,
+          provider: update.provider,
+          item: update.row.item,
+          timestamp: update.row.timestamp,
+          seq: update.row.seq,
+          epoch: update.epoch,
+        },
+      };
+    } else {
+      message = {
+        type: "agent.provider_subagents.update",
+        payload: {
+          kind: "remove",
+          parentAgentId: update.parentAgentId,
+          subagentId: update.subagentId,
+        },
+      };
+    }
+
+    const isNotification = update.type === "timeline" && update.row.item.type === "notification";
+    if (this.clientCapabilitiesBySource.size === 0 || !this.onMessageToSource) {
+      if (
+        this.supports(CLIENT_CAPS.providerSubagents) &&
+        (!isNotification || this.supportsTimelineNotifications())
+      ) {
+        this.emit(message);
+      }
+      return;
+    }
+    for (const [source, capabilities] of this.clientCapabilitiesBySource) {
+      if (!capabilities.has(CLIENT_CAPS.providerSubagents)) continue;
+      if (isNotification && !capabilities.has(CLIENT_CAPS.timelineNotifications)) continue;
+      this.onMessageToSource(source, message);
+    }
+  }
+
   private subscribeToAgentEvents(): void {
     if (this.unsubscribeAgentEvents) {
       this.unsubscribeAgentEvents();
@@ -1654,39 +1715,7 @@ export class Session {
 
         if (event.type === "provider_subagent") {
           this.emitProviderSubagentWorkspaceUpdate(event.event);
-          if (!this.supports(CLIENT_CAPS.providerSubagents)) {
-            return;
-          }
-          const update = event.event;
-          if (update.type === "upsert") {
-            this.emit({
-              type: "agent.provider_subagents.update",
-              payload: { kind: "upsert", subagent: update.subagent },
-            });
-          } else if (update.type === "timeline") {
-            this.emit({
-              type: "agent.provider_subagents.update",
-              payload: {
-                kind: "timeline",
-                parentAgentId: update.parentAgentId,
-                subagentId: update.subagentId,
-                provider: update.provider,
-                item: update.row.item,
-                timestamp: update.row.timestamp,
-                seq: update.row.seq,
-                epoch: update.epoch,
-              },
-            });
-          } else {
-            this.emit({
-              type: "agent.provider_subagents.update",
-              payload: {
-                kind: "remove",
-                parentAgentId: update.parentAgentId,
-                subagentId: update.subagentId,
-              },
-            });
-          }
+          this.forwardProviderSubagentUpdate(event.event);
           return;
         }
 
@@ -2276,7 +2305,7 @@ export class Session {
       case "agent.provider_subagents.list.request":
         return this.handleProviderSubagentListRequest(msg);
       case "agent.provider_subagents.timeline.get.request":
-        return this.handleProviderSubagentTimelineRequest(msg);
+        return this.handleProviderSubagentTimelineRequest(msg, source);
       case "agent.timeline.set_subscription.request": {
         const agentIds = [...new Set(msg.agentIds)].sort();
         if (
@@ -4052,6 +4081,9 @@ export class Session {
     source?: object,
   ): void {
     for (const row of rows) {
+      if (row.item.type === "notification" && !this.supportsTimelineNotifications(source)) {
+        continue;
+      }
       const event = serializeAgentStreamEvent({
         type: "timeline",
         provider,
@@ -7091,6 +7123,9 @@ export class Session {
         selectedTimeline.endSeq !== null
           ? { epoch: selectedTimeline.timeline.epoch, seq: selectedTimeline.endSeq }
           : null;
+      const entries = this.supportsTimelineNotifications(source)
+        ? selectedTimeline.entries
+        : selectedTimeline.entries.filter((entry) => entry.item.type !== "notification");
 
       this.emitForSource(
         {
@@ -7111,7 +7146,7 @@ export class Session {
             hasOlder: selectedTimeline.hasOlder,
             hasNewer: selectedTimeline.hasNewer,
             ...(msg.mergeWindow === true ? { mergeWindow: true } : {}),
-            entries: selectedTimeline.entries.map((entry) => {
+            entries: entries.map((entry) => {
               const payloadEntry = {
                 provider: snapshot.provider,
                 item: entry.item,
@@ -7267,6 +7302,7 @@ export class Session {
 
   private async handleProviderSubagentTimelineRequest(
     msg: Extract<SessionInboundMessage, { type: "agent.provider_subagents.timeline.get.request" }>,
+    source?: object,
   ): Promise<void> {
     const direction: AgentTimelineFetchDirection = msg.direction ?? (msg.cursor ? "after" : "tail");
     try {
@@ -7288,49 +7324,58 @@ export class Session {
           limit: msg.limit ?? (direction === "after" ? 0 : 200),
         },
       );
-      this.emit({
-        type: "agent.provider_subagents.timeline.get.response",
-        payload: {
-          requestId: msg.requestId,
-          parentAgentId: msg.parentAgentId,
-          subagentId: msg.subagentId,
-          provider: descriptor.provider,
-          direction,
-          epoch: timeline.epoch,
-          reset: timeline.reset,
-          staleCursor: timeline.staleCursor,
-          gap: timeline.gap,
-          window: timeline.window,
-          hasOlder: timeline.hasOlder,
-          hasNewer: timeline.hasNewer,
-          rows: timeline.rows.map((row) => ({
-            item: row.item,
-            timestamp: row.timestamp,
-            seq: row.seq,
-          })),
-          error: null,
+      const rows = this.supportsTimelineNotifications(source)
+        ? timeline.rows
+        : timeline.rows.filter((row) => row.item.type !== "notification");
+      this.emitForSource(
+        {
+          type: "agent.provider_subagents.timeline.get.response",
+          payload: {
+            requestId: msg.requestId,
+            parentAgentId: msg.parentAgentId,
+            subagentId: msg.subagentId,
+            provider: descriptor.provider,
+            direction,
+            epoch: timeline.epoch,
+            reset: timeline.reset,
+            staleCursor: timeline.staleCursor,
+            gap: timeline.gap,
+            window: timeline.window,
+            hasOlder: timeline.hasOlder,
+            hasNewer: timeline.hasNewer,
+            rows: rows.map((row) => ({
+              item: row.item,
+              timestamp: row.timestamp,
+              seq: row.seq,
+            })),
+            error: null,
+          },
         },
-      });
+        source,
+      );
     } catch (error) {
-      this.emit({
-        type: "agent.provider_subagents.timeline.get.response",
-        payload: {
-          requestId: msg.requestId,
-          parentAgentId: msg.parentAgentId,
-          subagentId: msg.subagentId,
-          provider: null,
-          direction,
-          epoch: "",
-          reset: false,
-          staleCursor: false,
-          gap: false,
-          window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
-          hasOlder: false,
-          hasNewer: false,
-          rows: [],
-          error: error instanceof Error ? error.message : String(error),
+      this.emitForSource(
+        {
+          type: "agent.provider_subagents.timeline.get.response",
+          payload: {
+            requestId: msg.requestId,
+            parentAgentId: msg.parentAgentId,
+            subagentId: msg.subagentId,
+            provider: null,
+            direction,
+            epoch: "",
+            reset: false,
+            staleCursor: false,
+            gap: false,
+            window: { minSeq: 0, maxSeq: 0, nextSeq: 0 },
+            hasOlder: false,
+            hasNewer: false,
+            rows: [],
+            error: error instanceof Error ? error.message : String(error),
+          },
         },
-      });
+        source,
+      );
     }
   }
 

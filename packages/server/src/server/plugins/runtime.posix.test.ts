@@ -494,7 +494,7 @@ export default function contribute(plugin: unknown) {
     await runtime.stopAll();
   });
 
-  it("rejects an index.ts plugin with the migration path", async () => {
+  it("explains that an index.ts plugin was made for an older Paseo version", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "paseo-plugin-"));
     temporaryDirectories.push(directory);
     await Promise.all([
@@ -504,10 +504,7 @@ export default function contribute(plugin: unknown) {
     const runtime = createTestRuntime();
 
     await expect(runtime.startPlugin("legacy", directory)).rejects.toThrow(
-      "Plugin entry split is required",
-    );
-    await expect(runtime.startPlugin("legacy", directory)).rejects.toThrow(
-      "https://paseo.sh/docs/plugins/v0.8/migration",
+      "This plugin was made for an older version of Paseo and cannot run on Paseo v0.8. Ask its author to update it. Plugin authors can follow the migration guide: https://paseo.sh/docs/plugins/v0.8/migration",
     );
   });
 

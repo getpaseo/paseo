@@ -91,7 +91,7 @@ paseo plugin add https://gitlab.com/group/repository.git
 paseo plugin add https://git.example.com/owner/repository.git
 paseo plugin add owner/monorepo:plugins/review
 paseo plugin add owner/repository --ref main
-paseo plugin status
+paseo plugin ls
 paseo plugin update review
 paseo plugin update --all
 ```
@@ -99,8 +99,8 @@ paseo plugin update --all
 Append `:relative/path` to the source when the plugin lives below the repository root.
 
 Omitting `--ref` tracks the remote's default branch. A branch passed with `--ref` also tracks;
-tags and commits stay pinned. `status` fetches tracked refs and reports the installed and available
-commits. Removing a Git source deletes Paseo's managed checkout.
+tags and commits stay pinned. `ls` reports the installed commit without contacting the remote.
+Removing a Git source deletes Paseo's managed checkout.
 
 ### Declare Git preparation
 

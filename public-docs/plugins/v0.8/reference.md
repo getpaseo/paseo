@@ -1016,16 +1016,18 @@ paseo plugin install /absolute/path/to/plugin --id another-runtime-id
 paseo plugin add owner/repository
 paseo plugin add https://git.example.com/owner/repository.git --ref main
 paseo plugin add owner/monorepo:plugins/review
-paseo plugin status [id]
+paseo plugin ls [id]
 paseo plugin update <id>
 paseo plugin update --all
-paseo plugin ls
 paseo plugin reload my-plugin
 paseo plugin logs my-plugin
 paseo plugin disable my-plugin
 paseo plugin enable my-plugin
 paseo plugin remove my-plugin
 ```
+
+`ls` reports runtime state, source details, and the installed commit without contacting the remote.
+Use `update` when you want Paseo to contact a tracked Git remote and install an available update.
 
 Put `--host <url>` before a management command when the target is not the CLI's default daemon. `remove`
 never deletes a directory source; it deletes the managed checkout for a Git source. The install-time
@@ -1070,7 +1072,7 @@ Use `paseo plugin ls` to read the current status and error.
 
 | Symptom                                                               | Check                                                                                                                                   |
 | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `Plugin entry split is required`                                      | The directory has only an `index.ts` entry. Follow the [migration guide](/docs/plugins/v0.8/migration).                                 |
+| `This plugin was made for an older version of Paseo`                  | The directory has only an `index.ts` entry. Follow the [migration guide](/docs/plugins/v0.8/migration).                                 |
 | `Plugin entry points are missing`                                     | Neither `index.client.tsx` nor `index.server.ts` exists with that exact name.                                                           |
 | `server-only module cannot be imported into the plugin client bundle` | Client code imports `server/` or a `*.server.*` file. Move the work behind an RPC and import its contract from `shared/`.               |
 | `client-only module cannot be imported into the plugin server bundle` | Server code imports `client/` or a `*.client.*` file. Register that contribution from `index.client.tsx` instead.                       |

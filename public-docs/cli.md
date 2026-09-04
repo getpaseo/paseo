@@ -154,10 +154,9 @@ paseo plugin install /absolute/path/to/plugin
 paseo plugin add owner/repository
 paseo plugin add https://gitlab.com/group/repository.git --ref main
 paseo plugin add owner/monorepo:plugins/review
-paseo plugin status
+paseo plugin ls [id]
 paseo plugin update my-plugin
 paseo plugin update --all
-paseo plugin ls
 paseo plugin reload my-plugin
 paseo plugin logs my-plugin
 paseo plugin disable my-plugin
@@ -166,8 +165,9 @@ paseo plugin remove my-plugin
 ```
 
 GitHub shorthand checks an existing host directory first. Append `:<directory>` for a plugin in a
-monorepo. `paseo plugin logs <id>` returns the plugin's recent daemon-side stdout and stderr. Add `--json` for
-structured entries, or run `paseo --host <target> plugin logs <id>` for another daemon. See the
+monorepo. `paseo plugin ls [id]` does not contact the remote. `paseo plugin logs <id>` returns the
+plugin's recent daemon-side stdout and stderr. Add `--json` for structured entries, or run
+`paseo --host <target> plugin logs <id>` for another daemon. See the
 [Plugin reference](/docs/plugins/v0.7/reference) for installation, trust, lifecycle, and log-retention
 behavior.
 

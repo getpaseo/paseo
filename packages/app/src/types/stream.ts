@@ -84,7 +84,7 @@ export type StreamItem =
   | ThoughtItem
   | ToolCallItem
   | TodoListItem
-  | ActivityLogItem
+  | NotificationItem
   | CompactionItem
   | PluginTimelineStreamItem;
 
@@ -771,17 +771,17 @@ export function isAgentToolCallItem(item: StreamItem): item is AgentToolCallItem
   return item.kind === "tool_call" && item.payload.source === "agent";
 }
 
-type ActivityLogType = "system" | "info" | "success" | "error";
+type NotificationLevel = "info" | "warning" | "error";
 
-export interface ActivityLogItem {
-  kind: "activity_log";
+export interface NotificationItem {
+  kind: "notification";
+  sourceType: "error" | "notification";
   id: string;
   timelineCursor?: TimelinePosition;
   turnId?: string;
   timestamp: Date;
-  activityType: ActivityLogType;
+  level: NotificationLevel;
   message: string;
-  metadata?: Record<string, unknown>;
 }
 
 export interface CompactionItem {
@@ -1215,6 +1215,16 @@ function appendAgentToolCall(
   return [...state, item];
 }
 
+function appendNotification(state: StreamItem[], entry: NotificationItem): StreamItem[] {
+  const index = state.findIndex((existing) => existing.id === entry.id);
+  if (index >= 0) {
+    const next = [...state];
+    next[index] = entry;
+    return next;
+  }
+  return [...state, entry];
+}
+
 function appendPluginTimelineItem(
   state: StreamItem[],
   item: Extract<AgentTimelineItem, { type: "plugin" }>,
@@ -1241,16 +1251,6 @@ function appendPluginTimelineItem(
   const next = [...state];
   next[existingIndex] = { ...nextItem, id: existing.id };
   return next;
-}
-
-function appendActivityLog(state: StreamItem[], entry: ActivityLogItem): StreamItem[] {
-  const index = state.findIndex((existing) => existing.id === entry.id);
-  if (index >= 0) {
-    const next = [...state];
-    next[index] = entry;
-    return next;
-  }
-  return [...state, entry];
 }
 
 function appendTodoList(
@@ -1459,7 +1459,7 @@ function reduceTimelineCompaction(
   }
   const compaction: CompactionItem = {
     kind: "compaction",
-    id: createTimelineId("compaction", item.status, timestamp),
+    id: createUniqueTimelineId(state, "compaction", item.status, timestamp),
     ...(timelineCursor ? { timelineCursor } : {}),
     timestamp,
     status: item.status,
@@ -1523,15 +1523,28 @@ function reduceTimelineEvent(
       );
     }
     case "error": {
-      const activity: ActivityLogItem = {
-        kind: "activity_log",
-        id: createTimelineId("error", item.message ?? "", timestamp),
+      const notification: NotificationItem = {
+        kind: "notification",
+        sourceType: "error",
+        id: createUniqueTimelineId(state, "error", item.message ?? "", timestamp),
         ...(timelineCursor ? { timelineCursor } : {}),
         timestamp,
-        activityType: "error",
+        level: "error",
         message: item.message ?? "Unknown error",
       };
-      return finalizeActiveThoughts(appendActivityLog(state, activity));
+      return finalizeActiveThoughts(appendNotification(state, notification));
+    }
+    case "notification": {
+      const notification: NotificationItem = {
+        kind: "notification",
+        sourceType: "notification",
+        id: createUniqueTimelineId(state, "notification", item.message, timestamp),
+        ...(timelineCursor ? { timelineCursor } : {}),
+        timestamp,
+        level: item.level,
+        message: item.message,
+      };
+      return finalizeActiveThoughts(appendNotification(state, notification));
     }
     case "compaction":
       return finalizeActiveThoughts(
@@ -1693,7 +1706,8 @@ function getEventItemKind(event: AgentStreamEventPayload): StreamItem["kind"] | 
     case "todo":
       return "todo_list";
     case "error":
-      return "activity_log";
+    case "notification":
+      return "notification";
     case "plugin":
       return "plugin";
     default:
