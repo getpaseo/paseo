@@ -1465,6 +1465,13 @@ export interface ProcessAgentStreamEventOutput {
   cursorChanged: boolean;
   acknowledgedClientMessageIds: string[];
   taskSnapshot?: TodoEntry[];
+  /**
+   * Whether the task snapshot on record belongs to a turn that is still running once these events
+   * are applied. True when the last decisive event is a todo list, false when a turn boundary came
+   * after it. Decided here, in stream order, because the store applies turn liveness at once and
+   * this snapshot on a deferred flush; any comparison made across those two clocks has a hole.
+   */
+  tasksLive?: boolean;
   sideEffects: AgentStreamReducerSideEffect[];
 }
 
@@ -1671,10 +1678,22 @@ export function processAgentStreamEvent(
     cursorChanged: sequencing.cursorChanged,
     acknowledgedClientMessageIds: streamResult.acknowledgedClientMessageIds ?? [],
     ...(sequencing.shouldApplyStreamEvent && event.type === "timeline" && event.item.type === "todo"
-      ? { taskSnapshot: event.item.items }
+      ? { taskSnapshot: event.item.items, tasksLive: true }
+      : {}),
+    ...(sequencing.shouldApplyStreamEvent && isTurnBoundaryEvent(event)
+      ? { tasksLive: false }
       : {}),
     sideEffects: sequencing.sideEffects,
   };
+}
+
+function isTurnBoundaryEvent(event: AgentStreamEventPayload): boolean {
+  return (
+    event.type === "turn_started" ||
+    event.type === "turn_completed" ||
+    event.type === "turn_failed" ||
+    event.type === "turn_canceled"
+  );
 }
 
 export function processAgentStreamEvents(
@@ -1699,6 +1718,7 @@ export function processAgentStreamEvents(
   let changedHead = false;
   let cursorChanged = false;
   let taskSnapshot: TodoEntry[] | undefined;
+  let tasksLive: boolean | undefined;
   const acknowledgedClientMessageIds = new Set<string>();
   const sideEffects: AgentStreamReducerSideEffect[] = [];
 
@@ -1725,6 +1745,9 @@ export function processAgentStreamEvents(
     if (result.taskSnapshot !== undefined) {
       taskSnapshot = result.taskSnapshot;
     }
+    if (result.tasksLive !== undefined) {
+      tasksLive = result.tasksLive;
+    }
 
     if (result.cursorChanged) {
       cursor = result.cursor ?? undefined;
@@ -1741,6 +1764,7 @@ export function processAgentStreamEvents(
     cursorChanged,
     acknowledgedClientMessageIds: [...acknowledgedClientMessageIds],
     ...(taskSnapshot !== undefined ? { taskSnapshot } : {}),
+    ...(tasksLive !== undefined ? { tasksLive } : {}),
     sideEffects,
   };
 }
@@ -1825,6 +1849,7 @@ interface StreamStatePatch {
   head?: StreamItem[];
   acknowledgedClientMessageIds?: readonly string[];
   taskSnapshot?: TodoEntry[];
+  tasksLive?: boolean;
 }
 
 export function deriveAgentStreamTurnLiveness(
@@ -1930,7 +1955,8 @@ export function createSessionAgentStreamReducerQueue(
         result.changedTail ||
         result.changedHead ||
         result.acknowledgedClientMessageIds.length > 0 ||
-        result.taskSnapshot !== undefined
+        result.taskSnapshot !== undefined ||
+        result.tasksLive !== undefined
       ) {
         setAgentStreamState(serverId, agentId, {
           ...(result.changedTail ? { tail: result.tail } : {}),
@@ -1939,6 +1965,7 @@ export function createSessionAgentStreamReducerQueue(
             ? { acknowledgedClientMessageIds: result.acknowledgedClientMessageIds }
             : {}),
           ...(result.taskSnapshot !== undefined ? { taskSnapshot: result.taskSnapshot } : {}),
+          ...(result.tasksLive !== undefined ? { tasksLive: result.tasksLive } : {}),
         });
       }
       if (result.cursorChanged && result.cursor) {

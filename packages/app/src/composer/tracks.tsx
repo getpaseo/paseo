@@ -9,8 +9,6 @@ import {
   useMenuContext,
   type MenuTriggerState,
 } from "@/components/ui/menu";
-import { StatusRing } from "@/components/status-ring";
-import { STATUS_RING_HALO_INSET } from "@/components/status-ring/geometry";
 import { MAX_CONTENT_WIDTH } from "@/constants/layout";
 import { isWeb } from "@/constants/platform";
 import { getStatusDotColor } from "@/utils/status-dot-color";
@@ -54,6 +52,15 @@ export interface ComposerTrackPillProps {
    * of them is hidden behind the others.
    */
   segments: readonly ComposerTrackPillSegment[];
+  /**
+   * The tracker's own mark, ahead of everything the segments report — the glyph naming the
+   * tracker, or a ring drawing how far along it is. Separate from a segment's `bucket` mark on
+   * purpose: that one reports a state and disappears with it, this one is identity and stays.
+   *
+   * Takes the open state because it sits inside the label's colour step. Render the glyph bare,
+   * no wrapper: a box wider than what it holds pushes the mark inside the pill's leading edge.
+   */
+  leading?: (state: { active: boolean }) => ReactNode;
   /** Sheet header on compact. Popovers never show one. */
   panelTitle: string;
   testID: string;
@@ -81,6 +88,7 @@ const PANEL_OFFSET = 12;
 
 export function ComposerTrackPill({
   segments,
+  leading,
   panelTitle,
   testID,
   accessibilityLabel,
@@ -90,6 +98,7 @@ export function ComposerTrackPill({
     <MenuRoot compactMode="sheet">
       <ComposerTrackPillTrigger
         segments={segments}
+        leading={leading}
         testID={testID}
         accessibilityLabel={accessibilityLabel ?? segments.map((segment) => segment.text).join(" ")}
       />
@@ -112,10 +121,12 @@ export function ComposerTrackPill({
 
 function ComposerTrackPillTrigger({
   segments,
+  leading,
   testID,
   accessibilityLabel,
 }: {
   segments: readonly ComposerTrackPillSegment[];
+  leading?: (state: { active: boolean }) => ReactNode;
   testID: string;
   accessibilityLabel: string;
 }): ReactElement {
@@ -145,6 +156,7 @@ function ComposerTrackPillTrigger({
       {...ariaExpandedProps}
       style={pillStyle}
     >
+      {leading?.({ active: open })}
       <View style={styles.segments}>
         {segments.map((segment, index) => (
           <View
@@ -266,32 +278,29 @@ export function ComposerTrackRow({
 }
 
 /**
- * A segment's state mark. Running is the ring every other running indicator in the app uses; the
- * rest are the dot it grows from.
+ * A segment's state mark: one dot, in the colour of the state it reports. Running included —
+ * this is the one running indicator in the app that does not turn.
  *
- * Each one is sized to the glyph you can see rather than to a slot wide enough for the largest of
- * them. The mark leads the pill, so a box wider than its glyph is padding on both sides at once:
- * it holds the dot off the pill's leading edge while the label runs flush to the trailing one, and
- * it opens a gap to its own label as wide as the gap to the next segment. The ring's halo is
- * knockout for marks that sit on top of an icon, and nothing sits under this one, so it comes off
- * too — leaving every mark's visible edge on the same rail whatever state it is in.
+ * The bar sits directly above the composer and is on screen for the whole of a run, so motion
+ * here is motion in the corner of your eye while you type. The rows inside the panel do orbit:
+ * you go there to watch, and by then the bar is behind an open surface.
+ *
+ * Each mark is sized to the glyph you can see rather than to a slot wide enough for the largest
+ * of them. The mark leads the pill, so a box wider than its glyph is padding on both sides at
+ * once: it holds the dot off the pill's leading edge while the label runs flush to the trailing
+ * one, and it opens a gap to its own label as wide as the gap to the next segment.
  */
 function ComposerTrackMark({ bucket }: { bucket: SidebarStateBucket | null }): ReactElement | null {
   if (!bucket) {
     return null;
   }
-  if (bucket === "running") {
-    return (
-      <View style={styles.ringMark}>
-        <StatusRing />
-      </View>
-    );
-  }
   return <View style={dotColorStyle(bucket)} />;
 }
 
-function dotColorStyle(bucket: Exclude<SidebarStateBucket, "running">) {
+function dotColorStyle(bucket: SidebarStateBucket) {
   switch (bucket) {
+    case "running":
+      return styles.dotRunning;
     case "needs_input":
       return styles.dotNeedsInput;
     case "failed":
@@ -306,7 +315,7 @@ function dotColorStyle(bucket: Exclude<SidebarStateBucket, "running">) {
 const styles = StyleSheet.create((theme) => {
   // Colours come from the one bucket-to-colour map so the pill cannot drift from the status dots
   // everywhere else, and are baked into each variant so the style prop stays a stable object.
-  const statusDot = (bucket: Exclude<SidebarStateBucket, "running">) => ({
+  const statusDot = (bucket: SidebarStateBucket) => ({
     width: STATUS_INDICATOR_FILLED_DOT_SIZE,
     height: STATUS_INDICATOR_FILLED_DOT_SIZE,
     borderRadius: theme.borderRadius.full,
@@ -373,9 +382,7 @@ const styles = StyleSheet.create((theme) => {
       gap: theme.spacing[2],
     },
     // Trims the ring's halo so the circle you can see is the box, like the dot's box is the dot.
-    ringMark: {
-      margin: -STATUS_RING_HALO_INSET,
-    },
+    dotRunning: statusDot("running"),
     dotNeedsInput: statusDot("needs_input"),
     dotFailed: statusDot("failed"),
     dotAttention: statusDot("attention"),

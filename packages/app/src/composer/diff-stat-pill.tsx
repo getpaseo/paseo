@@ -1,9 +1,18 @@
 import { memo, useCallback, useMemo, useState, type ReactElement } from "react";
 import { Pressable } from "react-native";
+import { FileDiff } from "lucide-react-native";
 import { useTranslation } from "react-i18next";
+import { withUnistyles } from "react-native-unistyles";
 import { DiffStat } from "@/components/diff-stat";
 import { composerPillStyles } from "@/composer/pill-styles";
 import { useVisibleWorkspaceDiffStat } from "@/composer/workspace-diff-stat";
+import { ICON_SIZE, type Theme } from "@/styles/theme";
+
+const ThemedFileDiff = withUnistyles(FileDiff);
+
+const foregroundMutedColorMapping = (theme: Theme) => ({
+  color: theme.colors.foregroundMuted,
+});
 
 interface ComposerDiffStatPillProps {
   additions: number;
@@ -31,6 +40,7 @@ export function ComposerDiffStatPill({ additions, deletions, onPress }: Composer
       onHoverOut={handleHoverOut}
       style={bodyStyle}
     >
+      <ThemedFileDiff size={ICON_SIZE.sm} uniProps={foregroundMutedColorMapping} />
       <DiffStat additions={additions} deletions={deletions} />
     </Pressable>
   );

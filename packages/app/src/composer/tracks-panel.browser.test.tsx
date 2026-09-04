@@ -2,6 +2,7 @@ import React, { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { Pressable, Text } from "react-native";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TaskListRow } from "@/components/task-list-row";
 import { ComposerTrackPill, ComposerTrackRow, type ComposerTrackPillSegment } from "./tracks";
 
 const SUBAGENT_SEGMENTS: ComposerTrackPillSegment[] = [{ bucket: null, text: "3 subagents" }];
@@ -152,18 +153,16 @@ describe("composer track pill status mark", () => {
     return { mark: segment.firstElementChild, body };
   }
 
-  it("spins the shared ring while a child is running", () => {
+  it("holds the running mark still, because the bar is on screen for the whole run", () => {
     const { mark } = mountMark("running");
     const animated = [...mark.querySelectorAll("*")].filter(
       (element) => element.getAnimations().length > 0,
     );
 
-    expect(animated).toHaveLength(1);
-    // The rotation is on the carrier; the quarter arc it turns is the coloured top border inside.
-    const arc = animated[0]?.firstElementChild as HTMLElement;
-    const arcStyle = getComputedStyle(arc);
-    expect(arcStyle.borderTopColor).toBe("rgb(38, 138, 224)");
-    expect(arcStyle.borderLeftColor).toBe("rgba(0, 0, 0, 0)");
+    // The rows inside the panel orbit; the bar does not. Motion above the composer is motion in
+    // the corner of your eye for as long as the agent works.
+    expect(animated).toHaveLength(0);
+    expect(getComputedStyle(mark).backgroundColor).toBe("rgb(38, 138, 224)");
   });
 
   it("draws a still dot for every other state", () => {
@@ -181,12 +180,7 @@ describe("composer track pill status mark", () => {
     // is the pill's padding. A mark boxed wider than its glyph sits further in than that while
     // looking correctly centred in the box nobody can see.
     for (const bucket of ["running", "failed"] as const) {
-      const { mark, body } = mountMark(bucket);
-      // The dot is its own box; the ring is drawn by the rotator inside the frame's halo.
-      const glyph = bucket === "failed" ? mark : mark.firstElementChild?.firstElementChild;
-      if (!(glyph instanceof HTMLElement)) {
-        throw new Error(`${bucket} mark did not render a glyph`);
-      }
+      const { mark: glyph, body } = mountMark(bucket);
 
       const style = getComputedStyle(body);
       const edge = Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.borderLeftWidth);
@@ -212,8 +206,58 @@ describe("composer track pill status mark", () => {
 
     const segments = [...container.querySelectorAll('[data-testid^="pill-segment-"]')];
     expect(segments.map((segment) => segment.textContent)).toEqual(["1 failed", "1 working"]);
-    // The ring is the only mark that animates, so its presence proves the second state survived.
-    const animated = segments[1]?.querySelectorAll("*") ?? [];
-    expect([...animated].filter((element) => element.getAnimations().length > 0)).toHaveLength(1);
+    // Every mark is a dot now, so the colours are what prove both states survived rather than
+    // one of them collapsing into the other.
+    const marks = segments.map((segment) => segment.firstElementChild as HTMLElement);
+    expect(marks.map((mark) => getComputedStyle(mark).backgroundColor)).toEqual([
+      "rgb(241, 46, 47)",
+      "rgb(38, 138, 224)",
+    ]);
+  });
+});
+
+const RUNNING_TASK = {
+  id: "t1",
+  text: "Run checks",
+  activeForm: "Running checks",
+  completed: false,
+  status: "in_progress",
+} as const;
+
+describe("task rows inside an open panel", () => {
+  // Queried by label rather than testID: a read-only row takes no `onPress`, and
+  // `ComposerTrackRow` only forwards its testID to the Pressable it builds for a row that has
+  // one. The label is what a screen reader gets, so it is the stable handle here.
+  function mountTaskPanel(live: boolean): Element {
+    mount(
+      <ComposerTrackPill testID="pill" segments={SUBAGENT_SEGMENTS} panelTitle="Tasks">
+        <ComposerTrackRow>
+          <TaskListRow task={RUNNING_TASK} live={live} />
+        </ComposerTrackRow>
+      </ComposerTrackPill>,
+    );
+    openPanel();
+    const panelRow = document.querySelector('[aria-label="Running checks"]');
+    if (!panelRow) {
+      throw new Error("task row did not render in the panel");
+    }
+    return panelRow;
+  }
+
+  it("orbits the running task's ring, the same one a workspace row turns", () => {
+    const panelRow = mountTaskPanel(true);
+
+    const animated = [...panelRow.querySelectorAll("*")].filter(
+      (element) => element.getAnimations().length > 0,
+    );
+    expect(animated).toHaveLength(1);
+  });
+
+  it("holds the ring still on a row that is not reporting a live state", () => {
+    const panelRow = mountTaskPanel(false);
+
+    expect(
+      [...panelRow.querySelectorAll("*")].filter((element) => element.getAnimations().length > 0),
+    ).toHaveLength(0);
   });
 });

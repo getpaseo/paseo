@@ -2527,6 +2527,34 @@ describe("processTimelineResponse", () => {
     expect(result.cursor).toEqual({ epoch: "epoch-1", startSeq: 1, endSeq: 5 });
   });
 
+  it("marks the task snapshot live only while no turn boundary follows it in the batch", () => {
+    const todo: AgentStreamEventPayload = {
+      type: "timeline",
+      provider: "codex",
+      item: {
+        type: "todo",
+        items: [{ id: "inspect", text: "Inspect", status: "in_progress", completed: false }],
+      },
+    };
+    const started: AgentStreamEventPayload = { type: "turn_started", provider: "codex" };
+    const completed: AgentStreamEventPayload = { type: "turn_completed", provider: "codex" };
+    const batch = (events: AgentStreamEventPayload[]) =>
+      processAgentStreamEvents({
+        events: events.map((event, index) => makeStreamReducerEvent(event, index + 1)),
+        currentTail: [],
+        currentHead: [],
+        currentCursor: undefined,
+        hasAuthoritativeBaseline: true,
+      });
+
+    expect(batch([todo]).tasksLive).toBe(true);
+    expect(batch([started, todo]).tasksLive).toBe(true);
+    expect(batch([todo, completed]).tasksLive).toBe(false);
+    // The previous turn's last todo, its end, and the next turn's start in one flush.
+    expect(batch([todo, completed, started]).tasksLive).toBe(false);
+    expect(batch([makeAssistantTimelineEvent("no tasks here")]).tasksLive).toBeUndefined();
+  });
+
   it("detects gap and emits catch-up side effect", () => {
     const existingCursor: TimelineCursor = {
       epoch: "epoch-1",

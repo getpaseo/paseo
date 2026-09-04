@@ -1,7 +1,7 @@
 import { useCallback, useMemo, type ReactElement } from "react";
 import { Pressable, Text, View } from "react-native";
 import { useTranslation } from "react-i18next";
-import { Archive, Unlink } from "lucide-react-native";
+import { Archive, Bot, Unlink } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { getProviderIcon } from "@/components/provider-icons";
 import { ComposerTrackActions, ComposerTrackPill, ComposerTrackRow } from "@/composer/tracks";
@@ -22,6 +22,7 @@ import {
 } from "./track-presentation";
 
 const ThemedArchive = withUnistyles(Archive);
+const ThemedBot = withUnistyles(Bot);
 const ThemedUnlink = withUnistyles(Unlink);
 
 const foregroundColorMapping = (theme: Theme) => ({ color: theme.colors.foreground });
@@ -43,6 +44,20 @@ const IDLE_ARCHIVE_FINISHED_STATUS: ArchiveFinishedStatus = { kind: "idle" };
 
 /** Leading and action glyphs share one size so rows keep a single icon column. */
 const ROW_ICON_SIZE = 14;
+
+/**
+ * The tracker's own glyph, ahead of whatever the segments report. The pill used to open on a
+ * count, which says how many without saying of what — the panel behind it names them, but only
+ * once it is open.
+ */
+function renderSubagentsMark({ active }: { active: boolean }) {
+  return (
+    <ThemedBot
+      size={ROW_ICON_SIZE}
+      uniProps={active ? foregroundColorMapping : foregroundMutedColorMapping}
+    />
+  );
+}
 
 function buildRowPresentation(row: SubagentRow): WorkspaceTabPresentation {
   const data = buildSubagentRowPresentationData(row);
@@ -79,6 +94,7 @@ export function SubagentsTrack({
     <ComposerTrackPill
       testID="subagents-track-header"
       segments={pill.segments}
+      leading={renderSubagentsMark}
       accessibilityLabel={pill.accessibilityLabel}
       panelTitle={t("subagents.title")}
     >

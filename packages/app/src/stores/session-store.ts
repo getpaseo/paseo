@@ -10,6 +10,7 @@ import {
   removeSubmittedUserMessage,
   type StreamItem,
   type TodoEntry,
+  type TodoListItem,
   type UserMessageItem,
 } from "@/types/stream";
 import {
@@ -55,6 +56,7 @@ import {
 } from "@/utils/workspace-agent-activity";
 import {
   applyTurnLivenessTransition,
+  readTurnLiveness,
   resolveTurnPresentation,
   TURN_LIVENESS_IDLE,
   type TurnLiveness,
@@ -337,12 +339,57 @@ export function selectAgentTurnPresentation(
   );
 }
 
-function latestTasksFromStream(items: readonly StreamItem[]): TodoEntry[] {
+/**
+ * Whether the task snapshot on screen belongs to the turn running now. False for a snapshot the
+ * previous turn left behind, which the store keeps until a new one replaces it. `agentTasksLive`
+ * alone decides it; the phase check reads the turn's own state rather than
+ * `selectAgentTurnPresentation`, which also counts a prompt the user has just submitted.
+ */
+export function selectAgentTasksAreLive(
+  session: SessionState | undefined,
+  agentId: string,
+): boolean {
+  if (!session) return false;
+  if (readTurnLiveness(session.agentTurnLiveness, agentId).phase !== "open") return false;
+  return session.agentTasksLive.get(agentId) === true;
+}
+
+function latestTodoItem(items: readonly StreamItem[]): TodoListItem | undefined {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
-    if (item?.kind === "todo_list") return item.items;
+    if (item?.kind === "todo_list") return item;
   }
-  return [];
+  return undefined;
+}
+
+function latestTasksFromStream(items: readonly StreamItem[]): TodoEntry[] {
+  return latestTodoItem(items)?.items ?? [];
+}
+
+function latestTodoTurnId(items: readonly StreamItem[]): string | undefined {
+  return latestTodoItem(items)?.turnId;
+}
+
+function sameTurn(before: TurnLiveness, after: TurnLiveness): boolean {
+  if (before.phase !== after.phase) return false;
+  return before.phase === "idle" || after.phase === "idle" || before.turnId === after.turnId;
+}
+
+/**
+ * A snapshot goes live only when the stream reducer says so: it saw a todo list with no turn
+ * boundary after it in the same batch. Every turn transition drops the flag at once, so between a
+ * turn's end and the flush that records it, the retained rows are already still.
+ */
+function updateAgentTasksLive(
+  current: Map<string, boolean>,
+  agentId: string,
+  live: boolean,
+): Map<string, boolean> {
+  if ((current.get(agentId) ?? false) === live) return current;
+  const next = new Map(current);
+  if (live) next.set(agentId, true);
+  else next.delete(agentId);
+  return next;
 }
 
 function updateAgentTasks(
@@ -387,6 +434,12 @@ export interface SessionState {
   agentStreamTail: Map<string, StreamItem[]>;
   agentStreamHead: Map<string, StreamItem[]>;
   agentTasks: Map<string, TodoEntry[]>;
+  /**
+   * Which `agentTasks` entries the running turn wrote. A snapshot outlives its turn - nothing
+   * clears `agentTasks` when an agent stops - so this is what tells a retained list apart from
+   * the one the running turn is writing. See `updateAgentTasksLive`.
+   */
+  agentTasksLive: Map<string, boolean>;
   agentTurnLiveness: Map<string, TurnLiveness>;
   messageSubmissions: Map<string, MessageSubmissionRecord[]>;
   agentTimelineCursor: Map<string, AgentTimelineCursorState>;
@@ -474,6 +527,7 @@ interface SessionStoreActions {
       head?: StreamItem[];
       acknowledgedClientMessageIds?: readonly string[];
       taskSnapshot?: TodoEntry[];
+      tasksLive?: boolean;
     },
   ) => void;
   applyAgentTurnLiveness: (
@@ -644,6 +698,7 @@ function createInitialSessionState(
     agentStreamTail: new Map(),
     agentStreamHead: new Map(),
     agentTasks: new Map(),
+    agentTasksLive: new Map(),
     agentTurnLiveness: new Map(),
     messageSubmissions: new Map(),
     agentTimelineCursor: new Map(),
@@ -1027,8 +1082,19 @@ export const useSessionStore = create<SessionStore>()(
           const changedSubmissions = observedSubmissions !== currentSubmissions;
           const agentTasks = updateAgentTasks(session.agentTasks, agentId, state.taskSnapshot);
           const changedTasks = agentTasks !== session.agentTasks;
+          const agentTasksLive =
+            state.tasksLive === undefined
+              ? session.agentTasksLive
+              : updateAgentTasksLive(session.agentTasksLive, agentId, state.tasksLive);
+          const changedTasksLive = agentTasksLive !== session.agentTasksLive;
 
-          if (!changedTail && !changedHead && !changedSubmissions && !changedTasks) {
+          if (
+            !changedTail &&
+            !changedHead &&
+            !changedSubmissions &&
+            !changedTasks &&
+            !changedTasksLive
+          ) {
             return prev;
           }
 
@@ -1051,6 +1117,7 @@ export const useSessionStore = create<SessionStore>()(
                 agentStreamTail: nextTail,
                 agentStreamHead: nextHead,
                 agentTasks,
+                agentTasksLive,
                 messageSubmissions,
               },
             },
@@ -1068,11 +1135,19 @@ export const useSessionStore = create<SessionStore>()(
             transition,
           );
           if (agentTurnLiveness === session.agentTurnLiveness) return prev;
+          // A turn starting or ending means the tasks on record are no longer the running turn's.
+          // Cancellation bookkeeping changes the entry without moving the turn, so it is ignored.
+          const agentTasksLive = sameTurn(
+            readTurnLiveness(session.agentTurnLiveness, agentId),
+            readTurnLiveness(agentTurnLiveness, agentId),
+          )
+            ? session.agentTasksLive
+            : updateAgentTasksLive(session.agentTasksLive, agentId, false);
           return {
             ...prev,
             sessions: {
               ...prev.sessions,
-              [serverId]: { ...session, agentTurnLiveness },
+              [serverId]: { ...session, agentTurnLiveness, agentTasksLive },
             },
           };
         });
@@ -1484,6 +1559,16 @@ export const useSessionStore = create<SessionStore>()(
           const agentTasks = new Map(session.agentTasks);
           if (tasks.length > 0) agentTasks.set(agentId, tasks);
           else agentTasks.delete(agentId);
+          // History carries no turn boundaries, so the todo item's own turn id is the only link to
+          // the running turn. Without one the rows stay still until the next live todo arrives.
+          const liveness = readTurnLiveness(session.agentTurnLiveness, agentId);
+          const agentTasksLive = updateAgentTasksLive(
+            session.agentTasksLive,
+            agentId,
+            liveness.phase === "open" &&
+              liveness.turnId !== null &&
+              latestTodoTurnId([...state.items, ...state.head]) === liveness.turnId,
+          );
 
           return {
             ...prev,
@@ -1494,6 +1579,7 @@ export const useSessionStore = create<SessionStore>()(
                 agentStreamTail: nextTail,
                 agentStreamHead: nextHead,
                 agentTasks,
+                agentTasksLive,
                 agentTimelineCursor: nextCursor,
                 agentTimelineHasOlder: nextHasOlder,
                 agentTimelineHasNewer: nextHasNewer,
