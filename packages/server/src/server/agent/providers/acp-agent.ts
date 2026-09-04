@@ -278,8 +278,8 @@ export function buildACPClientCapabilities(
 const PROBE_ENV: Record<string, string> = { NO_BROWSER: "true" };
 const ACP_DIAGNOSTIC_PHASE_TIMEOUT_MS = 20_000;
 const ACP_PROBE_CLOSE_TIMEOUT_MS = 2_000;
-const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 2_000;
-const ACP_IMPORT_HISTORY_BUDGET_MS = 5_000;
+const ACP_IMPORT_HISTORY_LOAD_TIMEOUT_MS = 3_000;
+const ACP_IMPORT_HISTORY_BUDGET_MS = 8_000;
 
 function summarizeMalformedACPStdoutError(error: unknown): { type: string; message: string } {
   return {

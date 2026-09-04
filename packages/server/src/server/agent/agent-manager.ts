@@ -87,7 +87,7 @@ import { withTimeout } from "../../utils/promise-timeout.js";
 
 const RELOAD_SESSION_CLOSE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SESSION_TIMEOUT_MS = 2_000;
-const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 8_000;
+const IMPORTABLE_SESSION_LIST_TIMEOUT_MS = 12_000;
 const STORED_AGENT_CAPABILITIES: AgentCapabilityFlags = {
   supportsStreaming: false,
   supportsSessionPersistence: true,
