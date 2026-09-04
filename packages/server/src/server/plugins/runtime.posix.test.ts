@@ -468,7 +468,7 @@ export default function contribute(server: PluginServerContext) {
   server.registerProvider(runAcpProvider({
     id: "acp-example",
     label: "ACP example",
-    command: [process.execPath, ${JSON.stringify(path.join("__PLUGIN_DIR__", "fake-acp.cjs"))}],
+    command: [process.execPath, __ACP_COMMAND__],
     transformers: [vendorEditTransformer],
   }));
   return () => {};
@@ -503,7 +503,10 @@ lines.on("line", (line) => {
       "utf8",
     );
     const pluginPath = path.join(directory, "index.server.ts");
-    const pluginSource = (await readFile(pluginPath, "utf8")).replace("__PLUGIN_DIR__", directory);
+    const pluginSource = (await readFile(pluginPath, "utf8")).replace(
+      "__ACP_COMMAND__",
+      JSON.stringify(agentPath),
+    );
     await writeFile(pluginPath, pluginSource, "utf8");
 
     const runtime = createTestRuntime();
