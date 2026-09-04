@@ -12,12 +12,29 @@ export interface TerminalCreateOptions extends TerminalCommandOptions {
   name?: string;
 }
 
+/**
+ * Splits the trailing `[command...]` argument into the daemon's separate
+ * `command`/`args` fields. Empty or omitted means "no launch command" —
+ * the daemon starts the default shell, same as before this flag existed.
+ */
+export function buildLaunchCommand(
+  command: string[] | undefined,
+): { command: string; args: string[] } | undefined {
+  if (!command || command.length === 0) {
+    return undefined;
+  }
+  const [launchCommand, ...launchArgs] = command as [string, ...string[]];
+  return { command: launchCommand, args: launchArgs };
+}
+
 export async function runCreateCommand(
+  command: string[] | undefined,
   options: TerminalCreateOptions,
   _command: Command,
 ): Promise<SingleResult<TerminalRow>> {
   const { client } = await connectTerminalClient(options.host);
   const cwd = options.cwd ?? process.cwd();
+  const launch = buildLaunchCommand(command);
 
   try {
     const opened = await client.openProject(cwd);
@@ -31,6 +48,7 @@ export async function runCreateCommand(
 
     const payload = await client.createTerminal(cwd, options.name, undefined, {
       workspaceId: opened.workspace.id,
+      ...launch,
     });
     if (!payload.terminal) {
       const error: CommandError = {

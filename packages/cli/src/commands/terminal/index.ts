@@ -26,6 +26,7 @@ export function createTerminalCommand(): Command {
     terminal
       .command("create")
       .description("Create a terminal")
+      .argument("[command...]", "Command and arguments to run in the terminal, after --")
       .option("--cwd <path>", "Workspace directory")
       .option("--name <name>", "Terminal name"),
   ).action(withOutput(runCreateCommand));
