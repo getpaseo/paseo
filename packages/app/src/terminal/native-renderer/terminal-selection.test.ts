@@ -215,6 +215,27 @@ describe("native terminal selection", () => {
     ).toBe("A界B");
   });
 
+  it("copies the whole glyph when a drag starts on its placeholder half", async () => {
+    const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 16, scrollbackLines: 20 });
+    await terminal.write("A界B\r\n");
+    const bounds = terminal.getBufferBounds();
+    // The raw char join includes the width-0 placeholder blank after 界.
+    const row = rowWithText(terminal, "A界 B");
+
+    // Col 2 is the placeholder half of 界: the drag visibly selects 界B, so
+    // the copy must include the glyph.
+    expect(
+      extractTerminalSelectedText({
+        terminal,
+        selection: {
+          start: { row, col: 2 },
+          end: { row, col: 3 },
+          coordinateEpoch: bounds.coordinateEpoch,
+        },
+      }),
+    ).toBe("界B");
+  });
+
   it("copies soft-wrapped rows without fake line breaks", async () => {
     const terminal = createNativeHeadlessTerminal({ rows: 4, cols: 4, scrollbackLines: 20 });
     await terminal.write("abcdef");

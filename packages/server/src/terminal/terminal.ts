@@ -566,11 +566,12 @@ function blankTerminalCell(): TerminalCell {
   return { char: " ", fg: undefined, bg: undefined };
 }
 
-function extractCellFromLine(
-  line: IBufferLine | undefined,
-  col: number,
-  includeCellWidth: boolean,
-): TerminalCell {
+function extractCellFromLine(input: {
+  line: IBufferLine | undefined;
+  col: number;
+  includeCellWidth: boolean;
+}): TerminalCell {
+  const { line, col, includeCellWidth } = input;
   if (!line) {
     return blankTerminalCell();
   }
@@ -610,16 +611,24 @@ function extractCellFromLine(
   };
 }
 
-function extractCell(
-  terminal: TerminalType,
-  row: number,
-  col: number,
-  includeCellWidth: boolean,
-): TerminalCell {
-  return extractCellFromLine(terminal.buffer.active.getLine(row), col, includeCellWidth);
+function extractCell(input: {
+  terminal: TerminalType;
+  row: number;
+  col: number;
+  includeCellWidth: boolean;
+}): TerminalCell {
+  return extractCellFromLine({
+    line: input.terminal.buffer.active.getLine(input.row),
+    col: input.col,
+    includeCellWidth: input.includeCellWidth,
+  });
 }
 
-function extractGrid(terminal: TerminalType, includeCellWidth: boolean): TerminalCell[][] {
+function extractGrid(input: {
+  terminal: TerminalType;
+  includeCellWidth: boolean;
+}): TerminalCell[][] {
+  const { terminal, includeCellWidth } = input;
   const grid: TerminalCell[][] = [];
   const buffer = terminal.buffer.active;
   // Visible viewport starts at baseY
@@ -628,7 +637,7 @@ function extractGrid(terminal: TerminalType, includeCellWidth: boolean): Termina
   for (let row = 0; row < terminal.rows; row++) {
     const rowCells: TerminalCell[] = [];
     for (let col = 0; col < terminal.cols; col++) {
-      rowCells.push(extractCell(terminal, baseY + row, col, includeCellWidth));
+      rowCells.push(extractCell({ terminal, row: baseY + row, col, includeCellWidth }));
     }
     grid.push(rowCells);
   }
@@ -654,7 +663,9 @@ function extractScrollback(
     const rowCells: TerminalCell[] = [];
     const line = buffer.getLine(row);
     for (let col = 0; col < terminal.cols; col++) {
-      rowCells.push(extractCellFromLine(line, col, options?.includeCellWidth ?? true));
+      rowCells.push(
+        extractCellFromLine({ line, col, includeCellWidth: options?.includeCellWidth ?? true }),
+      );
     }
     scrollback.push(rowCells);
   }
@@ -1240,7 +1251,7 @@ export async function createTerminal(options: CreateTerminalOptions): Promise<Te
     return {
       rows: terminal.rows,
       cols: terminal.cols,
-      grid: extractGrid(terminal, includeCellWidth),
+      grid: extractGrid({ terminal, includeCellWidth }),
       scrollback: extractScrollback(terminal, {
         scrollbackLines: snapshotOptions?.scrollbackLines,
         includeCellWidth,

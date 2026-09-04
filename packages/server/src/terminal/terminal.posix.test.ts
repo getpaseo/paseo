@@ -413,10 +413,8 @@ describe.skipIf(isPlatform("win32"))("terminal POSIX-only", () => {
       );
 
       // The wide glyph is a width-2 content cell followed by a width-0 placeholder.
-      const row = state.grid.find((candidate) => rowDisplayText(candidate).includes("A界"));
-      if (!row) {
-        throw new Error("expected a row containing A界");
-      }
+      const row = state.grid.find((candidate) => rowDisplayText(candidate).includes("A界")) ?? [];
+      expect(row.length).toBeGreaterThan(0);
       expect(rowDisplayText(row)).toMatch(/A界B$/);
       const wideIndex = row.findIndex((cell) => cell.char === "界");
       expect(row[wideIndex]?.width).toBe(2);

@@ -105,7 +105,12 @@ const TERMINAL_WORD_SEPARATORS = " ()[]{}',\"`";
 // Width-0 cells are wide-glyph placeholders: their column belongs to the
 // preceding glyph and their char is a blank, so they are stepped over rather
 // than read as a word boundary.
-function scanWordBoundary(cells: TerminalCellRow, fromCol: number, direction: -1 | 1): number {
+function scanWordBoundary(input: {
+  cells: TerminalCellRow;
+  fromCol: number;
+  direction: -1 | 1;
+}): number {
+  const { cells, fromCol, direction } = input;
   let col = fromCol;
   while (direction < 0 ? col > 0 : col + 1 < cells.length) {
     const neighbor = cells[col + direction];
@@ -214,8 +219,14 @@ export function resolveTerminalWordSelection(
   }
 
   return {
-    start: { row: input.coordinate.row, col: scanWordBoundary(cells, anchorCol, -1) },
-    end: { row: input.coordinate.row, col: scanWordBoundary(cells, anchorCol, 1) },
+    start: {
+      row: input.coordinate.row,
+      col: scanWordBoundary({ cells, fromCol: anchorCol, direction: -1 }),
+    },
+    end: {
+      row: input.coordinate.row,
+      col: scanWordBoundary({ cells, fromCol: anchorCol, direction: 1 }),
+    },
     coordinateEpoch: bounds.coordinateEpoch,
   };
 }
@@ -332,7 +343,12 @@ export function extractTerminalSelectedText(input: TerminalSelectedTextInput): s
     const cells = window.rows[offset] ?? [];
     const startsOnThisRow = row === selection.start.row;
     const endsOnThisRow = row === selection.end.row;
-    const startCol = startsOnThisRow ? selection.start.col : 0;
+    let startCol = startsOnThisRow ? selection.start.col : 0;
+    // A drag that begins on a wide glyph's placeholder half visibly selects
+    // the whole glyph, so back up to the glyph's leading cell before slicing.
+    while (startCol > 0 && cells[startCol]?.width === 0) {
+      startCol -= 1;
+    }
     const endCol = endsOnThisRow ? selection.end.col : cells.length - 1;
     const selectedCells = cells.slice(Math.max(0, startCol), Math.max(0, endCol) + 1);
     // Width-0 cells are wide-glyph placeholders; their column belongs to the
