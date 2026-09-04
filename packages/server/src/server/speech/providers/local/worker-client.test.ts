@@ -374,6 +374,35 @@ describe("LocalSpeechWorkerClient", () => {
     await expect(stoppedPromise).resolves.toEqual([]);
   });
 
+  it("releases a session closed while its create round-trip is in flight", async () => {
+    const { client, workers } = createClient({ idleTtlMs: 5 });
+    const provider = new WorkerBackedSpeechToTextProvider(client, "dictationStt");
+    const session = provider.createSession({ logger: pino({ level: "silent" }) });
+
+    const connect = session.connect();
+    const createRequest = workers[0].sent[0];
+    expect(createRequest).toMatchObject({ type: "session.create", kind: "dictationStt" });
+
+    // Cancel lands before the worker has answered session.create.
+    session.close();
+    workers[0].respond(createRequest, { requiredSampleRate: 16000 });
+    await connect;
+    await waitForMicrotasks();
+
+    const closeRequest = workers[0].sent[1];
+    expect(workers[0].sent.map((m) => m.type)).toEqual(["session.create", "session.close"]);
+    expect(closeRequest).toMatchObject({
+      type: "session.close",
+      sessionId: createRequest.sessionId,
+    });
+    workers[0].respond(closeRequest);
+    await waitForMicrotasks();
+
+    // With no session left registered the idle shutdown must fire.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(workers[0].kills).toBe(1);
+  });
+
   it("kills an idle worker and respawns on later use", async () => {
     const { client, workers } = createClient({ idleTtlMs: 5 });
 

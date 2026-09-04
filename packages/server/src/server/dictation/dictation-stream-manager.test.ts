@@ -218,6 +218,47 @@ describe("DictationStreamManager (provider-agnostic provider)", () => {
     expect(sttProvider.lastLanguage).toBe("pt");
   });
 
+  it("closes the STT session when cancel arrives while connect is in flight", async () => {
+    let releaseConnect: () => void = () => {};
+    const session = new FakeRealtimeSession();
+    session.connect = () =>
+      new Promise<void>((resolve) => {
+        releaseConnect = () => {
+          session.connected = true;
+          resolve();
+        };
+      });
+    const emitted: Array<{ type: string; payload: unknown }> = [];
+    const manager = new DictationStreamManager({
+      logger: pino({ level: "silent" }),
+      emit: (msg) => emitted.push(msg),
+      sessionId: "s1",
+      stt: new FakeSttProvider(session),
+    });
+
+    const start = manager.handleStart("d-race", "audio/pcm;rate=16000;bits=16");
+    await tick();
+    manager.handleCancel("d-race");
+    releaseConnect();
+    await start;
+
+    expect(session.closed).toBe(true);
+    // No stream was registered for the cancelled dictation.
+    await manager.handleChunk({
+      dictationId: "d-race",
+      seq: 0,
+      audioBase64: buildPcmBase64(1000, 160),
+      format: "audio/pcm;rate=16000;bits=16",
+    });
+    expect(
+      emitted.find(
+        (msg) =>
+          msg.type === "dictation_stream_error" &&
+          (msg.payload as { error: string }).error === "Dictation stream not started",
+      ),
+    ).toBeDefined();
+  });
+
   it("does not require OPENAI_API_KEY", async () => {
     const original = process.env.OPENAI_API_KEY;
     delete process.env.OPENAI_API_KEY;
