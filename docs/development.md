@@ -15,7 +15,7 @@ npm run dev:desktop
 
 Root checkout dev is intentionally split across terminals:
 
-- `npm run dev:server` runs the daemon on `127.0.0.1:6768`.
+- `npm run dev:server` runs the daemon on `127.0.0.1:6768`. To use another port, pass `PASEO_LISTEN=127.0.0.1:<port>` to every dev command, including `npm run cli`: `scripts/dev-home.sh` rewrites `daemon.listen` in the dev home's `config.json` from `PASEO_LISTEN` on each run and falls back to `6768` when it is unset, so one bare `npm run cli` call points the whole checkout back at `6768`.
 - `npm run dev:app` runs Expo on `http://localhost:8081` and connects to the dev daemon.
 - `npm run dev:desktop` runs its own Electron-flavored Expo server on the first free port from `8082` through `8089`. It never claims port `8081`.
 

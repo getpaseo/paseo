@@ -213,6 +213,21 @@ export default function contribute(client: PluginClientContext) {
 }
 ```
 
+A sidebar item can carry a count. `badge` has the shape of a `useSyncExternalStore` source:
+`getSnapshot()` returns the current count or `null` for no badge, and `subscribe(listener)` returns
+an unsubscribe function. Paseo renders the count at the trailing edge of the row and sums it across
+hosts when the same contribution exists on several. Clients that predate the field ignore it.
+
+```tsx
+client.addSidebarItem({
+  id: "inbox",
+  title: "Inbox",
+  icon: "Inbox",
+  surface: "board",
+  badge: { getSnapshot: () => store.pendingCount() || null, subscribe: store.subscribe },
+});
+```
+
 `PluginSurfaceProps` contains:
 
 | Field        | Meaning                                                                                                                      |

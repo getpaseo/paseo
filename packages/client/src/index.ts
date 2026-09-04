@@ -1,4 +1,5 @@
 import type {
+  AgentPermissionResolvedMessage,
   AgentSnapshotPayload,
   CreateAgentRequestMessage,
   FetchWorkspacesRequestMessage,
@@ -24,7 +25,7 @@ import type {
   WorkspaceCreateRequest,
 } from "@getpaseo/protocol/messages";
 import { DaemonClient } from "./daemon-client.js";
-import type { PluginTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { AgentPermissionResponse, PluginTimelineItem } from "@getpaseo/protocol/agent-types";
 import type {
   FetchAgentsEntry,
   FetchAgentsOptions,
@@ -247,6 +248,10 @@ export type PaseoAgentCommandsResult = ListCommandsResponse["payload"];
 
 export type PaseoAgentUpdate = Extract<SessionOutboundMessage, { type: "agent_update" }>["payload"];
 
+export type PaseoAgentPermissionResponse = AgentPermissionResponse;
+
+export type PaseoAgentPermissionResolved = AgentPermissionResolvedMessage["payload"];
+
 export type PaseoAgentStream = Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"];
 
 export type PaseoAgentUpdateHandler = (update: PaseoAgentUpdate) => void;
@@ -305,6 +310,17 @@ export interface PaseoAgentHandle {
   commands(options?: PaseoAgentCommandsOptions): Promise<PaseoAgentCommandsResult>;
   archive(): Promise<{ archivedAt: string }>;
   detach(): Promise<void>;
+  /**
+   * Answers one of `pendingPermissions`. Resolves with the daemon's resolution
+   * and rejects when the request is gone, so a request already answered from
+   * another client does not fail silently.
+   */
+  respondToPermission(
+    requestId: string,
+    response: PaseoAgentPermissionResponse,
+  ): Promise<PaseoAgentPermissionResolved>;
+  /** Clears `requiresAttention` without sending a prompt or opening the agent. */
+  clearAttention(): Promise<void>;
   subscribe(handler: (update: PaseoAgentUpdate) => void): () => void;
 }
 
@@ -700,6 +716,11 @@ function createAgentHandleFactory(daemonClient: DaemonClient): AgentHandleFactor
       },
       detach: async () => {
         await daemonClient.detachAgent(id);
+      },
+      respondToPermission: (requestId, response) =>
+        daemonClient.respondToPermissionAndWait(id, requestId, response),
+      clearAttention: async () => {
+        await daemonClient.clearAgentAttention(id);
       },
       subscribe: (handler) =>
         daemonClient.on("agent_update", (message) => {
