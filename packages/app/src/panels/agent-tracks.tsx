@@ -129,6 +129,8 @@ export const AgentTracks = memo(function AgentTracks({
       <AgentTaskList tasks={tasks} />
       <SubagentsTrack
         rows={subagentRows}
+        serverId={serverId}
+        cwd={cwd}
         onOpenSubagent={handleOpenSubagent}
         onOpenProviderSubagent={handleOpenProviderSubagent}
         onArchiveSubagent={archiveSubagent}

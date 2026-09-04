@@ -1445,6 +1445,74 @@ describe("stream reducer canonical tool calls", () => {
   });
 });
 
+describe("assistant attribution updates", () => {
+  it("attributes a late effort update to its message behind a tool call", () => {
+    let state = reduceStreamUpdate(
+      [],
+      assistantTimeline("Reading the file.", "claude", "msg-1"),
+      new Date("2025-01-01T10:00:00Z"),
+      { source: "live" },
+    );
+    state = reduceStreamUpdate(
+      state,
+      canonicalToolTimeline({
+        provider: "claude",
+        callId: "call-1",
+        name: "read",
+        status: "running",
+      }),
+      new Date("2025-01-01T10:00:01Z"),
+      { source: "live" },
+    );
+    state = reduceStreamUpdate(
+      state,
+      {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "assistant_message",
+          text: "",
+          messageId: "msg-1",
+          model: "claude-opus-4-6",
+          thinkingOptionId: "low",
+        },
+      },
+      new Date("2025-01-01T10:00:02Z"),
+      { source: "live" },
+    );
+
+    assert.deepStrictEqual(
+      state.map((item) => item.kind),
+      ["assistant_message", "tool_call"],
+    );
+    const assistant = state[0];
+    invariant(assistant?.kind === "assistant_message");
+    assert.strictEqual(assistant.text, "Reading the file.");
+    assert.strictEqual(assistant.model, "claude-opus-4-6");
+    assert.strictEqual(assistant.thinkingOptionId, "low");
+  });
+
+  it("drops a late attribution update when no message carries its id", () => {
+    const state = reduceStreamUpdate(
+      [],
+      {
+        type: "timeline",
+        provider: "claude",
+        item: {
+          type: "assistant_message",
+          text: "",
+          messageId: "msg-missing",
+          thinkingOptionId: "low",
+        },
+      },
+      new Date("2025-01-01T10:00:00Z"),
+      { source: "live" },
+    );
+
+    assert.deepStrictEqual(state, []);
+  });
+});
+
 describe("turn lifecycle events", () => {
   it("finalizes active stream items without adding timeline rows", () => {
     const startedAt = new Date("2025-01-01T12:00:00Z");

@@ -608,7 +608,15 @@ describe("AgentStreamCoalescer", () => {
     };
 
     coalescer.handle("agent-1", timeline(firstItem));
-    coalescer.handle("agent-1", assistant("llo"));
+    coalescer.handle(
+      "agent-1",
+      timeline({
+        type: "assistant_message",
+        text: "llo",
+        model: "gpt-observed",
+        thinkingOptionId: "high",
+      }),
+    );
 
     await vi.advanceTimersByTimeAsync(60);
     expect(flushes).toEqual([
@@ -618,6 +626,8 @@ describe("AgentStreamCoalescer", () => {
           type: "assistant_message",
           text: "hello",
           futureOptionalField: { preserved: true },
+          model: "gpt-observed",
+          thinkingOptionId: "high",
         },
         provider: "codex",
       },

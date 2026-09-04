@@ -19,7 +19,7 @@ import { claudeProjectDirSync } from "./project-dir.js";
 import { streamSession } from "../test-utils/session-stream-adapter.js";
 import type { AgentSession, AgentTimelineItem, AgentStreamEvent } from "../../agent-sdk-types.js";
 
-interface TestClaudeSession {
+interface TestClaudeSession extends AgentSession {
   translateMessageToEvents(message: SDKMessage): AgentStreamEvent[];
   close(): Promise<void>;
 }
@@ -381,11 +381,15 @@ describe("convertClaudeHistoryEntry", () => {
   test("passes assistant content blocks through to the mapper", () => {
     const entry = {
       type: "assistant",
+      uuid: "assistant-with-tools",
+      effort: "high",
       message: {
         role: "assistant",
+        model: "claude-opus-4-6-20260101",
         content: [
           { type: "thinking", thinking: "Let me reason about this..." },
           { type: "text", text: "Here is my answer." },
+          { type: "tool_use", id: "tool-1", name: "Read", input: { file_path: "auth.ts" } },
         ],
       },
     };
@@ -393,11 +397,61 @@ describe("convertClaudeHistoryEntry", () => {
     const mappedTimeline = [
       { type: "reasoning", text: "Let me reason about this..." },
       { type: "assistant_message", text: "Here is my answer." },
+      {
+        type: "tool_call",
+        callId: "tool-1",
+        name: "Read",
+        status: "running",
+        error: null,
+        detail: { type: "unknown" },
+      },
     ];
     const mapBlocks = vi.fn().mockReturnValue(mappedTimeline);
 
-    expect(convertClaudeHistoryEntry(entry, mapBlocks)).toEqual(mappedTimeline);
+    expect(convertClaudeHistoryEntry(entry, mapBlocks)).toEqual([
+      { type: "reasoning", text: "Let me reason about this..." },
+      {
+        type: "assistant_message",
+        text: "Here is my answer.",
+        messageId: "assistant-with-tools",
+        model: "claude-opus-4-6",
+        thinkingOptionId: "high",
+      },
+      {
+        type: "tool_call",
+        callId: "tool-1",
+        name: "Read",
+        status: "running",
+        error: null,
+        detail: { type: "unknown" },
+      },
+    ]);
     expect(mapBlocks).toHaveBeenCalledWith(entry.message.content);
+  });
+
+  test("backfills the normalized model from persisted assistant entries", () => {
+    const entry = {
+      type: "assistant",
+      uuid: "assistant-history-model",
+      message: {
+        role: "assistant",
+        model: "claude-opus-4-6-20260101",
+        content: [{ type: "text", text: "Historical answer." }],
+      },
+    };
+
+    expect(
+      convertClaudeHistoryEntry(entry, () => [
+        { type: "assistant_message", text: "Historical answer." },
+      ]),
+    ).toEqual([
+      {
+        type: "assistant_message",
+        text: "Historical answer.",
+        messageId: "assistant-history-model",
+        model: "claude-opus-4-6",
+      },
+    ]);
   });
 });
 
@@ -1150,6 +1204,164 @@ describe("ClaudeAgentSession features", () => {
       type: "warning",
       message: "Thinking level applies next turn",
     });
+
+    await session.close();
+  });
+
+  test("keeps the running turn's observed model until the turn ends", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+    });
+    const observed = session as unknown as TestClaudeSession;
+
+    await session.startTurn("hello");
+
+    observed.translateMessageToEvents({
+      type: "assistant",
+      effort: "low",
+      message: {
+        id: "assistant-in-flight",
+        role: "assistant",
+        model: "claude-opus-4-6-20260101",
+        content: [{ type: "text", text: "Running." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-in-flight-event",
+      session_id: "session-1",
+    } as unknown as SDKMessage);
+
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "claude-opus-4-6",
+      thinkingOptionId: "low",
+    });
+
+    await session.setModel?.("claude-sonnet-5");
+
+    // The selection applies next turn, so the running turn keeps reporting the
+    // model and effort Claude actually ran it at.
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "claude-opus-4-6",
+      thinkingOptionId: "low",
+    });
+
+    // A frame that lands after the selection still describes the old turn.
+    observed.translateMessageToEvents({
+      type: "assistant",
+      effort: "medium",
+      message: {
+        id: "assistant-late",
+        role: "assistant",
+        model: "claude-sonnet-4-5-20250929",
+        content: [{ type: "text", text: "Still running." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-late-event",
+      session_id: "session-1",
+    } as unknown as SDKMessage);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "claude-sonnet-4-5-20250929",
+      thinkingOptionId: "medium",
+    });
+
+    await session.interrupt();
+
+    // With the turn over, the selection wins over everything it observed.
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "claude-sonnet-5" });
+    await expect(session.getRuntimeInfo()).resolves.not.toHaveProperty("thinkingOptionId");
+
+    await session.close();
+  });
+
+  test("keeps the running turn's observed effort until the turn ends", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+    });
+    const observed = session as unknown as TestClaudeSession;
+
+    await session.startTurn("hello");
+
+    observed.translateMessageToEvents({
+      type: "assistant",
+      effort: "low",
+      message: {
+        id: "assistant-effort-in-flight",
+        role: "assistant",
+        model: "claude-opus-4-8-20260101",
+        content: [{ type: "text", text: "Running." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-effort-in-flight-event",
+      session_id: "session-1",
+    } as unknown as SDKMessage);
+
+    await expect(session.setThinkingOption?.("high")).resolves.toEqual({
+      type: "warning",
+      message: "Thinking level applies next turn",
+    });
+
+    // The notice says next turn, so this turn keeps reporting the level it ran at.
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: "low" });
+
+    await session.interrupt();
+
+    await expect(session.getRuntimeInfo()).resolves.not.toHaveProperty("thinkingOptionId");
+
+    await session.close();
+  });
+
+  test("clears observed runtime values immediately when no turn is running", async () => {
+    const { queryFactory } = createQueryMock();
+    const client = new ClaudeAgentClient({
+      logger,
+      queryFactory,
+      resolveBinary: async () => "/test/claude/bin",
+    });
+    const session = await client.createSession({
+      provider: "claude",
+      cwd: process.cwd(),
+      model: "claude-opus-4-8",
+    });
+    const observed = session as unknown as TestClaudeSession;
+
+    observed.translateMessageToEvents({
+      type: "assistant",
+      effort: "low",
+      message: {
+        id: "assistant-between-turns",
+        role: "assistant",
+        model: "claude-opus-4-6-20260101",
+        content: [{ type: "text", text: "Earlier turn." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-between-turns-event",
+      session_id: "session-1",
+    } as unknown as SDKMessage);
+
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "claude-opus-4-6",
+      thinkingOptionId: "low",
+    });
+
+    await session.setModel?.("claude-sonnet-5");
+
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ model: "claude-sonnet-5" });
+    await expect(session.getRuntimeInfo()).resolves.not.toHaveProperty("thinkingOptionId");
 
     await session.close();
   });
@@ -1995,6 +2207,500 @@ describe("ClaudeAgentSession context window usage", () => {
       item: { type: "user_message", clientMessageId: "client-message-1" },
     });
     await session.close();
+  });
+
+  test("captures the runtime model from assistant messages", async () => {
+    const session = await createSessionForTest();
+
+    const events = session.translateMessageToEvents({
+      type: "assistant",
+      message: {
+        id: "assistant-runtime-model",
+        role: "assistant",
+        model: "claude-opus-4-6-20260101",
+        content: [{ type: "text", text: "Observed response." }],
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+        },
+      },
+      uuid: "assistant-runtime-model-event",
+      session_id: "session-1",
+    } as SDKMessage);
+
+    expect(events).toContainEqual({
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "assistant_message",
+        text: "Observed response.",
+        model: "claude-opus-4-6",
+      },
+    });
+    await expect(session.getRuntimeInfo()).resolves.toEqual({
+      provider: "claude",
+      sessionId: "session-1",
+      model: "claude-opus-4-6",
+      modeId: "default",
+      extra: {
+        runtimeModel: "claude-opus-4-6-20260101",
+      },
+    });
+  });
+
+  test("stamps the effort the assistant frame actually ran at", async () => {
+    const session = await createSessionForTest();
+
+    const events = session.translateMessageToEvents({
+      type: "assistant",
+      effort: "low",
+      message: {
+        id: "assistant-effort",
+        role: "assistant",
+        model: "claude-sonnet-5",
+        content: [{ type: "text", text: "Ran low." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-effort-event",
+      session_id: "session-1",
+    } as unknown as SDKMessage);
+
+    expect(events).toContainEqual({
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "assistant_message",
+        text: "Ran low.",
+        model: "claude-sonnet-5",
+        thinkingOptionId: "low",
+      },
+    });
+  });
+
+  test("stamps no thinking level when the frame reports no usable effort", async () => {
+    const session = await createSessionForTest();
+
+    const [absent, numeric] = [undefined, 3].map((effort, index) =>
+      session.translateMessageToEvents({
+        type: "assistant",
+        ...(effort === undefined ? {} : { effort }),
+        message: {
+          id: `assistant-effort-${index}`,
+          role: "assistant",
+          model: "claude-sonnet-5",
+          content: [{ type: "text", text: "No effort reported." }],
+          usage: { input_tokens: 0, output_tokens: 0 },
+        },
+        uuid: `assistant-effort-${index}-event`,
+        session_id: "session-1",
+      } as unknown as SDKMessage),
+    );
+
+    for (const events of [absent, numeric]) {
+      const assistantEvent = events?.find(
+        (event) => event.type === "timeline" && event.item.type === "assistant_message",
+      );
+      expect(assistantEvent?.item).not.toHaveProperty("thinkingOptionId");
+    }
+  });
+
+  test("reports the observed effort as the runtime thinking level", async () => {
+    const session = await createSessionForTest();
+
+    // Absent until a frame reports one, so the configured level stays in charge.
+    await expect(session.getRuntimeInfo()).resolves.not.toHaveProperty("thinkingOptionId");
+
+    session.translateMessageToEvents({
+      type: "assistant",
+      effort: "low",
+      message: {
+        id: "assistant-runtime-effort",
+        role: "assistant",
+        model: "claude-sonnet-5",
+        content: [{ type: "text", text: "Ran low." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-runtime-effort-event",
+      session_id: "session-1",
+    } as unknown as SDKMessage);
+
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "claude-sonnet-5",
+      thinkingOptionId: "low",
+    });
+
+    // A later frame that reports no effort says nothing; the observation holds.
+    session.translateMessageToEvents({
+      type: "assistant",
+      message: {
+        id: "assistant-runtime-effort-silent",
+        role: "assistant",
+        model: "claude-sonnet-5",
+        content: [{ type: "text", text: "Silent about effort." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-runtime-effort-silent-event",
+      session_id: "session-1",
+    } as unknown as SDKMessage);
+
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: "low" });
+  });
+
+  test("drops the observed effort when the user picks a thinking option", async () => {
+    const session = await createSessionForTest();
+
+    session.translateMessageToEvents({
+      type: "assistant",
+      effort: "low",
+      message: {
+        id: "assistant-stale-effort",
+        role: "assistant",
+        model: "claude-sonnet-5",
+        content: [{ type: "text", text: "Ran low." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-stale-effort-event",
+      session_id: "session-1",
+    } as unknown as SDKMessage);
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({ thinkingOptionId: "low" });
+
+    await session.setThinkingOption("high");
+
+    // The stale "low" must not shadow the fresh selection; with no observation
+    // the key is absent so the configured level wins downstream.
+    await expect(session.getRuntimeInfo()).resolves.not.toHaveProperty("thinkingOptionId");
+  });
+
+  test("dispatches model_changed when an assistant message reveals the runtime model", async () => {
+    const session = await createSessionForTest();
+    const observed: AgentStreamEvent[] = [];
+    session.subscribe((event) => {
+      if (event.type === "model_changed") observed.push(event);
+    });
+
+    session.translateMessageToEvents({
+      type: "assistant",
+      message: {
+        id: "assistant-model-changed",
+        role: "assistant",
+        model: "claude-opus-4-6-20260101",
+        content: [{ type: "text", text: "Observed response." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-model-changed-event",
+      session_id: "session-1",
+    } as SDKMessage);
+
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toMatchObject({
+      type: "model_changed",
+      provider: "claude",
+      runtimeInfo: { model: "claude-opus-4-6" },
+    });
+
+    // A repeat of the same model is not a change and must not re-dispatch.
+    session.translateMessageToEvents({
+      type: "assistant",
+      message: {
+        id: "assistant-model-repeat",
+        role: "assistant",
+        model: "claude-opus-4-6-20260101",
+        content: [{ type: "text", text: "Second response." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-model-repeat-event",
+      session_id: "session-1",
+    } as SDKMessage);
+    expect(observed).toHaveLength(1);
+  });
+
+  test("ignores the <synthetic> placeholder instead of reporting it as a model", async () => {
+    const session = await createSessionForTest();
+
+    session.translateMessageToEvents({
+      type: "assistant",
+      message: {
+        id: "assistant-real-model",
+        role: "assistant",
+        model: "claude-opus-4-6-20260101",
+        content: [{ type: "text", text: "Real response." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-real-model-event",
+      session_id: "session-1",
+    } as SDKMessage);
+
+    const syntheticEvents = session.translateMessageToEvents({
+      type: "assistant",
+      message: {
+        id: "assistant-synthetic",
+        role: "assistant",
+        model: "<synthetic>",
+        content: [{ type: "text", text: "Synthetic notice." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "assistant-synthetic-event",
+      session_id: "session-1",
+    } as SDKMessage);
+
+    const syntheticItem = syntheticEvents.find(
+      (event) => event.type === "timeline" && event.item.type === "assistant_message",
+    );
+    expect(syntheticItem?.item).not.toHaveProperty("model");
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "claude-opus-4-6",
+      extra: { runtimeModel: "claude-opus-4-6-20260101" },
+    });
+  });
+
+  test("re-seeds the observed model from a persisted transcript", async () => {
+    const session = await createSessionForTest();
+    const ingest = session as unknown as { ingestPersistedHistory(content: string): void };
+
+    const transcript = [
+      JSON.stringify({
+        type: "assistant",
+        uuid: "hist-1",
+        message: {
+          role: "assistant",
+          model: "claude-sonnet-4-5-20250929",
+          content: [{ type: "text", text: "Earlier turn." }],
+        },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        uuid: "hist-2",
+        message: {
+          role: "assistant",
+          model: "claude-opus-4-6-20260101",
+          content: [{ type: "text", text: "Latest turn." }],
+        },
+      }),
+      JSON.stringify({
+        type: "assistant",
+        uuid: "hist-3",
+        message: {
+          role: "assistant",
+          model: "<synthetic>",
+          content: [{ type: "text", text: "Synthetic tail." }],
+        },
+      }),
+    ].join("\n");
+    ingest.ingestPersistedHistory(transcript);
+
+    // The last real assistant model wins; the synthetic tail is not an observation.
+    await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+      model: "claude-opus-4-6",
+      extra: { runtimeModel: "claude-opus-4-6-20260101" },
+    });
+  });
+
+  test("omits model attribution without an observed assistant model", async () => {
+    const session = await createSessionForTest();
+
+    const events = session.translateMessageToEvents({
+      type: "assistant",
+      message: {
+        id: "assistant-without-runtime-model",
+        role: "assistant",
+        content: [{ type: "text", text: "Unattributed response." }],
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+        },
+      },
+      uuid: "assistant-without-runtime-model-event",
+      session_id: "session-1",
+    } as SDKMessage);
+
+    const assistantEvent = events.find(
+      (event) => event.type === "timeline" && event.item.type === "assistant_message",
+    );
+    expect(assistantEvent).toEqual({
+      type: "timeline",
+      provider: "claude",
+      item: {
+        type: "assistant_message",
+        text: "Unattributed response.",
+      },
+    });
+    expect(assistantEvent?.item).not.toHaveProperty("model");
+  });
+
+  test("does not stamp a sidechain assistant message with the parent runtime model", async () => {
+    const session = await createSessionForTest();
+    session.translateMessageToEvents({
+      type: "assistant",
+      message: {
+        id: "parent-runtime-model",
+        role: "assistant",
+        model: "claude-opus-4-6-20260101",
+        content: [],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "parent-runtime-model-event",
+      session_id: "session-1",
+    } as SDKMessage);
+
+    const events = session.translateMessageToEvents({
+      type: "assistant",
+      parent_tool_use_id: "task-child",
+      message: {
+        id: "child-message",
+        role: "assistant",
+        content: [{ type: "text", text: "Child response." }],
+        usage: { input_tokens: 0, output_tokens: 0 },
+      },
+      uuid: "child-message-event",
+      session_id: "session-1",
+    } as SDKMessage);
+
+    const childAssistantItems = events.flatMap((event) =>
+      event.type === "provider_subagent" &&
+      event.event.type === "timeline" &&
+      event.event.item.type === "assistant_message"
+        ? [event.event.item]
+        : [],
+    );
+    expect(childAssistantItems).toEqual([
+      {
+        type: "assistant_message",
+        text: "Child response.",
+        messageId: "child-message",
+      },
+    ]);
+    expect(childAssistantItems[0]).not.toHaveProperty("model");
+  });
+
+  test("preserves assistant-observed runtime model metadata after run completes", async () => {
+    const runtimeModel = "claude-opus-4-6-20260101";
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        {
+          type: "assistant",
+          message: {
+            id: "assistant-runtime-model",
+            role: "assistant",
+            model: runtimeModel,
+            content: [{ type: "text", text: "Runtime model changed." }],
+            usage: {
+              input_tokens: 10,
+              output_tokens: 4,
+            },
+          },
+          uuid: "assistant-runtime-model-event",
+          session_id: "session-1",
+        },
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const result = await session.run("turn");
+
+      expect(result.timeline).toContainEqual({
+        type: "assistant_message",
+        text: "Runtime model changed.",
+        messageId: "assistant-runtime-model",
+        model: "claude-opus-4-6",
+      });
+
+      await expect(session.getRuntimeInfo()).resolves.toEqual({
+        provider: "claude",
+        sessionId: "session-1",
+        model: "claude-opus-4-6",
+        modeId: "default",
+        extra: {
+          runtimeModel,
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("attributes a turn with an unrecognized model rather than leaving it blank", async () => {
+    const unknownRuntimeModel = "claude-experimental-9-9-20991231";
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        {
+          type: "assistant",
+          message: {
+            id: "assistant-offcatalog",
+            role: "assistant",
+            model: unknownRuntimeModel,
+            content: [{ type: "text", text: "Off-catalog output." }],
+            usage: { input_tokens: 10, output_tokens: 4 },
+          },
+          uuid: "assistant-offcatalog-event",
+          session_id: "session-1",
+        },
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      const result = await session.run("turn");
+
+      expect(result.timeline).toContainEqual({
+        type: "assistant_message",
+        text: "Off-catalog output.",
+        messageId: "assistant-offcatalog",
+        model: unknownRuntimeModel,
+      });
+    } finally {
+      await session.close();
+    }
+  });
+
+  test("reports an unrecognized runtime model verbatim instead of a stale known one", async () => {
+    // Claude falling back to a model outside our catalog must not leave the
+    // previously recognized model in place — that asserts the agent is running
+    // something it isn't.
+    const unknownRuntimeModel = "claude-experimental-9-9-20991231";
+    const session = await createSessionForTurns([
+      [
+        createInitMessage(),
+        {
+          type: "assistant",
+          message: {
+            id: "assistant-known-model",
+            role: "assistant",
+            model: "claude-opus-4-6-20260101",
+            content: [{ type: "text", text: "Known model." }],
+            usage: { input_tokens: 10, output_tokens: 4 },
+          },
+          uuid: "assistant-known-model-event",
+          session_id: "session-1",
+        },
+        {
+          type: "assistant",
+          message: {
+            id: "assistant-unknown-model",
+            role: "assistant",
+            model: unknownRuntimeModel,
+            content: [{ type: "text", text: "Unknown model." }],
+            usage: { input_tokens: 10, output_tokens: 4 },
+          },
+          uuid: "assistant-unknown-model-event",
+          session_id: "session-1",
+        },
+        createSuccessResult(),
+      ],
+    ]);
+
+    try {
+      await session.run("turn");
+
+      await expect(session.getRuntimeInfo()).resolves.toMatchObject({
+        model: unknownRuntimeModel,
+        extra: { runtimeModel: unknownRuntimeModel },
+      });
+    } finally {
+      await session.close();
+    }
   });
 
   test("passes persistSession through to the Claude SDK query options", async () => {

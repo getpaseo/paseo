@@ -16,11 +16,34 @@ function row(
     id: overrides.id,
     provider: overrides.provider ?? "codex",
     title: overrides.title ?? `Agent ${overrides.id}`,
-    description: null,
-    subtitle: null,
     status: overrides.status ?? "idle",
     requiresAttention: overrides.requiresAttention ?? false,
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
+    model: overrides.model ?? null,
+    runtimeModelId: overrides.runtimeModelId ?? null,
+    thinkingOptionId: overrides.thinkingOptionId ?? null,
+    effectiveThinkingOptionId: overrides.effectiveThinkingOptionId,
+  };
+}
+
+function baseProviderRow(
+  overrides: Partial<ProviderSubagentRow> & Pick<ProviderSubagentRow, "id">,
+): ProviderSubagentRow {
+  return {
+    kind: "provider",
+    id: overrides.id,
+    parentAgentId: overrides.parentAgentId ?? "parent",
+    provider: overrides.provider ?? "claude",
+    title: overrides.title ?? null,
+    description: overrides.description ?? null,
+    subtitle: overrides.subtitle ?? null,
+    status: overrides.status ?? "running",
+    requiresAttention: overrides.requiresAttention ?? false,
+    createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
+    model: overrides.model ?? null,
+    runtimeModelId: overrides.runtimeModelId ?? null,
+    thinkingOptionId: overrides.thinkingOptionId ?? null,
+    effectiveThinkingOptionId: overrides.effectiveThinkingOptionId,
   };
 }
 
@@ -96,30 +119,14 @@ describe("buildSubagentPillPresentation", () => {
 describe("countFinishedSubagents", () => {
   it("counts eligible managed and terminal provider-owned children", () => {
     const providerRows: SubagentRow[] = [
-      {
-        kind: "provider",
-        id: "native-running",
-        parentAgentId: "parent",
-        provider: "claude",
-        title: "running",
-        description: null,
-        subtitle: null,
-        status: "running",
-        requiresAttention: false,
-        createdAt: new Date("2026-04-20T00:00:00.000Z"),
-      },
-      {
-        kind: "provider",
+      baseProviderRow({ id: "native-running", title: "running" }),
+      baseProviderRow({
         id: "native-failed",
-        parentAgentId: "parent",
-        provider: "claude",
         title: "failed",
-        description: null,
-        subtitle: null,
         status: "failed",
         requiresAttention: true,
         createdAt: new Date("2026-04-20T00:00:01.000Z"),
-      },
+      }),
     ];
 
     expect(
@@ -169,6 +176,14 @@ describe("buildSubagentRowPresentationData", () => {
     );
   });
 
+  it("reports paseo ownership for a managed subagent", () => {
+    expect(buildSubagentRowPresentationData(row({ id: "a" })).ownership).toBe("paseo");
+  });
+
+  it("reports native ownership for a provider-owned subagent", () => {
+    expect(buildSubagentRowPresentationData(baseProviderRow({ id: "a" })).ownership).toBe("native");
+  });
+
   it("marks the row ready when the title resolves to a real label", () => {
     const presentation = buildSubagentRowPresentationData(row({ id: "a", title: "Build it" }));
     expect(presentation.titleState).toBe("ready");
@@ -214,6 +229,10 @@ describe("buildSubagentRowPresentationData for provider rows", () => {
       status: overrides.status ?? "running",
       requiresAttention: false,
       createdAt: overrides.createdAt ?? new Date("2026-07-26T00:00:00.000Z"),
+      model: overrides.model ?? null,
+      runtimeModelId: overrides.runtimeModelId ?? null,
+      thinkingOptionId: overrides.thinkingOptionId ?? null,
+      effectiveThinkingOptionId: overrides.effectiveThinkingOptionId,
     };
   }
 
@@ -259,16 +278,20 @@ describe("provider-owned row subtitles", () => {
   function providerRow(overrides: Partial<ProviderSubagentRow> = {}): ProviderSubagentRow {
     return {
       kind: "provider",
-      id: "toolu_1",
-      parentAgentId: "parent",
-      provider: "claude",
-      title: "general-purpose",
-      description: "Reply with banana",
-      subtitle: null,
-      status: "running",
-      requiresAttention: false,
-      createdAt: new Date("2026-07-26T00:00:00.000Z"),
-      ...overrides,
+      id: overrides.id ?? "toolu_1",
+      parentAgentId: overrides.parentAgentId ?? "parent",
+      provider: overrides.provider ?? "claude",
+      title: "title" in overrides ? (overrides.title ?? null) : "general-purpose",
+      description:
+        "description" in overrides ? (overrides.description ?? null) : "Reply with banana",
+      subtitle: overrides.subtitle ?? null,
+      status: overrides.status ?? "running",
+      requiresAttention: overrides.requiresAttention ?? false,
+      createdAt: overrides.createdAt ?? new Date("2026-07-26T00:00:00.000Z"),
+      model: overrides.model ?? null,
+      runtimeModelId: overrides.runtimeModelId ?? null,
+      thinkingOptionId: overrides.thinkingOptionId ?? null,
+      effectiveThinkingOptionId: overrides.effectiveThinkingOptionId,
     };
   }
 

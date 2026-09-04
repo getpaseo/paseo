@@ -829,6 +829,10 @@ function reconcileOverlappingProjectedAssistant(params: {
     kind: "assistant_message",
     id: blockGroupId ?? match.current.id,
     ...(messageId !== undefined ? { messageId } : {}),
+    ...(match.current.model !== undefined ? { model: match.current.model } : {}),
+    ...(match.current.thinkingOptionId !== undefined
+      ? { thinkingOptionId: match.current.thinkingOptionId }
+      : {}),
     text: projectedText,
     timestamp: unit.timestamp,
     timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },

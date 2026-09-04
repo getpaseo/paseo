@@ -229,6 +229,36 @@ describe("ReplicaCache", () => {
     expect(restoredTimeline).toEqual(timeline());
   });
 
+  it("round-trips effective thinking while preserving absent versus null", async () => {
+    const cases: Array<{
+      effectiveThinkingOptionId?: string | null;
+      expected: string | null | undefined;
+    }> = [
+      { effectiveThinkingOptionId: "xhigh", expected: "xhigh" },
+      { effectiveThinkingOptionId: null, expected: null },
+      { expected: undefined },
+    ];
+
+    for (const testCase of cases) {
+      const storage = new MemoryStorage();
+      const writer = createCache(storage);
+      const cachedDirectory = directory();
+      const cachedAgent = cachedDirectory.agents.get("agent-1");
+      if (!cachedAgent) throw new Error("agent fixture is missing");
+      cachedDirectory.agents.set("agent-1", {
+        ...cachedAgent,
+        ...(Object.prototype.hasOwnProperty.call(testCase, "effectiveThinkingOptionId")
+          ? { effectiveThinkingOptionId: testCase.effectiveThinkingOptionId }
+          : {}),
+      });
+      writer.commitDirectory(SERVER_ID, cachedDirectory);
+      await writer.flush();
+
+      const restored = await createCache(storage).readAgent(SERVER_ID, "agent-1");
+      expect(restored?.effectiveThinkingOptionId).toBe(testCase.expected);
+    }
+  });
+
   it("never reads directory rows older than an accepted deferred deletion", async () => {
     const storage = new MemoryStorage();
     const cache = createCache(storage);

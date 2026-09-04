@@ -95,6 +95,11 @@ export interface Agent {
   model: string | null;
   features?: AgentFeature[];
   thinkingOptionId?: string | null;
+  /**
+   * Daemon-computed thinking option, preferring what the runtime reports over what
+   * is configured. `undefined` means the daemon never sent it.
+   */
+  effectiveThinkingOptionId?: string | null;
   requiresAttention?: boolean;
   attentionReason?: "finished" | "error" | "permission" | null;
   attentionTimestamp?: Date | null;

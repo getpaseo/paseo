@@ -104,7 +104,11 @@ export class AgentStreamCoalescer {
       return false;
     }
 
-    if (isTextTimelineItem(event.item) && event.item.text === "") {
+    const isEmptyAssistantAttribution =
+      event.item.type === "assistant_message" &&
+      event.item.text === "" &&
+      (event.item.model !== undefined || event.item.thinkingOptionId !== undefined);
+    if (isTextTimelineItem(event.item) && event.item.text === "" && !isEmptyAssistantAttribution) {
       return true;
     }
 
@@ -272,6 +276,15 @@ export class AgentStreamCoalescer {
         previous.turnId === entry.turnId
       ) {
         previous.text += entry.text;
+        if (previous.item.type === "assistant_message" && entry.item.type === "assistant_message") {
+          previous.item = {
+            ...previous.item,
+            ...(entry.item.model ? { model: entry.item.model } : {}),
+            ...(entry.item.thinkingOptionId
+              ? { thinkingOptionId: entry.item.thinkingOptionId }
+              : {}),
+          };
+        }
         continue;
       }
 

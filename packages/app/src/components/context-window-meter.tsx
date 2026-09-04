@@ -16,6 +16,10 @@ interface ContextWindowMeterProps {
   serverId?: string;
   /** The Paseo provider key, e.g. "claude", "gemini", "codex" */
   provider?: string | null;
+  /** Model the agent is actually running; omitted when unknown. */
+  modelLabel?: string | null;
+  /** Thinking level the agent is actually running; omitted when unknown. */
+  thinkingLabel?: string | null;
   /** Reserve the meter footprint and show a loading ring while usage is pending. */
   pending?: boolean;
   /** Optional glyph envelope for icon-toolbar alignment. */
@@ -103,6 +107,8 @@ export function ContextWindowMeter({
   showPercentage = false,
   serverId,
   provider,
+  modelLabel,
+  thinkingLabel,
   pending = false,
   glyphSize,
 }: ContextWindowMeterProps) {
@@ -231,6 +237,16 @@ export function ContextWindowMeter({
           {formattedSessionCost ? (
             <Text style={styles.tooltipDetail}>
               {t("contextWindow.sessionCost", { cost: formattedSessionCost })}
+            </Text>
+          ) : null}
+          {modelLabel ? (
+            <Text style={styles.tooltipDetail} testID="context-window-meter-model">
+              {t("contextWindow.model", { model: modelLabel })}
+            </Text>
+          ) : null}
+          {thinkingLabel ? (
+            <Text style={styles.tooltipDetail} testID="context-window-meter-thinking">
+              {t("contextWindow.thinking", { thinking: thinkingLabel })}
             </Text>
           ) : null}
           <ProviderUsageTooltipSection view={providerUsageView} activeProviderId={provider} />

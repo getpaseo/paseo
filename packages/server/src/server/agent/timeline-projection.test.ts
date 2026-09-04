@@ -50,7 +50,13 @@ describe("projectTimelineRows", () => {
       {
         seq: 2,
         timestamp: "2026-02-13T00:00:00.100Z",
-        item: { type: "assistant_message", text: "lo", messageId: "msg-1" },
+        item: {
+          type: "assistant_message",
+          text: "lo",
+          messageId: "msg-1",
+          model: "gpt-observed",
+          thinkingOptionId: "high",
+        },
       },
     ];
 
@@ -61,6 +67,8 @@ describe("projectTimelineRows", () => {
       type: "assistant_message",
       text: "Hello",
       messageId: "msg-1",
+      model: "gpt-observed",
+      thinkingOptionId: "high",
     });
   });
 

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { i18n } from "@/i18n/i18next";
+import type { AgentModelDisplay } from "@/composer/agent-controls/utils";
+import { buildAgentPanelSubtitle } from "@/panels/agent-panel-subtitle";
 import { buildDraftPanelDescriptor } from "@/panels/draft-panel-descriptor";
 
 function TestIcon() {
@@ -64,5 +66,36 @@ describe("buildDraftPanelDescriptor", () => {
       subtitle: "正在创建 Agent",
     });
     await i18n.changeLanguage("en");
+  });
+});
+
+function display(overrides: Partial<AgentModelDisplay> = {}): AgentModelDisplay {
+  return {
+    modelId: overrides.modelId ?? null,
+    modelLabel: overrides.modelLabel ?? null,
+    thinkingOptionId: overrides.thinkingOptionId ?? null,
+    thinkingLabel: overrides.thinkingLabel ?? null,
+  };
+}
+
+describe("buildAgentPanelSubtitle", () => {
+  it("reads out the provider, model, and thinking level", () => {
+    expect(
+      buildAgentPanelSubtitle("claude", display({ modelLabel: "Opus 4.5", thinkingLabel: "High" })),
+    ).toBe("Claude · Opus 4.5 · High");
+  });
+
+  it("drops the thinking level when the agent reports none", () => {
+    expect(buildAgentPanelSubtitle("codex", display({ modelLabel: "GPT-5.2 Codex" }))).toBe(
+      "Codex · GPT-5.2 Codex",
+    );
+  });
+
+  it("falls back to the plain provider label when nothing is known yet", () => {
+    expect(buildAgentPanelSubtitle("claude", display())).toBe("Claude agent");
+  });
+
+  it("title-cases multi-word provider ids", () => {
+    expect(buildAgentPanelSubtitle("github-copilot", display())).toBe("Github Copilot agent");
   });
 });

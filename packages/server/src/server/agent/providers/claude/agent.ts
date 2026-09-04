@@ -33,8 +33,8 @@ import {
 import {
   findClaudeModel,
   getClaudeModelsWithSettings,
-  normalizeClaudeRuntimeModelId,
   resolveConfiguredClaudeModel,
+  resolveObservedClaudeModelId,
 } from "./models.js";
 import {
   CLAUDE_DISABLED_THINKING_OPTION_ID,
@@ -463,6 +463,19 @@ function isClaudeThinkingEffort(value: string | null | undefined): value is Clau
     value === "xhigh" ||
     value === "max"
   );
+}
+
+/**
+ * The effort a Claude frame actually ran at, read off the frame itself.
+ *
+ * Claude Code records `effort` as a sibling of `message` on assistant frames —
+ * it is not on the SDK's `SDKAssistantMessage` type, so read it defensively and
+ * stamp nothing when it is absent. Thinking option ids are the effort levels
+ * verbatim, so a valid level needs no mapping. Numeric efforts (the hook API
+ * allows them) have no catalog id and are treated as unobserved.
+ */
+function resolveObservedClaudeEffort(value: unknown): ClaudeThinkingEffort | null {
+  return typeof value === "string" && isClaudeThinkingEffort(value) ? value : null;
 }
 
 function isClaudeThinkingOption(value: string | null | undefined): value is ClaudeThinkingOption {
@@ -1119,6 +1132,9 @@ interface TimelineMessageState {
   id: string;
   assistantText: string;
   reasoningText: string;
+  model?: string;
+  thinkingOptionId?: ClaudeThinkingEffort;
+  emittedThinkingOptionId?: ClaudeThinkingEffort;
   emittedAssistantLength: number;
   emittedReasoningLength: number;
   stopped: boolean;
@@ -1160,6 +1176,8 @@ class TimelineAssembler {
       return [];
     }
     const state = this.ensureMessageState(messageId, runId);
+    this.captureMessageModel(state, message.message?.model);
+    this.captureMessageEffort(state, toObjectRecord(message)?.effort);
     const fragments = this.extractFragments(message.message?.content);
     return this.applyAbsoluteFragments(state, fragments);
   }
@@ -1182,7 +1200,12 @@ class TimelineAssembler {
       if (!messageId) {
         return [];
       }
-      this.ensureMessageState(messageId, runId);
+      const state = this.ensureMessageState(messageId, runId);
+      const eventMessage = toObjectRecord(event.message);
+      this.captureMessageModel(
+        state,
+        typeof eventMessage?.model === "string" ? eventMessage.model : undefined,
+      );
       return [];
     }
 
@@ -1290,13 +1313,28 @@ class TimelineAssembler {
   private emitNewContent(state: TimelineMessageState): AgentTimelineItem[] {
     const items: AgentTimelineItem[] = [];
     const nextAssistantText = state.assistantText.slice(state.emittedAssistantLength);
-    if (
+    const hasAssistantText =
       nextAssistantText.length > 0 &&
       nextAssistantText !== INTERRUPT_TOOL_USE_PLACEHOLDER &&
-      !isClaudeTranscriptNoiseText(nextAssistantText)
-    ) {
-      state.emittedAssistantLength = state.assistantText.length;
-      items.push({ type: "assistant_message", text: nextAssistantText, messageId: state.id });
+      !isClaudeTranscriptNoiseText(nextAssistantText);
+    // The complete assistant frame reports effort after its text may already
+    // have streamed. An empty same-message item updates that earlier chunk.
+    const hasNewEffort =
+      state.emittedAssistantLength > 0 &&
+      state.thinkingOptionId !== undefined &&
+      state.thinkingOptionId !== state.emittedThinkingOptionId;
+    if (hasAssistantText || hasNewEffort) {
+      if (hasAssistantText) {
+        state.emittedAssistantLength = state.assistantText.length;
+      }
+      items.push({
+        type: "assistant_message",
+        text: hasAssistantText ? nextAssistantText : "",
+        messageId: state.id,
+        ...(state.model ? { model: state.model } : {}),
+        ...(state.thinkingOptionId ? { thinkingOptionId: state.thinkingOptionId } : {}),
+      });
+      state.emittedThinkingOptionId = state.thinkingOptionId;
     }
 
     const nextReasoningText = state.reasoningText.slice(state.emittedReasoningLength);
@@ -1329,6 +1367,21 @@ class TimelineAssembler {
       this.activeMessageByRun.set(runId, messageId);
     }
     return created;
+  }
+
+  private captureMessageModel(state: TimelineMessageState, runtimeModel: unknown): void {
+    const observedModel =
+      typeof runtimeModel === "string" ? resolveObservedClaudeModelId(runtimeModel) : null;
+    if (observedModel) {
+      state.model = observedModel;
+    }
+  }
+
+  private captureMessageEffort(state: TimelineMessageState, runtimeEffort: unknown): void {
+    const observedEffort = resolveObservedClaudeEffort(runtimeEffort);
+    if (observedEffort) {
+      state.thinkingOptionId = observedEffort;
+    }
   }
 
   private resolveMessageId(input: {
@@ -2084,6 +2137,9 @@ class ClaudeAgentSession implements AgentSession {
   private cachedRuntimeInfo: AgentRuntimeInfo | null = null;
   private lastOptionsModel: string | null = null;
   private lastRuntimeModel: string | null = null;
+  private lastObservedEffort: ClaudeThinkingEffort | null = null;
+  private pendingObservedModelReset: { optionsModel: string | null } | null = null;
+  private pendingObservedEffortReset = false;
   private compacting = false;
   private queryPumpPromise: Promise<void> | null = null;
   private queryRestartNeeded = false;
@@ -2151,15 +2207,16 @@ class ClaudeAgentSession implements AgentSession {
     });
   }
 
-  async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
-    if (this.cachedRuntimeInfo) {
-      return { ...this.cachedRuntimeInfo };
-    }
-    const info: AgentRuntimeInfo = {
+  private buildRuntimeInfo(): AgentRuntimeInfo {
+    return {
       provider: "claude",
       sessionId: this.claudeSessionId,
       model: this.lastOptionsModel,
       modeId: this.currentMode ?? null,
+      // Omitted rather than null when nothing was observed: the key's presence
+      // is what makes the runtime value win over the configured one, so an
+      // unobserved level has to leave the configured level in charge.
+      ...(this.lastObservedEffort ? { thinkingOptionId: this.lastObservedEffort } : {}),
       ...(this.lastRuntimeModel
         ? {
             extra: {
@@ -2168,6 +2225,13 @@ class ClaudeAgentSession implements AgentSession {
           }
         : {}),
     };
+  }
+
+  async getRuntimeInfo(): Promise<AgentRuntimeInfo> {
+    if (this.cachedRuntimeInfo) {
+      return { ...this.cachedRuntimeInfo };
+    }
+    const info = this.buildRuntimeInfo();
     this.cachedRuntimeInfo = info;
     return { ...info };
   }
@@ -2182,12 +2246,7 @@ class ClaudeAgentSession implements AgentSession {
       reduceFinalText: appendOrReplaceGrowingAssistantMessage,
     });
 
-    this.cachedRuntimeInfo = {
-      provider: "claude",
-      sessionId: this.claudeSessionId,
-      model: this.lastOptionsModel,
-      modeId: this.currentMode ?? null,
-    };
+    this.cachedRuntimeInfo = this.buildRuntimeInfo();
 
     if (!this.claudeSessionId) {
       throw new Error("Session ID not set after run completed");
@@ -2425,8 +2484,20 @@ class ClaudeAgentSession implements AgentSession {
     this.contextUsage.setInitialContextWindowMaxTokens(
       findClaudeModel(this.config.model)?.contextWindowMaxTokens,
     );
-    this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
-    this.lastRuntimeModel = null;
+    // Effort levels are per-model, so an observation from the old model says
+    // nothing about the new one. A running turn keeps the model it started with,
+    // so defer both resets until it ends rather than relabeling that turn with a
+    // selection it never used.
+    if (this.activeForegroundTurnId || this.autonomousTurn) {
+      this.pendingObservedModelReset = {
+        optionsModel: normalizedModelId ?? this.lastOptionsModel,
+      };
+      this.pendingObservedEffortReset = true;
+    } else {
+      this.lastOptionsModel = normalizedModelId ?? this.lastOptionsModel;
+      this.lastRuntimeModel = null;
+      this.lastObservedEffort = null;
+    }
     this.cachedRuntimeInfo = null;
     // Model change affects persistence metadata, so invalidate cached handle.
     this.persistence = null;
@@ -2466,10 +2537,16 @@ class ClaudeAgentSession implements AgentSession {
     } else {
       throw new Error(`Unknown thinking option: ${normalizedThinkingOptionId}`);
     }
+    // Drop the observation so a level from before this selection cannot shadow
+    // it; the next frame reports what Claude actually applied. Mid-turn the
+    // selection only takes effect next turn, so the drop waits for turn end.
+    this.cachedRuntimeInfo = null;
     this.queryRestartNeeded = true;
     if (this.activeForegroundTurnId || this.autonomousTurn) {
+      this.pendingObservedEffortReset = true;
       return THINKING_APPLIES_NEXT_TURN_NOTICE;
     }
+    this.lastObservedEffort = null;
   }
 
   async setFeature(featureId: string, value: unknown): Promise<void> {
@@ -3424,6 +3501,32 @@ class ClaudeAgentSession implements AgentSession {
       return;
     }
     this.transitionTurnState("idle", reason);
+    // Every turn-terminal path lands here, including interrupts and failures,
+    // which makes it the one place a deferred observation reset has to run.
+    this.applyPendingRuntimeObservationResets();
+  }
+
+  /**
+   * Drops observations a mid-turn selection invalidated. Anything the finished
+   * turn observed after that selection describes the old turn too, so the
+   * selection's values win here regardless of what arrived in between.
+   */
+  private applyPendingRuntimeObservationResets(): void {
+    const pendingModel = this.pendingObservedModelReset;
+    const pendingEffort = this.pendingObservedEffortReset;
+    if (!pendingModel && !pendingEffort) {
+      return;
+    }
+    this.pendingObservedModelReset = null;
+    this.pendingObservedEffortReset = false;
+    if (pendingModel) {
+      this.lastOptionsModel = pendingModel.optionsModel;
+      this.lastRuntimeModel = null;
+    }
+    if (pendingEffort) {
+      this.lastObservedEffort = null;
+    }
+    this.cachedRuntimeInfo = null;
   }
 
   private isAbortError(message: SDKMessage): boolean {
@@ -4085,18 +4188,12 @@ class ClaudeAgentSession implements AgentSession {
         this.appendUserMessageEvents(message, events);
         this.appendSidechainResultEvents(message, events);
         break;
-      case "assistant": {
-        const timelineItems = this.mapBlocksToTimeline(message.message.content, {
-          suppressAssistantText: options?.suppressAssistantText ?? false,
-          suppressReasoning: options?.suppressReasoning ?? false,
-        });
-        for (const item of timelineItems) {
-          events.push({ type: "timeline", item, provider: "claude" });
-        }
+      case "assistant":
+        this.appendAssistantMessageEvents(message, events, options);
         this.appendSidechainResultEvents(message, events);
         break;
-      }
       case "stream_event":
+        this.captureStreamEventRuntimeModel(message);
         this.appendStreamEventEvents(message, events, options);
         break;
       case "result":
@@ -4120,6 +4217,46 @@ class ClaudeAgentSession implements AgentSession {
   private appendTaskStateEvent(message: SDKMessage, events: AgentStreamEvent[]): void {
     const item = this.taskState.observe(message);
     if (item) events.push({ type: "timeline", provider: "claude", item });
+  }
+
+  private appendAssistantMessageEvents(
+    message: Extract<SDKMessage, { type: "assistant" }>,
+    events: AgentStreamEvent[],
+    options: { suppressAssistantText?: boolean; suppressReasoning?: boolean } | undefined,
+  ): void {
+    const observedModel = resolveObservedClaudeModelId(message.message.model);
+    const observedEffort = resolveObservedClaudeEffort(toObjectRecord(message)?.effort);
+    if (message.message.model) {
+      this.captureRuntimeModel(message.message.model, "assistant message", observedEffort);
+    }
+    const timelineItems = this.mapBlocksToTimeline(message.message.content, {
+      suppressAssistantText: options?.suppressAssistantText ?? false,
+      suppressReasoning: options?.suppressReasoning ?? false,
+    });
+    for (const item of timelineItems) {
+      events.push({
+        type: "timeline",
+        item:
+          item.type === "assistant_message"
+            ? {
+                ...item,
+                ...(observedModel ? { model: observedModel } : {}),
+                ...(observedEffort ? { thinkingOptionId: observedEffort } : {}),
+              }
+            : item,
+        provider: "claude",
+      });
+    }
+  }
+
+  private captureStreamEventRuntimeModel(
+    message: Extract<SDKMessage, { type: "stream_event" }>,
+  ): void {
+    const streamEvent = toObjectRecord(message.event);
+    const streamMessage = toObjectRecord(streamEvent?.message);
+    if (streamEvent?.type === "message_start" && typeof streamMessage?.model === "string") {
+      this.captureRuntimeModel(streamMessage.model, "stream message start");
+    }
   }
 
   /**
@@ -4532,20 +4669,65 @@ class ClaudeAgentSession implements AgentSession {
     }
     this.persistence = null;
     if (message.model) {
-      const normalizedRuntimeModel = normalizeClaudeRuntimeModelId(message.model);
-      this.logger.debug(
-        { runtimeModel: message.model, normalizedRuntimeModel },
-        "Captured runtime model from SDK init",
-      );
-      if (normalizedRuntimeModel) {
-        this.lastOptionsModel = normalizedRuntimeModel;
-      } else if (!this.lastOptionsModel) {
-        this.lastOptionsModel = this.config.model ?? null;
-      }
-      this.lastRuntimeModel = message.model;
-      this.cachedRuntimeInfo = null;
+      this.captureRuntimeModel(message.model, "SDK init");
     }
     return { threadStartedSessionId, notice };
+  }
+
+  private captureRuntimeModel(
+    runtimeModel: string,
+    source: "SDK init" | "assistant message" | "stream message start",
+    observedEffort?: ClaudeThinkingEffort | null,
+  ): void {
+    const effortChanged = this.noteRuntimeEffort(observedEffort ?? null);
+    if (runtimeModel === this.lastRuntimeModel) {
+      // Every assistant message repeats the model; only a change is worth the
+      // log line and the cache invalidation.
+      if (effortChanged) {
+        this.publishRuntimeObservation();
+      }
+      return;
+    }
+    const observedModel = resolveObservedClaudeModelId(runtimeModel);
+    if (!observedModel) {
+      // A placeholder such as "<synthetic>" is not an observation.
+      if (effortChanged) {
+        this.publishRuntimeObservation();
+      }
+      return;
+    }
+    this.logger.debug(
+      { runtimeModel, observedModel, observedEffort, source },
+      "Captured runtime model from Claude",
+    );
+    this.lastOptionsModel = observedModel;
+    this.lastRuntimeModel = runtimeModel;
+    this.publishRuntimeObservation();
+  }
+
+  /**
+   * Records the effort a frame reported. Returns whether it changed, so callers
+   * can fold it into one runtime-info push alongside a model change.
+   */
+  private noteRuntimeEffort(observedEffort: ClaudeThinkingEffort | null): boolean {
+    // A frame that reports no effort says nothing about the level; only a
+    // different reported level supersedes the last observation.
+    if (!observedEffort || observedEffort === this.lastObservedEffort) {
+      return false;
+    }
+    this.lastObservedEffort = observedEffort;
+    return true;
+  }
+
+  private publishRuntimeObservation(): void {
+    this.cachedRuntimeInfo = null;
+    // Push the observation to the manager immediately. Claude pre-assigns its
+    // session id, so `thread_started` never fires for it, and without this the
+    // manager's runtimeInfo would only refresh at turn completion — leaving
+    // running agents (exactly the ones the subagents track shows) modelless.
+    this.dispatchEvents([
+      { type: "model_changed", provider: "claude", runtimeInfo: this.buildRuntimeInfo() },
+    ]);
   }
 
   private readMissingResumedConversationError(message: SDKMessage): string | null {
@@ -4940,6 +5122,7 @@ class ClaudeAgentSession implements AgentSession {
     if (entry.type === "assistant" && typeof entry.uuid === "string") {
       this.rememberRewindAssistantAnchor(entry.uuid);
     }
+    this.reseedRuntimeObservationsFromHistoryEntry(entry);
 
     if (items.length > 0) {
       timeline.push(
@@ -4948,6 +5131,32 @@ class ClaudeAgentSession implements AgentSession {
           timestamp: historyTimestamp ?? undefined,
         })),
       );
+    }
+  }
+
+  /**
+   * Re-seed the runtime observation from the transcript so a daemon restart
+   * doesn't blank the observed model until the next turn completes. Entries
+   * replay in order, so the last assistant wins. No model_changed dispatch
+   * here: nothing is subscribed during load, and the manager refreshes runtime
+   * info when it attaches.
+   */
+  private reseedRuntimeObservationsFromHistoryEntry(entry: Record<string, unknown>): void {
+    if (entry.type !== "assistant") {
+      return;
+    }
+    const rawModel = toObjectRecord(entry.message)?.model;
+    const observedModel =
+      typeof rawModel === "string" ? resolveObservedClaudeModelId(rawModel) : null;
+    if (observedModel && typeof rawModel === "string") {
+      this.lastOptionsModel = observedModel;
+      this.lastRuntimeModel = rawModel;
+      this.cachedRuntimeInfo = null;
+    }
+    const observedEffort = resolveObservedClaudeEffort(entry.effort);
+    if (observedEffort) {
+      this.lastObservedEffort = observedEffort;
+      this.cachedRuntimeInfo = null;
     }
   }
 
@@ -5885,13 +6094,15 @@ function mapAssistantHistoryBlocksWithMessageId(
   const items = mapBlocks(content);
   const assistantMessageId =
     typeof entry.uuid === "string" && entry.uuid.length > 0 ? entry.uuid : null;
-  if (!assistantMessageId) {
-    return items;
-  }
+  const rawHistoryModel = typeof entry.message?.model === "string" ? entry.message.model : null;
+  const model = resolveObservedClaudeModelId(rawHistoryModel);
+  const effort = resolveObservedClaudeEffort(entry.effort);
   for (const item of items) {
     if (item.type === "assistant_message" && !item.messageId) {
-      item.messageId = assistantMessageId;
+      if (assistantMessageId) item.messageId = assistantMessageId;
     }
+    if (item.type === "assistant_message" && model) item.model = model;
+    if (item.type === "assistant_message" && effort) item.thinkingOptionId = effort;
   }
   return items;
 }
@@ -5986,6 +6197,9 @@ export function convertClaudeHistoryEntry(
   }
 
   if (hasToolBlock && normalizedBlocks) {
+    if (entry.type === "assistant") {
+      return mapAssistantHistoryBlocksWithMessageId(entry, normalizedBlocks, mapBlocks);
+    }
     const mapped = mapBlocks(normalizedBlocks);
     if (entry.type === "user") {
       // tool_result handling (handleToolResult) emits image markdown as an assistant_message

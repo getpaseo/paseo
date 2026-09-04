@@ -8,11 +8,13 @@ function paseo(id: string, status: PaseoSubagentRow["status"] = "idle"): PaseoSu
     id,
     provider: "codex",
     title: id,
-    description: null,
-    subtitle: null,
     status,
     requiresAttention: false,
     createdAt: new Date(),
+    model: null,
+    runtimeModelId: null,
+    thinkingOptionId: null,
+    effectiveThinkingOptionId: undefined,
   };
 }
 
@@ -31,6 +33,10 @@ function provider(
     status,
     requiresAttention: false,
     createdAt: new Date(),
+    model: null,
+    runtimeModelId: null,
+    thinkingOptionId: null,
+    effectiveThinkingOptionId: undefined,
   };
 }
 

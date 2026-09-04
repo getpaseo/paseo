@@ -32,6 +32,11 @@ function createSnapshot(
     persistence: input.persistence ?? null,
     title: input.title ?? null,
     labels: (input.labels ?? {}) as AgentSnapshotPayload["labels"],
+    thinkingOptionId: input.thinkingOptionId ?? null,
+    // Forwarded only when present: absent-vs-explicit-null is load-bearing here.
+    ...("effectiveThinkingOptionId" in input
+      ? { effectiveThinkingOptionId: input.effectiveThinkingOptionId }
+      : {}),
   };
 }
 
@@ -103,5 +108,32 @@ describe("normalizeAgentSnapshot", () => {
     expect(missing.parentAgentId).toBeNull();
     expect(empty.parentAgentId).toBeNull();
     expect(nonString.parentAgentId).toBeNull();
+  });
+
+  it("carries the daemon-computed effective thinking option into the store", () => {
+    const agent = normalizeAgentSnapshot(
+      createSnapshot({ thinkingOptionId: "high", effectiveThinkingOptionId: "xhigh" }),
+      "server-1",
+    );
+
+    expect(agent.thinkingOptionId).toBe("high");
+    expect(agent.effectiveThinkingOptionId).toBe("xhigh");
+  });
+
+  it("preserves an explicit null effective thinking option", () => {
+    const agent = normalizeAgentSnapshot(
+      createSnapshot({ thinkingOptionId: "high", effectiveThinkingOptionId: null }),
+      "server-1",
+    );
+
+    expect(agent.effectiveThinkingOptionId).toBeNull();
+  });
+
+  it("leaves the effective thinking option undefined when the daemon omitted it", () => {
+    // The undefined/null distinction is load-bearing: undefined means an older
+    // daemon, so display falls back to the configured value.
+    const agent = normalizeAgentSnapshot(createSnapshot({ thinkingOptionId: "high" }), "server-1");
+
+    expect(agent.effectiveThinkingOptionId).toBeUndefined();
   });
 });

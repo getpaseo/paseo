@@ -114,6 +114,9 @@ export function normalizeAgentSnapshot(snapshot: AgentSnapshotPayload, serverId:
     model: snapshot.model ?? null,
     features: snapshot.features,
     thinkingOptionId: snapshot.thinkingOptionId ?? null,
+    // Deliberately not `?? null`: an absent field means the daemon predates
+    // effectiveThinkingOptionId, which resolves differently from an explicit null.
+    effectiveThinkingOptionId: snapshot.effectiveThinkingOptionId,
     requiresAttention: snapshot.requiresAttention ?? false,
     attentionReason: snapshot.attentionReason ?? null,
     attentionTimestamp,

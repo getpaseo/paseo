@@ -4309,6 +4309,91 @@ test("persists live mode, model, and thinking changes without an external snapsh
   expect(persisted?.runtimeInfo?.model).toBe("gpt-5.4");
 });
 
+test("keeps runtime model and thinking display while a turn is active", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-live-runtime-display-"));
+  class HeldTurnSession extends TestAgentSession {
+    private selectedModel: string | null = null;
+    private selectedThinkingOptionId: string | null = null;
+
+    override async startTurn(): Promise<{ turnId: string }> {
+      return { turnId: "turn-held" };
+    }
+
+    override async setModel(modelId: string | null): Promise<void> {
+      this.selectedModel = modelId;
+    }
+
+    override async setThinkingOption(thinkingOptionId: string | null): Promise<void> {
+      this.selectedThinkingOptionId = thinkingOptionId;
+    }
+
+    override async getRuntimeInfo() {
+      const runtimeInfo = await super.getRuntimeInfo();
+      return {
+        ...runtimeInfo,
+        model: this.selectedModel ?? runtimeInfo.model,
+        thinkingOptionId: this.selectedThinkingOptionId ?? "low",
+      };
+    }
+  }
+  class HeldTurnClient extends TestAgentClient {
+    session: HeldTurnSession | null = null;
+
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      this.session = new HeldTurnSession(config);
+      return this.session;
+    }
+  }
+  const client = new HeldTurnClient();
+  const manager = new AgentManager({
+    clients: { codex: client },
+    logger,
+    idFactory: () => "00000000-0000-4000-8000-000000000135",
+  });
+
+  const snapshot = await manager.createAgent(
+    {
+      provider: "codex",
+      cwd: workdir,
+      model: "gpt-5.2-codex",
+      thinkingOptionId: "low",
+    },
+    undefined,
+    { workspaceId: undefined },
+  );
+  const stream = await manager.streamAgent(snapshot.id, "hello");
+  await expect(stream.next()).resolves.toMatchObject({
+    done: false,
+    value: { type: "turn_started" },
+  });
+
+  if (!client.session) {
+    throw new Error("Expected the held turn session");
+  }
+
+  await manager.setAgentModel(snapshot.id, "gpt-5.4");
+  await manager.setAgentThinkingOption(snapshot.id, "high");
+
+  expect(manager.getAgent(snapshot.id)).toMatchObject({
+    config: { model: "gpt-5.4", thinkingOptionId: "high" },
+    runtimeInfo: { model: "gpt-5.2-codex", thinkingOptionId: "low" },
+  });
+
+  client.session.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-held" });
+  await expect(stream.next()).resolves.toMatchObject({
+    done: false,
+    value: { type: "turn_completed" },
+  });
+  await expect(stream.next()).resolves.toEqual({ done: true, value: undefined });
+  await manager.flush();
+
+  expect(manager.getAgent(snapshot.id)?.runtimeInfo).toMatchObject({
+    model: "gpt-5.4",
+    thinkingOptionId: "high",
+  });
+  rmSync(workdir, { recursive: true, force: true });
+});
+
 test("later explicit config mutations win over events emitted by earlier mutations", async () => {
   const workdir = mkdtempSync(join(tmpdir(), "agent-manager-config-mutation-order-"));
   class ConfigMutationSession extends TestAgentSession {
