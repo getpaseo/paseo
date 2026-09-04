@@ -2544,8 +2544,11 @@ export const ArchiveWorkspaceRequestSchema = z.object({
 });
 
 // Create a new workspace record. Unlike open_project, this never deduplicates by
-// directory: it always produces a fresh workspace. The source discriminates
-// between an existing local directory and a newly created paseo worktree.
+// directory by default: it always produces a fresh workspace. The source
+// discriminates between an existing local directory and a newly created paseo
+// worktree. A directory source may opt into daemon-side dedupe with
+// reuseExisting: the daemon then returns the active workspace already backed by
+// an equivalent resolved path instead of minting a new one.
 export const WorkspaceCreateRequestSchema = z.object({
   type: z.literal("workspace.create.request"),
   requestId: z.string(),
@@ -2559,6 +2562,10 @@ export const WorkspaceCreateRequestSchema = z.object({
       // Path of the existing checkout/directory to back the workspace.
       path: z.string(),
       projectId: z.string().optional(),
+      // Reuse the active workspace already backed by this directory (compared
+      // after tilde expansion and symlink resolution) instead of creating a
+      // fresh one. Optional; older daemons ignore it and keep the old behavior.
+      reuseExisting: z.boolean().optional(),
     }),
     z.object({
       kind: z.literal("worktree"),
@@ -3466,6 +3473,11 @@ export const ServerInfoStatusPayloadSchema = z
         checkoutRefresh: z.boolean().optional(),
         // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
         workspaceMultiplicity: z.boolean().optional(),
+        // COMPAT(workspaceCreateExistingBranch): added in v0.5.0, remove gate after 2027-02-20.
+        // workspaceMultiplicity predates the worktree action/refName fields and does not promise
+        // that a daemon understands checkout intent. Clients use this separate flag before
+        // offering Existing branch, so they never infer that support from multiplicity alone.
+        workspaceCreateExistingBranch: z.boolean().optional(),
         // COMPAT(projectRemove): added in v0.1.97, drop the gate when floor >= v0.1.97.
         projectRemove: z.boolean().optional(),
         // COMPAT(projectAdd): added in v0.1.97, drop the gate when floor >= v0.1.97.
@@ -5549,6 +5561,7 @@ export const BranchSuggestionsResponseSchema = z.object({
           committerDate: z.number(),
           hasLocal: z.boolean().optional(),
           hasRemote: z.boolean().optional(),
+          isCheckedOut: z.boolean().optional(),
           localAhead: z.number().int().nonnegative().optional(),
           localBehind: z.number().int().nonnegative().optional(),
         }),

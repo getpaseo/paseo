@@ -2,11 +2,36 @@ import { useCallback } from "react";
 import { useHostRuntimeClient, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { useSessionStore } from "@/stores/session-store";
 import {
+  addExistingWorkspaceDirectly,
   cloneGithubProjectDirectly,
   openProjectDirectly,
+  type AddExistingWorkspaceResult,
   type OpenProjectResult,
   type ProjectGithubCloneProtocol,
 } from "@/hooks/open-project";
+
+export function useAddExistingWorkspace(
+  serverId: string | null,
+): (path: string) => Promise<AddExistingWorkspaceResult> {
+  const normalizedServerId = serverId?.trim() ?? "";
+  const client = useHostRuntimeClient(normalizedServerId);
+  const isConnected = useHostRuntimeIsConnected(normalizedServerId);
+  const mergeWorkspaces = useSessionStore((state) => state.mergeWorkspaces);
+  const setHasHydratedWorkspaces = useSessionStore((state) => state.setHasHydratedWorkspaces);
+
+  return useCallback(
+    async (path: string) =>
+      addExistingWorkspaceDirectly({
+        serverId: normalizedServerId,
+        workspacePath: path,
+        isConnected,
+        client,
+        mergeWorkspaces,
+        setHasHydratedWorkspaces,
+      }),
+    [client, isConnected, mergeWorkspaces, normalizedServerId, setHasHydratedWorkspaces],
+  );
+}
 
 export function useOpenProject(
   serverId: string | null,

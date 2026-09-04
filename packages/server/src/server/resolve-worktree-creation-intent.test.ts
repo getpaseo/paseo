@@ -127,14 +127,19 @@ describe("resolveWorktreeCreationIntent", () => {
     expect(deps.headRefLookups).toEqual([]);
   });
 
-  test("checks out an explicit branch target", async () => {
+  test.each([
+    ["dev", "dev", false],
+    ["refs/heads/dev", "dev", true],
+    ["refs/remotes/origin/dev", "dev", true],
+  ])("checks out an explicit branch target from %s", async (refName, branchName, exactBranch) => {
     const deps = createResolverHarness();
 
     await expect(
-      resolveWorktreeCreationIntent({ action: "checkout", refName: "dev" }, repoRoot, deps),
+      resolveWorktreeCreationIntent({ action: "checkout", refName }, repoRoot, deps),
     ).resolves.toEqual({
       kind: "checkout-branch",
-      branchName: "dev",
+      branchName,
+      ...(exactBranch ? { exactBranch: true } : {}),
     });
     expect(deps.headRefLookups).toEqual([]);
   });

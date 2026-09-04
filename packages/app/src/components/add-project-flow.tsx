@@ -41,6 +41,7 @@ import {
   moveAddProjectSelection,
   openAddProjectFlow,
   openDirectorySearchPage,
+  openExistingWorkspaceSearchPage,
   openGithubLocationPage,
   openGithubSearchPage,
   openNewDirectoryNamePage,
@@ -77,7 +78,11 @@ import { pickDirectory } from "@/desktop/pick-directory";
 import { useFetchQuery } from "@/data/query";
 import { getOpenProjectFailureReason, registerProjectDescriptor } from "@/hooks/open-project";
 import { useIsLocalDaemon, useLocalDaemonServerId } from "@/hooks/use-is-local-daemon";
-import { useCloneGithubProject, useOpenProject } from "@/hooks/use-open-project";
+import {
+  useAddExistingWorkspace,
+  useCloneGithubProject,
+  useOpenProject,
+} from "@/hooks/use-open-project";
 import {
   OverlayLayerProvider,
   useGlobalWebOverlayLayer,
@@ -90,11 +95,13 @@ import {
 } from "@/runtime/host-runtime";
 import { useHostFeatureMap } from "@/runtime/host-features";
 import { useSessionStore } from "@/stores/session-store";
+import { navigateToWorkspace } from "@/stores/navigation-active-workspace-store";
 import { useRecommendedProjectPaths } from "@/stores/session-store-hooks";
 import type { AddProjectFlowRequest } from "@/stores/add-project-flow-store";
 import type { Theme } from "@/styles/theme";
 import { shortenPath } from "@/utils/shorten-path";
 import { buildNewWorkspaceRoute, buildSettingsAddHostRoute } from "@/utils/host-routes";
+import { normalizeWorkspacePath } from "@/utils/workspace-identity";
 
 interface AddProjectFlowProps {
   request: AddProjectFlowRequest;
@@ -162,6 +169,7 @@ function FlowBackButton({ onPress }: { onPress: () => void }) {
 
 function methodIcon(method: AddProjectMethodId): FlowRowOption["icon"] {
   if (method === "github") return Github;
+  if (method === "existing-workspace") return FolderOpen;
   if (method === "browse") return FolderOpen;
   if (method === "new-directory") return FolderPlus;
   return Search;
@@ -176,6 +184,7 @@ function directoryOptionSubtitle(option: ProjectPickerOption, shortPath: string)
 function progressText(page: AddProjectPage): string {
   if (page.kind === "github-location") return "Cloning project...";
   if (page.kind === "new-directory-name") return "Creating directory...";
+  if (page.kind === "workspace-search") return "Adding workspace...";
   return "Adding project...";
 }
 
@@ -214,6 +223,8 @@ function pageTitle(page: AddProjectPage): string {
       return "Add project";
     case "directory-search":
       return "Search for directory";
+    case "workspace-search":
+      return "Add existing workspace";
     case "github-search":
       return "Clone from GitHub";
     case "github-location":
@@ -233,6 +244,8 @@ function pagePlaceholder(page: AddProjectInputPage): string {
       return "Search hosts...";
     case "directory-search":
       return "Search directories or enter a path...";
+    case "workspace-search":
+      return "Search workspaces or enter a path...";
     case "github-search":
       return "Search or enter a GitHub repository...";
     case "github-location":
@@ -373,7 +386,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   const openProject = useOpenProject(hostId);
   const cloneGithubProject = useCloneGithubProject(hostId);
   const upsertProject = useSessionStore((store) => store.upsertProject);
+  const sessionWorkspaces = useSessionStore((store) => store.sessions[hostId ?? ""]?.workspaces);
   const setHasHydratedWorkspaces = useSessionStore((store) => store.setHasHydratedWorkspaces);
+  const addExistingWorkspace = useAddExistingWorkspace(hostId);
   const inputRef = useRef<EditingTextInputHandle>(null);
   const submissionInFlightRef = useRef(false);
   const browseInFlightRef = useRef(false);
@@ -401,6 +416,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
 
   const searchesDirectories =
     page.kind === "directory-search" ||
+    page.kind === "workspace-search" ||
     page.kind === "github-location" ||
     page.kind === "new-directory-parent";
   const directoryQuery = useFetchQuery({
@@ -495,6 +511,44 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     [hostId, openNewWorkspaceForProject, openProject],
   );
 
+  const openExistingWorkspace = useCallback(
+    async (path: string) => {
+      if (!hostId || !client || submissionInFlightRef.current) return;
+      submissionInFlightRef.current = true;
+      setState((current) =>
+        setPageStatus(current, "workspace-search", { isSubmitting: true, error: null }),
+      );
+      try {
+        const normalizedPath = normalizeWorkspacePath(path);
+        const existingWorkspace = normalizedPath
+          ? Array.from(sessionWorkspaces?.values() ?? []).find(
+              (workspace) => workspace.workspaceDirectory === normalizedPath,
+            )
+          : null;
+        if (existingWorkspace) {
+          onClose();
+          navigateToWorkspace({ serverId: hostId, workspaceId: existingWorkspace.id });
+          return;
+        }
+
+        const result = await addExistingWorkspace(path);
+        if (!result.ok) throw new Error(result.error ?? "Unable to add existing workspace");
+        onClose();
+        navigateToWorkspace({ serverId: hostId, workspaceId: result.workspace.id });
+      } catch (error) {
+        setState((current) =>
+          setPageStatus(current, "workspace-search", {
+            isSubmitting: false,
+            error: error instanceof Error ? error.message : "Unable to add existing workspace",
+          }),
+        );
+      } finally {
+        submissionInFlightRef.current = false;
+      }
+    },
+    [addExistingWorkspace, client, hostId, onClose, sessionWorkspaces],
+  );
+
   const browse = useCallback(async () => {
     if (!hostId || !isLocalDaemon || browseInFlightRef.current) return;
     browseInFlightRef.current = true;
@@ -515,6 +569,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       if (!hostId) return;
       if (method === "directory-search") {
         setState((current) => openDirectorySearchPage(current, hostId));
+      } else if (method === "existing-workspace") {
+        setState((current) => openExistingWorkspaceSearchPage(current, hostId));
       } else if (method === "browse") {
         void browse();
       } else if (method === "github") {
@@ -628,6 +684,19 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         };
       });
     }
+    if (page.kind === "workspace-search") {
+      return pathOptions.map((option) => {
+        const shortPath = shortenPath(option.path);
+        return {
+          id: option.path,
+          title: shortPath,
+          subtitle: directoryOptionSubtitle(option, shortPath),
+          icon: FolderOpen,
+          testID: `add-existing-workspace-flow-path-${encodeURIComponent(option.path)}`,
+          select: () => void openExistingWorkspace(option.path),
+        };
+      });
+    }
     if (page.kind === "github-search") {
       const search = githubQuery.data?.query === page.query ? githubQuery.data.payload : null;
       const repositories = search?.repositories ?? [];
@@ -701,6 +770,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     page,
     pathOptions,
     recommendedPaths,
+    openExistingWorkspace,
     selectMethod,
     state.hosts,
   ]);

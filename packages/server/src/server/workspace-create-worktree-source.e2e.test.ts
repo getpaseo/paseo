@@ -48,7 +48,7 @@ test("workspace.create worktree source forwards action=checkout + refName into t
         kind: "worktree",
         cwd: repoDir,
         action: "checkout",
-        refName: "feature/existing-branch",
+        refName: "refs/heads/feature/existing-branch",
       },
     });
 
@@ -57,6 +57,37 @@ test("workspace.create worktree source forwards action=checkout + refName into t
     // slug instead of checking out the named branch. The created worktree being
     // on feature/existing-branch is the observable proof both fields forwarded.
     expect(result.workspace?.gitRuntime?.currentBranch).toBe("feature/existing-branch");
+  } finally {
+    await client.close().catch(() => undefined);
+    await daemon.close();
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+}, 180000);
+
+test("workspace.create does not replace an occupied exact branch with a suffixed branch", async () => {
+  const daemon = await createTestPaseoDaemon();
+  const { repoDir, tempRoot } = createGitRepoWithBranch();
+  const client = new DaemonClient({
+    url: `ws://127.0.0.1:${daemon.port}/ws`,
+    appVersion: "0.1.82",
+  });
+
+  try {
+    await client.connect();
+
+    const result = await client.createWorkspace({
+      source: {
+        kind: "worktree",
+        cwd: repoDir,
+        action: "checkout",
+        refName: "refs/heads/main",
+      },
+    });
+
+    expect(result).toMatchObject({
+      workspace: null,
+      error: "Branch already checked out: main",
+    });
   } finally {
     await client.close().catch(() => undefined);
     await daemon.close();

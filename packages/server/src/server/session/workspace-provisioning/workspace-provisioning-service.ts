@@ -54,6 +54,7 @@ export interface WorkspaceProvisioningService {
     operation: (workspace: PersistedWorkspaceRecord) => Promise<T>,
   ): Promise<ImportWorkspaceResult<T>>;
   findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord>;
+  findActiveWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord | null>;
   resolveOrCreateWorkspaceIdForCreateAgent(input: ResolveOrCreateWorkspaceIdInput): Promise<string>;
   createWorkspaceForDirectory(
     cwd: string,
@@ -295,6 +296,24 @@ export function createWorkspaceProvisioningService(deps: {
     return refreshProjectKind(project);
   }
 
+  async function findActiveWorkspaceForDirectory(
+    cwd: string,
+  ): Promise<PersistedWorkspaceRecord | null> {
+    const normalizedCwd = resolve(cwd);
+    const workspaces = await workspaceRegistry.list();
+    const matches = workspaces.filter(
+      (workspace) =>
+        !workspace.archivedAt && createRealpathAwarePathMatcher(workspace.cwd)(normalizedCwd),
+    );
+    return (
+      matches.sort(
+        (left, right) =>
+          Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
+          left.workspaceId.localeCompare(right.workspaceId),
+      )[0] ?? null
+    );
+  }
+
   async function findOrCreateWorkspaceForDirectory(cwd: string): Promise<PersistedWorkspaceRecord> {
     const normalizedCwd = resolve(cwd);
     const workspaces = await workspaceRegistry.list();
@@ -454,6 +473,7 @@ export function createWorkspaceProvisioningService(deps: {
   return {
     runInImportWorkspace,
     findOrCreateWorkspaceForDirectory,
+    findActiveWorkspaceForDirectory,
     resolveOrCreateWorkspaceIdForCreateAgent,
     createWorkspaceForDirectory,
     createWorkspaceForWorktree,

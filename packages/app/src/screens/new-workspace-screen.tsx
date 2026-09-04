@@ -96,6 +96,8 @@ import {
   remapDraftCwdToWorkspace,
 } from "./new-workspace-fork-context";
 import {
+  branchPickerOptionId,
+  buildAvailableWorktreeBranchItems,
   buildPickerOptionData,
   defaultBasePickerItem,
   pickerItemLabel,
@@ -105,6 +107,11 @@ import {
   type PickerItem,
   type PickerOptionData,
 } from "./new-workspace-picker-item";
+import {
+  buildWorktreeCheckoutRequest,
+  resolveWorktreeSourceMode,
+  type WorktreeSourceMode,
+} from "./new-workspace-worktree-source";
 import {
   clearPickerPrAttachmentForTargetChange,
   initialPickerSelectionState,
@@ -659,6 +666,53 @@ function IsolationPickerTrigger({
             ) : (
               <Folder size={iconSize} color={iconColor} />
             )}
+          </View>
+          <Text style={styles.badgeText} numberOfLines={1}>
+            {label}
+          </Text>
+        </ComboboxTrigger>
+      </TooltipTrigger>
+      <TooltipContent side="top" align="center" offset={8}>
+        <Text style={styles.tooltipText}>{tooltipLabel}</Text>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function WorktreeSourcePickerTrigger({
+  pickerAnchorRef,
+  onPress,
+  disabled,
+  badgePressableStyle,
+  label,
+  tooltipLabel,
+  iconColor,
+  iconSize,
+}: {
+  pickerAnchorRef: React.RefObject<View | null>;
+  onPress: () => void;
+  disabled: boolean;
+  badgePressableStyle: React.ComponentProps<typeof Pressable>["style"];
+  label: string;
+  tooltipLabel: string;
+  iconColor: string;
+  iconSize: number;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild triggerRefProp="ref">
+        <ComboboxTrigger
+          chevron={metaChevron}
+          ref={pickerAnchorRef}
+          testID="workspace-create-worktree-source-trigger"
+          onPress={onPress}
+          disabled={disabled}
+          style={badgePressableStyle}
+          accessibilityRole="button"
+          accessibilityLabel="Worktree source"
+        >
+          <View style={styles.badgeIconBox}>
+            <GitBranch size={iconSize} color={iconColor} />
           </View>
           <Text style={styles.badgeText} numberOfLines={1}>
             {label}
@@ -1317,10 +1371,18 @@ interface NewWorkspaceFormStackInput {
     renderOption: RefPickerRenderOption;
     canCreateWorktree: boolean;
   };
+  worktreeSource: FormPickerControl & {
+    mode: WorktreeSourceMode;
+    options: ComboboxOptionType[];
+    onSelect: (id: string) => void;
+    renderOption: RefPickerRenderOption;
+    show: boolean;
+  };
   base: FormPickerControl & {
     selectedSourceDirectory: string | null;
     selectedItem: PickerItem | null;
     triggerLabel: string;
+    title: string;
     options: ComboboxOptionType[];
     selectedOptionId: string;
     onSelect: (id: string) => void;
@@ -1338,15 +1400,18 @@ interface NewWorkspaceFormStackInput {
   };
 }
 
+// eslint-disable-next-line complexity -- this hook keeps the compact and desktop form layouts aligned.
 function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactElement {
   const { theme } = useUnistyles();
   const { t } = useTranslation();
-  const { isCompact, isPending, project, host, isolation, base, launch } = input;
+  const { isCompact, isPending, project, host, isolation, worktreeSource, base, launch } = input;
 
   const selectedHostLabel =
     host.allHosts.find((h) => h.serverId === host.selectedServerId)?.label ?? "Host";
   const showHostControl = host.allHosts.length > 1;
   const isolationTriggerLabel = isolationLabel(t, isolation.effectiveIsolation);
+  const worktreeSourceTriggerLabel =
+    worktreeSource.mode === "existing-branch" ? "Existing branch" : "New branch";
   const addProjectAction = useMemo(
     () => <AddProjectPickerAction onPress={project.onAddProject} />,
     [project.onAddProject],
@@ -1471,6 +1536,32 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
     </View>
   ) : null;
 
+  const worktreeSourceControl = worktreeSource.show ? (
+    <View style={desktopControlStyle}>
+      <WorktreeSourcePickerTrigger
+        pickerAnchorRef={worktreeSource.anchorRef}
+        onPress={worktreeSource.open}
+        disabled={isPending}
+        badgePressableStyle={badgePressableStyle}
+        label={worktreeSourceTriggerLabel}
+        tooltipLabel="Choose how to create the worktree"
+        iconColor={theme.colors.foregroundMuted}
+        iconSize={theme.iconSize.sm}
+      />
+      <Combobox
+        options={worktreeSource.options}
+        value={worktreeSource.mode}
+        onSelect={worktreeSource.onSelect}
+        title="Worktree source"
+        open={worktreeSource.openState}
+        onOpenChange={worktreeSource.onOpenChange}
+        desktopPlacement="bottom-start"
+        anchorRef={worktreeSource.anchorRef}
+        renderOption={worktreeSource.renderOption}
+      />
+    </View>
+  ) : null;
+
   const baseControl = base.showRefPicker ? (
     <View style={desktopControlStyle}>
       <RefPickerTrigger
@@ -1480,8 +1571,8 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         badgePressableStyle={badgePressableStyle}
         selectedItem={base.selectedItem}
         triggerLabel={base.triggerLabel}
-        accessibilityLabel={t("newWorkspace.refPicker.startingRef")}
-        tooltipLabel={t("newWorkspace.tooltips.startingRef")}
+        accessibilityLabel={base.title}
+        tooltipLabel={base.title}
         iconColor={theme.colors.foregroundMuted}
         iconSize={theme.iconSize.sm}
       />
@@ -1491,7 +1582,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
         onSelect={base.onSelect}
         searchable
         searchPlaceholder={t("newWorkspace.refPicker.searchPlaceholder")}
-        title={t("newWorkspace.refPicker.title")}
+        title={base.title}
         open={base.openState}
         onOpenChange={base.onOpenChange}
         onSearchQueryChange={base.setSearchQuery}
@@ -1519,6 +1610,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       <FormRow>{projectControl}</FormRow>
       {hostControl ? <FormRow>{hostControl}</FormRow> : null}
       {isolationControl ? <FormRow>{isolationControl}</FormRow> : null}
+      {worktreeSourceControl ? <FormRow>{worktreeSourceControl}</FormRow> : null}
       {baseControl ? <FormRow>{baseControl}</FormRow> : null}
       <FormRow>{launchControl}</FormRow>
       {/* Keep fixed stack height without separating the visible controls. */}
@@ -1530,6 +1622,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
       {projectControl}
       {hostControl}
       {isolationControl}
+      {worktreeSourceControl}
       {baseControl}
       <View style={styles.launchSpacer} />
       {launchControl}
@@ -1537,6 +1630,7 @@ function useNewWorkspaceFormStack(input: NewWorkspaceFormStackInput): ReactEleme
   );
 }
 
+// eslint-disable-next-line complexity -- this screen coordinates the workspace creation flows.
 export function NewWorkspaceScreen({
   serverId,
   sourceDirectory: sourceDirectoryProp,
@@ -1570,6 +1664,13 @@ export function NewWorkspaceScreen({
   });
   // COMPAT(workspaceMultiplicity): added in v0.1.97, drop the gate when floor >= v0.1.97
   const supportsWorkspaceMultiplicity = useHostFeature(selectedServerId, "workspaceMultiplicity");
+  // COMPAT(workspaceCreateExistingBranch): added in v0.5.0, remove gate after 2027-02-20.
+  // Older hosts may support multiple workspaces without promising that workspace creation honors
+  // action="checkout" and refName. Gate that intent once here instead of version-checking callers.
+  const supportsWorkspaceCreateExistingBranch = useHostFeature(
+    selectedServerId,
+    "workspaceCreateExistingBranch",
+  );
   const supportsForgeSearch = useHostFeature(selectedServerId, "forgeSearch");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createdWorkspace, setCreatedWorkspace] = useState<ReturnType<
@@ -1580,11 +1681,18 @@ export function NewWorkspaceScreen({
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const openAddProjectPicker = useOpenAddProject();
   const [isolationPickerOpen, setIsolationPickerOpen] = useState(false);
+  const [worktreeSourcePickerOpen, setWorktreeSourcePickerOpen] = useState(false);
+  const [worktreeSourceMode, setWorktreeSourceMode] = useState<WorktreeSourceMode>("new-branch");
+  const effectiveWorktreeSourceMode = resolveWorktreeSourceMode(
+    worktreeSourceMode,
+    supportsWorkspaceCreateExistingBranch,
+  );
   const [pickerSearchQuery, setPickerSearchQuery] = useState("");
   const [debouncedPickerSearchQuery, setDebouncedPickerSearchQuery] = useState("");
   const pickerAnchorRef = useRef<View>(null);
   const projectPickerAnchorRef = useRef<View>(null);
   const isolationPickerAnchorRef = useRef<View>(null);
+  const worktreeSourcePickerAnchorRef = useRef<View>(null);
   const hostPickerAnchorRef = useRef<View | null>(null);
   const isDraftHandoffActive = useIsNewWorkspaceDraftHandoffActive({ draftId, selectedServerId });
 
@@ -1774,18 +1882,59 @@ export function NewWorkspaceScreen({
       }),
     [baseItem, branchDetails, prItems],
   );
+  const worktreeSourceOptions = useMemo<ComboboxOptionType[]>(
+    () => [
+      { id: "new-branch", label: "New branch" },
+      { id: "existing-branch", label: "Existing branch" },
+    ],
+    [],
+  );
+  const worktreeBranchItems = useMemo(
+    () => buildAvailableWorktreeBranchItems(branchDetails),
+    [branchDetails],
+  );
+  const worktreeBranchItemById = useMemo(
+    () => new Map(worktreeBranchItems.map((item) => [branchPickerOptionId(item.refName), item])),
+    [worktreeBranchItems],
+  );
+  const worktreeBranchOptions = useMemo(
+    () =>
+      worktreeBranchItems.map((item) => ({
+        id: branchPickerOptionId(item.refName),
+        label: pickerItemLabel(item),
+      })),
+    [worktreeBranchItems],
+  );
+  const defaultBranchItem = worktreeBranchItems[0] ?? null;
+  const selectedWorktreeItem = useMemo(() => {
+    if (effectiveWorktreeSourceMode !== "existing-branch") return selectedItem ?? baseItem;
+    if (selectedItem?.kind === "branch") return selectedItem;
+    return defaultBranchItem;
+  }, [baseItem, defaultBranchItem, effectiveWorktreeSourceMode, selectedItem]);
+  const selectedWorktreeOptionId = useMemo(() => {
+    if (!selectedWorktreeItem) return "";
+    if (selectedWorktreeItem.kind === "branch") {
+      return branchPickerOptionId(selectedWorktreeItem.refName);
+    }
+    return selectedOptionId;
+  }, [selectedOptionId, selectedWorktreeItem]);
+  const worktreeBranchTriggerLabel = selectedWorktreeItem
+    ? pickerItemLabel(selectedWorktreeItem)
+    : "Choose branch";
   const triggerLabel = useMemo(() => {
     const displayItem = itemById.get(selectedOptionId);
     return displayItem ? pickerItemLabel(displayItem) : "main";
   }, [itemById, selectedOptionId]);
   const selectPickerItem = useCallback(
-    (item: PickerItem) => {
+    (item: PickerItem | null) => {
       const nextAttachments = syncPickerPrAttachment({
         attachments: chatDraft.attachments,
         item,
       });
 
-      dispatchPickerSelection({ type: "picker-selected", item });
+      dispatchPickerSelection(
+        item ? { type: "picker-selected", item } : { type: "target-changed" },
+      );
       chatDraft.setAttachments(nextAttachments);
       setPickerOpen(false);
     },
@@ -1794,11 +1943,27 @@ export function NewWorkspaceScreen({
 
   const handleSelectOption = useCallback(
     (id: string) => {
-      const item = itemById.get(id);
+      const item =
+        effectiveWorktreeSourceMode === "existing-branch"
+          ? worktreeBranchItemById.get(id)
+          : itemById.get(id);
       if (!item) return;
       selectPickerItem(item);
     },
-    [itemById, selectPickerItem],
+    [effectiveWorktreeSourceMode, itemById, selectPickerItem, worktreeBranchItemById],
+  );
+
+  const handleSelectWorktreeSourceMode = useCallback(
+    (id: string) => {
+      const nextMode: WorktreeSourceMode =
+        id === "existing-branch" ? "existing-branch" : "new-branch";
+      setWorktreeSourceMode(nextMode);
+      setWorktreeSourcePickerOpen(false);
+      if (nextMode === "existing-branch") {
+        selectPickerItem(defaultBranchItem);
+      }
+    },
+    [defaultBranchItem, selectPickerItem],
   );
 
   const clearPickerSelectionForTargetChange = useCallback(
@@ -1987,11 +2152,19 @@ export function NewWorkspaceScreen({
             cwd: selectedSourceDirectory,
           })
         : null;
-      const checkoutRequest = checkoutStatusForCreate
-        ? pickerItemToCheckoutRequest(
+      let checkoutRequest: PickerCheckoutRequest | undefined;
+      if (checkoutStatusForCreate) {
+        if (effectiveWorktreeSourceMode === "existing-branch") {
+          checkoutRequest = buildWorktreeCheckoutRequest({
+            mode: effectiveWorktreeSourceMode,
+            item: selectedWorktreeItem,
+          });
+        } else {
+          checkoutRequest = pickerItemToCheckoutRequest(
             selectedItem ?? defaultBasePickerItem(checkoutStatusForCreate),
-          )
-        : undefined;
+          );
+        }
+      }
       const normalizedWorkspace = supportsWorkspaceMultiplicity
         ? await createMultiplicityWorkspace({
             client: connectedClient,
@@ -2023,12 +2196,14 @@ export function NewWorkspaceScreen({
       mergeWorkspaces,
       queryClient,
       selectedItem,
+      selectedWorktreeItem,
       selectedProject,
       selectedServerId,
       selectedSourceDirectory,
       supportsWorkspaceMultiplicity,
       t,
       withConnectedClient,
+      effectiveWorktreeSourceMode,
     ],
   );
 
@@ -2147,6 +2322,27 @@ export function NewWorkspaceScreen({
     [isPending, itemById],
   );
 
+  const renderWorktreeSourceOption = useCallback(
+    (props: {
+      option: ComboboxOptionType;
+      selected: boolean;
+      active: boolean;
+      onPress: () => void;
+    }) => (
+      <IsolationOptionItem
+        optionId="worktree"
+        label={props.option.label}
+        selected={props.selected}
+        active={props.active}
+        disabled={isPending}
+        onPress={props.onPress}
+        iconColor={theme.colors.foregroundMuted}
+        iconSize={theme.iconSize.sm}
+      />
+    ),
+    [isPending, theme.colors.foregroundMuted, theme.iconSize.sm],
+  );
+
   const renderProjectOption = useCallback(
     (props: {
       option: ComboboxOptionType;
@@ -2230,19 +2426,40 @@ export function NewWorkspaceScreen({
       renderOption: renderIsolationOption,
       canCreateWorktree,
     },
+    worktreeSource: {
+      anchorRef: worktreeSourcePickerAnchorRef,
+      open: () => setWorktreeSourcePickerOpen(true),
+      mode: effectiveWorktreeSourceMode,
+      options: worktreeSourceOptions,
+      onSelect: handleSelectWorktreeSourceMode,
+      openState: worktreeSourcePickerOpen,
+      onOpenChange: setWorktreeSourcePickerOpen,
+      renderOption: renderWorktreeSourceOption,
+      show: showRefPicker && supportsWorkspaceCreateExistingBranch,
+    },
     base: {
       anchorRef: pickerAnchorRef,
       open: openPicker,
       selectedSourceDirectory,
-      selectedItem,
-      triggerLabel,
-      options,
-      selectedOptionId,
+      selectedItem: selectedWorktreeItem,
+      triggerLabel:
+        effectiveWorktreeSourceMode === "existing-branch"
+          ? worktreeBranchTriggerLabel
+          : triggerLabel,
+      title: effectiveWorktreeSourceMode === "existing-branch" ? "Branch" : "Base branch",
+      options: effectiveWorktreeSourceMode === "existing-branch" ? worktreeBranchOptions : options,
+      selectedOptionId:
+        effectiveWorktreeSourceMode === "existing-branch"
+          ? selectedWorktreeOptionId
+          : selectedOptionId,
       onSelect: handleSelectOption,
       openState: pickerOpen,
       onOpenChange: handlePickerOpenChange,
       setSearchQuery: setPickerSearchQuery,
-      emptyText: pickerEmptyText,
+      emptyText:
+        effectiveWorktreeSourceMode === "existing-branch" && !branchSuggestionsQuery.isFetching
+          ? "No available local branches."
+          : pickerEmptyText,
       renderOption: renderPickerOption,
       showRefPicker,
     },
