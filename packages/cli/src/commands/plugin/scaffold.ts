@@ -40,6 +40,7 @@ const SDK_DECLARATIONS = `declare module "@getpaseo/plugin/server" {
 
   export interface PluginHandlerContext {
     paseo: PaseoPluginApi;
+    readonly signal: AbortSignal;
   }
 
   export interface PluginToolHandlerContext {

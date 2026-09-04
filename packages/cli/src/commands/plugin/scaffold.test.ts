@@ -40,6 +40,9 @@ describe("plugin scaffold", () => {
     await expect(readFile(path.join(directory, "main.client.tsx"), "utf8")).resolves.toContain(
       "Hello from my plugin",
     );
+    await expect(readFile(path.join(directory, "paseo-plugin.d.ts"), "utf8")).resolves.toContain(
+      "readonly signal: AbortSignal;",
+    );
     await expect(readFile(path.join(directory, "tool.server.ts"), "utf8")).resolves.toContain(
       "defineTool",
     );
@@ -71,8 +74,9 @@ import { inspect } from "./inspect.shared";
 
 export async function inspectConfig(
   _input: ZodOutput<typeof inspect.input>,
-  { paseo }: PluginHandlerContext,
+  { paseo, signal }: PluginHandlerContext,
 ) {
+  signal.addEventListener("abort", () => undefined);
   return { configured: Boolean((await paseo.config.get()).config) };
 }
 `,

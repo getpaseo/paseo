@@ -941,6 +941,7 @@ export class PluginRuntime {
   ): Promise<unknown> {
     const kind = options.kind ?? "rpc";
     const requestId = randomUUID();
+    const validatedRequest = validatePluginProcessRequest({ ...request, requestId });
     return new Promise((resolve, reject) => {
       if (options.signal?.aborted) {
         reject(
@@ -987,7 +988,7 @@ export class PluginRuntime {
         );
       };
       options.signal?.addEventListener("abort", abort, { once: true });
-      void send(loaded.child, { ...request, requestId } as PluginProcessRequest).catch((error) => {
+      void send(loaded.child, validatedRequest).catch((error) => {
         if (loaded.pending.get(requestId) !== pending) return;
         this.quarantinePlugin(loaded, `Plugin request delivery failed: ${describeError(error)}`);
       });

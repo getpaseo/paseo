@@ -7,8 +7,14 @@ import pino from "pino";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PluginRuntime } from "./runtime.js";
 import type { PluginSessionSocket } from "./session-socket.js";
-import { PLUGIN_TOOL_MAX_UPDATE_COUNT } from "./plugin-tool.js";
-import type { PluginToolCatalogEntry } from "./plugin-process-protocol.js";
+import {
+  PLUGIN_TOOL_MAX_CONCURRENT_PER_PLUGIN,
+  PLUGIN_TOOL_MAX_UPDATE_COUNT,
+} from "./plugin-tool.js";
+import {
+  MAX_PLUGIN_PROCESS_MESSAGE_BYTES,
+  type PluginToolCatalogEntry,
+} from "./plugin-process-protocol.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -1040,6 +1046,71 @@ export default function contribute(plugin: any) {
     }
     await expect(Promise.all([replacement, ...calls.slice(1)])).resolves.toHaveLength(8);
     await runtime.stopAll();
+  });
+
+  it("rejects oversized caller contexts before occupying tool admission slots", async () => {
+    vi.useFakeTimers();
+    try {
+      const directory = await createPlugin(
+        "oversized-context",
+        `export default function contribute(plugin: any) { void plugin; return () => undefined; }`,
+      );
+      const child = createReloadChild("oversized-context", [], [], false, fakeToolCatalog);
+      const requestIds: string[] = [];
+      const originalSend = child.send.bind(child);
+      child.send = (message, callback) => {
+        if (message.type === "tool_invoke") {
+          requestIds.push((message as { requestId: string }).requestId);
+        }
+        return originalSend(message, callback);
+      };
+      let useOversizedContext = true;
+      const runtime = createTestRuntime({
+        spawnChild: () => child,
+        resolveToolContext: async (callerAgentId) => ({
+          callerAgentId,
+          agent: useOversizedContext
+            ? { oversized: "x".repeat(MAX_PLUGIN_PROCESS_MESSAGE_BYTES) }
+            : null,
+          workspace: null,
+        }),
+      });
+      await runtime.startPlugin("oversized-context", directory);
+
+      const oversizedCalls = Array.from({ length: PLUGIN_TOOL_MAX_CONCURRENT_PER_PLUGIN }, () =>
+        runtime.invokeTool("oversized-context", "acme.wait", {}, { callerAgentId: "agent-1" }),
+      );
+      await expect(Promise.allSettled(oversizedCalls)).resolves.toEqual(
+        Array.from({ length: PLUGIN_TOOL_MAX_CONCURRENT_PER_PLUGIN }, () =>
+          expect.objectContaining({
+            status: "rejected",
+            reason: expect.objectContaining({
+              message: expect.stringContaining("exceeds the IPC size limit"),
+            }),
+          }),
+        ),
+      );
+      expect(requestIds).toEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+
+      useOversizedContext = false;
+      const validCalls = Array.from({ length: PLUGIN_TOOL_MAX_CONCURRENT_PER_PLUGIN }, () =>
+        runtime.invokeTool("oversized-context", "acme.wait", {}, { callerAgentId: "agent-1" }),
+      );
+      await vi.waitFor(() =>
+        expect(requestIds).toHaveLength(PLUGIN_TOOL_MAX_CONCURRENT_PER_PLUGIN),
+      );
+      for (const requestId of requestIds) {
+        child.emit("message", { type: "tool_result", requestId, output: { ok: true } });
+      }
+      await expect(Promise.all(validCalls)).resolves.toHaveLength(
+        PLUGIN_TOOL_MAX_CONCURRENT_PER_PLUGIN,
+      );
+      expect(vi.getTimerCount()).toBe(0);
+      await runtime.stopAll();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("quarantines a child that forges more than the host progress bound", async () => {
