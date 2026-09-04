@@ -90,6 +90,7 @@ export interface Agent {
   lastUsage?: AgentUsage;
   lastError?: string | null;
   title: string | null;
+  summary?: string | null;
   cwd: string;
   workspaceId?: string;
   model: string | null;
@@ -1923,6 +1924,7 @@ export const useSessionStore = create<SessionStore>()(
             id: agent.id,
             serverId,
             title: agent.title ?? null,
+            summary: agent.summary ?? null,
             status: agent.status,
             lastActivityAt,
             cwd: agent.cwd,

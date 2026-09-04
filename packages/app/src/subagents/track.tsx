@@ -202,14 +202,33 @@ function SubagentsTrackRow({
     ({ active }: { active: boolean }) => (
       <>
         <WorkspaceTabIcon presentation={presentation} backdrop={active ? "surface2" : "surface1"} />
-        <Text style={styles.rowLabel} numberOfLines={1}>
-          {displayLabel}
-        </Text>
-        {presentation.subtitle ? (
-          <Text style={styles.rowTrailing} numberOfLines={1}>
-            {presentation.subtitle}
-          </Text>
-        ) : null}
+        {row.kind === "paseo" ? (
+          <View style={styles.managedRowText}>
+            <Text style={styles.managedRowLabel} numberOfLines={1}>
+              {displayLabel}
+            </Text>
+            {presentation.subtitle ? (
+              <Text
+                style={styles.managedRowSummary}
+                numberOfLines={1}
+                testID={`subagents-track-summary-${row.id}`}
+              >
+                {presentation.subtitle}
+              </Text>
+            ) : null}
+          </View>
+        ) : (
+          <>
+            <Text style={styles.rowLabel} numberOfLines={1}>
+              {displayLabel}
+            </Text>
+            {presentation.subtitle ? (
+              <Text style={styles.rowTrailing} numberOfLines={1}>
+                {presentation.subtitle}
+              </Text>
+            ) : null}
+          </>
+        )}
         {row.kind === "paseo" ? (
           <SubagentRowActions
             rowId={row.id}
@@ -332,6 +351,19 @@ function SubagentActionButton({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  managedRowText: {
+    flex: 1,
+    minWidth: 0,
+    gap: 1,
+  },
+  managedRowLabel: {
+    fontSize: theme.fontSize.base,
+    color: theme.colors.foreground,
+  },
+  managedRowSummary: {
+    fontSize: theme.fontSize.sm,
+    color: theme.colors.foregroundMuted,
+  },
   // `flexBasis: "auto"` rather than `flex: 1`: a zero-basis label contributes nothing to the row's
   // intrinsic width, so the panel measures itself at its floor and truncates every label at once.
   rowLabel: {

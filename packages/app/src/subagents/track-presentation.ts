@@ -23,11 +23,13 @@ export interface SubagentRowPresentationData {
 export function buildSubagentRowPresentationData(row: SubagentRow): SubagentRowPresentationData {
   // The task distinguishes siblings in a fan-out, so it names the row when present. Providers
   // own the compact secondary context because model, effort, and usage semantics differ.
-  const description = resolveRowLabel(row.description);
+  const description = row.kind === "provider" ? resolveRowLabel(row.description) : null;
   const title = resolveRowLabel(row.title);
   const label = description ?? title;
-  const providerSubtitle = row.kind === "provider" ? resolveRowLabel(row.subtitle) : null;
-  const subtitle = providerSubtitle ?? (description ? title : null);
+  const subtitle =
+    row.kind === "paseo"
+      ? row.summary
+      : (resolveRowLabel(row.subtitle) ?? (description ? title : null));
   const status = presentationStatus(row);
   return {
     key: `${row.kind}_subagent_${row.id}`,

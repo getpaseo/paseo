@@ -109,7 +109,7 @@ function createCache(storage: MemoryStorage, maxBytes?: number): ReplicaCache {
   return cache;
 }
 
-function agent(id = "agent-1"): Agent {
+function agent(id = "agent-1", summary: string | null = null): Agent {
   return {
     ...normalizeAgentSnapshot(
       {
@@ -135,6 +135,7 @@ function agent(id = "agent-1"): Agent {
         pendingPermissions: [],
         persistence: null,
         title: "Cached agent",
+        summary,
         labels: {},
       },
       SERVER_ID,
@@ -227,6 +228,23 @@ describe("ReplicaCache", () => {
     expect(restoredDirectory.projects.get("project-1")?.projectDisplayName).toBe("Paseo");
     expect(restoredDirectory.checkpoint).toEqual({ agents: { generation: "g", afterSeq: 12 } });
     expect(restoredTimeline).toEqual(timeline());
+  });
+
+  it("preserves an agent purpose summary across a cache round-trip", async () => {
+    const storage = new MemoryStorage();
+    const summarized = agent("agent-1", "Reviewing state projections");
+    const writer = createCache(storage);
+    writer.commitDirectory(SERVER_ID, {
+      agents: new Map([[summarized.id, summarized]]),
+      workspaces: new Map(),
+      projects: new Map(),
+    });
+    await writer.flush();
+
+    const reader = createCache(storage);
+    expect((await reader.readAgent(SERVER_ID, "agent-1"))?.summary).toBe(
+      "Reviewing state projections",
+    );
   });
 
   it("never reads directory rows older than an accepted deferred deletion", async () => {

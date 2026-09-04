@@ -202,6 +202,52 @@ const SourceSchema = z.object({
     });
   });
 
+  it("preserves an agent purpose summary in generated validation", () => {
+    const result = GeneratedWSOutboundMessageSchema.safeParse({
+      type: "session",
+      message: {
+        type: "agent_update",
+        payload: {
+          kind: "upsert",
+          agent: {
+            id: "agent-summary",
+            provider: "codex",
+            cwd: "/tmp/project",
+            model: "gpt-5.6",
+            createdAt: "2026-07-30T12:00:00.000Z",
+            updatedAt: "2026-07-30T12:01:00.000Z",
+            lastUserMessageAt: "2026-07-30T12:00:30.000Z",
+            status: "running",
+            capabilities: {
+              supportsStreaming: true,
+              supportsSessionPersistence: true,
+              supportsDynamicModes: true,
+              supportsMcpServers: true,
+              supportsReasoningStream: true,
+              supportsToolInvocations: true,
+            },
+            currentModeId: null,
+            availableModes: [],
+            pendingPermissions: [],
+            persistence: null,
+            title: "Implement summaries",
+            summary: "Adding persisted rolling purpose summaries.",
+            labels: {},
+          },
+        },
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(
+      (
+        result.data as {
+          message: { payload: { agent: { summary?: string | null } } };
+        }
+      ).message.payload.agent.summary,
+    ).toBe("Adding persisted rolling purpose summaries.");
+  });
+
   it.each([
     {
       name: "dedicated attention message",

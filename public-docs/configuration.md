@@ -127,6 +127,24 @@ Or persist it in `config.json`:
 
 When enabled, open the daemon HTTP origin, for example `http://localhost:6767/`, to load the web app. Static UI files load without daemon auth; API and WebSocket requests still require the configured password.
 
+## Agent purpose summaries
+
+Paseo generates rolling one-line summaries for agents by default. Disable them in
+`config.json` when you do not want the background generation calls:
+
+```json
+{
+  "features": {
+    "agentPurposeSummaries": {
+      "enabled": false
+    }
+  }
+}
+```
+
+The `PASEO_AGENT_PURPOSE_SUMMARIES` environment variable overrides this setting
+for one daemon process. Set it to `true` or `false`.
+
 ## Logging
 
 Daemon logging uses separate console and file sinks by default:

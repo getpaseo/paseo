@@ -152,6 +152,32 @@ describe("server config", () => {
     expect(config.configReload?.overrideControlledPaths).toEqual(expected);
   });
 
+  test("disables agent purpose summaries via PASEO_AGENT_PURPOSE_SUMMARIES", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-purpose-summaries-"));
+    roots.push(paseoHome);
+
+    expect(loadConfig(paseoHome, { env: {} }).agentPurposeSummariesEnabled).toBe(true);
+    expect(
+      loadConfig(paseoHome, { env: { PASEO_AGENT_PURPOSE_SUMMARIES: "0" } })
+        .agentPurposeSummariesEnabled,
+    ).toBe(false);
+  });
+
+  test("loads the persisted agent purpose summary feature flag", async () => {
+    const paseoHome = await mkdtemp(path.join(os.tmpdir(), "paseo-config-purpose-summaries-file-"));
+    roots.push(paseoHome);
+    await writeFile(
+      path.join(paseoHome, "config.json"),
+      JSON.stringify({ features: { agentPurposeSummaries: { enabled: false } } }),
+    );
+
+    expect(loadConfig(paseoHome, { env: {} }).agentPurposeSummariesEnabled).toBe(false);
+    expect(
+      loadConfig(paseoHome, { env: { PASEO_AGENT_PURPOSE_SUMMARIES: "1" } })
+        .agentPurposeSummariesEnabled,
+    ).toBe(true);
+  });
+
   test("resolves bundled web UI path from source-tree modules", () => {
     const root = path.parse(process.cwd()).root;
     expect(

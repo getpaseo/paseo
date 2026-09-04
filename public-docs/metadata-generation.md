@@ -1,6 +1,6 @@
 ---
 title: Metadata generation
-description: How Paseo uses providers to generate branch names, commit messages, and pull request text, and how to configure them.
+description: How Paseo uses providers to generate titles, agent summaries, branch names, commit messages, and pull request text.
 nav: Metadata generation
 order: 42
 category: Configuration
@@ -8,11 +8,12 @@ category: Configuration
 
 # Metadata generation
 
-Paseo asks a language model to write short pieces of text for you so you don't have to. This is separate from the agent you're talking to: it's a small, one-shot call made in the background.
+Paseo asks a language model to write short pieces of text for you so you don't have to. This is separate from the agent you're talking to: the calls are small and run in the background.
 
 Paseo generates these kinds of metadata:
 
 - **Workspace titles** — a short, task-shaped label for a workspace, shown in the sidebar.
+- **Agent purpose summaries** — a rolling one-line description of what an agent is doing, refreshed as its work progresses.
 - **Worktree branch names** — a slug for a new worktree-isolated workspace's branch.
 - **Commit messages** — a concise message for the changes you're committing.
 - **Pull request title and body** — drafted from the diff when you open a PR.
@@ -76,9 +77,13 @@ You can steer the wording of each kind of metadata per repository with a `paseo.
     "title": { "instructions": "Keep titles to a few words, no leading verb." },
     "branchName": { "instructions": "Use the format <type>/<scope>-<short-desc>." },
     "commitMessage": { "instructions": "Follow Conventional Commits." },
-    "pullRequest": { "instructions": "Include a Testing section in the body." }
+    "pullRequest": { "instructions": "Include a Testing section in the body." },
+    "agentSummary": { "instructions": "Name the concrete outcome and current phase." }
   }
 }
 ```
 
 Each key is optional; only the ones you set are affected. Your instructions **replace** the default style for that metadata type — they are not appended to it — so your wording never competes with Paseo's defaults. The functional requirements (what to produce and the output format) always apply and cannot be overridden.
+
+To disable rolling agent purpose summaries, set `features.agentPurposeSummaries.enabled`
+to `false` in `~/.paseo/config.json`. See [daemon configuration](/docs/configuration).

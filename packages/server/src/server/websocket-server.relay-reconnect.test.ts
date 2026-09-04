@@ -1012,6 +1012,7 @@ describe("relay external socket reconnect behavior", () => {
     expect(serverInfo.features?.["terminal-size-ownership"]).toBe(true);
     expect(serverInfo.features?.agentTurnIdentity).toBeUndefined();
     expect(serverInfo.permissions).toEqual(DAEMON_PERMISSIONS);
+    expect(serverInfo.features?.agentPurposeSummary).toBe(true);
     await server.close();
   });
 

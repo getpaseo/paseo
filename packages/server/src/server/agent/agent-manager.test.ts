@@ -10466,3 +10466,117 @@ test("onWorkspaceStateMayHaveChanged is not called for running shell tool calls"
 
   expect(onWorkspaceStateMayHaveChanged).not.toHaveBeenCalled();
 });
+
+test("counts only completed turns toward the purpose summary cadence", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-summary-turns-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let capturedSession: TestAgentSession | null = null;
+
+  class LiveEventClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new LiveEventClient() },
+    registry: storage,
+    logger,
+  });
+  const snapshot = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+
+  capturedSession!.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-1" });
+  capturedSession!.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-2" });
+  await vi.waitFor(() => {
+    expect(manager.getAgent(snapshot.id)?.summaryTurnsSinceUpdate).toBe(2);
+  });
+
+  capturedSession!.pushEvent({
+    type: "turn_failed",
+    provider: "codex",
+    turnId: "turn-3",
+    error: "boom",
+  });
+  await vi.waitFor(() => {
+    expect(manager.getAgent(snapshot.id)?.lastError).toBe("boom");
+  });
+  capturedSession!.pushEvent({
+    type: "turn_canceled",
+    provider: "codex",
+    turnId: "turn-4",
+    reason: "stop",
+  });
+  await vi.waitFor(() => {
+    expect(manager.getAgent(snapshot.id)?.lastError).toBeUndefined();
+  });
+  expect(manager.getAgent(snapshot.id)?.summaryTurnsSinceUpdate).toBe(2);
+
+  await vi.waitFor(async () => {
+    expect((await storage.get(snapshot.id))?.summaryTurnsSinceUpdate).toBe(2);
+  });
+
+  capturedSession!.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-5" });
+  await vi.waitFor(() => {
+    expect(manager.getAgent(snapshot.id)?.summaryTurnsSinceUpdate).toBe(3);
+  });
+
+  expect(
+    await manager.setAgentSummary(snapshot.id, "Rejected write.", {
+      expectedPreviousSummary: "Not the current summary.",
+    }),
+  ).toBe(false);
+  expect(manager.getAgent(snapshot.id)?.summaryTurnsSinceUpdate).toBe(3);
+
+  expect(
+    await manager.setAgentSummary(snapshot.id, "Tracks the summary cadence.", {
+      expectedPreviousSummary: null,
+      consumedTurns: 2,
+    }),
+  ).toBe(true);
+  expect(manager.getAgent(snapshot.id)?.summaryTurnsSinceUpdate).toBe(1);
+
+  expect(await manager.setAgentSummary(snapshot.id, "Resets the pending turns.")).toBe(true);
+  expect(manager.getAgent(snapshot.id)?.summaryTurnsSinceUpdate).toBe(0);
+
+  await vi.waitFor(async () => {
+    expect((await storage.get(snapshot.id))?.summaryTurnsSinceUpdate).toBe(0);
+  });
+});
+
+test("does not track summary turns for internal agents", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "agent-manager-summary-internal-"));
+  const storage = new AgentStorage(join(workdir, "agents"), logger);
+  let capturedSession: TestAgentSession | null = null;
+
+  class LiveEventClient extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig): Promise<AgentSession> {
+      capturedSession = new TestAgentSession(config);
+      return capturedSession;
+    }
+  }
+
+  const manager = new AgentManager({
+    clients: { codex: new LiveEventClient() },
+    registry: storage,
+    logger,
+  });
+  const snapshot = await manager.createAgent(
+    { provider: "codex", cwd: workdir, internal: true },
+    undefined,
+    { workspaceId: undefined },
+  );
+
+  capturedSession!.pushEvent({ type: "turn_started", provider: "codex", turnId: "turn-1" });
+  await vi.waitFor(() => {
+    expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("running");
+  });
+  capturedSession!.pushEvent({ type: "turn_completed", provider: "codex", turnId: "turn-1" });
+  await vi.waitFor(() => {
+    expect(manager.getAgent(snapshot.id)?.lifecycle).toBe("idle");
+  });
+
+  expect(manager.getAgent(snapshot.id)?.summaryTurnsSinceUpdate).toBeUndefined();
+});

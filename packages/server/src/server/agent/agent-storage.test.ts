@@ -127,6 +127,10 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     persistence: overrides.persistence ?? null,
     historyPrimed: overrides.historyPrimed ?? true,
     lastUserMessageAt: overrides.lastUserMessageAt ?? core.now,
+    summary: overrides.summary ?? null,
+    summaryUpdatedAt: overrides.summaryUpdatedAt,
+    summaryCursor: overrides.summaryCursor,
+    summaryTurnsSinceUpdate: overrides.summaryTurnsSinceUpdate,
     lastUsage: overrides.lastUsage,
     lastError: overrides.lastError,
   };
@@ -214,6 +218,99 @@ describe("AgentStorage", () => {
     const persisted = await reloaded.get("agent-feature-values");
     expect(persisted?.config?.featureValues).toEqual({ fast_mode: true });
     expect(buildSessionConfig(persisted!).featureValues).toEqual({ fast_mode: true });
+  });
+
+  test("applySnapshot persists and reloads purpose summary metadata", async () => {
+    const summaryUpdatedAt = new Date("2025-01-01T00:05:00.000Z");
+    const summaryCursor = { epoch: "epoch-summary", seq: 12 };
+    await storage.applySnapshot(
+      createManagedAgent({
+        id: "agent-summary",
+        summary: "Adding persisted rolling summaries.",
+        summaryUpdatedAt,
+        summaryCursor,
+        summaryTurnsSinceUpdate: 2,
+      }),
+    );
+
+    const reloaded = new AgentStorage(storagePath, logger);
+    const persisted = await reloaded.get("agent-summary");
+
+    expect(persisted?.summary).toBe("Adding persisted rolling summaries.");
+    expect(persisted?.summaryUpdatedAt).toBe(summaryUpdatedAt.toISOString());
+    expect(persisted?.summaryCursor).toEqual(summaryCursor);
+    expect(persisted?.summaryTurnsSinceUpdate).toBe(2);
+  });
+
+  test("applySnapshot preserves the stored summary turn counter when a snapshot omits it", async () => {
+    const agentId = "agent-summary-turns";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const initial = await storage.get(agentId);
+    expect(initial).not.toBeNull();
+    await storage.upsert({ ...initial!, summaryTurnsSinceUpdate: 4 });
+
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+
+    const persisted = await storage.get(agentId);
+    expect(persisted?.summaryTurnsSinceUpdate).toBe(4);
+  });
+
+  test("applySnapshot writes a reset summary turn counter", async () => {
+    const agentId = "agent-summary-turns-reset";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const initial = await storage.get(agentId);
+    await storage.upsert({ ...initial!, summaryTurnsSinceUpdate: 4 });
+
+    await storage.applySnapshot(createManagedAgent({ id: agentId, summaryTurnsSinceUpdate: 0 }));
+
+    const persisted = await storage.get(agentId);
+    expect(persisted?.summaryTurnsSinceUpdate).toBe(0);
+  });
+
+  test("applySnapshot preserves a stored summary when a snapshot has no authoritative summary", async () => {
+    const agentId = "agent-preserved-summary";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const initial = await storage.get(agentId);
+    expect(initial).not.toBeNull();
+    await storage.upsert({
+      ...initial!,
+      summary: "Preserve this generated summary.",
+      summaryUpdatedAt: "2025-01-01T00:04:00.000Z",
+      summaryCursor: { epoch: "epoch-preserved", seq: 8 },
+    });
+
+    const incompleteSnapshot = createManagedAgent({ id: agentId });
+    Object.assign(incompleteSnapshot, {
+      summary: undefined,
+      summaryUpdatedAt: undefined,
+      summaryCursor: undefined,
+    });
+    await storage.applySnapshot(incompleteSnapshot);
+
+    const persisted = await storage.get(agentId);
+    expect(persisted?.summary).toBe("Preserve this generated summary.");
+    expect(persisted?.summaryUpdatedAt).toBe("2025-01-01T00:04:00.000Z");
+    expect(persisted?.summaryCursor).toEqual({ epoch: "epoch-preserved", seq: 8 });
+  });
+
+  test("applySnapshot clears stored summary metadata when the managed summary is null", async () => {
+    const agentId = "agent-cleared-summary";
+    await storage.applySnapshot(createManagedAgent({ id: agentId }));
+    const initial = await storage.get(agentId);
+    expect(initial).not.toBeNull();
+    await storage.upsert({
+      ...initial!,
+      summary: "Completed stale work.",
+      summaryUpdatedAt: "2025-01-01T00:04:00.000Z",
+      summaryCursor: { epoch: "epoch-stale", seq: 4 },
+    });
+
+    await storage.applySnapshot(createManagedAgent({ id: agentId, summary: null }));
+
+    const persisted = await storage.get(agentId);
+    expect(persisted?.summary).toBeNull();
+    expect(persisted?.summaryUpdatedAt).toBeUndefined();
+    expect(persisted?.summaryCursor).toBeUndefined();
   });
 
   test("applySnapshot keeps featureValues absent when they were never set", async () => {

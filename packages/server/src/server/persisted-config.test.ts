@@ -115,6 +115,18 @@ describe("PersistedConfigSchema daemon web UI feature config", () => {
   });
 });
 
+describe("PersistedConfigSchema agent purpose summaries feature config", () => {
+  test("accepts an optional enable flag", () => {
+    const parsed = PersistedConfigSchema.parse({
+      features: {
+        agentPurposeSummaries: { enabled: false },
+      },
+    });
+
+    expect(parsed.features?.agentPurposeSummaries).toEqual({ enabled: false });
+  });
+});
+
 describe("PersistedConfigSchema worktrees config", () => {
   test("accepts optional worktree root", () => {
     const parsed = PersistedConfigSchema.parse({

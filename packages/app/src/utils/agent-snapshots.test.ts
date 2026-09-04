@@ -31,6 +31,7 @@ function createSnapshot(
     pendingPermissions: input.pendingPermissions ?? [],
     persistence: input.persistence ?? null,
     title: input.title ?? null,
+    summary: input.summary ?? null,
     labels: (input.labels ?? {}) as AgentSnapshotPayload["labels"],
   };
 }
@@ -66,6 +67,17 @@ describe("normalizeAgentSnapshot", () => {
         "server-1",
       ).activeTurn,
     ).toEqual({ turnId: null, startedAt: new Date(startedAt) });
+  });
+
+  it("preserves an optional purpose summary at the app boundary", () => {
+    const summarized = normalizeAgentSnapshot(
+      createSnapshot({ summary: "Reviewing state projections" }),
+      "server-1",
+    );
+    const missing = normalizeAgentSnapshot(createSnapshot(), "server-1");
+
+    expect(summarized.summary).toBe("Reviewing state projections");
+    expect(missing.summary).toBeNull();
   });
 
   it("derives parentAgentId from the parent label while preserving labels", () => {

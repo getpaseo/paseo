@@ -1763,6 +1763,7 @@ export class VoiceAssistantWebSocketServer {
         agentProfiles: true,
         // COMPAT(agentConfigApply): added in v0.3.2, remove gate after 2027-02-11.
         agentConfigApply: true,
+        agentPurposeSummary: true,
       },
     };
   }

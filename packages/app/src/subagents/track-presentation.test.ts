@@ -16,8 +16,7 @@ function row(
     id: overrides.id,
     provider: overrides.provider ?? "codex",
     title: overrides.title ?? `Agent ${overrides.id}`,
-    description: null,
-    subtitle: null,
+    summary: overrides.summary ?? null,
     status: overrides.status ?? "idle",
     requiresAttention: overrides.requiresAttention ?? false,
     createdAt: overrides.createdAt ?? new Date("2026-04-20T00:00:00.000Z"),
@@ -173,6 +172,14 @@ describe("buildSubagentRowPresentationData", () => {
     const presentation = buildSubagentRowPresentationData(row({ id: "a", title: "Build it" }));
     expect(presentation.titleState).toBe("ready");
     expect(presentation.label).toBe("Build it");
+  });
+
+  it("uses the gated purpose summary as the row subtitle", () => {
+    const presentation = buildSubagentRowPresentationData(
+      row({ id: "a", summary: "Reviewing state projections" }),
+    );
+
+    expect(presentation.subtitle).toBe("Reviewing state projections");
   });
 
   it("marks the row loading and blanks the label for the placeholder title", () => {

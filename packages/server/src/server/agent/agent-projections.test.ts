@@ -4,6 +4,7 @@ import { AGENT_LIFECYCLE_STATUSES } from "./agent-manager.js";
 import {
   buildStoredAgentPayload,
   toAgentPayload,
+  toAgentListItemPayload,
   toRecentProviderSessionDescriptorPayload,
   toStoredAgentRecord,
   type ManagedAgent,
@@ -94,6 +95,9 @@ function createManagedAgent(overrides: ManagedAgentOverrides = {}): ManagedAgent
     lastError: lastErrorValue,
     historyPrimed: true,
     lastUserMessageAt: now,
+    summary: null,
+    summaryUpdatedAt: undefined,
+    summaryCursor: undefined,
     attention: { requiresAttention: false },
   };
 
@@ -189,6 +193,30 @@ describe("toStoredAgentRecord", () => {
     expect(agent.persistence!.sessionId).toBe("persist-2");
   });
 
+  it("persists and restores purpose summary metadata", () => {
+    const summaryUpdatedAt = new Date("2025-01-01T00:02:00.000Z");
+    const summaryCursor = { epoch: "epoch-summary", seq: 6 };
+    const agent = createManagedAgent({
+      summary: "Implementing rolling purpose summaries.",
+      summaryUpdatedAt,
+      summaryCursor,
+    });
+
+    const record = toStoredAgentRecord(agent);
+    const payload = buildStoredAgentPayload(record, ["claude"]);
+    const listItem = toAgentListItemPayload(payload);
+
+    expect(record.summary).toBe("Implementing rolling purpose summaries.");
+    expect(record.summaryUpdatedAt).toBe(summaryUpdatedAt.toISOString());
+    expect(record.summaryCursor).toEqual(summaryCursor);
+    expect(payload.summary).toBe("Implementing rolling purpose summaries.");
+    expect(payload).not.toHaveProperty("summaryUpdatedAt");
+    expect(payload).not.toHaveProperty("summaryCursor");
+    expect(listItem.summary).toBe("Implementing rolling purpose summaries.");
+    expect(listItem).not.toHaveProperty("summaryUpdatedAt");
+    expect(listItem).not.toHaveProperty("summaryCursor");
+  });
+
   it("falls back to config mode when current mode is null and handles null title", () => {
     const agent = createManagedAgent({
       currentModeId: null,
@@ -275,6 +303,18 @@ describe("toAgentPayload", () => {
     expect(agent.capabilities.supportsStreaming).toBe(true);
     payload.pendingPermissions[0].title = "Mutated title";
     expect(permissionA.title).toBe("Run command");
+  });
+
+  it("projects the live purpose summary without its persisted timestamp", () => {
+    const agent = createManagedAgent({
+      summary: "Reviewing the storage projection.",
+      summaryUpdatedAt: new Date("2025-01-01T00:03:00.000Z"),
+    });
+
+    const payload = toAgentPayload(agent);
+
+    expect(payload.summary).toBe("Reviewing the storage projection.");
+    expect(payload).not.toHaveProperty("summaryUpdatedAt");
   });
 
   it("omits usage when any numeric usage field is NaN", () => {
