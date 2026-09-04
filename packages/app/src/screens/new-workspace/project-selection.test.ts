@@ -16,6 +16,7 @@ function project(projectKey: string, serverId = "host"): HostProjectListItem {
     viewKey: `view:${serverId}:${projectKey}`,
     projectKey,
     projectName: projectKey,
+    group: null,
     projectKind: "git",
     iconWorkingDir: `/work/${projectKey}`,
     hosts: [

@@ -4,7 +4,7 @@ import type {
   SidebarWorkspaceEntry,
   SidebarWorkspacePlacement,
 } from "@/hooks/use-sidebar-workspaces-list";
-import { buildSidebarProjection } from "./sidebar-projection";
+import { buildSidebarProjection, mergeProjectGroupOrder } from "./sidebar-projection";
 
 function makeWorkspace(
   id: string,
@@ -45,10 +45,12 @@ function makeWorkspace(
 function makeProject(
   workspaces: SidebarWorkspacePlacement[],
   viewKey = "project",
+  group: string | null = null,
 ): SidebarProjectEntry {
   return {
     viewKey,
     projectName: "Project",
+    group,
     projectKind: "git",
     iconWorkingDir: `/repo/${viewKey}`,
     hosts: [
@@ -63,14 +65,20 @@ function makeProject(
   };
 }
 
+function getProjectViewKey(project: SidebarProjectEntry): string {
+  return project.viewKey;
+}
+
 function projectionInput(options?: {
   groupMode?: "project" | "status";
   pinnedCollapsed?: boolean;
 }) {
   const pinned = makeWorkspace("pinned", "running");
   const unpinned = makeWorkspace("unpinned", "needs_input");
+  const projects = [makeProject([pinned.placement, unpinned.placement])];
   return {
-    projects: [makeProject([pinned.placement, unpinned.placement])],
+    projects,
+    allProjects: projects,
     pinnedKeys: {
       pinnedWorkspaceKeys: [pinned.placement.workspaceKey],
       pinnedAtByKey: { [pinned.placement.workspaceKey]: "2026-07-12T12:00:00.000Z" },
@@ -85,6 +93,8 @@ function projectionInput(options?: {
     pinnedCollapsed: options?.pinnedCollapsed ?? false,
     collapsedProjectKeys: new Set<string>(),
     collapsedWorkspaceGroupKeys: new Set<string>(),
+    collapsedProjectGroupKeys: new Set<string>(),
+    projectGroupOrder: [] as string[],
   };
 }
 
@@ -172,5 +182,176 @@ describe("buildSidebarProjection", () => {
     expect(projection.shortcutModel.shortcutTargets).toEqual([
       { serverId: "srv", workspaceId: "unpinned" },
     ]);
+  });
+});
+
+describe("buildSidebarProjection project groups", () => {
+  it("partitions unpinned projects into sorted groups and an ungrouped tail", () => {
+    const beta = makeWorkspace("beta-ws", "done", [], "beta-project");
+    const alpha = makeWorkspace("alpha-ws", "done", [], "alpha-project");
+    const solo = makeWorkspace("solo-ws", "done", [], "solo-project");
+    const projection = buildSidebarProjection({
+      ...projectionInput(),
+      projects: [
+        makeProject([beta.placement], "beta-project", "Beta"),
+        makeProject([alpha.placement], "alpha-project", "Alpha"),
+        makeProject([solo.placement], "solo-project", null),
+      ],
+      pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      workspaceEntriesByKey: new Map([
+        [beta.entry.workspaceKey, beta.entry],
+        [alpha.entry.workspaceKey, alpha.entry],
+        [solo.entry.workspaceKey, solo.entry],
+      ]),
+    });
+
+    expect(projection.projectGroups.map((group) => group.name)).toEqual(["Alpha", "Beta"]);
+    const groupProjectViewKeys = projection.projectGroups.map((group) =>
+      group.projects.map(getProjectViewKey),
+    );
+    expect(groupProjectViewKeys).toEqual([["alpha-project"], ["beta-project"]]);
+    expect(projection.ungroupedProjects.map((project) => project.viewKey)).toEqual([
+      "solo-project",
+    ]);
+  });
+
+  it("puts groups the stored order names first, in that order, and the rest after by name", () => {
+    const workspaces = ["alpha", "beta", "gamma", "delta"].map((name) =>
+      makeWorkspace(`${name}-ws`, "done", [], `${name}-project`),
+    );
+    const projection = buildSidebarProjection({
+      ...projectionInput(),
+      projects: workspaces.map((workspace, index) =>
+        makeProject(
+          [workspace.placement],
+          workspace.placement.projectViewKey,
+          ["Alpha", "Beta", "Gamma", "Delta"][index] ?? null,
+        ),
+      ),
+      allProjects: workspaces.map((workspace, index) =>
+        makeProject(
+          [workspace.placement],
+          workspace.placement.projectViewKey,
+          ["Alpha", "Beta", "Gamma", "Delta"][index] ?? null,
+        ),
+      ),
+      pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      workspaceEntriesByKey: new Map(
+        workspaces.map((workspace) => [workspace.entry.workspaceKey, workspace.entry]),
+      ),
+      // "vanished" names no group and is skipped.
+      projectGroupOrder: ["gamma", "vanished", "alpha"],
+    });
+
+    expect(projection.projectGroups.map((group) => group.name)).toEqual([
+      "Gamma",
+      "Alpha",
+      "Beta",
+      "Delta",
+    ]);
+  });
+
+  it("merges groups by case-insensitive name, keeping the first-seen casing as the display name", () => {
+    const first = makeWorkspace("first-ws", "done", [], "first-project");
+    const second = makeWorkspace("second-ws", "done", [], "second-project");
+    const projection = buildSidebarProjection({
+      ...projectionInput(),
+      projects: [
+        makeProject([first.placement], "first-project", "Client X"),
+        makeProject([second.placement], "second-project", "client x"),
+      ],
+      pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      workspaceEntriesByKey: new Map([
+        [first.entry.workspaceKey, first.entry],
+        [second.entry.workspaceKey, second.entry],
+      ]),
+    });
+
+    expect(projection.projectGroups).toHaveLength(1);
+    expect(projection.projectGroups[0]?.name).toBe("Client X");
+    expect(projection.projectGroups[0]?.projects.map((project) => project.viewKey)).toEqual([
+      "first-project",
+      "second-project",
+    ]);
+  });
+
+  it("marks every project in a collapsed group collapsed in the shortcut model, regardless of its own state", () => {
+    const grouped = makeWorkspace("grouped-ws", "done", [], "grouped-project");
+    const solo = makeWorkspace("solo-ws", "done", [], "solo-project");
+    const projection = buildSidebarProjection({
+      ...projectionInput(),
+      projects: [
+        makeProject([grouped.placement], "grouped-project", "Client X"),
+        makeProject([solo.placement], "solo-project", null),
+      ],
+      pinnedKeys: { pinnedWorkspaceKeys: [], pinnedAtByKey: {} },
+      workspaceEntriesByKey: new Map([
+        [grouped.entry.workspaceKey, grouped.entry],
+        [solo.entry.workspaceKey, solo.entry],
+      ]),
+      collapsedProjectGroupKeys: new Set(["client x"]),
+    });
+
+    expect(projection.shortcutModel.shortcutTargets).toEqual([
+      { serverId: "srv", workspaceId: "solo-ws" },
+    ]);
+  });
+});
+
+describe("mergeProjectGroupOrder", () => {
+  it("stores the new order of groups that had none", () => {
+    expect(
+      mergeProjectGroupOrder({
+        storedOrder: [],
+        allKeys: ["alpha", "bravo"],
+        visibleKeys: ["alpha", "bravo"],
+        nextKeys: ["bravo", "alpha"],
+      }),
+    ).toEqual(["bravo", "alpha"]);
+  });
+
+  it("keeps a filtered-out group in its slot instead of pushing it to the end", () => {
+    expect(
+      mergeProjectGroupOrder({
+        storedOrder: ["hidden", "alpha", "bravo"],
+        allKeys: ["hidden", "alpha", "bravo"],
+        visibleKeys: ["alpha", "bravo"],
+        nextKeys: ["bravo", "alpha"],
+      }),
+    ).toEqual(["hidden", "bravo", "alpha"]);
+  });
+
+  it("keeps a filtered-out group that has no stored entry in its slot", () => {
+    // Nothing was ever dragged, so the groups render alphabetically and Beta is hidden.
+    expect(
+      mergeProjectGroupOrder({
+        storedOrder: [],
+        allKeys: ["alpha", "beta", "charlie"],
+        visibleKeys: ["alpha", "charlie"],
+        nextKeys: ["charlie", "alpha"],
+      }),
+    ).toEqual(["charlie", "beta", "alpha"]);
+  });
+
+  it("gives a group with no stored entry a slot before moving it", () => {
+    expect(
+      mergeProjectGroupOrder({
+        storedOrder: ["alpha"],
+        allKeys: ["alpha", "bravo"],
+        visibleKeys: ["alpha", "bravo"],
+        nextKeys: ["bravo", "alpha"],
+      }),
+    ).toEqual(["bravo", "alpha"]);
+  });
+
+  it("leaves a group key that names no group alone", () => {
+    expect(
+      mergeProjectGroupOrder({
+        storedOrder: ["gone", "alpha", "bravo"],
+        allKeys: ["alpha", "bravo"],
+        visibleKeys: ["alpha", "bravo"],
+        nextKeys: ["bravo", "alpha"],
+      }),
+    ).toEqual(["gone", "bravo", "alpha"]);
   });
 });

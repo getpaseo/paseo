@@ -34,6 +34,9 @@ export function DraggableList<T>({
   waitFor,
   onDragBegin: onDragBeginProp,
   nestable = false,
+  // externalDndContext / getItemData are web-only (dnd-kit), ignored on native
+  externalDndContext: _externalDndContext,
+  getItemData: _getItemData,
 }: DraggableListProps<T>) {
   const { theme } = useUnistyles();
   const [isDragging, setIsDragging] = useState(false);

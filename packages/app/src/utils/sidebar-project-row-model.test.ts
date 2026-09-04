@@ -60,6 +60,7 @@ function project(overrides: ProjectOverrides = {}): SidebarProjectEntry {
     iconWorkingDir: "/repo",
     workspaces: [workspace()],
     ...overrides,
+    group: overrides.group ?? null,
     hosts,
   };
 }

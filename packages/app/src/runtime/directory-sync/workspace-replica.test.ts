@@ -199,6 +199,48 @@ it("preserves unchanged project identity when another project changes", () => {
   store.clearSession(serverId);
 });
 
+it("back-propagates projectGroup onto every workspace of the project it upserts", () => {
+  const serverId = "project-group-replica";
+  const store = useSessionStore.getState();
+  store.initializeSession(serverId, null);
+  const replica = new WorkspaceDirectoryReplica(serverId);
+  const main = normalizeWorkspaceDescriptor(workspace("main", "grouped"));
+  const feature = normalizeWorkspaceDescriptor(workspace("feature", "grouped"));
+  const project = normalizeProjectDescriptor({
+    projectId: "grouped",
+    projectDisplayName: "Grouped",
+    projectRootPath: "/repo/grouped",
+    projectKind: "git",
+  });
+  replica.commitSnapshot(
+    {
+      workspaces: new Map([
+        [main.id, main],
+        [feature.id, feature],
+      ]),
+      projects: new Map([[project.projectId, project]]),
+    },
+    [],
+  );
+
+  replica.applyDelta({
+    kind: "upsert",
+    project: {
+      projectId: "grouped",
+      projectDisplayName: "Grouped",
+      projectRootPath: "/repo/grouped",
+      projectKind: "git",
+      projectGroup: "Client X",
+    },
+  });
+
+  const session = useSessionStore.getState().sessions[serverId];
+  expect(session?.workspaces.get(main.id)).toMatchObject({ projectGroup: "Client X" });
+  expect(session?.workspaces.get(feature.id)).toMatchObject({ projectGroup: "Client X" });
+  expect(session?.projects.get("grouped")).toMatchObject({ projectGroup: "Client X" });
+  store.clearSession(serverId);
+});
+
 it("does not invent a null-key project from a workspace update", () => {
   const serverId = "workspace-before-project-update";
   const store = useSessionStore.getState();

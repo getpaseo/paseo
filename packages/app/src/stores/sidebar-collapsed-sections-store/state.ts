@@ -3,6 +3,10 @@ import { z } from "zod";
 export interface CollapsedProjectsState {
   collapsedProjectKeys: Set<string>;
   collapsedWorkspaceGroupKeys: Set<string>;
+  // Keyed by projectGroupKey(name) (trimmed + lowercased), not a stable id — a project group has
+  // no catalog record, so its identity is its normalized name. Renaming a group therefore changes
+  // its key and re-expands it on every device. Accepted for v1; see docs/glossary.md "Group".
+  collapsedProjectGroupKeys: Set<string>;
   collapsedPinned: boolean;
 }
 
@@ -10,6 +14,7 @@ export interface PersistedCollapsedProjects {
   collapsedProjectKeys?: string[];
   collapsedWorkspaceGroupKeys?: string[];
   collapsedStatusGroupKeys?: string[];
+  collapsedProjectGroupKeys?: string[];
   collapsedPinned?: boolean;
 }
 
@@ -19,6 +24,7 @@ export const PersistedCollapsedProjectsSchema: z.ZodType<PersistedCollapsedProje
     collapsedWorkspaceGroupKeys: z.array(z.string()).optional(),
     // COMPAT(sidebarWorkspaceGroupCollapse): added in v0.4.0, remove after 2027-02-14.
     collapsedStatusGroupKeys: z.array(z.string()).optional(),
+    collapsedProjectGroupKeys: z.array(z.string()).optional(),
     collapsedPinned: z.boolean().optional(),
   });
 
@@ -52,6 +58,19 @@ export function toggleWorkspaceGroupCollapsed(
   return { ...state, collapsedWorkspaceGroupKeys: next };
 }
 
+export function toggleProjectGroupCollapsed(
+  state: CollapsedProjectsState,
+  projectGroupKey: string,
+): CollapsedProjectsState {
+  const next = new Set(state.collapsedProjectGroupKeys);
+  if (next.has(projectGroupKey)) {
+    next.delete(projectGroupKey);
+  } else {
+    next.add(projectGroupKey);
+  }
+  return { ...state, collapsedProjectGroupKeys: next };
+}
+
 export function setProjectCollapsed(
   state: CollapsedProjectsState,
   projectKey: string,
@@ -69,11 +88,13 @@ export function setProjectCollapsed(
 export function serializeCollapsedProjects(state: CollapsedProjectsState): {
   collapsedProjectKeys: string[];
   collapsedWorkspaceGroupKeys: string[];
+  collapsedProjectGroupKeys: string[];
   collapsedPinned: boolean;
 } {
   return {
     collapsedProjectKeys: Array.from(state.collapsedProjectKeys),
     collapsedWorkspaceGroupKeys: Array.from(state.collapsedWorkspaceGroupKeys),
+    collapsedProjectGroupKeys: Array.from(state.collapsedProjectGroupKeys),
     collapsedPinned: state.collapsedPinned,
   };
 }
@@ -95,10 +116,17 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
       persisted.collapsedStatusGroupKeys ??
       Array.from(current.collapsedWorkspaceGroupKeys),
   );
+  // Old persisted state predates project groups and has no key at all: falling back to
+  // `current` is safe because merge only ever runs against the freshly created store state
+  // (empty sets), so an old persisted blob restores an empty collapsedProjectGroupKeys set.
+  const restoredProjectGroups = deserializeCollapsedKeys(
+    persisted.collapsedProjectGroupKeys ?? Array.from(current.collapsedProjectGroupKeys),
+  );
   const restoredPinned = persisted.collapsedPinned ?? current.collapsedPinned;
   if (
     areSetsEqual(current.collapsedProjectKeys, restoredProjects) &&
     areSetsEqual(current.collapsedWorkspaceGroupKeys, restoredWorkspaceGroups) &&
+    areSetsEqual(current.collapsedProjectGroupKeys, restoredProjectGroups) &&
     current.collapsedPinned === restoredPinned
   ) {
     return current;
@@ -107,6 +135,7 @@ export function mergePersistedCollapsedProjects<S extends CollapsedProjectsState
     ...current,
     collapsedProjectKeys: restoredProjects,
     collapsedWorkspaceGroupKeys: restoredWorkspaceGroups,
+    collapsedProjectGroupKeys: restoredProjectGroups,
     collapsedPinned: restoredPinned,
   };
 }
