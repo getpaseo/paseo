@@ -1,5 +1,6 @@
 import { LoadingSpinner } from "@/components/ui/loading-spinner";
 import { type ReactElement, useCallback, useMemo } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { Pressable, Text, View, type PressableStateCallbackType } from "react-native";
 import { useMutation } from "@tanstack/react-query";
@@ -15,15 +16,17 @@ import {
 import { useToast } from "@/contexts/toast-context";
 import { useCheckoutStatusQuery } from "@/git/use-status-query";
 import { useCheckoutPrStatusQuery } from "@/git/use-pr-status-query";
-import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
-import { useHostRuntimeIsConnected } from "@/runtime/host-runtime";
+import { getHostRuntimeStore, useHostRuntimeIsConnected } from "@/runtime/host-runtime";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { isAbsolutePath } from "@/utils/path";
 import { isWeb } from "@/constants/platform";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { resolveWorkspaceFilePaths, type WorkspaceFileLocation } from "@/workspace/file-open";
+import { openHostOverview } from "@/navigation/settings-navigation";
 import { planWorkspaceOpenTargets } from "@/workspace/open-in-editor/planner";
+import { startRemoteHostEditorSetup } from "@/workspace/open-in-editor/setup";
+import { useDesktopOpenExecution } from "@/workspace/open-in-editor/remote-destination";
 import type { Theme } from "@/styles/theme";
 import { ForgeBrandIcon } from "@/git/forge-icon";
 import { getForgePresentation } from "@/git/forge";
@@ -39,9 +42,36 @@ interface WorkspaceOpenInEditorButtonProps {
 
 interface OpenTarget {
   id: string;
+  /** Dropdown label. */
   label: string;
+  /** Split-button label; "Open" for everything the button can actually open. */
+  primaryLabel: string;
+  accessibilityLabel: string;
   icon: ReactElement;
+  /** Setup entries are an action, not an editor choice: picking one runs it. */
+  isSetup: boolean;
   onOpen: () => Promise<void> | void;
+}
+
+/** The host's own name as the rest of the UI shows it, resolved when the entry is used. */
+function resolveHostLabel(serverId: string): string {
+  const host = getHostRuntimeStore()
+    .getHosts()
+    .find((candidate) => candidate.serverId === serverId);
+  return host?.label ?? serverId;
+}
+
+function formatOpenAccessibilityLabel(
+  t: TFunction,
+  input: { fileName: string | null; target: string },
+): string {
+  if (input.fileName) {
+    return t("workspace.git.openInEditor.openFileIn", {
+      fileName: input.fileName,
+      target: input.target,
+    });
+  }
+  return t("workspace.git.openInEditor.openIn", { target: input.target });
 }
 
 const ThemedLoadingSpinner = withUnistyles(LoadingSpinner);
@@ -89,12 +119,10 @@ export function WorkspaceOpenInEditorButton({
   const { t } = useTranslation();
   const toast = useToast();
   const isConnected = useHostRuntimeIsConnected(serverId);
-  const isLocalDaemon = useIsLocalDaemon(serverId);
+  const execution = useDesktopOpenExecution(serverId);
   const { preferredEditorId, updatePreferredEditor } = usePreferredEditor();
   const { targets: desktopOpenTargets, isAvailable: isDesktopOpenAvailable } =
-    useDesktopOpenTargets({
-      isLocalExecution: isLocalDaemon,
-    });
+    useDesktopOpenTargets({ execution });
 
   const resolvedFile = useMemo(
     () =>
@@ -126,37 +154,73 @@ export function WorkspaceOpenInEditorButton({
         resolvedActiveFile: resolvedFile,
         desktopTargets: desktopOpenTargets,
         canUseDesktopBridge: isDesktopOpenAvailable,
-        isLocalExecution: isLocalDaemon,
+        execution,
         checkoutStatus,
         forge: resolvedForge,
       }).map((target) => {
+        if (target.source === "desktop-setup") {
+          const label = t("workspace.git.openInEditor.setUp");
+          return {
+            id: target.id,
+            label,
+            primaryLabel: label,
+            accessibilityLabel: t("workspace.git.openInEditor.setUpRemoteHost"),
+            icon: (
+              <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />
+            ),
+            isSetup: true,
+            onOpen: () =>
+              startRemoteHostEditorSetup({
+                serverId,
+                hostLabel: resolveHostLabel(serverId),
+                toast,
+                t,
+                navigate: openHostOverview,
+              }),
+          };
+        }
+        const open = t("workspace.git.openInEditor.open");
+        const accessibilityLabel = formatOpenAccessibilityLabel(t, {
+          fileName: activeFileName,
+          target: target.label,
+        });
         if (target.source === "forge") {
           const presentation = getForgePresentation(target.forge);
           return {
             id: target.id,
             label: target.label,
+            primaryLabel: open,
+            accessibilityLabel,
             icon: renderForgeOpenTargetIcon(presentation.icon),
+            isSetup: false,
             onOpen: () => openExternalUrl(target.url),
           };
         }
         return {
           id: target.id,
           label: target.label,
+          primaryLabel: open,
+          accessibilityLabel,
           icon: (
             <ThemedEditorTargetIcon icon={target.icon} size={16} uniProps={mutedColorMapping} />
           ),
+          isSetup: false,
           onOpen: () => openDesktopTarget(target.openInput),
         };
       }),
     [
       activeFile,
+      activeFileName,
       checkoutStatus,
       cwd,
       desktopOpenTargets,
+      execution,
       resolvedForge,
       isDesktopOpenAvailable,
-      isLocalDaemon,
       resolvedFile,
+      serverId,
+      t,
+      toast,
     ],
   );
 
@@ -185,9 +249,13 @@ export function WorkspaceOpenInEditorButton({
 
   const handleSelectTarget = useCallback(
     (target: OpenTarget) => {
+      if (target.isSetup) {
+        handleOpenTarget(target);
+        return;
+      }
       void updatePreferredEditor(target.id).catch(() => undefined);
     },
-    [updatePreferredEditor],
+    [handleOpenTarget, updatePreferredEditor],
   );
 
   const primaryPressableStyle = useCallback(
@@ -226,16 +294,7 @@ export function WorkspaceOpenInEditorButton({
           onPress={handlePrimaryPress}
           disabled={openMutation.isPending}
           accessibilityRole="button"
-          accessibilityLabel={
-            activeFileName
-              ? t("workspace.git.openInEditor.openFileIn", {
-                  fileName: activeFileName,
-                  target: primaryOption.label,
-                })
-              : t("workspace.git.openInEditor.openIn", {
-                  target: primaryOption.label,
-                })
-          }
+          accessibilityLabel={primaryOption.accessibilityLabel}
         >
           {openMutation.isPending ? (
             <ThemedLoadingSpinner
@@ -247,7 +306,7 @@ export function WorkspaceOpenInEditorButton({
             <View style={styles.splitButtonContent}>
               {primaryOption.icon}
               {!hideLabels && (
-                <Text style={styles.splitButtonText}>{t("workspace.git.openInEditor.open")}</Text>
+                <Text style={styles.splitButtonText}>{primaryOption.primaryLabel}</Text>
               )}
             </View>
           )}

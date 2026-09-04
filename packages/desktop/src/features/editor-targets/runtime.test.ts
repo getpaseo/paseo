@@ -57,4 +57,50 @@ describe("editor target runtime", () => {
       },
     ]);
   });
+
+  it("passes remote URIs to a Windows command script without extra quoting", async () => {
+    const records: SpawnRecord[] = [];
+    const runtime = createEditorTargetRuntime({
+      platform: "win32",
+      env: { PATH: "C:/Editors/bin" },
+      pathExists: (targetPath) => targetPath === "C:/Editors/bin/code.cmd",
+      spawn: (command, args, options) => {
+        const record = { command, args, options, unrefed: false };
+        records.push(record);
+        const child = {
+          once(event: "error" | "spawn", handler: (error?: Error) => void) {
+            if (event === "spawn") queueMicrotask(() => handler());
+            return child;
+          },
+          unref() {
+            record.unrefed = true;
+          },
+        };
+        return child;
+      },
+    });
+
+    const command = runtime.resolveCommand(["code"]);
+    if (!command) throw new Error("Expected the editor command to resolve");
+    // Percent-encoding happens before the shell sees the argument, so the characters the
+    // cmd escaper reacts to never reach it.
+    await runtime.spawnDetached({
+      command,
+      args: [
+        "--folder-uri",
+        "vscode-remote://ssh-remote+dev/home/me/repo%20%26%20tools",
+        "--goto",
+        "--file-uri",
+        "vscode-remote://ssh-remote+dev/home/me/repo%20%26%20tools/app.ts:12",
+      ],
+    });
+
+    expect(records[0]?.args).toEqual([
+      "--folder-uri",
+      "vscode-remote://ssh-remote+dev/home/me/repo%20%26%20tools",
+      "--goto",
+      "--file-uri",
+      "vscode-remote://ssh-remote+dev/home/me/repo%20%26%20tools/app.ts:12",
+    ]);
+  });
 });

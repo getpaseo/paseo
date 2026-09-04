@@ -4,6 +4,7 @@ const COMMANDS = ["rustrover", "rustrover64"] as const;
 
 export const rustroverTarget: EditorTarget = {
   id: "rustrover",
+  remoteDestinationKinds: [],
   async describe() {
     return {
       id: this.id,

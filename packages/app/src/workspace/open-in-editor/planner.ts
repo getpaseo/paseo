@@ -1,10 +1,16 @@
 import { type Forge, forgeFromRemoteUrl, getForgePresentation } from "@/git/forge";
-import type { DesktopOpenTarget, OpenDesktopTargetInput } from "@/workspace/desktop-open-targets";
+import type {
+  DesktopOpenExecution,
+  DesktopOpenTarget,
+  OpenDesktopTargetInput,
+} from "@/workspace/desktop-open-targets";
 import {
   type ResolvedWorkspaceFilePaths,
   resolveWorkspaceFilePaths,
   type WorkspaceFileLocation,
 } from "@/workspace/file-open";
+
+export const DESKTOP_SETUP_TARGET_ID = "open-in-editor-setup";
 
 interface CheckoutStatusForOpenTarget {
   isGit: boolean;
@@ -21,6 +27,18 @@ export interface PlannedDesktopOpenTarget {
   openInput: OpenDesktopTargetInput;
 }
 
+/**
+ * Offered when the daemon runs elsewhere and no remote authority is configured yet. It is
+ * the only way to find the feature without already knowing it exists, so it carries the
+ * icon of an installed remote-capable editor and routes to host settings instead of
+ * launching anything.
+ */
+export interface PlannedDesktopSetupTarget {
+  source: "desktop-setup";
+  id: typeof DESKTOP_SETUP_TARGET_ID;
+  icon: DesktopOpenTarget["icon"];
+}
+
 export interface PlannedForgeOpenTarget {
   source: "forge";
   forge: Forge;
@@ -29,7 +47,10 @@ export interface PlannedForgeOpenTarget {
   url: string;
 }
 
-export type PlannedWorkspaceOpenTarget = PlannedDesktopOpenTarget | PlannedForgeOpenTarget;
+export type PlannedWorkspaceOpenTarget =
+  | PlannedDesktopOpenTarget
+  | PlannedDesktopSetupTarget
+  | PlannedForgeOpenTarget;
 
 export interface PlanWorkspaceOpenTargetsInput {
   workspaceDirectory: string;
@@ -38,7 +59,7 @@ export interface PlanWorkspaceOpenTargetsInput {
   resolvedActiveFile?: ResolvedWorkspaceFilePaths | null;
   desktopTargets: readonly DesktopOpenTarget[];
   canUseDesktopBridge: boolean;
-  isLocalExecution: boolean;
+  execution: DesktopOpenExecution | null;
   checkoutStatus?: CheckoutStatusForOpenTarget | null;
   forge?: Forge | null;
 }
@@ -66,12 +87,10 @@ function planDesktopOpenTargets(input: {
   activeFile?: WorkspaceFileLocation | null;
   resolvedFile: ResolvedWorkspaceFilePaths | null;
   desktopTargets: readonly DesktopOpenTarget[];
-  canUseDesktopBridge: boolean;
-  isLocalExecution: boolean;
+  execution: Exclude<DesktopOpenExecution, { kind: "remote-unconfigured" }>;
 }): PlannedDesktopOpenTarget[] {
-  if (!input.canUseDesktopBridge || !input.isLocalExecution) {
-    return [];
-  }
+  const remote =
+    input.execution.kind === "remote" ? { remoteDestination: input.execution.destination } : {};
 
   const resolvedDirectory =
     input.directoryPath === undefined || input.directoryPath === null
@@ -95,7 +114,7 @@ function planDesktopOpenTargets(input: {
         label: target.label,
         editorId: target.id,
         icon: target.icon,
-        openInput: { editorId: target.id, workspacePath },
+        openInput: { editorId: target.id, workspacePath, ...remote },
       };
     }
     return {
@@ -109,6 +128,7 @@ function planDesktopOpenTargets(input: {
         workspacePath,
         filePath: input.resolvedFile.absolutePath,
         ...(input.activeFile?.lineStart ? { line: input.activeFile.lineStart } : {}),
+        ...remote,
       },
     };
   });
@@ -176,11 +196,36 @@ function planForgeOpenTarget(input: {
   };
 }
 
+function planDesktopSetupTarget(
+  desktopTargets: readonly DesktopOpenTarget[],
+): PlannedDesktopSetupTarget | null {
+  const editor = desktopTargets.find(
+    (target) => target.kind === "editor" && target.remoteDestinationKinds.length > 0,
+  );
+  if (!editor) {
+    return null;
+  }
+  return { source: "desktop-setup", id: DESKTOP_SETUP_TARGET_ID, icon: editor.icon };
+}
+
+function planDesktopTargets(
+  input: PlanWorkspaceOpenTargetsInput & { resolvedFile: ResolvedWorkspaceFilePaths | null },
+): (PlannedDesktopOpenTarget | PlannedDesktopSetupTarget)[] {
+  if (!input.canUseDesktopBridge || !input.execution) {
+    return [];
+  }
+  if (input.execution.kind === "remote-unconfigured") {
+    const setupTarget = planDesktopSetupTarget(input.desktopTargets);
+    return setupTarget ? [setupTarget] : [];
+  }
+  return planDesktopOpenTargets({ ...input, execution: input.execution });
+}
+
 export function planWorkspaceOpenTargets(
   input: PlanWorkspaceOpenTargetsInput,
 ): PlannedWorkspaceOpenTarget[] {
   const resolvedFile = resolveActiveFileForOpenTargets(input);
-  const desktopTargets = planDesktopOpenTargets({ ...input, resolvedFile });
+  const desktopTargets = planDesktopTargets({ ...input, resolvedFile });
   const forgeTarget = planForgeOpenTarget({ ...input, resolvedFile });
   return forgeTarget ? [...desktopTargets, forgeTarget] : desktopTargets;
 }

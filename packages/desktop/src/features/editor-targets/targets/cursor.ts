@@ -1,4 +1,5 @@
-import type { EditorTarget, EditorTargetLaunchInput, EditorTargetRuntime } from "../target.js";
+import type { EditorTarget, EditorTargetRuntime } from "../target.js";
+import { vscodeLaunchArgs } from "./vscode-launch.js";
 
 function commands(runtime: EditorTargetRuntime): string[] {
   const candidates = ["cursor"];
@@ -23,21 +24,9 @@ function commands(runtime: EditorTargetRuntime): string[] {
   return candidates;
 }
 
-function location(input: EditorTargetLaunchInput): string {
-  if (!input.line) return input.filePath!;
-  return input.column
-    ? `${input.filePath}:${input.line}:${input.column}`
-    : `${input.filePath}:${input.line}`;
-}
-
-function launchArgs(input: EditorTargetLaunchInput): string[] {
-  if (!input.filePath) return [input.workspacePath];
-  if (!input.line) return [input.workspacePath, input.filePath];
-  return [input.workspacePath, "--goto", location(input)];
-}
-
 export const cursorTarget: EditorTarget = {
   id: "cursor",
+  remoteDestinationKinds: ["ssh"],
   async describe(runtime) {
     return {
       id: this.id,
@@ -54,8 +43,11 @@ export const cursorTarget: EditorTarget = {
   async launch(input, runtime) {
     const command = runtime.resolveCommand(commands(runtime));
     if (command) {
-      await runtime.spawnDetached({ command, args: launchArgs(input) });
+      await runtime.spawnDetached({ command, args: vscodeLaunchArgs(input) });
       return;
+    }
+    if (input.remoteDestination) {
+      throw new Error("Cursor command line tools are required to open a remote workspace");
     }
     if (runtime.hasMacApplication("Cursor")) {
       await runtime.openMacApplication({

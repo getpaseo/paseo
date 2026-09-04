@@ -948,6 +948,10 @@ export const ru: TranslationResources = {
         openIn: "Открыть рабочее пространство в {{target}}",
         openFileIn: "Открыть {{fileName}} в {{target}}",
         failedOpen: "Не удалось открыть рабочее пространство",
+        setUp: "Настроить…",
+        setUpRemoteHost: "Настроить открытие этого хоста в редакторе",
+        setUpToast:
+          "Чтобы открыть {{host}} в редакторе, задайте её SSH-хост в разделе «Открыть в редакторе».",
       },
       pr: {
         actions: {
@@ -2324,6 +2328,22 @@ export const ru: TranslationResources = {
         },
         preview: {
           workspaceName: "my-workspace",
+        },
+      },
+      openInEditor: {
+        title: "Открыть в редакторе",
+        info: "«Открыть в редакторе» запускает редактор, установленный на этом компьютере. Если демон работает на другой машине, редактор подключается к ней по SSH: VS Code и Cursor через Remote-SSH, Zed через ssh://-адрес.",
+        sshHost: {
+          label: "SSH-хост",
+          hint: "Позволяет редакторам на этом компьютере открывать файлы этого хоста по SSH",
+          notSet: "Не задан",
+          editLabel: "Изменить SSH-хост",
+          modalTitle: "SSH-хост",
+          modalHint:
+            "Обычно это псевдоним из вашего ~/.ssh/config, например my-dev-host. Оставьте пустым, чтобы отключить.",
+          placeholder: "my-dev-host",
+          save: "Сохранить",
+          invalid: "Укажите один SSH-хост, без пробелов и слешей.",
         },
       },
       notFound: "Хост не найден",

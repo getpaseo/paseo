@@ -925,6 +925,9 @@ export const zhCN: TranslationResources = {
         openIn: "在 {{target}} 中打开 workspace",
         openFileIn: "在 {{target}} 中打开 {{fileName}}",
         failedOpen: "打开 workspace 失败",
+        setUp: "设置…",
+        setUpRemoteHost: "设置在编辑器中打开此主机",
+        setUpToast: "要在编辑器中打开 {{host}}，请在“在编辑器中打开”下设置它的 SSH 主机。",
       },
       pr: {
         actions: {
@@ -2260,6 +2263,21 @@ export const zhCN: TranslationResources = {
         },
         preview: {
           workspaceName: "my-workspace",
+        },
+      },
+      openInEditor: {
+        title: "在编辑器中打开",
+        info: "“在编辑器中打开”会启动本机安装的编辑器。当守护进程运行在另一台机器上时，编辑器通过 SSH 访问它：VS Code 和 Cursor 使用 Remote-SSH，Zed 使用 ssh:// 地址。",
+        sshHost: {
+          label: "SSH 主机",
+          hint: "让本机的编辑器通过 SSH 打开此主机上的文件",
+          notSet: "未设置",
+          editLabel: "编辑 SSH 主机",
+          modalTitle: "SSH 主机",
+          modalHint: "通常是你 ~/.ssh/config 中的别名，例如 my-dev-host。留空则关闭此功能。",
+          placeholder: "my-dev-host",
+          save: "保存",
+          invalid: "请使用单个 SSH 主机，不能包含空格或斜杠。",
         },
       },
       notFound: "Host 未找到",

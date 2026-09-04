@@ -942,6 +942,9 @@ export const en = {
         openIn: "Open workspace in {{target}}",
         openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "Failed to open workspace",
+        setUp: "Set up…",
+        setUpRemoteHost: "Set up opening this host in an editor",
+        setUpToast: "To open {{host}} in an editor, set its SSH host under Open in editor.",
       },
       pr: {
         actions: {
@@ -2384,6 +2387,22 @@ export const en = {
         },
         preview: {
           workspaceName: "my-workspace",
+        },
+      },
+      openInEditor: {
+        title: "Open in editor",
+        info: "Open in editor launches the editor installed on this computer. When the daemon runs on another machine, the editor reaches it over SSH — VS Code and Cursor through Remote-SSH, Zed through an ssh:// URL.",
+        sshHost: {
+          label: "SSH host",
+          hint: "Lets editors on this computer open this host's files over SSH",
+          notSet: "Not set",
+          editLabel: "Edit the SSH host",
+          modalTitle: "SSH host",
+          modalHint:
+            "Normally an alias from your ~/.ssh/config, such as my-dev-host. Leave empty to turn this off.",
+          placeholder: "my-dev-host",
+          save: "Save",
+          invalid: "Use a single SSH host, with no spaces or slashes.",
         },
       },
       notFound: "Host not found",

@@ -17,6 +17,7 @@ function launchArgs(input: EditorTargetLaunchInput): string[] {
 
 export const antigravityTarget: EditorTarget = {
   id: "antigravity",
+  remoteDestinationKinds: [],
   async describe(runtime) {
     return {
       id: this.id,

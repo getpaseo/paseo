@@ -1,10 +1,10 @@
 import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useToast } from "@/contexts/toast-context";
-import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { resolvePreferredEditorId, usePreferredEditor } from "@/hooks/use-preferred-editor";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
 import { planWorkspaceOpenTargets } from "@/workspace/open-in-editor/planner";
+import { useDesktopOpenExecution } from "@/workspace/open-in-editor/remote-destination";
 
 interface UseOpenDirectoryInEditorInput {
   serverId: string;
@@ -22,9 +22,13 @@ export function useOpenDirectoryInEditor({
 }: UseOpenDirectoryInEditorInput): OpenDirectoryInEditorAction | null {
   const { t } = useTranslation();
   const toast = useToast();
-  const isLocalExecution = useIsLocalDaemon(serverId);
+  const desktopOpenExecution = useDesktopOpenExecution(serverId);
+  // Opening a folder is a plain action with no room for a setup affordance, so an
+  // unconfigured remote host hides it exactly as it did before remote opens existed.
+  const execution =
+    desktopOpenExecution?.kind === "remote-unconfigured" ? null : desktopOpenExecution;
   const { preferredEditorId } = usePreferredEditor();
-  const { targets, isAvailable } = useDesktopOpenTargets({ isLocalExecution });
+  const { targets, isAvailable } = useDesktopOpenTargets({ execution });
   const editorTargets = useMemo(
     () => targets.filter((target) => target.kind === "editor"),
     [targets],
@@ -47,7 +51,7 @@ export function useOpenDirectoryInEditor({
         directoryPath,
         desktopTargets: [preferredTarget],
         canUseDesktopBridge: isAvailable,
-        isLocalExecution,
+        execution,
       }).find((candidate) => candidate.source === "desktop");
       if (!target) {
         return;
@@ -58,7 +62,7 @@ export function useOpenDirectoryInEditor({
         );
       });
     },
-    [isAvailable, isLocalExecution, preferredTarget, t, toast, workspaceDirectory],
+    [execution, isAvailable, preferredTarget, t, toast, workspaceDirectory],
   );
 
   return useMemo(

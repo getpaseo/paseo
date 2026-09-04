@@ -963,6 +963,10 @@ export const fr: TranslationResources = {
         openIn: "Espace de travail ouvert dans{{target}}",
         openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "Échec de l'ouverture de l'espace de travail",
+        setUp: "Configurer…",
+        setUpRemoteHost: "Configurer l'ouverture de cet hôte dans un éditeur",
+        setUpToast:
+          "Pour ouvrir {{host}} dans un éditeur, renseignez son hôte SSH sous Ouvrir dans l'éditeur.",
       },
       pr: {
         actions: {
@@ -2342,6 +2346,22 @@ export const fr: TranslationResources = {
         },
         preview: {
           workspaceName: "my-workspace",
+        },
+      },
+      openInEditor: {
+        title: "Ouvrir dans l'éditeur",
+        info: "Ouvrir dans l'éditeur lance l'éditeur installé sur cet ordinateur. Lorsque le démon tourne sur une autre machine, l'éditeur l'atteint par SSH : VS Code et Cursor via Remote-SSH, Zed via une URL ssh://.",
+        sshHost: {
+          label: "Hôte SSH",
+          hint: "Permet aux éditeurs de cet ordinateur d'ouvrir les fichiers de cet hôte par SSH",
+          notSet: "Non défini",
+          editLabel: "Modifier l'hôte SSH",
+          modalTitle: "Hôte SSH",
+          modalHint:
+            "Généralement un alias de votre ~/.ssh/config, par exemple my-dev-host. Laissez vide pour désactiver.",
+          placeholder: "my-dev-host",
+          save: "Enregistrer",
+          invalid: "Utilisez un seul hôte SSH, sans espaces ni barres obliques.",
         },
       },
       notFound: "Hostintrouvable",

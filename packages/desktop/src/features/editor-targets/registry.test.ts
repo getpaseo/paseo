@@ -7,6 +7,8 @@ import { explorerTarget, fileManagerTarget, finderTarget } from "./targets/file-
 import { intellijIdeaTarget } from "./targets/intellij-idea.js";
 import { pycharmTarget } from "./targets/pycharm.js";
 import { vscodeTarget } from "./targets/vscode.js";
+
+const sshDestination = { kind: "ssh", host: "dev" } as const;
 import { webstormTarget } from "./targets/webstorm.js";
 import { zedTarget } from "./targets/zed.js";
 
@@ -113,18 +115,21 @@ describe("editor target registry", () => {
         label: "VS Code",
         kind: "editor",
         icon: { kind: "image", dataUrl: "data:image/png;base64,vscode.png" },
+        remoteDestinationKinds: ["ssh"],
       },
       {
         id: "webstorm",
         label: "WebStorm",
         kind: "editor",
         icon: { kind: "image", dataUrl: "data:image/png;base64,webstorm.png" },
+        remoteDestinationKinds: [],
       },
       {
         id: "file-manager",
         label: "Files",
         kind: "file-manager",
         icon: { kind: "symbol", name: "folder" },
+        remoteDestinationKinds: [],
       },
     ]);
   });
@@ -247,6 +252,7 @@ describe("editor target registry", () => {
       label: "Android Studio",
       kind: "editor",
       icon: { kind: "image", dataUrl: "data:image/png;base64,android-studio.png" },
+      remoteDestinationKinds: [],
     });
 
     await openEditorTarget(
@@ -299,6 +305,7 @@ describe("editor target registry", () => {
       kind: "file-manager",
       icon: { kind: "symbol", name: "folder" },
     });
+    expect(explorerTarget.remoteDestinationKinds).toEqual([]);
     await explorerTarget.launch({ workspacePath: "C:/repo" }, runtime);
     await explorerTarget.launch(
       { workspacePath: "C:/repo", filePath: "C:/repo/src/app.ts" },
@@ -307,6 +314,177 @@ describe("editor target registry", () => {
 
     expect(runtime.openedPaths).toEqual(["C:/repo"]);
     expect(runtime.revealedPaths).toEqual(["C:/repo/src/app.ts"]);
+  });
+
+  it("opens a remote workspace through folder and file URIs instead of positional paths", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.installCommand("code");
+
+    await openEditorTarget(
+      {
+        editorId: "vscode",
+        workspacePath: "/home/user/my repo",
+        filePath: "/home/user/my repo/FILE.md",
+        line: 12,
+        remoteDestination: { kind: "ssh", host: "dev" },
+      },
+      runtime,
+      [vscodeTarget],
+    );
+
+    expect(runtime.launches).toEqual([
+      {
+        command: "/bin/code",
+        args: [
+          "--folder-uri",
+          "vscode-remote://ssh-remote+dev/home/user/my%20repo",
+          "--goto",
+          "--file-uri",
+          "vscode-remote://ssh-remote+dev/home/user/my%20repo/FILE.md:12",
+        ],
+      },
+    ]);
+  });
+
+  it("opens a remote folder, and a remote file without a line, without --goto", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.installCommand("code");
+
+    await openEditorTarget(
+      { editorId: "vscode", workspacePath: "/repo", remoteDestination: sshDestination },
+      runtime,
+      [vscodeTarget],
+    );
+    await openEditorTarget(
+      {
+        editorId: "vscode",
+        workspacePath: "/repo",
+        filePath: "/repo/src/app.ts",
+        remoteDestination: sshDestination,
+      },
+      runtime,
+      [vscodeTarget],
+    );
+
+    expect(runtime.launches).toEqual([
+      { command: "/bin/code", args: ["--folder-uri", "vscode-remote://ssh-remote+dev/repo"] },
+      {
+        command: "/bin/code",
+        args: [
+          "--folder-uri",
+          "vscode-remote://ssh-remote+dev/repo",
+          "--file-uri",
+          "vscode-remote://ssh-remote+dev/repo/src/app.ts",
+        ],
+      },
+    ]);
+  });
+
+  it("opens a remote workspace in Cursor with the same authority form as VS Code", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.installCommand("cursor");
+
+    await openEditorTarget(
+      {
+        editorId: "cursor",
+        workspacePath: "/repo",
+        filePath: "/repo/src/app.ts",
+        line: 9,
+        remoteDestination: sshDestination,
+      },
+      runtime,
+      [cursorTarget],
+    );
+
+    expect(runtime.launches).toEqual([
+      {
+        command: "/bin/cursor",
+        args: [
+          "--folder-uri",
+          "vscode-remote://ssh-remote+dev/repo",
+          "--goto",
+          "--file-uri",
+          "vscode-remote://ssh-remote+dev/repo/src/app.ts:9",
+        ],
+      },
+    ]);
+  });
+
+  it("opens a remote workspace in Zed as an ssh URL, folder only", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.installCommand("zeditor");
+
+    // Zed documents `zed ssh://[user@]host[:port]/<path>` for remote paths and `path:line`
+    // only for local ones, so the active file and line are dropped rather than guessed at.
+    await openEditorTarget(
+      {
+        editorId: "zed",
+        workspacePath: "/home/user/my repo",
+        filePath: "/home/user/my repo/src/app.ts",
+        line: 9,
+        remoteDestination: { kind: "ssh", host: "me@build.example.com:2222" },
+      },
+      runtime,
+      [zedTarget],
+    );
+
+    expect(runtime.launches).toEqual([
+      {
+        command: "/bin/zeditor",
+        args: ["ssh://me@build.example.com:2222/home/user/my%20repo"],
+      },
+    ]);
+  });
+
+  it("keeps opening local paths positionally for Zed", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.installCommand("zeditor");
+
+    await zedTarget.launch(
+      { workspacePath: "/repo", filePath: "/repo/src/app.ts", line: 7, column: 2 },
+      runtime,
+    );
+
+    expect(runtime.launches).toEqual([
+      { command: "/bin/zeditor", args: ["/repo", "/repo/src/app.ts:7:2"] },
+    ]);
+  });
+
+  it("refuses a remote open on a target that cannot reach another machine", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.addPath("/repo");
+
+    await expect(
+      openEditorTarget(
+        { editorId: "webstorm", workspacePath: "/repo", remoteDestination: sshDestination },
+        runtime,
+        [webstormTarget],
+      ),
+    ).rejects.toThrow("Editor target cannot open a ssh remote workspace: WebStorm");
+    expect(runtime.launches).toEqual([]);
+  });
+
+  it("refuses a remote open when only the macOS application is installed", async () => {
+    const runtime = new FakeEditorTargets("darwin");
+    runtime.installMacApplication("Visual Studio Code");
+
+    await expect(
+      openEditorTarget(
+        { editorId: "vscode", workspacePath: "/repo", remoteDestination: sshDestination },
+        runtime,
+        [vscodeTarget],
+      ),
+    ).rejects.toThrow("VS Code command line tools are required to open a remote workspace");
+    expect(runtime.openedMacApplications).toEqual([]);
+  });
+
+  it("keeps requiring a local path to exist when no destination is given", async () => {
+    const runtime = new FakeEditorTargets();
+    runtime.installCommand("code");
+
+    await expect(
+      openEditorTarget({ editorId: "vscode", workspacePath: "/repo" }, runtime, [vscodeTarget]),
+    ).rejects.toThrow("Path does not exist: /repo");
   });
 
   it("keeps the platform file-manager ids used by stored preferences", async () => {

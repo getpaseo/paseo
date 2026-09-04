@@ -59,7 +59,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import * as Clipboard from "expo-clipboard";
 import { useFileDownload } from "@/hooks/use-file-download";
-import { useIsLocalDaemon } from "@/hooks/use-is-local-daemon";
 import { buildAbsoluteExplorerPath } from "@/utils/explorer-paths";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { GitActionsSplitButton } from "@/git/actions-split-button";
@@ -100,6 +99,7 @@ import { usePublishWorkingDiffAttachment, useWorkingDiff } from "@/git/use-worki
 import type { CheckoutStatusPayload } from "@/git/use-status-query";
 import { DiffTooLargeState } from "@/git/diff-too-large-state";
 import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
+import { useDesktopOpenExecution } from "@/workspace/open-in-editor/remote-destination";
 import { PullRequestStateIcon } from "@/git/pull-request-state-icon";
 import { openExternalUrl } from "@/utils/open-external-url";
 import { openWorkspacePullRequest } from "@/workspace-tabs/open-supporting-view";
@@ -1616,9 +1616,9 @@ export function ChangesSurface({
   const codeFontSize = appSettings.codeFontSize;
 
   const toast = useToast();
-  const isLocalDaemon = useIsLocalDaemon(serverId);
+  const desktopOpenExecution = useDesktopOpenExecution(serverId);
   const { targets: desktopOpenTargets } = useDesktopOpenTargets({
-    isLocalExecution: isLocalDaemon,
+    execution: desktopOpenExecution,
   });
   const fileManagerTarget = desktopOpenTargets.find((target) => target.kind === "file-manager");
   const {

@@ -933,6 +933,9 @@ export const ar: TranslationResources = {
         openIn: "افتح مساحة العمل في{{target}}",
         openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "فشل في فتح مساحة العمل",
+        setUp: "الإعداد…",
+        setUpRemoteHost: "إعداد فتح هذا المضيف في محرر",
+        setUpToast: 'لفتح {{host}} في محرر، حدّد مضيف SSH الخاص به ضمن "الفتح في المحرر".',
       },
       pr: {
         actions: {
@@ -2286,6 +2289,22 @@ export const ar: TranslationResources = {
         },
         preview: {
           workspaceName: "my-workspace",
+        },
+      },
+      openInEditor: {
+        title: "الفتح في المحرر",
+        info: 'يشغّل "الفتح في المحرر" المحرر المثبّت على هذا الحاسوب. عندما يعمل الخادم على جهاز آخر، يصل المحرر إليه عبر SSH — VS Code وCursor عبر Remote-SSH، وZed عبر عنوان ssh://.',
+        sshHost: {
+          label: "مضيف SSH",
+          hint: "يتيح للمحررات على هذا الحاسوب فتح ملفات هذا المضيف عبر SSH",
+          notSet: "غير محدد",
+          editLabel: "تعديل مضيف SSH",
+          modalTitle: "مضيف SSH",
+          modalHint:
+            "عادةً اسم مستعار من ملف ~/.ssh/config لديك، مثل my-dev-host. اتركه فارغًا لتعطيل ذلك.",
+          placeholder: "my-dev-host",
+          save: "حفظ",
+          invalid: "استخدم مضيف SSH واحدًا، بدون مسافات أو شرطات مائلة.",
         },
       },
       notFound: "لم يتم العثور على Host",

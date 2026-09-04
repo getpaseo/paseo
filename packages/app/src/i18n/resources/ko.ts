@@ -940,6 +940,9 @@ export const ko: TranslationResources = {
         openIn: "{{target}}에서 워크스페이스 열기",
         openFileIn: "{{target}}에서 {{fileName}} 열기",
         failedOpen: "워크스페이스를 열지 못했습니다",
+        setUp: "설정…",
+        setUpRemoteHost: "이 호스트를 에디터에서 여는 설정",
+        setUpToast: "{{host}}을(를) 에디터에서 열려면 에디터에서 열기에서 SSH 호스트를 설정하세요.",
       },
       pr: {
         actions: {
@@ -2296,6 +2299,21 @@ export const ko: TranslationResources = {
         },
         preview: {
           workspaceName: "내-워크스페이스",
+        },
+      },
+      openInEditor: {
+        title: "에디터에서 열기",
+        info: "에디터에서 열기는 이 컴퓨터에 설치된 에디터를 실행합니다. 데몬이 다른 머신에서 실행 중이면 에디터가 SSH로 접근합니다. VS Code와 Cursor는 Remote-SSH를, Zed는 ssh:// URL을 사용합니다.",
+        sshHost: {
+          label: "SSH 호스트",
+          hint: "이 컴퓨터의 에디터가 SSH로 이 호스트의 파일을 열 수 있게 합니다",
+          notSet: "설정되지 않음",
+          editLabel: "SSH 호스트 편집",
+          modalTitle: "SSH 호스트",
+          modalHint: "보통 ~/.ssh/config의 별칭입니다(예: my-dev-host). 비워 두면 비활성화됩니다.",
+          placeholder: "my-dev-host",
+          save: "저장",
+          invalid: "공백이나 슬래시 없이 하나의 SSH 호스트를 사용하세요.",
         },
       },
       notFound: "호스트를 찾을 수 없습니다",

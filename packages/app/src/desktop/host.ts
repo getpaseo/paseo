@@ -69,6 +69,7 @@ export interface DesktopEditorTargetDescriptor {
   label: string;
   kind: "editor" | "file-manager";
   icon: { kind: "image"; dataUrl: string } | { kind: "symbol"; name: "folder" | "terminal" };
+  remoteDestinationKinds: readonly "ssh"[];
 }
 
 export interface DesktopEditorOpenTargetInput {
@@ -77,6 +78,7 @@ export interface DesktopEditorOpenTargetInput {
   filePath?: string;
   line?: number;
   column?: number;
+  remoteDestination?: { kind: "ssh"; host: string };
 }
 
 export interface DesktopEditorBridge {

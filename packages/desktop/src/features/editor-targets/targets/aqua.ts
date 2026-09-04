@@ -4,6 +4,7 @@ const COMMANDS = ["aqua", "aqua64"] as const;
 
 export const aquaTarget: EditorTarget = {
   id: "aqua",
+  remoteDestinationKinds: [],
   async describe() {
     return {
       id: this.id,

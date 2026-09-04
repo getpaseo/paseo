@@ -7,7 +7,11 @@ import { ContextMenuItem } from "@/components/ui/context-menu";
 import { getIsElectron } from "@/constants/platform";
 import { useToast } from "@/contexts/toast-context";
 import type { Theme } from "@/styles/theme";
-import { openDesktopTarget, useDesktopOpenTargets } from "@/workspace/desktop-open-targets";
+import {
+  LOCAL_DESKTOP_OPEN_EXECUTION,
+  openDesktopTarget,
+  useDesktopOpenTargets,
+} from "@/workspace/desktop-open-targets";
 
 interface OpenInFileManagerMenuItemProps {
   path?: string | null;
@@ -33,7 +37,7 @@ export function OpenInFileManagerMenuItem({
   const isElectron = getIsElectron();
   const workspacePath = path?.trim() ?? "";
   const { targets } = useDesktopOpenTargets({
-    isLocalExecution: isElectron && workspacePath.length > 0,
+    execution: isElectron && workspacePath.length > 0 ? LOCAL_DESKTOP_OPEN_EXECUTION : null,
   });
   const fileManagerTarget = targets.find((target) => target.kind === "file-manager");
 

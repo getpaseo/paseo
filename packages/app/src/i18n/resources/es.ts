@@ -964,6 +964,9 @@ export const es: TranslationResources = {
         openIn: "Abrir espacio de trabajo en{{target}}",
         openFileIn: "Open {{fileName}} in {{target}}",
         failedOpen: "No se pudo abrir el espacio de trabajo",
+        setUp: "Configurar…",
+        setUpRemoteHost: "Configurar la apertura de este host en un editor",
+        setUpToast: "Para abrir {{host}} en un editor, define su host SSH en Abrir en el editor.",
       },
       pr: {
         actions: {
@@ -2338,6 +2341,22 @@ export const es: TranslationResources = {
         },
         preview: {
           workspaceName: "my-workspace",
+        },
+      },
+      openInEditor: {
+        title: "Abrir en el editor",
+        info: "Abrir en el editor inicia el editor instalado en este equipo. Cuando el daemon se ejecuta en otra máquina, el editor llega hasta él por SSH: VS Code y Cursor mediante Remote-SSH, Zed mediante una URL ssh://.",
+        sshHost: {
+          label: "Host SSH",
+          hint: "Permite que los editores de este equipo abran los archivos de este host por SSH",
+          notSet: "Sin definir",
+          editLabel: "Editar el host SSH",
+          modalTitle: "Host SSH",
+          modalHint:
+            "Normalmente un alias de tu ~/.ssh/config, como my-dev-host. Déjalo vacío para desactivarlo.",
+          placeholder: "my-dev-host",
+          save: "Guardar",
+          invalid: "Usa un único host SSH, sin espacios ni barras.",
         },
       },
       notFound: "Hostno encontrado",

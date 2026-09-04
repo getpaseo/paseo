@@ -944,6 +944,10 @@ export const ja: TranslationResources = {
         openIn: "{{target}}でワークスペースを開く",
         openFileIn: "{{target}}で{{fileName}}を開く",
         failedOpen: "ワークスペースを開けませんでした",
+        setUp: "設定…",
+        setUpRemoteHost: "このホストをエディタで開く設定",
+        setUpToast:
+          "{{host}} をエディタで開くには、「エディタで開く」で SSH ホストを設定してください。",
       },
       pr: {
         actions: {
@@ -2305,6 +2309,22 @@ export const ja: TranslationResources = {
         },
         preview: {
           workspaceName: "my-workspace",
+        },
+      },
+      openInEditor: {
+        title: "エディタで開く",
+        info: "「エディタで開く」はこのコンピュータにインストールされたエディタを起動します。デーモンが別のマシンで動作している場合、エディタは SSH 経由で接続します。VS Code と Cursor は Remote-SSH、Zed は ssh:// URL を使います。",
+        sshHost: {
+          label: "SSH ホスト",
+          hint: "このコンピュータのエディタが SSH 経由でこのホストのファイルを開けるようにします",
+          notSet: "未設定",
+          editLabel: "SSH ホストを編集",
+          modalTitle: "SSH ホスト",
+          modalHint:
+            "通常は ~/.ssh/config のエイリアス（例: my-dev-host）です。空欄にすると無効になります。",
+          placeholder: "my-dev-host",
+          save: "保存",
+          invalid: "空白やスラッシュを含まない単一の SSH ホストを入力してください。",
         },
       },
       notFound: "ホストが見つかりません",

@@ -102,6 +102,7 @@ contextBridge.exposeInMainWorld("paseoDesktop", {
       filePath?: string;
       line?: number;
       column?: number;
+      remoteDestination?: { kind: "ssh"; host: string };
     }) => ipcRenderer.invoke("paseo:editor:openTarget", input),
   },
   webUtils: {

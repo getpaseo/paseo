@@ -4,6 +4,7 @@ const COMMANDS = ["dataspell", "dataspell64"] as const;
 
 export const dataspellTarget: EditorTarget = {
   id: "dataspell",
+  remoteDestinationKinds: [],
   async describe() {
     return {
       id: this.id,
