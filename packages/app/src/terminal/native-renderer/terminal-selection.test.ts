@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { createNativeHeadlessTerminal } from "./headless-terminal-state";
+import type {
+  NativeHeadlessTerminal,
+  TerminalBufferBounds,
+  TerminalBufferWindowInput,
+  TerminalCellRow,
+} from "./headless-terminal-state";
 import {
   copyTerminalSelection,
   createTerminalSelectionModel,
@@ -38,6 +44,33 @@ function rowWithText(
     throw new Error(`missing terminal row: ${text}`);
   }
   return window.startRow + rowOffset;
+}
+
+// Orphan placeholders (a width-0 cell not preceded by a width-2 glyph, e.g.
+// from a snapshot clipped mid-glyph) never occur in a live xterm buffer, so
+// those cases drive the selection logic with a hand-built row window.
+function terminalFromRows(rows: TerminalCellRow[]): NativeHeadlessTerminal {
+  const lastRow = rows.length - 1;
+  const bounds: TerminalBufferBounds = {
+    rows: rows.length,
+    cols: Math.max(...rows.map((row) => row.length)),
+    oldestRow: 0,
+    newestRow: lastRow,
+    coordinateEpoch: 0,
+    currentViewport: { firstRow: 0, lastRow },
+    bottomViewport: { firstRow: 0, lastRow },
+    cursorRow: 0,
+    cursorCol: 0,
+  };
+  const terminal: Pick<NativeHeadlessTerminal, "getBufferBounds" | "getBufferWindow"> = {
+    getBufferBounds: () => bounds,
+    getBufferWindow: (input: TerminalBufferWindowInput) => ({
+      startRow: input.startRow,
+      rows: rows.slice(input.startRow, input.startRow + input.rowCount),
+      wrappedRows: rows.map(() => false),
+    }),
+  };
+  return terminal as NativeHeadlessTerminal;
 }
 
 describe("native terminal selection", () => {
@@ -234,6 +267,50 @@ describe("native terminal selection", () => {
         },
       }),
     ).toBe("界B");
+  });
+
+  it("does not pull the previous cell into a drag that starts on an orphan placeholder", () => {
+    const terminal = terminalFromRows([
+      [
+        { char: "A", width: 1 },
+        { char: " ", width: 0 },
+        { char: "B", width: 1 },
+      ],
+    ]);
+    const bounds = terminal.getBufferBounds();
+
+    // The renderer skips the orphan placeholder, so the visible selection
+    // from col 1 is just B; copying must not add the preceding A.
+    expect(
+      extractTerminalSelectedText({
+        terminal,
+        selection: {
+          start: { row: 0, col: 1 },
+          end: { row: 0, col: 2 },
+          coordinateEpoch: bounds.coordinateEpoch,
+        },
+      }),
+    ).toBe("B");
+  });
+
+  it("treats a long-press on an orphan placeholder as a blank cell", () => {
+    const terminal = terminalFromRows([
+      [
+        { char: "a", width: 1 },
+        { char: "b", width: 1 },
+        { char: " ", width: 0 },
+        { char: "c", width: 1 },
+      ],
+    ]);
+    const bounds = terminal.getBufferBounds();
+
+    // The orphan belongs to no glyph, so the press must not resolve to the
+    // preceding word.
+    expect(resolveTerminalWordSelection({ terminal, coordinate: { row: 0, col: 2 } })).toEqual({
+      start: { row: 0, col: 2 },
+      end: { row: 0, col: 2 },
+      coordinateEpoch: bounds.coordinateEpoch,
+    });
   });
 
   it("copies soft-wrapped rows without fake line breaks", async () => {

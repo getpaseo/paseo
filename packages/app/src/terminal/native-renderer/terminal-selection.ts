@@ -205,9 +205,11 @@ export function resolveTerminalWordSelection(
     return null;
   }
   // A press landing on a wide glyph's placeholder half resolves to the glyph's
-  // leading cell — the placeholder column is part of the glyph.
+  // leading cell — the placeholder column is part of the glyph. An orphan
+  // placeholder (no preceding width-2 cell) belongs to no glyph; leave the
+  // anchor on it so it is treated as a blank.
   let anchorCol = input.coordinate.col;
-  while (anchorCol > 0 && cells[anchorCol]?.width === 0) {
+  while (anchorCol > 0 && cells[anchorCol]?.width === 0 && cells[anchorCol - 1]?.width === 2) {
     anchorCol -= 1;
   }
   if (TERMINAL_WORD_SEPARATORS.includes(cells[anchorCol]?.char || " ")) {
@@ -346,7 +348,10 @@ export function extractTerminalSelectedText(input: TerminalSelectedTextInput): s
     let startCol = startsOnThisRow ? selection.start.col : 0;
     // A drag that begins on a wide glyph's placeholder half visibly selects
     // the whole glyph, so back up to the glyph's leading cell before slicing.
-    while (startCol > 0 && cells[startCol]?.width === 0) {
+    // Only a real placeholder (preceded by a width-2 cell) belongs to a glyph;
+    // an orphan placeholder renders nothing and must not pull in the previous
+    // cell.
+    while (startCol > 0 && cells[startCol]?.width === 0 && cells[startCol - 1]?.width === 2) {
       startCol -= 1;
     }
     const endCol = endsOnThisRow ? selection.end.col : cells.length - 1;
