@@ -90,7 +90,7 @@ if (${JSON.stringify(launchMode)} === "piRuntime") {
   });
   process.stdin.on("end", () => process.exit(0));
 } else {
-  console.log("ARGV_OK");
+  process.stdout.write("ARGV_OK\\n", () => process.exit(0));
 }
 `,
   );

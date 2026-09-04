@@ -77,6 +77,7 @@ function getProviderStatus(
 }
 
 interface ProviderRowProps {
+  serverId: string;
   def: ProviderDefinition;
   entry: ProviderEntry;
   enabled: boolean;
@@ -167,6 +168,7 @@ function ProviderActionsMenu({
 }
 
 function ProviderRow({
+  serverId,
   def,
   entry,
   enabled,
@@ -181,7 +183,7 @@ function ProviderRow({
   const { t } = useTranslation();
   const { theme } = useUnistyles();
   const isCompact = useIsCompactFormFactor();
-  const ProviderIcon = getProviderIcon(def.id);
+  const ProviderIcon = getProviderIcon(def.id, serverId);
   const providerError =
     enabled &&
     entry.status === "error" &&
@@ -436,6 +438,7 @@ export function ProvidersSection({ serverId }: ProvidersSectionProps) {
               return (
                 <ProviderRow
                   key={def.id}
+                  serverId={serverId}
                   def={def}
                   entry={entry}
                   enabled={entry.enabled ?? true}
