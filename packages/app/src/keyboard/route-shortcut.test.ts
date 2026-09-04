@@ -305,6 +305,7 @@ describe("routeKeyboardShortcut — message-input.action", () => {
     ["voice-toggle", "message-input.voice-toggle"],
     ["voice-mute-toggle", "message-input.voice-mute-toggle"],
     ["mode-cycle", "message-input.mode-cycle"],
+    ["stash", "message-input.stash"],
   ] as const)("kind=%s → dispatch %s", (kind, id) => {
     expect(
       routeKeyboardShortcut({ action: "message-input.action", payload: { kind } }, makeCtx()),

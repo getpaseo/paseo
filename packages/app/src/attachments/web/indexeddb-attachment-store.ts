@@ -188,7 +188,7 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
       }
     },
 
-    async garbageCollect({ referencedIds }): Promise<void> {
+    async garbageCollect({ referencedIds, isReferenced }): Promise<void> {
       const db = await openAttachmentDb();
       try {
         await new Promise<void>((resolve, reject) => {
@@ -210,7 +210,7 @@ export function createIndexedDbAttachmentStore(): AttachmentStore {
             }
 
             const key = String(cursor.key);
-            if (!referencedIds.has(key)) {
+            if (!referencedIds.has(key) && !isReferenced?.(key)) {
               cursor.delete();
             }
             cursor.continue();

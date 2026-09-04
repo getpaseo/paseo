@@ -168,6 +168,7 @@ export interface DeleteAttachmentInput {
 
 export interface GarbageCollectInput {
   referencedIds: ReadonlySet<string>;
+  isReferenced?: (attachmentId: string) => boolean;
 }
 
 /**

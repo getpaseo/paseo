@@ -184,7 +184,7 @@ export function createLocalFileAttachmentStore(params: {
       await fileSystem.delete(attachmentUri(attachment), { idempotent: true });
     },
 
-    async garbageCollect({ referencedIds }): Promise<void> {
+    async garbageCollect({ referencedIds, isReferenced }): Promise<void> {
       if (!baseDirectory) {
         return;
       }
@@ -193,7 +193,7 @@ export function createLocalFileAttachmentStore(params: {
       await Promise.all(
         entries.map(async (entryName) => {
           const id = entryName.split(".", 1)[0] ?? "";
-          if (!id || referencedIds.has(id)) {
+          if (!id || referencedIds.has(id) || isReferenced?.(id)) {
             return;
           }
           await fileSystem.delete(`${baseDirectory}${entryName}`, {

@@ -196,6 +196,7 @@ export const SHORTCUT_HELP_ROW_ORDER: Record<ShortcutSectionId, readonly string[
   "agent-input": [
     "focus-message-input",
     "cycle-agent-mode",
+    "stash-prompt",
     "voice-toggle",
     "dictation-toggle",
     "agent-interrupt",
@@ -245,6 +246,7 @@ const SHORTCUT_HELP_LABEL_KEYS: Record<string, string> = {
   "cycle-agent-mode": "settings.shortcuts.help.cycleAgentMode",
   "voice-toggle": "settings.shortcuts.help.toggleVoiceMode",
   "dictation-toggle": "settings.shortcuts.help.startStopDictation",
+  "stash-prompt": "settings.shortcuts.help.stashPrompt",
   "agent-interrupt": "settings.shortcuts.help.interruptAgent",
   "voice-mute-toggle": "settings.shortcuts.help.muteUnmuteVoiceMode",
 };
@@ -1083,6 +1085,32 @@ const SHORTCUT_BINDINGS: readonly ShortcutBinding[] = [
       id: "cycle-agent-mode",
       section: "agent-input",
       label: "Cycle agent mode",
+    },
+  },
+  {
+    id: "message-input-stash-cmd-s-mac",
+    action: "message-input.action",
+    combo: "Cmd+S",
+    repeat: false,
+    when: { mac: true, commandCenter: false, terminal: false },
+    payload: { type: "message-input", kind: "stash" },
+    help: {
+      id: "stash-prompt",
+      section: "agent-input",
+      label: "Stash prompt",
+    },
+  },
+  {
+    id: "message-input-stash-ctrl-s-non-mac",
+    action: "message-input.action",
+    combo: "Ctrl+S",
+    repeat: false,
+    when: { mac: false, commandCenter: false, terminal: false },
+    payload: { type: "message-input", kind: "stash" },
+    help: {
+      id: "stash-prompt",
+      section: "agent-input",
+      label: "Stash prompt",
     },
   },
   {

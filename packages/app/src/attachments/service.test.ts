@@ -116,8 +116,12 @@ describe("attachment service", () => {
         await saveGate;
         return createAttachment({ id: input.id });
       },
-      async garbageCollect({ referencedIds }) {
-        garbageCollections.push([...referencedIds]);
+      async garbageCollect({ referencedIds, isReferenced }) {
+        garbageCollections.push(
+          ["assistant-preview"].filter(
+            (attachmentId) => referencedIds.has(attachmentId) || isReferenced?.(attachmentId),
+          ),
+        );
       },
     };
     __setAttachmentStoreForTests(store);
@@ -139,5 +143,27 @@ describe("attachment service", () => {
     }
 
     expect(garbageCollections).toEqual([["assistant-preview"]]);
+  });
+
+  it("checks live references before deleting an attachment", async () => {
+    let isLiveReferenced = false;
+    const deleted: string[] = [];
+    const store: AttachmentStore = {
+      ...createRecordingStore(),
+      async garbageCollect({ isReferenced }) {
+        isLiveReferenced = true;
+        if (!isReferenced?.("stashed-image")) {
+          deleted.push("stashed-image");
+        }
+      },
+    };
+    __setAttachmentStoreForTests(store);
+
+    await garbageCollectAttachments({
+      referencedIds: new Set(),
+      isReferenced: (attachmentId) => attachmentId === "stashed-image" && isLiveReferenced,
+    });
+
+    expect(deleted).toEqual([]);
   });
 });

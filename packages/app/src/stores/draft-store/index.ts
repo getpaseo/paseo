@@ -10,6 +10,10 @@ import {
 } from "@/attachments/service";
 import { collectRetainedAttachmentIds } from "@/attachments/gc-retention";
 import { useCreateFlowStore } from "@/stores/create-flow-store";
+import {
+  awaitPromptStashHydration,
+  collectPromptStashAttachmentIds,
+} from "@/stores/prompt-stash-store";
 import { useSessionStore, type SessionState } from "@/stores/session-store";
 import { useWorkspaceAttachmentsStore } from "@/attachments/workspace-attachments-store";
 import {
@@ -128,6 +132,10 @@ const migrateLegacyImages: MigrateLegacyImages = async (images) => {
 
 async function runAttachmentGc(): Promise<void> {
   gcScheduled = false;
+  // Stashed prompts hold attachment references outside any draft. Wait for the
+  // stash store to rehydrate so a GC pass early in startup cannot delete blobs
+  // only the stash still references.
+  await awaitPromptStashHydration();
   const nowMs = Date.now();
 
   useDraftStore.setState((state) => {
@@ -146,6 +154,10 @@ async function runAttachmentGc(): Promise<void> {
     referencedIds.add(id);
   }
   for (const id of collectRetainedAttachmentIds()) {
+    referencedIds.add(id);
+  }
+
+  for (const id of collectPromptStashAttachmentIds()) {
     referencedIds.add(id);
   }
 
@@ -179,7 +191,12 @@ async function runAttachmentGc(): Promise<void> {
   }
 
   try {
-    await garbageCollectAttachments({ referencedIds });
+    await garbageCollectAttachments({
+      referencedIds,
+      // A prompt can be stashed after the snapshot above while the backing
+      // store is still scanning. Recheck stash ownership at deletion time.
+      isReferenced: (attachmentId) => collectPromptStashAttachmentIds().includes(attachmentId),
+    });
   } catch (error) {
     console.warn("[DraftStore] Attachment garbage collection failed", error);
   }
@@ -214,7 +231,7 @@ function collectStreamUserImageIds(
   }
 }
 
-function scheduleAttachmentGc(): void {
+export function scheduleAttachmentGc(): void {
   if (gcScheduled) {
     return;
   }

@@ -163,6 +163,7 @@ export async function deleteAttachments(
 
 export async function garbageCollectAttachments(input: {
   referencedIds: ReadonlySet<string>;
+  isReferenced?: (attachmentId: string) => boolean;
 }): Promise<void> {
   pendingGarbageCollections += 1;
   if (!persistenceBarrier) {
@@ -177,15 +178,15 @@ export async function garbageCollectAttachments(input: {
     while (activePersistence.size > 0) {
       await Promise.allSettled(activePersistence);
     }
-    const referencedIds = new Set(input.referencedIds);
-    for (const id of collectRetainedAttachmentIds()) {
-      referencedIds.add(id);
-    }
-    for (const id of persistedDuringGarbageCollection) {
-      referencedIds.add(id);
-    }
     const store = await getAttachmentStore();
-    await store.garbageCollect({ referencedIds });
+    await store.garbageCollect({
+      referencedIds: input.referencedIds,
+      isReferenced: (attachmentId) =>
+        input.referencedIds.has(attachmentId) ||
+        collectRetainedAttachmentIds().has(attachmentId) ||
+        persistedDuringGarbageCollection.has(attachmentId) ||
+        input.isReferenced?.(attachmentId) === true,
+    });
   })();
   garbageCollectionTail = currentGarbageCollection.catch(() => undefined);
 
