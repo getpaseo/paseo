@@ -5656,6 +5656,7 @@ export class DaemonClient {
           [CLIENT_CAPS.providerSubagents]: true,
           [CLIENT_CAPS.projectUpdates]: true,
           [CLIENT_CAPS.compactProviderSnapshots]: true,
+          [CLIENT_CAPS.timelineNotifications]: true,
           ...this.config.capabilities,
         },
         ...(this.config.appVersion ? { appVersion: this.config.appVersion } : {}),

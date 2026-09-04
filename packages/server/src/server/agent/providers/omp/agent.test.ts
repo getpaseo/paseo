@@ -368,7 +368,7 @@ describe("OMP agent client and session", () => {
     ]);
   });
 
-  test("renders a live system-notice custom message as a synthetic tool call", async () => {
+  test("renders a live system-notice custom message as a notification", async () => {
     const omp = new OmpHarness();
     await omp.start();
 
@@ -387,8 +387,12 @@ describe("OMP agent client and session", () => {
       );
     omp.runtime().acceptCustomMessage("plain custom status text");
 
-    expect(omp.timeline().filter((item) => item.type === "tool_call")).toMatchObject([
-      { callId: "omp-notice:DocsSmokeTwo", name: "task_notification", status: "completed" },
+    expect(omp.timeline().filter((item) => item.type === "notification")).toEqual([
+      {
+        type: "notification",
+        level: "info",
+        message: "Background job DocsSmokeTwo completed",
+      },
     ]);
     // Non-notice custom messages still fall through as assistant messages.
     expect(omp.timeline().filter((item) => item.type === "assistant_message")).toMatchObject([
